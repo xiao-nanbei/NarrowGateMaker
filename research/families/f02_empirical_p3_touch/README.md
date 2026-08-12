@@ -1,0 +1,47 @@
+# F02 Empirical P3 Touch
+
+Last materially modified: 2026-08-12
+
+Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
+
+Status: active operational-baseline dependency plus prediction-infrastructure redesign. The current runtime artifact estimates fixed-horizon `P(touch)` and its local distance slope. It does not estimate queue conversion or final fill probability.
+
+Formal artifacts are bound to `event_type=touch`, `horizon_s=10`, distance unit `USDC_per_BTC`, and the exact artifact SHA256. Frozen v2 artifacts that predate the explicit event field remain readable without rewriting their bytes. This fixed 10-second contract is retained for historical and operational reproduction only; it is no longer authoritative for new P3 research.
+
+[`fill_probability.py`](fill_probability.py) is the runtime artifact loader; [`audit/`](audit/) owns empirical calibration; [`docs/`](docs/) records the current normalized-100ms calibration. Shared dependencies: D, S.
+
+## Public Document Map
+
+| Research identity | Public documents |
+| --- | --- |
+| Normalized-100ms v2 recalibration | [Development evidence](docs/p3_touch_recalibration_normalized100ms_v2_20260725.md) |
+| Source-aware expanded v3 | [Development report](docs/p3_touch_source_aware_expanded_v3_development_20260803.md), [Spec](docs/p3_touch_source_aware_expanded_v3_spec_20260803.json), [day manifest](docs/p3_touch_source_aware_expanded_v3_day_manifest_20260803.json), [quote-path Spec](docs/p3_touch_source_aware_expanded_v3_quote_path_spec_20260803.json) |
+| Volatility-conditioned v4 | [Development report](docs/p3_touch_volatility_conditioned_v4_development_20260803.md), [Spec](docs/p3_touch_volatility_conditioned_v4_spec_20260803.json) |
+| Volatility-conditioned v4.1 | [Development report](docs/p3_touch_volatility_conditioned_v4_1_development_20260803.md), [Spec](docs/p3_touch_volatility_conditioned_v4_1_spec_20260803.json) |
+| Conditional-curve scalar adapter | [Development report](docs/p3_touch_conditional_curve_quote_mapping_v1_development_20260803.md), [Spec](docs/p3_touch_conditional_curve_quote_mapping_v1_spec_20260803.json), [contract errata](docs/p3_touch_conditional_curve_quote_mapping_v1_contract_errata_20260803.md) |
+| Policy-visible decision cadence | [Development report](docs/p3_touch_policy_visible_decision_cadence_transport_v1_development_20260803.md), [Spec](docs/p3_touch_policy_visible_decision_cadence_transport_v1_spec_20260803.json), [contract errata](docs/p3_touch_policy_visible_decision_cadence_transport_v1_contract_errata_20260803.md) |
+| Aggressive reach-time successor | [Design](docs/p3_aggressive_reach_time_surface_v1_design_20260804.md), [frozen Spec](docs/p3_aggressive_reach_time_conditioned_hazard_v1_spec_20260804.md), [Development report](docs/p3_aggressive_reach_time_conditioned_hazard_v1_development_20260804.md) |
+
+Public Markdown uses repository-relative links and logical evidence IDs. Large retained reports, manifests, caches, and source tapes live in the private evidence store and are not distributed with the public repository; a SHA256 identifies retained bytes but is not a download link. Public machine-record projections are bound to their exact private source bytes in the repository-wide [projection manifest](../../public_machine_document_projections.json).
+
+The [source-aware expanded v3 study](docs/p3_touch_source_aware_expanded_v3_development_20260803.md) admitted 93 provider-normalized 2025 days without requiring D-1 L2 warmup. Its pooled static 2025+2026 curve failed historical 2026 transport and materially worsened a 44-day full quote-path diagnostic, so it is closed as a replacement candidate. The current v2 artifact remains operational.
+
+The successor [`p3_touch_volatility_conditioned_v4`](docs/p3_touch_volatility_conditioned_v4_development_20260803.md) passed all four historical native proper-score cells, all 48 supported calibration cells, provider/native prediction transport, and 197,231,404 monotonicity comparisons. Its original 98% context-coverage gate failed on three days and remains frozen as a failed predecessor.
+
+The owner-governed [`p3_touch_volatility_conditioned_v4_1`](docs/p3_touch_volatility_conditioned_v4_1_development_20260803.md) successor changed only that coverage threshold to 95%. Its minimum observed coverage was 96.85%, so the historical Development prediction identity is supported. The override is explicitly outcome-informed and is not independent confirmation. It makes a separate conditional-curve-to-quote economic study eligible for registration, but grants no quote, action, artifact replacement, or live authority.
+
+The canonical [`p3_touch_conditional_curve_quote_mapping_v1`](docs/p3_touch_conditional_curve_quote_mapping_v1_development_20260803.md) study tested one narrow adapter, now classified as `conditional_p3_scalar_compression_adapter_v1`. It averaged BUY and SELL touch curves, compressed them into scalar `delta_star` and `kappa_eff`, and passed those scalars through the legacy AS/GLFT ABI. Across 24 historical OOF native days, that adapter tightened mean raw half-spread from 24.58 to 13.49 USDC/BTC, increased fills from 8,799 to 21,597, and reduced terminal MTM PnL by 115.66 USDC. The scalar adapter is closed.
+
+This result closes only the scalar-compression adapter. The current v2 artifact remains operational, and v4.1 remains historical touch-prediction evidence only. See the [Development report](docs/p3_touch_conditional_curve_quote_mapping_v1_development_20260803.md) and [contract errata](docs/p3_touch_conditional_curve_quote_mapping_v1_contract_errata_20260803.md).
+
+The Development-only [`p3_touch_policy_visible_decision_cadence_transport_v1`](docs/p3_touch_policy_visible_decision_cadence_transport_v1_development_20260803.md) successor then queried the full BUY/SELL v4.1 surfaces at seven exact executable distances on F06's sampled current-BBO quote clock. It corrected the predecessor audit's omission of the frozen AWS Tokyo visibility-age layer. Across 467,093 baseline-eligible decisions, context coverage was 98.67%; all four side x surface Brier intervals favored v4.1, calibration improved materially, and 2,762,748 ordered-distance comparisons had zero violations.
+
+That hard-gate identity stopped before direct value fitting: the immutable overlap contains only 28 days and three OOF folds, below the frozen 30-day and four-fold support contract. Its 60-second context is a deterministic sampled-visibility sensitivity, not exact F06 persisted feature-state parity.
+
+An explicitly outcome-informed F05 owner continuation then retained the side-specific exact-distance curves and evaluated quantity-weighted terminal value overlays for 13 joint-quote candidates. Value coverage was 269/282 (95.39%), but no action-fold cell passed the economic screen; all 126 OOF buckets selected baseline. The strongest early point estimate was about `3.7e-5 USDC/bucket`, below half of the frozen `1e-4` threshold, and later-fold intervals crossed zero. Thus the current F05 sparse-value selector is closed for absent economic resolution and chronological stability. Conditional P3 itself is not closed, but neither tested quote mapping produced an action. See the F05 [`conditional_p3_quote_mapping_status_closure_v1`](../f05_fill_quality_quote_ev/docs/conditional_p3_quote_mapping_status_closure_v1_20260804.md).
+
+v4.1 remains an offline F02 probability artifact, is not connected to the live quote path, and writes no shadow log. Any future price action must be tested against the current live-held BER replay baseline; P3 prediction quality alone grants no action authority.
+
+The completed prediction successor is [`p3_aggressive_reach_time_conditioned_hazard_v1`](docs/p3_aggressive_reach_time_conditioned_hazard_v1_development_20260804.md). It replaces a universal horizon with the side-specific first-passage surface `F_reach,s(t,d|x)` on a 100ms label grid with explicit 30-second administrative right censoring. The reusable label cache stores cumulative maximum reached distance in integer ticks and excludes all order, queue, fill, cancel, inventory, campaign, and economic state.
+
+The frozen 156-day fit panel, four 21-day OOF folds, and 48 provider/native overlap comparisons were trained from reusable private evidence-store DAG caches, which are not distributed with the public repository. BUY and SELL both passed their day-clustered integrated-Brier gates, context coverage was 99.835%, and all distance/time monotonicity checks passed. This is formal prediction evidence, not an economic result. Near-distance calibration and daily source-transport tails remain diagnostics. The operational P3 v2 is not replaced, and no quote, action, shadow, or live permission is granted. See [`p3_aggressive_reach_time_conditioned_hazard_v1_development_20260804`](docs/p3_aggressive_reach_time_conditioned_hazard_v1_development_20260804.md).
