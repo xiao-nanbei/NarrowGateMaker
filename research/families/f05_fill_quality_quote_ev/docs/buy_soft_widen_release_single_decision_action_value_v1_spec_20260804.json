@@ -1,0 +1,426 @@
+{
+  "action": {
+    "action_duration": "one_quote_decision_only",
+    "assignment_unit": "one_pre_frozen_canonical_10s_quote_decision",
+    "candidate_requires_existing_soft_widen": true,
+    "old_selector_loaded": false,
+    "post_action_policy": "return_to_current_operational_baseline",
+    "queue_lifecycle_inventory_cooldown_campaign_regenerated": true,
+    "reducing_quote_changed": false,
+    "roles_evaluated_independently": [
+      "opener",
+      "add"
+    ],
+    "sell_quote_changed_directly": false,
+    "side": "BUY",
+    "spread_mult_cap": 1.0,
+    "spread_mult_mapping": "min(current_side_policy_spread_mult,1.0)"
+  },
+  "baseline": {
+    "baseline_id": "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_retired_baseline_20260804",
+    "buy_fill_selection_action_enabled": false,
+    "config": {
+      "bytes": 24244,
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5"
+    },
+    "identity": {
+      "bytes": 7417,
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
+      "sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638"
+    },
+    "ml_enabled": true,
+    "pointer": {
+      "bytes": 1644,
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62"
+    },
+    "q90_action_enabled": false
+  },
+  "bootstrap": {
+    "draws": 20000,
+    "seed": 2026080451,
+    "unit": "UTC_day"
+  },
+  "canonical_spec_identity_sha256": "0c9aaf88795ee62e476c48e443b5b01d61092f3944930910fc85623afa6bb3b5",
+  "created_date": "2026-08-04",
+  "development_panel": {
+    "days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "grade_a_days": [
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-06-03",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-13",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-26"
+    ],
+    "grade_b_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-14",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "historical_development_reuse": true,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "direct_value_model": {
+    "features": [
+      "toxicity_score",
+      "toxicity_other_side",
+      "pred_direction",
+      "pred_return",
+      "pred_volatility",
+      "inventory_units",
+      "baseline_distance_ticks",
+      "side_policy_spread_mult",
+      "bbo_spread_ticks",
+      "bar_spread_bps",
+      "l2_microprice_offset_bps",
+      "l2_imbalance_l1",
+      "l2_imbalance_l5",
+      "l2_book_refresh_ratio",
+      "l2_book_cancel_ratio",
+      "l2_quote_flip_rate",
+      "log1p_l2_near_depth_total",
+      "price_change_5s",
+      "price_change_30s",
+      "micro_ret_std",
+      "taker_quote_imbalance_5s",
+      "taker_quote_imbalance_30s",
+      "vpin_30s"
+    ],
+    "hyperparameter_search": false,
+    "missing_policy": "training_median",
+    "model": "fixed_ridge",
+    "oof_folds": [
+      {
+        "fold": 1,
+        "test_days": [
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08"
+        ],
+        "train_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31"
+        ]
+      },
+      {
+        "fold": 2,
+        "test_days": [
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14"
+        ],
+        "train_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08"
+        ]
+      },
+      {
+        "fold": 3,
+        "test_days": [
+          "2026-06-15",
+          "2026-06-16",
+          "2026-06-17",
+          "2026-06-18",
+          "2026-06-19",
+          "2026-06-20"
+        ],
+        "train_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14"
+        ]
+      },
+      {
+        "fold": 4,
+        "test_days": [
+          "2026-06-21",
+          "2026-06-22",
+          "2026-06-23",
+          "2026-06-24",
+          "2026-06-25",
+          "2026-06-26"
+        ],
+        "train_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14",
+          "2026-06-15",
+          "2026-06-16",
+          "2026-06-17",
+          "2026-06-18",
+          "2026-06-19",
+          "2026-06-20"
+        ]
+      }
+    ],
+    "ridge_alpha": 10.0,
+    "roles_fitted_separately": true,
+    "scale_policy": "training_IQR_then_clip_plus_minus_8",
+    "selector_rule": "predicted_delta_usdc >= 0.0001"
+  },
+  "frozen_at_utc": "2026-08-04T02:22:39.812911+00:00",
+  "gates": {
+    "either_path_only_unblocks_new_full_path_policy_identity": true,
+    "mechanics_minimum_days_per_role": 20,
+    "mechanics_minimum_rows_per_role": 100,
+    "minimum_selected_days_per_role": 12,
+    "minimum_selected_rows_per_role": 30,
+    "owner_progression": {
+      "original_hard_gate_failures_preserved": true,
+      "selected_day_sum_point_gt_zero": true,
+      "selected_mean_delta_point_gt_economic_threshold": true,
+      "selected_positive_day_rate_min": 0.5
+    },
+    "research_supported": {
+      "selected_day_sum_lcb_gt_zero": true,
+      "selected_mean_delta_lcb_gt_economic_threshold": true,
+      "selected_positive_day_rate_min": 0.55
+    },
+    "this_identity_cannot_authorize_action_or_live": true
+  },
+  "historical_context": {
+    "legacy_score_0_44_used": false,
+    "legacy_selector_model_or_threshold_used": false,
+    "retired_selector_estimand": "P(good_outcome_given_filled_x_pi0)",
+    "successor_estimand": "Q_pi0(x,release_one_buy_soft_widen_decision)-Q_pi0(x,current_baseline_decision)"
+  },
+  "identity": "buy_soft_widen_release_single_decision_action_value_v1",
+  "implementation_identities": {
+    "cpp/narrowgate_cpp/bindings.cpp": {
+      "bytes": 184658,
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "de0a17251fdedb5e9512f9c80c4112ab5be3bf10dcad61164d48d62d25ba1125"
+    },
+    "cpp/narrowgate_cpp/tick_replay.cpp": {
+      "bytes": 270120,
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "769878eb763e102cbd9e1627b8f5b031c78db8ea093776d53f21b2cab78d7e86"
+    },
+    "cpp/narrowgate_cpp/tick_replay.hpp": {
+      "bytes": 36182,
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "b7ee70b30a966132a0ced61c4b396083d2eb8c13f367b4e16ab7abf5dae597bc"
+    },
+    "models/backtest_tick.py": {
+      "bytes": 1323887,
+      "path": "models/backtest_tick.py",
+      "sha256": "0dccddbd8245cd6b33585c1a06dbf6f2a3ee3c5a5918f747f9705237e36bf783"
+    },
+    "research/families/f05_fill_quality_quote_ev/audit/buy_soft_widen_release_action_value.py": {
+      "bytes": 36630,
+      "path": "research/families/f05_fill_quality_quote_ev/audit/buy_soft_widen_release_action_value.py",
+      "sha256": "92dfd7fe1ceadd0571f71a0f3359fc41b62791fed49a6310a2fef4f10c18b453"
+    },
+    "strategy/buy_soft_widen_release.py": {
+      "bytes": 3384,
+      "path": "strategy/buy_soft_widen_release.py",
+      "sha256": "42f7bddb8f75808bbc6cb9b80c68caeb9c2182f399d35813e5677b88fd2e53fc"
+    },
+    "tests/test_buy_soft_widen_release_action_value.py": {
+      "bytes": 2177,
+      "path": "tests/test_buy_soft_widen_release_action_value.py",
+      "sha256": "1a7b8a6c8f60b3e8a0a50e589aa266ec40935cfa7d8c1750881d7d108757c073"
+    }
+  },
+  "opportunity_sampling": {
+    "opportunity_manifest": {
+      "bytes": 302743,
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_soft_widen_release_single_decision_action_value_v1_20260804/opportunity_manifest.parquet",
+      "sha256": "70f6b11c99eaccb3fed4814522ec52405237e9ee828ec7cf09444a0d69a5428e"
+    },
+    "opportunity_report": {
+      "bytes": 3335,
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_soft_widen_release_single_decision_action_value_v1_20260804/opportunity_report.json",
+      "sha256": "c0a5f5eeec20c151f9c7f074b47428a6cdf2dbc268e8270eb0cc199a74110e96"
+    },
+    "samples_per_role_day": 12,
+    "seed": 20260804,
+    "stable_hash_fields": [
+      "day",
+      "decision_ts_ms",
+      "side",
+      "role"
+    ]
+  },
+  "outcome": {
+    "economic_threshold_usdc_per_action": 0.0001,
+    "ownership_end": "UTC_day_end_with_open_inventory_MTM",
+    "ownership_start": "target_quote_decision_ts",
+    "pre_assignment_pnl_cancels_by_identical_path": true,
+    "primary": "candidate_minus_baseline_day_end_terminal_mtm_usdc",
+    "single_action_per_fork": true
+  },
+  "permissions_at_freeze": {
+    "action_authority": false,
+    "live_authority": false,
+    "prediction_authority": false
+  },
+  "research_family": "F05_fill_quality_quote_ev",
+  "schema_version": "narrowgate_buy_soft_widen_release_action_value.v1.spec",
+  "status": "frozen_before_single_action_economic_outcomes"
+}

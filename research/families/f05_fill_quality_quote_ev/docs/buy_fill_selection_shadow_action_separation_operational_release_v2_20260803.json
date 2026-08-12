@@ -1,0 +1,74 @@
+{
+  "schema_version": "buy_fill_selection_shadow_action_separation_operational_release.v2",
+  "identity": "buy_fill_selection_shadow_action_separation_operational_release_v2",
+  "effective_at_utc": "2026-08-02T23:21:27Z",
+  "status": "deployed_and_verified_action_off_shadow_on",
+  "supersedes_operational_release": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_action_suspension_operational_release_v1_20260803.json",
+    "sha256": "d4cd2d1642326d662632543394e84e2fed0924b584d7913eb55c7900d1b80116",
+    "historical_bytes_modified": false
+  },
+  "scientific_conclusion": {
+    "classification": "unsupported_negative_point_estimate",
+    "average_treatment_effect_negative_proven": false,
+    "universal_or_statewise_harm_proven": false,
+    "forbidden_claim": "BUY fill-selection has been proven universally harmful",
+    "interpretation": "The day-clustered interval crosses zero, so the average treatment effect has not been shown to be negative. Even an interval wholly below zero would not establish harm in every market state without conditional-effect evidence."
+  },
+  "frozen_40_day_evidence": {
+    "terminal_mtm_delta_on_minus_off_usdc": -16.794591448001086,
+    "mean_daily_delta_usdc": -0.41986478620002715,
+    "day_clustered_ci95_usdc_per_day": [
+      -1.3040616742125302,
+      0.29500005892495623
+    ],
+    "fill_change_fraction": 0.0057335927101465,
+    "loss_magnitude_change_fraction": 0.1055,
+    "multi_level_short_value_delta_usdc": -13.591,
+    "diagnostic_report": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_current_stack_ab_40d_diagnostic_20260803.md",
+    "diagnostic_report_sha256": "f03f52c8fd90be299f10ffea0f73a968127ce2f93e4f47624fb0d85bafccef00"
+  },
+  "operational_conclusion": {
+    "buy_fill_selection_live_enabled": false,
+    "buy_fill_selection_shadow_enabled": true,
+    "scorer_artifact_retained": true,
+    "shadow_rows_are_action_authority": false,
+    "decision_rule": "The action bears the burden of positive economic evidence; operations need not wait for proof of harm before suspending a reversible unsupported action."
+  },
+  "reenable_contract": {
+    "automatic_reenable_authorized": false,
+    "old_result_not_significantly_negative_is_sufficient": false,
+    "required": "A new frozen identity must produce positive economic evidence on the then-current operational baseline before action re-enable can be considered."
+  },
+  "runtime_implementation": {
+    "legacy_action_switch": "strategy.buy_fill_selection_live_enabled",
+    "shadow_switch": "strategy.buy_fill_selection_shadow_enabled",
+    "shadow_may_score_and_log": true,
+    "shadow_may_change_reason_mask_spread_or_quote": false,
+    "live_config_sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36",
+    "live_config_py_sha256": "076d2fda4f34ab1537d2bd81ba03a66b35cf26f297257ae732e10489e0833b57",
+    "live_main_py_sha256": "23a30116c6b5509215e9c0f5816b47584a3903ac5300afe432fa1b251087037d",
+    "maker_engine_py_sha256": "88a1c8f2185938f6d3455a575cf8e3cf8ae43c3f1f818b90c8b6cf2838f03103"
+  },
+  "deployment": {
+    "target": "<retired-original-aws-ssh-target>:${NARROWGATE_REMOTE_ROOT}",
+    "previous_pid": "<private-process-id>",
+    "current_pid": "<private-process-id>",
+    "python_version": "3.12.13",
+    "single_process_verified": true,
+    "remote_preflight_passed": true,
+    "rollback_directory": "deploy_backups/buy_fill_shadow_split_20260802T231556Z",
+    "first_health_timestamp_utc": "2026-08-02T23:22:30Z",
+    "first_health_shadow_eval_count": 0,
+    "first_health_action_count": 0,
+    "first_health_no_eligible_eval_reason": "inventory was -0.001 BTC, so BUY was reducing while the scorer denominator remained exposure-increasing BUY only"
+  },
+  "permissions": {
+    "owner_operational_suspension_authorized": true,
+    "shadow_collection_authorized": true,
+    "buy_fill_selection_action_authorized": false,
+    "research_prediction_authority": false,
+    "research_action_authority": false,
+    "universal_harm_claim_authorized": false
+  }
+}
