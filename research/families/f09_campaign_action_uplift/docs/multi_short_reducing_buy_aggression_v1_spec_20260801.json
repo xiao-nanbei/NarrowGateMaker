@@ -1,0 +1,417 @@
+{
+  "schema_version": "multi_short_reducing_buy_aggression.v1",
+  "family_id": "multi_short_reducing_buy_aggression_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-01T06:49:59Z",
+  "status": "frozen_before_formal_development_outcome_read",
+  "canonical_spec_identity_sha256": "900688e149222a84b2ddffe8fd39b6667885f6e49d90f292eec3cf26e096b2e1",
+  "scope": "Development-only campaign-randomized full-path replay of one fixed maker-only reducing-BUY repair action after inventory first reaches two SHORT units. It directly tests whether paying a less favorable passive exit price shortens multi-level SHORT exposure and improves assignment-to-terminal value. It does not train a selector, search an aggressiveness grid, read Validation or holdout, authorize live, or alter exposure-increasing SELL quotes.",
+  "base_full_path_contract": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+    "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
+    "reuse_scope": "corrected wall-time cooldown, native snapshot/delta queue, empirical P3, frozen latency path, loss cooldown, sync stress, blockers, campaign lifecycle, and daily fresh-start semantics"
+  },
+  "lineage_outcome_foundation": {
+    "path": "research/families/f09_campaign_action_uplift/docs/lineage_randomized_outcome_contract_v2.json",
+    "sha256": "bd95adae59e4fa1fee982b29dc960c233bb7e468bc2f844d656f42a4527503cd"
+  },
+  "predecessor_identity": {
+    "q90_off_mechanics_spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/post_cooldown_incremental_inventory_budget_feasibility_v1_2_spec_20260801.json",
+      "sha256": "c1f1e7d1ea873a5b1a0896a3de3616c4453499ba045c76199e30bc0833e356fb"
+    },
+    "q90_off_mechanics_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/post_cooldown_incremental_inventory_budget_feasibility_v1_2_20260801/development/report.json",
+      "sha256": "1c0e438943bcf0e8352b12c5557b33570320210f0c8bab4e853d219f8a181e87"
+    },
+    "q90_off_mechanics_postrun_audit": {
+      "path": "research/families/f09_campaign_action_uplift/docs/post_cooldown_incremental_inventory_budget_feasibility_v1_2_postrun_audit_20260801.json",
+      "sha256": "e62932effe9cfa960bdff6964bfbc1c07101cd38060931b8fa06123300720cb9"
+    },
+    "reuse_boundary": "Only the corrected q90-OFF baseline path and integrity evidence are reused. The closed discrete inventory-budget candidate and its result are not part of this action."
+  },
+  "observational_design_anchor": {
+    "report": {
+      "path": "research/families/f10_live_replay_attribution/docs/live_240h_loss_solution_routing_v1_20260801.md",
+      "sha256": "f15c366c6f8ffb1d2283ee16411c0ed129f0ec0df7452fe952b29399cf6ef906"
+    },
+    "source": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/live_240h_loss_solution_analysis_v1_20260801/inputs/live_240h_analysis.json",
+      "sha256": "25e0f7f17a16c184b26220709be580c77527add5c122bfbb8aa83d2c6842b129"
+    },
+    "use": "The concentration of terminal loss in campaigns reaching at least two SHORT units motivates the trigger and a reducing-side repair lever. This is observational mechanism evidence, not a causal treatment estimate, fitted optimum, decision gate, or live permission."
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "grade_a_days": [
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-06-03",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-13",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-26"
+    ],
+    "grade_b_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-14",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "grade_b_is_sensitivity_only": true,
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ]
+  },
+  "behavior_policy": {
+    "assignment_unit": "campaign_first_crossing_to_inventory_lte_minus_0_002_btc",
+    "assignment_time": "immediately_after_the_triggering_SELL_fill_is_booked_and_before_any_subsequent_quote_cancel_ack_fill_or_strategy_decision",
+    "trigger_fill_reward_treatment": "excluded_from_both_arms_outcome_by_post_fill_assignment",
+    "randomization_design": "independent_PRF_Bernoulli_stratified_by_UTC_day_and_SELL_side",
+    "random_seed": 2026080103,
+    "probabilities": {
+      "baseline_reducing_buy": 0.5,
+      "aggressive_maker_reducing_buy": 0.5
+    },
+    "treatment_window": "candidate_quote_permission_from_assignment_until_inventory_gte_minus_0_001_btc",
+    "outcome_window": "assignment_to_campaign_terminal_even_after_treatment_release",
+    "persistence": "one_assignment_per_campaign_no_rerandomization_after_release_or_reentry_to_multi_short",
+    "path_dependent_future_campaigns": "new campaign identities are randomized from their own pre-assignment UID and are not force-paired across diverged paths"
+  },
+  "actions": {
+    "control": {
+      "id": "baseline_reducing_buy",
+      "definition": "corrected q90-OFF baseline reducing-BUY quote and blocker path"
+    },
+    "candidate": {
+      "id": "aggressive_maker_reducing_buy",
+      "trigger_inventory_btc": -0.002,
+      "release_inventory_btc": -0.001,
+      "formula": "min(best_ask_1-tick,max(baseline_reducing_buy_price,best_bid_1))",
+      "price_rounding": "exchange tick grid with selected BUY price strictly below best ask",
+      "order_type": "GTX_maker_only",
+      "IOC_or_taker": "forbidden",
+      "defense_override": "override_only_reducing_BUY_defense_guard_pause_while_treatment_active",
+      "safety_gates_not_overridden": [
+        "stale_book_hard_pause",
+        "circuit_breaker",
+        "global_consecutive_loss_cooldown",
+        "sync_or_system_safety",
+        "inventory_and_order_size_validity",
+        "exchange_post_only_constraint"
+      ],
+      "replace_lifecycle": "existing_replace_throttle_cancel_ACK_pending_coalesce_and_queue_reset_path_is_preserved",
+      "exposure_increasing_sell": "unchanged",
+      "flat_opener": "unchanged",
+      "order_size": "unchanged",
+      "inventory_limit": "unchanged",
+      "cooldown": "unchanged_wall_time_85s_times_consecutive_same_side_fill_units",
+      "other_blockers": "unchanged_except_the_explicit_reducing_BUY_defense_pause_override"
+    },
+    "aggressiveness_grid_or_selector": "forbidden",
+    "q90": "off_identically_in_both_arms"
+  },
+  "action_registration": {
+    "foundation_contract_id": "lineage_randomized_outcome_contract_v2",
+    "action_family_id": "multi_short_reducing_buy_aggression_v1",
+    "primary_estimand": "decision_to_campaign_terminal_value_usdc",
+    "stratification_keys": [
+      "UTC_day",
+      "side"
+    ],
+    "trace_schema_version": "narrowgate_lineage_randomized_trace.v2",
+    "mechanism_extension_schema": "none",
+    "producer_identity": {
+      "models/backtest_tick.py": "4f5d60ace8a8b5e9364af08f045921051234c5623933f0ff9796524baa66f633",
+      "research/families/f09_campaign_action_uplift/audit/lineage_randomized_outcome_contract.py": "089c715896a0f5d2633e5c33361c86bea4bc8650153c40080119cf52dcf1fce9",
+      "research/families/f09_campaign_action_uplift/audit/multi_short_reducing_buy_aggression.py": "3abfec4f599e5c617a6392542a94e805acf44d19364f5de9c5df68d4c4549c6d",
+      "research/families/f09_campaign_action_uplift/audit/multi_short_reducing_buy_aggression_randomized_replay.py": "431a3e8a2819c90e2c7a95567cd12c67b293aae5e8137af61a11fa4cce698da8"
+    },
+    "randomization_seed": 2026080103,
+    "action_semantics": {
+      "baseline": "current_reducing_BUY",
+      "candidate": "most_aggressive_valid_GTX_maker_reducing_BUY_until_inventory_recovers_to_one_SHORT_unit"
+    },
+    "assignment_before_downstream_path": true,
+    "downstream_assignment_policy": "persist_to_campaign_terminal_no_rerandomization",
+    "maximum_assignments_per_campaign": 1,
+    "covariate_adjustment": {
+      "enabled": false,
+      "mode": "none",
+      "covariates": [],
+      "frozen_before_outcome_read": true
+    }
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "full_candidate_path_regenerated": true,
+    "native_snapshot_delta_queue": true,
+    "queue_mode": "strict_exact_level",
+    "shared_market_path": true,
+    "shared_latency_random_path": true,
+    "initial_state": "daily_fresh_start",
+    "window_cache_location": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "window_cache_mode": "read_existing_and_write_missing_internal_disk",
+    "frozen_evidence_location": "${NARROWGATE_DATA_ROOT}/reports/multi_short_reducing_buy_aggression_v1_20260801",
+    "trace_campaigns_max_per_day": 20000,
+    "consecutive_loss_cooldown_path_dependent": true,
+    "sync_degrade": "frozen_deterministic_stress",
+    "q90_action": "off_both_arms",
+    "full_cpp_tick_replay_authority": false,
+    "AWS_exact_receive_time_required_for_offline_development": false,
+    "AWS_exact_receive_time_required_for_live_transport": true
+  },
+  "reward_contract": {
+    "primary": "decision_to_campaign_terminal_value_usdc",
+    "identity": "campaign_terminal_equity_usdc_minus_assignment_equity_usdc",
+    "unit": "USDC_per_campaign_assignment",
+    "trigger_fill": "excluded_by_assignment_after_trigger_fill_accounting",
+    "pre_assignment_campaign_pnl": "balance_diagnostic_only_not_outcome",
+    "maker_signed_markout_or_spread_double_count": "forbidden",
+    "campaign_terminal_value_assigned_once": true,
+    "queue_and_churn_effect": "embedded_in_the_regenerated_full_path_terminal_reward",
+    "separate_queue_cost_usdc": 0.0,
+    "separate_queue_cost_reason": "No second additive queue-cost term is identified; adding one would double count the realized full-path effect. Submit, cancel, replace, and queue-reset counts remain diagnostics.",
+    "USDC_per_day_estimator": "day_level_Horvitz_Thompson_total_policy_difference_under_exact_half_propensity",
+    "secondary": [
+      "USDC_per_day",
+      "multilevel_SHORT_terminal_loss_protection",
+      "q10_and_CVaR10",
+      "maximum_inventory",
+      "inventory_time",
+      "campaign_MAE",
+      "reducing_BUY_fill_ratio_as_mechanism_not_retention_gate",
+      "total_post_assignment_fill_retention",
+      "submit_cancel_replace_queue_reset_counts",
+      "repair_probability_and_time",
+      "campaign_duration"
+    ]
+  },
+  "scorecard_profile": {
+    "schema_version": "narrowgate_score_profile.v1",
+    "profile_id": "action_defense_v1",
+    "profile_sha256": "88debbbd5ecfd537938a9127307bb4da0402db800d22af0e57da4be06fcba782"
+  },
+  "family_gates": {
+    "classification": "judgmental engineering gates frozen before formal Development outcomes",
+    "actual_action_change_rate_lcb_min": 0.05,
+    "maker_violation_count_must_equal": 0,
+    "action_generated_IOC_or_taker_count_must_equal": 0,
+    "multilevel_short_loss_lcb_must_exceed": 0.0,
+    "max_inventory_avoidance_lcb_min": 0.0,
+    "inventory_time_avoidance_lcb_min": 0.0,
+    "campaign_mae_avoidance_lcb_min": 0.0,
+    "policy_value_lcb_usdc_per_day_must_exceed": 0.0,
+    "reducing_buy_fill_retention_gate": "none_mechanism_is_expected_to_increase_reducing_fills",
+    "canonical_action_defense_total_fill_retention": 0.85,
+    "canonical_scorecard_must_pass": true,
+    "ranking_score_only_when_all_hard_gates_pass": true
+  },
+  "grade_b_sensitivity_gates": {
+    "classification": "pre-frozen transport sensitivity; Grade B never enters the primary scorecard",
+    "minimum_reward_point_estimate": 0.0,
+    "minimum_multilevel_loss_point_estimate": 0.0,
+    "minimum_total_fill_retention": 0.85
+  },
+  "bootstrap": {
+    "cluster": "UTC_day",
+    "draws": 5000,
+    "seed": 2026080104,
+    "interval": "two_sided_95_percent"
+  },
+  "source_identity": {
+    "path_relocation_contract": "legacy frozen MarketData paths are resolved through data_paths.relocate_marketdata_path without changing source bytes",
+    "market_manifest_canonical_sha256": "27787b4aa129563c3d5bf173ef7705e44a511462de0c5989a8b1db7e8b457227",
+    "market_manifest_rows": 1222,
+    "market_manifest_bytes": 11625657192,
+    "formal_full_run_requires_rehash": true
+  },
+  "storage_gate": {
+    "estimated_new_output_gib": 1.0,
+    "absolute_minimum_free_gib": 50.0,
+    "reserve_free_gib": 60.0,
+    "output_multiple": 2.5,
+    "internal_cache_root": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "external_evidence_root": "${NARROWGATE_DATA_ROOT}/reports"
+  },
+  "value_provenance": {
+    "candidate_price_formula": "judgmental_fixed_economic_intervention_with_exchange_post_only_constraint",
+    "trigger_minus_0_002_btc": "empirical_observational_multi_level_loss_boundary_frozen_as_design_value_not_causal_optimum",
+    "release_minus_0_001_btc": "judgmental_state_boundary_representing_return_to_single_SHORT_unit",
+    "campaign_0_5_propensity": "randomized_design_identity",
+    "assignment_to_terminal_accounting": "accounting_identity",
+    "scorecard_and_family_thresholds": "judgmental_engineering",
+    "tick_lot_inventory_limit_and_fees": "exchange_or_frozen_operational_rules"
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "431a3e8a2819c90e2c7a95567cd12c67b293aae5e8137af61a11fa4cce698da8",
+    "source_sha256": {
+      "data/normalized_l2_registry.py": "c9865f87cf3a12f3ac7f38c21a5790a02d6b4d6657ecbc0508c308c4946da1b3",
+      "data_paths.py": "65e4e3395f7de952f5b52ae5fce2f27a89bc6fb14ca35e3f72d008a6822280cd",
+      "models/audit/experiment_scorecard.py": "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6",
+      "models/backtest_config.py": "bd3214ea40a53266c2f16128c2b18a0881feeca4dd2fc93e52e34029f1fca12a",
+      "models/backtest_tick.py": "4f5d60ace8a8b5e9364af08f045921051234c5623933f0ff9796524baa66f633",
+      "models/book_source_contract.py": "6cc2d0897a18dae1e417728ee522ff9cbb308bd8796ae244395dec51481cfcd9",
+      "models/data_windows.py": "4802672e7b22af78d2296c16f24380173cd58ee593805f38e246ad266f282ce7",
+      "models/exchange_book_replay.py": "daf2fc1fca87899e59221026fffe93fe2a9066173e0b499b4e03ae85598c9778",
+      "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "models/tick_data_types.py": "2a5b00fcf59fcbff976163a0a5ef5baf6db0e30877c58fe0a077ce83e353cacc",
+      "research/families/f09_campaign_action_uplift/audit/lineage_randomized_outcome_contract.py": "089c715896a0f5d2633e5c33361c86bea4bc8650153c40080119cf52dcf1fce9",
+      "research/families/f09_campaign_action_uplift/audit/post_cooldown_incremental_inventory_budget_feasibility.py": "cc483b7119bf38e656a90608856ace8a28ff2cc23b136967a7ce7f62fa97ef3f",
+      "research/families/f09_campaign_action_uplift/audit/randomized_action_contrast.py": "379a72d7f120d1342808703752f6a9ccac4c68e7a8e3c1db844b765ab04a9607",
+      "research/families/f09_campaign_action_uplift/audit/multi_short_reducing_buy_aggression.py": "3abfec4f599e5c617a6392542a94e805acf44d19364f5de9c5df68d4c4549c6d",
+      "research/families/f09_campaign_action_uplift/audit/multi_short_reducing_buy_aggression_randomized_replay.py": "431a3e8a2819c90e2c7a95567cd12c67b293aae5e8137af61a11fa4cce698da8",
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_full_path_preflight.py": "3709a0e7624f48d44409d168aa6ed5ca83a50fb19fd5e453ae4e1e5edf16f11d",
+      "strategy/campaign_repair.py": "fbb10d21df3c234ddc2bc97518d8048ee2b4b5e07563c1a3a5eed35c8919fb15",
+      "strategy/fill_cooldown.py": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+      "strategy/policy_guards.py": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+      "strategy/quote_core.py": "ceeb0a3a9b198300984fe0ebb336d1e2f5ff91564588b8fce263bca3f3d56605",
+      "strategy/replay_controls.py": "c39e34de0f800c1ec011e9e5dd6534db2908ac2e6609e7e88e59a48f1eba8366",
+      "strategy/state_conditioned_quote_policy.py": "219ca178c652986e23d8987f56ad5dcee58ea14ea4eaceff0a1655c2e605f624",
+      "tests/test_data_paths.py": "14072a898877fc59fb2ee44c45c37acb3f2d2a7568068057c033a67691095b01",
+      "tests/test_lineage_randomized_outcome_contract_v2.py": "96c1453d7eeeb16ff8a3e48377934ec0320a58650e8060969cb6a1088fb8c10d",
+      "tests/test_post_cooldown_incremental_inventory_budget.py": "fc3b5eff739074f0cf092cf657c0d9db9233bf0e55327ceda767afdfe535f261",
+      "tests/test_post_cooldown_incremental_inventory_budget_feasibility.py": "1494d281ebcc0aa2f81f4c86be401c1c5077d29b52cbcbe083413c37f94ea1ee",
+      "tests/test_replay_path_dependent_controls.py": "aa8746bf14f9d1f18024922412ef63768a45e46bdd6ef4a436b4746ef472c5bf",
+      "tests/test_multi_short_reducing_buy_aggression.py": "05ebe6f645868cdf39805f16410e409728eda9e560b30dd708088da12b89767d",
+      "tests/test_multi_short_reducing_buy_aggression_randomized_replay.py": "06a424b1cea4188d7364f0382469d6708d16861f7f9302fc33ce552b7aaa7aeb"
+    }
+  },
+  "test_identity": {
+    "junit_xml": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multi_short_reducing_buy_aggression_v1_20260801/inputs/action_contract_tests.xml",
+      "sha256": "052d1b2d5efad3cd4e37871525ebb3870101508606885f8b567944cace76fde3"
+    },
+    "tests": 63,
+    "failures": 0,
+    "errors": 0,
+    "required_test_names": [
+      "test_action_rejects_q90_drifted_thresholds_and_cpp_full_path",
+      "test_aggressive_maker_buy_uses_frozen_price_formula",
+      "test_authoritative_replay_emits_complete_native_v2_lineage_trace",
+      "test_config_freezes_action_wall_clock_q90_off_and_python_authority",
+      "test_consecutive_loss_cooldown_is_path_dependent_and_python_cpp_equal",
+      "test_foundation_contract_hash_and_authority_are_fail_closed",
+      "test_full_path_changes_only_reducing_buy_until_release",
+      "test_future_action_must_freeze_adjustment_and_day_side_strata",
+      "test_grade_a_scorecard_requires_economic_and_mechanical_gates",
+      "test_maker_violation_cannot_be_rescued_by_positive_reward",
+      "test_native_trace_missing_producer_field_fails_instead_of_filtering",
+      "test_native_trace_requires_event_and_denominator_coverage",
+      "test_native_trace_satisfies_shared_outcome_contract_v2",
+      "test_panel_requires_exact_development_denominator_and_half_propensity",
+      "test_post_assignment_accounting_excludes_pre_assignment_pnl",
+      "test_q90_off_result_rejects_evaluation_or_enabled_state",
+      "test_rehashed_source_manifest_must_match_all_declared_dimensions",
+      "test_stratified_randomizer_keeps_conditional_half_propensity",
+      "test_sync_censor_prevents_future_mark_price_in_python_and_cpp",
+      "test_trigger_release_and_randomizer_contracts"
+    ]
+  },
+  "permissions": {
+    "randomized_action_identity_created": true,
+    "development_randomized_replay_allowed": true,
+    "development_outcome_read": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "full_cpp_tick_replay_authority": false
+  },
+  "frozen_decision_rule": "Run exactly the 40 frozen Development days. Grade A is the only primary action_defense_v1 scorecard denominator and Grade B is sensitivity-only. Pass requires positive assignment-to-terminal reward and USDC/day lower bounds, all fixed family gates, the canonical scorecard, and no Grade B sign or total-fill-retention failure. Reducing-BUY fill growth is a mechanism output and has no separate retention gate. Failure closes this exact maker-repair action on Development. Success only unlocks a separately governed Validation read; it does not authorize action or live deployment."
+}
