@@ -1,0 +1,735 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1.spec",
+  "identity": "multiscale_ema_add_wait_incremental_value_v1",
+  "last_materially_modified": "2026-08-09",
+  "family_id": "F05_fill_quality_quote_ev",
+  "research_class": "prediction_only_incremental_action_value",
+  "status_at_freeze": "preregistered_development_outcomes_unread",
+  "question": "Does a causal multiscale EMA surface add chronological out-of-fold information about side-specific ADD NOW versus WAIT ONE EXTERNAL EPOCH terminal value beyond frozen campaign-state and existing local/trend features?",
+  "scope": {
+    "estimand": "Q_pi0(ADD_NOW)-Q_pi0(WAIT_ONE_EXTERNAL_EPOCH)",
+    "prediction_only": true,
+    "economic_outcomes_may_be_read_only_after_this_spec_is_frozen": true,
+    "sell_and_buy_fitted_and_gated_separately": true,
+    "pooled_side_promotion_forbidden": true,
+    "f09_action_registration_authorized": false,
+    "order_action_authorized": false,
+    "live_policy_authorized": false,
+    "validation_or_holdout_rescue_forbidden": true
+  },
+  "source_contract": {
+    "denominator_source_spec": {
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+      "fields_reused": [
+        "panel.ordered_utc_days",
+        "control.identity",
+        "operational_baseline"
+      ],
+      "economic_results_reused": false
+    },
+    "operational_baseline_pointer": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
+    },
+    "operational_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+      "offline_projection": "only lifecycle_journal_v2.enabled changes from true to false"
+    },
+    "execution_plan": {
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3/execution-plan.json",
+      "sha256": "5c47033e67b75a9cbef6c336825dbea713b117c54674828d956f6626886fb7d4",
+      "day_count": 40,
+      "economic_results_reused": false
+    },
+    "baseline_policy": {
+      "arm_id": "current_live_held_global_ber_control",
+      "continuation_symbol": "pi0",
+      "exact_runtime_code_config_model_p3_queue_latency_and_projection_hashes": "must_be_bound_by_a_separate_execution_amendment_before_any_fork_label_is_generated",
+      "missing_execution_binding_policy": "fail_closed",
+      "only_fork_difference": "ADD_NOW versus WAIT_ONE_EXTERNAL_EPOCH at the assigned opportunity; both arms then return to pi0 at the same external epoch"
+    },
+    "forbidden_inputs_during_spec_freeze": [
+      "development result reports",
+      "development PnL or economic outcomes",
+      "validation outcomes",
+      "sealed holdout outcomes"
+    ]
+  },
+  "development_denominator": {
+    "role": "historical_native_development_previously_consumed_by_other_families_not_independent_confirmation",
+    "daily_fresh_start": true,
+    "ordered_utc_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "side_denominators": [
+      "SELL",
+      "BUY"
+    ],
+    "inventory_role": "exposure_increasing_add_only",
+    "opener_rows_forbidden": true,
+    "reducing_rows_forbidden": true,
+    "treatment_dependent_eligibility_forbidden": true
+  },
+  "opportunity_contract": {
+    "unit": "one_baseline-shadow-eligible side-specific add opportunity at one canonical external market generation",
+    "required_preconditions": [
+      "the campaign and side identity are fixed before either fork action",
+      "the proposed order is exposure-increasing add, not opener, reducing, or cross-zero",
+      "all non-cooldown baseline permissions allow the add",
+      "market readiness is true",
+      "feature_ready_ts_ns is not later than decision_ts_ns",
+      "there is no inherited same-side active, submitted, cancel-pending, or ACK-pending order",
+      "the prospective add uses the exact baseline price, quantity, GTX, queue, and latency semantics"
+    ],
+    "cooldown_phases": {
+      "COOLDOWN_ACTIVE": {
+        "baseline_action": "WAIT_ONE_EXTERNAL_EPOCH",
+        "definition": "all non-cooldown permissions allow add but the current operational 85-second economic cooldown still blocks it"
+      },
+      "COOLDOWN_EXPIRED": {
+        "baseline_action": "ADD_NOW",
+        "definition": "the current operational cooldown and every other baseline permission allow add"
+      }
+    },
+    "maximum_sampled_opportunities_per_utc_day_side_cooldown_phase": 2,
+    "maximum_total_sampled_opportunities": 320,
+    "stable_sampling": {
+      "outcome_blind": true,
+      "seed_text": "multiscale_ema_add_wait_incremental_value_v1|20260809",
+      "hash_algorithm": "sha256",
+      "row_key_fields": [
+        "utc_day",
+        "side",
+        "cooldown_phase",
+        "prospective_campaign_side_id",
+        "decision_ts_ns",
+        "market_generation_identity"
+      ],
+      "procedure": [
+        "within each campaign-side and cooldown phase retain the eligible opportunity with the smallest stable hash",
+        "within each UTC-day x side x cooldown-phase cell retain the two campaign representatives with the smallest stable hashes",
+        "if fewer than two representatives exist retain all without replacement"
+      ],
+      "sample_membership_must_be_frozen_before_fork_outcomes": true
+    }
+  },
+  "external_decision_clock": {
+    "canonical_generation_name": "G_market",
+    "generation_components": [
+      "bbo_index",
+      "l2_index",
+      "trade_index",
+      "feature_ready_index",
+      "prediction_index",
+      "snapshot_mid_tick_x2"
+    ],
+    "generation_identity": "sha256 of the canonical serialization of the six content components; market event index is a locator and is not part of content identity",
+    "monotonicity": "the five source cursor components must be non-decreasing; snapshot_mid_tick_x2 may move in either direction; at least one content component must change for a later generation",
+    "allowed_generation_causes": [
+      "new decision-visible BBO or depth state",
+      "new decision-visible trade state",
+      "new feature-ready generation",
+      "new prediction-ready generation"
+    ],
+    "forbidden_generation_causes": [
+      "candidate submit",
+      "candidate cancel request or ACK",
+      "candidate partial or full fill",
+      "candidate inventory or campaign transition",
+      "candidate order-age, queue, cursor, or hazard transition"
+    ],
+    "next_epoch": "tau_plus is the first u greater than t with G_market(u) strictly after G_market(t), scheduled_requote(u)=true, and readiness(u)=true",
+    "candidate_induced_forced_decisions_cannot_release_wait": true,
+    "missing_or_regressing_generation_policy": "fail_closed"
+  },
+  "paired_fork_actions": {
+    "ADD_NOW": {
+      "at_assignment": "submit the same side-specific add that pi0 would submit when permitted, with identical executable price, quantity, GTX, activation, queue, and latency semantics",
+      "continuation": "at tau_plus and afterward use frozen pi0"
+    },
+    "WAIT_ONE_EXTERNAL_EPOCH": {
+      "at_assignment": "do not submit the side-specific add",
+      "during_wait": "candidate-induced order or campaign events cannot create an earlier redecision",
+      "continuation": "at the same tau_plus as ADD_NOW, re-evaluate both arms under frozen pi0"
+    },
+    "second_assignment_before_joint_washout": "forbidden",
+    "independent_market_path": false,
+    "shared_market_path": true,
+    "arm_specific_state": [
+      "orders",
+      "queue",
+      "fills",
+      "cash",
+      "inventory",
+      "cooldown",
+      "campaign"
+    ]
+  },
+  "baseline_fallback": {
+    "economic_threshold_usdc_per_opportunity": 0.0001,
+    "threshold_provenance": "precommitted F05 governance threshold; not selected from this Development panel and not claimed to be a market constant",
+    "delta_definition": "delta_Q_usdc = Q(ADD_NOW)-Q(WAIT_ONE_EXTERNAL_EPOCH)",
+    "cooldown_active": "depart from baseline WAIT only when simultaneous_LCB(delta_Q_usdc) is strictly greater than 0.0001",
+    "cooldown_expired": "depart from baseline ADD only when simultaneous_UCB(delta_Q_usdc) is strictly less than -0.0001",
+    "uncertain_or_unsupported": "execute the current baseline action for that cooldown phase",
+    "this_identity_executes_the_rule": false,
+    "rule_use": "diagnostic policy projection only; any executable rule requires a separately frozen side-specific F09 successor"
+  },
+  "joint_washout_and_label": {
+    "assignment_ownership": "all descendant orders and all economic state caused by the assigned action remain owned by that fork until common joint washout",
+    "arm_complete_conditions": [
+      "inventory is flat within the operational campaign epsilon of 1e-10 BTC and campaign_active is false",
+      "all descendant orders are exchange-terminal",
+      "active_order_count is zero",
+      "pending_submit_count is zero",
+      "pending_cancel_count is zero",
+      "pending_ack_count is zero",
+      "old queue cursor ownership is zero",
+      "old hazard ownership is zero",
+      "second_assignment_count is zero"
+    ],
+    "joint_complete": "every arm_complete_condition is true in both ADD_NOW and WAIT_ONE_EXTERNAL_EPOCH arms",
+    "early_flat_arm_policy": "quarantine the early-flat arm; it may not open a new campaign while the other arm remains unwashed, and may use reducing-only recovery if a pending terminal race reopens inventory",
+    "ema_state_during_fork": "continue updating both arms from the same external market path",
+    "primary_arm_value": "arm_equity_usdc_at_joint_washout minus common_assignment_equity_usdc, including fees",
+    "primary_target": "Q_ADD_NOW_usdc minus Q_WAIT_ONE_EXTERNAL_EPOCH_usdc",
+    "arbitrary_maximum_wait_or_forced_terminal": "forbidden",
+    "data_boundary_before_joint_washout": {
+      "status": "right_censored",
+      "primary_label_observed": false,
+      "primary_training_and_primary_oof_scoring": "excluded",
+      "required_diagnostics": [
+        "mid_mark_to_market_value_for_each_arm",
+        "executable_BBO_liquidation_value_for_each_arm",
+        "paired_difference_interval_from_the_two_contemporaneous_valuations",
+        "remaining_inventory_and_order_lifecycle_state"
+      ],
+      "diagnostic_interval_is_not_a_claim_about_eventual_campaign_terminal_value": true
+    }
+  },
+  "ema_surface": {
+    "half_lives_s": [
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      16.0,
+      32.0,
+      64.0,
+      128.0,
+      256.0
+    ],
+    "observation_clock": "QuoteDecisionSnapshot feature-ready external market clock",
+    "observation_price": "canonical mid from the same immutable QuoteDecisionSnapshot used by the opportunity and both forks",
+    "update_equation": "EMA_h(t_i)=exp(-ln(2)*delta_t/h)*EMA_h(t_i-1)+(1-exp(-ln(2)*delta_t/h))*mid(t_i)",
+    "future_or_mixed_snapshot_input_forbidden": true,
+    "side_mapping": {
+      "BUY": 1,
+      "SELL": -1
+    },
+    "hard_golden_cross_or_death_cross_used_as_model_feature": false,
+    "hard_cross_fields": "diagnostic_only"
+  },
+  "feature_sets": {
+    "common_causal_requirements": [
+      "every feature_ready_ts_ns is not later than decision_ts_ns",
+      "features are computed from the common pre-assignment market and baseline-shadow state",
+      "no fill, terminal, markout, future price, or treatment-dependent feature is allowed"
+    ],
+    "M0": {
+      "description": "campaign state plus existing decision-visible local, trend, flow, refill, and prospective queue state",
+      "categorical_features": [
+        "cooldown_phase"
+      ],
+      "continuous_features": [
+        "baseline_action_is_add",
+        "fill_cooldown_elapsed_ms",
+        "fill_cooldown_remaining_ms",
+        "fill_cooldown_consecutive_units",
+        "campaign_age_s",
+        "abs_inventory_units",
+        "campaign_max_abs_inventory_units",
+        "campaign_pnl_so_far",
+        "campaign_adverse_excursion_so_far",
+        "campaign_exposure_increasing_fills_so_far",
+        "campaign_reducing_fills_so_far",
+        "toxicity",
+        "markout_ema",
+        "pred_direction_side_signed",
+        "pred_return_side_signed",
+        "baseline_distance_ticks",
+        "spread_mult",
+        "bbo_spread_ticks",
+        "microprice_shift_side_signed_bps",
+        "l2_book_refresh_ratio",
+        "l2_book_cancel_ratio",
+        "l2_quote_flip_rate",
+        "log1p_l2_near_depth_total",
+        "decision_queue_ahead_btc",
+        "decision_feature_volatility_5s",
+        "decision_feature_volatility_30s",
+        "decision_feature_volatility_60s",
+        "decision_feature_volatility_300s",
+        "decision_feature_volume_imbalance_5s_side_signed",
+        "decision_feature_volume_imbalance_30s_side_signed",
+        "decision_feature_volume_imbalance_60s_side_signed",
+        "decision_feature_volume_imbalance_300s_side_signed",
+        "decision_feature_trade_intensity_5s",
+        "decision_feature_trade_intensity_30s",
+        "decision_feature_trade_intensity_60s",
+        "decision_feature_trade_intensity_300s",
+        "decision_feature_vpin_5s",
+        "decision_feature_vpin_30s",
+        "decision_feature_vpin_60s",
+        "decision_feature_vpin_300s",
+        "decision_feature_price_change_5s_side_signed",
+        "decision_feature_price_change_30s_side_signed",
+        "decision_feature_price_change_60s_side_signed",
+        "decision_feature_price_change_300s_side_signed",
+        "decision_feature_taker_quote_imbalance_5s_side_signed",
+        "decision_feature_taker_quote_imbalance_10s_side_signed",
+        "decision_feature_taker_quote_imbalance_30s_side_signed",
+        "decision_feature_taker_quote_imbalance_60s_side_signed"
+      ]
+    },
+    "M1": {
+      "description": "M0 plus the frozen continuous multiscale EMA surface",
+      "includes_every_M0_feature": true,
+      "ema_feature_generators": [
+        "side-signed EMA_h relative to canonical mid in bps for every half-life",
+        "side-signed EMA_h velocity in bps per second for every half-life",
+        "side-signed adjacent-half-life EMA distance in bps",
+        "log1p age since the last adjacent ordering change, with missing indicator",
+        "side-signed adjacent-half-life distance divided by max(causal micro volatility bps, exchange tick bps)",
+        "adjacent-scale curvature across every consecutive half-life triple",
+        "favorable adjacent-ordering positive fraction",
+        "favorable adjacent-ordering mean distance",
+        "elapsed seconds since the complete adjacent ordering vector last changed, with missing indicator"
+      ],
+      "binary_cross_signs_in_model": false
+    },
+    "same_row_contract": {
+      "M0_and_M1_train_row_ids_identical": true,
+      "M0_and_M1_test_row_ids_identical": true,
+      "M0_and_M1_targets_identical": true,
+      "M0_and_M1_campaign_weights_identical": true,
+      "M1_unsupported_row_policy": "exclude the row from both M0 and M1 before fitting or scoring and report the exclusion reason"
+    }
+  },
+  "training_weight": {
+    "campaign_key": [
+      "utc_day",
+      "side",
+      "prospective_campaign_side_id"
+    ],
+    "row_weight": "1 divided by the number of common-label forks retained for the campaign key",
+    "campaign_total_weight": 1.0,
+    "long_campaigns_cannot_gain_weight_from_more_forks": true,
+    "fit_sides_separately": true,
+    "cluster_intervals_by": [
+      "UTC_day",
+      "campaign_key_within_UTC_day"
+    ]
+  },
+  "model_and_preprocessing": {
+    "model": "sklearn.linear_model.Ridge",
+    "ridge_alpha": 10.0,
+    "fit_intercept": true,
+    "solver": "svd",
+    "hyperparameter_search": false,
+    "target_transform": "none",
+    "target_winsorization": "forbidden",
+    "continuous_missing_policy": "outer-train weighted median plus an always-present missing indicator per feature",
+    "continuous_scaling": "subtract outer-train weighted median, divide by max(outer-train weighted IQR,1e-12), then clip to [-8,8]",
+    "categorical_encoding": {
+      "cooldown_phase": [
+        "COOLDOWN_ACTIVE",
+        "COOLDOWN_EXPIRED"
+      ],
+      "unknown_category_policy": "fail_closed"
+    },
+    "all_preprocessing_fit_on_outer_train_only": true,
+    "side_models": [
+      "SELL",
+      "BUY"
+    ],
+    "phase_specific_models": false,
+    "fold_or_side_failure_cannot_be_replaced_by_a_pooled_model": true
+  },
+  "chronological_oof": {
+    "design": "16-day initial history followed by four non-overlapping six-day test folds",
+    "test_day_count": 24,
+    "calendar_embargo_days_before_each_test_fold": 1,
+    "label_end_purge": "after calendar embargo, exclude every train row that is right-censored or whose joint_washout_ts_ms is greater than or equal to the first assignment_ts_ms in the test fold",
+    "folds": [
+      {
+        "fold": 1,
+        "history_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31"
+        ],
+        "calendar_embargo_utc_day": "2026-06-01",
+        "fit_day_candidates_after_day_embargo": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31"
+        ],
+        "test_days": [
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08"
+        ]
+      },
+      {
+        "fold": 2,
+        "history_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08"
+        ],
+        "calendar_embargo_utc_day": "2026-06-08",
+        "fit_day_candidates_after_day_embargo": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07"
+        ],
+        "test_days": [
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14"
+        ]
+      },
+      {
+        "fold": 3,
+        "history_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14"
+        ],
+        "calendar_embargo_utc_day": "2026-06-14",
+        "fit_day_candidates_after_day_embargo": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13"
+        ],
+        "test_days": [
+          "2026-06-15",
+          "2026-06-16",
+          "2026-06-17",
+          "2026-06-18",
+          "2026-06-19",
+          "2026-06-20"
+        ]
+      },
+      {
+        "fold": 4,
+        "history_days": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14",
+          "2026-06-15",
+          "2026-06-16",
+          "2026-06-17",
+          "2026-06-18",
+          "2026-06-19",
+          "2026-06-20"
+        ],
+        "calendar_embargo_utc_day": "2026-06-20",
+        "fit_day_candidates_after_day_embargo": [
+          "2026-04-17",
+          "2026-04-18",
+          "2026-04-19",
+          "2026-04-20",
+          "2026-04-22",
+          "2026-04-23",
+          "2026-05-01",
+          "2026-05-02",
+          "2026-05-03",
+          "2026-05-04",
+          "2026-05-05",
+          "2026-05-06",
+          "2026-05-13",
+          "2026-05-29",
+          "2026-05-30",
+          "2026-05-31",
+          "2026-06-02",
+          "2026-06-03",
+          "2026-06-05",
+          "2026-06-06",
+          "2026-06-07",
+          "2026-06-08",
+          "2026-06-09",
+          "2026-06-10",
+          "2026-06-11",
+          "2026-06-12",
+          "2026-06-13",
+          "2026-06-14",
+          "2026-06-15",
+          "2026-06-16",
+          "2026-06-17",
+          "2026-06-18",
+          "2026-06-19"
+        ],
+        "test_days": [
+          "2026-06-21",
+          "2026-06-22",
+          "2026-06-23",
+          "2026-06-24",
+          "2026-06-25",
+          "2026-06-26"
+        ]
+      }
+    ],
+    "test_fold_overlap_allowed": false,
+    "future_training_rows_allowed": false
+  },
+  "uncertainty_and_evaluation": {
+    "same_draws_for_M0_and_M1": true,
+    "cluster_bootstrap": {
+      "outer_unit": "UTC_day",
+      "inner_unit": "campaign_key_within_UTC_day",
+      "draws": 20000,
+      "seed": 20260809,
+      "paired_M0_M1_draws": true
+    },
+    "simultaneous_prediction_band": {
+      "purpose": "diagnostic baseline-departure projection only",
+      "family": "all common OOF rows within one side and outer fold",
+      "method": "outer-train day-then-campaign clustered bootstrap Ridge refits with max-t simultaneous correction",
+      "refit_draws": 2000,
+      "two_sided_familywise_coverage": 0.95,
+      "seed": 202608091,
+      "band_unavailable_policy": "baseline_fallback"
+    },
+    "primary_incremental_metrics": [
+      "campaign-weighted OOF squared-error reduction: loss_M0 minus loss_M1",
+      "campaign-weighted OOF absolute-error reduction: loss_M0 minus loss_M1"
+    ],
+    "required_side_specific_prediction_gates": [
+      "M1-minus-M0 squared-error-reduction day/campaign-clustered LCB is strictly positive",
+      "M1-minus-M0 absolute-error-reduction day/campaign-clustered LCB is strictly positive",
+      "all four test folds contain common observed labels",
+      "feature clock violations equal zero",
+      "M0/M1 common-row mismatch equals zero",
+      "campaign total-weight error is at most 1e-12"
+    ],
+    "diagnostic_policy_projection_gates": [
+      "selected deviation rows are defined only by the frozen simultaneous band and 0.0001 USDC threshold",
+      "selected deviation realized value is oriented against the baseline action before aggregation",
+      "selected deviation campaign-weighted mean value LCB is strictly greater than 0.0001 USDC",
+      "selected deviation support is reported by fold, day, cooldown phase, and side"
+    ],
+    "sell_failure_does_not_block_buy_prediction_reporting": true,
+    "buy_failure_does_not_block_sell_prediction_reporting": true,
+    "one_side_cannot_rescue_the_other": true
+  },
+  "permissions": {
+    "development_outcomes_read_at_freeze": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "validation_read_allowed_by_this_identity": false,
+    "sealed_holdout_read_allowed_by_this_identity": false,
+    "f09_registration": false,
+    "action_authority": false,
+    "live_authority": false,
+    "automatic_promotion": false,
+    "only_possible_successor": "after a side-specific M1 pass, a new separately frozen F09 side-specific policy identity may be proposed but is not authorized by this F05 artifact"
+  },
+  "prohibited_adaptations_after_outcome_read": [
+    "changing EMA half-lives",
+    "changing the ADD or WAIT semantics",
+    "changing the external generation clock",
+    "changing the common washout or censoring rule",
+    "changing the two-opportunity stable sample cap",
+    "changing Ridge alpha, preprocessing, economic threshold, folds, embargo, purge, or bootstrap",
+    "pooling BUY and SELL",
+    "reading Validation or holdout to rescue Development",
+    "registering or enabling an F09 or live action from prediction evidence alone"
+  ]
+}

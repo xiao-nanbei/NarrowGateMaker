@@ -1,0 +1,94 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1.execution_amendment",
+  "identity": "multiscale_ema_add_wait_incremental_value_v1",
+  "last_materially_modified": "2026-08-09",
+  "status": "execution_bound_before_fork_economic_outcomes",
+  "artifacts": [
+    {
+      "role": "frozen_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_spec_20260809.json",
+      "sha256": "ed935104b5b98cf178a4e76b87667071d0a1dec2b32882e5dc640cb03b12f928"
+    },
+    {
+      "role": "study_runner",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_study.py",
+      "sha256": "b9db1586797430ac63e9ba087318f58e74db28c363458b0cdcb694c5d6ae0314"
+    },
+    {
+      "role": "ema_contract",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value.py",
+      "sha256": "28a149a0acfd3fc2674506368d774bb84ac6f424550bc88a2cdf0a9cbaad2466"
+    },
+    {
+      "role": "python_replay",
+      "path": "models/backtest_tick.py",
+      "sha256": "d9c5352b662afc55f7b380b2192c4589e7e26492d35d387f21abde1ebf80fdef"
+    },
+    {
+      "role": "operational_config",
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18"
+    },
+    {
+      "role": "operational_baseline_pointer",
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
+    },
+    {
+      "role": "replay_baseline",
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    },
+    {
+      "role": "execution_plan",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3/execution-plan.json",
+      "sha256": "5c47033e67b75a9cbef6c336825dbea713b117c54674828d956f6626886fb7d4"
+    },
+    {
+      "role": "test_contract",
+      "path": "tests/test_multiscale_ema_add_wait_incremental_value_study.py",
+      "sha256": "490712d6ec729c3b49d5870e516dca2ec3c67ed2d6b558e7958fd91a14c94c93"
+    },
+    {
+      "role": "ema_unit_test",
+      "path": "tests/test_multiscale_ema_add_wait_incremental_value.py",
+      "sha256": "c6a4b4498faed1f5fd79790dc279f3ca11afbfbffd0e431128f626af747b5af0"
+    },
+    {
+      "role": "model_bundle_meta",
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+      "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+    },
+    {
+      "role": "p3_artifact",
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    {
+      "role": "queue_calibration",
+      "path": "${NARROWGATE_DATA_ROOT}/queue_calibration/BTCUSDC-daily-queue-calibration.json",
+      "sha256": "93c2de12e7ab8fa46f2e2dcd2f21e8de902a544119175e1ca1590889d70cfe31"
+    },
+    {
+      "role": "latency_profile",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_offline_execution_projection_20260809.json",
+      "sha256": "2d2cb4a05a38ba89c465d1ea161a0c0a88029a656f3aea005446699752a0f1bd"
+    }
+  ],
+  "fork_contract": {
+    "target": "ADD_NOW versus WAIT_ONE_EXTERNAL_EPOCH",
+    "release_locator": "frozen untreated market event index and timestamp",
+    "release_content": "six-component decision-visible market generation",
+    "candidate_induced_release_forbidden": true,
+    "common_joint_washout_required": true,
+    "right_censor_marks_are_not_terminal_value_bounds": true
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1.offline_execution_projection",
+  "identity": "multiscale_ema_add_wait_incremental_value_v1",
+  "last_materially_modified": "2026-08-09",
+  "status": "frozen_before_fork_economic_outcomes",
+  "source_operational_config": {
+    "path": "${NARROWGATE_LIVE_CONFIG}",
+    "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18",
+    "canonical_mapping_sha256": "5a727b0fe48be20faa455b4edf8beb97f1d3e8fb37b1b53e5705682ca19f3eeb"
+  },
+  "offline_projection": {
+    "canonical_mapping_sha256": "5ed92886e1f9d763fd9e806731fba1034e7bd1e8644bc402da77afcb19bd9ffa",
+    "changed_paths": [
+      "lifecycle_journal_v2.enabled"
+    ],
+    "lifecycle_journal_v2.enabled": false,
+    "all_order_path_parameters_structurally_equal": true
+  },
+  "runtime_state": {
+    "causal_v12_ml_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_action_enabled": false,
+    "global_ber_enabled": true
+  },
+  "latency_profile": {
+    "new_order_latency_ms": 0.0,
+    "cancel_order_latency_ms": 0.0,
+    "latency_jitter_ms": 0.0,
+    "provenance": "resolved by models.backtest_config from the frozen operational config",
+    "not_claimed_to_match_physical_live_latency": true
+  },
+  "model_bundle": {
+    "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+    "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+  },
+  "p3_artifact": {
+    "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+    "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+  },
+  "queue_calibration": {
+    "path": "${NARROWGATE_DATA_ROOT}/queue_calibration/BTCUSDC-daily-queue-calibration.json",
+    "sha256": "93c2de12e7ab8fa46f2e2dcd2f21e8de902a544119175e1ca1590889d70cfe31"
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}
