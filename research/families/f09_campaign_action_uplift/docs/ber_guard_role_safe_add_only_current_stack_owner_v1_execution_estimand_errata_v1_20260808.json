@@ -1,0 +1,39 @@
+{
+  "schema_version": "ber_guard_role_safe_add_only_current_stack_owner.v1.execution_estimand_errata_v1",
+  "identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
+  "last_materially_modified": "2026-08-08",
+  "status": "mechanics_informed_execution_successor_before_full_development_read",
+  "predecessor_failure": {
+    "path": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_mechanics_implementation_failure_20260808.json",
+    "sha256": "d9642a07c21c8107dd986023a5b8bcdafb5df04bb8317c5ad7df90b99e399b82"
+  },
+  "unchanged_policy": {
+    "control": "current global bilateral BER",
+    "candidate": "same BER signal and 1.2/2.0 mapping only on exposure-increasing add",
+    "threshold_search": false,
+    "multiplier_search": false,
+    "role_change": false,
+    "panel_change": false,
+    "economic_gate_change": false
+  },
+  "superseded_execution_requirements": {
+    "equal_control_candidate_n_requotes": false,
+    "equal_control_candidate_ber_state_at_arm_terminal": false,
+    "reason": "Full-path actions may change fill, inventory, circuit-breaker, and continuation, so arm-specific terminal clocks are treatment outcomes rather than common mechanics state."
+  },
+  "authoritative_requirements": {
+    "within_arm_python_cpp_fill_path_mismatch_count": 0,
+    "within_arm_python_cpp_ber_state_mismatch_count": 0,
+    "candidate_source_mismatch_count": 0,
+    "candidate_cap_infeasible_count": 0,
+    "candidate_effective_change_rate_denominator": "two candidate-arm canonical side quote decisions per candidate-arm requote",
+    "control_candidate_requote_count_delta": "reported lifecycle outcome",
+    "control_candidate_ber_active_rate_delta": "reported lifecycle outcome",
+    "minimum_effective_changes_and_days_per_side": "unchanged from frozen spec"
+  },
+  "one_day_economic_output_used_to_design_errata": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "action_authorized": false,
+  "live_authorized": false
+}
