@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -42,4 +43,58 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
                     "to run this module"
                 )
             )
+        )
+
+
+def _github_escape(value: object) -> str:
+    return (
+        str(value)
+        .replace("%", "%25")
+        .replace("\r", "%0D")
+        .replace("\n", "%0A")
+    )
+
+
+def _emit_github_failure(
+    *,
+    title: str,
+    message: object,
+    path: object = ".github",
+    line: int = 1,
+) -> None:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    print(
+        "::error "
+        f"file={_github_escape(path)},"
+        f"line={max(1, line)},"
+        f"title={_github_escape(title)}::"
+        f"{_github_escape(message)}",
+        flush=True,
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(
+    item: pytest.Item,
+    call: pytest.CallInfo[Any],
+) -> Any:
+    outcome = yield
+    report = outcome.get_result()
+    if not report.failed:
+        return
+    path, line, _ = report.location
+    _emit_github_failure(
+        title=f"Pytest {report.when} failure: {report.nodeid}",
+        message=report.longrepr,
+        path=path,
+        line=int(line) + 1,
+    )
+
+
+def pytest_collectreport(report: pytest.CollectReport) -> None:
+    if report.failed:
+        _emit_github_failure(
+            title=f"Pytest collection failure: {report.nodeid}",
+            message=report.longrepr,
         )
