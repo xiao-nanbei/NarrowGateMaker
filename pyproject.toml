@@ -101,7 +101,14 @@ packages = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
+# Reconstructed research and runtime modules retain frozen byte identities.
+# The maintained public package and examples are the formatting/lint surface;
+# historical imports remain covered by syntax, tests, hashes, and replay audits.
+include = [
+  "narrowgate/**/*.py",
+  "examples/**/*.py",
+]
 extend-exclude = [
   "models/saved*",
   "logs",
