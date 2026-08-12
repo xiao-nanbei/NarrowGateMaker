@@ -1,0 +1,153 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1_2.execution_amendment",
+  "identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
+  "last_materially_modified": "2026-08-09",
+  "status": "execution_bound_before_cross_day_label_repair_and_2025_encoder_fit",
+  "artifacts": [
+    {
+      "role": "frozen_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_spec_20260809.json",
+      "sha256": "c26eb2d8f59cb909e5647df1efba2dfc085abf63f3a68480949ae1e6f36a3fff"
+    },
+    {
+      "role": "study_runner",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_v1_2_study.py",
+      "sha256": "5a69736bf787c68d8bac84e9c0d29940fb9e2714a0c6b804289fa93f8126ddf7"
+    },
+    {
+      "role": "cross_day_prefix_preserving_stitcher",
+      "path": "models/replay/f05_ema_add_wait_two_day_window.py",
+      "sha256": "99eaf2c723c42b8cd832bf09e710fd85cd384e4997b68801d48fcc7d0bd24397"
+    },
+    {
+      "role": "provider_ema_pretraining",
+      "path": "models/replay/f05_ema_provider_pretraining.py",
+      "sha256": "6bd01864bb5acde5f5844eac9c2d83c8dfb22b6d0d67e5d7260c57810d1bf0c0"
+    },
+    {
+      "role": "full_rank_ema_encoder",
+      "path": "models/replay/f05_ema_source_encoder.py",
+      "sha256": "58ca6815e0747c96d6709023bcf493996ab0b4200fe904f6581f28159ef13967"
+    },
+    {
+      "role": "successor_test_contract",
+      "path": "tests/test_multiscale_ema_add_wait_incremental_value_v1_2_continuation.py",
+      "sha256": "46f28098fa7437a6f4559c22217e12bf236d11b22d7246ec5072d3ffce2491ea"
+    },
+    {
+      "role": "predecessor_study_runner",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_v1_1_study.py",
+      "sha256": "aae014a25310e5885970cf5650de300614e59626e8a01b4781de5130910931d8"
+    },
+    {
+      "role": "predecessor_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
+      "sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908"
+    },
+    {
+      "role": "predecessor_execution_amendment",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_execution_amendment_20260809.json",
+      "sha256": "4c2dd8a19640e058856bc2eb27e408fa431935349a3a2fab0e474643f389269f"
+    },
+    {
+      "role": "ema_contract",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value.py",
+      "sha256": "28a149a0acfd3fc2674506368d774bb84ac6f424550bc88a2cdf0a9cbaad2466"
+    },
+    {
+      "role": "python_replay",
+      "path": "models/backtest_tick.py",
+      "sha256": "363cb29660026f7e6882ed4a0be804a4ba326672f7d038451fa37487e2192105"
+    },
+    {
+      "role": "operational_config",
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18"
+    },
+    {
+      "role": "operational_baseline_pointer",
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
+    },
+    {
+      "role": "replay_baseline",
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    },
+    {
+      "role": "native_execution_plan",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3/execution-plan.json",
+      "sha256": "5c47033e67b75a9cbef6c336825dbea713b117c54674828d956f6626886fb7d4"
+    },
+    {
+      "role": "provider_training_day_spec",
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_expanded_source_aware_semantics_v6_train_spec_20260802.json",
+      "sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328"
+    },
+    {
+      "role": "provider_cache_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json",
+      "sha256": "ba606ca6da354dacc97f7c01dbc40afe10e8008a90ffcc7f08f83fa741ca4f5c"
+    },
+    {
+      "role": "provider_source_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_research_union_v1/manifest.json",
+      "sha256": "fe851cf4c8aeafd7bcc5312e41fbcaef4f81a9fc1faaa12cc309315ff62623f5"
+    },
+    {
+      "role": "provider_feature_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802/causal_feature_manifest.json",
+      "sha256": "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+    },
+    {
+      "role": "model_bundle_meta",
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+      "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+    },
+    {
+      "role": "p3_artifact",
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    {
+      "role": "queue_calibration",
+      "path": "${NARROWGATE_DATA_ROOT}/queue_calibration/BTCUSDC-daily-queue-calibration.json",
+      "sha256": "93c2de12e7ab8fa46f2e2dcd2f21e8de902a544119175e1ca1590889d70cfe31"
+    },
+    {
+      "role": "offline_execution_projection",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_offline_execution_projection_20260809.json",
+      "sha256": "2d2cb4a05a38ba89c465d1ea161a0c0a88029a656f3aea005446699752a0f1bd"
+    }
+  ],
+  "source_aware_contract": {
+    "provider_days": 66,
+    "provider_year": 2025,
+    "provider_use": "unsupervised_full_rank_ema_representation_only",
+    "provider_economic_labels": "forbidden",
+    "provider_queue_or_lifecycle_authority": false,
+    "native_label_year": 2026,
+    "native_use": "exact_lifecycle_add_minus_wait_value_and_all_chronological_oof_evidence",
+    "component_selection": "none_full_rank",
+    "side_pooling": "forbidden"
+  },
+  "continuation_contract": {
+    "rows_reused_without_replay": 310,
+    "rows_requiring_natural_d_plus_1": 10,
+    "utc_midnight_resets_state": false,
+    "first_day_locator_prefix_must_remain_identical": true,
+    "new_engine_call_spans_both_days": true,
+    "checkpoint_restart_between_days": false,
+    "arbitrary_terminal_timeout": "forbidden",
+    "evaluation_with_any_remaining_right_censor": "forbidden_fail_closed"
+  },
+  "permissions": {
+    "development_native_oof_prediction_evidence_may_be_read": true,
+    "provider_economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f09_registration_authorized_before_side_specific_gate": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

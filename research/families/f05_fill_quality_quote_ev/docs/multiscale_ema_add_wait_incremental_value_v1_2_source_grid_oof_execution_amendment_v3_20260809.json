@@ -1,0 +1,115 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1_2.source_grid_oof_execution_amendment.v3",
+  "identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
+  "last_materially_modified": "2026-08-09",
+  "status": "frozen_after_v2_denominator_assertion_failure_before_persisted_oof_evidence",
+  "reason": "The frozen four outer chronological folds score only their 24-day test union. The complete 40-day, 320-row label panel also contains 16 earlier training-history days and therefore cannot be the OOF row denominator.",
+  "prior_attempt_receipt": {
+    "v2_development_labels_read_under_frozen_permission": true,
+    "v2_models_transiently_fit_and_predicted": true,
+    "v2_oof_artifact_persisted": false,
+    "v2_metric_report_persisted": false,
+    "v2_metric_values_observed_from_process_output": false,
+    "failure": "SourceGridStudyError: native OOF denominator drifted",
+    "correction_result_informed": false
+  },
+  "oof_denominator_correction": {
+    "complete_development_days": 40,
+    "complete_label_rows": 320,
+    "training_history_days_not_scored_oof": 16,
+    "training_history_rows_not_scored_oof": 128,
+    "outer_fold_count": 4,
+    "outer_oof_days": 24,
+    "outer_oof_rows": 192,
+    "outer_oof_rows_per_side": 96,
+    "membership_rule": "exact opportunity_id set on the frozen outer-fold test-day union",
+    "duplicate_opportunity_ids_allowed": false,
+    "test_day_overlap_across_folds_allowed": false,
+    "fold_ownership_rule": "each OOF row must map to the unique frozen fold owning its UTC day"
+  },
+  "unchanged_research_contract": {
+    "provider_2025_training_days": 66,
+    "provider_2025_sampling": "all admitted normalized 100ms BBO source rows",
+    "provider_2025_economic_labels": false,
+    "native_2026_complete_label_rows": 320,
+    "native_2026_outer_oof_rows": 192,
+    "side_pooling": "forbidden",
+    "model_family": "M0 Ridge versus M0 plus full-rank 2025 source-grid EMA representation Ridge",
+    "ridge_alpha": 10.0,
+    "ridge_solver": "svd",
+    "campaign_total_training_weight": 1.0,
+    "bootstrap_draws": 20000,
+    "bootstrap_cluster": "UTC day then prospective campaign-side",
+    "side_specific_gate": "LCB95 squared-error reduction > 0 and LCB95 absolute-error reduction > 0 with all four folds",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "artifacts": [
+    {
+      "role": "frozen_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_spec_20260809.json",
+      "sha256": "c26eb2d8f59cb909e5647df1efba2dfc085abf63f3a68480949ae1e6f36a3fff"
+    },
+    {
+      "role": "source_grid_execution_amendment_v2",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_execution_amendment_v2_20260809.json",
+      "sha256": "a11ad4d8f1986132537976643fe91188482aded5981a7489de4eb2ee70cd6c96"
+    },
+    {
+      "role": "source_grid_runner_v2_preserved",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_study.py",
+      "sha256": "fb7fcf213268c9d0de365b4f33947c4cc5c561faa5e5e717e6bdbcaa8714a20c"
+    },
+    {
+      "role": "corrected_oof_runner_v3",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_oof_study.py",
+      "sha256": "1124621e5e3266a834a0087316ca9875b59af1ca247416ca53801e7403a338ac"
+    },
+    {
+      "role": "corrected_oof_denominator_test",
+      "path": "tests/test_multiscale_ema_add_wait_incremental_value_v1_2_source_grid_oof.py",
+      "sha256": "d67eacfc6e0b0e0d4ed195df69bddeacf5324dd9e90dbb908b34f2011667ad3e"
+    },
+    {
+      "role": "predecessor_fold_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
+      "sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908"
+    },
+    {
+      "role": "complete_native_label_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/label_manifest.json",
+      "sha256": "dea4a570cf615d1d66c620ca5983df52c0e48d370a9fc81e733c3424822e31e4"
+    },
+    {
+      "role": "complete_native_label_panel",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/paired_labels.parquet",
+      "sha256": "87b93984d3e2729ab1b0d874ea0f018c7f8941fc742883552d871f35ad0f7a2d"
+    },
+    {
+      "role": "provider_source_grid_encoder_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid_manifest.json",
+      "sha256": "59970d00136c56e7500f50ca4df71ed3487fb3dcec705c371b75f530b0eb4def"
+    },
+    {
+      "role": "provider_source_grid_encoder",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/ema_encoder_2025_provider_source_grid.npz",
+      "sha256": "369ee07e5f8568ad0d9b41cf9c407c2d01fe794f072f7af55942fbeba917236d"
+    },
+    {
+      "role": "operational_baseline_pointer",
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
+    },
+    {
+      "role": "current_replay_baseline",
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    }
+  ],
+  "permissions": {
+    "development_native_oof_prediction_evidence_may_be_read": true,
+    "f09_registration_authorized_before_side_specific_gate": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

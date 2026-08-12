@@ -1,0 +1,42 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1_2.provider_source_grid_correction",
+  "identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
+  "last_materially_modified": "2026-08-09",
+  "status": "frozen_after_pretraining_fail_closed_before_any_encoder_or_oof_artifact",
+  "superseded_execution_semantics": {
+    "sampling": "causal-v12 canonical 10-second feature materialization rows",
+    "reason_rejected": "the inherited materialization cadence would decide which EMA states enter representation training even though it is neither the source data resolution nor the ADD/WAIT decision clock",
+    "encoder_artifact_written": false,
+    "oof_predictions_written": false,
+    "economic_outcomes_read_by_failed_command": false,
+    "failure_detail": "two admitted 2025 feature files had 8639 rather than 8640 rows, causing an exact-grid fail-closed before fitting"
+  },
+  "corrected_provider_semantics": {
+    "ordered_training_days": 66,
+    "year": 2025,
+    "source": "provider_normalized_causal_bbo",
+    "source_artifact_resolution_ms": 100,
+    "source_artifact_resolution_is_economic_horizon": false,
+    "source_artifact_resolution_is_action_cadence": false,
+    "sampling_stride": "none_use_every_admitted_target_day_source_row",
+    "warmup": "natural D-1 provider BBO",
+    "state_clock": "provider BBO causal timestamp",
+    "encoder_role": "unsupervised source normalization/eigensurface only",
+    "provider_economic_labels": "forbidden",
+    "provider_queue_or_lifecycle_authority": false,
+    "provider_causal_v12_feature_file_read": false,
+    "volatility_normalized_ema_fields_in_encoder": false,
+    "volatility_field_exclusion_reason": "their existing volatility_5s denominator would reintroduce a separate fixed feature basis into the 2025 representation",
+    "economic_label_source": "2026 native exact-lifecycle ADD NOW versus WAIT ONE EXTERNAL EPOCH only",
+    "native_decision_clock_changed": false
+  },
+  "governance": {
+    "correction_selected_after_prediction_or_pnl_result": false,
+    "development_oof_read_before_correction": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f09_registration_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

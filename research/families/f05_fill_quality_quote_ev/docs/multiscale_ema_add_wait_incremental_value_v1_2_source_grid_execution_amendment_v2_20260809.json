@@ -1,0 +1,103 @@
+{
+  "schema_version": "multiscale_ema_add_wait_incremental_value.v1_2.source_grid_execution_amendment.v2",
+  "identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
+  "last_materially_modified": "2026-08-09",
+  "status": "execution_bound_after_complete_native_labels_before_2025_encoder_and_oof_fit",
+  "artifacts": [
+    {
+      "role": "frozen_spec",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_spec_20260809.json",
+      "sha256": "c26eb2d8f59cb909e5647df1efba2dfc085abf63f3a68480949ae1e6f36a3fff"
+    },
+    {
+      "role": "label_execution_amendment_v1",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_execution_amendment_20260809.json",
+      "sha256": "581f163726911c3ddd19975d4f7a9b3e6420f466be92dd2ff12c2bf814df5fcf"
+    },
+    {
+      "role": "provider_source_grid_correction",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_provider_source_grid_correction_20260809.json",
+      "sha256": "8c3f9e5f1e95ade1c23b5529ffe625bdebb4203c15bf60e4e1c10d6caff8d1dd"
+    },
+    {
+      "role": "source_grid_study_runner",
+      "path": "research/families/f05_fill_quality_quote_ev/audit/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_study.py",
+      "sha256": "fb7fcf213268c9d0de365b4f33947c4cc5c561faa5e5e717e6bdbcaa8714a20c"
+    },
+    {
+      "role": "provider_source_grid_ema",
+      "path": "models/replay/f05_ema_provider_source_grid.py",
+      "sha256": "b30637718c45f4357aec40a09cbf410930b133a5cc92450f6c36a95b5ce89bb5"
+    },
+    {
+      "role": "source_encoder",
+      "path": "models/replay/f05_ema_source_encoder.py",
+      "sha256": "58ca6815e0747c96d6709023bcf493996ab0b4200fe904f6581f28159ef13967"
+    },
+    {
+      "role": "source_grid_test_contract",
+      "path": "tests/test_f05_ema_provider_source_grid.py",
+      "sha256": "e52e717f3fada9127ce97d0dc70171455386e096649c3ab98b781595e207e2ad"
+    },
+    {
+      "role": "complete_native_label_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/label_manifest.json",
+      "sha256": "dea4a570cf615d1d66c620ca5983df52c0e48d370a9fc81e733c3424822e31e4"
+    },
+    {
+      "role": "complete_native_label_panel",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/paired_labels.parquet",
+      "sha256": "87b93984d3e2729ab1b0d874ea0f018c7f8941fc742883552d871f35ad0f7a2d"
+    },
+    {
+      "role": "cross_day_repaired_rows",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_add_wait_incremental_value_source_aware_v1_2_20260809/repaired_labels.parquet",
+      "sha256": "daaa90bffc95b47b619e15cec63c13fe200c804de1ad852c4214ebf27cac4f6a"
+    },
+    {
+      "role": "provider_training_day_spec",
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_expanded_source_aware_semantics_v6_train_spec_20260802.json",
+      "sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328"
+    },
+    {
+      "role": "provider_cache_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/cache_prewarm_provider_20250801_20251231_v13/manifest.json",
+      "sha256": "ba606ca6da354dacc97f7c01dbc40afe10e8008a90ffcc7f08f83fa741ca4f5c"
+    },
+    {
+      "role": "provider_source_manifest",
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_research_union_v1/manifest.json",
+      "sha256": "fe851cf4c8aeafd7bcc5312e41fbcaef4f81a9fc1faaa12cc309315ff62623f5"
+    },
+    {
+      "role": "operational_baseline_pointer",
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
+    },
+    {
+      "role": "current_replay_baseline",
+      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047"
+    }
+  ],
+  "training_contract": {
+    "provider_2025": "fit_unsupervised_full_rank_ema_representation_on_every_admitted_100ms_source_row",
+    "provider_2025_economic_labels": false,
+    "native_2026": "fit_direct_add_minus_wait_value_head_inside_each_chronological_fold_and_score_outer_oof",
+    "native_2026_exact_lifecycle_rows": 320,
+    "native_2026_sides": {
+      "SELL": 160,
+      "BUY": 160
+    },
+    "right_censored_rows": 0,
+    "side_pooling": "forbidden",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "permissions": {
+    "development_native_oof_prediction_evidence_may_be_read": true,
+    "f09_registration_authorized_before_side_specific_gate": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}
