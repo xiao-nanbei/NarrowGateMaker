@@ -1,0 +1,240 @@
+{
+  "schema_version": "narrowgate_paired_state_fill_surface_spec.v1",
+  "family_id": "paired_state_fill_surface_v1",
+  "created_at_utc": "2026-07-26T00:00:00Z",
+  "evidence_scope": "family-specific; dates may have been inspected by unrelated hypotheses",
+  "research_status": "frozen_before_surface_outcomes",
+  "source_identity": {
+    "strict_day_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/normalized_strict_days.csv",
+    "strict_day_manifest_sha256": "8e820f3d9a59db10432533fa3c7118bc12327aa60822a717df57fb10c957bdab",
+    "native_sequence_audit": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/sequence_audit_v2.csv",
+    "native_sequence_audit_sha256": "042db7f53fb0de37e42deb0fc25125a45762f9556451147dff4a40f908b07d51",
+    "normalized_l2_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/manifest.json",
+    "normalized_l2_manifest_sha256": "f47e044b0607d135de713f8cbf13dad82decc051786dd4a896f21e014129b517",
+    "normalized_l2_daily_quality": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+    "normalized_l2_daily_quality_sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc",
+    "config": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "2c3d1daf5d07f48d3e8a35555531f95294833d1190a2cf4bcc230804b3f958cc",
+    "latency_sampler_version": "keyed_splitmix64_v1",
+    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux"
+  },
+  "panels": {
+    "development": {
+      "trainable": true,
+      "sealed": false,
+      "days": [
+        "2026-04-17",
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+        "2026-04-22",
+        "2026-04-23",
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-13",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-05",
+        "2026-06-06",
+        "2026-06-07",
+        "2026-06-08",
+        "2026-06-09",
+        "2026-06-10",
+        "2026-06-11",
+        "2026-06-12",
+        "2026-06-13",
+        "2026-06-14",
+        "2026-06-15",
+        "2026-06-16",
+        "2026-06-17",
+        "2026-06-18",
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+        "2026-06-25",
+        "2026-06-26"
+      ]
+    },
+    "embargo_1": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-06-27"
+      ]
+    },
+    "validation": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-06-28",
+        "2026-06-29",
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
+        "2026-07-07",
+        "2026-07-08"
+      ]
+    },
+    "embargo_2": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-07-09"
+      ]
+    },
+    "sealed_holdout": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-07-10",
+        "2026-07-11",
+        "2026-07-12",
+        "2026-07-14",
+        "2026-07-15",
+        "2026-07-16",
+        "2026-07-17",
+        "2026-07-18",
+        "2026-07-19",
+        "2026-07-20"
+      ]
+    }
+  },
+  "development_fit": {
+    "mode": "expanding_chronological",
+    "past_only": true,
+    "minimum_train_days": 20,
+    "embargo_days": 1,
+    "outer_test_days": 5,
+    "inner_calibration": "expanding_inner_oof_only"
+  },
+  "estimands": {
+    "placement_fill_surface_v1": {
+      "risk_origin": "decision_before_submit",
+      "actions": [
+        "closer_1tick",
+        "current",
+        "farther_1tick"
+      ],
+      "distance_delta_ticks": [
+        -1,
+        0,
+        1
+      ],
+      "primary": "action_specific_activation_probability_times_direct_fill_cif",
+      "activation_is_action_specific": true,
+      "queue_at_activation_is_integrated_not_a_decision_feature": true,
+      "monotonicity_scope": "simultaneous_submission_with_shared_followup_only"
+    },
+    "active_order_continuation_surface_v1": {
+      "risk_origin": "currently_active_order_snapshot",
+      "actions": [
+        "keep",
+        "replace"
+      ],
+      "primary": "action_specific_direct_fill_cif_and_order_value",
+      "keep_preserves_queue": true,
+      "replace_resets_queue": true,
+      "distance_monotonicity_required": false
+    }
+  },
+  "event_contract": {
+    "touch_states": [
+      "untouched",
+      "exact_touched_queued",
+      "exact_queue_fill",
+      "later_through_fill",
+      "strict_through_fill",
+      "cancel_ack"
+    ],
+    "primary_fill_definition": "direct total fill CIF",
+    "mechanism_decomposition": [
+      "exact_queue_fill",
+      "through_fill"
+    ],
+    "forbidden_label": "queue_fill_given_touch_for_combined_exact_and_through",
+    "risk_end": "min(decision_plus_horizon, action_specific_cancel_ack)",
+    "scheduled_exposure_includes_cancel_ack_latency": true,
+    "same_timestamp_ambiguity": "flag_and_exclude_from_strict_queue_path"
+  },
+  "feature_contract": {
+    "causal_assertion": "feature_ready_ts_ns <= decision_ts_ns",
+    "decision_features": [
+      "side",
+      "inventory_role",
+      "inventory",
+      "campaign_state_so_far",
+      "baseline_distance_ticks",
+      "best_bid",
+      "best_ask",
+      "microprice",
+      "local_imbalance",
+      "refill_recovery",
+      "volatility_state",
+      "order_age_for_active_order_surface_only"
+    ],
+    "simulator_only_not_policy_features": [
+      "native_visible_queue_at_activation",
+      "native_future_level_changes",
+      "future_touch_type",
+      "future_cancel_ack",
+      "future_fill"
+    ],
+    "external_reference_enabled": false
+  },
+  "frozen_separate_treatments": [
+    {
+      "treatment_id": "buy_exposure_adverse_q90_cancel_reentry_v1",
+      "enabled_in_operational_config": true,
+      "policy_path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+      "policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+      "surface_status": "excluded_frozen_separate_treatment",
+      "smoke_followup": "frozen_baseline_followup_shadow"
+    }
+  ],
+  "candidate_models": [
+    "exposure_only_cif",
+    "side_role_monotone_discrete_time_gam",
+    "depth2_honest_monotone_tree"
+  ],
+  "prediction_gates": {
+    "development_first": true,
+    "pathwise_monotonicity_violations": 0,
+    "minimum_oof_days_per_side_role": 8,
+    "minimum_fill_events_per_side_role": 100,
+    "day_clustered_brier_skill_lower_bound_vs_exposure_only": 0.0,
+    "calibration_slope_range": [
+      0.8,
+      1.2
+    ],
+    "calibration_intercept_abs_max": 0.01,
+    "daily_rank_direction_required_fraction": 0.6,
+    "validation_access": "only_after_all_development_primary_gates_pass",
+    "sealed_holdout_access": "only_after_validation_passes_without_changes",
+    "action_or_live_authorization": false
+  },
+  "reward_contract": {
+    "currency": "USDC",
+    "maker_signed_markout_already_contains_spread_capture": true,
+    "queue_effect_enters_fill_probability_not_an_extra_queue_cost": true,
+    "campaign_terminal_mtm_and_repair_value_must_not_be_double_counted": true,
+    "shadow_predicted_value_is_diagnostic_not_action_uplift": true
+  },
+  "storage_gate": {
+    "minimum_free_gib_for_full_build": 60,
+    "current_phase": "single_day_streaming_smoke_only",
+    "full_panel_allowed": false
+  }
+}

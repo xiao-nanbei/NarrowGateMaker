@@ -1,0 +1,78 @@
+{
+  "experiment_id": "paired_state_fill_surface_v1_mechanics_smoke_20260726",
+  "config_path": "${NARROWGATE_LIVE_CONFIG}",
+  "dataset_manifest_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/normalized_strict_days.csv",
+  "feature_schema_version": "paired_order_lifecycle_smoke.v1",
+  "model_versions": {
+    "operational_p3": "models/saved_btcusdc_causal_v5_normalized100ms_20260725/fill_prob_params.json",
+    "queue_calibration": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+    "latency_profile": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+    "excluded_q90_treatment": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json"
+  },
+  "label_versions": {
+    "placement": "submit-origin action-specific activation and direct fill CIF",
+    "active_order": "activation-origin conditional direct fill CIF",
+    "touch": "exact queue touch and strictly-through touch kept separate",
+    "terminal": "administrative censor, cancel ACK, reject, partial fill, and full fill"
+  },
+  "splits": {
+    "contract_path": "docs/paired_state_fill_surface_v1_spec_20260726.json",
+    "contract_sha256": "fc20d96c2cf72a1e9c524f157cd118d66ee54f1e6535915dc752965c0455baa2",
+    "development_days": 40,
+    "embargo_days": 2,
+    "validation_days": 10,
+    "sealed_holdout_days": 10,
+    "smoke_day": "2026-05-13",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "baseline_definition": {
+    "source": "frozen corrected baseline side-decision, order-lifecycle, and quote traces",
+    "followup": "baseline cancel request and ACK schedule",
+    "shadow_fill_feedback": false,
+    "campaign_counterfactual_available": false,
+    "q90_treatment": "excluded frozen separate treatment"
+  },
+  "action_definition": {
+    "estimand": "new-placement mechanics only",
+    "actions": [
+      "closer_1tick",
+      "current",
+      "farther_1tick"
+    ],
+    "shared": [
+      "submit time",
+      "new-order latency",
+      "market path",
+      "cancel request and ACK followup"
+    ],
+    "action_specific": [
+      "GTX activation",
+      "effective price",
+      "native visible queue",
+      "exact and through fill path"
+    ]
+  },
+  "scorecard_profile": {
+    "status": "mechanics_only",
+    "pathwise_monotonicity_violations_required": 0,
+    "surface_fit_allowed": false,
+    "action_or_live_authorization": false
+  },
+  "engine": "Python causal scheduler over native exchange-time snapshot/delta and individual trades",
+  "commands": [
+    "python3 -m models.audit.paired_order_lifecycle_smoke --day 2026-05-13 --decision-trace <decision.parquet> --lifecycle-trace <lifecycle.parquet> --quote-trace <quotes.parquet> --raw-root ${NARROWGATE_RETIRED_MARKETDATA_ROOT}/cryptohftdata --output-dir <output> --max-cohorts 1000 --max-horizon-ms 10000"
+  ],
+  "input_paths": [
+    "docs/paired_state_fill_surface_v1_spec_20260726.json",
+    "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_state_fill_surface_v1_smoke_20260726/baseline_2026-05-13.partial/2026-05-13.decisions.parquet",
+    "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_state_fill_surface_v1_smoke_20260726/baseline_2026-05-13.partial/2026-05-13.lifecycle.parquet",
+    "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_state_fill_surface_v1_smoke_20260726/baseline_2026-05-13.partial/2026-05-13.quotes.parquet"
+  ],
+  "artifact_paths": [
+    "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_state_fill_surface_v1_smoke_20260726/lifecycle_smoke1000_2026-05-13/paired_order_lifecycle_smoke.parquet",
+    "${NARROWGATE_RETIRED_DATA_ROOT}/reports/paired_state_fill_surface_v1_smoke_20260726/lifecycle_smoke1000_2026-05-13/manifest.json"
+  ],
+  "promotion_status": "mechanics_smoke_not_training_panel",
+  "notes": "No surface was fitted, no action uplift was estimated, and live was not modified."
+}
