@@ -61,17 +61,27 @@ def _emit_github_failure(
     message: object,
     path: object = ".github",
     line: int = 1,
+    config: pytest.Config | None = None,
 ) -> None:
     if os.environ.get("GITHUB_ACTIONS") != "true":
         return
-    print(
+    annotation = (
         "::error "
         f"file={_github_escape(path)},"
         f"line={max(1, line)},"
         f"title={_github_escape(title)}::"
-        f"{_github_escape(message)}",
-        flush=True,
+        f"{_github_escape(message)}"
     )
+    capture_manager = (
+        config.pluginmanager.getplugin("capturemanager")
+        if config is not None
+        else None
+    )
+    if capture_manager is None:
+        print(annotation, flush=True)
+        return
+    with capture_manager.global_and_fixture_disabled():
+        print(annotation, flush=True)
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -89,6 +99,7 @@ def pytest_runtest_makereport(
         message=report.longrepr,
         path=path,
         line=int(line) + 1,
+        config=item.config,
     )
 
 
