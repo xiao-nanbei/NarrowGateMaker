@@ -1,0 +1,21 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "economic_state_carry": true
+  },
+  "contract_id": "continuous_replay_state.v1",
+  "implementation": {
+    "path": "models/replay/replay_state_checkpoint.py",
+    "sha256": "4189252229cca0c2dbced25ce5b208acd5d4f09fdd790274a5b9f3466c5d4453"
+  },
+  "last_materially_modified": "2026-08-03",
+  "preserved_state": [
+    "cash_usdc",
+    "position_btc",
+    "average_entry_price",
+    "cumulative_realized_pnl_usdc",
+    "cumulative_fees_usdc",
+    "economic_campaign"
+  ],
+  "schema_version": "continuous_replay_state.v1"
+}

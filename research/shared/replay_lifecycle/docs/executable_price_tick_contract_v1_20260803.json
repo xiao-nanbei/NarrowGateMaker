@@ -1,0 +1,41 @@
+{
+  "schema_version": "executable_price_tick_contract.v1",
+  "last_materially_modified": "2026-08-10",
+  "status": "implemented_current_replay_contract",
+  "scope": "shared_replay_infrastructure",
+  "numeric_layers": {
+    "continuous_valuation": {
+      "type": "double",
+      "values": ["mid", "microprice", "reservation_price", "volatility", "markout", "pnl"]
+    },
+    "executable_price_identity": {
+      "type": "int64_price_tick",
+      "values": ["order_price", "trade_price", "book_level"]
+    }
+  },
+  "invariants": {
+    "buy_trade_crosses_order": "trade_tick <= order_tick",
+    "sell_trade_crosses_order": "trade_tick >= order_tick",
+    "exact_queue_level": "trade_tick == order_tick",
+    "price_tolerance_defines_level_identity": false,
+    "off_tick_or_non_finite_executable_price": "fail_closed"
+  },
+  "current_replay_baseline": {
+    "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
+    "ber_clock": "live_held_completed_10s_feature_sampled_on_completed_1s_callback.v1",
+    "days": 50,
+    "terminal_mtm_pnl_usdc": -165.56607903599894,
+    "closed_campaign_value_usdc": -168.5309790359994,
+    "fills_total": 20147,
+    "evidence_label": "native_derived_top20_100ms_cpp_daily_fresh_start_diagnostic",
+    "raw_native_order_path_authority": false,
+    "latency_transport_authority": false,
+    "strict_native_latency_successor_status": "preflight_50_of_50_and_one_day_mechanics_passed_full_panel_not_run"
+  },
+  "research_boundary": {
+    "implementation_bug_confirmed": true,
+    "action_authority": false,
+    "live_authority": false,
+    "economic_results_from_removed_pre_correction_control_retained": false
+  }
+}

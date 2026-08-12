@@ -1,0 +1,109 @@
+{
+  "schema_version": "prospective_lifecycle_remote_release_orchestrator_contract.v1",
+  "identity": "prospective_lifecycle_remote_release_orchestrator_v1",
+  "date": "2026-08-05",
+  "status": "implemented_local_not_executed",
+  "inputs": {
+    "release_manifest": "${NARROWGATE_EPHEMERAL_ROOT}/narrowgate_prospective_lifecycle_narrow_release_v1_20260805_final/release_manifest.json",
+    "release_manifest_sha256": "daff2f96fcb947e2564d0bf3dba4f3ec404b98b7f632a135fb1e295500997ce2",
+    "remote_v9_identity": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
+    "remote_v9_identity_sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638"
+  },
+  "default_mode": "dry_run_no_ssh_no_mutation",
+  "source_freshness": {
+    "current_uploaded_stage_is_diagnostic_only": true,
+    "source_payload_current": false,
+    "known_drifted_files": [
+      "execution/order_lifecycle_journal_v2.py",
+      "execution/order_lifecycle_journal_writer_v2.py"
+    ],
+    "deploy_requires_fresh_local_rebuild": true,
+    "deploy_requires_reselection_of_rebuilt_exact_manifest": true
+  },
+  "observed_active_runtime": {
+    "pid": "<private-process-id>",
+    "etimes_s": 98692,
+    "process_cpu_pct_one_core": 14.6,
+    "rss_kib": 334652,
+    "vsz_kib": 992184,
+    "python_version": "3.12.13",
+    "pyarrow_version": "21.0.0",
+    "required_successor_pyarrow_version": "24.0.0",
+    "pyarrow_version_mismatch": true,
+    "active_venv_mutation_allowed": false,
+    "isolated_successor_venv_required": true,
+    "remote_root_free_gib": 23,
+    "active_venv_size_mib": 598,
+    "evidence_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_runtime_evidence_20260805.json"
+  },
+  "observed_isolated_stage": {
+    "path": "${NARROWGATE_REMOTE_ROOT}/.releases/prospective_lifecycle_journal_v2_20260805",
+    "canonical_manifest_sha256": "daff2f96fcb947e2564d0bf3dba4f3ec404b98b7f632a135fb1e295500997ce2",
+    "manifest_file_sha256_prefix": "df47525c",
+    "manifest_file_sha256_fully_bound": false,
+    "pyarrow_24_import_smoke_passed": true,
+    "targeted_tests_bound": false,
+    "stage_gate_passed": false
+  },
+  "stages": [
+    "rebuild-validate",
+    "runtime-evidence",
+    "stage-validate",
+    "deploy-restart",
+    "performance",
+    "admit",
+    "rollback-drill"
+  ],
+  "mutation_contract": {
+    "isolated_upload_requires_explicit_flag": true,
+    "production_mutation_requires_explicit_flag": true,
+    "production_mutation_requires_hash_bound_owner_token": true,
+    "production_mutation_requires_remote_predecessor_revalidation": true,
+    "successor_venv_requires_hash_locked_wheelhouse": true,
+    "active_venv_in_place_upgrade_forbidden": true,
+    "make_deploy_forbidden": true,
+    "strategy_parameters_changed": false,
+    "q90_action_enabled": false,
+    "buy_fill_selection_shadow_enabled": false,
+    "buy_fill_selection_live_enabled": false
+  },
+  "machine_gates": {
+    "python_version": "3.12.13",
+    "pyarrow_version": "24.0.0",
+    "initial_state_domain_count": 13,
+    "pre_epoch_native_events": 0,
+    "drop_count": 0,
+    "error_count": 0,
+    "producer_enqueue_p99_us_max": 100.0,
+    "producer_enqueue_max_us_max": 1000.0,
+    "quote_loop_p99_regression_pct_max": 5.0,
+    "writer_queue_hwm_max": 2048,
+    "writer_cpu_pct_one_core_max": 10.0,
+    "writer_rss_delta_mib_max": 256.0,
+    "rss_gate_uses_candidate_process_rss_minus_bound_baseline_rss": true,
+    "writer_cpu_scope": "writer_thread_cpu_pct_one_core_hard_gate",
+    "process_cpu_scope": "whole_process_cpu_pct_one_core_diagnostic",
+    "writer_write_p99_ms_max": 250.0,
+    "maker_thread_filesystem_calls": 0,
+    "baseline_quote_loop_window_end_ts": 1785896266.426,
+    "baseline_quote_loop_requote_rows": 601,
+    "baseline_quote_loop_p99_us": 141384.284,
+    "candidate_quote_loop_p99_max_us": 148453.4982,
+    "quote_loop_regression_recomputed_from_raw_p99": true,
+    "bounded_collection_duration_s": 3600,
+    "minimum_admissible_duration_s": 3500,
+    "maximum_admissible_duration_s": 3700
+  },
+  "permissions": {
+    "ssh_executed": false,
+    "isolated_upload_executed": false,
+    "deployment_executed": false,
+    "restart_executed": false,
+    "performance_collection_executed": false,
+    "evidence_admitted": false,
+    "rollback_drill_executed": false,
+    "economic_outcomes_read": false,
+    "strategy_action_authorized": false,
+    "live_policy_authorized": false
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "identity": "order_lifecycle_journal_writer_v2",
+  "last_materially_modified": "2026-08-04",
+  "status": "infrastructure_implemented_local_not_integrated",
+  "schema_versions": {
+    "identity": "order_lifecycle_journal_writer_identity.v2",
+    "writer": "order_lifecycle_journal_writer.v2",
+    "health": "order_lifecycle_journal_writer_health.v2",
+    "part": "order_lifecycle_journal_part.v2",
+    "source_journal": "order_lifecycle_journal.v2"
+  },
+  "scope": {
+    "economic_outcomes_read": false,
+    "pnl_read": false,
+    "reward_read": false,
+    "markout_read": false,
+    "q90_action_authorized": false,
+    "live_integration_changed": false,
+    "replay_integration_changed": false,
+    "registry_changed": false
+  },
+  "transaction_order": [
+    "validate every unseen event in one source callback as one journal-v2 batch",
+    "fsync and atomically rename one immutable Parquet or JSONL payload part",
+    "fsync and atomically rename the matching content-addressed part manifest",
+    "fsync and atomically replace writer health with the admitted part included",
+    "fsync and atomically replace the lifecycle durable cursor"
+  ],
+  "cursor_invariant": "durable cursor must never be ahead of validated immutable parts or health admission and must end on a callback-batch boundary",
+  "restart_contract": {
+    "source_of_truth": "validated immutable part manifests plus payload SHA256",
+    "health_before_cursor_recovery": true,
+    "deduplication_key": "stable journal-v2 event_id plus content-addressed callback batch_id",
+    "gaps": "fail_closed",
+    "overlaps": "fail_closed",
+    "mutated_event": "fail_closed",
+    "orphan_payload_without_manifest": "reported_in_health_and_formal_collection_invalid_until_same_callback_completes_commit"
+  },
+  "hot_start_quarantine": {
+    "initial_active_orders_excluded": true,
+    "collection_cutover": "after every startup-active exchange order has an allowed exchange-terminal outcome",
+    "pre_cutover_lifecycle_retrospective_admission": false,
+    "local_shutdown_censor_releases_exchange_order": false
+  },
+  "terminal_contract": {
+    "exchange_terminal_reasons": [
+      "cancel_ack",
+      "cancel_ack_reconciled",
+      "expired",
+      "filled_before_cancel_ack",
+      "full_fill",
+      "rejected"
+    ],
+    "local_shutdown_censor_reasons": [
+      "administrative_cancel",
+      "local_shutdown_cancel",
+      "shutdown"
+    ],
+    "local_shutdown_censor": "explicit non-exchange terminal observation; cannot assert completed physical exposure and no later journal event may be admitted",
+    "unknown_reason": "fail_closed_without_cursor_advance"
+  },
+  "clock_contract": {
+    "journal_v2_payload_rewritten": false,
+    "visible_quantity_time_exposure_preserved": true,
+    "exchange_quantity_time_exposure_preserved": true,
+    "clock_valid_complete_and_reason_fields_preserved": true
+  },
+  "health_fields": [
+    "state",
+    "last_heartbeat_ts_ns",
+    "last_flush_ts_ns",
+    "last_flush_batch_id",
+    "callbacks_committed",
+    "rows_committed",
+    "rows_dropped",
+    "callbacks_quarantined",
+    "error_count",
+    "last_error",
+    "quarantine_order_ids",
+    "excluded_lifecycle_ids",
+    "durable_cursor_count",
+    "local_shutdown_censor_count",
+    "orphan_payload_count",
+    "formal_collection_valid"
+  ],
+  "fault_injection_boundaries": [
+    "before_payload_replace",
+    "after_payload_replace",
+    "before_manifest_replace",
+    "after_manifest_replace",
+    "before_health_replace",
+    "after_health_replace",
+    "before_cursor_replace",
+    "after_cursor_replace"
+  ],
+  "storage_layout": {
+    "runtime_identity": "session-<id>/runtime_identity.json",
+    "health": "session-<id>/health.json",
+    "payloads": "session-<id>/parts/part-<batch_id>.parquet|jsonl",
+    "part_manifests": "session-<id>/parts/part-<batch_id>.manifest.json",
+    "cursors": "session-<id>/cursors/cursor-<sha256(lifecycle_id)>.json",
+    "process_lock": "session-<id>/writer.lock"
+  },
+  "implementation": {
+    "path": "execution/order_lifecycle_journal_writer_v2.py",
+    "sha256": "ea1bcf695a451add489fb772d22d4036529bd6ac2f7a2c34bcc3c94e46f7438e"
+  },
+  "tests": {
+    "path": "tests/test_order_lifecycle_journal_writer_v2.py",
+    "sha256": "7b5317e6d1ba941395ab69521fae020356efdfa7d74fb1e8da21c8a1caee26b2"
+  },
+  "next_integration_gate": "wire the bridge into live/replay callbacks in a separate identity, then require admitted tape and 40-day lockstep before any q90 economic or action authority"
+}

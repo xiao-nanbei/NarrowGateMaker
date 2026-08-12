@@ -1,0 +1,95 @@
+{
+  "schema_version": "narrowgate_order_lifecycle_journal_v2_storage_profiles.v2",
+  "identity": "order_lifecycle_journal_v2_storage_profiles_v2_implementation",
+  "date": "2026-08-08",
+  "status": "deployed_first_bounded_session_atomically_admitted",
+  "default": {
+    "enabled": false,
+    "storage_profile": "local_orico_replay_admission"
+  },
+  "profiles": {
+    "local_orico_replay_admission": {
+      "required_mount": "${NARROWGATE_STORAGE_ROOT}",
+      "journal_and_epoch_roots_must_be_strict_children": true,
+      "local_formal_admission_may_be_claimed_after_writer_validation": true,
+      "remote_spool_only": false
+    },
+    "bounded_remote_spool": {
+      "default_allowlisted_root": "${NARROWGATE_REMOTE_ROOT}/formal_collection",
+      "absolute_paths_required": true,
+      "sensitive_or_broad_roots_rejected": true,
+      "journal_and_epoch_roots_must_be_distinct_siblings": true,
+      "session_duration_bound_required": true,
+      "session_byte_bound_required": true,
+      "local_formal_admission_may_be_claimed": false,
+      "requires_later_rsync_and_local_orico_admission": true
+    }
+  },
+  "producer_semantics": {
+    "filesystem_writes_on_maker_thread": false,
+    "bounded_queue": true,
+    "writer_failure_blocks_trading": false,
+    "writer_failure_invalidates_tape": true,
+    "callbacks_after_planned_bound_are_ignored": true,
+    "byte_bound_exceeded_invalidates_tape": true
+  },
+  "collector_interface": {
+    "path": "scripts/admit_prospective_lifecycle_remote_session.py",
+    "modes": [
+      "inspect",
+      "dry-run",
+      "execute"
+    ],
+    "network_operations": true,
+    "rsync_executed": true,
+    "local_admission_executed": true,
+    "manifest_contains_sha256_and_files_from": true,
+    "bounded_complete_session_required": true,
+    "single_rsync_files_from_session": true,
+    "atomic_rename_admission": true
+  },
+  "authority": {
+    "seven_tape_heartbeat_contract_modified": false,
+    "ec2_deployed": true,
+    "ec2_restarted": true,
+    "transfer_executed": true,
+    "formal_collection_authorized_from_remote_spool_alone": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_policy_authorized": false
+  },
+  "first_admission": {
+    "session_id": "prospective-1785924596631939323-4e487a4a8d53",
+    "admission_identity_sha256": "cc1d4ad466f0cd096ae0e30067b63d9240c21f4eb1baa08038fd035289a46db4",
+    "file_count": 5922,
+    "part_count": 2664,
+    "row_count": 2664,
+    "cursor_count": 589,
+    "remote_payload_deleted": false
+  },
+  "implementation_files": [
+    "execution/order_lifecycle_journal_storage_v2.py",
+    "execution/order_lifecycle_remote_spool_v2.py",
+    "execution/order_lifecycle_live_writer_v2.py",
+    "models/replay/prospective_baseline_epoch.py",
+    "live/config.py",
+    "live/main.py",
+    "scripts/lifecycle_journal_v2_collector.py"
+  ],
+  "implementation_sha256": {
+    "execution/order_lifecycle_journal_storage_v2.py": "291c7ddc08de26d15ea1ec839b3c5c5c31fe7a398cd20b3eaf8ac3dde99726f4",
+    "execution/order_lifecycle_remote_spool_v2.py": "4efc4e5d4d400712b8cb26688822c38de02a3edb3f468c3e7914a090768ea369",
+    "execution/order_lifecycle_live_writer_v2.py": "ec5c9b2cc4af5c4b9865c96a79b49152933ae3b100a90dc4d9be2bb069b00dda",
+    "models/replay/prospective_baseline_epoch.py": "17ebd23e7d72695ba5501e169967a113d1e0ceac276f1b96c179776509d297ed",
+    "live/config.py": "74013f6af666751ff5cd48db5f40de2a907745b4ed369e93e33e75cf28f05d60",
+    "live/main.py": "f79cce825b722b1fbdb002b84d5be2c46a55a39b88d5e771bd2cb56301de4b0c",
+    "scripts/lifecycle_journal_v2_collector.py": "f9f2a7435a56d3cda59273feb53803a56495f69e5369914f6eee2dfe4351a444"
+  },
+  "tests": [
+    "tests/test_live_lifecycle_journal_v2_config.py",
+    "tests/test_order_lifecycle_live_writer_v2.py",
+    "tests/test_lifecycle_journal_v2_remote_spool.py",
+    "tests/test_live_prospective_epoch_startup.py",
+    "tests/test_prospective_baseline_epoch.py"
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "schema_version": "prospective_lifecycle_remote_runtime_probe.v1",
+  "observed_at_date": "2026-08-05",
+  "collection_mode": "user_supplied_read_only_remote_evidence_no_ssh_by_orchestrator",
+  "release_manifest_sha256": "daff2f96fcb947e2564d0bf3dba4f3ec404b98b7f632a135fb1e295500997ce2",
+  "remote_identity_sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638",
+  "maker_pid": "<private-process-id>",
+  "maker_etimes_s": 98692,
+  "process_cpu_pct_one_core": 14.6,
+  "process_rss_kib": 334652,
+  "process_vsz_kib": 992184,
+  "maker_command": ".venv-active/bin/python3 live/main.py --config live/config.yaml",
+  "python_version": "3.12.13",
+  "pyarrow_version": "21.0.0",
+  "required_successor_pyarrow_version": "24.0.0",
+  "pyarrow_version_mismatch": true,
+  "active_venv_mutation_allowed": false,
+  "isolated_successor_venv_required": true,
+  "loaded_native_extensions": [
+    {
+      "path": "${NARROWGATE_REMOTE_ROOT}/.venv-py312/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-x86_64-linux-gnu.so",
+      "sha256": "343d92127a80cb6fefe10cddd21e70f8c1bf22674c19874c7fb0971d052b45f0"
+    }
+  ],
+  "remote_root_free_gib": 23,
+  "active_venv_size_mib": 598,
+  "frozen_v9_hashes_verified": {
+    "live/config.yaml": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5",
+    "live/main.py": "f0f0ffe919f05df0fa17b2cc62b5d5815cb3ec4cf6b718d1efe011003e33bc6b",
+    "live/config.py": "eb9a72d4bb2361ecf0f2617ee6fbc53329517d62d77ee381c85a6c59873fb8a7",
+    "strategy/maker_engine.py": "9dcca8b0b92313758f2c35093516eafbc6940d5fec6fea028f190c6bc68cc23c"
+  },
+  "runtime_identity_matches_v9": true,
+  "runtime_release_gate_passed": false,
+  "blocker": "active_pyarrow_21_must_not_be_mutated_in_place_build_hash_locked_isolated_successor_venv_with_pyarrow_24"
+}

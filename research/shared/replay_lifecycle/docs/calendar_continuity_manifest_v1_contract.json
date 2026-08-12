@@ -1,0 +1,22 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "continuity_sensitivity": true,
+    "non_a_grade_upgrade": false,
+    "tail_governance_identified_without_on_off_control": false
+  },
+  "contract_id": "calendar_continuity_manifest.v1",
+  "implementation": {
+    "path": "data/quality/calendar_gap_manifest.py",
+    "sha256": "b84d53d01d73b859897066a74e7503594cb776a745cdc9f895ee8dab788d5a05"
+  },
+  "last_materially_modified": "2026-08-03",
+  "requirements": [
+    "complete ordered natural-day envelope",
+    "immutable anchor panel identity and SHA256",
+    "outcome-blind data gaps and quality grades",
+    "provider-normalized source kept distinct from native sequence authority",
+    "UTC midnight is accounting-only"
+  ],
+  "schema_version": "calendar_continuity_manifest.v1"
+}

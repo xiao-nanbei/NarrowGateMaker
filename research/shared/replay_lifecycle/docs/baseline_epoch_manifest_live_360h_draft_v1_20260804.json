@@ -1,0 +1,999 @@
+{
+  "canonical_manifest_sha256": "f05ec4fbcc331837997779ded0a916c6105e3265f7854c823db2425b3510a69f",
+  "epochs": [
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784768720678000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R00",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ]
+      },
+      "identity_sha256": "914b8e4fbb138827fc9122fc0d9732c8516f26576fef207a3ca9064751f75e10",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "identity_evidence_begins",
+      "start_ts_ns": 1784483931996000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784929079142000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R01",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-23T01:05:20.669Z; first quote_decision at 2026-07-23T01:05:20.678Z",
+          "start_ts_ns": 1784768720678000000
+        }
+      },
+      "identity_sha256": "914b8e4fbb138827fc9122fc0d9732c8516f26576fef207a3ca9064751f75e10",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1784768720678000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784930853474000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R02",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-24T21:37:59.133Z; first quote_decision at 2026-07-24T21:37:59.142Z",
+          "start_ts_ns": 1784929079142000000
+        }
+      },
+      "identity_sha256": "914b8e4fbb138827fc9122fc0d9732c8516f26576fef207a3ca9064751f75e10",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1784929079142000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784932531083000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R03",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-24T22:07:33.466Z; first quote_decision at 2026-07-24T22:07:33.474Z",
+          "start_ts_ns": 1784930853474000000
+        }
+      },
+      "identity_sha256": "914b8e4fbb138827fc9122fc0d9732c8516f26576fef207a3ca9064751f75e10",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1784930853474000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784932688954000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R04",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-24T22:35:31.077Z; first quote_decision at 2026-07-24T22:35:31.083Z",
+          "start_ts_ns": 1784932531083000000
+        }
+      },
+      "identity_sha256": "914b8e4fbb138827fc9122fc0d9732c8516f26576fef207a3ca9064751f75e10",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1784932531083000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1784990690319000000,
+      "epoch_id": "E001-btc_usdc_empirical_p3_20260720-R05",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "b3a4a86c88c147c00721c97590228e81daa7f235aaee0784c2144691ca04da94",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+        "p3_sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+        "runtime_code_sha256": "274b3b7ac6e887747e542a7bee65f0ef4e24dcdc0d37b56277bb48d7e05e2c93"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_empirical_p3_20260720",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v1",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784483924000000000,
+        "first_decision_ts_ns": 1784483931996000000,
+        "identity_file_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
+        "identity_recorded_or_effective_ts_ns": 1784483924000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "additional_boundary_reasons": [
+            "action_enablement_change"
+          ],
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {
+            "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d"
+          },
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "q90 live policy activation plus order_outcomes sequence reset at 2026-07-24T22:38:08.946Z; first quote_decision at 2026-07-24T22:38:08.954Z",
+          "start_ts_ns": 1784932688954000000
+        }
+      },
+      "identity_sha256": "5800df90a2edc03daf698864963385a6941c444b647bad5c5acb87c8b97d1d49",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1784932688954000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785056624962000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R00",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ]
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "code_deployment",
+      "start_ts_ns": 1784990690319000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785057784323000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R01",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:03:44.953Z; first quote_decision at 2026-07-26T09:03:44.962Z",
+          "start_ts_ns": 1785056624962000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785056624962000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785058243682000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R02",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:23:04.315Z; first quote_decision at 2026-07-26T09:23:04.323Z",
+          "start_ts_ns": 1785057784323000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785057784323000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785581215837000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R03",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:30:43.674Z; first quote_decision at 2026-07-26T09:30:43.682Z",
+          "start_ts_ns": 1785058243682000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785058243682000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785626954829000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R04",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T10:46:55.837Z",
+          "start_ts_ns": 1785581215837000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785581215837000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785627182770000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R05",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T23:29:14.829Z",
+          "start_ts_ns": 1785626954829000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785626954829000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785627716637000000,
+      "epoch_id": "E002-btc_usdc_causal_v5_normalized100ms_20260725-R06",
+      "identity": {
+        "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d",
+        "clock_semantics_sha256": null,
+        "config_sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+        "data_source_identity_sha256": "d991d433e4ccecce9cad51c320b549a1d54b22402c293a5f485716ad5f58d3be",
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": null,
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "71447d5dce7d435a07fae289cb9bd049b5e87713bdf836c3f317eb06aaec13a0"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v2",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256",
+          "data_source_identity_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1784990690000000000,
+        "first_decision_ts_ns": 1784990690319000000,
+        "identity_file_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
+        "identity_recorded_or_effective_ts_ns": 1784990690000000000,
+        "missing_fields": [
+          "feature_dag_sha256",
+          "initial_runtime_state_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T23:33:02.770Z",
+          "start_ts_ns": 1785627182770000000
+        }
+      },
+      "identity_sha256": "cbcfa46da830244853d31e237a1ebd1d664dba9555d68a6911f0113dd3948e7c",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785627182770000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785637517674000000,
+      "epoch_id": "E003-btc_usdc_causal_v12_semantics_v6_owner_authorized_canary_20260802-R00",
+      "identity": {
+        "action_enablement_sha256": null,
+        "clock_semantics_sha256": null,
+        "config_sha256": "93a1a203aacee95466dc032f8b9fc7916b7a2daaf2ee31a1b1142506362ebc4f",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "b424a86b851f0bf82daaefa0d272e301e01f6f3fbc546fe7ccc8708f18e1f7aa"
+      },
+      "identity_evidence": {
+        "authority_annotations": [
+          {
+            "baseline_id": "btc_usdc_causal_v12_semantics_v6_operational_baseline_20260802",
+            "effective_ts_ns": 1785634296190000000,
+            "identity_file_sha256": "aa25144dae7de8a1ca06d374e0e52faafd66b4199be71ef08e3d721688755d29",
+            "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v4.json"
+          }
+        ],
+        "baseline_id": "btc_usdc_causal_v12_semantics_v6_owner_authorized_canary_20260802",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v3",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "feature_dag_sha256",
+          "execution_abi_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1785627715000000000,
+        "first_decision_ts_ns": 1785627716637000000,
+        "identity_file_sha256": "a6b9d9fb0e63328e6407c1c44ed4206fdd2dbb577296887582a7e9af491f9810",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802.json",
+        "identity_recorded_or_effective_ts_ns": 1785627715000000000,
+        "missing_fields": [
+          "action_enablement_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "v12 canary restart; first quote_decision 2026-08-01T23:41:56.637Z",
+          "start_ts_ns": 1785627716637000000
+        }
+      },
+      "identity_sha256": "6e6e0e42ee1f59c4d58422a6cc20dc63bb7a2a6d4a2e1dfac618b81f7610a478",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785627716637000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785710447950000000,
+      "epoch_id": "E004-btc_usdc_causal_v12_semantics_v6_q90_action_suspended_baseline_20260802-R00",
+      "identity": {
+        "action_enablement_sha256": "e2fc066e77e20371e2bdbec18ecfb8081a7b7f7a420de266b585bd04eaa6af67",
+        "clock_semantics_sha256": null,
+        "config_sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": "8dc6f6c61d9b9be3d16d6aaf97bac570e9ba9105a124922c0770c5c4ede9aac5",
+        "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "b424a86b851f0bf82daaefa0d272e301e01f6f3fbc546fe7ccc8708f18e1f7aa"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v12_semantics_v6_q90_action_suspended_baseline_20260802",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v5",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "feature_dag_sha256",
+          "execution_abi_sha256",
+          "action_enablement_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1785637516000000000,
+        "first_decision_ts_ns": 1785637517674000000,
+        "identity_file_sha256": "e80aacdad29160e47889d157fdf67a633cb42d8e448bbfe4db70ea7c4435a000",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v5.json",
+        "identity_recorded_or_effective_ts_ns": 1785637516000000000,
+        "missing_fields": [
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "q90 suspension restart; first quote_decision 2026-08-02T02:25:17.674Z",
+          "start_ts_ns": 1785637517674000000
+        }
+      },
+      "identity_sha256": "b04372afaf141ed38fed2c528ead66dd9e824cde72ebc0f110ea20a8e1fd63a6",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785637517674000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785712890237000000,
+      "epoch_id": "E005-btc_usdc_causal_v12_semantics_v6_q90_and_buy_fill_selection_actions_suspended_baseline_20260803-R00",
+      "identity": {
+        "action_enablement_sha256": "bdcc787e06a0d57703c3ba09fd684aff583b3bc1559b2986b71502321dc505d2",
+        "clock_semantics_sha256": null,
+        "config_sha256": "55002a2502fd03707ddb157522aa5de1843a793d093439d05402cbe98da443bd",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": null,
+        "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "60bf07924fe19871cdc360cabc8ab64fc428831949ce0ed533c99ff96512fd47"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v12_semantics_v6_q90_and_buy_fill_selection_actions_suspended_baseline_20260803",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v6",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "feature_dag_sha256",
+          "action_enablement_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1785710446000000000,
+        "first_decision_ts_ns": 1785710447950000000,
+        "identity_file_sha256": "43c6c89692b50101c17dd35c2038a39f7b9708fd3b4c9527f2fe18bc9e564e0b",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v6.json",
+        "identity_recorded_or_effective_ts_ns": 1785710446000000000,
+        "missing_fields": [
+          "execution_abi_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "action suspension restart; first quote_decision 2026-08-02T22:40:47.950Z",
+          "start_ts_ns": 1785710447950000000
+        }
+      },
+      "identity_sha256": "1b8f6eceee1b290d57371d004460643ec3b85044d83bdd7c027e1abb35d3df0b",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785710447950000000
+    },
+    {
+      "binding_status": "partially_bound",
+      "boundary_status": "first_decision_bound",
+      "continuous_economic_estimation_authorized": false,
+      "end_ts_ns": 1785747480000000000,
+      "epoch_id": "E006-btc_usdc_causal_v12_q90_shadow_buy_fill_selection_shadow_only_baseline_20260803-R00",
+      "identity": {
+        "action_enablement_sha256": "9842a061efeedf3029582adab33626537c410fe0477afef7ea1b44f99d4627bd",
+        "clock_semantics_sha256": null,
+        "config_sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36",
+        "data_source_identity_sha256": null,
+        "execution_abi_sha256": null,
+        "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+        "initial_runtime_state_sha256": null,
+        "model_bundle_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+        "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+        "runtime_code_sha256": "e4f99d2185885a345ac9549059aa124eb3715e166cb8e4c13112fcefb489f493"
+      },
+      "identity_evidence": {
+        "baseline_id": "btc_usdc_causal_v12_q90_shadow_buy_fill_selection_shadow_only_baseline_20260803",
+        "baseline_schema_version": "narrowgate_operational_baseline_identity.v7",
+        "bound_fields": [
+          "runtime_code_sha256",
+          "config_sha256",
+          "model_bundle_sha256",
+          "p3_sha256",
+          "feature_dag_sha256",
+          "action_enablement_sha256"
+        ],
+        "boundary_precision": "first_decision_bound",
+        "effective_ts_ns": 1785712887000000000,
+        "first_decision_ts_ns": 1785712890237000000,
+        "identity_file_sha256": "c4fe893b62ba7d972f293ec2afa789af0e9229c3cdb01bedc79200cd26d88672",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v7.json",
+        "identity_recorded_or_effective_ts_ns": 1785712887000000000,
+        "missing_fields": [
+          "execution_abi_sha256",
+          "initial_runtime_state_sha256",
+          "data_source_identity_sha256",
+          "clock_semantics_sha256"
+        ],
+        "restart_event": {
+          "boundary_reason": "unrestored_process_restart",
+          "boundary_status": "first_decision_bound",
+          "identity_updates": {},
+          "initial_runtime_state_sha256": null,
+          "source_evidence": "shadow-only baseline restart; first quote_decision 2026-08-02T23:21:30.237Z",
+          "start_ts_ns": 1785712890237000000
+        }
+      },
+      "identity_sha256": "4b6f1843bbddbb6631e7bb29fc112d83640f07caf4de578735f236a27fbfa78a",
+      "initial_economic_state_complete": false,
+      "lifecycle_estimation_authorized": false,
+      "pooling_authorized": false,
+      "start_reason": "unrestored_process_restart",
+      "start_ts_ns": 1785712890237000000
+    }
+  ],
+  "manifest_id": "live_360h_baseline_epochs_v1",
+  "observed_boundary_event_count": 15,
+  "pooled_estimation_authorized": false,
+  "required_identity_fields": [
+    "runtime_code_sha256",
+    "config_sha256",
+    "model_bundle_sha256",
+    "p3_sha256",
+    "feature_dag_sha256",
+    "execution_abi_sha256",
+    "action_enablement_sha256",
+    "initial_runtime_state_sha256",
+    "data_source_identity_sha256",
+    "clock_semantics_sha256"
+  ],
+  "restart_audit_complete": false,
+  "schema_version": "narrowgate_baseline_epoch_manifest.v1",
+  "scope_end_ts_ns": 1785747480000000000,
+  "scope_start_ts_ns": 1784451480000000000,
+  "source_clock": "utc_ns",
+  "unbound_intervals": [
+    {
+      "end_ts_ns": 1784483931996000000,
+      "reason": "no frozen operational baseline identity",
+      "start_ts_ns": 1784451480000000000
+    }
+  ],
+  "utc_midnight_splits_epoch": false
+}

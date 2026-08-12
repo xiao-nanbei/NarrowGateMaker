@@ -1,0 +1,40 @@
+{
+  "audit_mode": "read_only_no_deploy",
+  "captured_at_utc_date": "2026-08-05",
+  "config": {
+    "path": "live/config.yaml",
+    "sha256": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5"
+  },
+  "execution_directory": {
+    "files": [
+      "execution/__init__.py",
+      "execution/active_order_depth_path.py"
+    ],
+    "order_lifecycle_new_file_confirmed": true
+  },
+  "files": {
+    "features/feature_dag.py": "68554be350b225f4ad6af02c4cf9ac4cadc9be92b7f4c7c547d8a10f7f27342f",
+    "live/config.py": "eb9a72d4bb2361ecf0f2617ee6fbc53329517d62d77ee381c85a6c59873fb8a7",
+    "live/main.py": "f0f0ffe919f05df0fa17b2cc62b5d5815cb3ec4cf6b718d1efe011003e33bc6b",
+    "live/ws_handler.py": "c76683bf7fab8d975d80d78b48230e7d50f2fa50605e31b42a1b03a5156a3fd3",
+    "strategy/inventory_manager.py": "cf60a38bd48e9e9327400833a18e02fdc91be910b7bbaf5470af34cb25551903",
+    "strategy/maker_engine.py": "9dcca8b0b92313758f2c35093516eafbc6940d5fec6fea028f190c6bc68cc23c",
+    "strategy/order_manager.py": "fb246ac4ef64207be42b317688a0e1c3e7b13f586b0514718301a80fe2235db9",
+    "strategy/signal.py": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f"
+  },
+  "new_files_absent_on_remote": [
+    "execution/order_lifecycle.py",
+    "execution/order_lifecycle_quantity_contract.py",
+    "execution/order_lifecycle_journal_storage_v2.py",
+    "execution/order_lifecycle_journal_v2.py",
+    "execution/order_lifecycle_journal_writer_v2.py",
+    "execution/order_lifecycle_live_writer_v2.py",
+    "execution/order_lifecycle_remote_spool_v2.py",
+    "execution/prospective_lifecycle_state_capture_v1.py",
+    "models/replay/__init__.py",
+    "models/replay/baseline_epoch_manifest.py",
+    "models/replay/prospective_baseline_epoch.py"
+  ],
+  "remote_root": "${NARROWGATE_REMOTE_ROOT}",
+  "schema_version": "prospective_lifecycle_remote_v9_dependency_evidence.v1"
+}

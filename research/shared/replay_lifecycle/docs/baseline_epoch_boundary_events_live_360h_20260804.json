@@ -1,0 +1,127 @@
+[
+  {
+    "start_ts_ns": 1784768720678000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-23T01:05:20.669Z; first quote_decision at 2026-07-23T01:05:20.678Z"
+  },
+  {
+    "start_ts_ns": 1784929079142000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-24T21:37:59.133Z; first quote_decision at 2026-07-24T21:37:59.142Z"
+  },
+  {
+    "start_ts_ns": 1784930853474000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-24T22:07:33.466Z; first quote_decision at 2026-07-24T22:07:33.474Z"
+  },
+  {
+    "start_ts_ns": 1784932531083000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-24T22:35:31.077Z; first quote_decision at 2026-07-24T22:35:31.083Z"
+  },
+  {
+    "start_ts_ns": 1784932688954000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {
+      "action_enablement_sha256": "9d1b8ed9a4724555f2fc0549fc27341505adfc292e85109d80bcd1f54f19f84d"
+    },
+    "additional_boundary_reasons": [
+      "action_enablement_change"
+    ],
+    "source_evidence": "q90 live policy activation plus order_outcomes sequence reset at 2026-07-24T22:38:08.946Z; first quote_decision at 2026-07-24T22:38:08.954Z"
+  },
+  {
+    "start_ts_ns": 1785056624962000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:03:44.953Z; first quote_decision at 2026-07-26T09:03:44.962Z"
+  },
+  {
+    "start_ts_ns": 1785057784323000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:23:04.315Z; first quote_decision at 2026-07-26T09:23:04.323Z"
+  },
+  {
+    "start_ts_ns": 1785058243682000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "order_outcomes sequence reset at 2026-07-26T09:30:43.674Z; first quote_decision at 2026-07-26T09:30:43.682Z"
+  },
+  {
+    "start_ts_ns": 1785581215837000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T10:46:55.837Z"
+  },
+  {
+    "start_ts_ns": 1785626954829000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T23:29:14.829Z"
+  },
+  {
+    "start_ts_ns": 1785627182770000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "maker startup plus order sequence reset; first quote_decision 2026-08-01T23:33:02.770Z"
+  },
+  {
+    "start_ts_ns": 1785627716637000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "v12 canary restart; first quote_decision 2026-08-01T23:41:56.637Z"
+  },
+  {
+    "start_ts_ns": 1785637517674000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "q90 suspension restart; first quote_decision 2026-08-02T02:25:17.674Z"
+  },
+  {
+    "start_ts_ns": 1785710447950000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "action suspension restart; first quote_decision 2026-08-02T22:40:47.950Z"
+  },
+  {
+    "start_ts_ns": 1785712890237000000,
+    "boundary_reason": "unrestored_process_restart",
+    "boundary_status": "first_decision_bound",
+    "initial_runtime_state_sha256": null,
+    "identity_updates": {},
+    "source_evidence": "shadow-only baseline restart; first quote_decision 2026-08-02T23:21:30.237Z"
+  }
+]

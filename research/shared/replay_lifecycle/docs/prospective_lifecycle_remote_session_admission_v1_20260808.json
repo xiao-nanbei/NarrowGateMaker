@@ -1,0 +1,37 @@
+{
+  "schema_version": "prospective_lifecycle_remote_session_admission_record.v1",
+  "identity": "prospective_lifecycle_remote_session_admission_v1",
+  "last_materially_modified": "2026-08-08",
+  "status": "first_bounded_remote_session_atomically_admitted_to_orico",
+  "session_id": "prospective-1785924596631939323-4e487a4a8d53",
+  "collection_interval_utc": [
+    "2026-08-05T10:09:56Z",
+    "2026-08-05T11:09:56Z"
+  ],
+  "orico_destination": "${NARROWGATE_DATA_ROOT}/formal_collection/prospective_lifecycle_journal_v2/session-prospective-1785924596631939323-4e487a4a8d53",
+  "admission_manifest_sha256": "3c04ad384d4c2b7b0b655e77def6cd8ffdc46b8e20d8863c8dccaf9d1562e434",
+  "admission_identity_sha256": "cc1d4ad466f0cd096ae0e30067b63d9240c21f4eb1baa08038fd035289a46db4",
+  "seal_identity_sha256": "ab79ec4069c0303d2e353130562ce8bbf242903380e232221bf8c3cf3e464eb6",
+  "epoch_identity_sha256": "4e487a4a8d53cbe811cb242ec9874dc4918c7634ea9ffef5b1fadbf7c5d0442e",
+  "runtime_identity_sha256": "9d44e56106126254df030f9f34fa15fc5ce2f7249ce43dffa8d0a5f505217c71",
+  "validation": {
+    "file_count": 5922,
+    "payload_bytes": 41391625,
+    "part_count": 2664,
+    "row_count": 2664,
+    "lifecycle_cursor_count": 589,
+    "stable_double_read_passed": true,
+    "epoch_fully_bound": true,
+    "drop_count": 0,
+    "error_count": 0,
+    "queue_hwm": 9,
+    "enqueue_latency_p99_us": 133.17,
+    "write_latency_p99_ms": 272.925116,
+    "single_rsync_files_from_session": true,
+    "atomic_rename_admission": true
+  },
+  "remote_payload_deleted": false,
+  "economic_outcomes_read": false,
+  "action_authorized": false,
+  "live_policy_authorized": false
+}

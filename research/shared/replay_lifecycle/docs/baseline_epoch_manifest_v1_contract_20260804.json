@@ -1,0 +1,43 @@
+{
+  "schema_version": "narrowgate_baseline_epoch_manifest_contract.v1",
+  "identity": "baseline_epoch_manifest_v1",
+  "last_materially_modified": "2026-08-04",
+  "source_clock": "utc_ns",
+  "utc_midnight_splits_epoch": false,
+  "economic_outcomes_read": false,
+  "required_identity_fields": [
+    "runtime_code_sha256",
+    "config_sha256",
+    "model_bundle_sha256",
+    "p3_sha256",
+    "feature_dag_sha256",
+    "execution_abi_sha256",
+    "action_enablement_sha256",
+    "initial_runtime_state_sha256",
+    "data_source_identity_sha256",
+    "clock_semantics_sha256"
+  ],
+  "missing_identity_policy": "null_and_fail_closed",
+  "pre_estimation_pooling_authorized": false,
+  "implementation": {
+    "path": "models/replay/baseline_epoch_manifest.py",
+    "sha256": "3131c2df210086ab60123f825382f5d29174b193bffacc0916ad8464c0a03cb6"
+  },
+  "builder": {
+    "path": "scripts/build_baseline_epoch_manifest.py",
+    "sha256": "ef177d5ee282a2490dcb436ecba8d5b492b43a01c0a55731f400b8ccc6dd55b3"
+  },
+  "draft_manifest": {
+    "path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
+    "canonical_sha256": "a70e75ca6e609bbe1a7bf503b3c7b6e8407db2706b11c836ca33eda8f26bfcf7",
+    "restart_audit_complete": false,
+    "lifecycle_estimation_authorized_epochs": 0,
+    "pooled_estimation_authorized": false
+  },
+  "permissions": {
+    "lifecycle_estimation_authorized": false,
+    "economic_estimation_authorized": false,
+    "action_authorized": false,
+    "live_policy_authorized": false
+  }
+}

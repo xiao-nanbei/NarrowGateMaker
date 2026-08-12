@@ -1,0 +1,11 @@
+{
+  "btc_usdc_empirical_p3_20260720": 1784483931996000000,
+  "btc_usdc_causal_v5_normalized100ms_20260725": 1784990690319000000,
+  "btc_usdc_causal_v12_semantics_v6_owner_authorized_canary_20260802": 1785627716637000000,
+  "btc_usdc_causal_v12_semantics_v6_operational_baseline_20260802": 1785634296190000000,
+  "btc_usdc_causal_v12_semantics_v6_q90_action_suspended_baseline_20260802": 1785637517674000000,
+  "btc_usdc_causal_v12_semantics_v6_q90_and_buy_fill_selection_actions_suspended_baseline_20260803": 1785710447950000000,
+  "btc_usdc_causal_v12_q90_shadow_buy_fill_selection_shadow_only_baseline_20260803": 1785712890237000000,
+  "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_shadow_only_baseline_20260804": 1785788918714000000,
+  "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_retired_baseline_20260804": 1785798080910000000
+}
