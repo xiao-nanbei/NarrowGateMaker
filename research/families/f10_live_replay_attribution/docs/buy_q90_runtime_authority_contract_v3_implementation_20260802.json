@@ -1,0 +1,77 @@
+{
+  "schema_version": "buy_q90_runtime_authority_contract.v3",
+  "identity": "buy_q90_runtime_authority_contract_v3",
+  "date": "2026-08-02",
+  "classification": "baseline_integrity_mechanics_only",
+  "status": "local_runtime_authority_implemented_not_deployed_full_transport_not_run",
+  "historical_predecessor": {
+    "identity": "buy_q90_dual_clock_terminal_routing_contract_v2",
+    "implementation_identity": "research/families/f10_live_replay_attribution/docs/buy_q90_dual_clock_terminal_routing_contract_v2_implementation_20260802.json",
+    "implementation_identity_sha256": "37b3feb98f11677a68d39773dc242d77798ee8a257df4b8976dadb7d3d256b35",
+    "frozen_identity_modified": false,
+    "current_implementation_bytes_claimed": false
+  },
+  "runtime_authority_contract": {
+    "q90_action_default": "OFF",
+    "q90_shadow_default": "ON_in_operational_private_baseline",
+    "post_cancel_recovery_contract_supported": false,
+    "direct_main_startup_guarded": true,
+    "run_sh_start_preflight_before_nohup": true,
+    "run_sh_restart_preflight_before_stop": true,
+    "sighup_action_state_change_allowed": false,
+    "unsupported_q90_action_without_owner_override": "startup_fail_closed",
+    "owner_override_environment": "NARROWGATE_ALLOW_UNREPAIRED_Q90_ACTION_DEPLOY",
+    "owner_override_logged": true,
+    "owner_override_written_to_runtime_identity": true,
+    "runtime_identity_path": "logs/runtime_identity.json",
+    "runtime_identity_persisted_atomically": true,
+    "preflight_identity_path": "logs/maker.preflight.json",
+    "shared_policy_schema": "narrowgate_runtime_policy.v1"
+  },
+  "operational_baseline_projection": {
+    "causal_v12_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_enabled": true
+  },
+  "q90_runtime_state": {
+    "shadow_enabled": true,
+    "action_enabled": false,
+    "local_runtime_authority_repair_deployed": false
+  },
+  "unchanged_q90_recovery_blockers": [
+    "fresh prospective placement recovery evaluator",
+    "40-day Python/C++ event-lockstep under ABI v3",
+    "same-date AWS receive-time transport",
+    "inherited valid-fraction absolute-delta gate",
+    "inherited cancel-role total-variation gate",
+    "independent q90 ON/OFF economic attribution after mechanics pass"
+  ],
+  "implementation_sha256": {
+    "live/runtime_policy.py": "c37b1a6ae1d8145ba886ecefa75bbeded61d98270ad9fbb2bd6cd1bdd160f8d8",
+    "live/config.py": "dc6de02f7b76a7ab65ba72657670cf4726481797a42fd23d74b4d76003a04eea",
+    "live/main.py": "553e7616cad33f4378986f45993269a27ac421353f7a9a73f3614fe18db2c4e0",
+    "live/run.sh": "89cd361374175536126f38f9ef1df888c4488a74defb78b786d652618994cffe",
+    "scripts/preflight_live_deploy.py": "cf50a5a7e159fcef2af02b2ba0c7021718b9bd7840a17d750a8f9ccd16f93717",
+    "tests/test_live_runtime_policy.py": "370313615f8571617e6a53849e12b693443c4ab0dc992dab2b3a46740a8aa53f",
+    "tests/test_preflight_live_deploy.py": "e2dad24f79921aaffe85860aba4c806edfbd4d12031f2637782080d16709e5f4",
+    "tests/test_buy_q90_dual_clock_terminal_routing_contract_v2.py": "baf2ab9a62ae0e6054e31a511026cf0f53acfbec32625845803c91efcae1eb41",
+    "tests/test_buy_q90_runtime_authority_contract_v3.py": "f0ff6963f11e8506c481ead1df518f7aabc69c5ae53143a8424176d87cd4524c"
+  },
+  "verification": {
+    "targeted_tests_passed": true,
+    "targeted_test_result": "72 passed in 0.96s",
+    "full_repository_suite_rerun_for_v3": true,
+    "full_repository_result": "1353 passed, 4 skipped, 1 warning in 85.79s",
+    "shell_syntax_passed": true,
+    "current_private_config_preflight_passed": true,
+    "economic_outcome_columns_read": []
+  },
+  "economic_outcome_read": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "prediction_supported": false,
+  "transport_supported": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false
+}
