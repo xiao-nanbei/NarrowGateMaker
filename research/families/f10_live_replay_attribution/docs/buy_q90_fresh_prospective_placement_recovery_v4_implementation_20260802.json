@@ -1,0 +1,93 @@
+{
+  "schema_version": "buy_q90_fresh_prospective_placement_recovery.v4",
+  "identity": "buy_q90_fresh_prospective_placement_recovery_v4",
+  "date": "2026-08-02",
+  "classification": "baseline_integrity_mechanics_only",
+  "status": "local_implementation_tested_not_deployed_lockstep_transport_not_run",
+  "historical_predecessor": {
+    "identity": "buy_q90_runtime_authority_contract_v3",
+    "implementation_identity": "research/families/f10_live_replay_attribution/docs/buy_q90_runtime_authority_contract_v3_implementation_20260802.json",
+    "implementation_identity_sha256": "2c5a5332bf9064cd355edf39d69f7434592fa7cf0184eaebebc52e5d1d094368",
+    "frozen_identity_modified": false,
+    "current_implementation_bytes_claimed": false
+  },
+  "fresh_prospective_placement_contract": {
+    "accepted_terminal_route": "PROSPECTIVE_CANCEL_REENTRY",
+    "accepted_terminal_reasons": [
+      "cancel_ack",
+      "cancel_ack_reconciled"
+    ],
+    "remaining_quantity_rule": "strictly_positive",
+    "candidate_side": "BUY",
+    "candidate_price_source": "current_quote_decision",
+    "market_state_source": "current_causal_deep_book_and_trade_state",
+    "order_age_ms": 0,
+    "queue_seed": "current_candidate_level_queue_at_tail",
+    "inside_spread_queue_seed": 0.0,
+    "gtx_contract": "current_candidate_must_be_on_tick_and_non_crossing",
+    "activation_support_contract": "current_book_valid_candidate_level_causally_covered_feature_ready_not_after_decision",
+    "learned_activation_probability_added": false,
+    "old_cursor_or_path_read_allowed": false,
+    "full_fill_route": "TERMINAL_COMPLETE_NO_REENTRY",
+    "reject_route": "BASELINE_RESUBMIT",
+    "expiry_route": "BASELINE_RESUBMIT",
+    "shutdown_route": "SHUTDOWN_NO_REENTRY",
+    "unknown_terminal_reason": "fail_fast",
+    "post_terminal_active_hazard_allowed": false,
+    "post_terminal_cursor_retention_allowed": false
+  },
+  "native_contract": {
+    "abi_version": "dynamic_fill_hazard_native_book_q90.v4",
+    "legacy_counter_dictionary_preserved": true,
+    "prospective_counters_exposed_separately": true,
+    "full_cpp_tick_replay_authority": false
+  },
+  "operational_baseline_projection": {
+    "causal_v12_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_enabled": true,
+    "q90_threshold_changed": false
+  },
+  "q90_runtime_state": {
+    "shadow_enabled": true,
+    "action_enabled": false,
+    "fresh_recovery_deployed": false
+  },
+  "remaining_blockers": [
+    "40-day Python live/replay lifecycle journal lockstep",
+    "40-day Python/C++ terminal path score cancel recovery lockstep",
+    "same-date AWS receive-time transport",
+    "inherited valid-fraction absolute-delta gate",
+    "inherited cancel-role total-variation gate",
+    "independent q90 ON/OFF economic attribution after mechanics pass"
+  ],
+  "implementation_sha256": {
+    "strategy/dynamic_fill_hazard_model.py": "a0c54430a68493757d4682798d2b7274c4e3c834fc502d2ad2ffd3ba37654b88",
+    "strategy/maker_engine.py": "2acfe71a753a61d0570a842987f0e803094fb1f9eb6c11b68981315ddebc12f1",
+    "execution/order_lifecycle.py": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "533132126fa1ed2d32fc11b2fed6bb58726f4965b5cc64a0106934c786dc7eba",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "687c377abfcd38438558d7f48226167258101ea94768b9433821f9e49d8e1c8c",
+    "cpp/narrowgate_cpp/bindings.cpp": "afad64fc4826f0267a49ba8c1027b323a299bb6b6e665c7beabc1d045327a798",
+    "tests/test_dynamic_fill_hazard_cpp_parity.py": "0ee261ae95cb2a8c38f791791930fe111a7926e31dd95ee2df3076cd84b8e2ed",
+    "tests/test_dynamic_fill_hazard_live_action.py": "d29a984e3e63ae0904f4bbca6c885fba159faf222537088b7649d27f3536cd49",
+    "tests/test_execution_order_lifecycle.py": "b1a7824337e5f5b88b2f2c0057bfd41b36d0ac2413978d6de44f8fb49612fe30",
+    "tests/test_buy_q90_fresh_prospective_placement_recovery_v4.py": "818994809c2b2cf00df09700432ecd1fd1415048f5f0659df8d9334ae8164779"
+  },
+  "verification": {
+    "native_extension_rebuilt": true,
+    "targeted_tests_passed": true,
+    "targeted_test_result": "67 passed in 1.19s",
+    "full_repository_suite_rerun_for_v4": true,
+    "full_repository_result": "1409 passed, 4 skipped, 3 failed, 1 warning in 84.18s",
+    "full_repository_failure_classification": "three frozen F09 execution-amendment SHA256 mismatches caused by the intentionally changed shared F10 lifecycle and historical q90 successor-test bytes; F09 was not modified",
+    "economic_outcome_columns_read": []
+  },
+  "economic_outcome_read": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "prediction_supported": false,
+  "transport_supported": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false
+}
