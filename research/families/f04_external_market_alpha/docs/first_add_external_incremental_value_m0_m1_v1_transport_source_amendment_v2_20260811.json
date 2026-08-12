@@ -1,0 +1,63 @@
+{
+  "schema_version": "first_add_external_incremental_value.transport_source_amendment.v2",
+  "identity": "first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_v2",
+  "status": "preregistered_blocked_on_30_distinct_valid_source_aware_receive_time_utc_days",
+  "created_at_utc": "2026-08-11T15:48:02Z",
+  "outcome_read_for_amendment": false,
+  "parent_identity": "first_add_external_incremental_value_m0_m1_v1",
+  "supersedes_for_prospective_collection_only": "first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_v1",
+  "frozen_v1_amendment_modified": false,
+  "unchanged_contract": {
+    "target": "decision_to_campaign_terminal_value_usdc",
+    "m0": "campaign_state_plus_local_causal_microstructure",
+    "m1": "m0_plus_bitget_bybit_okx_receive_and_feature_ready_state",
+    "estimator": "standardized_ridge_direct_usdc_alpha_1",
+    "buy_sell_separate": true,
+    "grade_a_primary_grade_b_sensitivity": true,
+    "true_leave_one_venue_out": true,
+    "common_row_denominators": true,
+    "chronological_oof_and_late_panel": true,
+    "day_then_campaign_clustered_inference": true,
+    "prediction_only": true,
+    "action_or_live_authority": false
+  },
+  "source_strata": {
+    "aws_tokyo_historical_v1": {
+      "source_key": "legacy_aws_tokyo_v1_unbound",
+      "status": "immutable_frozen_stratum",
+      "ledger": "${NARROWGATE_DATA_ROOT}/receive_time_tape/capture_ledger.v1.jsonl",
+      "distinct_valid_full_window_utc_days_at_cutover": 21
+    },
+    "vultr_tokyo_v2": {
+      "source_key": "vultr:nrt:<retired-intermediate-vultr-host>",
+      "status": "immutable_frozen_stratum",
+      "ledger": "${NARROWGATE_DATA_ROOT}/receive_time_tape/capture_ledger.v2.jsonl",
+      "retired_utc": "2026-08-11T15:17:38Z"
+    },
+    "aws_tokyo_reactivated": {
+      "source_key": "aws:ap_northeast_1:<current-live-epoch>",
+      "provider": "aws",
+      "region": "ap-northeast-1",
+      "public_ipv4": "<current-live-host>",
+      "instance_id": "<current-live-instance>",
+      "activated_utc": "2026-08-11T15:48:02Z",
+      "status": "prospective_host_bound_stratum",
+      "ledger": "${NARROWGATE_DATA_ROOT}/receive_time_tape/capture_ledger.v2.jsonl"
+    }
+  },
+  "combined_capture_admission": {
+    "minimum_distinct_valid_utc_days": 30,
+    "one_statistical_day_per_utc_day_across_all_sources": true,
+    "minimum_requested_or_observed_duration_s": 3500,
+    "source_provider_region_host_epoch_runtime_and_config_identity_required": true,
+    "all_parent_v1_capture_and_denominator_gates_unchanged": true
+  },
+  "permissions": {
+    "outcome_read_before_all_capture_and_denominator_gates": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_registration": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
