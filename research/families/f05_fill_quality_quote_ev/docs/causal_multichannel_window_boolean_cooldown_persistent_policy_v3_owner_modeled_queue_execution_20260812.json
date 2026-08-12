@@ -1,0 +1,116 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_persistent_policy_v3.owner_modeled_queue_execution.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_persistent_policy_v3",
+  "status": "frozen_before_v3_refit_on_consumed_development",
+  "research_type": "outcome_informed_exploratory_successor",
+  "predecessor_outcomes_already_consumed": true,
+  "fresh_outer_evidence": false,
+  "artifact_bindings": {
+    "predecessor_config": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_study_config_20260811.json",
+      "sha256": "636074fdbf52b363bcde953926db0a529e5f9ac349324cddd4473f70f56e6659"
+    },
+    "predecessor_owner_spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_spec_20260811.json",
+      "sha256": "362cb1848da44e8b6f4e274ab4e99f7077e9cea7efafcbd77cc404e53774c666"
+    },
+    "modeled_label_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810/admission_manifest.json",
+      "sha256": "a203efbf985848b7b24486a9e36ac18286e22dc22c057ad73b2d23f561c775cb"
+    },
+    "feature_panel_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/owner_modeled_queue_feature_panel_v1/panel_manifest.json",
+      "sha256": "13d4edc3e6ae4e5033bb97af4e09ffbeb334ece9268e5c10decef3fb7c7808d1"
+    },
+    "v3_design_contract": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_persistent_policy_v3_design_20260812.json",
+      "sha256": "f81365eece3bdfb186f46af98ec851ff7aeb9c7ec02ae5e9c35d2f89bb61df87"
+    }
+  },
+  "search_contract": {
+    "model": "multioutput_shallow_regression_tree_compiled_to_observed_guarded_boolean_policy",
+    "target": "duration_arm_minus_CONTROL_85N_assignment_to_washout_value_usdc",
+    "unsupported_training_target": "neutral_zero_discovery_target_only",
+    "unsupported_outer_outcome_imputed": false,
+    "outer_train_feature_pool_uses_outcomes": false,
+    "inner_train_tree_split_uses_outcomes": true,
+    "outer_test_used_for_fit_or_selection": false,
+    "profiles": [
+      {
+        "name": "small",
+        "feature_budget": 64,
+        "max_depth": 2,
+        "max_leaf_nodes": 4,
+        "min_samples_leaf": 50
+      },
+      {
+        "name": "medium",
+        "feature_budget": 128,
+        "max_depth": 3,
+        "max_leaf_nodes": 8,
+        "min_samples_leaf": 30
+      },
+      {
+        "name": "large",
+        "feature_budget": 256,
+        "max_depth": 4,
+        "max_leaf_nodes": 16,
+        "min_samples_leaf": 20
+      }
+    ],
+    "profile_selection": "three_inner_expanding_folds_then_nonbaseline_one_standard_error_rule",
+    "baseline_candidate_in_inner_selection": false,
+    "tree_leaf_policy": "best_nonbaseline_duration_when_leaf_predicted_uplift_positive_else_CONTROL_85N",
+    "all_nonpositive_tree_fallback": "best_train_leaf_still_enters_outer_oof_as_nonbaseline_exploration",
+    "missing_semantics": "UNOBSERVED_never_matches_positive_or_negated_literal",
+    "rule_form": "OR_leaf_clauses_grouped_by_action_with_ordered_first_match_across_actions",
+    "random_seed": 20260812
+  },
+  "inference_contract": {
+    "primary_weighting": "equal_UTC_day_of_campaign_equal_opportunity_value",
+    "sensitivity_weighting": "campaign_equal_pooled",
+    "paired_hierarchy": [
+      "M0_absolute",
+      "M1_minus_M0",
+      "M2_minus_M1"
+    ],
+    "same_selected_action_contrast": "exact_zero_even_when_absolute_arm_is_censored",
+    "different_selected_actions": "identified_only_when_both_selected_arms_are_supported",
+    "simultaneous_method": "shared_UTC_day_Webb_wild_max_t",
+    "bootstrap_draws": 99999,
+    "confidence": 0.95,
+    "seed": 20260812,
+    "valid_terminal_bounds_available": false,
+    "promotion_when_bounds_unavailable": false
+  },
+  "code_bindings": [
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_persistent_policy_v3_oof.py",
+      "sha256": "abb308976a976b161321017f7c1a1a8936547e8d8d593bd1c2e3a9bc1ebaaa63"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_modeled_oof.py",
+      "sha256": "23a8a67e41421b64742fb0f0fd08e74ce794f1b94dba1137138daa12da3d3ab7"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "f196dd3d0924e30e58dd62dcc3f73c9d452ab75a38397d213906f0a352e986db"
+    }
+  ],
+  "library_versions": {
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "pyarrow": "24.0.0",
+    "python": "3.12.13",
+    "scikit_learn": "1.9.0"
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "execution_identity_sha256": "6265510d5dabeda208040164ddff3485a786915a8727b6e2f732922da1e49a7f"
+}

@@ -1,0 +1,127 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_persistent_policy_v3.design.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_persistent_policy_v3",
+  "created_at_utc": "2026-08-12T00:00:00Z",
+  "status": "design_only_execution_not_frozen",
+  "research_type": "outcome_informed_exploratory_successor",
+  "predecessor_boundary": {
+    "strict_historical_labels": "blocked_non_identifiable_same_millisecond_trade_book_ordering",
+    "modeled_queue_one_shot": "limited_search_outer_oof_no_pass",
+    "predecessor_interpretation_errata": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_interpretation_errata_20260812.json",
+    "predecessor_development_may_be_reused_as_fresh_outer_evidence": false,
+    "predecessor_numeric_results_modified": false
+  },
+  "research_mapping": {
+    "input": "causal multichannel market plus order, inventory, campaign, and cooldown state",
+    "model": "side-specific multi-rule ordered AND_OR_NOT duration policy with observed-state guards",
+    "output": "one cooldown duration at each eligible exposure-increasing fill",
+    "one_shot_label": "assignment_to_joint_washout_terminal_USDC_value_by_duration",
+    "policy_reward": "repeated_policy_full_path_terminal_and_closed_campaign_USDC_value",
+    "control": "CONTROL_85N",
+    "reducing_quote_changed": false
+  },
+  "evidence_lanes": {
+    "research_supported": {
+      "label_requirement": "order_identified_receive_time_or_equivalent_strict_queue_evidence",
+      "historical_same_millisecond_tie_break_allowed": false,
+      "modeled_queue_may_substitute": false
+    },
+    "owner_exploratory": {
+      "modeled_queue_allowed": true,
+      "permanent_label": "owner_risk_accepted_modelled_queue_exploration",
+      "may_grant_live_authority_without_order_identified_transport": false
+    },
+    "lanes_may_be_pooled": false
+  },
+  "feature_family_hierarchy": {
+    "primary_order": [
+      "M0_absolute",
+      "paired_M1_minus_M0",
+      "paired_M2_minus_M1",
+      "paired_continuous_minus_boolean"
+    ],
+    "M1_requires": [
+      "M1_absolute_positive_simultaneous_lower_bound",
+      "paired_M1_minus_M0_positive_simultaneous_lower_bound"
+    ],
+    "M2_requires": [
+      "M2_absolute_positive_simultaneous_lower_bound",
+      "paired_M2_minus_M1_positive_simultaneous_lower_bound"
+    ],
+    "continuous_comparator_role": "measure_information_loss_from_boolean_thresholding",
+    "independent_absolute_cell_any_pass_forbidden": true,
+    "BUY_SELL_pooled": false
+  },
+  "search_contract_before_successor_outcomes": {
+    "predicate_prevalence_and_three_state_missingness_audit_required": true,
+    "outcome_blind_fixed_hash_subset_as_entire_architecture_claim_forbidden": true,
+    "predicate_selection_may_use_inner_chronological_training_only": true,
+    "outer_test_predicate_selection_forbidden": true,
+    "multi_rule_ordered_candidates_required": true,
+    "single_rule_only_search_forbidden": true,
+    "literal_clause_rule_and_policy_budgets": "must_be_frozen_in_execution_amendment_after_compute_benchmark_before_successor_outcome_read",
+    "continuous_state_comparator_required": true
+  },
+  "distribution_audit": {
+    "required_dimensions": [
+      "side",
+      "opener_add_role",
+      "consecutive_fill_units",
+      "UTC_hour",
+      "censoring_reason",
+      "predicate_prevalence",
+      "three_state_missingness",
+      "continuous_feature_SMD",
+      "continuous_feature_PSI"
+    ],
+    "outer_fold_train_test_audit_required": true,
+    "source_selected_subset_must_remain_separate": true
+  },
+  "censoring": {
+    "preferred": "D_plus_1_or_continuous_state_carryover_to_joint_washout",
+    "fallback": "pre_frozen_partial_identification_bounds",
+    "complete_case_filtering": false,
+    "forced_fixed_terminal_timeout": false
+  },
+  "inference": {
+    "cluster_unit": "UTC_day",
+    "campaign_total_training_weight": 1.0,
+    "primary_point_estimand": "equal_UTC_day_mean_of_campaign_equal_uplift",
+    "campaign_weighted_sensitivity_required": true,
+    "support_requires_weighting_sign_consistency": true,
+    "simultaneous_method": "paired_day_cluster_max_t_resampling_over_side_and_frozen_hierarchy_family",
+    "normal_1_96_only_confirmatory": false,
+    "small_cluster_adjustment_required": true
+  },
+  "data_governance": {
+    "default_full_path_denominator": "current_frozen_50_day_baseline_panel",
+    "prefix40_added10_pooled50_reported_separately": true,
+    "added10_is_late_diagnostic": true,
+    "consumed_prefix40_may_train_outcome_informed_successor": true,
+    "consumed_prefix40_may_grant_fresh_outer_support": false,
+    "retained_good_days_must_be_audited_before_requesting_future_days": true,
+    "source_intersection_and_order_identifiability_frozen_before_outcomes": true,
+    "reduced_support_identity_required_when_sources_missing": true
+  },
+  "stage_dependencies": [
+    "freeze_execution_search_and_inference_contract",
+    "build_order_identified_or_explicit_owner_modeled_one_shot_labels",
+    "run_nested_chronological_feature_hierarchy",
+    "freeze_one_BUY_and_one_SELL_policy_only_for_supported_sides",
+    "run_repeated_policy_python_cpp_parity",
+    "run_BUY_only_SELL_only_and_joint_50_day_full_path_AB",
+    "run_restart_aware_continuous_confirmation",
+    "run_receive_feature_ready_transport",
+    "consider_bounded_reversible_live_canary"
+  ],
+  "permissions": {
+    "successor_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "contract_canonical_sha256": "86e60514f7188080b0ffb8c455f217757c74400926577c5978b470761542cd34"
+}
