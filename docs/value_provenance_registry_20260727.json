@@ -1,0 +1,951 @@
+{
+  "schema_version": "narrowgate_value_provenance.v2",
+  "as_of_utc": "2026-07-28",
+  "status": "historical_provenance_snapshot_no_current_live_authority",
+  "current_operational_authority_pointer": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+  "current_operational_identity_at_last_audit": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+  "entry_live_authority_flags_effective_for_current_runtime": false,
+  "scope": "Decision-relevant training, formal tick replay, live baseline, and placement-fill-CIF values. This registry is not a claim that every diagnostic column in the repository is listed.",
+  "classes": {
+    "theory_or_identity": "A mathematical identity, dimensional requirement, or a model structure taken from theory. Theory may specify the form without identifying its numerical parameters.",
+    "empirical_direct_estimate": "Measured or fitted directly from frozen historical/replay/live observations without choosing a strategy action or operating value. Valid only for the recorded data, code, split, and environment identity.",
+    "empirical_policy_selection": "Selected among candidate parameters, thresholds, artifacts, or policy values using historical/replay/live outcomes. It is not a market constant and must be revalidated when the policy, data, split, or environment changes.",
+    "judgmental_engineering": "Chosen by the project for safety, support, regularization, governance, or operational convenience. It is not implied by a theorem or learned uniquely from data.",
+    "exchange_or_account_rule": "Specified by the venue, instrument, or fee tier and expected to be refreshed from exchange metadata.",
+    "hybrid": "Combines a theoretical form with empirical inputs and/or judgmental bounds. The components are listed explicitly."
+  },
+  "family_display_names": {
+    "placement_fill_cif_v4": "fixed_horizon_v4",
+    "placement_fill_full_curve_competing_cif_v4": "full_curve_competing_v4",
+    "placement_fill_policy_clock_race_v1": "policy_clock_race_v1"
+  },
+  "live_authority_semantics": "Historical snapshot field only. A true value records applicability at this registry's 2026-07-28 snapshot and grants no current authority. Current runtime authority resolves exclusively through operational_baseline_current.json and its bound immutable identity.",
+  "entries": [
+    {
+      "id": "equity_accounting",
+      "area": "pnl",
+      "value_or_formula": "equity_usdc = cash_usdc + inventory_btc * mark_usdc_per_btc",
+      "unit": "USDC",
+      "class": "theory_or_identity",
+      "source": "strategy/inventory_manager.py and models/backtest_tick.py",
+      "live_authority": true,
+      "note": "Accounting identity; it does not imply that a strategy has positive expected value."
+    },
+    {
+      "id": "maker_signed_fill_value",
+      "area": "pnl",
+      "value_or_formula": "qty_btc * (maker_signed_future_price_move_usdc_per_btc - maker_fee_rate * fill_price)",
+      "unit": "USDC",
+      "class": "theory_or_identity",
+      "source": "models/backtest_tick.py",
+      "live_authority": true,
+      "note": "The price-relative spread capture is already inside maker-signed markout; adding half-spread again would double count it."
+    },
+    {
+      "id": "inventory_risk_scale",
+      "area": "quote_core",
+      "value_or_formula": "sqrt(sigma_sq_price_per_s * horizon_s) * abs(inventory_btc)",
+      "unit": "USDC",
+      "class": "theory_or_identity",
+      "source": "strategy/quote_core.py",
+      "live_authority": true,
+      "note": "Dimensional contract for absolute-price variance."
+    },
+    {
+      "id": "as_glft_quote_form",
+      "area": "quote_core",
+      "value_or_formula": "reservation = fair - q * gamma * sigma_sq * H; spread includes gamma*sigma_sq*H and a log(1+gamma/kappa) term",
+      "unit": "USDC/BTC",
+      "class": "hybrid",
+      "source": "strategy/quote_core.py",
+      "components": {
+        "theory_or_identity": [
+          "functional form",
+          "variance integration over H"
+        ],
+        "empirical_direct_estimate": [
+          "sigma_sq",
+          "P3 kappa_eff and delta_star"
+        ],
+        "empirical_policy_selection": [
+          "gamma"
+        ],
+        "judgmental_engineering": [
+          "H",
+          "caps",
+          "regime multipliers"
+        ]
+      },
+      "live_authority": true
+    },
+    {
+      "id": "fill_probability_decomposition",
+      "area": "placement_fill_cif",
+      "value_or_formula": "P(fill by h | do(a), x0) = P(activation | do(a), x0) * P(fill before min(h,cancel_ACK) | activation, do(a), x0)",
+      "unit": "probability",
+      "class": "theory_or_identity",
+      "source": "research_06_placement_fill_cif/audit/direct_fill_cif.py",
+      "live_authority": false,
+      "note": "KEEP/REPLACE has a different risk origin and is intentionally excluded."
+    },
+    {
+      "id": "perfect_logit_calibration",
+      "area": "placement_fill_cif",
+      "value_or_formula": "logit(Y) = alpha + beta*logit(p_hat); perfect calibration has alpha=0 and beta=1",
+      "unit": "log-odds",
+      "class": "theory_or_identity",
+      "source": "research_06_placement_fill_cif/audit/direct_fill_cif.py",
+      "live_authority": false,
+      "note": "Theory gives the ideal point, not an acceptable finite-sample tolerance."
+    },
+    {
+      "id": "brier_score",
+      "area": "placement_fill_cif",
+      "value_or_formula": "mean((p_hat-y)^2)",
+      "unit": "probability squared",
+      "class": "theory_or_identity",
+      "source": "research_06_placement_fill_cif/audit/direct_fill_cif.py",
+      "live_authority": false
+    },
+    {
+      "id": "p3_empirical_survival",
+      "area": "quote_core",
+      "value_or_formula": {
+        "delta_star": 13.999085981719634,
+        "kappa_eff": 0.0673564264343969
+      },
+      "unit": {
+        "delta_star": "USDC/BTC, approximately 140 ticks at tick=0.1",
+        "kappa_eff": "(USDC/BTC)^-1"
+      },
+      "class": "empirical_direct_estimate",
+      "source": "models/saved_btcusdc_causal_v7_time_calendar_semantics_20260726/fill_prob_params.json",
+      "artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+      "live_authority": true,
+      "note": "kappa_eff is a local distance slope of log touch probability, not an order-arrival intensity."
+    },
+    {
+      "id": "queue_ahead_calibration_q070",
+      "area": "replay_matcher",
+      "value_or_formula": "q0.70 queue-ahead artifact",
+      "unit": "visible quantity multiplier/model parameters",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+      "live_authority": false,
+      "note": "Calibrates public-book replay against live outcomes; true exchange queue priority remains latent."
+    },
+    {
+      "id": "aws_tokyo_latency_profile",
+      "area": "replay_matcher",
+      "value_or_formula": "avg/captured/p95/p99 empirical latency paths",
+      "unit": "milliseconds",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+      "environment_id": "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260712",
+      "live_authority": false,
+      "note": "Must be replaced when instance type, region, network path, or gateway changes."
+    },
+    {
+      "id": "execution_book_visibility_delay",
+      "area": "replay_matcher",
+      "value_or_formula": "empirical receive-time visibility distribution with fixed replay seed",
+      "unit": "milliseconds",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260719/day_20260718/quote_decisions_2026-07-18.csv",
+      "environment_id": "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260718",
+      "live_authority": false
+    },
+    {
+      "id": "gamma_live",
+      "area": "quote_core",
+      "value_or_formula": 0.046,
+      "unit": "model coefficient under current quote-core convention",
+      "class": "empirical_policy_selection",
+      "source": "${NARROWGATE_LIVE_CONFIG}; selected by 2026-07-09 retained39 Sobol baseline",
+      "live_authority": true,
+      "note": "Historically selected, not theoretically optimal and not invariant across quote horizons."
+    },
+    {
+      "id": "kappa_legacy_fallback",
+      "area": "quote_core",
+      "value_or_formula": 0.073,
+      "unit": "(USDC/BTC)^-1 under the legacy convention",
+      "class": "empirical_policy_selection",
+      "source": "${NARROWGATE_LIVE_CONFIG}; 2026-05-16 sweep",
+      "live_authority": false,
+      "note": "Current effective path uses the empirical P3 artifact because p3_kappa_eff_override=0."
+    },
+    {
+      "id": "order_size_live",
+      "area": "risk_and_execution",
+      "value_or_formula": 0.001,
+      "unit": "BTC",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Risk/liquidity budget; constrained by lot and min-notional rules, not derived by market-making theory."
+    },
+    {
+      "id": "max_inventory_live",
+      "area": "risk_and_execution",
+      "value_or_formula": 0.026,
+      "unit": "BTC",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}; 2026-05-16 sweep",
+      "components": {
+        "empirical_policy_selection": [
+          "historical sweep outcome"
+        ],
+        "judgmental_engineering": [
+          "accepted inventory risk budget"
+        ]
+      },
+      "live_authority": true,
+      "note": "A selected risk budget is not evidence that increasing it creates alpha."
+    },
+    {
+      "id": "quote_horizon_live",
+      "area": "quote_core",
+      "value_or_formula": 1.0,
+      "unit": "seconds",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Required explicitly for units; the numerical value is an engineering/model-horizon choice."
+    },
+    {
+      "id": "requote_interval_live",
+      "area": "execution",
+      "value_or_formula": 5.0,
+      "unit": "seconds",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "components": {
+        "empirical_policy_selection": [
+          "historical D5-10 behavior"
+        ],
+        "judgmental_engineering": [
+          "fallback timer and churn budget"
+        ]
+      },
+      "live_authority": true
+    },
+    {
+      "id": "fill_cooldown_live",
+      "area": "lifecycle_policy",
+      "value_or_formula": 85.0,
+      "unit": "seconds",
+      "class": "empirical_policy_selection",
+      "source": "${NARROWGATE_LIVE_CONFIG}; 2026-07-10 execution+fill85 baseline",
+      "live_authority": true,
+      "note": "No theory implies 85 seconds. It is an empirically selected operational baseline whose action uplift has not been established universally."
+    },
+    {
+      "id": "max_pair_spread_live",
+      "area": "risk_and_execution",
+      "value_or_formula": 20,
+      "unit": "bps of mid for total pair spread",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}; 2026-07-09 Sobol baseline",
+      "components": {
+        "empirical_policy_selection": [
+          "historical selected value"
+        ],
+        "judgmental_engineering": [
+          "safety cap"
+        ]
+      },
+      "live_authority": true
+    },
+    {
+      "id": "buy_fill_selection_threshold",
+      "area": "fill_selection",
+      "value_or_formula": 0.44,
+      "unit": "model score",
+      "class": "empirical_policy_selection",
+      "source": "${NARROWGATE_LIVE_CONFIG} and saved BUY fill-selection artifact",
+      "live_authority": true,
+      "note": "A score threshold, not an absolute fill probability. Its action semantics and artifact identity must remain explicit."
+    },
+    {
+      "id": "placement_cells",
+      "area": "placement_fill_cif",
+      "value_or_formula": "BUY/SELL x opener/add/reducing x 1s/5s/10s = 18 calibration/evaluation cells; current/-1/+1 placement actions pooled inside each cell",
+      "unit": "research design",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "live_authority": false,
+      "status": "historical_fixed_horizon_family_only",
+      "family_id": "placement_fill_cif_v4",
+      "family_display_id": "fixed_horizon_v4",
+      "note": "Superseded for new modeling by the complete full-curve CIF. The 1s/5s/10s cuts remain historical reports, not natural horizons or independent gates."
+    },
+    {
+      "id": "placement_full_curve_estimand_v3",
+      "area": "placement_fill_cif",
+      "value_or_formula": "P(T_fill <= t and T_fill < T_cancelACK | x,a), using fill and cancel-ACK cause hazards in one discrete survival process",
+      "unit": "probability curve",
+      "class": "theory_or_identity",
+      "source": "research_06_placement_fill_cif/audit/full_curve_fill_cif.py and research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v3_spec_20260727.json",
+      "live_authority": false,
+      "note": "Placement only. KEEP, REPLACE, and campaign repair have different risk origins and remain separate estimands."
+    },
+    {
+      "id": "placement_full_curve_report_horizons_v3",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "p25_ms": 5010,
+        "p50_ms": 5816,
+        "p75_ms": 7900,
+        "maximum_support_p99_ms": 34500
+      },
+      "unit": "milliseconds",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_cif_v3_development_20260727/report.json",
+      "artifact_sha256": "884a978beaeac48d2d1f94d275cd74ed3474f2019b5e8970e410dd0740734a6a",
+      "live_authority": false,
+      "note": "Quantiles of Development active exposure through cancel ACK. They are report points, not separate targets or universal strategy horizons."
+    },
+    {
+      "id": "placement_full_curve_grid_and_sampling_v3",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "risk_grid_ms": 100,
+        "hash_stratified_non_event_intervals": 8,
+        "distance_monotonicity_tolerance": 1e-05
+      },
+      "unit": "engineering model configuration",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_full_curve_cif_v2_spec_20260727.json and research_06_placement_fill_cif/audit/evaluate_full_curve_fill_cif.py",
+      "live_authority": false,
+      "note": "The 100ms grid matches normalized L2 resolution; K=8 is a computational quadrature budget; 1e-5 absorbs float32 numerical dust. None is theory-derived."
+    },
+    {
+      "id": "placement_full_curve_v3_development_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": "All six side-role curves have positive day-clustered integrated Brier-improvement lower bounds across empirical p25/p50/p75; zero time or distance violations above 1e-5",
+      "unit": "frozen empirical evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_cif_v3_development_20260727/curve_evaluation.json",
+      "artifact_sha256": "223c352654655a97fb1fec7137103bdb2657c0ba56af69f63d1cb1fc244e7e47",
+      "live_authority": false,
+      "note": "Development diagnostic only. Separate cancel-ACK OOF CIF is not exported, no curve-level gate was frozen, and Validation/holdout remain unread."
+    },
+    {
+      "id": "placement_full_curve_competing_gate_v4",
+      "area": "placement_fill_cif",
+      "value_or_formula": "Six side-role curves integrated over empirical p25/p50/p75: probability identities + support + positive joint/cause-specific day-cluster Brier lower bounds + fill/cancel calibration-bias intervals containing zero",
+      "unit": "pre-frozen curve qualification contract",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_full_curve_competing_cif_v4_spec_20260727.json",
+      "components": {
+        "theory_or_identity": [
+          "probability simplex",
+          "cumulative incidence monotonicity",
+          "three-state and binary Brier proper-score forms"
+        ],
+        "empirical_direct_estimate": [
+          "OOF score improvements",
+          "event support",
+          "day-cluster calibration-bias intervals"
+        ],
+        "judgmental_engineering": [
+          "95% confidence",
+          "20 OOF days",
+          "100 events per cause",
+          "1e-6 simplex and 1e-5 monotonicity tolerances"
+        ]
+      },
+      "live_authority": false,
+      "family_id": "placement_fill_full_curve_competing_cif_v4",
+      "family_display_id": "full_curve_competing_v4",
+      "note": "A Development pass could only recommend one-time Validation access through the panel controller; it could never authorize an action or live deployment."
+    },
+    {
+      "id": "placement_full_curve_competing_v4_development_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "curves_passed": 2,
+        "curves_total": 6,
+        "identity_pass": true,
+        "support_pass_all": true,
+        "proper_score_pass_all": true,
+        "fill_calibration_pass_all": true,
+        "cancel_ack_calibration_failed": [
+          "BUY opener",
+          "BUY reducing",
+          "SELL opener",
+          "SELL reducing"
+        ],
+        "validation_read": false,
+        "sealed_holdout_read": false
+      },
+      "unit": "frozen Development evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_full_curve_competing_cif_v4_development_20260727/curve_evaluation.json",
+      "artifact_sha256": "ee962c3543afe6c333a83aabe70068809a6368e0263e7d1ef9c998c6d691f2a9",
+      "live_authority": false,
+      "family_id": "placement_fill_full_curve_competing_cif_v4",
+      "family_display_id": "full_curve_competing_v4",
+      "status": "closed_on_development",
+      "note": "Cancel-ACK integrated calibration bias was about -0.75 to -1.11 percentage points for opener/reducing curves; do not read full_curve_competing_v4 Validation or relax the frozen gate."
+    },
+    {
+      "id": "placement_role_calibrated_curve_v5_method",
+      "area": "placement_fill_cif",
+      "value_or_formula": "Within each outer train, fit the common side hazard on earlier days and fit cause-specific opener/add/reducing logit offsets on the final five train-only days",
+      "unit": "nested calibration procedure",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_role_calibrated_competing_cif_v5_spec_20260727.json",
+      "components": {
+        "theory_or_identity": [
+          "outer-test exclusion",
+          "past-only temporal ordering"
+        ],
+        "judgmental_engineering": [
+          "five calibration days",
+          "role-specific intercept-only map",
+          "no-fallback rule"
+        ]
+      },
+      "live_authority": false
+    },
+    {
+      "id": "placement_role_calibrated_curve_v5_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "curves_passed": 2,
+        "curves_total": 6,
+        "cancel_ack_calibration_failed": [
+          "BUY opener",
+          "BUY reducing",
+          "SELL opener",
+          "SELL reducing"
+        ],
+        "validation_read": false,
+        "sealed_holdout_read": false
+      },
+      "unit": "frozen Development evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_role_calibrated_competing_cif_v5_development_20260727/curve_evaluation.json",
+      "artifact_sha256": "dd2644d7ad6de06f15d93b8caae1cb260285d0b42552fea30441468babeec780",
+      "live_authority": false,
+      "status": "closed_on_development",
+      "note": "Reducing calibration improved, opener calibration worsened, and the unchanged full_curve_competing_v4 gate still failed. Static role offsets did not transfer the baseline cancel policy clock."
+    },
+    {
+      "id": "placement_nested_role_calibrated_curve_v6_method",
+      "area": "placement_fill_cif",
+      "value_or_formula": "Within every outer train, fit role-by-cause weighted Platt maps from past-only inner-expanding OOF interval scores; refit the base hazard on all outer-train days and apply both only to the later outer test",
+      "unit": "nested calibration procedure",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_nested_role_competing_cif_v6_spec_20260727.json",
+      "components": {
+        "theory_or_identity": [
+          "outer-test exclusion",
+          "past-only inner and outer temporal ordering",
+          "positive calibration slope preserves raw-score ordering"
+        ],
+        "empirical_direct_estimate": [
+          "role/cause calibration coefficients"
+        ],
+        "judgmental_engineering": [
+          "10 inner train days",
+          "one embargo day",
+          "three inner test days",
+          "Platt functional form and regularization",
+          "20 event and 100 non-event interval support floors"
+        ]
+      },
+      "live_authority": false
+    },
+    {
+      "id": "placement_nested_role_calibrated_curve_v6_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "curves_passed": 0,
+        "curves_total": 6,
+        "identity_pass": true,
+        "support_pass_all": true,
+        "proper_score_pass_all": true,
+        "cancel_ack_bias_range": [
+          -0.04385109411668964,
+          -0.0343400935914057
+        ],
+        "validation_read": false,
+        "sealed_holdout_read": false
+      },
+      "unit": "frozen Development evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_nested_role_competing_cif_v6_development_20260727/curve_evaluation.json",
+      "artifact_sha256": "c105cf4f9edd6cae88f013633afc8f8eaddc90a2f871316ece0e6f9a8e369ba3",
+      "live_authority": false,
+      "status": "closed_on_development",
+      "note": "The inner-OOF role maps did not transport to full outer-train base-model refits; all six cancel-ACK CIFs were materially underpredicted. Do not read Validation or tune this family on its locked panels."
+    },
+    {
+      "id": "placement_policy_clock_race_v1_method",
+      "area": "placement_fill_cif",
+      "value_or_formula": "Replay the frozen baseline cancel-request timestamp and reason, fit request-to-ACK latency separately on past-only data, allow fill until ACK, and derive fill/cancel/no-event CIF from the explicit race",
+      "unit": "placement lifecycle procedure",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_policy_clock_race_v1_fit_spec_20260728.json",
+      "components": {
+        "theory_or_identity": [
+          "cancel ACK cannot precede request",
+          "an order remains fillable until ACK",
+          "fill, cancel ACK, and no-event probabilities share one simplex"
+        ],
+        "empirical_direct_estimate": [
+          "Development exposure quantiles",
+          "past-only side-role ACK-latency PMFs",
+          "state-dependent and exposure-only fill hazards"
+        ],
+        "judgmental_engineering": [
+          "100ms fill grid",
+          "1ms ACK grid and 1000ms cap",
+          "model capacity, priors, support, and confidence gates"
+        ]
+      },
+      "live_authority": false,
+      "family_id": "placement_fill_policy_clock_race_v1",
+      "family_display_id": "policy_clock_race_v1",
+      "note": "This is policy-path-conditioned offline evidence, not an online cancel-request forecast or active-order KEEP/REPLACE model."
+    },
+    {
+      "id": "placement_policy_clock_race_v1_development_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "policy_request_parity_pass": true,
+        "ack_latency_curves_passed": 12,
+        "ack_latency_curves_total": 12,
+        "identity_pass": true,
+        "support_pass_all": true,
+        "joint_brier_lower_bound_positive_curves": 6,
+        "fill_brier_lower_bound_positive_curves": 6,
+        "absolute_fill_calibration_curves_passed": 3,
+        "cancel_ack_brier_curves_passed": 0,
+        "integrated_cancel_ack_calibration_curves_passed": 0,
+        "validation_read": false,
+        "sealed_holdout_read": false
+      },
+      "unit": "frozen Development evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_policy_clock_race_v1_development_20260728/curve_evaluation.json",
+      "artifact_sha256": "4b2532a955ed0147b0904a10b6c42746b94b092119c789a4eb277ad99a1ea39b",
+      "live_authority": false,
+      "family_id": "placement_fill_policy_clock_race_v1",
+      "family_display_id": "policy_clock_race_v1",
+      "status": "closed_on_development",
+      "note": "The lifecycle decomposition and fill ranking improved, but the full absolute race CIF did not calibrate. This closes v1 without rejecting the placement fill estimand."
+    },
+    {
+      "id": "retired_intercept_gate_v1",
+      "area": "placement_fill_cif",
+      "value_or_formula": "abs(logit calibration intercept) <= 0.01",
+      "unit": "log-odds",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v1_spec_20260726.json",
+      "live_authority": false,
+      "status": "retired_for_v4_qualification_but_preserved_as_frozen_v1_evidence",
+      "note": "Not theory-derived, not tied to USDC action error, and much tighter than observed day-level base-rate drift."
+    },
+    {
+      "id": "placement_slope_gate",
+      "area": "placement_fill_cif",
+      "value_or_formula": "0.8 <= calibration slope <= 1.2",
+      "unit": "dimensionless",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "live_authority": false,
+      "note": "Centered on the theoretical ideal beta=1; the width is a project tolerance."
+    },
+    {
+      "id": "placement_support_gates",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "minimum_events": 100,
+        "minimum_oof_days": 8,
+        "minimum_daily_rank_direction_fraction": 0.6,
+        "bootstrap_confidence": 0.95
+      },
+      "unit": "research governance",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "live_authority": false
+    },
+    {
+      "id": "placement_empirical_drift_envelope",
+      "area": "placement_fill_cif",
+      "value_or_formula": "cell absolute calibration bias must remain within a Development day-level drift envelope",
+      "unit": "probability",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/audit/direct_fill_cif.py and research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "components": {
+        "empirical_direct_estimate": [
+          "observed day-level base-rate drift by side/role/horizon"
+        ],
+        "judgmental_engineering": [
+          "chosen envelope quantile and pass semantics"
+        ]
+      },
+      "live_authority": false,
+      "note": "Qualifies prediction transfer/shadow use only; it is not an economic action-error budget."
+    },
+    {
+      "id": "placement_model_hyperparameters",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "learning_rate": 0.05,
+        "max_iter": 160,
+        "max_depth": 2,
+        "min_samples_leaf": 200,
+        "l2_regularization": 10.0,
+        "max_bins": 127,
+        "random_state": 20260726
+      },
+      "unit": "model configuration",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/audit/direct_fill_cif.py",
+      "live_authority": false,
+      "note": "Regularization and reproducibility choices; not market constants."
+    },
+    {
+      "id": "placement_one_tick_resolution_development",
+      "area": "placement_fill_cif",
+      "value_or_formula": "fraction of paired cohorts with nonzero predicted closer-minus-farther probability: approximately 0.23 to 0.33 by side/role/horizon; median action delta is zero",
+      "unit": "fraction and probability",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v2_development_20260727/oof_predictions.parquet",
+      "live_authority": false,
+      "note": "The shallow binned tree is useful for state ranking but often cannot distinguish adjacent one-tick actions. This is an action-resolution diagnostic, not a prediction-transfer gate."
+    },
+    {
+      "id": "placement_shadow_gate",
+      "area": "placement_fill_cif",
+      "value_or_formula": "support + positive day-cluster Brier improvement + slope + daily rank + empirical drift envelope",
+      "unit": "qualification contract",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "components": {
+        "theory_or_identity": [
+          "proper-scoring and calibration diagnostics"
+        ],
+        "empirical_direct_estimate": [
+          "OOF metric values and drift envelope"
+        ],
+        "judgmental_engineering": [
+          "confidence level, tolerances, all-cell requirement"
+        ]
+      },
+      "live_authority": false,
+      "note": "Passing authorizes a frozen shadow prediction artifact, not a quote action."
+    },
+    {
+      "id": "placement_fixed_horizon_v4_validation_result",
+      "area": "placement_fill_cif",
+      "value_or_formula": {
+        "cells_passed": 13,
+        "cells_total": 18,
+        "validation_days": 10,
+        "placement_cohorts": 167300,
+        "sealed_holdout_read": false
+      },
+      "unit": "frozen empirical evidence",
+      "class": "empirical_direct_estimate",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v4_validation_20260727/report.json",
+      "artifact_sha256": "9026c194d16ecd8ff537dc6e3ca6c4087182804371b30db317f7e483eb7d59ca",
+      "live_authority": false,
+      "family_id": "placement_fill_cif_v4",
+      "family_display_id": "fixed_horizon_v4",
+      "note": "Five cells failed calibration-slope transfer after the v1 0.01 point-intercept rule was removed. The family stopped before sealed holdout and cannot authorize absolute EV or an action."
+    },
+    {
+      "id": "placement_action_value_gate",
+      "area": "placement_fill_cif",
+      "value_or_formula": "V(a|x)=P_fill(a|x)*E(net_fill_value|fill,a,x)-incremental_campaign_cost(a,x)-explicit_queue_reset_or_churn_cost(a,x)",
+      "unit": "USDC per decision/opportunity",
+      "class": "hybrid",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "components": {
+        "theory_or_identity": [
+          "expected-value decomposition without double counting"
+        ],
+        "empirical_direct_estimate": [
+          "fill probability, conditional fill value, campaign and queue effects"
+        ],
+        "judgmental_engineering": [
+          "promotion confidence and acceptable tail/activity budgets"
+        ]
+      },
+      "live_authority": false,
+      "note": "Requires known-propensity randomized replay/OPE; prediction qualification alone cannot identify it."
+    },
+    {
+      "id": "normalized_l2_sampling_contract",
+      "area": "training_and_replay_data",
+      "value_or_formula": "native snapshot/delta reconstructed causally and sampled to normalized 100ms states; formal days require warmup, sequence, and coverage checks",
+      "unit": "data contract",
+      "class": "hybrid",
+      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_20260727/manifest.json",
+      "components": {
+        "exchange_or_account_rule": [
+          "exchange sequence semantics"
+        ],
+        "empirical_direct_estimate": [
+          "observed coverage and gap quality"
+        ],
+        "judgmental_engineering": [
+          "100ms sampling interval and formal eligibility thresholds"
+        ]
+      },
+      "live_authority": false
+    },
+    {
+      "id": "placement_panel_split",
+      "area": "training_and_replay_data",
+      "value_or_formula": "40 Development days, 1-day embargo, 10 Validation days, 1-day embargo, 10 sealed-holdout days, then four late-evidence days",
+      "unit": "research governance",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json",
+      "live_authority": false,
+      "note": "Dates are precommitted panel roles; they are not market constants."
+    },
+    {
+      "id": "daily_terminal_mtm",
+      "area": "backtest_metrics",
+      "value_or_formula": "cash + inventory * terminal_mark at the replay boundary",
+      "unit": "USDC",
+      "class": "hybrid",
+      "source": "models/backtest_tick.py",
+      "components": {
+        "theory_or_identity": [
+          "equity accounting"
+        ],
+        "judgmental_engineering": [
+          "daily replay boundary and terminal mark convention"
+        ]
+      },
+      "live_authority": false,
+      "note": "A censored end-of-day position is MTM, not a realized flat-to-flat campaign."
+    },
+    {
+      "id": "campaign_outcome_metrics",
+      "area": "backtest_metrics",
+      "value_or_formula": "flat-to-flat terminal PnL; censored terminal MTM; MAE; duration; repair time; inventory-time",
+      "unit": "USDC, seconds, BTC-seconds",
+      "class": "hybrid",
+      "source": "models/audit/order_lifecycle.py and models/backtest_tick.py",
+      "components": {
+        "theory_or_identity": [
+          "cashflow and inventory integration"
+        ],
+        "judgmental_engineering": [
+          "campaign boundary, censoring, tail, and repair definitions"
+        ]
+      },
+      "live_authority": false
+    },
+    {
+      "id": "replay_random_path",
+      "area": "replay_matcher",
+      "value_or_formula": "keyed_splitmix64_v1 with frozen seeds; all compared arms share a common random path",
+      "unit": "reproducibility contract",
+      "class": "judgmental_engineering",
+      "source": "research_06_placement_fill_cif/docs/placement_fill_cif_v4_spec_20260727.json and models/backtest_tick.py",
+      "live_authority": false,
+      "note": "A seed is not alpha; it reduces paired simulation variance."
+    },
+    {
+      "id": "regime_scaling_live",
+      "area": "quote_core",
+      "value_or_formula": {
+        "vol_baseline": 3.0,
+        "gamma_scale_min": 0.5,
+        "gamma_scale_max": 2.0,
+        "gamma_liquidity_scale_min": 0.5,
+        "gamma_liquidity_scale_max": 3.0
+      },
+      "unit": "price volatility input and dimensionless multipliers",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "components": {
+        "empirical_direct_estimate": [
+          "rolling volatility/liquidity state and baseline scale"
+        ],
+        "judgmental_engineering": [
+          "clipping bounds and response mapping"
+        ]
+      },
+      "live_authority": true
+    },
+    {
+      "id": "quote_shape_controls_live",
+      "area": "quote_core",
+      "value_or_formula": {
+        "kappa_ratio": 1.1,
+        "vol_power": 1.5,
+        "ber_guard_threshold": 1.2,
+        "ber_spread_multiplier": 2.0,
+        "dynamic_cap_base_bps": 20.0,
+        "dynamic_cap_alpha": 0.25,
+        "dynamic_cap_max_multiplier": 2.0
+      },
+      "unit": "mixed dimensionless multipliers and bps",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "components": {
+        "empirical_direct_estimate": [
+          "observed market state"
+        ],
+        "empirical_policy_selection": [
+          "historically selected kappa ratio"
+        ],
+        "judgmental_engineering": [
+          "volatility exponent, BER threshold/multiplier, cap response and bounds"
+        ]
+      },
+      "live_authority": true,
+      "note": "LVR/AMM literature does not prove vol_power=1.5 for this CLOB."
+    },
+    {
+      "id": "replace_churn_controls_live",
+      "area": "execution",
+      "value_or_formula": {
+        "minimum_price_change_ticks": 15.0,
+        "minimum_interval_ms_exposure_increasing": 1000.0,
+        "minimum_interval_ms_reducing": 125.0
+      },
+      "unit": "ticks and milliseconds",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Operational churn/queue trade-off, not a theoretically optimal timer."
+    },
+    {
+      "id": "markout_ema_live",
+      "area": "fill_selection_and_guards",
+      "value_or_formula": {
+        "horizon_s": 10.0,
+        "ema_span_fills": 50,
+        "spread_scale": 0.2
+      },
+      "unit": "seconds, fill updates, dimensionless scale",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Span 50 is an EMA span, not a 50-fill half-life."
+    },
+    {
+      "id": "adverse_defense_guards_live",
+      "area": "risk_and_lifecycle_policy",
+      "value_or_formula": "adverse and defense markout/toxicity thresholds, 1.5x spread multipliers, pause windows, and emergency overrides",
+      "unit": "mixed score, price, seconds, and multipliers",
+      "class": "hybrid",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "components": {
+        "empirical_direct_estimate": [
+          "live/replay markout and toxicity state"
+        ],
+        "judgmental_engineering": [
+          "thresholds, multipliers, pause durations, emergency boundaries"
+        ]
+      },
+      "live_authority": true,
+      "note": "A guard can be useful risk control without being an action alpha."
+    },
+    {
+      "id": "buy_dynamic_fill_hazard_q90_live",
+      "area": "active_order_policy",
+      "value_or_formula": "BUY exposure-increasing active orders: cancel/re-enter in the frozen adverse-value q90 state; reducing side unchanged",
+      "unit": "policy mapping",
+      "class": "hybrid",
+      "source": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json and ${NARROWGATE_LIVE_CONFIG}",
+      "artifact_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+      "components": {
+        "empirical_direct_estimate": [
+          "dynamic fill-hazard score and score distribution"
+        ],
+        "empirical_policy_selection": [
+          "q90 cutoff"
+        ],
+        "judgmental_engineering": [
+          "BUY-only surface, cancel/re-enter mapping, 100ms exposure, one-tick jump definition"
+        ]
+      },
+      "live_authority": true,
+      "note": "This is the currently deployed active-order hazard family; it is separate from the new placement-fill CIF."
+    },
+    {
+      "id": "risk_limits_live",
+      "area": "risk",
+      "value_or_formula": {
+        "max_daily_loss_usdc": 50.0,
+        "max_position_value_usdc": 3000.0,
+        "emergency_close_drawdown_usdc": 150.0,
+        "circuit_breaker_sigma": 8.0,
+        "pnl_volatility_horizon_s": 300.0
+      },
+      "unit": "USDC, standard-deviation multiple, seconds",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Risk-budget choices. They should be stress-tested but are not estimates of expected alpha."
+    },
+    {
+      "id": "exit_urgency_weights_live",
+      "area": "risk_and_lifecycle_policy",
+      "value_or_formula": {
+        "urgency_strength": 0.5,
+        "time_weight": 0.3,
+        "pnl_weight": 0.3,
+        "signal_weight": 0.4
+      },
+      "unit": "dimensionless weights",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "The weights are an engineering mixture, not statistically identified action values."
+    },
+    {
+      "id": "thirteen_head_ml_runtime",
+      "area": "model_runtime",
+      "value_or_formula": "disabled; empirical P3 remains enabled",
+      "unit": "runtime state",
+      "class": "judgmental_engineering",
+      "source": "${NARROWGATE_LIVE_CONFIG}",
+      "live_authority": true,
+      "note": "Historical 13-head training results do not currently influence live quotes."
+    },
+    {
+      "id": "tick_lot_min_notional",
+      "area": "exchange_contract",
+      "value_or_formula": {
+        "tick_size": 0.1,
+        "lot_size": 0.001,
+        "min_notional_startup_fallback": 5.0
+      },
+      "unit": {
+        "tick_size": "USDC/BTC",
+        "lot_size": "BTC",
+        "min_notional": "USDC"
+      },
+      "class": "exchange_or_account_rule",
+      "source": "${NARROWGATE_LIVE_CONFIG}; refreshed from exchange filters at startup",
+      "live_authority": true
+    },
+    {
+      "id": "fees_live",
+      "area": "exchange_contract",
+      "value_or_formula": {
+        "maker": 0.0,
+        "taker": 0.00036
+      },
+      "unit": "fraction of notional",
+      "class": "exchange_or_account_rule",
+      "source": "${NARROWGATE_LIVE_CONFIG} and account fee tier",
+      "live_authority": true,
+      "note": "Must include commission asset conversion when the charged asset is not USDC."
+    }
+  ]
+}

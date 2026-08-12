@@ -1,0 +1,94 @@
+{
+  "schema_version": "narrowgate.marketdata_storage_relocation.v2",
+  "last_materially_modified": "2026-07-31",
+  "volume": {
+    "device_identifier": "disk5s1",
+    "filesystem": "APFS",
+    "mount_point": "${NARROWGATE_STORAGE_ROOT}",
+    "name": "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}",
+    "size_bytes": 1024191365120,
+    "uuid": "17AF86AF-5BFC-4DCB-9835-48379D2B67B6"
+  },
+  "roots": {
+    "active_marketdata_root": "${NARROWGATE_MARKETDATA_ROOT}",
+    "active_project_data_root": "${NARROWGATE_DATA_ROOT}",
+    "active_cache_root": "${NARROWGATE_CACHE_ROOT}",
+    "legacy_marketdata_root": "${NARROWGATE_RETIRED_MARKETDATA_ROOT}"
+  },
+  "compatibility_symlink": false,
+  "migration_validation": {
+    "checksum_dry_run_exit_code": 0,
+    "final_structure_dry_run_differences": 0,
+    "logical_bytes": 349998927580,
+    "regular_files": 46570,
+    "directories": 6949,
+    "symlinks": 266,
+    "broken_symlinks_preserved": 12,
+    "hardlink_inode_groups": 415,
+    "appledouble_sidecars_removed": 1344
+  },
+  "legacy_copy_deleted": true,
+  "legacy_copy_delete_status": "deleted_after_explicit_confirmation_2026_07_31",
+  "symlink_retarget": {
+    "status": "complete",
+    "links": 266,
+    "old_absolute_targets_remaining": 0,
+    "valid_orico_targets": 254,
+    "known_missing_targets": 12
+  },
+  "final_non_cache_dry_run": {
+    "substantive_payload_differences": 0,
+    "apple_metadata_files_different": 3,
+    "apple_metadata_bytes": 55308,
+    "cache_root_excluded": true,
+    "retargeted_symlink_roots_excluded": true
+  },
+  "cache_split": {
+    "status": "internal_cache_authoritative_external_duplicate_deleted",
+    "legacy_internal_window_cache": "${NARROWGATE_RETIRED_DATA_ROOT}/window_cache",
+    "duplicate_external_window_cache": "${NARROWGATE_DATA_ROOT}/window_cache",
+    "target_internal_window_cache": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "legacy_internal_source_present": false,
+    "target_internal_cache_present": true,
+    "external_duplicate_present": false,
+    "files": 2230,
+    "logical_bytes": 68139019746,
+    "bidirectional_metadata_dry_run_differences": 0
+  },
+  "post_delete_validation": {
+    "checked_on": "2026-07-31",
+    "legacy_marketdata_root_present": false,
+    "external_window_cache_present": false,
+    "internal_cache_present": true,
+    "old_absolute_symlink_targets_remaining": 0,
+    "known_missing_relative_symlink_targets": 12,
+    "orico_free_gib_approx": 519,
+    "internal_volume_free_gib_approx": 288
+  },
+  "post_migration_acquisition": {
+    "source_identity": "tardis_0730_beinan_binance_futures_btcusdc",
+    "available_start_utc": "2026-01-01",
+    "available_end_utc": "2026-07-29",
+    "files": 420,
+    "compressed_bytes": 55996845705,
+    "historical_bad_day_candidates": 67,
+    "raw_repair_ready_days": 67,
+    "formal_good_day_promotions": 0,
+    "native_sequence_eligible": false,
+    "exact_queue_policy_eligible": false
+  },
+  "tardis_archive_layout": {
+    "acquisition_mode": "one_off_historical_delivery",
+    "recurring_daily_source": false,
+    "active_root": "${NARROWGATE_MARKETDATA_ROOT}/tardis",
+    "active_payload_dir": "${NARROWGATE_MARKETDATA_ROOT}/tardis/binance-futures",
+    "active_manifest_dir": "${NARROWGATE_MARKETDATA_ROOT}/tardis/manifests",
+    "legacy_root": "${NARROWGATE_MARKETDATA_ROOT}/tardis/0730-beinan",
+    "legacy_root_present": false,
+    "compatibility_symlink": false,
+    "frozen_artifacts_preserve_legacy_path_strings": true,
+    "active_readers_apply_explicit_relocation": true
+  },
+  "frozen_artifact_policy": "preserve_bytes_and_relocate_at_filesystem_boundary",
+  "source_provenance_policy": "never_relabel_tardis_as_cryptohftdata"
+}
