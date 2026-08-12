@@ -1,0 +1,373 @@
+# ============================================================
+#  NarrowGate Maker — Public Configuration Template
+#  PUBLIC TEMPLATE: do not deploy this file to a real exchange account.
+# ============================================================
+#
+# This repository keeps the public config intentionally generic. Private live
+# parameters, model bundle names, host-specific paths, and experiment snapshots
+# should live in an ignored local file such as:
+#
+#   docs/private/live_config.current.local.yaml
+#
+# Run locally with:
+#
+#   NARROWGATE_LIVE_CONFIG=docs/private/live_config.current.local.yaml \
+#     bash live/run.sh start
+#
+# Deploy with:
+#
+#   NARROWGATE_LIVE_CONFIG=docs/private/live_config.current.local.yaml \
+#     make deploy
+#
+
+project_name: "NarrowGate"
+symbol: "BTCUSDC"
+tick_size: 0.1
+lot_size: 0.001
+min_notional: 5.0
+
+api:
+  key: ""
+  secret: ""
+  testnet: true
+
+strategy:
+  # Core AS/GLFT-style quote controls. Values here are safe examples, not a
+  # promoted parameter set.
+  gamma: 0.01
+  order_size: 0.001
+  max_inventory: 0.01
+  requote_interval: 10.0
+  position_timeout: 0.0
+  # sigma_sq is one-second absolute-price variance. Keep the AS integration
+  # horizon explicit when quote cadence changes.
+  # The current BTCUSDC operational baseline integrates one second of
+  # absolute-price variance. Deploy configs must set this field explicitly.
+  quote_horizon_s: 1.0
+  max_spread_bps: 12.0
+  # Historical behavior compresses quotes inward when the desired pair spread
+  # exceeds the cap. Research A/B may use pause_exposure or observe explicitly.
+  spread_cap_mode: "compress"
+  rq_min: 5.0
+  rq_max: 10.0
+  kappa_ratio: 1.0
+  depth_kappa_ratio: 0.3
+  vol_power: 1.5
+  leverage: 1
+  eta: 0.5
+
+  # Execution lifecycle examples. Keep these conservative for public demos.
+  replace_min_price_change_ticks: 0.0
+  replace_min_price_change_ticks_reducing: 0.0
+  replace_min_interval_ms: 0.0
+  replace_min_interval_ms_reducing: 0.0
+  replace_pending_coalesce: true
+  replace_cancel_first_exposure_increasing: false
+  # Startup-only system arm. Normal quote REST leaves the market-data thread
+  # and each side keeps only its latest desired quote. Safety cancel/close paths
+  # remain synchronous. Enable only for a controlled live soak.
+
+  # Guard / cooldown examples. These are disabled by default in the public
+  # template because promotion requires symbol-specific replay/live evidence.
+  adverse_guard_enabled: false
+  adverse_pause: true
+  adverse_markout_pause_hybrid: false
+  defense_guard_enabled: false
+  defense_pause: true
+  fill_cooldown: 0.0
+  # Same-side quantity units include add and reducing fills. The live baseline
+  # clears them only when an opposite-side fill arrives.
+  fill_cooldown_consecutive_reset_policy: "opposite_fill_only"
+  fill_cooldown_reducing: 0.0
+  fill_cooldown_reducing_campaign_only: false
+  boolean_cooldown_policy_enabled: false
+  boolean_cooldown_policy_path: ""
+  boolean_cooldown_policy_sha256: ""
+  boolean_cooldown_predicate_bundle_path: ""
+  boolean_cooldown_predicate_bundle_sha256: ""
+  boolean_cooldown_ema_warmup_s: 2048.0
+  boolean_cooldown_evidence_route: "owner_risk_accepted_promotion"
+  adaptive_add_cooldown_enabled: false
+  adaptive_add_cooldown_gate_enabled: false
+  # Post-fill quote response research surface. I shifts the pair center;
+  # A widens only the exposure-increasing side. Disabled means exact no-op.
+  post_fill_quote_response_enabled: false
+  post_fill_quote_response_mode: "noop"  # noop | inventory_shift | flow_add_widen | hybrid
+  post_fill_inventory_ticks_per_order_unit: 0.25
+  post_fill_inventory_max_ticks: 4.0
+  post_fill_flow_amplitude_mode: "excitation_ticks"  # or expected_adverse
+  post_fill_flow_ticks_per_excitation: 2.0
+  post_fill_flow_max_ticks: 8.0
+  post_fill_flow_excitation_per_order_unit: 1.0
+  post_fill_flow_max_excitation: 4.0
+  post_fill_flow_expected_adverse_buy_ticks: 0.0
+  post_fill_flow_expected_adverse_sell_ticks: 0.0
+  post_fill_flow_add_distance_fraction_buy: 1.0
+  post_fill_flow_add_distance_fraction_sell: 1.0
+  post_fill_response_half_life_s: 20.0
+  post_fill_response_half_life_min_s: 4.0
+  post_fill_response_half_life_max_s: 120.0
+  post_fill_response_volatility_ref_bps: 3.0
+  post_fill_response_volatility_weight: 0.0
+  post_fill_response_refill_edge_ref: 0.1
+  post_fill_response_refill_weight: 0.0
+  post_fill_response_repair_probability_anchor: 0.6
+  post_fill_response_repair_probability_weight: 0.0
+  markout_side_asymmetry_sign: 1.0   # maker-signed BUY/SELL EMA semantics require +1
+  markout_horizon_s: 10.0     # exact fill-to-observation wall-clock horizon
+  markout_ema_span_fills: 50  # alpha=2/(N+1); span, not half-life
+
+  # Archived/direct live alpha paths remain disabled in public config.
+  buy_fill_selection_shadow_enabled: false
+  buy_fill_selection_live_enabled: false
+  # BUY/SELL fill-hazard prediction only. No order action reads this signal.
+  dynamic_fill_hazard_shadow_enabled: false
+  dynamic_fill_hazard_shadow_model_path: ""
+  dynamic_fill_hazard_shadow_model_sha256: ""
+  dynamic_fill_hazard_shadow_sides: "BUY"
+  dynamic_fill_hazard_shadow_exposure_ms: 100.0
+  dynamic_fill_hazard_shadow_price_jump_ticks: 1.0
+  # Separately hashed BUY-only action map. Public template remains disabled.
+  dynamic_fill_hazard_action_enabled: false
+  dynamic_fill_hazard_action_policy_path: ""
+  dynamic_fill_hazard_action_policy_sha256: ""
+  # Bounded next-generation action layer. Fixed quote parameters remain the
+  # safety envelope; current evidence has not passed live promotion.
+  state_conditioned_policy_mode: disabled  # disabled | shadow | active
+  state_conditioned_policy_model_path: ""
+  # Evidence-only pair projection. No action mode exists; candidate prices are
+  # written to a dedicated CSV and never reach cancel/replace/place routing.
+  cross_venue_fair_price_shadow_enabled: false
+
+  # Shared live/replay quote controls.
+  use_bar_pricing: false
+  symmetric_size: false
+
+ml:
+  enabled: false
+  vol_blend: 0.5
+  skew_strength: 0.0
+  asym_strength: 0.0
+  gamma_dir_bonus: 0.0
+  dir_threshold: 0.05
+  ret_skew: 0.0
+  ret_shift_max_pct: 0.3
+  ret_demean_halflife: 0
+  toxicity_horizon_s: 10
+  model_dir: "models/example_model_bundle"
+
+multi_market:
+  enabled: false
+  market_stage: "minimal"
+  reference_symbol: "BTCUSDT"
+  stablecoin_anchor_symbol: "USDCUSDT"
+
+# Independent venue references are receive-time shadow inputs only. Public
+# Bitget/Bybit/OKX market data do not require API keys.
+external_venues:
+  enabled: false
+  shadow_only: true
+  sources:
+    - venue: "bitget"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "perp"
+      product_type: "USDT-FUTURES"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      websocket_url: "wss://ws.bitget.com/v3/ws/public"
+      book_channel: "books1"
+      trade_channel: "publicTrade"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+    - venue: "bybit"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "perp"
+      product_type: "linear"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      websocket_url: "wss://stream.bybit.com/v5/public/linear"
+      book_channel: "orderbook.1"
+      trade_channel: "publicTrade"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+    - venue: "bitget"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "spot"
+      product_type: "SPOT"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      websocket_url: "wss://ws.bitget.com/v3/ws/public"
+      book_channel: "books1"
+      trade_channel: "publicTrade"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+    - venue: "bybit"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "spot"
+      product_type: "spot"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      websocket_url: "wss://stream.bybit.com/v5/public/spot"
+      book_channel: "orderbook.1"
+      trade_channel: "publicTrade"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+    - venue: "okx"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "perp"
+      product_type: "SWAP"
+      instrument_id: "BTC-USDT-SWAP"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      contract_multiplier: 0.01
+      websocket_url: "wss://ws.okx.com:8443/ws/v5/public"
+      book_channel: "bbo-tbt"
+      trade_channel: "trades"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+    - venue: "okx"
+      enabled: false
+      transport: "websocket"
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "spot"
+      product_type: "SPOT"
+      instrument_id: "BTC-USDT"
+      quote_currency: "USDT"
+      settlement_currency: "USDT"
+      contract_multiplier: 1.0
+      websocket_url: "wss://ws.okx.com:8443/ws/v5/public"
+      book_channel: "bbo-tbt"
+      trade_channel: "trades"
+      max_source_age_s: 2.0
+      record_enabled: false
+      record_interval_ms: 0.0
+      record_trades: true
+      record_queue_size: 20000
+      record_dir: "logs/external_venues"
+
+depth_execution:
+  shadow_enabled: false
+  log_interval_requotes: 6
+  microprice_kappa:
+    enabled: false
+  imbalance_asym:
+    enabled: false
+  depth_tox_spread:
+    enabled: false
+
+regime:
+  enabled: true
+  vol_baseline: 3.0
+  gamma_scale_min: 0.5
+  gamma_scale_max: 2.0
+  liq_baseline: 0.0
+  gamma_liq_scale_min: 0.5
+  gamma_liq_scale_max: 3.0
+
+fees:
+  maker: 0.0                    # BTCUSDC maker fills are modeled at zero fee
+  taker: 0.00036                # only real taker exits; replay window-end MTM does not charge this
+
+websocket:
+  depth_levels: 20
+  depth_speed: 100
+  # Keep the existing partial top-20 strategy feed unchanged. The separate
+  # snapshot+diff book is used only for deep active-order queue/path state.
+  deep_book_enabled: false
+  deep_book_snapshot_levels: 1000
+  deep_book_speed: 100
+  deep_book_max_buffer_events: 20000
+  deep_book_resync_backoff_s: 1.0
+  deep_book_max_age_s: 2.0
+  exec_stream_silence_timeout_s: 45.0
+  anchor_stream_silence_timeout_s: 45.0
+
+risk:
+  max_daily_loss: 10.0
+  max_position_value: 100.0
+  emergency_close_dd: 20.0
+  cooldown_after_loss: 30.0
+  max_consecutive_losses: 3
+  max_exec_book_age_s: 5.0  # historical replay end-to-end age ABI
+  max_exec_book_visible_age_s: 5.0  # live stale gate: capture - receive
+  max_exec_book_source_lag_s: 5.0   # separate receive - exchange transport gate
+  sync_adjust_degrade_enabled: true
+  sync_adjust_degrade_count: 2
+  sync_adjust_abs_qty_threshold: 0.0
+  sync_adjust_degrade_window_s: 300.0
+  sync_adjust_pause_s: 120.0
+  sync_adjust_reconnect_user_stream: true
+  sync_adjust_cancel_orders: true
+  circuit_breaker_sigma: 8.0
+  # Public example only; production must calibrate this to its inventory horizon.
+  pnl_volatility_horizon_s: 300.0
+  exit_urgency_strength: 0.5
+  urgency_time_weight: 0.3
+  urgency_pnl_weight: 0.3
+  urgency_signal_weight: 0.4
+
+logging:
+  level: "INFO"
+  file: "logs/maker.log"
+  console: true
+  trade_log: "logs/trades.csv"
+  quote_log: "logs/quote_decisions.csv"
+  order_outcome_log: "logs/order_outcomes.csv"
+  buy_fill_selection_shadow_log: "logs/buy_fill_selection_shadow.csv"
+  dynamic_fill_hazard_shadow_log: "logs/dynamic_fill_hazard_shadow.csv"
+  dynamic_fill_hazard_action_log: "logs/dynamic_fill_hazard_action.csv"
+  state_conditioned_policy_shadow_log: "logs/state_conditioned_policy_shadow.csv"
+  cross_venue_fair_price_shadow_log: "logs/cross_venue_fair_price_shadow.csv"
+  inventory_campaign_shadow_enabled: false
+  inventory_campaign_shadow_log: "logs/inventory_campaign_shadow.csv"
+  live_perf_telemetry_log: "logs/live_perf_telemetry.csv"
+  quote_snapshot_integrity_log: "logs/quote_snapshot_integrity.csv"
+  # Receive-time tape is shadow-only and never changes quote policy. Keep the
+  # public template off; a private live config can enable it for latency audits.
+  market_tape_enabled: false
+  market_tape_dir: "logs/market_tape"
+  market_tape_record_books: true
+  market_tape_record_trades: true
+  market_tape_record_depth: false
+  market_tape_book_interval_ms: 0.0
+  market_tape_queue_size: 20000
+  bad_trade_log_every: 100
+
+performance:
+  listen_key_renew: 1800

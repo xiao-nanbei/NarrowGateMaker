@@ -1,0 +1,73 @@
+# Public dry-run config example.
+# This is not a promoted live parameter set and should not be used for trading.
+
+project_name: "NarrowGate"
+symbol: "BTCUSDC"
+tick_size: 0.1
+lot_size: 0.001
+min_notional: 5.0
+
+api:
+  key: ""
+  secret: ""
+  testnet: true
+
+strategy:
+  gamma: 0.01
+  order_size: 0.001
+  max_inventory: 0.01
+  requote_interval: 10.0
+  max_spread_bps: 12.0
+  maker_fill_prob: 1.0
+  adverse_guard_enabled: false
+  defense_guard_enabled: false
+  fill_cooldown: 0.0
+
+ml:
+  enabled: false
+  model_dir: "models/example_model_bundle"
+
+multi_market:
+  enabled: false
+  reference_symbol: "BTCUSDT"
+  market_stage: "minimal"
+
+external_venues:
+  enabled: false
+  shadow_only: true
+  sources:
+    - venue: "bitget"
+      enabled: false
+      role: "reference"
+      symbol: "BTCUSDT"
+      instrument_type: "perp"
+      product_type: "USDT-FUTURES"
+      websocket_url: "wss://ws.bitget.com/v2/ws/public"
+      book_channel: "books1"
+      trade_channel: "trade"
+      max_source_age_s: 2.0
+      record_enabled: false
+
+fees:
+  maker: 0.0
+  taker: 0.00036
+
+websocket:
+  depth_levels: 20
+  depth_speed: 100
+
+risk:
+  max_daily_loss: 10.0
+  max_position_value: 100.0
+  emergency_close_dd: 20.0
+  max_exec_book_age_s: 5.0
+
+logging:
+  level: "INFO"
+  file: "logs/maker.log"
+  trade_log: "logs/trades.csv"
+  quote_log: "logs/quote_decisions.csv"
+  order_outcome_log: "logs/order_outcomes.csv"
+
+performance:
+  listen_key_renew: 1800

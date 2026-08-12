@@ -1,0 +1,929 @@
+"""Frozen identity and latency semantics for formal tick replay evidence."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+from collections.abc import Mapping, MutableMapping
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+from strategy.replay_controls import (
+    LOSS_COOLDOWN_SEMANTICS,
+    SYNC_DEGRADE_SEMANTICS,
+    SYNC_DEGRADE_TAPE_SCHEMA,
+)
+
+FORMAL_REPLAY_CONTRACT_SCHEMA = "narrowgate_formal_replay_contract.v4"
+STANDARD_INITIAL_STATE_SCHEMA = "narrowgate_standard_initial_state.v1"
+KEYED_LATENCY_SAMPLER_VERSION = "keyed_splitmix64_v1"
+DEFAULT_LATENCY_ENVIRONMENT = "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+INDIVIDUAL_TRADES_REPAIR_ID = "individual_trade_side_repaired_20260725"
+INDIVIDUAL_TRADES_REPAIRED_DAYS = tuple(f"2026-07-{day:02d}" for day in range(4, 12))
+
+_FROZEN_QUEUE_KEYS = (
+    "queue_ahead_base_mult",
+    "queue_deplete_base_mult",
+    "queue_ahead_buy_exposure_mult",
+    "queue_ahead_buy_reducing_mult",
+    "queue_ahead_sell_exposure_mult",
+    "queue_ahead_sell_reducing_mult",
+)
+_MODEL_SUFFIXES = {".json", ".txt", ".bin", ".model", ".pkl", ".joblib"}
+_INDIVIDUAL_TRADE_SOURCES = {
+    "trades",
+    "individual_trade",
+    "individual_trades",
+    "binance_usdm_individual_trades",
+}
+
+
+def _canonical_bytes(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def sha256_file(path: str | Path | None) -> str:
+    if path is None:
+        return ""
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        return ""
+    digest = hashlib.sha256()
+    with resolved.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_path(raw: Any, *, root: Path | None = None) -> Path | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser()
+    if not path.is_absolute() and root is not None:
+        path = root / path
+    return path.resolve()
+
+
+def _is_individual_trade_source(value: Any) -> bool:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    return normalized in _INDIVIDUAL_TRADE_SOURCES
+
+
+def _valid_sha256(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return len(text) == 64 and all(char in "0123456789abcdef" for char in text)
+
+
+def _individual_trade_manifest_rows(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, Mapping):
+            raise ValueError("individual-trades manifest JSON must contain an object")
+        raw_rows = payload.get("daily_files")
+        if raw_rows is None:
+            raw_rows = payload.get("files")
+        if not isinstance(raw_rows, list):
+            raise ValueError("individual-trades manifest must contain daily_files or files")
+        rows: list[dict[str, Any]] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, Mapping):
+                continue
+            day = str(raw_row.get("day", "") or "")
+            raw_path = str(
+                raw_row.get("raw_file") or raw_row.get("path") or raw_row.get("file") or ""
+            )
+            raw_sha256 = str(raw_row.get("raw_sha256") or raw_row.get("sha256") or "").lower()
+            rows.append(
+                {
+                    "day": day,
+                    "file_name": Path(raw_path).name if raw_path else "",
+                    "raw_sha256": raw_sha256,
+                    "raw_size_bytes": int(
+                        raw_row.get("raw_size_bytes") or raw_row.get("size_bytes") or 0
+                    ),
+                }
+            )
+        metadata = {
+            "schema_version": str(payload.get("schema") or payload.get("schema_version") or ""),
+            "symbol": str(payload.get("symbol", "") or ""),
+            "source": str(payload.get("source") or payload.get("raw_root") or ""),
+            "content_sha256": str(
+                payload.get("daily_manifest_sha256")
+                or payload.get("manifest_identity_sha256")
+                or ""
+            ),
+        }
+        return metadata, rows
+
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        fields = line.strip().split(maxsplit=1)
+        if len(fields) != 2 or not _valid_sha256(fields[0]):
+            continue
+        file_name = fields[1].lstrip("*")
+        day = ""
+        for token in Path(file_name).stem.split("-"):
+            if len(token) == 10 and token[4:5] == "-" and token[7:8] == "-":
+                day = token
+                break
+        if not day:
+            marker = "trades-"
+            start = file_name.find(marker)
+            if start >= 0:
+                day = file_name[start + len(marker) : start + len(marker) + 10]
+        rows.append(
+            {
+                "day": day,
+                "file_name": Path(file_name).name,
+                "raw_sha256": fields[0].lower(),
+                "raw_size_bytes": 0,
+            }
+        )
+    if not rows:
+        raise ValueError("individual-trades checksum manifest contains no valid rows")
+    return {
+        "schema_version": "sha256_file_list",
+        "symbol": "",
+        "source": "",
+        "content_sha256": "",
+    }, rows
+
+
+def _individual_trades_identity(
+    params: Mapping[str, Any],
+    *,
+    root: Path | None,
+) -> dict[str, Any]:
+    source = str(params.get("execution_trade_source", "individual_trades") or "")
+    if not _is_individual_trade_source(source):
+        return {
+            "source": source,
+            "status": "not_applicable",
+            "evidence_scope": "not_applicable",
+            "manifest_path": "",
+            "manifest_sha256": "",
+            "manifest_content_sha256": "",
+            "integrity_report_path": "",
+            "integrity_report_sha256": "",
+            "repair_identity": {
+                "id": INDIVIDUAL_TRADES_REPAIR_ID,
+                "required_days": list(INDIVIDUAL_TRADES_REPAIRED_DAYS),
+                "days": [],
+                "complete": False,
+            },
+        }
+
+    manifest_path = _resolve_path(
+        params.get("individual_trades_manifest_path")
+        or params.get("execution_trade_manifest_path"),
+        root=root,
+    )
+    integrity_path = _resolve_path(
+        params.get("individual_trades_integrity_report_path")
+        or params.get("execution_trade_quality_path"),
+        root=root,
+    )
+    manifest_sha256 = sha256_file(manifest_path)
+    integrity_sha256 = sha256_file(integrity_path)
+    declared_manifest_sha256 = str(
+        params.get("individual_trades_manifest_sha256", "") or ""
+    ).lower()
+    declared_integrity_sha256 = str(
+        params.get("individual_trades_integrity_report_sha256")
+        or params.get("execution_trade_quality_sha256")
+        or ""
+    ).lower()
+
+    metadata: dict[str, Any] = {
+        "schema_version": "",
+        "symbol": "",
+        "source": "",
+        "content_sha256": "",
+    }
+    rows: list[dict[str, Any]] = []
+    parse_error = ""
+    if manifest_path is not None and manifest_sha256:
+        try:
+            metadata, rows = _individual_trade_manifest_rows(manifest_path)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            parse_error = str(exc)
+
+    rows_by_day = {str(row.get("day", "")): row for row in rows if str(row.get("day", ""))}
+    repaired_rows = [
+        rows_by_day[day]
+        for day in INDIVIDUAL_TRADES_REPAIRED_DAYS
+        if day in rows_by_day and _valid_sha256(rows_by_day[day].get("raw_sha256"))
+    ]
+    missing_repaired_days = [
+        day
+        for day in INDIVIDUAL_TRADES_REPAIRED_DAYS
+        if day not in {str(row.get("day", "")) for row in repaired_rows}
+    ]
+
+    manifest_hash_matches = (
+        not declared_manifest_sha256 or declared_manifest_sha256 == manifest_sha256
+    )
+    integrity_hash_matches = (
+        not declared_integrity_sha256 or declared_integrity_sha256 == integrity_sha256
+    )
+    if not manifest_sha256:
+        status = "missing_manifest"
+    elif parse_error:
+        status = "invalid_manifest"
+    elif not manifest_hash_matches:
+        status = "manifest_hash_mismatch"
+    elif integrity_path is not None and not integrity_sha256:
+        status = "missing_integrity_report"
+    elif not integrity_hash_matches:
+        status = "integrity_report_hash_mismatch"
+    elif missing_repaired_days:
+        status = "repair_identity_incomplete"
+    else:
+        status = "verified"
+
+    days = sorted(rows_by_day)
+    return {
+        "source": source,
+        "status": status,
+        "evidence_scope": ("formal_eligible" if status == "verified" else "diagnostic_only"),
+        "manifest_path": str(manifest_path or ""),
+        "manifest_sha256": manifest_sha256,
+        "declared_manifest_sha256": declared_manifest_sha256,
+        "manifest_hash_matches_declared": manifest_hash_matches,
+        "manifest_schema_version": str(metadata.get("schema_version", "")),
+        "manifest_content_sha256": str(metadata.get("content_sha256", "")),
+        "manifest_symbol": str(metadata.get("symbol", "")),
+        "manifest_source": str(metadata.get("source", "")),
+        "manifest_day_count": len(rows_by_day),
+        "manifest_first_day": days[0] if days else "",
+        "manifest_last_day": days[-1] if days else "",
+        "manifest_parse_error": parse_error,
+        "integrity_report_path": str(integrity_path or ""),
+        "integrity_report_sha256": integrity_sha256,
+        "declared_integrity_report_sha256": declared_integrity_sha256,
+        "integrity_report_hash_matches_declared": integrity_hash_matches,
+        "repair_identity": {
+            "id": INDIVIDUAL_TRADES_REPAIR_ID,
+            "required_days": list(INDIVIDUAL_TRADES_REPAIRED_DAYS),
+            "days": repaired_rows,
+            "missing_days": missing_repaired_days,
+            "complete": not missing_repaired_days,
+        },
+    }
+
+
+def artifact_tree_identity(path: str | Path | None) -> dict[str, Any]:
+    """Hash the deployable files in a model directory without hashing caches."""
+    resolved = _resolve_path(path)
+    if resolved is None:
+        return {"path": "", "files": [], "sha256": ""}
+    if resolved.is_file():
+        rows = [{"path": resolved.name, "sha256": sha256_file(resolved)}]
+    elif resolved.is_dir():
+        rows = [
+            {
+                "path": str(candidate.relative_to(resolved)),
+                "sha256": sha256_file(candidate),
+            }
+            for candidate in sorted(resolved.rglob("*"))
+            if candidate.is_file()
+            and not candidate.name.startswith(".")
+            and candidate.suffix.lower() in _MODEL_SUFFIXES
+        ]
+    else:
+        rows = []
+    return {
+        "path": str(resolved),
+        "files": rows,
+        "sha256": hashlib.sha256(_canonical_bytes(rows)).hexdigest() if rows else "",
+    }
+
+
+def _finite_samples(values: Any) -> np.ndarray:
+    try:
+        samples = np.asarray(values if values is not None else [], dtype=np.float64).ravel()
+    except (TypeError, ValueError):
+        return np.empty(0, dtype=np.float64)
+    return np.ascontiguousarray(
+        samples[np.isfinite(samples) & (samples >= 0.0)],
+        dtype=np.float64,
+    )
+
+
+def _sample_identity(values: Any) -> dict[str, Any]:
+    samples = _finite_samples(values)
+    payload = [float(value) for value in samples]
+    return {
+        "count": int(samples.size),
+        "sha256": hashlib.sha256(_canonical_bytes(payload)).hexdigest(),
+        "min_ms": float(samples.min()) if samples.size else 0.0,
+        "median_ms": float(np.median(samples)) if samples.size else 0.0,
+        "max_ms": float(samples.max()) if samples.size else 0.0,
+    }
+
+
+def configure_fixed_latency_distribution(
+    params: MutableMapping[str, Any],
+    *,
+    scenario: str,
+    profile_id: str,
+    environment: str | Mapping[str, Any],
+    baseline_clip_quantile: float = 0.99,
+    stress_spike_probability: float = 0.001,
+    stress_spike_multiplier: float = 5.0,
+) -> MutableMapping[str, Any]:
+    """Freeze stable latency samples; synthetic tail spikes are stress-only."""
+    normalized_scenario = str(scenario or "baseline").lower()
+    if normalized_scenario not in {"baseline", "stress"}:
+        raise ValueError("latency scenario must be baseline or stress")
+    clip_quantile = float(baseline_clip_quantile)
+    if not 0.5 <= clip_quantile <= 1.0:
+        raise ValueError("baseline latency clip quantile must be within [0.5, 1.0]")
+    probability = float(stress_spike_probability)
+    multiplier = float(stress_spike_multiplier)
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("stress spike probability must be within [0, 1]")
+    if multiplier < 1.0:
+        raise ValueError("stress spike multiplier must be at least 1")
+
+    for key in (
+        "_new_order_latency_samples_ms",
+        "_cancel_order_latency_samples_ms",
+        "_exec_book_visibility_delay_samples_ms",
+    ):
+        samples = _finite_samples(params.get(key, ()))
+        if samples.size:
+            cap = float(np.quantile(samples, clip_quantile))
+            params[key] = np.ascontiguousarray(np.minimum(samples, cap), dtype=np.float64)
+
+    params["latency_sampler_version"] = KEYED_LATENCY_SAMPLER_VERSION
+    params["latency_profile_id"] = str(profile_id or "").strip()
+    params["latency_environment"] = (
+        dict(environment) if isinstance(environment, Mapping) else str(environment or "").strip()
+    )
+    params["latency_scenario"] = normalized_scenario
+    params["latency_baseline_clip_quantile"] = clip_quantile
+    params["latency_stress_enabled"] = normalized_scenario == "stress"
+    params["latency_stress_spike_probability"] = probability
+    params["latency_stress_spike_multiplier"] = multiplier
+    params["latency_rare_spike_policy"] = "stress_only"
+    return params
+
+
+def load_standard_initial_state(path: str | Path) -> dict[str, float]:
+    resolved = Path(path).expanduser().resolve()
+    payload = json.loads(resolved.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != STANDARD_INITIAL_STATE_SCHEMA:
+        raise ValueError(
+            f"standard initial state must use {STANDARD_INITIAL_STATE_SCHEMA}: {resolved}"
+        )
+    if payload.get("active_orders"):
+        raise ValueError("formal standard initial state cannot contain active orders")
+    output = {
+        "initial_inventory": float(payload.get("initial_inventory", 0.0) or 0.0),
+        "initial_entry_price": float(payload.get("initial_entry_price", 0.0) or 0.0),
+    }
+    if not all(math.isfinite(value) for value in output.values()):
+        raise ValueError(f"standard initial state contains non-finite values: {resolved}")
+    if abs(output["initial_inventory"]) > 0.0 and output["initial_entry_price"] <= 0.0:
+        raise ValueError("non-flat standard initial state requires a positive entry price")
+    return output
+
+
+def _sync_event_tape_metadata(path: Path | None) -> dict[str, Any]:
+    if path is None or not path.is_file():
+        return {
+            "schema_version": "",
+            "environment": "",
+            "start_ts_ms": 0,
+            "end_ts_ms": 0,
+            "event_count": 0,
+        }
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("sync-adjust event tape must contain an object")
+    schema = str(payload.get("schema_version", "") or "")
+    if schema != SYNC_DEGRADE_TAPE_SCHEMA:
+        raise ValueError("sync-adjust event tape schema is invalid")
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise ValueError("sync-adjust event tape events must be a list")
+    return {
+        "schema_version": schema,
+        "environment": str(payload.get("environment", "") or ""),
+        "start_ts_ms": int(payload.get("start_ts_ms", 0) or 0),
+        "end_ts_ms": int(payload.get("end_ts_ms", 0) or 0),
+        "event_count": int(len(events)),
+    }
+
+
+def _artifact_identity(params: Mapping[str, Any], *, root: Path | None) -> dict[str, Any]:
+    config_path = _resolve_path(params.get("_config_path"), root=root)
+    p3_path = _resolve_path(params.get("fill_probability_model_path"), root=root)
+    queue_path = _resolve_path(params.get("queue_calibration_path"), root=root)
+    formal_l2_manifest_path = _resolve_path(
+        params.get("formal_l2_manifest_path"),
+        root=root,
+    )
+    model_path = _resolve_path(
+        params.get("resolved_model_dir") or params.get("model_dir"), root=root
+    )
+    buy_score_path = _resolve_path(params.get("buy_fill_selection_live_model_path"), root=root)
+    hazard_model_path = _resolve_path(
+        params.get("dynamic_fill_hazard_shadow_model_path"), root=root
+    )
+    hazard_policy_path = _resolve_path(
+        params.get("dynamic_fill_hazard_action_policy_path"), root=root
+    )
+    sync_tape_path = _resolve_path(
+        params.get("sync_adjust_event_tape_path"), root=root
+    )
+    sync_tape_metadata = _sync_event_tape_metadata(sync_tape_path)
+    return {
+        "config": {"path": str(config_path or ""), "sha256": sha256_file(config_path)},
+        "model": artifact_tree_identity(model_path),
+        "p3": {"path": str(p3_path or ""), "sha256": sha256_file(p3_path)},
+        "queue": {"path": str(queue_path or ""), "sha256": sha256_file(queue_path)},
+        "formal_l2": {
+            "dataset_root": str(params.get("formal_l2_dataset_root", "") or ""),
+            "manifest_path": str(formal_l2_manifest_path or ""),
+            "manifest_sha256": sha256_file(formal_l2_manifest_path),
+        },
+        "individual_trades": _individual_trades_identity(params, root=root),
+        "buy_fill_selection": {
+            "path": str(buy_score_path or ""),
+            "sha256": sha256_file(buy_score_path),
+        },
+        "dynamic_fill_hazard_model": {
+            "path": str(hazard_model_path or ""),
+            "sha256": sha256_file(hazard_model_path),
+            "declared_sha256": str(
+                params.get("dynamic_fill_hazard_shadow_model_sha256", "") or ""
+            ).lower(),
+        },
+        "dynamic_fill_hazard_policy": {
+            "path": str(hazard_policy_path or ""),
+            "sha256": sha256_file(hazard_policy_path),
+            "declared_sha256": str(
+                params.get("dynamic_fill_hazard_action_policy_sha256", "") or ""
+            ).lower(),
+        },
+        "sync_adjust_event_tape": {
+            "path": str(sync_tape_path or ""),
+            "sha256": sha256_file(sync_tape_path),
+            "declared_sha256": str(
+                params.get("sync_adjust_event_tape_sha256", "") or ""
+            ).lower(),
+            **sync_tape_metadata,
+        },
+    }
+
+
+def build_replay_contract(
+    params: Mapping[str, Any],
+    *,
+    purpose: str = "formal",
+    initial_state_mode: str = "fresh_start",
+    initial_state_artifact: str | Path | None = None,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Build a canonical replay identity from the parameters actually executed."""
+    normalized_purpose = str(purpose or "formal").lower()
+    if normalized_purpose not in {"formal", "exploratory", "live_alignment"}:
+        raise ValueError("replay purpose must be formal, exploratory, or live_alignment")
+    normalized_initial = str(initial_state_mode or "fresh_start").lower()
+    if normalized_initial not in {"fresh_start", "frozen_standard"}:
+        raise ValueError("initial state mode must be fresh_start or frozen_standard")
+    project_root = Path(root).expanduser().resolve() if root is not None else None
+    state_path = _resolve_path(initial_state_artifact, root=project_root)
+
+    artifacts = _artifact_identity(params, root=project_root)
+    individual_trades_diagnostic = (artifacts.get("individual_trades") or {}).get(
+        "evidence_scope"
+    ) == "diagnostic_only"
+    sync_mode = str(
+        params.get("sync_adjust_replay_mode", "disabled") or "disabled"
+    ).strip().lower()
+    sync_enabled = bool(params.get("sync_adjust_degrade_enabled", False))
+    q90_enabled = bool(params.get("dynamic_fill_hazard_action_enabled", False))
+    sync_promotion_eligible = bool(
+        (not sync_enabled and sync_mode == "disabled")
+        or (sync_enabled and sync_mode == "frozen_tape")
+    )
+    contract = {
+        "schema_version": FORMAL_REPLAY_CONTRACT_SCHEMA,
+        "purpose": normalized_purpose,
+        "promotion_eligible": bool(
+            normalized_purpose == "formal"
+            and str(params.get("latency_scenario", "baseline")) == "baseline"
+            and not bool(params.get("queue_calibration_diagnostic_only", False))
+            and not individual_trades_diagnostic
+            and sync_promotion_eligible
+        ),
+        "artifacts": artifacts,
+        "p3": {
+            "schema_version": str(params.get("fill_probability_schema_version", "")),
+            "model_type": str(params.get("fill_probability_model_type", "")),
+            "event_type": str(params.get("fill_probability_event_type", "")),
+            "horizon_s": float(params.get("fill_probability_horizon_s", 0.0) or 0.0),
+            "distance_unit": str(params.get("fill_probability_distance_unit", "")),
+            "artifact_sha256": str(
+                params.get("fill_probability_artifact_sha256", "") or ""
+            ),
+            "delta_star": float(params.get("p3_delta_star", 0.0) or 0.0),
+            "kappa_eff": float(params.get("p3_kappa_eff", 0.0) or 0.0),
+        },
+        "queue": {
+            "schema_version": str(params.get("queue_calibration_schema_version", "")),
+            "apply_mode": str(params.get("queue_calibration_apply_mode", "")),
+            "fit_days": list(params.get("queue_calibration_fit_days") or []),
+            "diagnostic_only": bool(params.get("queue_calibration_diagnostic_only", False)),
+            "diagnostic_parent_sha256": str(
+                params.get("queue_calibration_diagnostic_parent_sha256", "") or ""
+            ),
+            "diagnostic_note": str(params.get("queue_calibration_diagnostic_note", "") or ""),
+            "replay_params": {
+                key: (
+                    float(params[key])
+                    if key in params and math.isfinite(float(params[key]))
+                    else None
+                )
+                for key in _FROZEN_QUEUE_KEYS
+            },
+        },
+        "causal_event_semantics": {
+            "execution_trade_source": str(
+                params.get("execution_trade_source", "individual_trades")
+            ),
+            "replay_event_clock": str(params.get("replay_event_clock", "trade")),
+            "replay_clock_interval_ms": int(params.get("replay_clock_interval_ms", 0) or 0),
+            "require_historical_bbo": bool(params.get("require_historical_bbo", False)),
+            "require_formal_l2": bool(params.get("require_formal_l2", False)),
+            "verify_formal_l2_hashes": bool(params.get("verify_formal_l2_hashes", False)),
+            "feature_visibility": "feature_ready_ts_lte_decision_ts",
+            "queue_event_visibility": "exchange_time_causal",
+            "terminal_equity": "cash_plus_inventory_times_terminal_mark",
+            "hypothetical_terminal_taker_fee_in_final_pnl": False,
+            "exec_book_visibility_mode": str(params.get("exec_book_visibility_mode", "sampled")),
+            "exec_depth_visibility_source_offset_ms": int(
+                params.get("exec_depth_visibility_source_offset_ms", 0) or 0
+            ),
+            "fill_cooldown_consecutive_reset_policy": str(
+                params.get("fill_cooldown_consecutive_reset_policy", "") or ""
+            ),
+        },
+        "path_dependent_controls": {
+            "consecutive_loss_cooldown": {
+                "semantics_version": str(
+                    params.get(
+                        "consecutive_loss_cooldown_semantics",
+                        LOSS_COOLDOWN_SEMANTICS,
+                    )
+                    or ""
+                ),
+                "max_consecutive_losses": int(
+                    params.get("max_consecutive_losses", 0) or 0
+                ),
+                "cooldown_after_loss_s": float(
+                    params.get("cooldown_after_loss", 0.0) or 0.0
+                ),
+                "round_trip_clock": "full_close_or_flip_then_next_policy_clock",
+            },
+            "dynamic_fill_hazard_q90": {
+                "enabled": q90_enabled,
+                "side": "BUY",
+                "replay_authority": (
+                    "python_native_exchange_book" if q90_enabled else "disabled"
+                ),
+                "model_artifact": artifacts["dynamic_fill_hazard_model"],
+                "policy_artifact": artifacts["dynamic_fill_hazard_policy"],
+                "exchange_book_queue_mode": str(
+                    params.get("exchange_book_queue_mode", "disabled") or "disabled"
+                ),
+                "native_exchange_book_root": str(
+                    params.get("native_exchange_book_root", "") or ""
+                ),
+                "native_exchange_book_warmup_hours": int(
+                    params.get("native_exchange_book_warmup_hours", 0) or 0
+                ),
+                "daily_source_identity": "sha256_per_snapshot_delta_file",
+                "pending_cancel_fillable": True,
+                "reentry": "after_cancel_ack_and_score_recovery",
+            },
+            "sync_adjust_degrade": {
+                "config_enabled": sync_enabled,
+                "mode": sync_mode,
+                "semantics_version": str(
+                    params.get("sync_adjust_semantics", SYNC_DEGRADE_SEMANTICS)
+                    or ""
+                ),
+                "pause_s": float(params.get("sync_adjust_pause_s", 0.0) or 0.0),
+                "cancel_orders": bool(
+                    params.get("sync_adjust_cancel_orders", True)
+                ),
+                "environment": str(
+                    artifacts["sync_adjust_event_tape"].get(
+                        "environment", ""
+                    )
+                    or ""
+                ),
+                "declared_environment": str(
+                    params.get("sync_adjust_event_environment", "") or ""
+                ),
+                "event_tape": artifacts["sync_adjust_event_tape"],
+                "promotion_eligible": sync_promotion_eligible,
+            },
+        },
+        "initial_state": {
+            "mode": normalized_initial,
+            "artifact_path": str(state_path or ""),
+            "artifact_sha256": sha256_file(state_path),
+            "initial_inventory": float(params.get("initial_inventory", 0.0) or 0.0),
+            "initial_entry_price": float(params.get("initial_entry_price", 0.0) or 0.0),
+        },
+        "latency": {
+            "profile_id": str(params.get("latency_profile_id", "")),
+            "environment": params.get("latency_environment", ""),
+            "scenario": str(params.get("latency_scenario", "baseline")),
+            "sampler_version": str(params.get("latency_sampler_version", "")),
+            "rng_seed": int(params.get("rng_seed", 42)),
+            "latency_seed": int(params.get("latency_seed", 59)),
+            "exec_book_visibility_seed": int(params.get("exec_book_visibility_delay_seed", 0) or 0),
+            "market_data_profile": {
+                "path": str(params.get("market_data_latency_profile_path", "")),
+                "sha256": str(params.get("market_data_latency_profile_sha256", "")),
+                "profile_id": str(params.get("market_data_latency_profile_id", "")),
+                "environment": params.get("market_data_latency_environment", {}),
+                "mode": str(params.get("market_data_latency_mode", "exchange_zero")),
+                "seed": int(params.get("market_data_latency_seed", 7) or 7),
+            },
+            "new_order_samples": _sample_identity(params.get("_new_order_latency_samples_ms", ())),
+            "cancel_order_samples": _sample_identity(
+                params.get("_cancel_order_latency_samples_ms", ())
+            ),
+            "exec_book_visibility_samples": _sample_identity(
+                params.get("_exec_book_visibility_delay_samples_ms", ())
+            ),
+            "new_order_fixed_ms": float(params.get("new_order_latency_ms", 0.0) or 0.0),
+            "cancel_order_fixed_ms": float(params.get("cancel_order_latency_ms", 0.0) or 0.0),
+            "jitter_ms": float(params.get("latency_jitter_ms", 0.0) or 0.0),
+            "baseline_clip_quantile": float(
+                params.get("latency_baseline_clip_quantile", 0.99) or 0.99
+            ),
+            "stress_spike_probability": float(
+                params.get("latency_stress_spike_probability", 0.001) or 0.0
+            ),
+            "stress_spike_multiplier": float(
+                params.get("latency_stress_spike_multiplier", 5.0) or 1.0
+            ),
+            "rare_spike_policy": str(params.get("latency_rare_spike_policy", "stress_only")),
+        },
+        "live_alignment_scope": (
+            "unit_clock_state_machine_gate_order_diagnostics_only"
+            if normalized_purpose == "live_alignment"
+            else "not_applicable"
+        ),
+        "live_alignment_not_required": [
+            "campaign_identity",
+            "per_event_fill_identity",
+            "daily_pnl_identity",
+        ],
+    }
+    contract["contract_sha256"] = hashlib.sha256(_canonical_bytes(contract)).hexdigest()
+    return contract
+
+
+def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, Any]) -> list[str]:
+    errors: list[str] = []
+    purpose = str(contract.get("purpose", ""))
+    initial = contract.get("initial_state", {})
+    latency = contract.get("latency", {})
+    causal = contract.get("causal_event_semantics", {})
+    artifacts = contract.get("artifacts", {})
+    controls = contract.get("path_dependent_controls", {})
+    loss_control = controls.get("consecutive_loss_cooldown", {})
+    q90_control = controls.get("dynamic_fill_hazard_q90", {})
+    sync_control = controls.get("sync_adjust_degrade", {})
+    if purpose == "formal":
+        for name in ("config", "p3", "queue"):
+            if not str((artifacts.get(name) or {}).get("sha256", "")):
+                errors.append(f"formal replay requires a frozen {name} artifact hash")
+        model_identity = artifacts.get("model") or {}
+        if str(model_identity.get("path", "")) and not str(model_identity.get("sha256", "")):
+            errors.append("configured model directory has no frozen deployable artifacts")
+        if bool(params.get("buy_fill_selection_live_enabled", False)) and not str(
+            (artifacts.get("buy_fill_selection") or {}).get("sha256", "")
+        ):
+            errors.append("enabled BUY fill-selection scorer artifact is missing")
+        if _is_individual_trade_source(causal.get("execution_trade_source")):
+            trades_identity = artifacts.get("individual_trades") or {}
+            if not str(trades_identity.get("manifest_sha256", "")):
+                errors.append("formal individual-trades replay requires a frozen manifest")
+            elif str(trades_identity.get("status", "")) != "verified":
+                errors.append(
+                    "formal individual-trades identity is not verified: "
+                    f"{trades_identity.get('status', 'unknown')}"
+                )
+        queue_params = (contract.get("queue") or {}).get("replay_params", {})
+        if any(queue_params.get(key) is None for key in _FROZEN_QUEUE_KEYS):
+            errors.append("queue artifact runtime parameters are incomplete")
+        if causal.get("replay_event_clock") != "merged":
+            errors.append("formal replay requires the merged causal event clock")
+        try:
+            from strategy.fill_cooldown import normalize_consecutive_reset_policy
+
+            normalize_consecutive_reset_policy(
+                causal.get("fill_cooldown_consecutive_reset_policy"),
+                require_explicit=True,
+            )
+        except ValueError as exc:
+            errors.append(str(exc))
+        if causal.get("exec_book_visibility_mode") == "paired":
+            errors.append("paired live visibility is live_alignment-only")
+        if int(causal.get("exec_depth_visibility_source_offset_ms", 0) or 0) != 0:
+            errors.append("source-time boundary offsets are live_alignment-only")
+        if params.get("initial_live_state"):
+            errors.append("full live warm-start state is live_alignment-only")
+        if params.get("_empirical_requote_ts_ms") is not None:
+            try:
+                if len(params.get("_empirical_requote_ts_ms")):
+                    errors.append("empirical live requote clocks are live_alignment-only")
+            except TypeError:
+                errors.append("empirical live requote clocks are live_alignment-only")
+        if initial.get("mode") == "fresh_start":
+            if abs(float(initial.get("initial_inventory", 0.0) or 0.0)) > 1e-12:
+                errors.append("fresh-start replay requires zero initial inventory")
+            if abs(float(initial.get("initial_entry_price", 0.0) or 0.0)) > 1e-12:
+                errors.append("fresh-start replay requires zero initial entry price")
+        elif not str(initial.get("artifact_sha256", "")):
+            errors.append("frozen standard initial state requires an artifact hash")
+        if str(latency.get("scenario", "")) == "stress" and contract.get(
+            "promotion_eligible", True
+        ):
+            errors.append("latency stress runs cannot be promotion evidence")
+        loss_limit = int(loss_control.get("max_consecutive_losses", 0) or 0)
+        loss_pause = float(loss_control.get("cooldown_after_loss_s", 0.0) or 0.0)
+        if (loss_limit > 0) != (loss_pause > 0.0):
+            errors.append(
+                "consecutive-loss cooldown requires both a positive threshold and duration"
+            )
+        if (loss_limit > 0 or loss_pause > 0.0) and str(
+            loss_control.get("semantics_version", "")
+        ) != LOSS_COOLDOWN_SEMANTICS:
+            errors.append(
+                "consecutive-loss cooldown semantics identity is invalid"
+            )
+
+        if bool(q90_control.get("enabled", False)):
+            if not bool(params.get("dynamic_fill_hazard_shadow_enabled", False)):
+                errors.append("BUY q90 action requires the dynamic hazard model")
+            if str(q90_control.get("exchange_book_queue_mode", "")) != "strict":
+                errors.append("BUY q90 formal replay requires strict native exchange-book mode")
+            if not bool(params.get("require_formal_l2", False)):
+                errors.append("BUY q90 formal replay requires the frozen formal L2 identity")
+            if not str((artifacts.get("formal_l2") or {}).get("manifest_sha256", "")):
+                errors.append("BUY q90 formal replay is missing the formal L2 manifest hash")
+            native_root = Path(
+                str(q90_control.get("native_exchange_book_root", "") or "")
+            ).expanduser()
+            if not str(q90_control.get("native_exchange_book_root", "") or ""):
+                errors.append("BUY q90 formal replay requires a native exchange-book root")
+            elif not native_root.is_dir():
+                errors.append("BUY q90 native exchange-book root does not exist")
+            if int(q90_control.get("native_exchange_book_warmup_hours", 0) or 0) < 0:
+                errors.append("BUY q90 native exchange-book warmup hours are invalid")
+            for name in (
+                "dynamic_fill_hazard_model",
+                "dynamic_fill_hazard_policy",
+            ):
+                identity = artifacts.get(name) or {}
+                actual = str(identity.get("sha256", "") or "").lower()
+                declared = str(identity.get("declared_sha256", "") or "").lower()
+                if not actual or not declared or actual != declared:
+                    errors.append(f"{name} artifact hash is missing or mismatched")
+
+        sync_mode = str(sync_control.get("mode", "") or "")
+        sync_enabled = bool(sync_control.get("config_enabled", False))
+        if sync_mode not in {"disabled", "frozen_tape", "censor", "stress"}:
+            errors.append("sync-adjust replay mode is invalid")
+        if sync_enabled and sync_mode == "disabled":
+            errors.append(
+                "formal replay cannot omit the enabled live sync-adjust control"
+            )
+        if not sync_enabled and sync_mode != "disabled":
+            errors.append(
+                "sync-adjust events cannot run while the live control is disabled"
+            )
+        if sync_mode != "disabled" and str(
+            sync_control.get("semantics_version", "")
+        ) != SYNC_DEGRADE_SEMANTICS:
+            errors.append("sync-adjust event ordering semantics identity is invalid")
+        if sync_mode in {"frozen_tape", "censor"}:
+            tape = sync_control.get("event_tape") or {}
+            actual = str(tape.get("sha256", "") or "").lower()
+            declared = str(tape.get("declared_sha256", "") or "").lower()
+            if not actual or not declared or actual != declared:
+                errors.append("sync-adjust event tape hash is missing or mismatched")
+            environment = str(sync_control.get("environment", "") or "")
+            declared_environment = str(
+                sync_control.get("declared_environment", "") or ""
+            )
+            if not environment or not declared_environment:
+                errors.append("sync-adjust event tape environment identity is missing")
+            elif environment != declared_environment:
+                errors.append("sync-adjust event tape environment identity is mismatched")
+            if str(tape.get("schema_version", "") or "") != SYNC_DEGRADE_TAPE_SCHEMA:
+                errors.append("sync-adjust event tape schema identity is invalid")
+            coverage_start = int(tape.get("start_ts_ms", 0) or 0)
+            coverage_end = int(tape.get("end_ts_ms", 0) or 0)
+            if coverage_start <= 0 or coverage_end < coverage_start:
+                errors.append("sync-adjust event tape coverage identity is invalid")
+        if sync_mode in {"censor", "stress"} and contract.get(
+            "promotion_eligible", True
+        ):
+            errors.append("sync-adjust censor/stress runs cannot be promotion evidence")
+    if str(latency.get("sampler_version", "")) != KEYED_LATENCY_SAMPLER_VERSION:
+        errors.append(f"latency sampler must be {KEYED_LATENCY_SAMPLER_VERSION}")
+    if not str(latency.get("profile_id", "")):
+        errors.append("latency profile requires an environment/version label")
+    if not latency.get("environment"):
+        errors.append("latency environment identity is missing")
+    if str(latency.get("rare_spike_policy", "")) != "stress_only":
+        errors.append("rare latency spikes must be stress-only")
+    return errors
+
+
+def freeze_replay_contract(
+    params: MutableMapping[str, Any],
+    *,
+    purpose: str = "formal",
+    initial_state_mode: str = "fresh_start",
+    initial_state_artifact: str | Path | None = None,
+    root: str | Path | None = None,
+) -> dict[str, Any]:
+    normalized_initial = str(initial_state_mode or "fresh_start").lower()
+    if str(purpose or "formal").lower() == "formal" and params.get("initial_live_state"):
+        raise RuntimeError("full live warm-start state is live_alignment-only")
+    if normalized_initial == "fresh_start":
+        params["initial_inventory"] = 0.0
+        params["initial_entry_price"] = 0.0
+        params.pop("initial_live_state", None)
+    elif normalized_initial == "frozen_standard":
+        if initial_state_artifact is None:
+            raise ValueError("frozen_standard requires an initial-state artifact")
+        params.update(load_standard_initial_state(initial_state_artifact))
+        params.pop("initial_live_state", None)
+    contract = build_replay_contract(
+        params,
+        purpose=purpose,
+        initial_state_mode=normalized_initial,
+        initial_state_artifact=initial_state_artifact,
+        root=root,
+    )
+    errors = _formal_contract_errors(params, contract)
+    if errors:
+        raise RuntimeError("Replay contract failed: " + "; ".join(errors))
+    params["replay_contract"] = contract
+    params["replay_contract_sha256"] = contract["contract_sha256"]
+    params["replay_purpose"] = contract["purpose"]
+    params["replay_initial_state_mode"] = normalized_initial
+    params["replay_promotion_eligible"] = bool(contract["promotion_eligible"])
+    return contract
+
+
+def validate_frozen_replay_contract(params: Mapping[str, Any]) -> dict[str, Any]:
+    expected = params.get("replay_contract")
+    if not isinstance(expected, Mapping):
+        raise RuntimeError("formal replay contract is missing")
+    initial = expected.get("initial_state", {})
+    rebuilt = build_replay_contract(
+        params,
+        purpose=str(expected.get("purpose", "formal")),
+        initial_state_mode=str(initial.get("mode", "fresh_start")),
+        initial_state_artifact=str(initial.get("artifact_path", "")) or None,
+    )
+    errors = _formal_contract_errors(params, rebuilt)
+    if rebuilt.get("contract_sha256") != expected.get("contract_sha256"):
+        errors.append(
+            "runtime config/model/P3/queue/causal/latency identity differs from the frozen contract"
+        )
+    if errors:
+        raise RuntimeError("Replay contract failed: " + "; ".join(errors))
+    return rebuilt
+
+
+def write_replay_contract(contract: Mapping[str, Any], path: str | Path) -> Path:
+    output = Path(path).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(contract, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return output

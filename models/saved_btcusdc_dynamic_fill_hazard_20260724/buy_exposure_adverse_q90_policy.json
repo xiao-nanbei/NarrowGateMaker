@@ -1,0 +1,31 @@
+{
+  "schema_version": "dynamic_fill_hazard_live_policy.v1",
+  "policy_id": "buy_exposure_adverse_q90_cancel_reenter_v1",
+  "model_family_id": "dynamic_fill_hazard_m0_native_strict_nested_cal_v2",
+  "model_file_sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6",
+  "side": "BUY",
+  "eligible_roles": [
+    "opener",
+    "add"
+  ],
+  "score_formula": "probability_adverse_fill-probability_favorable_fill",
+  "score_units": "probability",
+  "entry_quantile": 0.9,
+  "entry_threshold": 0.005747997873332665,
+  "entry_action": "cancel",
+  "recovery_rule": "score_below_entry_threshold",
+  "reentry_action": "baseline_reenter",
+  "evaluation_interval_ms": 100.0,
+  "invalid_state_action": "hold_if_already_canceled_otherwise_keep",
+  "reducing_side_unchanged": true,
+  "sell_side_unchanged": true,
+  "size_unchanged": true,
+  "inventory_limit_unchanged": true,
+  "development_oof_sha256": "1d204cd92a907821fb45fa473f6966bab614cbb535ec0b5725f20871b68593d3",
+  "development_oof_rows": 936204,
+  "development_oof_days": 19,
+  "validation_predictions_sha256": "e072f6418a0805045004e3c34d99796f000613f5cf1057863aab78dcc8188a68",
+  "validation_activation_rate": 0.08594391806780217,
+  "threshold_selection": "Development OOF BUY opener/add empirical q90; Validation was not used to retune",
+  "live_authorization": "explicit user instruction 2026-07-25"
+}
