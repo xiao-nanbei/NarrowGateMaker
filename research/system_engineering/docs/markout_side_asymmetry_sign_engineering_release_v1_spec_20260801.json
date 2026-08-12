@@ -1,0 +1,57 @@
+{
+  "schema_version": "markout_side_asymmetry_sign_engineering_release.v1.spec",
+  "identity": "markout_side_asymmetry_sign_engineering_release_v1",
+  "status": "remote_same_version_preflight_passed_pending_minimal_release",
+  "scope": "Engineering correction of maker-signed BUY/SELL markout asymmetry semantics. This is not an alpha arm, PnL claim, inventory-action reopening, or q90 policy change.",
+  "routing": {
+    "F09": "inventory_suppression_and_passive_repair_action_subspace_exhausted",
+    "q90": "baseline_integrity_repair_active",
+    "PnL": "decision_visible_fill_quality_alpha_missing"
+  },
+  "observed_remote_before": {
+    "config_yaml_sha256": "896b8055d456935050dc0df8fdfa25184824ada6d212e539c91677f8f47f3278",
+    "config_py_sha256": "2eb44ab9e837193ca9ef9b734cebba2e0409c548c588737ce9a2f475490df4c6",
+    "quote_core_py_sha256": "ceeb0a3a9b198300984fe0ebb336d1e2f5ff91564588b8fce263bca3f3d56605",
+    "quote_core_hpp_sha256": "6a6a0dcfee9ccd4090a75b4d93acb23300496cdf4973f42b4ad5125895e341af",
+    "effective_markout_side_asymmetry_sign": -1.0,
+    "sign_source": "runtime config.py default because live/config.yaml omitted the field"
+  },
+  "minimal_release_payload": {
+    "config_yaml_sha256": "2752f93243c635e87073b5b82089ea0bdaeb6a0ec3183c374c9e64a84481a670",
+    "config_py_sha256": "162cf7973a65553fd20ad0f120c071c09269836b2ff37e7a4d956e785ab161e5",
+    "quote_core_py_sha256": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+    "quote_core_hpp_sha256": "dd1810c8cd428039039471547ece8b9ffa9480e0463996eaf9ed69612ecdf3de",
+    "explicit_markout_side_asymmetry_sign": 1.0,
+    "diff_contract": "one explicit YAML field, two live/config.py defaults, three strategy/quote_core.py defaults, and one C++ header default only"
+  },
+  "q90_immutability": {
+    "policy_path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+    "policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "entry_quantile": 0.9,
+    "entry_threshold": 0.005747997873332665,
+    "action_enabled_before": true,
+    "threshold_tuning_allowed": false,
+    "economic_result_read_allowed": false
+  },
+  "verification": {
+    "engineering_release_test_sha256": "f9268740d1872dedf1b15cebf40a0bfae45ca79b0ce500b4fff016ad8ab28b8c",
+    "targeted_tests_passed": 25,
+    "python_cpp_parity": true,
+    "spread_cap_contract": true,
+    "gtx_contract": true,
+    "shadow_coordinate_audit_result_sha256": "dfedb81c768ab8c52c4b508af7ea1da02827dfc8c82adba6ef62d8483fb5484b",
+    "shadow_corrected_minus_observed_mean_bps": -0.0004068517236373232,
+    "remote_same_version_preflight_passed": true,
+    "remote_candidate_config_sha256": "2752f93243c635e87073b5b82089ea0bdaeb6a0ec3183c374c9e64a84481a670",
+    "capture_active_before_release": false,
+    "local_whole_worktree_preflight_passed": false,
+    "local_whole_worktree_preflight_non_gate_reason": "The dirty local tree expects feature_semantics_version=6 while the unchanged remote ML-OFF bundle and same-version runtime use version 5. This minimal patch does not sync feature or model code; remote same-version preflight is authoritative."
+  },
+  "permissions": {
+    "engineering_release_authorized": true,
+    "strategy_action_authorized": false,
+    "prediction_claim_authorized": false,
+    "pnl_improvement_claim_authorized": false,
+    "closed_family_reopen_authorized": false
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "schema_version": "ec2_python_runtime_migration.v1",
+  "identity": "ec2_python_runtime_migration_v1_20260801",
+  "authority": "system_engineering_only",
+  "strategy_action_authorized": false,
+  "live_strategy_change_authorized": false,
+  "host": "<retired-original-aws-ssh-target>",
+  "repository": "${NARROWGATE_REMOTE_ROOT}",
+  "source_runtime": {
+    "venv": ".venv",
+    "python": "3.9.25",
+    "soabi": "cpython-39-x86_64-linux-gnu",
+    "pybind_sha256": "7708df6b5c31c087f588e4ba8cf16f6c26e60c1d29139050d55424babb830bba"
+  },
+  "target_runtime": {
+    "venv": ".venv-py312",
+    "python": "3.12.13",
+    "rpm": "python3.12-3.12.13-2.amzn2023.0.2.x86_64",
+    "soabi": "cpython-312-x86_64-linux-gnu",
+    "pip_freeze_sha256": "e18ef03b0762698c5f71ac084a9b85fe97cbfd36d4a8636f946f42d042f77f45",
+    "pybind_sha256": "6bb6d4dff15d1c43fcfa400fbd79f481fe50fc62c956928b0ae3238a3cacc152"
+  },
+  "launcher": {
+    "path": "live/run.sh",
+    "target_sha256": "f5274bd995e02d2390a71e661267285e487d6f12af2b3f415c678161ba2c4aeb",
+    "selector": ".venv-active",
+    "fallback": ".venv"
+  },
+  "frozen_runtime_inputs": {
+    "config_sha256": "2752f93243c635e87073b5b82089ea0bdaeb6a0ec3183c374c9e64a84481a670",
+    "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "q90_policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "ml_enabled": false,
+    "recording_required_disabled": true
+  },
+  "pre_switch_gates": [
+    "target_python_exact_match",
+    "dependency_imports",
+    "pybind_import_and_default_contract",
+    "deploy_preflight",
+    "q90_bundle_and_policy_load",
+    "python_cpp_quote_core_smoke",
+    "capture_inactive",
+    "natural_flat_account_state"
+  ],
+  "post_switch_gates": [
+    "exactly_one_live_process",
+    "process_uses_target_venv",
+    "process_python_3_12_13",
+    "frozen_input_hashes_unchanged",
+    "recording_disabled",
+    "no_startup_severe_log",
+    "quote_decision_progress"
+  ],
+  "rollback": {
+    "retain_source_venv": true,
+    "procedure": "stop live, remove .venv-active selector, start live/run.sh using .venv"
+  },
+  "known_preflight_finding": {
+    "id": "top_level_signal_module_shadows_stdlib_when_python_runs_from_repo_root",
+    "mitigation_for_migration": "create the venv from ${NARROWGATE_REMOTE_HOME} and invoke repository scripts by path"
+  }
+}

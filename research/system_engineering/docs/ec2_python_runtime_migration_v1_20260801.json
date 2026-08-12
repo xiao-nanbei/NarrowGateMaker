@@ -1,0 +1,51 @@
+{
+  "schema_version": "ec2_python_runtime_migration_result.v1",
+  "identity": "ec2_python_runtime_migration_v1_20260801",
+  "status": "complete",
+  "authority": "system_engineering_only",
+  "strategy_action_authorized": false,
+  "live_strategy_change_authorized": false,
+  "host": "<retired-original-aws-ssh-target>",
+  "switch": {
+    "natural_flat": true,
+    "capture_inactive": true,
+    "old_pid": "<private-process-id>",
+    "new_pid": "<private-process-id>",
+    "active_selector": ".venv-active",
+    "active_target": ".venv-py312"
+  },
+  "runtime": {
+    "python": "3.12.13",
+    "soabi": "cpython-312-x86_64-linux-gnu",
+    "pybind_path": ".venv-py312/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-x86_64-linux-gnu.so",
+    "pybind_sha256": "6bb6d4dff15d1c43fcfa400fbd79f481fe50fc62c956928b0ae3238a3cacc152"
+  },
+  "frozen_inputs_after_switch": {
+    "config_sha256": "2752f93243c635e87073b5b82089ea0bdaeb6a0ec3183c374c9e64a84481a670",
+    "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "q90_policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "launcher_sha256": "f5274bd995e02d2390a71e661267285e487d6f12af2b3f415c678161ba2c4aeb"
+  },
+  "gates": {
+    "exactly_one_live_process": true,
+    "process_uses_target_selector": true,
+    "target_python_exact_match": true,
+    "cp312_pybind_loaded": true,
+    "deploy_preflight": true,
+    "q90_bundle_and_policy_load": true,
+    "python_cpp_quote_core_smoke": true,
+    "recording_disabled": true,
+    "quote_decision_progress": true,
+    "startup_severe_log_absent": true,
+    "source_venv_retained_for_rollback": true
+  },
+  "post_switch_observation": {
+    "position": "FLAT",
+    "quote_rows_during_switch_gate": 8,
+    "native_cpp_quote_core": true,
+    "native_cpp_signal_features": true,
+    "native_cpp_global_flow": true,
+    "native_cpp_live_routing": true,
+    "global_reference_state": "basis_warmup_after_process_restart"
+  }
+}
