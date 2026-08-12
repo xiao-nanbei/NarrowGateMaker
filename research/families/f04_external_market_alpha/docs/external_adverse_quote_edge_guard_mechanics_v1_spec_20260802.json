@@ -1,0 +1,162 @@
+{
+  "identity": "external_adverse_quote_edge_guard_mechanics_v1",
+  "identity_class": "development_only_outcome_blind_quote_surface_mechanics",
+  "babel_layer": "E6/P2",
+  "status": "frozen_for_development_mechanics",
+  "question": "Does a three-venue, leave-one-venue-out-consistent adverse-edge state survive the AWS Tokyo visibility clock and mechanically move the current exposure-increasing quote surface without relying on reward selection?",
+  "minimum_full_window_duration_s": 3500,
+  "visibility_delays_ms": [
+    0,
+    10,
+    25,
+    50,
+    100,
+    250,
+    500
+  ],
+  "denominator": {
+    "unit": "one strict adjacent BUY-then-SELL historical live quote-log pair",
+    "scope": "all quote decisions in valid full-window AWS Tokyo capture intervals",
+    "formal_exact_opportunity_denominator": false,
+    "formal_exact_opportunity_blocker": "legacy quote logs have no stable decision_id and use millisecond post-decision log-write time; two ledger days also lack quote rows",
+    "role_rule": "latest strictly-prior signed position state derives opener/add/reducing separately for BUY and SELL; quote_decisions.inventory_ratio is absolute magnitude only and is forbidden for role inference",
+    "inventory_state_clock": "millisecond post-state-update log-write time",
+    "same_millisecond_state_rule": "role unknown and guard ineligible",
+    "eligible_guard_roles": [
+      "opener",
+      "add"
+    ],
+    "reducing_role_action": "unchanged_control_surface",
+    "first_add_exact_denominator": false,
+    "p1_first_add_target_directly_transportable": false,
+    "required_future_merge": "either restrict a successor mechanics identity to exact first-add or preregister an all-exposure-increasing value-prediction sibling"
+  },
+  "clock_contract": {
+    "market_visibility_clock": "feature_ready_ts_ns",
+    "causal_requirement": "feature_ready_ts_ns<=query_ts_ns",
+    "historical_opportunity_clock": "millisecond_resolution_post_decision_log_write",
+    "reorder_window_ms": 5000.0,
+    "reorder_rule": "bounded heap reorder by feature_ready_ts_ns; any event arriving behind the emitted watermark fails the complete capture",
+    "reorder_budget_basis": "outcome-blind engineering budget above the observed recorder queue-age tail; it changes ordering capacity, not signal thresholds",
+    "exact_decision_start_clock_available": false,
+    "historical_subsecond_transport_authority": false,
+    "interpretation": "current run is log-write-clock sensitivity; exact E6 transport requires native decision_ts_ns instrumentation"
+  },
+  "fair_price": {
+    "venues": [
+      "bitget",
+      "bybit",
+      "okx"
+    ],
+    "markets_per_venue": [
+      "spot",
+      "perp"
+    ],
+    "local_execution_market": "binance:perp:BTCUSDC",
+    "stablecoin_anchor": "binance:spot:USDCUSDT",
+    "minimum_valid_venues": 3,
+    "basis_half_life_s": 360.0,
+    "variance_half_life_s": 360.0,
+    "minimum_basis_samples": 30,
+    "minimum_gain_samples": 30,
+    "max_source_age_ms": 2000.0,
+    "max_anchor_age_ms": 30000.0,
+    "max_dispersion_bps": 2.0,
+    "maximum_abs_basis_bps": 100.0,
+    "basis_and_error_updates": "strictly past-only before each current output",
+    "uncertainty_interval": "per-venue adjusted fair price plus/minus past tracking standard deviation and one deterministic rounding tick",
+    "loo_profiles": [
+      "all_venues",
+      "leave_bitget_out",
+      "leave_bybit_out",
+      "leave_okx_out"
+    ]
+  },
+  "quote_contract": {
+    "action_semantics": "outward_only_defense_never_inward_tightening",
+    "buy_rule": "move exposure-increasing BUY down only when every all/LOO profile identifies negative conservative BUY edge",
+    "sell_rule": "move exposure-increasing SELL up only when every all/LOO profile identifies negative conservative SELL edge",
+    "tick_size": 0.1,
+    "max_pair_spread_bps": 20.0,
+    "maker_fee_bps": 0.0,
+    "spread_cap_source": "operational private baseline config SHA256 832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8",
+    "no_gain_search": true,
+    "no_side_multiplier": true,
+    "no_venue_weight_search": true,
+    "no_pnl_selected_threshold": true
+  },
+  "mechanics_outputs": [
+    "negative-edge trigger rate and episode duration",
+    "BUY/SELL and opener/add/reducing support",
+    "10-500ms trigger survival under recorded feature-ready time",
+    "requested and effective outward ticks",
+    "spread-cap clipping",
+    "all/LOO direction consistency",
+    "potential place/replace and queue-reset upper bounds"
+  ],
+  "non_authoritative_outputs": {
+    "potential_replace": "upper bound only because exact pending-order and ACK state is absent from the immutable capture payload",
+    "potential_queue_reset": "upper bound only",
+    "fill_path_divergence": "not identified in this identity",
+    "economic_value": "not read"
+  },
+  "input_identity_snapshot": {
+    "capture_ledger_path": "${NARROWGATE_DATA_ROOT}/receive_time_tape/capture_ledger.v1.jsonl",
+    "capture_ledger_sha256": "99acb42418ed792262212a1c7da1e59c64f9fa2503f9661567c8ea74551c8fdf",
+    "valid_full_windows": 19,
+    "distinct_valid_full_utc_days": 18,
+    "quote_decision_sources": [
+      {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_240h_20260731/quote_decisions.csv",
+        "sha256": "eef2721f7f8b206a10c5fe9419e39715daa1595534a5f9694bd549c464616bdf"
+      },
+      {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_360h_20260801/decisions_360h.csv.gz",
+        "sha256": "d689f37f54e89bdc0236d1a452b0bdc93a5452c38f5acc7858c35b2e20d29e19"
+      }
+    ],
+    "signed_inventory_state_sources": [
+      {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_240h_20260731/trades.csv",
+        "sha256": "f2162b72134c52e9d8a9246ccc50325d8e52da7c08f773b2e35a29f6c60cd641",
+        "columns_allowed": [
+          "timestamp",
+          "position"
+        ]
+      },
+      {
+        "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_360h_20260801/trades_360h.csv.gz",
+        "sha256": "66cd940f09305f6f8f10cb3926bc7498ccefcb7176817ff1aa41e26dfac981d5",
+        "columns_allowed": [
+          "timestamp",
+          "position"
+        ]
+      }
+    ],
+    "fair_price_implementation_sha256": "fd72138572382eff3d02f749a1272598a0cf0c0d8b9b80c24d2fd389da45ecaa"
+  },
+  "cache_contract": {
+    "class": "reusable_derived_window_cache",
+    "default_root": "${NARROWGATE_CACHE_ROOT}/replay_dag/external_adverse_quote_edge_guard_mechanics_v1",
+    "raw_and_frozen_noncache_data_remain_on_orico": true,
+    "cache_may_not_replace_source_hashes": true
+  },
+  "forbidden_inputs": [
+    "post-decision fills",
+    "fill price or quantity",
+    "markout",
+    "PnL",
+    "campaign terminal outcome",
+    "future price",
+    "Validation",
+    "sealed holdout"
+  ],
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  }
+}
