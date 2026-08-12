@@ -1,0 +1,174 @@
+{
+  "schema_version": "narrowgate.action_bound_full_path_direct_promotion.v1",
+  "identity": "action_bound_full_path_direct_promotion_contract_v1",
+  "created_at_utc": "2026-08-04T00:00:00Z",
+  "canonical_contract_sha256": "bb7a971852c862843da2cd6ac5bc27ab0bf5892bd92df7f4e812eac16a995dfe",
+  "successor_scope": "supplements_dual_path_research_progression_contract_v1_without_rewriting_frozen_predecessors",
+  "principle": "freeze a concrete action, run authoritative full-path replay, then promote directly to active live only through the promotion controller",
+  "stage_order": [
+    "freeze_concrete_action",
+    "authoritative_full_path_replay",
+    "promotion_controller",
+    "direct_active_live_with_rollback"
+  ],
+  "shadow_stage": {
+    "mandatory_for_promotion": false,
+    "grants_action_authority": false,
+    "engineering_exception_requires_budget_and_expiry": true,
+    "allowed_exception_scopes": [
+      "execution_parity",
+      "data_transport",
+      "incident_diagnosis"
+    ],
+    "persistent_observation_only_strategy_shadow_is_default": false
+  },
+  "action_binding": {
+    "identity_hash_required": true,
+    "baseline_hash_required": true,
+    "candidate_policy_hash_required": true,
+    "side_scope_frozen_before_replay": true,
+    "candidate_rate_frozen_before_replay": true,
+    "rate_limit_frozen_before_replay": true,
+    "deployed_parameters_must_equal_replay": true,
+    "candidate_must_be_an_independent_economic_intervention": true,
+    "candidate_examples": [
+      "toxicity_triggered_exposure_quote_widening",
+      "exit_urgency_triggered_reducing_quote_aggression",
+      "external_adverse_edge_single_side_defense"
+    ]
+  },
+  "conditional_p3_leverage": {
+    "role": "action_embedded_mechanics_input_only",
+    "standalone_research_identity_allowed": false,
+    "standalone_backtest_allowed": false,
+    "standalone_live_allowed": false,
+    "generates_quote": false,
+    "grants_action_authority": false,
+    "fields": [
+      "interface_schema_version",
+      "parent_action_identity_hash",
+      "baseline_identity_hash",
+      "candidate_policy_hash",
+      "candidate_universe_sha256",
+      "p3_artifact_hash",
+      "p3_cadence",
+      "p3_horizon_s",
+      "quote_snapshot_id",
+      "quote_snapshot_market_generation",
+      "quote_snapshot_depth_generation",
+      "side",
+      "role",
+      "candidate_source",
+      "candidate_action",
+      "baseline_effective_price",
+      "candidate_effective_price",
+      "tick_size",
+      "effective_tick_delta",
+      "price_action_noop",
+      "support_valid",
+      "unsupported_reason",
+      "baseline_reach_probability",
+      "candidate_reach_probability",
+      "delta_reach_probability",
+      "relative_reach_ratio",
+      "relative_reach_ratio_valid",
+      "probability_denominator_epsilon",
+      "delta_reach_lcb_simultaneous",
+      "delta_reach_ucb_simultaneous",
+      "reach_near_noop",
+      "reach_near_noop_abs_delta",
+      "reach_collapse_risk",
+      "reach_retention_floor",
+      "simultaneous_band_family_id",
+      "simultaneous_band_artifact_sha256",
+      "simultaneous_band_method",
+      "p3_generates_quote",
+      "p3_grants_action_authority"
+    ],
+    "interval_scope": "paired_simultaneous_band_over_frozen_action_candidate_family",
+    "reach_is_not_fill_or_value": true,
+    "scalar_kappa_or_delta_star_export_forbidden": true
+  },
+  "active_policy_contract": {
+    "identity_template": "<candidate_source>_conditional_p3_reach_gate_v1",
+    "mode": "active_only_after_full_path_promotion",
+    "standalone_shadow_identity": null,
+    "candidate_source_proposes_direction_and_price": true,
+    "p3_only_applies_frozen_reach_mechanics_gate": true,
+    "unsupported_fallback": "baseline",
+    "single_evaluation_per_canonical_10s_epoch": true,
+    "high_frequency_shadow_csv_forbidden": true,
+    "live_and_replay_must_share_policy_implementation": true,
+    "current_candidate_registered": false,
+    "current_action_enabled": false
+  },
+  "authoritative_full_path_replay": {
+    "shared_quote_snapshot_between_arms": true,
+    "quote_snapshot_contract": "QuoteDecisionSnapshot",
+    "required_components": [
+      "quote_decision_snapshot",
+      "tick_rounding_gtx_and_spread_cap",
+      "activation",
+      "queue",
+      "partial_fill",
+      "cancel_request_ack_race",
+      "cooldown",
+      "inventory",
+      "campaign"
+    ],
+    "economic_gates": [
+      "assignment_to_terminal_pnl_lcb_positive",
+      "campaign_q10_noninferior",
+      "campaign_cvar_noninferior",
+      "mae_noninferior",
+      "maximum_inventory_noninferior",
+      "inventory_time_noninferior",
+      "fill_and_activity_within_frozen_bounds"
+    ],
+    "candidate_rate_side_scope_and_rate_limit_may_not_change_after_outcomes": true
+  },
+  "production_promotion": {
+    "required_gates": [
+      "python_cpp_parity",
+      "config_model_and_artifact_hash_match",
+      "live_preflight",
+      "automatic_rollback"
+    ],
+    "routes": {
+      "hard_gate_path": "research_supported_promotion",
+      "owner_progression_path": "owner_risk_accepted_promotion"
+    },
+    "owner_label_is_permanent": true,
+    "shadow_can_substitute_for_full_path": false,
+    "short_engineering_parity_window_may_precede_activation": true,
+    "short_engineering_parity_window_is_not_a_strategy_shadow_stage": true
+  },
+  "shadow_surface_rationalization": {
+    "buy_fill_selection": "retire_shadow_after_negative_action_evidence_and_action_suspension",
+    "cross_venue_fair_center": "retire_shadow_after_action_closure",
+    "inventory_campaign_what_if": "retire_continuous_writer_when_frozen_historical_denominator_is_sufficient",
+    "depth_diagnostics": "retire_shadow_logging_while_retaining_promoted_imbalance_asym_action",
+    "q90": "temporary_exception_only_while_fresh_recovery_and_transport_work_remain_active",
+    "external_receive_time": "move_to_independent_bounded_recorder_before_removing_live_process_inputs"
+  },
+  "artifact_bindings": {
+    "validator": {
+      "path": "models/audit/action_bound_full_path_promotion.py",
+      "sha256": "09779f32e6c8b04847c5a3d4228f7165105f946423185a2348c98887a82296ce"
+    },
+    "contract_tests": {
+      "path": "tests/test_action_bound_full_path_promotion.py",
+      "sha256": "2e2b4b2491816b820386684153c052455b9d05ae7cf49394129f76e378fd1e4f"
+    },
+    "predecessor_dual_path_contract": {
+      "path": "research/shared/experiment_governance/docs/dual_path_research_progression_contract_v1.md",
+      "sha256": "8b8040f6c208e5a9e3438f1796823b582585667ed3f8e19f3189c8690c5a488d"
+    }
+  },
+  "contract_permissions": {
+    "action_authorized": false,
+    "live_authorized": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  }
+}

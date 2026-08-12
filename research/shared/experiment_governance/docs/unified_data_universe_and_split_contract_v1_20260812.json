@@ -1,0 +1,85 @@
+{
+  "schema_version": "narrowgate_unified_data_universe_and_split_contract.v1",
+  "identity": "unified_data_universe_and_split_contract_v1_20260812",
+  "effective_for": "new_experiment_identities_and_successors",
+  "historical_results_rewritten": false,
+  "universe": {
+    "mode": "append_only_daily_capability_ledger",
+    "one_physical_archive_universe": true,
+    "one_universal_experiment_day_list": false,
+    "day_selection": "deterministic_intersection_of_frozen_capability_requirements",
+    "required_daily_fields": [
+      "utc_day",
+      "source_paths_and_sha256",
+      "source_authority",
+      "trade_bbo_depth_external_and_private_lifecycle_availability",
+      "exchange_receive_and_feature_ready_clock_support",
+      "native_sequence_and_exact_queue_support",
+      "previous_natural_day_warmup_validity",
+      "capability_specific_grade_and_rejection_reasons",
+      "prediction_provider_native_queue_and_live_transport_permissions"
+    ]
+  },
+  "experiment_binding": {
+    "schema_version": "narrowgate_experiment_dataset_binding.v1",
+    "validator": "models/audit/dataset_governance.py",
+    "required": true,
+    "manual_private_date_lists_allowed": false
+  },
+  "full_path_execution": {
+    "canonical_spec": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_spec_20260810.json",
+    "canonical_day_count": 50,
+    "report_views": [
+      "immutable_prefix_40",
+      "added_10",
+      "pooled_50"
+    ],
+    "silent_40_day_fallback_allowed": false,
+    "reduced_support_requires_explicit_capability_exclusions": true,
+    "reduced_support_may_claim_current_50_day_baseline": false
+  },
+  "training_window": {
+    "default": "expanding_all_eligible_pre_cutoff",
+    "calendar_year_or_month_cutoff_has_intrinsic_authority": false,
+    "alternate_window_selection": "inner_nested_chronological_oof_only",
+    "selection_must_precede_outer_oof": true,
+    "source_or_semantics_epoch_boundary_allowed": true
+  },
+  "source_pooling": {
+    "naive_provider_native_pooling_allowed": false,
+    "allowed_modes": [
+      "single_authority",
+      "source_stratified",
+      "auxiliary_then_current_source_calibration"
+    ],
+    "provider_exact_queue_authority": false,
+    "provider_live_transport_authority": false
+  },
+  "oof": {
+    "scope": "development_only",
+    "chronology": "expanding_past_train_then_embargo_then_future_test",
+    "nested_when_selecting_models_features_rules_or_windows": true,
+    "validation_or_holdout_in_oof_allowed": false,
+    "actual_fold_dates_and_test_day_count_required": true,
+    "oof_day_count_is_synonymous_with_execution_denominator": false
+  },
+  "storage": {
+    "raw_and_normalized_source_archives_are_cache": false,
+    "raw_source_lru_deletion_allowed": false,
+    "hard_linked_union_is_payload_duplication": false,
+    "derived_features_overlays_windows_and_training_artifacts_are_lru_managed": true
+  },
+  "current_snapshot": {
+    "provider_calendar_start": "2025-08-01",
+    "provider_calendar_end": "2026-07-30",
+    "owner_excluded_days": [
+      "2026-07-30"
+    ],
+    "normalized_complete_days": 363,
+    "provider_normalized_replay_candidates": 180,
+    "provider_exact_queue_eligible_days": 0,
+    "canonical_full_path_days": 50,
+    "canonical_full_path_grade_a_days": 34,
+    "canonical_full_path_grade_b_days": 16
+  }
+}
