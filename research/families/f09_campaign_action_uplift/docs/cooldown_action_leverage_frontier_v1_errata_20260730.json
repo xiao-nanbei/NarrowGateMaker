@@ -1,0 +1,62 @@
+{
+  "schema_version": "cooldown_action_leverage_frontier_errata.v1",
+  "identity": "cooldown_action_leverage_frontier_v1",
+  "errata_id": "first_add_loss_scale_context_provenance_v1",
+  "created_at_utc": "2026-07-30T00:00:00+00:00",
+  "status": "provenance_scope_corrected_without_modifying_frozen_identity",
+  "frozen_artifacts_unchanged": true,
+  "affected_frozen_artifacts": {
+    "spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/cooldown_action_leverage_frontier_v1_spec_20260730.json",
+      "sha256": "4e97d86cdfd9a7c327a429a15d79fc53ae0162125979eb27dd96be61b4f222dc"
+    },
+    "evaluator": {
+      "path": "research/families/f09_campaign_action_uplift/audit/cooldown_action_leverage_frontier.py",
+      "sha256": "1e27cdd12315f189c01c17f23783a36a162780619376b9522b27e28c3e59d827"
+    },
+    "repository_report": {
+      "path": "research/families/f09_campaign_action_uplift/docs/cooldown_action_leverage_frontier_v1_development_20260730.md",
+      "sha256": "1473b28e165d7eea115efe54c1c9c590a109a6f02ddd8972d16b50f0fd94f6da"
+    },
+    "machine_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/cooldown_action_leverage_frontier_v1_20260730/development/report.json",
+      "sha256": "7db2fc231caf989d170e2a29198e30fb6a88326d9a7a581d0302b1fb2e01d133"
+    },
+    "machine_report_markdown": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/cooldown_action_leverage_frontier_v1_20260730/development/report.md",
+      "sha256": "aebf22c3ac5c02ae63bdfe73e9026b019e7155e1aa78c23ad0a516aed28ee263"
+    }
+  },
+  "correction": {
+    "affected_claim": "the MDE divided by selected-cycle fill rate exceeds the observed first-add loss scale",
+    "correct_classification": "unbound_contextual_comparison",
+    "f10_report_read_by_evaluator": false,
+    "f10_report_in_source_manifest": false,
+    "f10_reference": {
+      "path": "research/families/f10_live_replay_attribution/docs/first_add_decision_to_terminal_loss_diagnostic_v1_development_20260729.md",
+      "identity_bound": false,
+      "sha256": null
+    },
+    "allowed_interpretation": "qualitative context only",
+    "forbidden_interpretation": "evidence-bound economic gate or closure input",
+    "decision_gate_dependency": false
+  },
+  "unchanged_evidence": {
+    "buy_design_mde_usdc": 0.014364963291585165,
+    "sell_design_mde_usdc": 0.015456289238170814,
+    "buy_selected_cycle_fill_rate": 0.0715771951727008,
+    "sell_selected_cycle_fill_rate": 0.06260647359454855,
+    "buy_required_value_per_affected_fill_usdc": 0.20069189993999506,
+    "sell_required_value_per_affected_fill_usdc": 0.2468800485117352,
+    "one_cycle_near_noop_threshold_ucb95": 0.1,
+    "frontier_rows_with_activity_positive_reward_lcb_and_lifecycle_support": 0
+  },
+  "unchanged_decision": {
+    "decision": "tested_cooldown_temporal_permission_action_subspace_exhausted",
+    "f09_family_closed": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
