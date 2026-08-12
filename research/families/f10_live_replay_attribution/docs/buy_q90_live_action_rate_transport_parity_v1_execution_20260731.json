@@ -1,0 +1,59 @@
+{
+  "schema_version": "buy_q90_live_action_rate_transport_execution.v1",
+  "identity": "buy_q90_live_action_rate_transport_parity_v1",
+  "status": "frozen_before_full_component_decomposition",
+  "frozen_at_utc": "2026-07-31T05:15:00Z",
+  "canonical_execution_sha256": "f3264096700dd8bf8b11ca4c4b36b32732c2ebf7b1cdf9d816d67c5fec83cb03",
+  "spec": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_live_action_rate_transport_parity_v1_spec_20260731.json",
+    "file_sha256": "8a8e25a53ef401e6322f55c0d6523fac3b208099868337679e44421e0070de28",
+    "canonical_spec_sha256": "cc24b910f7e5d898382b04afb6615bd08722d13bff5acc83ef77439e40ea80ae"
+  },
+  "implementation": {
+    "path": "research/families/f10_live_replay_attribution/audit/buy_q90_live_action_rate_transport_parity.py",
+    "sha256": "b1e9779e6be123fb98ca9aec6d2c786bb50fd837b72e9e6c5fea1cfafc7bf920",
+    "test_path": "tests/test_buy_q90_live_action_rate_transport_parity.py",
+    "test_sha256": "949677354d8f030f1241f8f03e13a2cd12823014815e401f266738f288f97e29",
+    "python": "3.12.13"
+  },
+  "inputs": {
+    "live_shadow_snapshot": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_live_action_rate_transport_parity_v1_20260731/inputs/buy_q90_shadow_20260724T223950_20260730T220013.csv.gz",
+      "sha256": "383dafd6cb44e03fd62e3061e4c1669e2e61ce06ffaab75ae57ba0947eae23bc",
+      "complete_csv_rows_including_header": 3971978,
+      "gzip_valid": true,
+      "window_start_epoch_s": 1784932790.39433,
+      "window_end_epoch_s": 1785448813.373509
+    },
+    "live_action_log": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_240h_20260731/dynamic_fill_hazard_action.csv",
+      "sha256": "5f7c0b0fee9c638b42962daee446eb81c02e957be3afd3fa81059b5ba826c118"
+    },
+    "live_quote_decisions": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/live_240h_20260731/quote_decisions.csv",
+      "sha256": "eef2721f7f8b206a10c5fe9419e39715daa1595534a5f9694bd549c464616bdf",
+      "role": "identity_and_denominator_context_only"
+    },
+    "historical_replay_arm_daily": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_portfolio_path_attribution_v1_20260731/development/arm_daily.parquet",
+      "sha256": "485026f9c2876f61464c33910b4b6c5c855f3c7d4147cb76df4e76d414dc7011"
+    },
+    "ec2_maker_engine": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/q90_ec2_maker_engine_20260731.py",
+      "sha256": "a6853429cbc5dd93125669598a4a811b4fa402da26ed1ee612f8b5495cda878e"
+    },
+    "ec2_dynamic_fill_hazard_model": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/q90_ec2_dynamic_fill_hazard_model_20260731.py",
+      "sha256": "65a42affcd3f6a4200d7f80b1d38a2054c61f64bb080a501dd029a730acf0c94"
+    }
+  },
+  "output_root": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_live_action_rate_transport_parity_v1_20260731/development",
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_policy_change_authorized": false,
+    "automatic_rollback_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

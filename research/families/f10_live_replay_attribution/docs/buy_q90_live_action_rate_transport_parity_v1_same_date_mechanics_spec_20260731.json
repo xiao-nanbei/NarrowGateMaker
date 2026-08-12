@@ -1,0 +1,96 @@
+{
+  "schema_version": "buy_q90_same_date_mechanics.v1",
+  "identity": "buy_q90_live_action_rate_transport_parity_v1_same_date_mechanics",
+  "status": "frozen_before_same_date_replay_output_read",
+  "frozen_at_utc": "2026-07-31T05:35:00Z",
+  "canonical_spec_sha256": "ac941b10142edd5c2b2c3b274b22a3b5014b424b1d9f0bd7da1b9adbf873ba31",
+  "day": "2026-07-25",
+  "quality_grade": "B",
+  "quality_scope": "gap_censored_sensitivity_context_only; full-day mechanics output cannot grant transport authority",
+  "purpose": "Compare exchange-time same-date q90 mechanics with the already observed receive-time live q90 rate. This separates historical calendar transport from residual clock/path transport without reading economic outcomes.",
+  "known_live_metrics_before_freeze": {
+    "shadow_rows": 483468,
+    "valid_rows": 420607,
+    "at_risk_evaluations": 298386,
+    "valid_at_risk_evaluations": 298383,
+    "cancel_requests": 184,
+    "first_threshold_crossings": 184,
+    "eligible_order_time_s": 30717.5645,
+    "calendar_role": "already_observed_live_mechanics_not_a_replay_outcome"
+  },
+  "parent_historical_q90_spec": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+    "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d"
+  },
+  "implementation": {
+    "path": "research/families/f10_live_replay_attribution/audit/buy_q90_same_date_mechanics.py",
+    "sha256": "6af650ee8bcbc70411a9a7e1fe63636fd07fce3f40cdb5f720f975fefbb26233"
+  },
+  "source_identity": {
+    "normalized_l2": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2_20260727/l2/BTCUSDC-l2-2026-07-25.parquet",
+      "sha256": "5393d374e2580e5720221cc11ef471e78e5a767c4cda5c7bbf1c24ac168a8b3a",
+      "coverage": 0.999728,
+      "maximum_internal_gap_s": 28.409
+    },
+    "normalized_bbo": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2_20260727/bbo/BTCUSDC-bbo-2026-07-25.parquet",
+      "sha256": "80b123cd2a71ee56bf0bcc2fcbf55a5b7b6e0e2dd13c13f4a2b249a6d0a0f1d7"
+    },
+    "individual_trades": {
+      "path": "${NARROWGATE_DATA_ROOT}/raw_trades/BTCUSDC/BTCUSDC-trades-2026-07-25.csv",
+      "sha256": "90160f4f2c628c6dba1958f807a46e3f6a32e08750711a9e66a3f5ad01295627"
+    },
+    "native_orderbook": "CryptoHFT snapshot/delta with D-1 warmup and strict sequence checks inherited from the parent q90 contract"
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "q90_cpp_scope": "native_book_and_q90_kernel_lockstep",
+    "clock": "exchange_time_merged_100ms",
+    "initial_state": "daily_fresh_start",
+    "receive_time_not_reconstructed": true,
+    "q90_enabled": true,
+    "ml_enabled": false,
+    "maker_fill_prob": 1.0,
+    "trace_fills": false,
+    "trace_economic_outcomes": false,
+    "window_cache_write": false,
+    "native_source_gap_must_equal_zero": true,
+    "native_invalid_sequence_messages_must_equal_zero": true,
+    "python_cpp_mismatch_must_equal_zero": true
+  },
+  "allowed_outputs": [
+    "elapsed_hours",
+    "q90_eval_count",
+    "q90_valid_eval_count",
+    "q90_invalid_eval_count",
+    "q90_keep_count",
+    "q90_cancel_request_count",
+    "q90_cancel_ack_count",
+    "q90_pre_ack_fill_count",
+    "q90_recovery_count",
+    "q90_reentry_count",
+    "native_event_count",
+    "native_source_gap_count",
+    "native_sequence_failure_count",
+    "python_cpp_parity_counters",
+    "evaluations_per_hour",
+    "cancel_requests_per_hour",
+    "cancel_requests_per_evaluation"
+  ],
+  "economic_outputs_prohibited": true,
+  "interpretation_contract": {
+    "same_date_replay_near_live_rate": "supports July market-state contribution but does not prove receive-time parity",
+    "same_date_replay_near_historical_rate": "supports residual receive-time, feature-ready, activation, queue-path, or lifecycle transport divergence",
+    "grade_b_limit": "result is sensitivity-only regardless of rate proximity",
+    "no_threshold_retuning": true
+  },
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_policy_change_authorized": false,
+    "automatic_rollback_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
