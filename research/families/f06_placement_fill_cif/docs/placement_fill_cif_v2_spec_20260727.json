@@ -1,0 +1,221 @@
+{
+  "schema_version": "narrowgate_placement_fill_cif_spec.v2",
+  "family_id": "placement_fill_cif_v2",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v2_development_outcomes",
+  "revision_reason": "replace the unsupported point gate abs(logit calibration intercept) <= 0.01 with nested cell calibration and day-clustered transfer gates",
+  "evidence_scope": "v1 Development outcomes informed this calibration revision; v1 Validation and sealed holdout were still unread when v2 was frozen",
+  "lineage": {
+    "v1_spec": "docs/placement_fill_cif_v1_spec_20260726.json",
+    "v1_spec_sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
+    "v1_development_panel": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v1_development_20260726",
+    "v1_development_panel_manifest_sha256": "a42d77d2e7a9cf320d646baa9f3e8e870c75457263d55762da4ed55aefd5f9a9",
+    "v1_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v1_development_20260726/report.json",
+    "v1_development_report_sha256": "fd8c3fdc475a2f68d8138835e682982711193451723d7062733c9a3805a8001a",
+    "v1_frozen_intercept_gate_retained_as_history": 0.01
+  },
+  "source_identity": {
+    "strict_day_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/normalized_strict_days.csv",
+    "strict_day_manifest_sha256": "8e820f3d9a59db10432533fa3c7118bc12327aa60822a717df57fb10c957bdab",
+    "normalized_l2_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_20260727/manifest.json",
+    "normalized_l2_manifest_sha256": "88ff8faeef9976a10b1cf03e887e624e3cce5abb3d17de1b7920a58bb0de1275",
+    "normalized_l2_daily_quality": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_20260727/daily_quality.csv",
+    "normalized_l2_daily_quality_sha256": "e2aa9122b26cdb229fd739a626eec4ba58db5b876e1af1b4bde785e3e308131e",
+    "native_exchange_book_root": "${NARROWGATE_RETIRED_MARKETDATA_ROOT}/cryptohftdata",
+    "config": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "896b8055d456935050dc0df8fdfa25184824ada6d212e539c91677f8f47f3278",
+    "p3_artifact": "models/saved_btcusdc_causal_v7_time_calendar_semantics_20260726/fill_prob_params.json",
+    "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "queue_calibration": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+    "queue_calibration_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+    "latency_telemetry": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+    "latency_telemetry_sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
+    "book_visibility_profile": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260719/day_20260718/quote_decisions_2026-07-18.csv",
+    "book_visibility_profile_sha256": "c47929a6e0212017762277edbb5b6008b799e0bdb827e72d8d47e8d6310d5825",
+    "latency_sampler_version": "keyed_splitmix64_v1",
+    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux"
+  },
+  "panels": {
+    "development": {
+      "trainable": true,
+      "sealed": false,
+      "days": [
+        "2026-04-17",
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+        "2026-04-22",
+        "2026-04-23",
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-13",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-05",
+        "2026-06-06",
+        "2026-06-07",
+        "2026-06-08",
+        "2026-06-09",
+        "2026-06-10",
+        "2026-06-11",
+        "2026-06-12",
+        "2026-06-13",
+        "2026-06-14",
+        "2026-06-15",
+        "2026-06-16",
+        "2026-06-17",
+        "2026-06-18",
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+        "2026-06-25",
+        "2026-06-26"
+      ]
+    },
+    "embargo_1": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-06-27"
+      ]
+    },
+    "validation": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-06-28",
+        "2026-06-29",
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
+        "2026-07-07",
+        "2026-07-08"
+      ]
+    },
+    "embargo_2": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-07-09"
+      ]
+    },
+    "sealed_holdout": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-07-10",
+        "2026-07-11",
+        "2026-07-12",
+        "2026-07-14",
+        "2026-07-15",
+        "2026-07-16",
+        "2026-07-17",
+        "2026-07-18",
+        "2026-07-19",
+        "2026-07-20"
+      ]
+    },
+    "late_evidence": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-07-21",
+        "2026-07-22",
+        "2026-07-23",
+        "2026-07-25"
+      ],
+      "excluded_days": {
+        "2026-07-24": "normalized L2 coverage below the formal threshold"
+      }
+    }
+  },
+  "development_fit": {
+    "mode": "expanding_chronological",
+    "past_only": true,
+    "minimum_train_days": 20,
+    "embargo_days": 1,
+    "outer_test_days": 5,
+    "inner_calibration": "expanding_inner_oof_only",
+    "calibration_revision": "side_affine_logit_then_side_role_horizon_intercept_only",
+    "placement_actions_pooled_inside_each_calibration_cell": true
+  },
+  "placement_estimand": {
+    "risk_origin": "decision_before_submit",
+    "actions": [
+      "closer_1tick",
+      "current",
+      "farther_1tick"
+    ],
+    "distance_delta_ticks": [
+      -1,
+      0,
+      1
+    ],
+    "fixed_horizons_ms": [
+      1000,
+      5000,
+      10000
+    ],
+    "cells": "BUY/SELL x opener/add/reducing x 1s/5s/10s = 18; actions are pooled, not 54 gates",
+    "primary": "action_specific_activation_times_direct_fill_cif_before_cancel_ack",
+    "lifecycle_endpoint": "first_fill_before_cancel_ack_or_administrative_censor",
+    "shadow_fill_feedback": false,
+    "external_reference_enabled": false
+  },
+  "active_order_estimand": {
+    "family_id": "active_order_continuation_surface_v1",
+    "status": "separate_and_not_built_by_this_pipeline",
+    "risk_origin": "currently_active_order_snapshot",
+    "actions": [
+      "keep",
+      "replace"
+    ],
+    "keep_preserves_queue": true,
+    "replace_resets_queue": true
+  },
+  "prediction_gates": {
+    "development_first": true,
+    "pathwise_observed_monotonicity_violations": 0,
+    "minimum_oof_days_per_side_role": 8,
+    "minimum_fill_events_per_side_role": 100,
+    "day_clustered_brier_skill_lower_bound_vs_exposure_only": 0.0,
+    "calibration_slope_range": [
+      0.8,
+      1.2
+    ],
+    "calibration_level": {
+      "point_intercept_limit": null,
+      "day_clustered_observed_minus_expected_ci_must_contain_zero": true,
+      "day_clustered_observed_expected_ratio_ci_must_contain_one": true,
+      "inner_oof_empirical_drift_quantile": 0.95,
+      "pooled_absolute_bias_must_not_exceed_inner_oof_drift_envelope": true
+    },
+    "daily_rank_direction_required_fraction": 0.6,
+    "validation_access": "only_after_all_18_development_cells_pass",
+    "sealed_holdout_access": "only_after_validation_passes_without_model_or_gate_changes",
+    "late_evidence_access": "only_after_sealed_holdout passes",
+    "action_or_live_authorization": false
+  },
+  "interpretation": {
+    "prediction_pass_allows": "frozen shadow probability artifact and downstream action-value experiment",
+    "prediction_pass_does_not_allow": "direct quote change or live action",
+    "economic_gate": "deferred until P(fill) is combined with side-role fill value, campaign cost, and queue/reset cost"
+  },
+  "storage_gate": {
+    "minimum_free_gib_reserve": 60,
+    "minimum_free_multiplier_of_estimated_output": 2.5
+  }
+}

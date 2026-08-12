@@ -1,0 +1,38 @@
+{
+  "extends": "placement_fill_cif_v2_spec_20260727.json",
+  "extends_sha256": "54c74b8a5185cfe55ff00cd7bbf95896649133d6093de0707ddf6b3b7ce906e9",
+  "schema_version": "narrowgate_placement_fill_cif_spec.v4",
+  "family_id": "placement_fill_cif_v4",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_v4_validation_access",
+  "revision_reason": "separate a prediction-transfer gate from the later economic absolute-probability gate",
+  "evidence_scope": "Development was used for gate design; Validation and sealed holdout remained unread when v4 was frozen",
+  "lineage": {
+    "v2_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v2_development_20260727/report.json",
+    "v2_development_report_sha256": "d2cd70eee455347bdffca28fe874e27fa81085cb77d80b210e7e3aa0267b80b0",
+    "v3_development_report": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/direct_fill_cif_v3_development_20260727/report.json",
+    "v3_development_report_sha256": "e9b8f8441708f0b8fad576c9e6a2baab83ec52d56d88f0a2cb3c020194a2e0dc",
+    "v3_result": "17/18; rolling calibration was rejected because SELL add 1s lost Brier support"
+  },
+  "development_fit": {
+    "calibration_revision": "v2 nested side affine plus side-role-horizon intercept; no rolling window selected"
+  },
+  "prediction_gates": {
+    "calibration_level": {
+      "point_intercept_limit": null,
+      "day_clustered_observed_minus_expected_ci_must_contain_zero": false,
+      "day_clustered_observed_expected_ratio_ci_must_contain_one": false,
+      "inner_oof_empirical_drift_quantile": 0.95,
+      "pooled_absolute_bias_must_not_exceed_inner_oof_drift_envelope": true,
+      "zero_centered_intervals_are_diagnostics": true
+    },
+    "qualification_name": "prediction_transfer_shadow_gate",
+    "action_or_live_authorization": false
+  },
+  "interpretation": {
+    "prediction_pass_allows": "score all three placement actions in shadow and enter a downstream randomized action-value experiment",
+    "prediction_pass_does_not_allow": "choose a quote action from fill probability alone or deploy a live action",
+    "absolute_probability_status": "requires downstream USDC EV sensitivity and uncertainty propagation",
+    "economic_gate": "abs(delta P_fill) times abs(net fill value) plus campaign and queue costs must remain inside a separately frozen action error budget"
+  }
+}
