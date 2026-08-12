@@ -1,0 +1,753 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_40day_input_identity.v1",
+  "identity": "f07_order_lifecycle_v2_40day_input_admission_v1",
+  "status": "frozen_input_identity_pending_40day_artifact_admission",
+  "frozen_at_utc": "2026-08-05T00:00:00Z",
+  "scope": {
+    "mechanics_only": true,
+    "economic_outcomes_read": false,
+    "lockstep_executed": false,
+    "purpose": "freeze_and_admit_inputs_before_formal_daily_event_lockstep"
+  },
+  "panel": {
+    "ordered_utc_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "day_intervals": [
+      {
+        "day": "2026-04-17",
+        "warmup_interval": {
+          "start_utc": "2026-04-16T00:00:00Z",
+          "end_utc": "2026-04-17T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-17T00:00:00Z",
+          "end_utc": "2026-04-18T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "54a7db19e1ee91e333e810d7da15b098ed49cf33ad7160901fc7a53e90612e84"
+      },
+      {
+        "day": "2026-04-18",
+        "warmup_interval": {
+          "start_utc": "2026-04-17T00:00:00Z",
+          "end_utc": "2026-04-18T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-18T00:00:00Z",
+          "end_utc": "2026-04-19T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "ba504c5c660bbf18db1e9c0d4b7e33cd5774fff01fdc2d4acff9a8b56ef88840"
+      },
+      {
+        "day": "2026-04-19",
+        "warmup_interval": {
+          "start_utc": "2026-04-18T00:00:00Z",
+          "end_utc": "2026-04-19T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-19T00:00:00Z",
+          "end_utc": "2026-04-20T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "140196d92d503891c35a6b92c94779699960232ea831062466790cb15fef8a35"
+      },
+      {
+        "day": "2026-04-20",
+        "warmup_interval": {
+          "start_utc": "2026-04-19T00:00:00Z",
+          "end_utc": "2026-04-20T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-20T00:00:00Z",
+          "end_utc": "2026-04-21T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "d2a939f54eab8293ddbf724eb1894541c706822f58a19b7b344787355a6e054d"
+      },
+      {
+        "day": "2026-04-22",
+        "warmup_interval": {
+          "start_utc": "2026-04-21T00:00:00Z",
+          "end_utc": "2026-04-22T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-22T00:00:00Z",
+          "end_utc": "2026-04-23T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "bbb6c28ecf7c46696ae8677d71967c86aa59ec10dee5984db9bb46fd59c6a683"
+      },
+      {
+        "day": "2026-04-23",
+        "warmup_interval": {
+          "start_utc": "2026-04-22T00:00:00Z",
+          "end_utc": "2026-04-23T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-04-23T00:00:00Z",
+          "end_utc": "2026-04-24T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "d6a28aa8ad9ba2524d1fdaeeee67a6194d4d2ce905bbd92f470f32f01346ef4f"
+      },
+      {
+        "day": "2026-05-01",
+        "warmup_interval": {
+          "start_utc": "2026-04-30T00:00:00Z",
+          "end_utc": "2026-05-01T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-01T00:00:00Z",
+          "end_utc": "2026-05-02T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "b989090076e94aea132930eef67d62ba2c5b8e1d699c58ea75572b5bbc737199"
+      },
+      {
+        "day": "2026-05-02",
+        "warmup_interval": {
+          "start_utc": "2026-05-01T00:00:00Z",
+          "end_utc": "2026-05-02T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-02T00:00:00Z",
+          "end_utc": "2026-05-03T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "b51cda5122e926dbccaf94c9295dc0cb23d778eb51610296c48afe63e6bc502b"
+      },
+      {
+        "day": "2026-05-03",
+        "warmup_interval": {
+          "start_utc": "2026-05-02T00:00:00Z",
+          "end_utc": "2026-05-03T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-03T00:00:00Z",
+          "end_utc": "2026-05-04T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "741e7c0c131919b5f14873fe8f92438a9b88bb1fc1d75301d30b545ffc403a5b"
+      },
+      {
+        "day": "2026-05-04",
+        "warmup_interval": {
+          "start_utc": "2026-05-03T00:00:00Z",
+          "end_utc": "2026-05-04T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-04T00:00:00Z",
+          "end_utc": "2026-05-05T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "38302a4bb8acce48b7a2202feec98afeb4895493d11fac912766f914d5ced687"
+      },
+      {
+        "day": "2026-05-05",
+        "warmup_interval": {
+          "start_utc": "2026-05-04T00:00:00Z",
+          "end_utc": "2026-05-05T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-05T00:00:00Z",
+          "end_utc": "2026-05-06T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "fa3574a3f2fd517b407d352e46395652ba381fc22c19feef0586e4136763f419"
+      },
+      {
+        "day": "2026-05-06",
+        "warmup_interval": {
+          "start_utc": "2026-05-05T00:00:00Z",
+          "end_utc": "2026-05-06T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-06T00:00:00Z",
+          "end_utc": "2026-05-07T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "4beb3ef510239f8beab5b682c5c4caf968a864acfd494c326ff7a3ca8e7fc40a"
+      },
+      {
+        "day": "2026-05-13",
+        "warmup_interval": {
+          "start_utc": "2026-05-12T00:00:00Z",
+          "end_utc": "2026-05-13T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-13T00:00:00Z",
+          "end_utc": "2026-05-14T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "cf6eb274db296282705f9686a90e6330b760244670d56e2749626ee5662a49a6"
+      },
+      {
+        "day": "2026-05-29",
+        "warmup_interval": {
+          "start_utc": "2026-05-28T00:00:00Z",
+          "end_utc": "2026-05-29T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-29T00:00:00Z",
+          "end_utc": "2026-05-30T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "ae28cbd4315b462649464ced14ced2c609f115bcd0e8b53481e1e044286cc5f8"
+      },
+      {
+        "day": "2026-05-30",
+        "warmup_interval": {
+          "start_utc": "2026-05-29T00:00:00Z",
+          "end_utc": "2026-05-30T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-30T00:00:00Z",
+          "end_utc": "2026-05-31T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "b0b7b730241175ae2a3e1c83324b2b3d7b2f4b10edff998cb9d9bb751dec2e8c"
+      },
+      {
+        "day": "2026-05-31",
+        "warmup_interval": {
+          "start_utc": "2026-05-30T00:00:00Z",
+          "end_utc": "2026-05-31T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-05-31T00:00:00Z",
+          "end_utc": "2026-06-01T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "665139c13ce70f24e214cfa1174c7d79e025fc79d8704f84607e69cefb012d74"
+      },
+      {
+        "day": "2026-06-02",
+        "warmup_interval": {
+          "start_utc": "2026-06-01T00:00:00Z",
+          "end_utc": "2026-06-02T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-02T00:00:00Z",
+          "end_utc": "2026-06-03T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "c534e340b9de5549d4b0e1d19cfbb82bd2d2f275cea005cafacde37d0914ba7b"
+      },
+      {
+        "day": "2026-06-03",
+        "warmup_interval": {
+          "start_utc": "2026-06-02T00:00:00Z",
+          "end_utc": "2026-06-03T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-03T00:00:00Z",
+          "end_utc": "2026-06-04T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "aee2865f4104b15437025442bd69982e0e2eedbf8a54a519c04f1dbc6ce7ab4c"
+      },
+      {
+        "day": "2026-06-05",
+        "warmup_interval": {
+          "start_utc": "2026-06-04T00:00:00Z",
+          "end_utc": "2026-06-05T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-05T00:00:00Z",
+          "end_utc": "2026-06-06T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "4f6841409ce127ec12a0ceeaeafd4974f273d4c70012e78c118cc50a205f7c54"
+      },
+      {
+        "day": "2026-06-06",
+        "warmup_interval": {
+          "start_utc": "2026-06-05T00:00:00Z",
+          "end_utc": "2026-06-06T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-06T00:00:00Z",
+          "end_utc": "2026-06-07T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "aa957402a203bffb77b7883548d6c523446082fdf84d7b067e19032ec63d230e"
+      },
+      {
+        "day": "2026-06-07",
+        "warmup_interval": {
+          "start_utc": "2026-06-06T00:00:00Z",
+          "end_utc": "2026-06-07T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-07T00:00:00Z",
+          "end_utc": "2026-06-08T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "0bf3040735dda700c0c36bae9781b98107a9fbde5eae0008ccc638d55f0dd4de"
+      },
+      {
+        "day": "2026-06-08",
+        "warmup_interval": {
+          "start_utc": "2026-06-07T00:00:00Z",
+          "end_utc": "2026-06-08T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-08T00:00:00Z",
+          "end_utc": "2026-06-09T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "8e7ef6b12912b2e7c7447a6262ab3f8cb7affa84105a8d3ebc000211f4dc8f1c"
+      },
+      {
+        "day": "2026-06-09",
+        "warmup_interval": {
+          "start_utc": "2026-06-08T00:00:00Z",
+          "end_utc": "2026-06-09T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-09T00:00:00Z",
+          "end_utc": "2026-06-10T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "3f7502165b3d5d674f1852bc5c3ca058f86de7a7a19efd400bda0096907c5bac"
+      },
+      {
+        "day": "2026-06-10",
+        "warmup_interval": {
+          "start_utc": "2026-06-09T00:00:00Z",
+          "end_utc": "2026-06-10T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-10T00:00:00Z",
+          "end_utc": "2026-06-11T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "5d92145cfa073cf9ddd4726a7bd2d323fb5512bc6ba1c5289104df489bd2a48a"
+      },
+      {
+        "day": "2026-06-11",
+        "warmup_interval": {
+          "start_utc": "2026-06-10T00:00:00Z",
+          "end_utc": "2026-06-11T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-11T00:00:00Z",
+          "end_utc": "2026-06-12T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "32fb26ee9b46563f1e51890f150e9c49f5191a7ea5048ee19811f8c0d8cc1c1d"
+      },
+      {
+        "day": "2026-06-12",
+        "warmup_interval": {
+          "start_utc": "2026-06-11T00:00:00Z",
+          "end_utc": "2026-06-12T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-12T00:00:00Z",
+          "end_utc": "2026-06-13T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "e2ebebc09760c7047e587c3be6cf00543d8c99b6e279c7d2f59e543f6e1e2e2b"
+      },
+      {
+        "day": "2026-06-13",
+        "warmup_interval": {
+          "start_utc": "2026-06-12T00:00:00Z",
+          "end_utc": "2026-06-13T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-13T00:00:00Z",
+          "end_utc": "2026-06-14T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "4ae6b4225820906ffb62ea93b8a98884ea2164c76a3fd2b63c32bf2be42a4b1e"
+      },
+      {
+        "day": "2026-06-14",
+        "warmup_interval": {
+          "start_utc": "2026-06-13T00:00:00Z",
+          "end_utc": "2026-06-14T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-14T00:00:00Z",
+          "end_utc": "2026-06-15T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "0307578e3feedee4b9c320c0682ce231e3aa17ebe45c81954643339b077a9a2a"
+      },
+      {
+        "day": "2026-06-15",
+        "warmup_interval": {
+          "start_utc": "2026-06-14T00:00:00Z",
+          "end_utc": "2026-06-15T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-15T00:00:00Z",
+          "end_utc": "2026-06-16T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "28a85e0b59430f51ee70ff59dcee82b19124248194f76f771b4569bcb91e4286"
+      },
+      {
+        "day": "2026-06-16",
+        "warmup_interval": {
+          "start_utc": "2026-06-15T00:00:00Z",
+          "end_utc": "2026-06-16T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-16T00:00:00Z",
+          "end_utc": "2026-06-17T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "b38feed416c2354caca4b99cd72e8f6a48c3e3ef74daab531370ff847a301723"
+      },
+      {
+        "day": "2026-06-17",
+        "warmup_interval": {
+          "start_utc": "2026-06-16T00:00:00Z",
+          "end_utc": "2026-06-17T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-17T00:00:00Z",
+          "end_utc": "2026-06-18T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "55f6e54119ce0b550edaa591059e29027625c33d78119cf8ca1d7c25ea0ebe1c"
+      },
+      {
+        "day": "2026-06-18",
+        "warmup_interval": {
+          "start_utc": "2026-06-17T00:00:00Z",
+          "end_utc": "2026-06-18T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-18T00:00:00Z",
+          "end_utc": "2026-06-19T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "009ecc1673e27d113a0abd3d91f5844a4907e186e1bd128f685a268e60cdb87e"
+      },
+      {
+        "day": "2026-06-19",
+        "warmup_interval": {
+          "start_utc": "2026-06-18T00:00:00Z",
+          "end_utc": "2026-06-19T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-19T00:00:00Z",
+          "end_utc": "2026-06-20T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "a0882e598c3e7341fb3289cf32f0f304d12d3d43156207623871f40a98223472"
+      },
+      {
+        "day": "2026-06-20",
+        "warmup_interval": {
+          "start_utc": "2026-06-19T00:00:00Z",
+          "end_utc": "2026-06-20T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-20T00:00:00Z",
+          "end_utc": "2026-06-21T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "54c39497c031337103e6ac7f3b0c43452bf844475b7d42e9477290fe0ff500eb"
+      },
+      {
+        "day": "2026-06-21",
+        "warmup_interval": {
+          "start_utc": "2026-06-20T00:00:00Z",
+          "end_utc": "2026-06-21T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-21T00:00:00Z",
+          "end_utc": "2026-06-22T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "26b6fbe08feee216ce49308738ecb03b8babfc9c2ff4371fde5e616af6ad7cc4"
+      },
+      {
+        "day": "2026-06-22",
+        "warmup_interval": {
+          "start_utc": "2026-06-21T00:00:00Z",
+          "end_utc": "2026-06-22T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-22T00:00:00Z",
+          "end_utc": "2026-06-23T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "c3db8efd5163ba392179d917d1f916d4b0c0d2c59bc48291f38a19c16d78e5d3"
+      },
+      {
+        "day": "2026-06-23",
+        "warmup_interval": {
+          "start_utc": "2026-06-22T00:00:00Z",
+          "end_utc": "2026-06-23T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-23T00:00:00Z",
+          "end_utc": "2026-06-24T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "9526291024492de4dd0e5bda140fe6a2c81e2df24bc8ce76c79fd1c6beabc570"
+      },
+      {
+        "day": "2026-06-24",
+        "warmup_interval": {
+          "start_utc": "2026-06-23T00:00:00Z",
+          "end_utc": "2026-06-24T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-24T00:00:00Z",
+          "end_utc": "2026-06-25T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "6a7dde0d7ee46f6d07cd822c51d8f1219cf8c8bc2d5b1c4939d6f489074f8f98"
+      },
+      {
+        "day": "2026-06-25",
+        "warmup_interval": {
+          "start_utc": "2026-06-24T00:00:00Z",
+          "end_utc": "2026-06-25T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-25T00:00:00Z",
+          "end_utc": "2026-06-26T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "03b0c0b47136d45cba68998581defa1c6c9ee046bb115cbc9cf1ef368dbeda27"
+      },
+      {
+        "day": "2026-06-26",
+        "warmup_interval": {
+          "start_utc": "2026-06-25T00:00:00Z",
+          "end_utc": "2026-06-26T00:00:00Z",
+          "denominator": false
+        },
+        "target_interval": {
+          "start_utc": "2026-06-26T00:00:00Z",
+          "end_utc": "2026-06-27T00:00:00Z",
+          "denominator": true
+        },
+        "interval_identity_sha256": "485ecd7d70ea6e5871889fe747721886b30d1529bd4167f172468f26b72b5265"
+      }
+    ],
+    "denominator_authority": {
+      "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+      "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d",
+      "size_bytes": 12535
+    }
+  },
+  "baseline_runtime_identity": {
+    "pointer_artifact": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62",
+      "size_bytes": 1644
+    },
+    "identity_artifact": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
+      "sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638",
+      "size_bytes": 7417
+    },
+    "baseline_id": "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_retired_baseline_20260804",
+    "operational_config_sha256": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5",
+    "model_bundle_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "p3_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+    "execution_abi": "order_lifecycle_journal_v2.python_replay_adapter.v1+dynamic_fill_hazard_native_book_q90.v4",
+    "initial_state_mode": "daily_fresh_start",
+    "replay_session_scope": "fresh_start_per_target_day",
+    "q90_action_enabled": false,
+    "economic_outcomes_read": false,
+    "canonical_sha256": "56b123739436e9d5b704330a12e05b61ff7106d76befbefc39c7e72e969f6c16"
+  },
+  "implementation_identities": {
+    "execution/order_lifecycle.py": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957",
+    "execution/order_lifecycle_journal_v2.py": "c24bdfd8514afc38773c3dc1a0c16dd52829a1309fbe875ec897458450a9ae64",
+    "execution/order_lifecycle_journal_writer_v2.py": "ea1bcf695a451add489fb772d22d4036529bd6ac2f7a2c34bcc3c94e46f7438e",
+    "models/replay/order_lifecycle_v2_replay_adapter.py": "838ca1934768502bbc161f3fb33aa4d32f6c423c828a8e605fd43777bf24dd47",
+    "models/audit/order_lifecycle.py": "6205026c18dd69c4a8e3efba79e9703f75cec271cd141a5f58f2f9e88b6cd84f",
+    "models/backtest_tick.py": "434fd20c1e8b5e39a4c21b6fa2426431416fe026cc58df18263845a069b28da9",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_event_lockstep.py": "e0af33e5876df0303d52fb4c4ddf1e76b28c7e9b66ce2e0e8e7c30f1947aa806",
+    "research/families/f10_live_replay_attribution/audit/buy_q90_abi_v4_40day_lockstep.py": "f1236932d591b3541cc472db13e2062c62163d5f6ccc0b794d8d9f1a5285ec5b",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_input_admission.py": "7448b9ec0c6c52b0f62a4e3b63876e22a67441ba0af120386649bf7500ebda55"
+  },
+  "schema_identities": {
+    "journal_v2_schema_version": "order_lifecycle_journal.v2",
+    "journal_v2_schema_sha256": "58274b4a74a5dc3d9ae5f2c26741efee1e0e74239617714c15ee1776d1b34ea4",
+    "legacy_required_schema_sha256": "3e44cde0d6ccf361ad1960909a97fe72870663ef2fe67e858fb80ec20fe18999",
+    "writer_part_schema_version": "order_lifecycle_journal_part.v2",
+    "writer_health_schema_version": "order_lifecycle_journal_writer_health.v2"
+  },
+  "market_data_source_identities": {
+    "artifacts": [
+      {
+        "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+        "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d",
+        "size_bytes": 12535
+      },
+      {
+        "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+        "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
+        "size_bytes": 11984
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/native_strict_universe_20260724/evidence_split_dynamic_fill_hazard_m0_native_strict_frozen_v3.json",
+        "sha256": "8d9688f0d8a6b8883421a0853ffc9d533f6fd59222cda9f87f2fc83d0e410967",
+        "size_bytes": 9241
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2/manifest.json",
+        "sha256": "f47e044b0607d135de713f8cbf13dad82decc051786dd4a896f21e014129b517",
+        "size_bytes": 234094
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+        "sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc",
+        "size_bytes": 88660
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/trade_features_causal_v3_20260727/manifest.json",
+        "sha256": "af385300d2852c0e6cc8d3e5f1b50984e649dee6e33450cf44740dc189a72292",
+        "size_bytes": 87834
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/causal_v9_through_20260725_20260727/execution_trade_quality.csv",
+        "sha256": "b61ccb04fe703927dc919ed7cb5fd06c0f109dd7d1b61e89d1a0807357539bf0",
+        "size_bytes": 856
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+        "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
+        "size_bytes": 8625975
+      },
+      {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+        "sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+        "size_bytes": 211751
+      }
+    ],
+    "path_relocation_contract": "legacy MarketData paths relocate through data_paths.relocate_marketdata_path; admitted authoritative non-cache data resolves on ${NARROWGATE_PRIVATE_EVIDENCE_ROOT}",
+    "f09_market_source_manifest_canonical_sha256": "8f375ff7afa566a960f59c98c5496cd4cd01749d94f113306e65130a9c5b9396",
+    "f10_full_source_manifest_canonical_sha256": "27787b4aa129563c3d5bf173ef7705e44a511462de0c5989a8b1db7e8b457227",
+    "canonical_sha256": "07aeb1938eaa557df3885aec143c8c5600097d5a67f611206d4372ec334887f4"
+  },
+  "admission_contract": {
+    "replay_session_scope": "fresh_start_per_target_day",
+    "lifecycle_sequence_starts_at_one_per_target_day": true,
+    "prospective_live_epoch_transport_supported": false,
+    "daily_source_role_contracts": [
+      {
+        "role": "native_book_warmup",
+        "minimum_files": 24,
+        "coverage": "warmup_exact"
+      },
+      {
+        "role": "native_book_target",
+        "minimum_files": 24,
+        "coverage": "target_exact"
+      },
+      {
+        "role": "market_context_window_cache",
+        "minimum_files": 1,
+        "coverage": "warmup_and_target_exact"
+      }
+    ]
+  },
+  "current_producer_status": {
+    "legacy_explicit_dual_clock": false,
+    "cancel_reject_route": false,
+    "sub_lot_terminal_contract": false,
+    "cpp_event_stream_binding": false
+  },
+  "permissions": {
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "prospective_live_epoch_transport": false,
+    "live_deployment": false
+  },
+  "canonical_identity_sha256": "3458cb12a9fcc9b65608018b9324fbb30de02e208ee3b26d000257800102dbd7"
+}

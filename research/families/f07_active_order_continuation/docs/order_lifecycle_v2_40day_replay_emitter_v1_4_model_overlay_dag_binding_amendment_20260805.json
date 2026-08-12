@@ -1,0 +1,52 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_40day_replay_emitter_model_overlay_binding_amendment.v1",
+  "identity": "f07_order_lifecycle_v2_40day_replay_emitter_v1_4_model_overlay_dag_binding_amendment",
+  "status": "implemented_fixture_verified_formal_replay_not_executed",
+  "last_materially_modified": "2026-08-05",
+  "predecessor": {
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_replay_emitter_v1_3_native_queue_authority_amendment_20260805.json",
+    "file_sha256": "73adfd14e7d401fe4562cfff201db738280de8cd5e2fc28f3dddaff8a2141c84",
+    "canonical_amendment_sha256": "cb78c793865ae7517e5d8707aa53169b26a172762982b76fec79e989efc9f252",
+    "bytes_modified": false
+  },
+  "failure_observed": {
+    "stage": "first_day_operational_model_overlay_admission_before_tick_replay",
+    "day": "2026-04-17",
+    "exception": "ReplayEmitterError: 2026-04-17: operational ML overlay is missing",
+    "root_cause": "the v13 market-context window correctly excluded model predictions, but the F07 plan had not bound the existing causal-v12 model_overlay_day DAG node",
+    "economic_outcomes_read": false,
+    "journal_rows_admitted": 0,
+    "frozen_input_identity_changed": false
+  },
+  "repair": {
+    "model_overlay_is_separate_dag_node": true,
+    "market_context_window_rebuilt": false,
+    "monolithic_window_duplicated": false,
+    "operational_ml_enabled": true,
+    "model_overlay_main_array_count": 21,
+    "feature_mapping_required": true,
+    "model_bundle_content_identity_bound": true,
+    "frozen_window_to_overlay_market_context_output_parity_required": true,
+    "daily_overlay_identity_manifest_payload_size_and_sha256_bound": true,
+    "denominator_action_or_output_schema_changed": false
+  },
+  "implementation_artifacts": {
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_replay_emitter.py": "8acefb26009ecfbecc72c2fdabc5d678991a4602c58b4483451c0a6d9b53c86f",
+    "tests/test_order_lifecycle_v2_40day_replay_emitter.py": "3c97560bfee3221fe6f710b51e725162912a7b5b20bb3beef8f7b0e735194831"
+  },
+  "verification": {
+    "test_command": ".venv/bin/python -m pytest -q tests/test_order_lifecycle_v2_40day_replay_emitter.py",
+    "result": "23 passed",
+    "formal_40day_replay_executed": false
+  },
+  "permissions": {
+    "formal_40day_replay_execution": true,
+    "formal_40day_lockstep": false,
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "prospective_live_epoch_transport": false,
+    "live_deployment": false
+  },
+  "canonical_amendment_sha256": "98a518a75e9730380cf89b8489477b2bc1fde4f6c085e3ab821ed0f3f22b40c2"
+}

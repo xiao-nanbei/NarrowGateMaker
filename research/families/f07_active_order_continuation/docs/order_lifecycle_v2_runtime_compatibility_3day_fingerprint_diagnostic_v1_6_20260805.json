@@ -1,0 +1,101 @@
+{
+  "canonical_report_sha256": "1432395193ca4a72a135aaff6ee1c09fe559192a7818895b47576188506ff655",
+  "coverage": "diagnostic_subset",
+  "days": [
+    {
+      "day": "2026-06-24",
+      "event_ids_unique_in_each_panel": true,
+      "first_physical_mismatch_index": 0,
+      "first_semantic_mismatch_index": null,
+      "identity_only_mismatch_row_count": 74740,
+      "physical_exact_row_match": false,
+      "predecessor_day_manifest_sha256": "2fc893c41fb93794eb4ab0f2e44659578883021e5fb47bb09d16e0e31d0c1179",
+      "predecessor_fingerprint_sha256": "76f506a2bd4be361f95ad9640d61f05140406cc12e1dca032859192ccf96fb15",
+      "predecessor_row_count": 74740,
+      "predecessor_semantic_fingerprint_sha256": "da9c09da5553142364ed8c05822aa88f11af1a4e3aa1418c0c14779a2035ff70",
+      "semantic_exact_after_plan_namespace_normalization": true,
+      "successor_day_manifest_sha256": "b791c64493af33bf89593915001608b220242a329ff35fcc3855299439cb78d9",
+      "successor_fingerprint_sha256": "8e203692c18153c9c2b05e725102239bd0769516190b76abeff0d800418aab29",
+      "successor_row_count": 74740,
+      "successor_semantic_fingerprint_sha256": "da9c09da5553142364ed8c05822aa88f11af1a4e3aa1418c0c14779a2035ff70",
+      "unexpected_mismatch_fields": []
+    },
+    {
+      "day": "2026-06-25",
+      "event_ids_unique_in_each_panel": true,
+      "first_physical_mismatch_index": 0,
+      "first_semantic_mismatch_index": null,
+      "identity_only_mismatch_row_count": 75679,
+      "physical_exact_row_match": false,
+      "predecessor_day_manifest_sha256": "0a3a3ea3152f029f70f6f28f479cdfa9e64a0049a5b1f5b4f3acdbbe15a002c0",
+      "predecessor_fingerprint_sha256": "9d71b69caac90e3d43fe26e6b276b206459652c694b5cbb4b4e3c3fbba0249d7",
+      "predecessor_row_count": 75679,
+      "predecessor_semantic_fingerprint_sha256": "d2e298d58c806b291c691dcb3b512c579f2cd556c6b11705a3b8ed76cc5a015d",
+      "semantic_exact_after_plan_namespace_normalization": true,
+      "successor_day_manifest_sha256": "148c46563adacef7eb970227fab9d58601e285fb78d8c6b2cde04493e07844f2",
+      "successor_fingerprint_sha256": "0fbcafd36464fd66bbabb6316020f4c4e9b84ca97ee5c3d8049fecd7bec42258",
+      "successor_row_count": 75679,
+      "successor_semantic_fingerprint_sha256": "d2e298d58c806b291c691dcb3b512c579f2cd556c6b11705a3b8ed76cc5a015d",
+      "unexpected_mismatch_fields": []
+    },
+    {
+      "day": "2026-06-26",
+      "event_ids_unique_in_each_panel": true,
+      "first_physical_mismatch_index": 0,
+      "first_semantic_mismatch_index": null,
+      "identity_only_mismatch_row_count": 77664,
+      "physical_exact_row_match": false,
+      "predecessor_day_manifest_sha256": "24ed33932ab8b59d3277bf6e5342f3b63be00ffebf0b805c7e5ec24cf9f6e00a",
+      "predecessor_fingerprint_sha256": "a2c4d953866327b375c8a935abee9a434ff12bb353e7c122968f5308d6bc98c0",
+      "predecessor_row_count": 77664,
+      "predecessor_semantic_fingerprint_sha256": "26f15f7df7547f088e4c06300eef0a21e2b70ece59cb8280fa8c571a80d574b8",
+      "semantic_exact_after_plan_namespace_normalization": true,
+      "successor_day_manifest_sha256": "c5840423e054e69cf0b27f92996ca340439cf2eade53ea780a92067fa6b34b91",
+      "successor_fingerprint_sha256": "7279cf7449109d61c4a2d774323c6b3bdaf0d47fff062fc0ab3636268f24ac9f",
+      "successor_row_count": 77664,
+      "successor_semantic_fingerprint_sha256": "26f15f7df7547f088e4c06300eef0a21e2b70ece59cb8280fa8c571a80d574b8",
+      "unexpected_mismatch_fields": []
+    }
+  ],
+  "gates": {
+    "all_physical_differences_are_plan_namespace_only": true,
+    "all_requested_days_present": true,
+    "all_semantic_rows_exact_after_plan_namespace_normalization": true,
+    "economic_outcomes_not_read": true,
+    "event_ids_unique_in_each_panel": true
+  },
+  "generated_at_utc": "2026-08-05T09:35:32.286567+00:00",
+  "identity": "f07_order_lifecycle_v2_panel_fingerprint_equivalence_v1",
+  "ordered_utc_days": [
+    "2026-06-24",
+    "2026-06-25",
+    "2026-06-26"
+  ],
+  "permissions": {
+    "action": false,
+    "economic_evaluation": false,
+    "live_deployment": false,
+    "live_transport": false,
+    "q90_action": false
+  },
+  "predecessor_execution_plan": {
+    "canonical_plan_sha256": "6a83e033cd143b20aeefc657938a3c32fb5eae237783e351b58023512e717d0a",
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4/execution_plan.json",
+    "sha256": "30693fe79f423d2c563aa705219a0069ee290c3a1c0e972a66a4121525158bd2",
+    "size_bytes": 1086305
+  },
+  "predecessor_root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_5_20260805_run4",
+  "schema_version": "f07_order_lifecycle_v2_panel_fingerprint_equivalence.v1",
+  "scope": {
+    "economic_outcomes_read": false,
+    "mechanics_only": true
+  },
+  "status": "passed",
+  "successor_execution_plan": {
+    "canonical_plan_sha256": "01c70871129faffaeffabecb0b909abedd2b003b0a7b0eda3cf3b3fbaea32dc2",
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_successor_v1_6_20260805/execution_plan.json",
+    "sha256": "da0553dc6b83855723efeaa3db0053445f62d27cbc7d03d921d14afd6bf1ee75",
+    "size_bytes": 1086310
+  },
+  "successor_root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_successor_v1_6_20260805"
+}

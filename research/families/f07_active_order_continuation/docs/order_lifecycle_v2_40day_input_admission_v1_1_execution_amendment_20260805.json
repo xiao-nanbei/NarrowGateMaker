@@ -1,0 +1,110 @@
+{
+  "schema_version": "f07_order_lifecycle_v2_40day_admission_execution_amendment.v1",
+  "identity": "f07_order_lifecycle_v2_40day_input_admission_v1_1_execution_amendment",
+  "status": "implementation_blockers_cleared_pending_legacy_dual_clock_data",
+  "last_materially_modified": "2026-08-05",
+  "amends": {
+    "path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_input_admission_v1_contract_20260805.json",
+    "file_sha256": "3b1f6816111e2f73018307d2a44886d789a47bf84b48d5bcbe69f6bddc8d0aeb",
+    "canonical_identity_sha256": "3458cb12a9fcc9b65608018b9324fbb30de02e208ee3b26d000257800102dbd7",
+    "ordered_40_day_denominator_unchanged": true,
+    "historical_contract_bytes_unchanged": true
+  },
+  "scope": {
+    "mechanics_only": true,
+    "economic_outcomes_read": false,
+    "formal_40day_lockstep_executed": false,
+    "cif_trained": false,
+    "live_deployed": false
+  },
+  "resolved_implementation_blockers": {
+    "cancel_reject_risk_set_continuation": {
+      "status": "cleared",
+      "required_branches": [
+        "CANCEL_PENDING_to_ACTIVE",
+        "CANCEL_PENDING_to_PARTIALLY_FILLED"
+      ],
+      "fill_risk_continues_after_reject": true
+    },
+    "terminal_sub_lot_remainder": {
+      "status": "cleared",
+      "quantity_contract_id": "order_lifecycle_terminal_remainder_zero_abs_1e-12.v1",
+      "terminal_remainder_abs_tolerance_btc": 1e-12,
+      "persisted_terminal_remainder_btc": 0.0,
+      "source_residue_at_or_below_tolerance_canonicalizes_to_zero": true,
+      "positive_sub_lot_remainder_is_not_full_fill": true,
+      "verified_positive_sub_lot_btc": 0.0004
+    },
+    "cpp_journal_v2_event_stream_binding": {
+      "status": "cleared",
+      "abi_version": "order_lifecycle_journal_v2_cpp_event_stream_mirror.v1",
+      "journal_schema_version": "order_lifecycle_journal.v2",
+      "journal_schema_sha256": "58274b4a74a5dc3d9ae5f2c26741efee1e0e74239617714c15ee1776d1b34ea4",
+      "projection_schema_sha256": "1d6d006114120225fc235e746e1ce6bc7e4d8a9d1847718f28570a9fc9e5c3ef",
+      "per_event_schema_sequence_terminal_route_lockstep": true
+    }
+  },
+  "remaining_blockers": {
+    "implementation": [],
+    "data": [
+      {
+        "code": "legacy_40day_trace_explicit_dual_clock_coverage_incomplete",
+        "status": "blocking",
+        "description": "The retained legacy 40-day traces must carry authoritative visibility and exchange timestamps. The clocks may not be inferred from journal-v2 or a provider timestamp.",
+        "required_visibility_clock": "event_visibility_ts_ns on every event",
+        "required_exchange_clock": "event_exchange_ts_ns on activate, partial/full fill, cancel reject/ACK, reject, and expiry",
+        "required_ordering": "event_exchange_ts_ns <= event_visibility_ts_ns"
+      }
+    ]
+  },
+  "admission_effect": {
+    "remove_from_implementation_blocker_list": [
+      "cancel_reject_route",
+      "sub_lot_terminal_contract",
+      "cpp_event_stream_binding"
+    ],
+    "retain_as_per_day_fail_closed_gates": [
+      "cancel_reject_route_and_observed_count",
+      "terminal_remainder_exact_zero",
+      "cpp_event_stream_binding_artifact_and_hash"
+    ],
+    "sole_remaining_input_data_blocker": "legacy_40day_trace_explicit_dual_clock_coverage_incomplete",
+    "lockstep_execution_eligible": false,
+    "eligibility_reason": "No authoritative 40-day dual-clock legacy panel has been admitted."
+  },
+  "implementation_artifacts": {
+    "cpp/CMakeLists.txt": "acc2243c14bdec8838f802ba1cd3768f13c9a365717ab26f5e6285409890a66c",
+    "cpp/narrowgate_cpp/bindings.cpp": "b62cea5dfa1f5fe2be73bd3f79efdae90d15b27db9a5a227ddc2a7d7743b6d9f",
+    "execution/order_lifecycle.py": "447c21ef8150891e8faffefbb16665d33cf4325e214ac1e5538b902ccf137ec8",
+    "execution/order_lifecycle_journal_v2.py": "0d87c9c4d5d7c8bf0535289c284a071a50627444773edffd862fa789b6b14451",
+    "execution/order_lifecycle_quantity_contract.py": "dcb37675dca018142a1e44ae207f9c4bdf3eda3a48426676d2069cf17ba04e52",
+    "models/audit/order_lifecycle.py": "39d8c071da86602363564d5111742cd53b65df467c5b5b7e9b405d424a21f2b7",
+    "models/replay/order_lifecycle_v2_replay_adapter.py": "87311d8eeda4ed0fdc098a82ba09dd8829e49f07f2030b3527d2001359497a06",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_40day_input_admission.py": "a1afffa5a892909e3905cb5bf053729da7f058769cb23ca316132506f3a4d490",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding.py": "cba3c33ca89599ba3d72293b3157e902984cf5db1ddb92fbe7810c59ea84a461",
+    "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_event_lockstep.py": "ec5b612e28a5fcfc70a4d50ea21909009994a784ee2c9b821fb805591b38d72a",
+    "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp": "ee84d8f0e2edbca1bf25b1ea1a94e03c8d486d4e752517dd7569926674d73e14",
+    "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp": "0e33b39ae79ea9dd010eff2c5792e92c654d95bb3184ef748bb7f0438d884183"
+  },
+  "verification": {
+    "cpp_event_stream_binding_tests": {
+      "command": ".venv/bin/python -m pytest -q tests/test_order_lifecycle_v2_cpp_event_stream_binding.py",
+      "passed": 7
+    },
+    "combined_admission_and_lockstep_tests": {
+      "command": ".venv/bin/python -m pytest -q tests/test_order_lifecycle_v2_cpp_event_stream_binding.py tests/test_order_lifecycle_v2_40day_input_admission.py tests/test_order_lifecycle_v2_event_lockstep.py",
+      "passed": 24
+    },
+    "scoped_ruff": "passed",
+    "old_contract_canonical_hash_verified": true,
+    "implementation_artifact_hashes_verified": true
+  },
+  "permissions": {
+    "formal_40day_lockstep": false,
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "live_deployment": false
+  },
+  "canonical_amendment_sha256": "dd7b16a087f4ba96d8b331fa20672ca0bc167dfd668733f2b95d26328e2be16f"
+}

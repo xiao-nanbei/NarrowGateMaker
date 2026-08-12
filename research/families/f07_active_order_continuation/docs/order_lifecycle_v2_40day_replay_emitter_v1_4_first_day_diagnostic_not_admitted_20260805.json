@@ -1,0 +1,24 @@
+{
+  "identity": "order_lifecycle_v2_40day_replay_emitter_v1_4_first_day_diagnostic_not_admitted",
+  "last_materially_modified": "2026-08-05",
+  "status": "diagnostic_not_admitted",
+  "v1_4_execution_plan": {
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_4/execution_plan.json",
+    "canonical_plan_sha256": "d5ad4161bd3babbbc035bc91d052891067b2f54d16135dc8bd948f9833452417",
+    "global_execution_identity_sha256": "13a6ff058fb25130283ee4a6e78133f0508b3d6ae059fa0ba1fc5b7e41112ec4"
+  },
+  "diagnostic_day": "2026-04-17",
+  "staging_path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_4/.staging/2026-04-17-3cc3d0a86758431d83919b37df7fdf65",
+  "admitted_day_count": 0,
+  "panel_manifest_exists": false,
+  "economic_outcomes_read": false,
+  "reason": "v1.4 execution was stopped before atomic day admission and is superseded by the v1.5 authority contract",
+  "permissions": {
+    "cif_training": false,
+    "economic_evaluation": false,
+    "q90_action": false,
+    "live_transport": false,
+    "live_deployment": false
+  },
+  "canonical_marker_sha256": "873dcd3b607b7dbb7c46448744b2f238ec25ef06fca7cc31965d181aa9231c9a"
+}

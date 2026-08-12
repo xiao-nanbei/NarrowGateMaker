@@ -1,0 +1,134 @@
+{
+  "canonical_report_sha256": "5819a6d7441f0f2456ec8c305e88e8ee20915051d2e92eb42e337b5fb5ad655e",
+  "cpp_abi_version": "order_lifecycle_journal_v2_cpp_event_stream_mirror.v2",
+  "cpp_module": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+    "size_bytes": 1298120
+  },
+  "gates": {
+    "active_cancel_reject_recovery_observed": true,
+    "branch_counts_exact": true,
+    "cpp_module_hash_bound": true,
+    "economic_outcomes_not_read": true,
+    "partially_filled_cancel_reject_recovery_observed": true,
+    "require_cancel_reject_branches_true": true,
+    "risk_set_resumed_after_cancel_reject": true,
+    "synthetic_support_not_transport_support": true,
+    "zero_python_cpp_mismatch": true
+  },
+  "generated_at_utc": "2026-08-08T03:58:07.432539+00:00",
+  "identity": "f07_order_lifecycle_v2_cancel_reject_synthetic_lockstep_v1_6",
+  "implementation_artifacts": {
+    "cpp_event_stream_binding": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cpp_event_stream_binding_v2.py",
+      "sha256": "727df6b20cf60b083c718fe9ba33c45034f9d4409efb2d46f3592e7ad57e9e82",
+      "size_bytes": 15563
+    },
+    "order_lifecycle": {
+      "path": "execution/order_lifecycle.py",
+      "sha256": "2981b6154f8e7e5aaa2af6c8f2e2720877f7ad214b2a2692f31f8af291496d33",
+      "size_bytes": 24333
+    },
+    "replay_adapter": {
+      "path": "models/replay/order_lifecycle_v2_replay_adapter_strict_native.py",
+      "sha256": "1be258a8ba53dc234cec5c6dcccefa4c299118e3298f16e91acab665771a5fda",
+      "size_bytes": 20096
+    },
+    "synthetic_audit": {
+      "path": "research/families/f07_active_order_continuation/audit/order_lifecycle_v2_cancel_reject_synthetic_lockstep_v1_6.py",
+      "sha256": "7f778ae4c88e1a0994d10bd2870b69c5f6149ff337ca5e515634b5a77a476658",
+      "size_bytes": 21545
+    }
+  },
+  "lockstep_summary": {
+    "cancel_reject_branch_support_complete": true,
+    "canonical_report_sha256": "59dda948a182c867c3194a018ddf5bb3681c10e63c0a0853b1e68105ffa7bf20",
+    "counts": {
+      "cancel_reject_to_ACTIVE": 1,
+      "cancel_reject_to_PARTIALLY_FILLED": 1,
+      "cpp_cancel_reject_to_ACTIVE": 1,
+      "cpp_cancel_reject_to_PARTIALLY_FILLED": 1,
+      "event_activate": 2,
+      "event_cancel_rejected": 2,
+      "event_cancel_request": 4,
+      "event_count": 13,
+      "event_exchange_terminal": 2,
+      "event_partial_fill": 1,
+      "event_submit": 2,
+      "lifecycle_count": 2
+    },
+    "gates": {
+      "cancel_reject_risk_set_continuation": true,
+      "event_sequence_and_terminal_route_lockstep": true,
+      "journal_schema_lockstep": true,
+      "terminal_remainder_zero_contract": true
+    },
+    "mechanics_lockstep_passed": true,
+    "mismatch_counts": {}
+  },
+  "permissions": {
+    "action": false,
+    "economic_evaluation": false,
+    "live_deployment": false,
+    "live_transport": false,
+    "q90_action": false
+  },
+  "plan": {
+    "canonical_plan_sha256": "01c70871129faffaeffabecb0b909abedd2b003b0a7b0eda3cf3b3fbaea32dc2",
+    "global_execution_identity_sha256": "423453e929f9c7de1acf2f0c9cfd5ab0c6ca06678fae9d497bca7fe0c8ab919b",
+    "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_successor_v1_6_20260805/execution_plan.json",
+    "sha256": "da0553dc6b83855723efeaa3db0053445f62d27cbc7d03d921d14afd6bf1ee75",
+    "size_bytes": 1086310
+  },
+  "require_cancel_reject_branches": true,
+  "schema_version": "f07_order_lifecycle_v2_cancel_reject_synthetic_lockstep_report.v1_6",
+  "scope": {
+    "economic_outcomes_read": false,
+    "empirical_transport_support": false,
+    "mechanics_only": true,
+    "synthetic_branch_support_only": true
+  },
+  "status": "passed",
+  "synthetic_input_contract": {
+    "require_cancel_reject_branches": true,
+    "scenarios": [
+      {
+        "activate_exchange_ts_ms": 1010,
+        "activate_visibility_ts_ms": 1020,
+        "cancel_reject_exchange_ts_ms": 1050,
+        "cancel_reject_visibility_ts_ms": 1060,
+        "cancel_request_ts_ms": 1040,
+        "scenario": "cancel_reject_to_active",
+        "submit_ts_ms": 1000,
+        "terminal_cancel_ack_exchange_ts_ms": 1090,
+        "terminal_cancel_ack_visibility_ts_ms": 1100,
+        "terminal_cancel_request_ts_ms": 1080,
+        "trace_id": 1
+      },
+      {
+        "activate_exchange_ts_ms": 2010,
+        "activate_visibility_ts_ms": 2020,
+        "cancel_reject_exchange_ts_ms": 2070,
+        "cancel_reject_visibility_ts_ms": 2080,
+        "cancel_request_ts_ms": 2060,
+        "partial_fill_exchange_ts_ms": 2030,
+        "partial_fill_visibility_ts_ms": 2040,
+        "remaining_after_btc": 0.0004,
+        "scenario": "cancel_reject_to_partially_filled",
+        "submit_ts_ms": 2000,
+        "terminal_cancel_ack_exchange_ts_ms": 2110,
+        "terminal_cancel_ack_visibility_ts_ms": 2120,
+        "terminal_cancel_request_ts_ms": 2100,
+        "trace_id": 2
+      }
+    ],
+    "schema_version": "f07_cancel_reject_synthetic_scenarios.v1"
+  },
+  "synthetic_input_contract_sha256": "b312978bc3c8ecbebea7819512fe1f9a0d82dd17777225cd7f261398e22b93d1",
+  "synthetic_rows": {
+    "lifecycle_count": 2,
+    "row_count": 13,
+    "rows_sha256": "ab7bc1abe2bb53bbcb7ead0598fe1bd5a76f46c85a7bde8f2209d5c96101c69f"
+  }
+}
