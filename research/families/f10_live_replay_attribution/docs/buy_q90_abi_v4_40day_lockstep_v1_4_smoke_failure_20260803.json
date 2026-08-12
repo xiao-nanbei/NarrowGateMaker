@@ -1,0 +1,36 @@
+{
+  "schema_version": "buy_q90_abi_v4_40day_lockstep_smoke_failure.v1",
+  "identity": "buy_q90_abi_v4_40day_lockstep_v1_4",
+  "classification": "Development mechanics-only fail-closed smoke",
+  "spec_path": "research/families/f10_live_replay_attribution/docs/buy_q90_abi_v4_40day_lockstep_v1_4_spec_20260803.json",
+  "spec_file_sha256": "43ae7b00346b04c4d94bf98208bb5e5426d89b81660bfc2b17cf0da2a0b7e4b6",
+  "day": "2026-04-22",
+  "completed_day_result_written": false,
+  "full_40day_run_completed": false,
+  "full_40day_run_status": "not_run_after_smoke_failure",
+  "failure_stage": "evaluation",
+  "failure_type": "python_cpp_parity_mismatch",
+  "client_order_id": "513",
+  "now_ts_ms": 1776818327400,
+  "python": {
+    "valid": false,
+    "reason": "same_ms_exchange_book_ambiguity",
+    "action": "none"
+  },
+  "cpp": {
+    "valid": true,
+    "reason": "ok",
+    "action": "none"
+  },
+  "mismatch_interpretation": "The native runtime did not retain the visibility scheduler's coalesced same-millisecond ordering ambiguity for the active BUY order path.",
+  "economic_outcomes_read": false,
+  "markout_read": false,
+  "campaign_economics_read": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "deployment_performed": false,
+  "q90_operational_action_enabled": false,
+  "threshold_changed": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false
+}

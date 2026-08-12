@@ -1,0 +1,168 @@
+{
+  "schema_version": "buy_q90_abi_v4_40day_lockstep.v1.6",
+  "identity": "buy_q90_abi_v4_40day_lockstep_v1_6",
+  "status": "frozen_before_development_mechanics_read",
+  "frozen_at_utc": "2026-08-03T00:00:00Z",
+  "canonical_spec_sha256": "aa6d187eda384b21941a644d6af8d807ba807c7929b2825c02fc4ba144ebe6ec",
+  "scope": "F10 Development-only BUY q90 ABI v4 Python/C++ event lockstep; lifecycle mechanics only; aggregate persistence only",
+  "successor_amendment": {
+    "predecessor_spec": "research/families/f10_live_replay_attribution/docs/buy_q90_abi_v4_40day_lockstep_v1_5_spec_20260803.json",
+    "predecessor_spec_sha256": "3395b19f30f34df1c3a3af70ee5c53a9cb07531c23c531e8a3799f06d457058e",
+    "predecessor_result": "v1_4_failed_closed_and_v1_5_disabled_execution_while_removing_full_journal_persistence",
+    "failure_stage": "single_day_development_event_lockstep",
+    "mechanics_or_economics_read": "mechanics_only",
+    "threshold_or_panel_changed": false,
+    "fix_scope": "synchronize Python authoritative exact feature-ready batch ambiguity into the message-oriented C++ active path before score evaluation",
+    "common_visibility_contract": {
+      "exchange_truth_order": "native sequence",
+      "visibility_ambiguity_boundary": "exact_equal_feature_ready_ts_ns",
+      "affected_path": "active BUY exact-price path touched by the ambiguous visibility batch",
+      "behavior": "persistent fail-closed same_ms_exchange_book_ambiguity",
+      "one_millisecond_broadening_allowed": false
+    },
+    "full_40day_execution_condition": "2026-04-22 authoritative smoke passes every hard gate"
+  },
+  "frozen_40day_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+    "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d"
+  },
+  "v4_implementation_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_fresh_prospective_placement_recovery_v4_implementation_20260802.json",
+    "sha256": "ccc08cab886ad12bc0d41c40cb761f953e2253cfe5c440c233606a2e09d9173d"
+  },
+  "development_days": [
+    "2026-04-17",
+    "2026-04-18",
+    "2026-04-19",
+    "2026-04-20",
+    "2026-04-22",
+    "2026-04-23",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-05-06",
+    "2026-05-13",
+    "2026-05-29",
+    "2026-05-30",
+    "2026-05-31",
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-17",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-23",
+    "2026-06-24",
+    "2026-06-25",
+    "2026-06-26"
+  ],
+  "operational_config_identity": {
+    "path": "${NARROWGATE_LIVE_CONFIG}",
+    "sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8",
+    "required_runtime_state": {
+      "dynamic_fill_hazard_shadow_enabled": true,
+      "dynamic_fill_hazard_action_enabled": false
+    }
+  },
+  "model_identity": {
+    "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json",
+    "sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6"
+  },
+  "policy_identity": {
+    "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+    "sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "threshold_change_allowed": false
+  },
+  "native_module_identity": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "cc85ce43174156d8ba71561f721a02720e3c0338dddeaab91dd710a98f236866",
+    "abi_version": "dynamic_fill_hazard_native_book_q90.v4",
+    "full_cpp_tick_replay_authority": false
+  },
+  "input_cache_manifest_canonical_sha256": "180ac5e0e5299076f030e68a1f896231ecc11b8f802a5154210785566d20b701",
+  "input_cache_contract": {
+    "rows": 40,
+    "window_cache_bytes": 48365497982,
+    "window_cache_version": 13,
+    "cache_write_allowed": false,
+    "relocated_source_signature_fallback": "newest explicitly hashed compatible v13 day cache",
+    "native_tape_files_per_day": 48,
+    "validation_or_holdout_inputs_allowed": false
+  },
+  "persistence_contract": {
+    "full_lifecycle_journal_persisted": false,
+    "full_lifecycle_journal_returned_across_worker_boundary": false,
+    "allowed": [
+      "lifecycle_journal_row_count",
+      "lifecycle_event_counts",
+      "lifecycle_transition_counts",
+      "terminal_route_counts",
+      "terminal_reason_counts",
+      "lifecycle_audit",
+      "mechanics_counters",
+      "parity_counters"
+    ]
+  },
+  "lockstep_gates": {
+    "terminal_route_path_score_cancel_recovery_transitions": "Python/C++ exact lockstep",
+    "post_terminal_hazard_reuse_max": 0,
+    "post_terminal_cursor_reuse_max": 0,
+    "terminal_cursor_retention_end_max": 0,
+    "unsupported_terminal_route_max": 0,
+    "python_cpp_mismatch_max": 0,
+    "exchange_exposure_coverage": "report valid complete null and invalid reasons without threshold relaxation",
+    "future_feature_time_requires_explicit_attribution": true,
+    "all_40_days_required": true
+  },
+  "implementation_sha256": {
+    "models/backtest_tick.py": "36b47124111770054731f86c7655dd4bdee61cf995b4d51feb009a0203bbb418",
+    "strategy/replay_controls.py": "14ef3578dfdb74ff28bef42d276f9e6ec0f4e012c54e2e0e5a80015ae8d002c5",
+    "research/families/f10_live_replay_attribution/audit/buy_q90_abi_v4_40day_lockstep.py": "f1236932d591b3541cc472db13e2062c62163d5f6ccc0b794d8d9f1a5285ec5b",
+    "tests/test_buy_q90_abi_v4_40day_lockstep.py": "354256ae9181e4e997944fb6cbc6a4128a28119dae189644c47e163035f11c5a",
+    "tests/test_dynamic_fill_hazard_cpp_parity.py": "566bf9deb1c499c03877b6924036970fd311ee705899da5c6ded53003a0c3a4b",
+    "execution/order_lifecycle.py": "8ec1dd988cfd6a45f55382a0c455a9bad0c5d3977cc0c4d40b4998481be20957",
+    "execution/order_lifecycle_journal.py": "6acbdf1158549557dab7f8469108b1ae5600039514b9efd34edb1609cf96ed6e",
+    "strategy/dynamic_fill_hazard_model.py": "a0c54430a68493757d4682798d2b7274c4e3c834fc502d2ad2ffd3ba37654b88",
+    "models/exchange_book_replay.py": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177",
+    "models/data_windows.py": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223",
+    "models/backtest_config.py": "3b0f1907944e9587f9c8ef4a31a3f9b0625e427249bac49e998ae1f02fa3d9c1",
+    "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "687c377abfcd38438558d7f48226167258101ea94768b9433821f9e49d8e1c8c",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "533132126fa1ed2d32fc11b2fed6bb58726f4965b5cc64a0106934c786dc7eba",
+    "cpp/narrowgate_cpp/bindings.cpp": "afad64fc4826f0267a49ba8c1027b323a299bb6b6e665c7beabc1d045327a798"
+  },
+  "storage": {
+    "cache_root": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "output_root": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_abi_v4_40day_lockstep_v1_6_20260803/development",
+    "cache_write_allowed": false
+  },
+  "permissions": {
+    "development_mechanics_execution_allowed": true,
+    "economic_outcome_read": false,
+    "markout_read": false,
+    "campaign_economics_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "deployment_allowed": false,
+    "q90_operational_action_enable_allowed": false,
+    "threshold_change_allowed": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
