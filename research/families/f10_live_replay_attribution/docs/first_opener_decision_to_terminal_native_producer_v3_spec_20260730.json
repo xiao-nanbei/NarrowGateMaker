@@ -1,0 +1,100 @@
+{
+  "schema_version": "first_opener_decision_to_terminal_native_producer.v3",
+  "identity": "first_opener_decision_to_terminal_native_producer_v3",
+  "status": "frozen_before_v3_native_development_production",
+  "canonical_spec_sha256": "816127c288fc08da08707b7a66011531b098671fedd32901096fdefa29f923bb",
+  "scope": "Produce the exact source-clock-audited first-opener trace for the frozen 22A/11B native-formal Development panels. This producer cannot fit a model, inspect outcomes, read later panels, register an action, or authorize live deployment.",
+  "predecessor": {
+    "identity": "first_opener_decision_to_terminal_native_producer_v2",
+    "status": "invalidated_before_development_outcome_read",
+    "invalidation_path": "research/families/f10_live_replay_attribution/docs/sell_first_fill_conditional_value_feasibility_v2_invalidation_20260730.json"
+  },
+  "f10_spec_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/sell_first_fill_conditional_value_feasibility_v3_spec_20260730.json",
+    "sha256": "e5e77bbde39922391465e6e666d003b735439b3814d996dc079d36d7b196668b"
+  },
+  "baseline_contract_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
+    "sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
+    "reuse_scope": "data, corrected wall-time baseline, queue, P3, latency, BUY-q90 and replay semantics only; variance-time treatment and its outcome identity are excluded"
+  },
+  "market_source_manifest_identity": {
+    "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/market_source_manifest.json",
+    "sha256": "4c984dd6757c4c00c7359df0cb98662c2e45f7d6688b8ade428a38f1d7266003"
+  },
+  "bar_payload_manifest_identity": {
+    "path": "research/families/f10_live_replay_attribution/docs/first_opener_replay_bar_payload_manifest_v3_20260730.json",
+    "sha256": "4c777c00c6dba728d39c04e6970cfda58d5e690eba0f81c841dc8c9c56bea454"
+  },
+  "native_module_identity": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "b5c20c9af4fca7c6be2f8f63f91a82152db5857b904e06a643e350eafc7f3c06",
+    "authority": "BUY-q90 native kernel lockstep only; full C++ tick replay authority remains false"
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "initial_state": "daily_fresh_start",
+    "event_clock": "merged_100ms",
+    "execution_trade_source": "Binance USD-M individual trades",
+    "native_orderbook": "CryptoHFT snapshot_delta_strict_exact_level",
+    "fill_cooldown_clock": "wall_time_85n",
+    "buy_q90": "enabled_cpp_kernel_lockstep",
+    "sync_degrade": "disabled_condition_on_no_historical_system_event_tape",
+    "trace_schema_version": "first_opener_decision_to_terminal_trace.v2",
+    "decision_feature_clock": "modeled_receive_ready_source_asof",
+    "trace_rows_max_per_day": 200000,
+    "q90_mismatch_trace_max": 1000,
+    "ml_enabled": false,
+    "promotion_eligible": false
+  },
+  "source_feature_contract": {
+    "bbo": "actual source frame timestamp must not exceed the receive-visible cutoff",
+    "l2": "actual source frame timestamp must not exceed the depth-visible cutoff after the frozen archive source offset",
+    "individual_trade": "execution-path authority only; excluded from v3 decision features because child trades are not live-visible before parent aggTrade receipt",
+    "deep_queue": "retained as exchange-time diagnostic only and forbidden from the v3 model",
+    "formal_context_preflight": "every target and previous natural UTC day must pass normalized_l2_100ms_v2 formal identity before any replay worker starts",
+    "local_toxicity": "excluded because ML is disabled and v1 emitted a constant default",
+    "minimum_unique_values_per_panel_side": 2,
+    "maximum_dominant_value_fraction_per_panel_side": 0.995,
+    "minimum_nonconstant_day_fraction_per_panel_side": 0.25
+  },
+  "storage_gate": {
+    "minimum_free_gib": 61.25,
+    "checkpoint_granularity": "one_UTC_day",
+    "atomic_daily_parquet_and_audit": true
+  },
+  "support_gate": {
+    "minimum_true_opener_campaign_coverage": 0.99,
+    "provenance": "judgmental engineering threshold carried forward before v3 outcome read",
+    "eligible_denominator_coverage_must_equal_one": true,
+    "unsupported_cross_boundary_reopens_must_be_reported": true,
+    "all_model_features_must_be_nondegenerate_in_each_panel_side": true
+  },
+  "implementation_identity": {
+    "research/families/f10_live_replay_attribution/audit/first_opener_decision_to_terminal_runner.py": "ef6e58adb6f8fa1c4b0352f11074546bf2e5ad23f4212502fb3717db744ffdc6",
+    "research/families/f10_live_replay_attribution/audit/first_opener_decision_to_terminal_contract.py": "fb7bbac2e76e3ba23f8d8cc0a9c06edebb847a2942c8293fb6daa2ba88df95cf",
+    "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_full_path_preflight.py": "3709a0e7624f48d44409d168aa6ed5ca83a50fb19fd5e453ae4e1e5edf16f11d",
+    "models/backtest_tick.py": "f46e4d4ce030eed3c7e016b7593bda6637a0d91609eab2d374b89da40113d864",
+    "models/backtest_config.py": "bd3214ea40a53266c2f16128c2b18a0881feeca4dd2fc93e52e34029f1fca12a",
+    "models/data_windows.py": "6edc935d7505699ddff4bebeb80b5d48b31c5f1e09f3c4811f131cd06f330139",
+    "models/exchange_book_replay.py": "30592c41eb1ab526c4b110c78c3943fd1e155013a833beb5d4e15f6953ed2a4b",
+    "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+    "strategy/fill_cooldown.py": "64151d14579e5f95c961d2a07634e01aa6989e22528842d8536fd27a56060ccd",
+    "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+    "strategy/dynamic_fill_hazard_model.py": "71734cd82a7728814aea2707cec5bb3fc35b177ad652e0fd163fa6394932719a",
+    "strategy/quote_core.py": "ceeb0a3a9b198300984fe0ebb336d1e2f5ff91564588b8fce263bca3f3d56605",
+    "strategy/policy_guards.py": "154783a11c23e870ccac8b11df83f770f485dfe24d873c3f51ac28a7c3f7669e",
+    "strategy/signal.py": "da0c39ca4be956a7f01438080871eee8f00a350ea1b00c31e1b265e4a736d280",
+    "live/config.py": "8d1354ca9761d6364c949fff977906022a149e36070accc370b2034f074060a7",
+    "tests/test_first_opener_decision_to_terminal_runner.py": "adf3957a73af3d6663585a677a731660ff39fdf7ff607c211b7c86e831d06623",
+    "tests/test_first_opener_decision_to_terminal_contract.py": "8d201b4e1227137048ecf0a6d8ab359dd9e872e77f09989ae95c7689be1f67ef",
+    "tests/test_first_add_decision_to_terminal_native_trace.py": "eea5e459a7f15504514c0d132d57f73a681adc1bcd3cec271e68fbf782c6ba1f"
+  },
+  "permissions": {
+    "development_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
