@@ -1,0 +1,334 @@
+{
+  "schema_version": "ranked_toxicity_guard_full_path_mechanics.v2",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-03T00:00:00Z",
+  "status": "registered_execution_only_mechanics_before_result_read",
+  "canonical_spec_identity_sha256": "d0f001e9673b89b8e005e445df98bb0515fb7f3b92771b89bcd668fe79e5f3de",
+  "implementation_sha256": "7c465928e2d348e2d8ece9fca99cbbdcc6c9c1fe1960081f03122e1b6e13dfc4",
+  "scope": "Outcome-blind successor to the failed campaign-side assignment identity. It changes only assignment ownership and washout: an arm persists across untreated inventory campaign lineages while any owned order or guard state remains live. It reads mechanics only and grants no prediction, economic, action, Validation, holdout, or live authority.",
+  "predecessor_failure": {
+    "identity": "causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics_v1_5",
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics_v1_5_implementation_failure_20260802.json",
+    "sha256": "ecab10c903b7fb8acd2ccdf4af88080695b5f0250dd130709c73a04e729fbc8e",
+    "root_cause": "inventory campaign terminal occurred while an order owned by the old arm remained exchange-active"
+  },
+  "unchanged_action_contract": {
+    "BUY": {
+      "prediction_head": "tox_bid_10s",
+      "random_seed": 2026080201,
+      "candidate_probability": 0.5
+    },
+    "SELL": {
+      "prediction_head": "tox_ask_10s",
+      "random_seed": 2026080202,
+      "candidate_probability": 0.5
+    },
+    "quantile": 0.9,
+    "release": "next completed 10s prediction below the same daily past-only p90",
+    "reducing_quotes_unchanged": true,
+    "buy_fill_selection_same_in_both_arms": true,
+    "q90_action_enabled_in_both_arms": false,
+    "full_fill_then_cancel_baseline_repair_same_in_both_arms": true
+  },
+  "assignment_contract": {
+    "unit": "carryover_safe_assignment_episode",
+    "assignment_time": "first baseline-eligible side-specific exposure opportunity after the prior episode has naturally washed out at an untreated lineage boundary",
+    "boundary_clock": "untreated_baseline_lineage_transition",
+    "candidate_campaign_terminal_rerandomizes": false,
+    "owned_order_lifecycle": "submit_or_preassignment_adoption_through_exchange_terminal",
+    "clean_boundary_requires": [
+      "all episode-owned orders exchange-terminal",
+      "all terminal cursors and hazards detached",
+      "no cancel-pending or deferred pre-activation cancel",
+      "no pending quote directive",
+      "guard permission released or neutral"
+    ],
+    "carryover": "if any clean-boundary condition fails, the next untreated inventory campaign remains in the same assignment episode",
+    "active_order_role_transition": "an exchange-live order submitted as reducing may enter the current exposure-increasing risk set after inventory changes; retain the same order, queue and assignment ownership, require fill_risk_active=true, and journal the transition",
+    "order_ownership_transfer": "forbidden",
+    "forced_cancel_for_washout": "forbidden",
+    "panel_end": "right-censor the current assignment episode",
+    "outcome_and_cluster_unit_for_any_future_identity": "assignment_episode"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "grade_a_days": [
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-06-03",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-13",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-26"
+    ],
+    "grade_b_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-14",
+      "2026-06-24",
+      "2026-06-25"
+    ],
+    "grade_b_sensitivity_only": true,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "daily_initial_state": "fresh_start_due_noncontiguous_retained_panel"
+  },
+  "baseline": {
+    "operational_baseline_id": "btc_usdc_causal_v12_semantics_v6_q90_action_suspended_baseline_20260802",
+    "config_path": "${NARROWGATE_DATA_ROOT}/reports/current_operational_baseline_40d_20260803/operational_config.yaml",
+    "required_projection": {
+      "ml_enabled": true,
+      "q90_shadow_enabled": true,
+      "q90_action_enabled": false,
+      "buy_fill_selection_enabled": true
+    }
+  },
+  "model_identity": {
+    "model_dir": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary",
+    "bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+  },
+  "threshold_contract": {
+    "quantile": 0.9,
+    "method": "higher",
+    "history": "strictly earlier UTC Development days",
+    "denominator": "side-specific baseline-eligible exposure-increasing opportunities, one row per completed 10s prediction bucket",
+    "minimum_prior_days": 5,
+    "minimum_prior_buckets": 500,
+    "fallback_threshold": "forbidden"
+  },
+  "data_identity": {
+    "feature_dir": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802",
+    "feature_manifest_sha256": "1e21d6a8aee511d1ebed8db04d76c5b6d8803724999c284b2256bd83f5d36a90",
+    "normalized_l2_root": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2",
+    "native_orderbook_root": "${NARROWGATE_MARKETDATA_ROOT}/cryptohftdata",
+    "queue_calibration_path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+    "execution_trades": {
+      "manifest_path": "${NARROWGATE_DATA_ROOT}/trade_features_causal_v3_20260727/manifest.json",
+      "manifest_sha256": "af385300d2852c0e6cc8d3e5f1b50984e649dee6e33450cf44740dc189a72292",
+      "quality_path": "${NARROWGATE_DATA_ROOT}/reports/causal_v9_through_20260725_20260727/execution_trade_quality.csv",
+      "quality_sha256": "b61ccb04fe703927dc919ed7cb5fd06c0f109dd7d1b61e89d1a0807357539bf0"
+    },
+    "latency": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+      "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
+      "mode": "avg",
+      "profile_id": "aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14",
+      "environment": "aws-ap-northeast-1-tokyo",
+      "baseline_clip_quantile": 0.99
+    }
+  },
+  "symbol_rules": {
+    "symbol": "BTCUSDC",
+    "tick_size": 0.1,
+    "lot_size": 0.001
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "candidate_path_regenerated": true,
+    "native_warmup_hours": 24,
+    "event_clock": "merged_100ms",
+    "queue_mode": "strict_native_exact_level",
+    "rng_seed": 42,
+    "sync_mode": "frozen_deterministic_stress",
+    "sync_stress_seed": 20260729,
+    "sync_stress_interval_s": 21600.0,
+    "journal_chunk_rows": 50000,
+    "q90_action": "off_both_arms",
+    "economic_result_access": "forbidden"
+  },
+  "mechanics_hard_gates": {
+    "minimum_threshold_ready_days": 30,
+    "minimum_assignments": 500,
+    "minimum_behavior_propensity": 0.5,
+    "minimum_ESS_fraction_of_assignments": 0.9,
+    "prediction_bucket_exceedance_rate_range": [
+      0.05,
+      0.2
+    ],
+    "eligible_decision_exceedance_rate_range": [
+      0.05,
+      0.2
+    ],
+    "assignment_episode_activation_rate_range": [
+      0.02,
+      0.25
+    ],
+    "minimum_final_quote_action_change_rate": 0.02,
+    "minimum_opener_support_days": 10,
+    "minimum_add_support_days": 10,
+    "cancel_ACK_coverage": 1.0,
+    "minimum_completed_episode_fraction": 0.9,
+    "maximum_panel_end_censor_fraction": 0.1,
+    "post_terminal_active_order_evaluations": 0,
+    "terminal_cursor_retention": 0,
+    "cross_arm_order_ownership": 0,
+    "forced_washout_cancel": 0,
+    "reducing_quote_changes": 0,
+    "feature_ready_clock_violations": 0
+  },
+  "storage": {
+    "cache_root": "${NARROWGATE_CACHE_ROOT}/f09_ranked_toxicity_carryover_safe_v2",
+    "window_cache_dir": "${NARROWGATE_CACHE_ROOT}/window_cache",
+    "evidence_root": "${NARROWGATE_DATA_ROOT}/reports/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_20260803"
+  },
+  "storage_gate": {
+    "absolute_minimum_free_gib": 50.0,
+    "reserve_free_gib": 60.0,
+    "output_multiple": 2.5,
+    "estimated_cache_output_gib": 4.0,
+    "estimated_evidence_output_gib": 2.0
+  },
+  "artifact_identities": {
+    "BUY_registration": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_buy_v1_mechanics_spec_20260802.json",
+      "sha256": "f2000ab4ad6c9ec2e822b56e9791ac4cac498422167d354b88473fa4140a2caf"
+    },
+    "SELL_registration": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_sell_v1_mechanics_spec_20260802.json",
+      "sha256": "816c047beccdaa1d3a90dfc2b5f0cee964adda82eda44b13d0cfe912dd8ecc1d"
+    },
+    "development_panel_source": {
+      "path": "research/families/f09_campaign_action_uplift/docs/cross_venue_fair_center_shift_randomized_replay_v1_1_spec_20260801.json",
+      "sha256": "c2c08041638293eb4ed365d65f4acb76af26a710d9baed9a358c6ed3e08f9ebd"
+    },
+    "operational_config": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/current_operational_baseline_40d_20260803/operational_config.yaml",
+      "sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8"
+    },
+    "v12_bundle_meta": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+      "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+    },
+    "tox_bid_model": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/tox_bid_10s.txt",
+      "sha256": "4f7e20cf3b5d92cf00595327c532ea62235a19a326fd11776a7303d1b23d179a"
+    },
+    "tox_ask_model": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/tox_ask_10s.txt",
+      "sha256": "bd2d3a016f77f3a45cefff80283132065eea2df361756ecaf8d3e3880af228a0"
+    }
+  },
+  "implementation_identities": {
+    "guard_runtime": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard.py",
+      "sha256": "f7eff8b3d04a825a49531bf0c55e80a5149f375a5050d1eb93e1d9b2c23c1f40"
+    },
+    "frozen_v1_4_adapter": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_4.py",
+      "sha256": "24d501b543815f07944aee03a5d10fb6475a2570c87824bfe90aa64ac49efd6f"
+    },
+    "carryover_safe_adapter_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v2.py",
+      "sha256": "53909688911af69904eed6e1de0a300a38723802023687dae8fa2f8773cebd05"
+    },
+    "threshold_binding_v1_5": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_authoritative_replay_v1_5.py",
+      "sha256": "437007289f96a6b139f2bf3df72e9e3bfa5f05eee533755af41a1c10c77bf418"
+    },
+    "carryover_safe_replay_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_authoritative_replay_v2.py",
+      "sha256": "911b7ed3a8e256d339f78a48054a478e17d41e95c1eb10e8122ad74adb0ab77e"
+    },
+    "mechanics_runner_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_mechanics_v2.py",
+      "sha256": "7c465928e2d348e2d8ece9fca99cbbdcc6c9c1fe1960081f03122e1b6e13dfc4"
+    },
+    "authoritative_tick_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "744b195589653f83b960887b92169a5129b57d9e3dab45464f77324e6380c598"
+    },
+    "chunked_parquet_journal": {
+      "path": "execution/chunked_parquet_journal.py",
+      "sha256": "8596df6d1faedb54bb2c2e6282707f1959cc8b1899b7c91d24d8c620aaf9bada"
+    },
+    "window_loader": {
+      "path": "models/data_windows.py",
+      "sha256": "227d381968e818692516fbe7180d27253fad4bb353c9cab40a49c7371c401220"
+    },
+    "native_exchange_book": {
+      "path": "models/exchange_book_replay.py",
+      "sha256": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177"
+    }
+  },
+  "economic_outcome_columns_read": [],
+  "permissions": {
+    "mechanics_execution_allowed": true,
+    "mechanics_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_authority": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

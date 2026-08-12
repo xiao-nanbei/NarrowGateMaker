@@ -1,0 +1,31 @@
+{
+  "artifact_hashes_valid": true,
+  "canonical_spec_identity_sha256": "af39d4038c7e6780187a86eea646447aef7fb545a7b0a6875987bfc78af723b5",
+  "economic_outcome_columns_read": [],
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_buy_v1",
+  "operational_baseline_semantics": {
+    "buy_fill_selection_enabled": true,
+    "ml_enabled": true,
+    "q90_action_enabled": false,
+    "q90_shadow_enabled": true
+  },
+  "permissions": {
+    "action_experiment_authorized": false,
+    "development_economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "mechanics_read": false,
+    "mechanics_registration": true,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "prediction_head": "tox_bid_10s",
+  "schema_version": "ranked_toxicity_exposure_guard_registration.v1.audit",
+  "scorecard_profile": {
+    "profile_id": "action_execution_selective_v2",
+    "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+    "schema_version": "narrowgate_score_profile.v1"
+  },
+  "side": "BUY",
+  "stage": "mechanics_registered_not_run"
+}

@@ -1,0 +1,74 @@
+{
+  "schema_version": "ranked_toxicity_registration_linkage_amendment.v2",
+  "amendment_id": "causal_v12_ranked_toxicity_exposure_guard_registration_linkage_v2",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "current_config_to_v12_bundle_linkage_frozen_mechanics_not_run",
+  "canonical_spec_identity_sha256": "8817b2f1e3387ae7b70c6a300b540744f8a3ee684bf2adadbd801263b20283b7",
+  "scope": "Mechanics-only registration linkage. It binds the current operational YAML model_dir to the exact v12 bundle_meta already named by both frozen side-specific v1 specs. It does not rewrite either v1 spec, read outcomes, or grant action/live authority.",
+  "frozen_v1_registrations": {
+    "BUY": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_buy_v1_mechanics_spec_20260802.json",
+      "sha256": "f2000ab4ad6c9ec2e822b56e9791ac4cac498422167d354b88473fa4140a2caf"
+    },
+    "SELL": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_sell_v1_mechanics_spec_20260802.json",
+      "sha256": "816c047beccdaa1d3a90dfc2b5f0cee964adda82eda44b13d0cfe912dd8ecc1d"
+    }
+  },
+  "artifact_identities": {
+    "current_operational_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "0b0f137461db59eafbb05519da178e61bac0b3e6242d4ee8a35ea746580d6a64"
+    },
+    "v12_bundle_meta": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+      "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+    }
+  },
+  "operational_baseline_projection": {
+    "ml_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_enabled": true
+  },
+  "historical_identity_boundary": {
+    "frozen_v1_operational_config_sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8",
+    "current_operational_config_sha256": "0b0f137461db59eafbb05519da178e61bac0b3e6242d4ee8a35ea746580d6a64",
+    "frozen_v1_specs_modified": false,
+    "frozen_v1_config_identity_reinterpreted": false,
+    "current_execution_linkage_supersedes_historical_config_bytes": true,
+    "action_threshold_seed_scorecard_or_economic_gate_changed": false
+  },
+  "supporting_identities": {
+    "operational_baseline_v5": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v5.json",
+      "sha256": "e80aacdad29160e47889d157fdf67a633cb42d8e448bbfe4db70ea7c4435a000"
+    },
+    "full_path_adapter_v1_2": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v1_2_execution_amendment_20260802.json",
+      "sha256": "47bc5d4e088d0982e22707fc834079f232ce28424420656a82f9e1f431885ecb"
+    }
+  },
+  "implementation_identity": {
+    "registration_linkage_v2_validator": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_exposure_guard_registration_linkage_v2.py",
+      "sha256": "b7e58cc673ab57731d4f0b4a0823028cd959b06c9d730673b47d99cf335acbd6"
+    },
+    "registration_linkage_v2_tests": {
+      "path": "tests/test_ranked_toxicity_registration_linkage_v2.py",
+      "sha256": "0bfbf39665db7b3485c97bb54658a1b9e570ec2ceceaae6cda68aef07cf6496d"
+    }
+  },
+  "economic_outcome_columns_read": [],
+  "permissions": {
+    "mechanics_registration_linkage_valid": true,
+    "mechanics_read": false,
+    "development_economic_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_authority": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

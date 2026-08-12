@@ -1,0 +1,80 @@
+{
+  "canonical_spec_identity_sha256": "cf80b55164d449c52afbce7569df0551179d59ba490c0fb8977f4b73426f74c6",
+  "contract_tests_passed": true,
+  "cpp_quantity_time_exposure_authority": false,
+  "economic_outcome_columns_read": [],
+  "frozen_v1_hashes_valid": true,
+  "historical_v1_1_bytes_valid": true,
+  "historical_v1_1_current_execution_eligible": false,
+  "implementation_hashes_valid": true,
+  "lifecycle_branch_contract_valid": true,
+  "permissions": {
+    "action_experiment_authorized": false,
+    "adapter_contract_tests_passed": true,
+    "adapter_registration": true,
+    "development_economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "mechanics_execution_eligible": true,
+    "mechanics_read": false,
+    "prediction_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "ranked_toxicity_guard_full_path_execution_amendment.v1.2.audit",
+  "shared_lifecycle_refresh_contract_valid": true,
+  "stage": "v1_2_dependency_refresh_hash_bound_mechanics_not_run",
+  "unchanged_v1_contract_projection": {
+    "BUY": {
+      "assignment_unit": "one BUY side assignment per prospective campaign lineage",
+      "buy_fill_selection_same_in_both_arms": true,
+      "family_id": "causal_v12_ranked_toxicity_exposure_guard_buy_v1",
+      "history": "strictly_earlier_UTC_days",
+      "prediction_head": "tox_bid_10s",
+      "probabilities": {
+        "baseline_permission": 0.5,
+        "ranked_toxicity_guard": 0.5
+      },
+      "q90_action_enabled": false,
+      "quantile": 0.9,
+      "random_seed": 2026080201,
+      "rank": "side_specific_p90",
+      "reducing_quotes_unchanged": true,
+      "scorecard_profile": {
+        "profile_id": "action_execution_selective_v2",
+        "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+        "schema_version": "narrowgate_score_profile.v1"
+      },
+      "side": "BUY"
+    },
+    "SELL": {
+      "assignment_unit": "one SELL side assignment per prospective campaign lineage",
+      "buy_fill_selection_same_in_both_arms": true,
+      "family_id": "causal_v12_ranked_toxicity_exposure_guard_sell_v1",
+      "history": "strictly_earlier_UTC_days",
+      "prediction_head": "tox_ask_10s",
+      "probabilities": {
+        "baseline_permission": 0.5,
+        "ranked_toxicity_guard": 0.5
+      },
+      "q90_action_enabled": false,
+      "quantile": 0.9,
+      "random_seed": 2026080202,
+      "rank": "side_specific_p90",
+      "reducing_quotes_unchanged": true,
+      "scorecard_profile": {
+        "profile_id": "action_execution_selective_v2",
+        "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+        "schema_version": "narrowgate_score_profile.v1"
+      },
+      "side": "SELL"
+    }
+  },
+  "zero_tolerance_gates": {
+    "assignment_after_treatment": 0,
+    "campaign_side_rerandomization": 0,
+    "control_candidate_baseline_shadow_mismatch": 0,
+    "duplicate_or_inconsistent_prediction_bucket": 0,
+    "post_terminal_hazard_or_cursor_reuse": 0,
+    "reducing_quote_changes": 0
+  }
+}

@@ -1,0 +1,104 @@
+{
+  "schema_version": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2.implementation.v1",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2",
+  "status": "one_day_authoritative_smoke_passed_formal_mechanics_not_run",
+  "spec_identity": {
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_spec_20260803.json",
+    "file_sha256": "07b92c0c1b913a38f1354181d8643cb8c049b6bbe430a9a0fbbd552d0253a37d",
+    "canonical_sha256": "8f1ecf03c2e6fd5943038a5fbc5e77fb0d2b7c2c14f9a03dd7666da5e2571316"
+  },
+  "root_cause": {
+    "classification": "active_order_dynamic_inventory_role_transition",
+    "failed_order_id": "13612",
+    "side": "SELL",
+    "lifecycle_phase": "ACTIVE",
+    "exchange_terminal": false,
+    "fill_risk_active": true,
+    "submitted_as_exposure_increasing": false,
+    "current_decision_exposure_increasing": true,
+    "ownership_matched_current_episode": true,
+    "lifecycle_event_missing": false,
+    "stale_active_order_pointer": false,
+    "resolution": "bind the same exchange-live order, queue and assignment ownership into the current exposure risk set after inventory changes; unknown, terminal and non-fill-risk orders remain fail-closed"
+  },
+  "implementation_identities": {
+    "carryover_safe_adapter_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v2.py",
+      "sha256": "53909688911af69904eed6e1de0a300a38723802023687dae8fa2f8773cebd05"
+    },
+    "carryover_safe_replay_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_authoritative_replay_v2.py",
+      "sha256": "911b7ed3a8e256d339f78a48054a478e17d41e95c1eb10e8122ad74adb0ab77e"
+    },
+    "mechanics_runner_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_full_path_mechanics_v2.py",
+      "sha256": "7c465928e2d348e2d8ece9fca99cbbdcc6c9c1fe1960081f03122e1b6e13dfc4"
+    },
+    "authoritative_tick_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "744b195589653f83b960887b92169a5129b57d9e3dab45464f77324e6380c598"
+    },
+    "window_loader": {
+      "path": "models/data_windows.py",
+      "sha256": "227d381968e818692516fbe7180d27253fad4bb353c9cab40a49c7371c401220"
+    },
+    "targeted_test": {
+      "path": "tests/test_ranked_toxicity_guard_carryover_safe_assignment_v2.py",
+      "sha256": "3675aa958f88e7bd3e5f97fe30fd5546ae8a842c80e8a7bc1caf904df47f4dc3"
+    }
+  },
+  "one_day_authoritative_smoke": {
+    "utc_day": "2026-04-17",
+    "baseline_manifest": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_preflight_20260803_run3/baseline_v1_5/manifest.json",
+      "sha256": "e17e222efbff9bd6205840749a524c3afd9809299798c6205be43ec533fb018d",
+      "decision_rows": 29072,
+      "consumed_rows": 29072,
+      "complete": true
+    },
+    "candidate_output_root": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_preflight_20260803_run6_fixed",
+    "BUY": {
+      "journal_manifest_sha256": "77c09d46babe7f014436c9cd301ab21ead556979435c5c4a9c15c8fb2ba07916",
+      "journal_rows": 72388,
+      "assignment_episodes": 337,
+      "completed_episodes": 336,
+      "censored_episodes": 1,
+      "carryover_transitions": 58,
+      "active_order_role_transition_to_exposure_count": 0,
+      "cross_arm_order_ownership_count": 0,
+      "forced_washout_cancel_count": 0,
+      "order_owner_mismatch_count": 0,
+      "execution_complete": true,
+      "zero_tolerance_passed": true,
+      "carryover_contract_valid": true
+    },
+    "SELL": {
+      "journal_manifest_sha256": "8a573c7fc31601f77b98905b60c9f37efcbd04dee0a4332eb5e2af069fc4d64a",
+      "journal_rows": 73424,
+      "assignment_episodes": 337,
+      "completed_episodes": 336,
+      "censored_episodes": 1,
+      "carryover_transitions": 50,
+      "active_order_role_transition_to_exposure_count": 1,
+      "cross_arm_order_ownership_count": 0,
+      "forced_washout_cancel_count": 0,
+      "order_owner_mismatch_count": 0,
+      "execution_complete": true,
+      "zero_tolerance_passed": true,
+      "carryover_contract_valid": true
+    }
+  },
+  "tests": {
+    "scope": "F09 ranked-toxicity adapter, authoritative replay, carryover-safe assignment and execution-contract tests; registration-linkage tests excluded as a separate frozen identity",
+    "result": "49 passed"
+  },
+  "permissions": {
+    "formal_40_day_mechanics_run": false,
+    "mechanics_results_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

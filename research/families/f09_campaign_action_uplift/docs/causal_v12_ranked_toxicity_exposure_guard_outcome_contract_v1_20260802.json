@@ -1,0 +1,65 @@
+{
+  "schema_version": "ranked_toxicity_exposure_guard_outcome_contract.v1",
+  "contract_id": "causal_v12_ranked_toxicity_exposure_guard_outcome_contract_v1",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "frozen_before_mechanics_and_economic_outcome_read",
+  "canonical_contract_identity_sha256": "fc4ad90d097c478b1190b0a35e0fb4e053d816ef8af2dc749a00dcb1923345a6",
+  "scope": "Shared future economic outcome contract for the independently registered BUY and SELL ranked-toxicity exposure guards. This contract freezes labels and score semantics but grants no permission to read economic outcomes until the corresponding side mechanics gate passes.",
+  "primary_reward": {
+    "estimand": "assignment_to_campaign_terminal_value_usdc",
+    "foundation_contract": "lineage_randomized_outcome_contract_v2",
+    "pre_assignment_campaign_pnl": "covariate_and_balance_diagnostic_only",
+    "accounting_identity": "lineage_reward_plus_post_lineage_continuation_equals_assignment_to_campaign_terminal_value_exactly",
+    "fees": "deduct exact causally convertible fees once; an unknown commission asset censors the affected economic record and may not be treated as USDC",
+    "maker_signed_markout_already_contains_execution_price": true,
+    "half_spread_must_not_be_added_again": true
+  },
+  "toxic_fill_estimand": {
+    "horizon_ms": 10000,
+    "epsilon_toxic_bps": 0.0,
+    "epsilon_provenance": "economic break-even boundary after known maker fees; not fitted to Development outcomes",
+    "future_price": "normalized_l2_100ms_v2 BBO mid from the first valid grid snapshot at or after fill_ts_plus_10000ms and no later than target_plus_100ms",
+    "missing_future_bbo": "retain the assigned decision; mark the unmatched filled quantity unlabeled and use the conservative censoring bound",
+    "BUY_markout_bps": "10000 * (future_bbo_mid - fill_price) / fill_price - known_maker_fee_bps",
+    "SELL_markout_bps": "10000 * (fill_price - future_bbo_mid) / fill_price - known_maker_fee_bps",
+    "toxic_definition": "net_maker_signed_markout_bps < -epsilon_toxic_bps",
+    "partial_fill_rule": "label every execution quantity separately before aggregating to its assigned decision",
+    "assigned_quantity_rule": "freeze assigned quantity at the randomized opportunity before downstream order and fill paths",
+    "fill_rate": "mean_over_decisions(filled_qty_btc / assigned_qty_btc)",
+    "toxic_fill_rate": "mean_over_decisions(toxic_filled_qty_btc / assigned_qty_btc)",
+    "conservative_censoring_bound": "candidate unlabeled fill quantity is toxic and baseline unlabeled fill quantity is non-toxic",
+    "required_bounds": [
+      "toxic_reduction_surplus_day_clustered_LCB95",
+      "toxic_share_log_ratio_day_clustered_LCB95",
+      "conditional_net_value_day_clustered_LCB95"
+    ]
+  },
+  "scorecard_profile": {
+    "profile_id": "action_execution_selective_v2",
+    "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+    "schema_version": "narrowgate_score_profile.v1"
+  },
+  "side_separation": {
+    "BUY_and_SELL_are_distinct_action_identities": true,
+    "pooled_promotion_forbidden": true,
+    "other_side_remains_exact_operational_baseline": true
+  },
+  "future_economic_gates": {
+    "primary_reward_LCB95_strictly_positive": true,
+    "conditional_net_value_LCB95_strictly_positive": true,
+    "toxic_reduction_surplus_LCB95_strictly_positive": true,
+    "toxic_share_log_ratio_LCB95_strictly_positive": true,
+    "q10_and_CVaR_not_worse": true,
+    "campaign_terminal_not_worse": true,
+    "result_cannot_be_explained_only_by_activity_collapse": true,
+    "ranking_score_nonnull_only_after_all_hard_gates": true
+  },
+  "permissions": {
+    "mechanics_read": false,
+    "development_economic_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

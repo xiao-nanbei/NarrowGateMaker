@@ -1,0 +1,248 @@
+{
+  "schema_version": "ranked_toxicity_exposure_guard_registration.v1",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_buy_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "side": "BUY",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "registered_mechanics_only_before_execution",
+  "canonical_spec_identity_sha256": "4b6a27d8af71797cd33dc973e43d10f0ecf462e8fb63bb1630cdd021d95105e3",
+  "scope": "Side-specific selective execution identity using the causal v12 tox_bid_10s rank. Stage one may read only action mechanics. It is not the raw adverse_toxicity_threshold path, does not recalibrate v12 probabilities, and grants no economic, Validation, action, or live authority.",
+  "historical_evidence_boundary": {
+    "development_panel_previously_used_by_other_action_families": true,
+    "independent_confirmation": false,
+    "new_guard_economic_outcomes_previously_read": false,
+    "validation_and_holdout_remain_closed": true
+  },
+  "baseline_contract": {
+    "operational_baseline_id": "btc_usdc_causal_v12_semantics_v6_q90_action_suspended_baseline_20260802",
+    "ml_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "q90_action_suspension_release_hash_bound": true,
+    "q90_terminal_riskset_repair_status": "implemented_and_verified_locally_not_deployed",
+    "q90_prospective_placement_recovery_supported": false,
+    "buy_fill_selection_enabled": true,
+    "buy_fill_selection_same_in_both_arms": true,
+    "adverse_toxicity_threshold": 2.0,
+    "raw_toxicity_threshold_remains_disabled": true,
+    "reducing_quotes_unchanged": true,
+    "all_non_guard_strategy_mechanics_same_in_both_arms": true
+  },
+  "prediction_contract": {
+    "model_identity": "causal_v12_expanded_source_aware_semantics_v6",
+    "head": "tox_bid_10s",
+    "event_type": "ranked_toxicity_prediction",
+    "horizon_s": 10,
+    "feature_semantics_version": 6,
+    "feature_dag_id": "live_10s_signal_cutoff.v1",
+    "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+    "visibility_invariant": "feature_ready_ts_ms <= decision_ts_ms",
+    "sample_and_hold": "one score per completed 10s prediction bucket",
+    "raw_probability_authority": false,
+    "rank_authority_only": true
+  },
+  "threshold_contract": {
+    "rank": "side_specific_p90",
+    "quantile": 0.9,
+    "quantile_method": "higher",
+    "history": "strictly_earlier_UTC_days",
+    "threshold_fixed_within_UTC_day": true,
+    "minimum_prior_days": 5,
+    "minimum_prior_buckets": 500,
+    "support_minima_provenance": "judgmental mechanics support floor frozen before guard mechanics or economic outcomes",
+    "denominator": {
+      "side_specific": true,
+      "baseline_eligible_only": true,
+      "exposure_increasing_only": true,
+      "roles": [
+        "opener",
+        "add"
+      ],
+      "maximum_rows_per_prediction_bucket": 1,
+      "row_selection_within_bucket": "first causally visible baseline-eligible opportunity",
+      "repeated_100ms_main_loop_rows_forbidden": true
+    },
+    "crossing": "score >= daily_past_only_p90",
+    "release": "next completed 10s score < daily_past_only_p90",
+    "no_raw_threshold_grid": true
+  },
+  "behavior_policy": {
+    "assignment_unit": "one BUY side assignment per prospective campaign lineage",
+    "assignment_time": "first baseline-eligible BUY exposure-increasing opportunity before downstream guard action",
+    "randomization_design": "deterministic_PRF_Bernoulli_stratified_by_UTC_day_and_side",
+    "random_seed": 2026080201,
+    "probabilities": {
+      "baseline_permission": 0.5,
+      "ranked_toxicity_guard": 0.5
+    },
+    "assignment_persists_within_campaign_side": true,
+    "no_rerandomization_each_prediction_bucket": true,
+    "maximum_assignments_per_campaign_side": 1,
+    "other_side": "exact operational baseline"
+  },
+  "state_machine": {
+    "states": [
+      "BASELINE",
+      "GUARD_ACTIVE",
+      "CANCEL_PENDING",
+      "SUPPRESSING",
+      "RELEASED"
+    ],
+    "crossing_action": "cancel one active BUY exposure-increasing order at most once per guard episode, wait for cancel ACK, and suppress later BUY exposure submissions",
+    "post_ACK_contract": "old order leaves the fill-risk set; old queue, age, hazard, and depth cursor are terminal and cannot be used for recovery",
+    "recovery_signal": "only the next completed causal v12 tox_bid_10s rank below the same frozen daily p90",
+    "reducing_BUY": "never suppressed by this identity",
+    "reentry": "new order lifecycle with age zero and new queue after RELEASED",
+    "q90_terminal_hold_reuse": "forbidden"
+  },
+  "panels": {
+    "source_identity": "exact 40-day F09 Development and Grade-A/Grade-B partition bound by artifact_identities.development_panel_source",
+    "grade_a_primary": true,
+    "grade_b_sensitivity_only": true,
+    "first_five_or_other_threshold_unready_days": "mechanics support only; no assignment and no fallback threshold",
+    "future_economic_evidence_on_this_panel_is_not_independent_confirmation": true
+  },
+  "stage_one_mechanics": {
+    "allowed_outputs": [
+      "prediction_bucket_exceedance_rate",
+      "eligible_decision_exceedance_rate",
+      "campaign_activation_rate",
+      "final_quote_action_change_rate",
+      "cancel_request_and_ACK_counts",
+      "opener_and_add_support",
+      "propensity_and_ESS",
+      "feature_ready_clock_validity",
+      "post_ACK_risk_set_violations",
+      "reducing_quote_changes",
+      "BUY_fill_selection_parity",
+      "q90_shadow_and_action_parity"
+    ],
+    "forbidden_columns": [
+      "PnL",
+      "reward",
+      "markout",
+      "toxic_fill",
+      "campaign_tail",
+      "terminal_value"
+    ],
+    "hard_gates": {
+      "minimum_threshold_ready_days": 30,
+      "minimum_assignments": 500,
+      "minimum_behavior_propensity": 0.5,
+      "minimum_ESS_fraction_of_assignments": 0.9,
+      "prediction_bucket_exceedance_rate_range": [
+        0.05,
+        0.2
+      ],
+      "eligible_decision_exceedance_rate_range": [
+        0.05,
+        0.2
+      ],
+      "campaign_activation_rate_range": [
+        0.02,
+        0.25
+      ],
+      "minimum_final_quote_action_change_rate": 0.02,
+      "minimum_opener_support_days": 10,
+      "minimum_add_support_days": 10,
+      "cancel_ACK_coverage": 1.0,
+      "post_ACK_active_order_evaluations": 0,
+      "terminal_cursor_retention": 0,
+      "reducing_quote_changes": 0,
+      "feature_ready_clock_violations": 0,
+      "BUY_fill_selection_arm_mismatches": 0,
+      "q90_action_count_both_arms": 0
+    }
+  },
+  "stage_two_economic": {
+    "may_start_only_if_all_stage_one_hard_gates_pass": true,
+    "outcome_contract": "causal_v12_ranked_toxicity_exposure_guard_outcome_contract_v1",
+    "requires_new_hash_bound_full_path_execution_spec": true,
+    "BUY_and_SELL_promotion_remain_separate": true
+  },
+  "scorecard_profile": {
+    "profile_id": "action_execution_selective_v2",
+    "profile_sha256": "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14",
+    "schema_version": "narrowgate_score_profile.v1"
+  },
+  "artifact_identities": {
+    "operational_private_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "832e389e44c7d132db3bed10e37d0454b32cad7dca7596b90a1731998f4c7ca8"
+    },
+    "operational_baseline_identity": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v5.json",
+      "sha256": "e80aacdad29160e47889d157fdf67a633cb42d8e448bbfe4db70ea7c4435a000"
+    },
+    "q90_action_suspension_operational_release": {
+      "path": "research/families/f10_live_replay_attribution/docs/buy_q90_action_suspension_operational_release_v1_20260802.md",
+      "sha256": "5fa7d8505cb88fa1ff7d089b941d4370b2d3d516236d2ed167e3cd62ff90d2bf"
+    },
+    "v12_bundle_meta": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/bundle_meta.json",
+      "sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2"
+    },
+    "side_toxicity_model": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/tox_bid_10s.txt",
+      "sha256": "4f7e20cf3b5d92cf00595327c532ea62235a19a326fd11776a7303d1b23d179a"
+    },
+    "side_toxicity_meta": {
+      "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/tox_bid_10s_meta.json",
+      "sha256": "097319eef7d1d334e8de9fb8874fd7432b8979d450b74ae2c090c5929cfe4808"
+    },
+    "lineage_outcome_foundation": {
+      "path": "research/families/f09_campaign_action_uplift/docs/lineage_randomized_outcome_contract_v2.json",
+      "sha256": "bd95adae59e4fa1fee982b29dc960c233bb7e468bc2f844d656f42a4527503cd"
+    },
+    "future_outcome_contract": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_outcome_contract_v1_20260802.json",
+      "sha256": "0ca5fdecef9dc2c2d72c339c23da77163c946559312a02a1811a4a4e2be6a0dd"
+    },
+    "development_panel_source": {
+      "path": "research/families/f09_campaign_action_uplift/docs/cross_venue_fair_center_shift_randomized_replay_v1_1_spec_20260801.json",
+      "sha256": "c2c08041638293eb4ed365d65f4acb76af26a710d9baed9a358c6ed3e08f9ebd"
+    }
+  },
+  "implementation_identity": {
+    "guard_mechanics": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard.py",
+      "sha256": "f7eff8b3d04a825a49531bf0c55e80a5149f375a5050d1eb93e1d9b2c23c1f40"
+    },
+    "quantity_selectivity_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/toxic_fill_selectivity_v2.py",
+      "sha256": "527280e4fc41b9eb2f729d103c3a2acf2ff079d7a049fb859cf9d825aefcfe8d"
+    },
+    "registration_validator": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_exposure_guard_registration.py",
+      "sha256": "abed4d89ec6056f48f0f8baa94cef331ab4e4a53b7f0bfa6b70fe42aa5e11ae2"
+    },
+    "guard_tests": {
+      "path": "tests/test_causal_v12_ranked_toxicity_exposure_guard.py",
+      "sha256": "538dd2e69f42129d327967402c7547760493b3fcc5a27f6a800f14a69db89f36"
+    },
+    "quantity_tests": {
+      "path": "tests/test_toxic_fill_selectivity_v2.py",
+      "sha256": "1ad50df32da1d919103ebafade08af9feaf017fc368b462d2a87fb43af1bc40e"
+    },
+    "scorecard": {
+      "path": "models/audit/experiment_scorecard.py",
+      "sha256": "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6"
+    }
+  },
+  "execution_boundary": {
+    "full_path_replay_adapter_status": "not_yet_hash_bound",
+    "mechanics_execution_allowed_now": false,
+    "required_next_step": "implement and hash-bind the full-path adapter without changing this action, denominator, threshold, baseline, seed, gates, or permissions; then create an execution-only v1.1 amendment before running mechanics",
+    "economic_execution_allowed_now": false
+  },
+  "permissions": {
+    "mechanics_registration": true,
+    "mechanics_read": false,
+    "development_economic_outcome_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "prediction_authority": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

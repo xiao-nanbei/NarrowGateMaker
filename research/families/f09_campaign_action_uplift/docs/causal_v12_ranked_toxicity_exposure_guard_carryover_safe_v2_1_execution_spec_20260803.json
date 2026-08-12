@@ -1,0 +1,143 @@
+{
+  "schema_version": "ranked_toxicity_guard_carryover_safe_execution.v2.1",
+  "family_id": "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_1_execution",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-08-03T00:00:00Z",
+  "status": "registered_one_day_execution_successor_before_smoke",
+  "canonical_spec_identity_sha256": "175d4d4e560a687e5dd8f47300e6561ae3bc1a8bcfb86877613ae5ba8f5ba08a",
+  "implementation_sha256": "1c6ae7eca890f3946546cbd33a05aa3b689018503c7e394f02f185d1d654ef04",
+  "scope": "Execution-only successor to frozen carryover-safe v2. The action, assignment, threshold, baseline tape and expected mechanics counts remain unchanged. The successor binds the current window loader and replay-cache DAG v2, permits legacy v13 cache reads, forbids every cache write, and keeps WindowData ephemeral.",
+  "predecessor_v2": {
+    "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_spec_20260803.json",
+    "sha256": "07b92c0c1b913a38f1354181d8643cb8c049b6bbe430a9a0fbbd552d0253a37d",
+    "canonical_sha256": "8f1ecf03c2e6fd5943038a5fbc5e77fb0d2b7c2c14f9a03dd7666da5e2571316"
+  },
+  "unchanged_semantics": {
+    "adapter": "carryover_safe_adapter_v2",
+    "authoritative_binding": "ranked_toxicity_guard_authoritative_replay_binding.v2",
+    "assignment_unit": "carryover_safe_assignment_episode",
+    "randomization": "unchanged_from_v2",
+    "threshold": "unchanged_v2_smoke_threshold_0.8",
+    "baseline_shadow_tape": "unchanged_hash_bound_v2_tape",
+    "economic_estimand": "not_read"
+  },
+  "cache_execution_contract": {
+    "replay_cache_dag_id": "tick_replay_window_materialization.v2",
+    "replay_cache_dag_v2_identity_sha256": "d4aaf484d1ed8f1419da675d771e9520d944e5c23f8016d81a89fbeb0d69c39c",
+    "legacy_v13_read": "read_only_compatible",
+    "smoke_requires_legacy_v13_read": false,
+    "legacy_v13_read_compatibility_test_required": true,
+    "legacy_component_v1_read": "read_only_compatible",
+    "window_data_materialization": "ephemeral",
+    "action_dependent_replay_state_materialization": "forbidden",
+    "window_cache_write_enabled": false,
+    "legacy_monolithic_window_cache_write_enabled": false,
+    "legacy_component_v1_write_enabled": false,
+    "market_context_day_v2_write_enabled": false,
+    "model_overlay_day_write_enabled": false,
+    "native_book_hour_write_enabled": false,
+    "cache_tree_mutation_tolerance": 0
+  },
+  "smoke_contract": {
+    "utc_day": "2026-04-17",
+    "baseline_manifest": {
+      "path": "${NARROWGATE_EPHEMERAL_ROOT}/f09_carryover_v2_preflight_20260803_run3/baseline_v1_5/manifest.json",
+      "sha256": "e17e222efbff9bd6205840749a524c3afd9809299798c6205be43ec533fb018d"
+    },
+    "threshold": 0.8,
+    "threshold_source_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expected_v2_counts": {
+      "baseline": {
+        "rows": 29072,
+        "consumed": 29072,
+        "unconsumed": 0,
+        "complete": true
+      },
+      "candidate_campaign_terminal_count": 408,
+      "BUY": {
+        "assignment_episodes": 337,
+        "completed_episodes": 336,
+        "censored_episodes": 1,
+        "carryover_transitions": 58,
+        "active_order_role_transition_to_exposure_count": 0,
+        "cross_arm_order_ownership_count": 0,
+        "forced_washout_cancel_count": 0,
+        "order_owner_mismatch_count": 0,
+        "execution_complete": true,
+        "zero_tolerance_passed": true,
+        "carryover_contract_valid": true
+      },
+      "SELL": {
+        "assignment_episodes": 337,
+        "completed_episodes": 336,
+        "censored_episodes": 1,
+        "carryover_transitions": 50,
+        "active_order_role_transition_to_exposure_count": 1,
+        "cross_arm_order_ownership_count": 0,
+        "forced_washout_cancel_count": 0,
+        "order_owner_mismatch_count": 0,
+        "execution_complete": true,
+        "zero_tolerance_passed": true,
+        "carryover_contract_valid": true
+      }
+    }
+  },
+  "artifact_identities": {
+    "frozen_v2_implementation_record": {
+      "path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_implementation_20260803.json",
+      "sha256": "bd31923f690b3b2f07e65124e5fdad5671ad80c02f2aa8c97220022814e99180"
+    }
+  },
+  "implementation_identities": {
+    "execution_successor_v2_1": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_carryover_safe_execution_v2_1.py",
+      "sha256": "1c6ae7eca890f3946546cbd33a05aa3b689018503c7e394f02f185d1d654ef04"
+    },
+    "carryover_safe_adapter_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/causal_v12_ranked_toxicity_exposure_guard_full_path_adapter_v2.py",
+      "sha256": "53909688911af69904eed6e1de0a300a38723802023687dae8fa2f8773cebd05"
+    },
+    "carryover_safe_replay_v2": {
+      "path": "research/families/f09_campaign_action_uplift/audit/ranked_toxicity_guard_authoritative_replay_v2.py",
+      "sha256": "911b7ed3a8e256d339f78a48054a478e17d41e95c1eb10e8122ad74adb0ab77e"
+    },
+    "authoritative_tick_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "36b47124111770054731f86c7655dd4bdee61cf995b4d51feb009a0203bbb418"
+    },
+    "window_loader": {
+      "path": "models/data_windows.py",
+      "sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223"
+    },
+    "replay_cache_dag_v2": {
+      "path": "models/replay_cache_dag.py",
+      "sha256": "27ecd5bce3777634f890c771c09cccc0c7d92104fcc80605e8f09f6879a55ee3"
+    },
+    "native_exchange_book": {
+      "path": "models/exchange_book_replay.py",
+      "sha256": "25f26771b3dbfdc7567b5696d0a507ae52b0ed79ee5c7d04111ad48380910177"
+    },
+    "native_exchange_book_cache": {
+      "path": "models/native_exchange_book_cache.py",
+      "sha256": "7e7c9296479e036c49dd37e389258060907a7e64b2d20bac2060ca2f3c98c45c"
+    },
+    "chunked_parquet_journal": {
+      "path": "execution/chunked_parquet_journal.py",
+      "sha256": "8596df6d1faedb54bb2c2e6282707f1959cc8b1899b7c91d24d8c620aaf9bada"
+    },
+    "execution_successor_test": {
+      "path": "tests/test_ranked_toxicity_guard_carryover_safe_execution_v2_1.py",
+      "sha256": "f5e1e3943417409a1bc29d9ef161d19496e17fec6aa2de52b371fa9c4f02bc1f"
+    }
+  },
+  "permissions": {
+    "one_day_execution_smoke_allowed": true,
+    "formal_40_day_mechanics_run": false,
+    "mechanics_results_read": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
