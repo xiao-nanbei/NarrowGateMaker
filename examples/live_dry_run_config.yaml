@@ -17,6 +17,7 @@ strategy:
   order_size: 0.001
   max_inventory: 0.01
   requote_interval: 10.0
+  quote_horizon_s: 1.0
   max_spread_bps: 12.0
   maker_fill_prob: 1.0
   adverse_guard_enabled: false
@@ -25,7 +26,7 @@ strategy:
 
 ml:
   enabled: false
-  model_dir: "models/example_model_bundle"
+  model_dir: "examples/public_dry_run_model_bundle"
 
 multi_market:
   enabled: false
@@ -61,6 +62,8 @@ risk:
   max_position_value: 100.0
   emergency_close_dd: 20.0
   max_exec_book_age_s: 5.0
+  max_exec_book_visible_age_s: 5.0
+  max_exec_book_source_lag_s: 5.0
 
 logging:
   level: "INFO"

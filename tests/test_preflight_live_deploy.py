@@ -21,6 +21,7 @@ from strategy.model_contract import (
 
 EXAMPLE_REMOTE_COLLECTION_ROOT = "/srv/example-live/formal_collection"
 EXAMPLE_STORAGE_ROOT = "/srv/example-storage"
+PUBLIC_DRY_RUN_BUNDLE = Path("examples/public_dry_run_model_bundle")
 
 
 def _write_fixture(
@@ -105,6 +106,31 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     assert identity["use_bar_pricing"] is False
     assert identity["max_exec_book_visible_age_s"] == pytest.approx(5.0)
     assert identity["max_exec_book_source_lag_s"] == pytest.approx(5.0)
+
+
+def test_public_dry_run_bundle_is_hash_bound_and_preflight_valid() -> None:
+    root = Path(__file__).resolve().parents[1]
+    bundle = root / PUBLIC_DRY_RUN_BUNDLE
+    manifest = json.loads(
+        (bundle / "fixture_manifest.json").read_text(encoding="utf-8")
+    )
+
+    assert manifest["synthetic"] is True
+    assert all(value is False for value in manifest["authority"].values())
+    for entry in manifest["files"]:
+        path = bundle / entry["path"]
+        payload = path.read_bytes()
+        assert len(payload) == entry["bytes"]
+        assert hashlib.sha256(payload).hexdigest() == entry["sha256"]
+
+    identity = validate_deploy_config(
+        root / "examples/live_dry_run_config.yaml",
+        root,
+    )
+
+    assert identity["ml_enabled"] is False
+    assert identity["dynamic_fill_hazard_action_enabled"] is False
+    assert identity["validated_model_heads"] == sorted(REQUIRED_MODEL_HEADS)
 
 
 def test_preflight_requires_explicit_quote_snapshot_clock_limits(

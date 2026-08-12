@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "rebuilt-main-20260812"]
   pull_request:
   workflow_dispatch:
 

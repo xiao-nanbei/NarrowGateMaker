@@ -1,0 +1,146 @@
+{
+  "authority": {
+    "action": false,
+    "live": false,
+    "research": false
+  },
+  "files": [
+    {
+      "bytes": 3128,
+      "path": "dir_10s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "dir_10s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "dir_30s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "dir_30s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "dir_60s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "dir_60s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 397,
+      "path": "fill_prob_params.json",
+      "sha256": "599fe519d6b2f52605ccca60750ceff32ca173c65a111584751ce77061a8206b"
+    },
+    {
+      "bytes": 3128,
+      "path": "ret_10s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "ret_10s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "ret_30s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "ret_30s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "ret_60s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "ret_60s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "tox_ask_10s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "tox_ask_10s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "tox_ask_5s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "tox_ask_5s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "tox_bid_10s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "tox_bid_10s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "tox_bid_5s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 706,
+      "path": "tox_bid_5s_meta.json",
+      "sha256": "d99e8f59db7d5c79b2a4d2d88097e73ca8691206453d8af46df37f09894d3111"
+    },
+    {
+      "bytes": 3128,
+      "path": "vol_10s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 770,
+      "path": "vol_10s_meta.json",
+      "sha256": "edaff30b61a0709bb3cb91d7a70f61d2b95fde091983920839606ce756504c6b"
+    },
+    {
+      "bytes": 3128,
+      "path": "vol_30s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 770,
+      "path": "vol_30s_meta.json",
+      "sha256": "edaff30b61a0709bb3cb91d7a70f61d2b95fde091983920839606ce756504c6b"
+    },
+    {
+      "bytes": 3128,
+      "path": "vol_60s.txt",
+      "sha256": "ec7eb2dbdfc74a49eb1449ff8421ca16082bdb043dc50164dbb352530e98fb13"
+    },
+    {
+      "bytes": 770,
+      "path": "vol_60s_meta.json",
+      "sha256": "edaff30b61a0709bb3cb91d7a70f61d2b95fde091983920839606ce756504c6b"
+    }
+  ],
+  "schema_version": "narrowgate_public_dry_run_model_bundle.v1",
+  "synthetic": true
+}
