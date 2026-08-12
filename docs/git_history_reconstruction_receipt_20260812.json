@@ -1,0 +1,91 @@
+{
+  "schema_version": "narrowgate_git_history_reconstruction_receipt.v1",
+  "reconstructed_history": true,
+  "scientific_rerun": false,
+  "projection_date": "2026-08-12",
+  "receipt_generated_at_utc": "2026-08-12T13:10:01Z",
+  "repository": "xiao-nanbei/NarrowGateMaker",
+  "branch": "main",
+  "old_public_root": {
+    "commit": "774a4d03f5d025e82cc82c224db1d6cd3e25e819",
+    "origin_main_at_freeze": "774a4d03f5d025e82cc82c224db1d6cd3e25e819",
+    "retained_as_new_history_ancestor": false,
+    "local_archive_ref": "refs/archive/pre-rebuild-20260812T123354Z",
+    "local_archive_ref_must_not_be_pushed": true
+  },
+  "owner_only_backup": {
+    "availability": "filevault-backed owner-only backup; not distributed",
+    "permissions": "owner-only",
+    "old_history_bundle_verified": true,
+    "bundle_restores_old_main": true,
+    "git_metadata_copy_fsck_passed": true,
+    "worktree_byte_comparison_passed": true,
+    "private_backup_path_published": false
+  },
+  "commit_plan": {
+    "sha256": "3a89f180d52600fc60d2ab1fc1952f6c9045ec54485577878fb0bb90b8877aa4",
+    "input_manifest_sha256": "7934671ec08ff3756e7cedce2fc34cc3012920b0eee3e76bfbb739ecf0fc65e6",
+    "input_amendment_001_sha256": "6940b177464b457782dba5b31b52f133ad1288ad40b31691fe0151f47274514b",
+    "input_amendment_002_sha256": "6245b55c93a0a48f3ce08c55a21356b2e22046666afca23485ccccb86c543a18",
+    "pre_final_commit_results_sha256": "3f5dc1f7eb66bec711b9a4167986485ceed3b289009b510353da8d2a67cf0766",
+    "planned_commit_count": 116,
+    "planned_public_tree_path_count": 1678,
+    "path_sets_disjoint": true,
+    "existing_public_inputs_assigned_exactly_once": true,
+    "private_or_ignored_inputs_assigned": 0
+  },
+  "reconstructed_tree": {
+    "root_commit": "f150ef7b7a99258c5b04fd06a1750e3377470c05",
+    "pre_final_commit": "f72294039122d16dbdd9c1628c9bf9feb02fa1fc",
+    "final_commit_binding": "this receipt is introduced by the final planned commit",
+    "commit_count_after_final_binding": 116,
+    "single_root_required": true,
+    "old_root_must_not_be_ancestor": true,
+    "private_paths_allowed": false,
+    "forbidden_legacy_archives_allowed": false
+  },
+  "reconstructed_import_tags": [
+    {
+      "name": "rebuild/f02/p3-aggressive-reach-time-conditioned-hazard/v1-20260804",
+      "target_commit": "98e66927325a1f751da5fa4146dcdfbd8743765b"
+    },
+    {
+      "name": "rebuild/f05/causal-multichannel-window-boolean-cooldown/v2-20260812",
+      "target_commit": "857b5ffd01e845f136277b0bd811520530503b66"
+    },
+    {
+      "name": "rebuild/f05/causal-multichannel-window-boolean-cooldown-persistent-policy/v3-20260812",
+      "target_commit": "1092f96c6137d4a469d3e3950ae67177ee315e7b"
+    },
+    {
+      "name": "rebuild/f10/operational-baseline/v11-20260812",
+      "target_commit": "78efeda10640f497150c9a8b95f6e9c41b8b9e0b"
+    }
+  ],
+  "verification": {
+    "commits_001_through_115_archive_validation": "passed",
+    "json_yaml_parse": "passed_per_commit",
+    "python_syntax_compile": "passed_per_commit",
+    "committed_package_import": "passed_per_commit_when_available",
+    "committed_relative_link_check": "passed_for_available_targets",
+    "staged_path_plan_match": "passed_per_commit",
+    "staged_whitespace_check": "passed_per_commit_after_recorded_input_amendments",
+    "final_repository_validation_required_before_main_replacement": true,
+    "github_ci_required_before_main_replacement": true,
+    "fresh_clone_required_before_main_replacement": true
+  },
+  "publication_contract": {
+    "temporary_branch_first": "rebuilt-main-20260812",
+    "main_update_method": "force-with-lease against frozen old origin/main",
+    "plain_force_allowed": false,
+    "archive_refs_published": false,
+    "old_history_bundle_published": false,
+    "tags_must_be_pushed_individually": true,
+    "status_at_receipt_creation": "local reconstruction complete; remote publication pending validation"
+  },
+  "identity_model": {
+    "git": "public source, documentation, version, diff, rollback, and release identity",
+    "sha256": "data, models, private originals, execution configuration, results, binaries, and deployment evidence",
+    "git_commit_sha_replaces_artifact_sha256": false
+  }
+}
