@@ -14,16 +14,16 @@ CONTRACT = (
 
 def test_storage_profile_implementation_contract_binds_files_and_permissions() -> None:
     payload = json.loads(CONTRACT.read_text(encoding="utf-8"))
-    assert payload["status"] == "implemented_local_not_deployed"
+    assert payload["status"] == "deployed_first_bounded_session_atomically_admitted"
     assert payload["default"] == {
         "enabled": False,
         "storage_profile": "local_orico_replay_admission",
     }
     authority = payload["authority"]
     assert authority["seven_tape_heartbeat_contract_modified"] is False
-    assert authority["ec2_deployed"] is False
-    assert authority["ec2_restarted"] is False
-    assert authority["transfer_executed"] is False
+    assert authority["ec2_deployed"] is True
+    assert authority["ec2_restarted"] is True
+    assert authority["transfer_executed"] is True
     assert authority["formal_collection_authorized_from_remote_spool_alone"] is False
     assert authority["economic_outcomes_read"] is False
     assert authority["action_authorized"] is False

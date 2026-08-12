@@ -372,7 +372,7 @@ def test_design_contract_binds_implementation_and_keeps_authority_closed() -> No
     assert all(value is False for value in design["permissions"].values())
 
     text = DESIGN_MD_PATH.read_text(encoding="utf-8")
-    assert "Last materially modified: 2026-08-04" in text
+    assert "Last materially modified: 2026-08-12" in text
     assert implementation["sha256"] in text
     assert "current live v1 journal" in text
     assert "grants no panel-generation, model-training, q90 action" in text

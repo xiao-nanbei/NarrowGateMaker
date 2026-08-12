@@ -150,7 +150,7 @@ def test_training_execution_economics_and_q90_action_remain_closed() -> None:
 def test_markdown_matches_machine_readable_contract() -> None:
     text = DOC_PATH.read_text(encoding="utf-8")
 
-    assert "Last materially modified: 2026-08-04" in text
+    assert "Last materially modified: 2026-08-12" in text
     assert KERNEL_SHA256 in text
     assert "`favorable_fill`" in text
     assert "`adverse_fill`" in text
@@ -161,6 +161,6 @@ def test_markdown_matches_machine_readable_contract() -> None:
     assert "cancel request moves the order into `CANCEL_PENDING`" in text
     assert "cancel reject returns the order" in text
     assert "q90 action remains OFF" in text
-    assert "chronological\n40-day Python/C++ event lockstep" in text
-    assert "AWS\nreceive-time transport" in text
+    assert "chronological 40-day Python/C++ event lockstep" in text
+    assert "AWS receive-time transport" in text
     assert "PnL, reward, markout" in text

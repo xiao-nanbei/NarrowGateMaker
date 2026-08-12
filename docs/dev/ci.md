@@ -17,6 +17,8 @@ $PYTHON -m py_compile narrowgate/cli.py
 
 The full test suite imports offline research modules and the read-only public venue connectors, so `research` and `live` are test dependencies even when no network request or live order is made. A minimal replay-only installation may still use the base package without those extras.
 
+Historical reproduction tests whose exact predecessor bytes, temporary deployment trees, or owner-private execution configurations are not distributed are listed in `tests/fixtures/public_clone_historical_test_availability.json`. They are explicit skips in a public clone and grant no research, action, or live authority. After restoring every bound fixture, an owner may opt in with `NARROWGATE_RUN_HISTORICAL_REPRODUCTION_TESTS=1`; setting that variable without the exact evidence is expected to fail closed.
+
 C++ extension smoke:
 
 ```bash

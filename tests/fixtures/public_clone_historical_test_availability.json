@@ -1,0 +1,57 @@
+{
+  "schema_version": "narrowgate_public_clone_historical_test_availability.v1",
+  "default_policy": "skip_when_exact_historical_evidence_is_not_distributed",
+  "opt_in_environment_variable": "NARROWGATE_RUN_HISTORICAL_REPRODUCTION_TESTS",
+  "opt_in_required_value": "1",
+  "authority": {
+    "skip_grants_research_authority": false,
+    "skip_grants_action_authority": false,
+    "skip_grants_live_authority": false,
+    "frozen_fail_closed_results_remain_valid": true
+  },
+  "categories": {
+    "ephemeral_release_predecessor_unavailable": {
+      "reason": "requires a retired temporary release/predecessor tree that is not part of the public repository",
+      "modules": [
+        "test_build_prospective_lifecycle_from_safe_baseline.py",
+        "test_build_prospective_lifecycle_narrow_release.py",
+        "test_build_warmup_before_websocket_baseline_successor.py",
+        "test_deploy_warmup_before_websocket_baseline_successor.py",
+        "test_orchestrate_prospective_lifecycle_remote_release.py",
+        "test_preflight_prospective_lifecycle_release.py"
+      ]
+    },
+    "exact_historical_source_bytes_unavailable": {
+      "reason": "requires predecessor source/config bytes or artifacts whose frozen SHA intentionally differs from the current public tree",
+      "modules": [
+        "test_buy_q90_fresh_prospective_placement_recovery_v4.py",
+        "test_buy_q90_runtime_authority_contract_v3.py",
+        "test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+        "test_causal_multichannel_window_boolean_cooldown_v2_preflight.py",
+        "test_causal_v12_1s_restart_aware_continuous_ab.py",
+        "test_causal_v12_1s_restart_aware_continuous_execution_v1_2.py",
+        "test_cooldown_action_leverage_frontier.py",
+        "test_cooldown_release_one_cycle_mechanics_reaudit.py",
+        "test_decision_visible_negative_fill_value_evidence.py",
+        "test_exact_opener_opportunity_tape_contract_v2_1.py",
+        "test_first_add_external_incremental_preregistration.py",
+        "test_lifecycle_journal_v2_storage_profiles_contract.py",
+        "test_order_lifecycle_v2_40day_input_admission.py",
+        "test_order_lifecycle_v2_40day_journal_authority_amendment.py",
+        "test_order_lifecycle_v2_40day_replay_emitter.py",
+        "test_order_lifecycle_v2_downstream_execution_amendment_v1_5.py",
+        "test_ranked_toxicity_guard_carryover_safe_execution_v2_1.py",
+        "test_ranked_toxicity_guard_carryover_safe_execution_v2_2.py",
+        "test_ranked_toxicity_guard_full_path_adapter_contract.py",
+        "test_ranked_toxicity_guard_full_path_adapter_contract_v1_3.py",
+        "test_ranked_toxicity_registration_linkage_v2.py"
+      ]
+    },
+    "owner_private_execution_config_unavailable": {
+      "reason": "requires an owner-private execution config snapshot that is deliberately not distributed",
+      "modules": [
+        "test_current_live_held_ber_replay_baseline_50d.py"
+      ]
+    }
+  }
+}
