@@ -1,0 +1,23 @@
+{
+  "admission_contract_valid": true,
+  "canonical_spec_identity_sha256": "4463f8825a7c21579e75af34610e44ee92aef32a12f9e6c50fd2e700d9bac579",
+  "economic_outcomes_read": false,
+  "frozen_v2_1_bytes_valid": true,
+  "implementation_hashes_valid": true,
+  "operational_lifecycle_outcomes_read": true,
+  "permissions": {
+    "action_experiment_authorized": false,
+    "economic_outcome_read": false,
+    "implementation_preflight_eligible": true,
+    "live_deployment_authorized": false,
+    "prediction_authority": false,
+    "prospective_collection_eligible": true,
+    "prospective_collection_enabled": false,
+    "prospective_tape_read": false,
+    "transport_supported": false
+  },
+  "prospective_collection_enabled": false,
+  "runtime_contract_valid": true,
+  "schema_version": "external_adverse_quote_edge_guard_exact_opener_execution_contract.v2.2.audit",
+  "valid": true
+}
