@@ -1,0 +1,38 @@
+{
+  "schema_version": "buy_q90_causal_visibility_clock_parity.denominator_errata.v1",
+  "identity": "buy_q90_causal_visibility_clock_parity_v1_1",
+  "last_materially_modified": "2026-07-31",
+  "authoritative_report": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_causal_visibility_clock_parity_v1_1_20260731/development/report.json",
+    "sha256": "fd3c93ba055210f11f62c5ff32eb7a973a3f74e66e7610089badfe42da1d4e7f"
+  },
+  "frozen_spec_sha256": "a664cc05c8f44e79dadc398d1d8e5affe3e738a2e5387506967794c7569d9bd1",
+  "error": "known_live_metrics_before_freeze.elapsed_hours was recorded as 24.0, but the 2026-07-25 live q90 shadow slice ends at 14:44:50 UTC and spans 14.74742333776421 hours",
+  "actual_live_interval": {
+    "start_utc": "2026-07-25T00:00:00.001780033Z",
+    "end_utc": "2026-07-25T14:44:50.725795984Z",
+    "elapsed_hours": 14.74742333776421,
+    "rows": 483468
+  },
+  "corrected_rate_comparisons": {
+    "evaluation_rate_ratio_replay_over_live": 0.9975293167917448,
+    "cancel_requests_per_hour_ratio_replay_over_live": 0.6412154517712261,
+    "evaluation_rate_gate_passed": true,
+    "cancel_requests_per_hour_gate_passed": true
+  },
+  "unaffected_failed_gates": {
+    "valid_fraction_abs_delta": 0.12982988942436424,
+    "valid_fraction_gate_passed": false,
+    "cancel_role_total_variation": 0.15149456521739132,
+    "cancel_role_gate_limit": 0.15,
+    "cancel_role_gate_passed": false
+  },
+  "decision_impact": "none; same_date_live_mechanics_parity remains failed and F07 v2 registration remains blocked",
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "f07_v2_registration_authorized": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

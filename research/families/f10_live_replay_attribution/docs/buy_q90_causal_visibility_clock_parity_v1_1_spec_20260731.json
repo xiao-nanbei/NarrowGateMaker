@@ -1,0 +1,257 @@
+{
+  "schema_version": "buy_q90_causal_visibility_clock_parity.v1_1",
+  "identity": "buy_q90_causal_visibility_clock_parity_v1_1",
+  "status": "frozen_before_mechanics_output_read",
+  "frozen_at_utc": "2026-07-31T09:20:00Z",
+  "canonical_spec_sha256": "9a975c76d56a0479d2686ef1fd73aeadb4468761c930d78d2ffade641fe30d96",
+  "last_materially_modified": "2026-07-31",
+  "day": "2026-07-25",
+  "quality_grade": "B",
+  "quality_scope": "same-date full-day normalized native truth plus one-hour AWS BTCUSDC BBO/aggTrade latency profile; no captured deep-diff feature-ready event path",
+  "purpose": "Repair the mixed exchange/receive/feature-ready clock contract and audit q90 mechanics without reading PnL, markout, or campaign outcomes.",
+  "supersedes_failed_identity": {
+    "identity": "buy_q90_causal_visibility_clock_parity_v1",
+    "canonical_spec_sha256": "1420a13475531c76042bf77fd900891915a2c0738726a1c71ca38ef06d302811",
+    "failure": "C++ visible_state_age_ms used provider source time instead of feature-ready time",
+    "outcome_read": false
+  },
+  "mode_order": [
+    "legacy_shadow",
+    "provider_receive_shadow",
+    "aws_profile_shadow",
+    "aws_profile_apply"
+  ],
+  "modes": {
+    "legacy_shadow": {
+      "clock_mode": "legacy_mixed",
+      "action_application": "shadow",
+      "cpp_parity": false,
+      "authority": "withdrawn_mixed_clock_diagnostic"
+    },
+    "provider_receive_shadow": {
+      "clock_mode": "provider_receive_sensitivity",
+      "action_application": "shadow",
+      "cpp_parity": false,
+      "authority": "CryptoHFT_provider_clock_sensitivity_only"
+    },
+    "aws_profile_shadow": {
+      "clock_mode": "aws_profile",
+      "action_application": "shadow",
+      "cpp_parity": false,
+      "authority": "same_date_AWS_latency_profile_sensitivity_only"
+    },
+    "aws_profile_apply": {
+      "clock_mode": "aws_profile",
+      "action_application": "apply",
+      "cpp_parity": true,
+      "authority": "stateful_q90_mechanics_and_kernel_parity_only"
+    }
+  },
+  "clock_contract": {
+    "truth_clock": "exchange_event_time",
+    "truth_uses": [
+      "native_sequence",
+      "book_reconstruction",
+      "queue_truth",
+      "trade_matching",
+      "fill_outcome"
+    ],
+    "visibility_clock": "feature_ready_time",
+    "visibility_uses": [
+      "strategy_visible_book",
+      "strategy_visible_trade_flow",
+      "q90_feature_state",
+      "q90_evaluation"
+    ],
+    "causal_requirement": "feature_ready_ts_ns<=decision_now_ts_ns",
+    "original_exchange_and_provider_timestamps_preserved": true,
+    "same_latency_and_random_path_across_aws_profile_arms": true,
+    "provider_receive_time_is_not_AWS_authority": true,
+    "whole_millisecond_event_reordering_prohibited": true,
+    "exact_timestamp_tie_policy": "book_before_trade_only_for_identical_feature_ready_ts_ns",
+    "decision_cadence_ms": 100,
+    "activation_age_origin": "order_activation_ts_ns"
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "native_queue": "strict_snapshot_delta_exact_level",
+    "initial_state": "daily_fresh_start",
+    "ml_enabled": false,
+    "maker_fill_prob": 1.0,
+    "economic_traces_disabled": true,
+    "window_cache_write_enabled": false,
+    "visibility_seed": 20260731,
+    "profile_mode": "profile_empirical",
+    "provider_feature_latency_ms": 0.0,
+    "provider_trade_delay_ms": 0.0,
+    "cpp_mismatch_trace_max": 25,
+    "full_cpp_tick_replay_authority": false,
+    "q90_cpp_scope": "native_book_and_buy_q90_kernel_lockstep_only"
+  },
+  "known_live_metrics_before_freeze": {
+    "source": "2026-07-25 UTC slice of the already-observed q90 live shadow tape",
+    "elapsed_hours": 24.0,
+    "shadow_rows": 483468,
+    "valid_rows": 420607,
+    "invalid_rows": 62861,
+    "cancel_requests": 184,
+    "reentries": 179,
+    "roles_all": {
+      "opener": 298657,
+      "add": 72072,
+      "reducing": 112739
+    },
+    "roles_valid": {
+      "opener": 247920,
+      "add": 60311,
+      "reducing": 112376
+    },
+    "cancel_roles": {
+      "opener": 163,
+      "add": 21
+    },
+    "score_quantiles": {
+      "p10": 0.00010448821629883075,
+      "p50": 0.00023979818473571533,
+      "p90": 0.0007125008755390402
+    },
+    "invalid_reasons": {
+      "future_feature_time": 3,
+      "order_price_outside_deep_book": 62495,
+      "trade_depth_attribution_ambiguous": 363
+    },
+    "outcome_status": "known_before_freeze_mechanics_only"
+  },
+  "same_date_parity_tolerances": {
+    "rate_ratio_low": 0.5,
+    "rate_ratio_high": 2.0,
+    "valid_fraction_abs": 0.05,
+    "role_tv": 0.1,
+    "score_ratio_low": 0.5,
+    "score_ratio_high": 2.0,
+    "cancel_role_tv": 0.15,
+    "reentry_ratio_abs": 0.1,
+    "status": "judgmental_engineering_tolerances_frozen_before_corrected_replay_output"
+  },
+  "hard_gates": {
+    "future_feature_time_count": 0,
+    "invalid_reason_attribution_closed": true,
+    "native_source_gap_count": 0,
+    "native_sequence_failure_count": 0,
+    "native_receive_timestamp_fallback_count": 0,
+    "legacy_vs_corrected_shadow_truth_and_fill_mismatch_count": 0,
+    "python_cpp_q90_mismatch_count": 0,
+    "same_date_live_mechanics_parity": true,
+    "exact_AWS_deep_event_path_required_for_transport": true,
+    "grade_A_required_for_transport": true
+  },
+  "latency_profile_identity": {
+    "path": "live/profiles/latency/aws_tokyo_binance_perp_btcusdc_20260725_3597s.json",
+    "sha256": "f08b5449078d41c4d42cea54b4f8f2ce392ee3986f671c1286dfce04ad8fd11b",
+    "profile_id": "aws_tokyo_binance_perp_btcusdc_20260725_3597s",
+    "capture_window_s": 3597,
+    "market_id": "binance:perp:BTCUSDC",
+    "book_samples": 80462,
+    "trade_samples": 3445,
+    "deep_event_path_recorded": false,
+    "depth_recording_disabled_in_capture": true,
+    "authority": "latency_distribution_sensitivity_not_event_path"
+  },
+  "parent_historical_q90_spec": {
+    "path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
+    "sha256": "7d1972bbd04f8b59502d7cec96cf76f0fcdebfd07adbe1063bddde602995c98d"
+  },
+  "source_identity": {
+    "normalized_l2": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2_20260727/l2/BTCUSDC-l2-2026-07-25.parquet",
+      "sha256": "5393d374e2580e5720221cc11ef471e78e5a767c4cda5c7bbf1c24ac168a8b3a"
+    },
+    "normalized_bbo": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2_20260727/bbo/BTCUSDC-bbo-2026-07-25.parquet",
+      "sha256": "80b123cd2a71ee56bf0bcc2fcbf55a5b7b6e0e2dd13c13f4a2b249a6d0a0f1d7"
+    },
+    "individual_trades": {
+      "path": "${NARROWGATE_DATA_ROOT}/raw_trades/BTCUSDC/BTCUSDC-trades-2026-07-25.csv",
+      "sha256": "90160f4f2c628c6dba1958f807a46e3f6a32e08750711a9e66a3f5ad01295627"
+    },
+    "live_q90_shadow_tape": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_live_action_rate_transport_parity_v1_20260731/inputs/buy_q90_shadow_20260724T223950_20260730T220013.csv.gz",
+      "sha256": "383dafd6cb44e03fd62e3061e4c1669e2e61ce06ffaab75ae57ba0947eae23bc"
+    },
+    "aws_capture_summary": {
+      "path": "${NARROWGATE_DATA_ROOT}/receive_time_tape/aws_tokyo_20260725T153151Z/summary.json",
+      "sha256": "759d8cd5043857d9a0e9995bcb21dc5e2578e962dd3776825bc7d3462de45a04"
+    },
+    "aws_binance_receive_tape": {
+      "path": "${NARROWGATE_DATA_ROOT}/receive_time_tape/aws_tokyo_20260725T153151Z/logs/market_tape/binance_receive_tape_2026-07-25_20260725T153156225991Z_p1303470.jsonl.gz",
+      "sha256": "8a3d75f5ccce186ed1f06cf6f36287297ed44972afaf1925e57a5a6325e7267f"
+    }
+  },
+  "implementation_identity": {
+    "research/families/f10_live_replay_attribution/audit/buy_q90_causal_visibility_clock_parity.py": "3cfd03fb27b74d762775cbd80f00982cace606a95e87801987c52f82fdf2a9d4",
+    "models/backtest_tick.py": "058fc6b00c280aa71f42a385ae7af2233ec50cabbe88282f96d941d2a4e5e0f4",
+    "models/exchange_book_replay.py": "daf2fc1fca87899e59221026fffe93fe2a9066173e0b499b4e03ae85598c9778",
+    "strategy/dynamic_fill_hazard_model.py": "c4ba62900b5098da78690c202ce4dc1ece54f20f3a86a3f46e8210ab6c6c5931",
+    "strategy/replay_controls.py": "c39e34de0f800c1ec011e9e5dd6534db2908ac2e6609e7e88e59a48f1eba8366",
+    "execution/active_order_depth_path.py": "1e5a1363aaef6ee0434948be431751d8bf6e70790c5932715dfaff2bdf849f2a",
+    "live/orderbook/binance_usdm.py": "00a7d593b5fba46b076abb602bd08a04ac0048883124efa709a7b02cfd24d1e8",
+    "live/ws_handler.py": "c76683bf7fab8d975d80d78b48230e7d50f2fa50605e31b42a1b03a5156a3fd3",
+    "live/main.py": "bb929c9734d8e993726e16f4427030f4c9a0be19cbc81fdb02eb0b3c2ded36d1",
+    "strategy/maker_engine.py": "4343d49a868672db8b406e86388b1f5923c2c3802930f01be1c1fb208df0de6c",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "dab1b19daff2971ec3a064e0fac75c01b2e065fddc0b8c60dff6f2306b536fca",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "847db55b2e71b399718fe8244792c68c66932d613602053a885468ce5fd2410d",
+    "cpp/narrowgate_cpp/bindings.cpp": "2eeb0edaf5901cf4d7b79cc75212ae0a4de13ce272c762b32c5bc7864ad01c21"
+  },
+  "native_module_identity": {
+    "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+    "sha256": "1716ccf5cfc1d79dcd080c1d1836b7ba540ca090ef845897a7383743975aa4f9"
+  },
+  "test_identity": {
+    "junit": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_causal_visibility_clock_parity_v1_1_20260731/preflight/contract_tests.junit.xml",
+      "sha256": "ce16379fbb8556fcdc46e656aac9a9e34f7ebb5f4507d1ebf2b907202fa58c34"
+    },
+    "runner_contract": {
+      "path": "tests/test_buy_q90_causal_visibility_clock_parity.py",
+      "sha256": "d40bc31e90f849aa5e5b3f8ed304b2d4d19c63de6ceda1b92a6c4bc15735a4b3"
+    },
+    "visibility_scheduler": {
+      "path": "tests/test_exchange_book_replay.py",
+      "sha256": "0f2901db8945fb326a402c17f3ddaa1db71840b48930d4b49598e6b3732a4e92"
+    },
+    "replay_path": {
+      "path": "tests/test_replay_path_dependent_controls.py",
+      "sha256": "aa8746bf14f9d1f18024922412ef63768a45e46bdd6ef4a436b4746ef472c5bf"
+    },
+    "live_atomic_book": {
+      "path": "tests/test_binance_deep_book.py",
+      "sha256": "e99b3a31ddc707adcc19c6903eb69999c1a61f6f6680913893c7b09041517169"
+    },
+    "live_q90": {
+      "path": "tests/test_dynamic_fill_hazard_live_shadow.py",
+      "sha256": "229ca3d03abf8a4ab023b0edda2303199428fbf2138bf9917c7e52ae586c95c3"
+    },
+    "cpp_q90": {
+      "path": "tests/test_dynamic_fill_hazard_cpp_parity.py",
+      "sha256": "b219314d8fcf84ebdb05999ee34b5bcacc37c2033e0f8ae23d5ccca98df5eecb"
+    }
+  },
+  "interpretation_contract": {
+    "mechanics_supported": "Only the repaired dual-clock scheduler, q90 lifecycle, truth conservation, and kernel parity passed.",
+    "transport_supported": "Requires a captured q90 deep-diff feature-ready path and Grade-A denominator; a latency CDF is insufficient.",
+    "old_q90_on_off_result": "Remains frozen as an anomalously weak-treatment result and has no live transport authority.",
+    "f07_v2": "May be created only when fully_passed and f07_v2_registration_unblocked are both true.",
+    "no_threshold_or_policy_retuning": true
+  },
+  "economic_outputs_prohibited": true,
+  "permissions": {
+    "prediction_supported": false,
+    "transport_supported": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "f07_v2_registration_authorized": false,
+    "action_experiment_authorized": false,
+    "live_policy_change_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
