@@ -1,0 +1,49 @@
+{
+  "schema_version": "sell_first_fill_conditional_value.invalidation.v1",
+  "identity": "sell_first_fill_conditional_value_feasibility_v1",
+  "status": "engineering_invalid_before_complete_development_evaluation",
+  "frozen_v1_spec_unchanged": true,
+  "formal_evaluator_run": false,
+  "prediction_result_exists": false,
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false,
+  "partial_native_run": {
+    "output_directory": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/sell_first_fill_conditional_value_feasibility_v1_20260730/native_development",
+    "checkpoint_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03"
+    ],
+    "complete_development": false,
+    "admission_authority": false,
+    "disposition": "retain_as_invalid_diagnostic_do_not_resume_or_evaluate"
+  },
+  "blocking_failures": [
+    "local_toxicity_was_constant_0p5_with_ml_disabled",
+    "opener_only_parent_flow_fell_back_to_constant_zero",
+    "feature_ready_timestamps_were_submit_time_self_assertions_without_source_asof_validation",
+    "minimum_primary_oof_day_gate_was_not_implemented",
+    "artifact_admission_did_not_validate_transitive_producer_identity"
+  ],
+  "operator_incident": {
+    "partial_outcome_rows_inspected": true,
+    "checkpoint_day_count_at_read": 3,
+    "occurred_after_v1_spec_freeze": true,
+    "spec_feature_gate_or_model_change_after_read": false,
+    "impact": "v1_is_invalid_independently_and_must_not_be_used_as_blind_development_evidence"
+  },
+  "successor": {
+    "identity": "sell_first_fill_conditional_value_feasibility_v2",
+    "must_use_new_trace_schema": true,
+    "must_use_new_producer_and_output_directory": true,
+    "may_not_reuse_v1_checkpoint_rows": true
+  }
+}
