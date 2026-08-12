@@ -1,0 +1,111 @@
+{
+  "schema_version": "narrowgate_strict_native_latency_baseline_50d_spec.v1",
+  "identity": "btc_usdc_current_live_held_ber_strict_native_latency_baseline_50d_v1_20260810",
+  "created_at_utc": "2026-08-10T00:00:00Z",
+  "purpose": "Rebuild the current live-held BER 50-day Development denominator with raw native exchange truth and frozen AWS Tokyo latency simulation.",
+  "parent_diagnostic": {
+    "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
+    "sha256": "f2691875f2126a2233419401b4e7d204790e326629c890c3ba9f2eca19096983",
+    "days": 50,
+    "terminal_mtm_pnl_usdc": -165.56607903599894,
+    "closed_campaign_value_usdc": -168.5309790359994,
+    "fills_total": 20147,
+    "evidence_label": "native_derived_top20_100ms_cpp_daily_fresh_start_diagnostic"
+  },
+  "exchange_truth": {
+    "engine": "python",
+    "raw_root": "${NARROWGATE_MARKETDATA_ROOT}/cryptohftdata",
+    "exchange": "binance_futures",
+    "symbol": "BTCUSDC",
+    "mode": "strict",
+    "warmup_hours": 24,
+    "execution_trade_source": "individual_trades",
+    "queue_l2_cancel_ahead_enabled": false,
+    "required_queue_scope": "strategy_independent_native_snapshot_delta_exchange_time_v1",
+    "all_50_target_and_d_minus_1_paths_present": true
+  },
+  "queue_calibration": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+    "sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+    "schema_version": "narrowgate_queue_calibration.v3",
+    "apply_mode": "frozen_default",
+    "fit_days": [
+      "2026-07-10",
+      "2026-07-11"
+    ],
+    "replay_params": {
+      "queue_ahead_base_mult": 0.7,
+      "queue_deplete_base_mult": 1.0,
+      "queue_ahead_buy_exposure_mult": 0.5,
+      "queue_ahead_buy_reducing_mult": 1.15,
+      "queue_ahead_sell_exposure_mult": 1.45,
+      "queue_ahead_sell_reducing_mult": 0.7
+    }
+  },
+  "strategy_visibility": {
+    "profile_path": "${NARROWGATE_DATA_ROOT}/live_calibration_snapshots/20260715_full/live_perf_telemetry.csv.gz",
+    "profile_sha256": "4e346af66e9fe25605bddc3888de9a2f3dc79b2323e4947484a3d766d3ae674d",
+    "environment": "AWS Tokyo",
+    "mode": "sampled",
+    "visibility_seed": 2026081001,
+    "observed_visibility_rows": 9551,
+    "visibility_mean_ms": 198.72029634217353,
+    "visibility_p50_ms": 55.90319912880659,
+    "visibility_p90_ms": 570.6203584559262,
+    "visibility_p99_ms": 1725.4835463827476,
+    "exact_historical_receive_tape_available_for_panel": false,
+    "exact_live_transport_authority": false
+  },
+  "gateway_latency": {
+    "profile_path": "${NARROWGATE_DATA_ROOT}/live_calibration_snapshots/20260715_full/live_perf_telemetry.csv.gz",
+    "profile_sha256": "4e346af66e9fe25605bddc3888de9a2f3dc79b2323e4947484a3d766d3ae674d",
+    "sample_mode": "avg",
+    "latency_seed": 2026081002,
+    "new_order_samples": 6869,
+    "cancel_order_samples": 6577,
+    "shared_serial_rest_gateway_modeled": false,
+    "private_fill_visibility_modeled": false
+  },
+  "policy_clock": {
+    "mode": "merged",
+    "nominal_interval_ms": 100,
+    "reason": "The deployed main loop sleeps for 100ms; visibility and REST delays are sampled separately.",
+    "empirical_loop_callback_clock_available_for_panel": false,
+    "same_millisecond_ordering_sensitivity_required": true
+  },
+  "baseline": {
+    "config_path": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.aws_tokyo_20260808_ber_baseline.yaml",
+    "global_ber_enabled": true,
+    "ber_guard_thresh": 1.2,
+    "ber_spread_mult": 2.0,
+    "ber_exposure_add_only": false,
+    "causal_v12_ml_enabled": true,
+    "q90_action_enabled": false,
+    "q90_replay_instrumentation_enabled": false,
+    "buy_fill_selection_action_enabled": false,
+    "initial_state": "daily_fresh_start"
+  },
+  "gates": {
+    "exchange_book_queue_mode": "strict",
+    "native_events_consumed_nonzero": true,
+    "native_events_accepted_nonzero": true,
+    "queue_lookup_identity_exact": true,
+    "queue_missing_count": 0,
+    "source_gap_events": 0,
+    "invalid_sequence_messages": 0,
+    "sequence_gaps": 0,
+    "message_time_reversals": 0,
+    "new_order_latency_samples_nonzero": true,
+    "cancel_order_latency_samples_nonzero": true,
+    "visibility_delay_samples_nonzero": true,
+    "visibility_delay_applied_nonzero": true,
+    "campaign_accounting_abs_error_usdc_max": 1e-06
+  },
+  "permissions": {
+    "development_economics_may_be_read": true,
+    "independent_confirmation": false,
+    "exact_live_transport_authority": false,
+    "action_authority": false,
+    "live_action_authority": false
+  }
+}
