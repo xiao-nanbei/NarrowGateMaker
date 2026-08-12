@@ -1,0 +1,86 @@
+{
+  "schema_version": "external_adverse_quote_edge_guard_exact_opener.collection_preflight_failure.v1",
+  "identity": "external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1",
+  "date": "2026-08-02",
+  "status": "collection_preflight_failed_before_tape_enable",
+  "research_family": "F04_external_market_alpha",
+  "babel_layer": "E6/P2",
+  "classification": "outcome_blind_collection_integrity_failure",
+  "frozen_execution_amendment": {
+    "path": "research/families/f04_external_market_alpha/docs/external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1_execution_amendment_20260802.json",
+    "sha256": "d0ed2bd06ad1492eb66d1fd5e97072a42d761dd6817cae26cd05837a0989232e",
+    "modified": false,
+    "prospective_collection_eligible_claim_withdrawn": true
+  },
+  "reaudit": {
+    "validator_output_path": "${NARROWGATE_EPHEMERAL_ROOT}/p2_v21_reaudit_20260802.json",
+    "legacy_validator_returned_pass": true,
+    "legacy_validator_bound_runtime_producers": false,
+    "legacy_validator_checked_runtime_config_dependencies": false,
+    "legacy_validator_checked_writer_admission": false
+  },
+  "runtime_identity": {
+    "strategy/maker_engine.py": "2acfe71a753a61d0570a842987f0e803094fb1f9eb6c11b68981315ddebc12f1",
+    "strategy/order_manager.py": "329641fee3b2657be6d1eca2d6a586822af085710968e696f1342be70827cddc",
+    "live/config.py": "dc6de02f7b76a7ab65ba72657670cf4726481797a42fd23d74b4d76003a04eea",
+    "live/config.yaml": "7bea9cbc756a616824d9e5d35ec9545509848fb37b79df0f2b40fc33e00c81ad",
+    "execution/exact_opportunity_tape.py": "9df7753b9e9560804a2df5168f1d5da2b428d17945eb1f905fb6395fe2cbb492"
+  },
+  "current_public_config": {
+    "multi_market_enabled": false,
+    "external_venues_enabled": false,
+    "cross_venue_fair_price_shadow_enabled": false,
+    "exact_opportunity_tape_enabled": false
+  },
+  "hard_blockers": [
+    {
+      "id": "runtime_producer_identity_unbound",
+      "detail": "the v2.1 implementation identity hashes the schema and validators but does not bind the maker-engine or order-manager bytes that produce decision and lifecycle rows"
+    },
+    {
+      "id": "config_dependencies_not_fail_closed",
+      "detail": "enabling exact_opportunity_tape does not require the external venues, stablecoin bridge, source count, shadow-only mode, or formal destination contract"
+    },
+    {
+      "id": "writer_failure_is_silent",
+      "detail": "the exact tape uses the generic CSV writer, whose exceptions are logged and swallowed, with no producer-health identity or admission failure"
+    },
+    {
+      "id": "hot_start_rows_can_be_silently_missing",
+      "detail": "orders without an originating exact decision context are skipped, so enabling the tape with inherited active orders creates an unmarked lifecycle hole"
+    },
+    {
+      "id": "cancel_reject_reconciliation_not_journaled",
+      "detail": "the REST reconcile path that restores an exchange-open PENDING_CANCEL order updates lifecycle state but does not emit the lifecycle callback consumed by the exact tape"
+    },
+    {
+      "id": "authoritative_storage_contract_not_implemented",
+      "detail": "the amendment names an ${NARROWGATE_PRIVATE_EVIDENCE_ROOT} authoritative destination, while runtime writes one append-only CSV path without per-day rotation, atomic manifest, hash admission, or a separate transfer contract"
+    }
+  ],
+  "read_boundary": {
+    "prospective_exact_tape_started": false,
+    "prospective_exact_tape_read": false,
+    "economic_outcome_read": false,
+    "pnl_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "decision": "withdraw_v2_1_prospective_collection_eligibility_and_require_v2_2_execution_amendment",
+  "v2_2_minimum_contract": [
+    "hash-bind every runtime producer and the exact deployment config",
+    "fail startup when source, bridge, shadow-only, destination, or schema dependencies are inconsistent",
+    "quarantine inherited orders until a complete new decision lineage begins",
+    "journal cancel rejection and every terminal branch exactly once",
+    "surface writer health and fail formal admission on any dropped or failed row",
+    "rotate bounded daily parts and atomically hash-admit them to the authoritative ${NARROWGATE_PRIVATE_EVIDENCE_ROOT} destination",
+    "run prospective zero-economic-row smoke collection before formal support counting"
+  ],
+  "permissions": {
+    "prospective_collection_eligible": false,
+    "prediction_authority": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

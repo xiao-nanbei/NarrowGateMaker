@@ -1,0 +1,191 @@
+{
+  "schema_version": "external_adverse_quote_edge_guard_exact_opener_execution_amendment.v2.1",
+  "amendment_id": "external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1",
+  "research_family": "F04_external_market_alpha",
+  "babel_layer": "E6/P2",
+  "frozen_at_utc": "2026-08-02T00:00:00Z",
+  "status": "hash_bound_waiting_for_prospective_exact_tape",
+  "canonical_spec_identity_sha256": "347ded3d33b0926b61ab769f62df88fd9f4f9a2efa900c53a4ea5defc392b7ed",
+  "scope": "Collection-time fail-closed hardening for the independent exact-opener v2 estimand. It preserves the conservative all/LOO guard and five-percent support floor, excludes add/P1, and grants no F09 action authority.",
+  "frozen_v2_predecessor": {
+    "identity": "external_adverse_quote_edge_guard_exact_opener_mechanics_v2",
+    "spec": {
+      "path": "research/families/f04_external_market_alpha/docs/external_adverse_quote_edge_guard_exact_opener_mechanics_v2_spec_20260802.json",
+      "sha256": "3ecbe9dc6e264aff693198b95018e0efc6a2c1565b94799423007d64011ae6c2"
+    },
+    "registration": {
+      "path": "research/families/f04_external_market_alpha/docs/external_adverse_quote_edge_guard_exact_opener_mechanics_v2_registration_20260802.md",
+      "sha256": "c00594e02650c84857ef0ff55f32c99d0fbd92e049b0ee7b401f5ef40d799b86"
+    },
+    "v2_files_modified": false
+  },
+  "research_provenance": {
+    "successor_class": "mechanics_informed_successor",
+    "v1_opener_concentration_informed_new_denominator": true,
+    "same_as_v1_estimand": false,
+    "first_add_or_P1_rows_in_scope": false,
+    "add_rows_recorded_for_diagnostics_only": true,
+    "economic_outcomes_informed_contract": false
+  },
+  "validator_contract": {
+    "validator_contract_version": "external_adverse_quote_edge_guard_exact_opener_validator.v2.1",
+    "tape_schema_version": "exact_quote_opportunity_tape.v1",
+    "exact_schema_columns": [
+      "baseline_eligible",
+      "baseline_quote_price",
+      "candidate_quote_price",
+      "client_order_id",
+      "decision_group_id",
+      "decision_id",
+      "decision_start_ts_ns",
+      "effective_outward_ticks",
+      "event_ts_ns",
+      "event_type",
+      "exchange_ts_ns",
+      "exposure_increasing",
+      "feature_ready_ts_ns",
+      "fill_price",
+      "fill_quantity",
+      "final_executed_action",
+      "guard_adverse_side",
+      "guard_reason",
+      "guard_valid",
+      "lifecycle_sequence",
+      "order_quantity",
+      "order_state",
+      "origin_decision_id",
+      "queue_reset",
+      "remaining_quantity",
+      "replaced_client_order_id",
+      "requested_outward_ticks",
+      "role",
+      "schema_version",
+      "side",
+      "signed_inventory_before",
+      "symbol",
+      "terminal_reason",
+      "trigger_decision_id",
+      "visibility_ts_ns"
+    ],
+    "allowed_internal_columns": [
+      "input_path"
+    ],
+    "baseline_eligible_final_actions": [
+      "keep",
+      "place",
+      "replace"
+    ],
+    "candidate_change_contract": {
+      "guard_valid": 1,
+      "guard_adverse_side_equals_quote_side": true,
+      "effective_outward_ticks_strictly_positive": true,
+      "effective_outward_ticks_at_most_requested": true,
+      "candidate_coordinate_differs_from_baseline": true
+    },
+    "candidate_rate_gate": {
+      "minimum": 0.05,
+      "scope": "BUY_and_SELL_each_independently",
+      "pooled_rate": "diagnostic_only"
+    },
+    "identifier_contract": "nonempty_non_null_non_nan",
+    "lifecycle_sequence_contract": "positive_unique_strictly_increasing_per_order",
+    "terminal_order_events": [
+      "cancel_ack",
+      "cancel_ack_reconciled",
+      "expired",
+      "full_fill",
+      "local_shutdown_cancel",
+      "rejected"
+    ],
+    "maximum_terminal_outcomes_per_order": 1,
+    "economic_outcomes_read": false,
+    "operational_lifecycle_outcomes_read": true
+  },
+  "outcome_boundary": {
+    "economic_outcomes_read": false,
+    "external_outcome_tables_allowed": false,
+    "operational_lifecycle_outcomes_read": true,
+    "operational_lifecycle_fields": [
+      "partial_fill",
+      "full_fill",
+      "fill_quantity",
+      "fill_price",
+      "remaining_quantity",
+      "terminal_event_counts"
+    ],
+    "purpose": "mechanics linkage, executed-action support, and lifecycle integrity only",
+    "PnL_markout_reward_campaign_terminal_labels_forbidden": true
+  },
+  "denominator_contract": {
+    "formal_unit": "one native side-specific baseline-eligible opener quote decision",
+    "role": "opener_only",
+    "baseline_eligible_requires_final_action": [
+      "place",
+      "replace",
+      "keep"
+    ],
+    "candidate_changed_requires": "guard_valid=1 and guard_adverse_side=side and 0<effective_outward_ticks<=requested_outward_ticks and candidate_quote_price!=baseline_quote_price",
+    "add_and_P1_excluded": true,
+    "BUY_and_SELL_separate_denominators": true
+  },
+  "support_gate": {
+    "minimum_candidate_rate": 0.05,
+    "BUY_must_pass": true,
+    "SELL_must_pass": true,
+    "pooled_rate_authority": false,
+    "pooled_rate_role": "diagnostic_only",
+    "passing_only_proves_opener_mechanics_support": true,
+    "passing_cannot_register_F09_action": true
+  },
+  "collection_boundary": {
+    "producer_default_enabled": false,
+    "live_orders_modified": false,
+    "bounded_seven_tape_capture_modified": false,
+    "authoritative_destination": "${NARROWGATE_DATA_ROOT}/exact_opportunity_tape",
+    "formal_collection_started": false
+  },
+  "implementation_identity": {
+    "tape_schema": {
+      "path": "execution/exact_opportunity_tape.py",
+      "sha256": "9df7753b9e9560804a2df5168f1d5da2b428d17945eb1f905fb6395fe2cbb492"
+    },
+    "tape_validator": {
+      "path": "research/families/f04_external_market_alpha/audit/exact_opener_opportunity_tape.py",
+      "sha256": "4190204a1c03fcc5f4621a33dac10769dfbf65d2dfab1c457f3615150e2a4089"
+    },
+    "execution_amendment_validator": {
+      "path": "research/families/f04_external_market_alpha/audit/exact_opener_opportunity_tape_contract_v2_1.py",
+      "sha256": "6110009800b8aca4d842d98bba63616938dbb5f8c55f649bc97de6fe8e6c921f"
+    },
+    "tape_tests": {
+      "path": "tests/test_exact_opportunity_tape.py",
+      "sha256": "ecbb7a5c3b31f0afb160670e8464be7d9e4d6a23fcb051f3f1d63c9aa9eb77ee"
+    },
+    "projection_tests": {
+      "path": "tests/test_external_adverse_quote_edge_guard_mechanics.py",
+      "sha256": "63563725e93b2a086df3088cf3580d19a82818d6b3d29bf0f9e163bc9d1fae68"
+    },
+    "execution_amendment_tests": {
+      "path": "tests/test_exact_opener_opportunity_tape_contract_v2_1.py",
+      "sha256": "d4951c0d8b36c957793d120767645cd0127beea00f9f23bf0c956bcf861f9178"
+    }
+  },
+  "contract_tests": {
+    "passed": true,
+    "command": ".venv/bin/python -m pytest -q tests/test_exact_opportunity_tape.py tests/test_external_adverse_quote_edge_guard_mechanics.py tests/test_exact_opener_opportunity_tape_contract_v2_1.py",
+    "result": "33 passed in 0.36s",
+    "full_repository_suite_passed": true,
+    "full_repository_command": ".venv/bin/python -m pytest -q",
+    "full_repository_result": "1382 passed, 4 skipped, 1 warning in 83.91s"
+  },
+  "permissions": {
+    "prospective_collection_eligible": true,
+    "prospective_tape_read": false,
+    "economic_outcome_read": false,
+    "operational_lifecycle_outcomes_allowed_during_collection": true,
+    "prediction_authority": false,
+    "transport_supported": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}

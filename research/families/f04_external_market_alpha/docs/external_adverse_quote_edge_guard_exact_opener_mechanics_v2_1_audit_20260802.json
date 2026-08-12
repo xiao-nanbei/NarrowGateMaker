@@ -1,0 +1,23 @@
+{
+  "canonical_spec_identity_sha256": "8e4e5e32aa6abc366a1087b71eff803909c8d2a36ea48d7cee250174467a9786",
+  "economic_outcomes_read": false,
+  "exact_opener_denominator_contract_valid": true,
+  "exact_schema_allowlist_valid": true,
+  "frozen_v2_bytes_valid": true,
+  "implementation_hashes_valid": true,
+  "lifecycle_identity_and_terminal_contract_valid": true,
+  "operational_lifecycle_outcomes_read": true,
+  "permissions": {
+    "action_experiment_authorized": false,
+    "economic_outcome_read": false,
+    "live_deployment_authorized": false,
+    "operational_lifecycle_outcomes_allowed_during_collection": true,
+    "prediction_authority": false,
+    "prospective_collection_eligible": true,
+    "prospective_tape_read": false,
+    "transport_supported": false
+  },
+  "schema_version": "external_adverse_quote_edge_guard_exact_opener_execution_amendment.v2.1.audit",
+  "side_specific_candidate_rate_gate_valid": true,
+  "stage": "v2_1_hash_bound_waiting_for_prospective_exact_tape"
+}
