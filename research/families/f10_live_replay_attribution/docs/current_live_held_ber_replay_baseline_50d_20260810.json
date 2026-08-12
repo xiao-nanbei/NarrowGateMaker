@@ -1,0 +1,161 @@
+{
+  "schema_version": "narrowgate_current_replay_baseline_50d.v1",
+  "baseline_id": "btc_usdc_current_live_held_ber_replay_baseline_50d_20260810",
+  "as_of_utc": "2026-08-10T09:07:02.318036+00:00",
+  "status": "active_native_derived_top20_100ms_daily_fresh_start_diagnostic_control",
+  "operational_baseline": {
+    "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+    "identity_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
+    "causal_v12_ml_enabled": true,
+    "q90_shadow_enabled": true,
+    "q90_action_enabled": false,
+    "buy_fill_selection_shadow_enabled": false,
+    "buy_fill_selection_action_enabled": false,
+    "global_ber_enabled": true
+  },
+  "replay_semantics": {
+    "ber_clock_identity": "live_held_completed_10s_feature_sampled_on_completed_1s_callback.v1",
+    "feature": "trade_intensity_60s",
+    "feature_publish_clock": "completed_canonical_10s_feature_bucket",
+    "ber_sample_clock": "completed_1s_bar_callback",
+    "executable_price_identity": "int64_price_tick",
+    "initial_state": "daily_fresh_start",
+    "continuous_live_pnl_claimed": false,
+    "exchange_book_queue_mode": "disabled",
+    "raw_snapshot_delta_tape_used": false,
+    "new_cancel_latency_calibration_used": false,
+    "exec_book_visibility_latency_used": false,
+    "aws_receive_feature_ready_transport_claimed": false
+  },
+  "control": {
+    "identity": "current_live_held_global_ber_control",
+    "ber_guard_thresh": 1.2,
+    "ber_spread_mult": 2.0,
+    "ber_exposure_add_only": false
+  },
+  "panel": {
+    "role": "historical_native_development_previously_consumed",
+    "days": 50,
+    "grade_a_days": 34,
+    "grade_b_days": 16,
+    "immutable_prefix_days": 40,
+    "added_days": 10,
+    "ordered_utc_days": [
+      "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-22", "2026-04-23",
+      "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06", "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31",
+      "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06", "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",
+      "2026-06-29", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-16"
+    ],
+    "daily_fresh_start": true,
+    "independent_confirmation": false,
+    "validation_read": true,
+    "sealed_holdout_read": false
+  },
+  "economics": {
+    "terminal_mtm_pnl_usdc": -165.56607903599894,
+    "terminal_mtm_pnl_usdc_per_day": -3.3113215807199787,
+    "closed_campaign_value_usdc": -168.5309790359994,
+    "fills_bid": 10097,
+    "fills_ask": 10050,
+    "fills_total": 20147,
+    "positive_pnl_days": 6,
+    "campaign_q10_usdc": -0.17300000000000182,
+    "campaign_cvar10_usdc": -0.5143663447006809,
+    "max_inventory_btc": 0.015000000000000006,
+    "abs_inventory_time_btc_s": 6889.346925999153,
+    "multi_level_long_terminal_value_usdc": -73.79578625200078,
+    "multi_level_short_terminal_value_usdc": -81.42518783599982,
+    "prefix_40": {
+      "terminal_mtm_pnl_usdc": -144.25174795199894,
+      "terminal_mtm_pnl_usdc_per_day": -3.6062936987999734,
+      "closed_campaign_value_usdc": -147.4663479519997,
+      "fills_total": 17118,
+      "positive_pnl_days": 3,
+      "campaign_q10_usdc": -0.1691600000000008,
+      "campaign_cvar10_usdc": -0.5091445535779097,
+      "multi_level_long_terminal_value_usdc": -62.54864762000073,
+      "multi_level_short_terminal_value_usdc": -71.70138290800011
+    },
+    "added_10": {
+      "terminal_mtm_pnl_usdc": -21.314331083999978,
+      "terminal_mtm_pnl_usdc_per_day": -2.1314331083999978,
+      "closed_campaign_value_usdc": -21.06463108399975,
+      "fills_total": 3029,
+      "positive_pnl_days": 3,
+      "campaign_q10_usdc": -0.19872000000000153,
+      "campaign_cvar10_usdc": -0.5490702752500016,
+      "multi_level_long_terminal_value_usdc": -11.247138632000052,
+      "multi_level_short_terminal_value_usdc": -9.723804927999709
+    },
+    "pooled_50": {
+      "terminal_mtm_pnl_usdc": -165.56607903599894,
+      "terminal_mtm_pnl_usdc_per_day": -3.3113215807199787,
+      "closed_campaign_value_usdc": -168.5309790359994,
+      "fills_bid": 10097,
+      "fills_ask": 10050,
+      "fills_total": 20147,
+      "positive_pnl_days": 6,
+      "campaign_q10_usdc": -0.17300000000000182,
+      "campaign_cvar10_usdc": -0.5143663447006809,
+      "max_inventory_btc": 0.015000000000000006,
+      "abs_inventory_time_btc_s": 6889.346925999153,
+      "multi_level_long_terminal_value_usdc": -73.79578625200078,
+      "multi_level_short_terminal_value_usdc": -81.42518783599982
+    }
+  },
+  "parity": {
+    "prefix_daily_mismatch_count": 0,
+    "python_cpp_fill_path_mismatch_count": 0,
+    "python_cpp_ber_state_mismatch_count": 0
+  },
+  "execution_scope_amendment": {
+    "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_execution_scope_amendment_v1_20260810.md",
+    "evidence_label": "native_derived_top20_100ms_cpp_daily_fresh_start_diagnostic",
+    "strict_native_latency_successor_required": true,
+    "raw_snapshot_delta_available_for_all_50_days": true,
+    "order_path_action_promotion_authorized": false
+  },
+  "implementation": {
+    "runner_path": "research/families/f10_live_replay_attribution/audit/current_live_held_ber_replay_baseline_50d.py",
+    "runner_sha256": "3361a307c5c3cf82343a2355a592e728d5cd7a1fdca84145df3e97afa0a34f60",
+    "backtest_tick_path": "models/backtest_tick.py",
+    "backtest_tick_sha256": "12b7e9c58e9dd2528124258500ad9b60743058898d3b85a4c11d7657c538b387",
+    "tick_replay_cpp_path": "cpp/narrowgate_cpp/tick_replay.cpp",
+    "tick_replay_cpp_sha256": "d98955033f198e85057cf67c75d598e689d4ec43e6edd6525a3e4fdfe7e61dc1",
+    "tick_replay_hpp_path": "cpp/narrowgate_cpp/tick_replay.hpp",
+    "tick_replay_hpp_sha256": "4ba5d3edde3a0c5b13cf53cd30f2cd870fb8acc6a13c8f7d8b4e2d9b98ae2f55"
+  },
+  "source": {
+    "spec_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_spec_20260810.json",
+    "spec_sha256": "98762d1000ff27aa6bbc72e3e219c6a73abf49da4bdd6f95f0f1679ec04a4abb",
+    "execution_plan_path": "${NARROWGATE_DATA_ROOT}/cache/current_live_held_ber_baseline_50d_20260810/execution-plan.json",
+    "execution_plan_sha256": "7c272cea600e20d06b5fc5aa6858929ac2e6ace9840e8a9bdca6e44fffdc4898",
+    "root": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810",
+    "report_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/report.json",
+    "report_sha256": "2a01262137a2dbc51bbe5bd78d9259f3fe6cdb3ecf5fbda27117ce5c29c24b2d",
+    "daily_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/daily.parquet",
+    "daily_sha256": "20d266d00a364154f92cfea8582f85405712b14cb47a4bcc2306a36c5fce08c4",
+    "campaigns_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/campaigns.parquet",
+    "campaigns_sha256": "386fff115c3ce5f069666cf8d78383c0938fdb30d465c82bc6c7558c631a5fe7",
+    "fills_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/fills.parquet",
+    "fills_sha256": "fe6894268af0af4c9c84ecc3f83875fdd77db3a17a20c2b040087e034d7f2d9a",
+    "manifest_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/manifest.json",
+    "manifest_sha256": "d94534f1d701e1d37a0ad07d9e4afbeb8c7f65b95d3ec5195c81e2d56203569a",
+    "success_marker_path": "${NARROWGATE_DATA_ROOT}/reports/current_live_held_ber_baseline_50d_20260810/_PANEL_SUCCESS"
+  },
+  "predecessor": {
+    "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+    "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
+    "retained_as_immutable_prefix_evidence": true
+  },
+  "permissions": {
+    "backtest_default_control_authorized": true,
+    "backtest_default_control_scope": "common_simulator_diagnostic_only",
+    "strict_native_queue_authority": false,
+    "live_transport_authority": false,
+    "order_path_pnl_authority": false,
+    "independent_confirmation": false,
+    "action_authority": false,
+    "live_action_authority": false
+  }
+}
