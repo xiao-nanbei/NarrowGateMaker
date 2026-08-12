@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  python:
+    name: Python tests and lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          # The full suite imports research pipelines and read-only live/data
+          # connectors.  Install both extras so collection tests the packaged
+          # dependency boundary instead of relying on runner-global modules.
+          python -m pip install -e ".[dev,research,live]"
+          # The full suite includes native lifecycle-contract tests. Build the
+          # extension in every Python matrix job instead of relying on the
+          # separate C++ smoke job to affect another isolated runner.
+          python -m pip install -e cpp
+
+      - name: CLI smoke
+        run: |
+          narrowgate doctor
+          narrowgate quote-demo
+          python examples/order_level_score_demo.py
+
+      - name: Lint public surface
+        run: |
+          ruff check narrowgate examples
+
+      - name: Pytest
+        run: |
+          pytest -q
+
+  cpp-build-smoke:
+    name: C++ extension build smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install C++ extension
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev,research,live]"
+          python -VV
+          python -c "import sysconfig; print('include=', sysconfig.get_path('include')); print('platlib=', sysconfig.get_path('platlib'))"
+          python -m pip install -e cpp
+
+      - name: Import smoke
+        run: |
+          python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
+
+      - name: C++ quote-core parity tests
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          set -o pipefail
+          python -X faulthandler -m pytest tests/test_cpp_quote_core_parity.py -vv -s 2>&1 | tee cpp_quote_core_pytest.log
+
+      - name: C++ signal parity tests
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          set -o pipefail
+          python -X faulthandler -m pytest tests/test_cpp_signal_features.py -vv -s 2>&1 | tee cpp_signal_pytest.log
+
+      - name: C++ tick-replay parity tests
+        env:
+          PYTHONFAULTHANDLER: "1"
+        run: |
+          set -o pipefail
+          python -X faulthandler -m pytest \
+            tests/test_cpp_tick_replay_parity.py \
+            tests/test_fill_selection_feature_parity.py \
+            -vv -s 2>&1 | tee cpp_tick_replay_pytest.log
+
+      - name: Upload C++ pytest logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cpp-pytest-logs
+          path: cpp_*_pytest.log

@@ -1,0 +1,101 @@
+# Repo-local market-data fallback. Source modules in data/ remain versioned.
+/data/*
+!/data/*.py
+!/data/README.md
+!/data/quality/
+!/data/quality/*.py
+!/data/quality/**/*.py
+
+# Generated results and model artifacts
+results/
+models/saved_btcusdc*/
+models/saved_btcusdt*/
+models/saved_*_20*/
+models/saved
+models/saved_backup_*/
+
+# Small, hash-bound q90 fixtures are required by Python/C++ CI parity tests.
+!models/saved_btcusdc_dynamic_fill_hazard_20260724/
+models/saved_btcusdc_dynamic_fill_hazard_20260724/*
+!models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json
+!models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json
+
+# Logs
+logs/
+/cpp_*_pytest.log
+
+# Python environments, caches, and build outputs
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.ipynb_checkpoints/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Native extension and CMake outputs
+*.so
+*.dylib
+*.dll
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.local.json
+secrets.local.json
+secrets.local.yaml
+live/logs
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local temporary configs
+live/*.tmp.yaml
+**/*.local.yaml
+**/*.current.local.*
+
+# Local diagnostics and interrupted writes
+*.log
+*.prof
+*.partial
+*.tmp
+.historical_reproduction-*/
+
+# Private local notes / path mappings for public-redaction work
+docs/private/
+
+# Non-research owner-private catalogs, locators, and unpublished evidence indexes.
+/live/private/
+/data/private/
+/models/private/
+/execution/private/
+
+# Per-research-unit private evidence catalogs, locators, and owner-only notes.
+# Public research contracts and reports stay in each unit's README.md and docs/.
+research/**/private/
