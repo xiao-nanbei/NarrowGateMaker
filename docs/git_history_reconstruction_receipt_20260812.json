@@ -1,9 +1,9 @@
 {
-  "schema_version": "narrowgate_git_history_reconstruction_receipt.v1",
+  "schema_version": "narrowgate_git_history_reconstruction_receipt.v2",
   "reconstructed_history": true,
   "scientific_rerun": false,
   "projection_date": "2026-08-12",
-  "receipt_generated_at_utc": "2026-08-12T13:51:42Z",
+  "receipt_generated_at_utc": "2026-08-12T15:30:26Z",
   "repository": "xiao-nanbei/NarrowGateMaker",
   "branch": "main",
   "old_public_root": {
@@ -36,39 +36,39 @@
   },
   "reconstructed_tree": {
     "root_commit": "f150ef7b7a99258c5b04fd06a1750e3377470c05",
-    "pre_final_commit": "f72294039122d16dbdd9c1628c9bf9feb02fa1fc",
-    "final_commit_binding": "this receipt is introduced by the final planned commit",
-    "commit_count_after_final_binding": 116,
-    "post_reconstruction_validation_fix_count": 1,
-    "commit_count_after_validation_fix": 117,
-    "post_reconstruction_governance_commit_count": 2,
-    "validated_candidate_head_before_receipt_update": "f3ef067d7cea263250f82b6b3b992e3d54f7eae9",
-    "commit_count_before_receipt_update": 119,
-    "expected_commit_count_after_receipt_update": 120,
-    "post_receipt_compatibility_fix_count": 1,
-    "expected_publication_commit_count": 121,
-    "public_tree_path_count_before_receipt_update": 1709,
+    "validated_candidate_head_before_receipt_update": "0705e1a7c934a080ad8c4f7b1fe1319784a10719",
+    "commit_count_before_receipt_update": 129,
+    "expected_publication_commit_count": 130,
+    "public_tree_path_count_before_receipt_update": 1710,
+    "expected_publication_tree_path_count": 1710,
+    "post_plan_commits_before_receipt_update": 13,
     "single_root_required": true,
+    "single_root_verified": true,
     "old_root_must_not_be_ancestor": true,
+    "old_root_is_ancestor": false,
     "private_paths_allowed": false,
     "forbidden_legacy_archives_allowed": false
   },
   "reconstructed_import_tags": [
     {
       "name": "rebuild/f02/p3-aggressive-reach-time-conditioned-hazard/v1-20260804",
-      "target_commit": "98e66927325a1f751da5fa4146dcdfbd8743765b"
+      "tag_object": "1fa648467f4583e2746ae65487e36f3fb13c9f13",
+      "target_commit": "6d7466c5c7e85a8d211fd1e819b3eb27d739a779"
     },
     {
       "name": "rebuild/f05/causal-multichannel-window-boolean-cooldown/v2-20260812",
-      "target_commit": "857b5ffd01e845f136277b0bd811520530503b66"
+      "tag_object": "dedc0484821694a72d5b7172c2738ccd32f0e414",
+      "target_commit": "5f3b8e2c2eba6344b490fdd7bdcf07f091807cdd"
     },
     {
       "name": "rebuild/f05/causal-multichannel-window-boolean-cooldown-persistent-policy/v3-20260812",
-      "target_commit": "1092f96c6137d4a469d3e3950ae67177ee315e7b"
+      "tag_object": "f46f77b2170a73ff5216566eb56108c2b8fa76ad",
+      "target_commit": "235c2364863ae810c0edc53959088ccfb6f429dc"
     },
     {
       "name": "rebuild/f10/operational-baseline/v11-20260812",
-      "target_commit": "78efeda10640f497150c9a8b95f6e9c41b8b9e0b"
+      "tag_object": "b32562c0f973269a00cd422e872fb9808a591b6b",
+      "target_commit": "b5ce0680cc75cb100f3e49e07d9585c14510e54f"
     }
   ],
   "verification": {
@@ -79,18 +79,49 @@
     "committed_relative_link_check": "passed_for_available_targets",
     "staged_path_plan_match": "passed_per_commit",
     "staged_whitespace_check": "passed_per_commit_after_recorded_input_amendments",
-    "public_documentation_audit": "passed; 678 documents, 1008 source files, 243 projections, 557 links, zero findings",
+    "public_documentation_audit": "passed; 678 documents, 1009 source files, 243 projections, 557 links, zero findings",
     "private_evidence_audit": "passed; 20 owner roots, 497 private files, 7407 catalog entries, zero findings",
-    "full_pytest": "passed; 2781 passed, 298 explicitly skipped, zero failed",
-    "cpp_extension_build": "passed",
-    "python_cpp_parity": "passed; 93 tests",
-    "cli_smoke": "passed; doctor, quote-demo, order-level score demo",
-    "public_deploy_dry_run": "passed; synthetic no-authority bundle with ML and actions disabled",
+    "owner_checkout_full_pytest": "passed; 2764 passed, 316 explicitly skipped, zero failed",
+    "fresh_public_clone_full_pytest": "passed; 2763 passed, 317 explicitly skipped, zero failed; macOS OpenMP runtime supplied as a host dependency",
+    "cpp_extension_build": "passed in owner checkout, fresh public clone, and GitHub Actions",
+    "python_cpp_parity": "passed; 90 tests and 3 explicit private-probe skips in the dedicated local parity set",
+    "cli_smoke": "passed in fresh public clone; doctor, quote-demo, order-level score demo",
+    "ruff": "passed for the declared maintained public surface: narrowgate and examples",
+    "public_deploy_dry_run": "passed in owner checkout and fresh public clone; synthetic no-authority bundle with ML and actions disabled",
     "owner_private_deploy_preflight": "fail-closed; owner bundle metadata hash does not match the current public runtime contract",
     "owner_private_bundle_hashes_rewritten": false,
-    "final_repository_validation_required_before_main_replacement": false,
+    "reachable_history_known_private_ipv4_search": "passed; zero matches for all registered private host addresses",
+    "tracked_private_env_log_or_legacy_archive_paths": "zero",
+    "git_fsck": "passed with no missing or corrupt reachable objects; dangling rewrite objects remain local",
     "github_ci_required_before_main_replacement": true,
     "fresh_clone_required_before_main_replacement": true
+  },
+  "history_privacy_rewrite": {
+    "trigger": "a known private host address was found inside one public F03 source path literal after the first temporary-branch publication",
+    "resolution": "rewrite the affected reconstructed import commits, replace the machine path with a portable environment-resolved owner-private identity, and strengthen the source audit boundary",
+    "audit_boundary_regression_added": true,
+    "temporary_branch_replaced_with_exact_force_with_lease": true,
+    "old_temporary_branch_head": "6861650075ff0c2f70ac8f8a3d4a2a78e45086b0",
+    "rewritten_temporary_branch_head_before_receipt_update": "0705e1a7c934a080ad8c4f7b1fe1319784a10719",
+    "archive_refs_published": false,
+    "old_history_bundle_published": false
+  },
+  "temporary_branch_ci": {
+    "initial_run_id": 31602844311,
+    "initial_failure": "stale Python 3.10 package declaration while public source uses datetime.UTC",
+    "runtime_resolution": "align package, C++ package, CI, documentation, and skills to Python >=3.11 without rewriting frozen research logic",
+    "linux_parity_diagnostic_run_ids": [
+      31609039888,
+      31610065254
+    ],
+    "linux_parity_failure": "micro_ret_skew differed because x86 extended precision retained a different central-moment mean than the Python binary64 oracle",
+    "linux_parity_resolution": "round the mean at the Python binary64 boundary before central-moment accumulation; parity tolerances were not widened",
+    "successful_run_id": 31611542662,
+    "successful_run_head": "0705e1a7c934a080ad8c4f7b1fe1319784a10719",
+    "python_311": "success",
+    "python_312": "success",
+    "cpp_build_and_parity": "success",
+    "receipt_only_final_commit_requires_one_last_ci_run": true
   },
   "publication_contract": {
     "temporary_branch_first": "rebuilt-main-20260812",
@@ -99,23 +130,24 @@
     "archive_refs_published": false,
     "old_history_bundle_published": false,
     "tags_must_be_pushed_individually": true,
-    "status_at_receipt_creation": "local reconstruction and validation complete; temporary-branch publication, GitHub CI, and fresh-clone validation pending"
+    "remote_tags_published_at_receipt_update": false,
+    "origin_main_at_receipt_update": "774a4d03f5d025e82cc82c224db1d6cd3e25e819",
+    "status_at_receipt_update": "rewritten temporary branch, GitHub CI, fresh-clone tests, governance audits, parity, CLI smoke, and public deploy dry-run passed; commit this receipt, run final CI, then replace main with the exact frozen lease and push tags individually"
   },
-  "post_reconstruction_validation_fixes": {
-    "projection_hash_sync_after_crlf_normalization": [
-      "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260805.csv",
-      "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260808.csv"
-    ],
+  "post_reconstruction_corrections": {
+    "projection_hash_sync_after_crlf_normalization": true,
+    "public_clone_private_evidence_boundaries": true,
+    "operational_baseline_v11_build_binding": true,
+    "synthetic_no_authority_deployment_fixture": true,
+    "python_runtime_floor_311": true,
+    "bounded_ci_failure_reporting": true,
+    "portable_synthetic_volume_tests": true,
+    "declared_ruff_maintained_scope": true,
+    "private_host_history_scrub": true,
+    "cross_platform_central_moment_parity": true,
     "research_semantics_changed": false,
-    "private_source_identity_changed": false
-  },
-  "temporary_branch_ci_correction": {
-    "initial_run_id": 31602844311,
-    "initial_python_310_result": "failed during collection because datetime.UTC is unavailable before Python 3.11",
-    "codebase_datetime_utc_import_file_count": 66,
-    "resolution": "align Python package, C++ package, CI, documentation, and skills to the actual Python >=3.11 runtime contract",
-    "frozen_research_sources_mechanically_rewritten": false,
-    "revalidation_required": true
+    "scientific_results_rerun": false,
+    "private_source_identity_relabelled": false
   },
   "identity_model": {
     "git": "public source, documentation, version, diff, rollback, and release identity",

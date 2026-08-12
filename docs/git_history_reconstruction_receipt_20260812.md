@@ -1,57 +1,67 @@
 # Git History Reconstruction Receipt
 
+Last materially modified: 2026-08-12
+
 This repository history is a reconstructed public import created on 2026-08-12. It is not a fabricated timeline of when the research originally occurred. Dates retained in filenames and reports describe the research record; Git author and committer timestamps describe the reconstruction itself.
 
 ## Result
 
 - Old public root: `774a4d03f5d025e82cc82c224db1d6cd3e25e819`.
 - New reconstructed root: `f150ef7b7a99258c5b04fd06a1750e3377470c05`.
-- Planned public history: 116 commits and 1,678 paths.
-- Post-plan validation and governance corrections add four transparent commits, for 120 commits after this receipt update and 1,709 public paths.
-- Old history is retained only in a verified, FileVault-backed owner-only backup and a local archive ref. Neither is distributed.
-- Private owner evidence, machine-specific paths, raw market data, private bundles, environment files, logs, and the two legacy snapshot archives are excluded from the reconstructed public tree.
-- The final operational pointer is `operational_baseline_identity_20260812_v11` and retains its explicit `owner_risk_accepted_promotion` and `research_hard_gate_passed=false` semantics.
+- Frozen machine plan: 116 commits and 1,678 public paths.
+- Validated candidate before this receipt update: 129 commits, 1,710 public paths, and head `0705e1a7c934a080ad8c4f7b1fe1319784a10719`.
+- This receipt update is the expected 130th publication commit and does not add a path.
+- The old root is not an ancestor of the reconstructed branch. Old history remains only in verified owner-only backup material and local archive refs that must never be pushed.
+- No tracked `private/`, environment, log, raw-data, private-bundle, owner-evidence, or forbidden legacy snapshot archive path is present.
+- The final operational pointer is `operational_baseline_identity_20260812_v11` and retains `owner_risk_accepted_promotion` with `research_hard_gate_passed=false`.
 
 ## Construction
 
-Every existing public input was assigned exactly once by a machine-readable NUL-delimited commit plan. The path sets are disjoint, and the final registry and projection manifests were committed only after their target records existed.
+Every existing public input was assigned exactly once by a machine-readable NUL-delimited commit plan. Path sets were disjoint, shared source had one owner commit, and registry and projection manifests followed the records they index. Each planned commit was exported from its own tree and checked for planned membership, forbidden paths, structured-data parsing, Python syntax, import availability, links to already committed targets, and staged whitespace errors.
 
-Commits 001 through 115 were each exported with `git archive` and checked independently for planned tree membership, forbidden paths, JSON/YAML parsing, Python syntax, package import when available, and links to already committed targets. Staged paths were compared exactly with each planned path set.
+Two owner-ledger input amendments were necessary before reconstruction: one redundant final blank line was removed, and 44 files received only CRLF-to-LF or final-newline normalization. Neither amendment changes research semantics.
 
-Two auditable input amendments were required by the staged whitespace gate:
+## Privacy Rewrite
 
-- one Python file had a redundant final blank line removed;
-- 44 files received only CRLF-to-LF or single-final-newline normalization.
+The first temporary publication exposed one registered private host address embedded between underscores in an F03 source path literal. The public audit used word boundaries and failed to detect that spelling. Publication stopped before replacing `main`.
 
-Both amendments retain before/after SHA256 records in the owner-only reconstruction ledger and do not change research semantics or path assignment.
+The affected reconstructed import commits were rewritten, the path became a portable environment-resolved owner-private identity, and the audit now detects registered private IPv4 literals beside punctuation or underscores. A regression test constructs that case without storing the address itself in public test source. All three registered private host addresses now have zero matches across the entire history reachable from `HEAD`.
+
+The remote temporary branch was replaced only with an exact `--force-with-lease` against its observed old SHA. The public `main` branch remained at the frozen old root throughout this correction. Local pre-scrub and pre-rebuild archive refs remain owner recovery material and are not publication refs.
+
+## Cross-Platform Parity
+
+Ubuntu exposed a platform-specific difference in `micro_ret_skew`: x86 extended precision retained a different mean during central-moment accumulation than the Python binary64 oracle. The C++ feature implementation now rounds the mean at the same binary64 boundary before computing second, third, and fourth moments. No parity tolerance was widened.
+
+Dedicated parity verification passed 90 tests with three explicit local-private-probe skips. GitHub Actions run `31611542662` passed Python 3.11, Python 3.12, and the C++ build/parity job at candidate head `0705e1a7c934a080ad8c4f7b1fe1319784a10719`.
+
+## Validation
+
+- Public governance audit: 678 documents, 1,009 source files, 243 projections, 557 links, zero findings.
+- Private owner audit: 20 owner roots, 497 private files, 7,407 catalog entries, zero findings.
+- Owner checkout: 2,764 tests passed, 316 explicit skips, zero failures.
+- Fresh public clone: 2,763 tests passed, 317 explicit skips, zero failures. The macOS LightGBM wheel required the host's OpenMP runtime; this is a platform dependency, not private repository evidence.
+- Ruff: passed for the explicitly declared maintained public surface, `narrowgate/` and `examples/`. Historical reconstructed research source is governed by syntax checks, tests, recorded hashes, and replay contracts rather than being misrepresented as fully reformatted.
+- C++ extension: built in the owner checkout, fresh public clone, and Ubuntu CI.
+- CLI smoke: `doctor`, `quote-demo`, and the order-level score demo passed in the fresh public clone.
+- Public deployment dry-run: passed in both checkouts using the synthetic no-authority bundle with ML and every action disabled.
+- Reachable-object integrity: one root, no old-root ancestry, no missing/corrupt reachable object, and no forbidden tracked path. Dangling objects from local history rewrites are retained only as local recovery material.
+
+The owner-private deployment preflight still correctly fails closed because an owner bundle's frozen metadata hash does not match the current public runtime contract. No private artifact hash was rewritten to hide that mismatch. This is independent of the public-history publication gate.
 
 ## Tags
 
-The `rebuild/*` annotated tags identify reconstructed public research records, not original execution commits:
+The following annotated tags identify reconstructed public research records, not original execution commits:
 
 - `rebuild/f02/p3-aggressive-reach-time-conditioned-hazard/v1-20260804`
 - `rebuild/f05/causal-multichannel-window-boolean-cooldown/v2-20260812`
 - `rebuild/f05/causal-multichannel-window-boolean-cooldown-persistent-policy/v3-20260812`
 - `rebuild/f10/operational-baseline/v11-20260812`
 
+They were recreated against the rewritten identity commits. They remain local until the final `main` replacement succeeds and must be pushed individually, never with `git push --tags`.
+
 ## Publication Gate
 
-The reconstructed history must first be pushed to `rebuilt-main-20260812`, pass repository validation and GitHub CI, and pass validation from a fresh clone. The public `main` branch may then be replaced only with `--force-with-lease` against the frozen old remote commit. Archive refs and the old-history bundle must never be pushed.
+The rewritten temporary branch and its pre-receipt candidate are green. Because committing this receipt creates a new head, that receipt-only head must pass one final GitHub CI run without further edits. Then `origin/main` must still equal the frozen old commit before the sole permitted replacement command uses the exact `--force-with-lease` value. After the replacement's own CI is green, the four tags may be pushed one by one.
 
-The machine-readable receipt contains the plan, amendment, result-ledger, root, and tag hashes used to audit this reconstruction.
-
-## Local Validation
-
-The committed candidate passed both governance audits with zero findings, the full public test suite with 2,781 passes and 298 explicit skips, a fresh C++ extension build, 93 dedicated Python/C++ parity tests, CLI smoke tests, and the public deployment dry-run. The public dry-run uses a synthetic bundle with ML and all actions disabled; it grants no research, action, baseline, or live authority.
-
-The owner-private deployment preflight remains correctly fail-closed because an owner bundle's frozen metadata hash does not match the current public runtime contract. No private artifact hash was rewritten to conceal that mismatch. This owner deployment blocker is independent of the public-history publication gate.
-
-## Post-Reconstruction Validation Fix
-
-The frozen plan produced 116 commits. The first public-documentation audit then correctly found that two public projection SHA values still described the pre-normalization CRLF bytes of their CSV targets. A 117th, explicitly post-reconstruction validation commit synchronizes those two projection hashes and records this correction here. It changes neither research semantics nor private-source identity.
-
-Two further post-reconstruction governance commits make unavailable historical reproductions explicit in public-clone test output, bind build metadata to operational baseline v11, enable CI on the temporary reconstruction branch, and provide a hash-bound synthetic deployment fixture. This receipt update is the fourth transparent post-plan commit.
-
-## Temporary-Branch CI Correction
-
-The first temporary-branch CI run exposed a stale Python 3.10 packaging declaration: 66 public modules use `datetime.UTC`, whose standard-library contract begins with Python 3.11. Rather than mechanically rewrite SHA-bound research sources, the repository package, C++ package, CI matrix, CI documentation, and both workflow skills now state the actual Python `>=3.11` runtime contract. This correction creates a 121-commit publication candidate and requires a fresh CI run before `main` can be replaced.
+Archive refs, old-history bundles, old worktree refs, and owner-only backup material must never be pushed. Git identifies public source and documentation history; SHA256 manifests remain authoritative for data, models, private originals, execution configuration, results, binaries, and deployment evidence.
