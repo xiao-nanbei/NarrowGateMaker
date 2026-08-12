@@ -1,0 +1,74 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.owner_modeled_queue.study_config.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1",
+  "config_status": "frozen_before_owner_oof_economic_read",
+  "analysis_panels": [
+    "prefix40_modeled_label_development",
+    "prefix33_raw_m2_common_support"
+  ],
+  "feature_blocks": [
+    "R0",
+    "M0",
+    "M1",
+    "M2"
+  ],
+  "outer_folds": 4,
+  "outer_minimum_train_days": 12,
+  "chronology": {
+    "split_unit": "UTC_day",
+    "mode": "expanding",
+    "observation_end_aware_purge": true,
+    "train_observation_end_must_be_before_test_start": true,
+    "embargo_substitution": false
+  },
+  "search": {
+    "max_literals_per_clause": 2,
+    "max_clauses_per_rule": 2,
+    "max_rules_per_policy": 2,
+    "max_clause_candidates": 96,
+    "max_rule_candidates": 192,
+    "max_policy_candidates": 384,
+    "inner_folds": 3,
+    "inner_minimum_train_days": 3,
+    "minimum_action_opportunities": 3,
+    "minimum_action_campaigns": 2,
+    "minimum_action_days": 2,
+    "confidence": 0.95,
+    "exploratory_candidate_requires_positive_lcb": false,
+    "baseline_is_candidate": false
+  },
+  "continuous_comparator": {
+    "model_family": "raw_state_multioutput_regression_tree_diagnostic",
+    "max_depth_candidates": [
+      2,
+      4
+    ],
+    "min_samples_leaf": 20,
+    "random_state": 20260810,
+    "run_for_every_feature_block": true,
+    "may_replace_boolean_policy": false,
+    "may_grant_action_or_live": false
+  },
+  "post_oof_gate": {
+    "economic_epsilon_usdc": 0.0,
+    "minimum_action_rate": 0.0,
+    "minimum_action_campaigns": 2,
+    "minimum_action_days": 2,
+    "require_outer_fold_nonbaseline_action": true,
+    "require_opener_and_add_reporting": true,
+    "only_prefix_panels_may_grant_owner_support": true,
+    "added10_or_pooled50_may_grant_support": false
+  },
+  "outcomes": {
+    "point_outcome": "assignment_to_washout_value_usdc",
+    "unsupported_or_censored_imputation": false,
+    "partial_identification_report_required": true
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "strict_research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

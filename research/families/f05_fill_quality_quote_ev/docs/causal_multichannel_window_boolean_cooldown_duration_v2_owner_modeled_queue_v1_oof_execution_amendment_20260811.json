@@ -1,0 +1,81 @@
+{
+  "artifact_bindings": {
+    "feature_panel_manifest": {
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2.owner_modeled_queue_feature_panel.v1",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/owner_modeled_queue_feature_panel_v1/panel_manifest.json",
+      "sha256": "13d4edc3e6ae4e5033bb97af4e09ffbeb334ece9268e5c10decef3fb7c7808d1"
+    },
+    "frozen_config": {
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_study_config_20260811.json",
+      "sha256": "636074fdbf52b363bcde953926db0a529e5f9ac349324cddd4473f70f56e6659"
+    },
+    "frozen_owner_spec": {
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1",
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_spec_20260811.json",
+      "sha256": "362cb1848da44e8b6f4e274ab4e99f7077e9cea7efafcbd77cc404e53774c666"
+    },
+    "modeled_label_manifest": {
+      "identity": "multiscale_ema_boolean_cooldown_duration_policy_v1",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/multiscale_ema_boolean_cooldown_duration_policy_v1_20260810/admission_manifest.json",
+      "sha256": "a203efbf985848b7b24486a9e36ac18286e22dc22c057ad73b2d23f561c775cb"
+    },
+    "outcome_blind_2025_predicate_book.BUY": {
+      "canonical_sha256": "c63f992f5f42803f9dfecdc60ade61ce2f4e896286e89c97b520451dcddf5cc7",
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts/25b8918a45989972d21d27304faff493ef9d6f4ea36e824d3372619ab044a9b2/artifacts/book_buy.json",
+      "sha256": "25fff5b26b2a3ae1349e47a144ccb1829db5c41c6528526c29609721133921eb"
+    },
+    "outcome_blind_2025_predicate_book.SELL": {
+      "canonical_sha256": "92fb49aae95ccfe6b15bdab69f19d9ad19b35fe74efeb782db59dda670f7a2cb",
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts/25b8918a45989972d21d27304faff493ef9d6f4ea36e824d3372619ab044a9b2/artifacts/book_sell.json",
+      "sha256": "6f4117d1a222b3e4610a721f89417d002507b6b4b06b3eb59d523d31f8bb9f52"
+    },
+    "outcome_blind_2025_predicate_bundle": {
+      "canonical_sha256": "96d66218318f4dda7377082691482b15e586f73be985bdcec7912d1a39e94aa8",
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts/25b8918a45989972d21d27304faff493ef9d6f4ea36e824d3372619ab044a9b2/predicate_bundle.json",
+      "sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37"
+    },
+    "outcome_blind_2025_predicate_trade.BUY": {
+      "canonical_sha256": "2f4103ce7539efc75326411892dab9aa55fee443e1d37f9b2e498940c8be1ccd",
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts/25b8918a45989972d21d27304faff493ef9d6f4ea36e824d3372619ab044a9b2/artifacts/trade_buy.json",
+      "sha256": "43331df2984b3328621e1e8fa4f7a6298e9f3fb2a6b2d5070442f2a35a00e56c"
+    },
+    "outcome_blind_2025_predicate_trade.SELL": {
+      "canonical_sha256": "102b3c29a23c80237fb285fd51ab669604752bc1868c881d75b3f834598c69ce",
+      "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+      "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/outcome_blind_2025_predicate_artifacts/25b8918a45989972d21d27304faff493ef9d6f4ea36e824d3372619ab044a9b2/artifacts/trade_sell.json",
+      "sha256": "804ffa740fb5a66380e89a74a716e87b6299f28958a367e10e2109c9e624f75c"
+    }
+  },
+  "code_bindings": [
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_modeled_oof.py",
+      "sha256": "eb8684f65748bcb366bac08587bed3f8ae412f2ce3c684c9cade09cba96cfa82"
+    },
+    {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "f196dd3d0924e30e58dd62dcc3f73c9d452ab75a38397d213906f0a352e986db"
+    }
+  ],
+  "execution_identity_sha256": "0a16147b39d507d20c468bd26091c6f6d747809587aa18cf9a46a7d956a0efdb",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1",
+  "library_versions": {
+    "numpy": "2.4.6",
+    "pandas": "3.0.3",
+    "pyarrow": "24.0.0",
+    "python": "3.12.13",
+    "scikit_learn": "1.9.0"
+  },
+  "permissions": {
+    "action_authorized": false,
+    "live_authorized": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1.oof_execution_amendment.v1",
+  "status": "frozen_before_owner_oof_economic_read"
+}
