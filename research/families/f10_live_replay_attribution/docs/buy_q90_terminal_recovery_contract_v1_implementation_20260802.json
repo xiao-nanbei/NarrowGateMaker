@@ -1,0 +1,89 @@
+{
+  "schema_version": "buy_q90_terminal_recovery_contract.v1",
+  "identity": "buy_q90_terminal_recovery_contract_v1",
+  "date": "2026-08-02",
+  "classification": "baseline_integrity_mechanics_only",
+  "status": "implementation_verified_full_panel_transport_not_run",
+  "state_machine": [
+    "SUBMITTED",
+    "ACTIVE",
+    "PARTIALLY_FILLED",
+    "CANCEL_PENDING",
+    "EXCHANGE_TERMINAL",
+    "POST_CANCEL_RECOVERY",
+    "REENTRY_ELIGIBLE"
+  ],
+  "fill_risk_set": [
+    "ACTIVE",
+    "PARTIALLY_FILLED",
+    "CANCEL_PENDING"
+  ],
+  "terminal_contract": {
+    "terminal_time": "min(full_fill,cancel_ack,reject,expiry)",
+    "fill_risk_after_exchange_terminal": 0,
+    "terminal_cursor_retention_allowed": false,
+    "old_queue_age_or_price_allowed_in_post_cancel_recovery": false
+  },
+  "exposure_contract": {
+    "estimand": "integral_from_activation_to_terminal_of_remaining_quantity_dt",
+    "unit": "BTC*s",
+    "first_fill_latency_reported_separately": true,
+    "partial_fill_updates_remaining_quantity_before_next_interval": true
+  },
+  "clock_contract": {
+    "exchange_event_time": "exchange truth and matching order",
+    "local_receive_time": "strategy lifecycle visibility",
+    "feature_ready_time": "decision visibility after parsing and feature update",
+    "future_feature_time_allowed": false
+  },
+  "post_cancel_recovery": {
+    "state_defined": true,
+    "old_active_order_hazard_evaluation_allowed": false,
+    "prospective_placement_evaluator_implemented": false,
+    "automatic_exposure_increasing_reentry_authorized": false,
+    "reducing_quote_invariant_preserved": true
+  },
+  "native_abi": "dynamic_fill_hazard_native_book_q90.v2",
+  "feature_graph": {
+    "graph_id": "buy_q90_visibility_lifecycle_path_score.v2",
+    "sha256": "aa365745ec4b9f111a0e3c459285b047c336ce126f39349020e52d4820cf1f11"
+  },
+  "live_runtime_repair_deployed": false,
+  "implementation_sha256": {
+    "execution/order_lifecycle.py": "b4d5b7d58d5683f0aa64f8dc3696d63f01378ac683ce640dd1cc5202776a37af",
+    "execution/active_order_depth_path.py": "147719b82f50f8374fc117cc9d9a1a5d905e9de07df9f5e9eff9fa9e5ade61a7",
+    "strategy/order_manager.py": "f5096a2668a8ed2aa0b53a7a17134819dfc9d1e7beec545759a06421bc035a08",
+    "strategy/maker_engine.py": "3af81d2c556b355e3c661e8a9ab75b1ddd5a76e52f0a059bd814096c474cb966",
+    "strategy/dynamic_fill_hazard_model.py": "7b2a90040a1dde94fecad1c05777d140b7079281cc29d19ab7af5ace3b3a9ca7",
+    "features/feature_dag.py": "6b65797aabb0766e0231f78a9750332ea4cf742da5158a3c3f94ada2d2d914ea",
+    "live/ws_handler.py": "c817f147394cc892489b5fbdf13e572a9f6bd391529182880ff7f87a4618d294",
+    "models/backtest_tick.py": "6de797f8ae9299f7ebb95e41d5275e10b9986f925489e14693c7a7f0614818fb",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp": "0887a3c1eb7e6c2ac5127e109eac51c36a8562832da8a6a1f3614ef19c8393eb",
+    "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp": "8222cae88f20eeee29c99dede232767c3cf4ce80dd594a0478d76fe692a7d86a",
+    "cpp/narrowgate_cpp/bindings.cpp": "ef31841592dd42982d87de713dd6ce72c63918bf0a1691aedb0f079ea8da2605",
+    "tests/test_execution_order_lifecycle.py": "4271dfcc87717830b3226b72cefc494df2f70d9db12026235a0bf73a2ddfa099",
+    "tests/test_feature_dag.py": "f2ee92cefde668f4af44f078a7f787e475621caf76a2d7f5adf2d45bd4087211"
+  },
+  "verification": {
+    "targeted_lifecycle_q90_suites_passed": true,
+    "full_repository_tests_passed": 1273,
+    "full_repository_tests_skipped": 4,
+    "full_repository_test_warning_count": 1,
+    "python_version": "3.12.13",
+    "native_extension_rebuilt": true
+  },
+  "unresolved_gates": [
+    "prospective placement recovery estimator",
+    "40-day mechanics parity under the repaired ABI",
+    "same-date AWS receive-time transport",
+    "inherited valid-fraction absolute-delta gate",
+    "inherited cancel-role total-variation gate",
+    "q90 ON/OFF economic attribution under repaired treatment"
+  ],
+  "validation_read": false,
+  "sealed_holdout_read": false,
+  "prediction_supported": false,
+  "transport_supported": false,
+  "action_experiment_authorized": false,
+  "live_deployment_authorized": false
+}
