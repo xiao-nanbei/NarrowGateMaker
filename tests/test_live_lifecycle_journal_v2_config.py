@@ -76,6 +76,11 @@ def test_enabled_bounded_remote_spool_does_not_require_local_mount(
     settings = LifecycleJournalV2Config(
         enabled=True,
         storage_profile=BOUNDED_REMOTE_SPOOL,
+        root=str(EXAMPLE_REMOTE_SPOOL / "order_lifecycle_journal_v2"),
+        prospective_epoch_root=str(
+            EXAMPLE_REMOTE_SPOOL / "prospective_baseline_epochs"
+        ),
+        remote_spool_allowlisted_roots=[str(EXAMPLE_REMOTE_SPOOL)],
         baseline_identity_path="baseline.json",
         baseline_identity_sha256="a" * 64,
     )

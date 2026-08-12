@@ -4,7 +4,6 @@ import json
 
 import pytest
 
-from data_paths import storage_root
 from execution.chunked_parquet_journal import (
     ChunkedParquetJournalWriter,
     iter_chunked_parquet_journal,
@@ -47,9 +46,8 @@ def test_chunked_parquet_journal_is_atomic_hash_verified_and_bounded(tmp_path) -
 
 
 def test_chunked_parquet_journal_rejects_removable_volume() -> None:
-    removable_root = storage_root()
     with pytest.raises(ValueError, match="local cache disk"):
         ChunkedParquetJournalWriter(
-            f"{removable_root}/forbidden-replay-cache",
+            "/Volumes/NARROWGATE_TEST_REMOVABLE/forbidden-replay-cache",
             journal_id="test.removable.v1",
         )

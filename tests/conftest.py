@@ -16,23 +16,26 @@ _OPT_IN_ENV = str(_AVAILABILITY["opt_in_environment_variable"])
 _OPT_IN_VALUE = str(_AVAILABILITY["opt_in_required_value"])
 
 
-def _unavailable_modules() -> dict[str, str]:
-    unavailable: dict[str, str] = {}
+def _unavailable_tests() -> tuple[dict[str, str], dict[str, str]]:
+    modules: dict[str, str] = {}
+    nodeids: dict[str, str] = {}
     for category, payload in _AVAILABILITY["categories"].items():
         reason = str(payload["reason"])
         for module in payload["modules"]:
-            unavailable[str(module)] = f"{category}: {reason}"
-    return unavailable
+            modules[str(module)] = f"{category}: {reason}"
+        for nodeid in payload.get("nodeids", []):
+            nodeids[str(nodeid)] = f"{category}: {reason}"
+    return modules, nodeids
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     if os.environ.get(_OPT_IN_ENV) == _OPT_IN_VALUE:
         return
 
-    unavailable = _unavailable_modules()
+    unavailable_modules, unavailable_nodeids = _unavailable_tests()
     for item in items:
         module = Path(str(item.path)).name
-        reason = unavailable.get(module)
+        reason = unavailable_nodeids.get(item.nodeid) or unavailable_modules.get(module)
         if reason is None:
             continue
         item.add_marker(

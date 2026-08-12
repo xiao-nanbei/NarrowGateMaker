@@ -52,6 +52,30 @@
       "modules": [
         "test_current_live_held_ber_replay_baseline_50d.py"
       ]
+    },
+    "owner_private_historical_projection_unavailable": {
+      "reason": "requires an exact owner-private source projection, live config, or generated historical execution plan that is deliberately not distributed",
+      "modules": [],
+      "nodeids": [
+        "tests/test_causal_v12_1s_economic_precommit.py::test_precommit_binds_current_v9_and_exact_native_40_days",
+        "tests/test_causal_v12_1s_economic_precommit.py::test_direct_canary_requires_runtime_safety_and_no_long_shadow",
+        "tests/test_causal_v12_1s_restart_aware_continuous_execution_v1_3.py::test_v13_plan_is_outcome_blind_and_cli_adapter_is_not_injection_only",
+        "tests/test_conditional_p3_scalar_reproduction_gate.py::test_scalar_adapter_registered_spec_is_historical_evidence_only",
+        "tests/test_conditional_p3_scalar_reproduction_gate.py::test_errata_narrows_scope_without_rewriting_frozen_artifacts",
+        "tests/test_historical_reproduction_governance.py::test_f06_accepts_only_registered_path_and_hash",
+        "tests/test_historical_reproduction_governance.py::test_historical_output_cannot_claim_new_authority",
+        "tests/test_live_shadow_retirement.py::test_operational_shadow_retirement_does_not_change_quote_core_contract",
+        "tests/test_multiscale_ema_boolean_cooldown_duration_policy_study.py::test_execution_dependencies_bind_frozen_specs_without_amendment_cycle",
+        "tests/test_p3_reach_time_hazard_training.py::test_actual_frozen_spec_is_strictly_bound",
+        "tests/test_p3_reach_time_hazard_training.py::test_spec_tamper_fails_before_data_read",
+        "tests/test_p3_reach_time_hazard_training.py::test_cache_catalog_binds_builder_and_node_code_hashes",
+        "tests/test_p3_reach_time_hazard_training.py::test_memmap_materialization_loads_days_incrementally",
+        "tests/test_p3_reach_time_hazard_training.py::test_synthetic_side_model_evaluates_full_cdf_without_economics",
+        "tests/test_p3_reach_time_hazard_training.py::test_fold_models_and_results_publish_as_one_atomic_directory",
+        "tests/test_p3_touch_source_aware_expanded_v3.py::test_frozen_v3_contract_has_source_separation_and_no_authority",
+        "tests/test_p3_touch_volatility_conditioned_v4.py::test_frozen_v4_spec_is_canonical_and_grants_no_authority",
+        "tests/test_public_machine_projection_identity.py::test_cross_unit_public_projection_resolves_owner_private_source"
+      ]
     }
   }
 }

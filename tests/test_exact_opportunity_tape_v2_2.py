@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from data_paths import storage_root
 from execution.exact_opportunity_tape import (
     ExactQuoteOpportunityTapeRow,
     empty_exact_opportunity_row,
@@ -206,10 +205,9 @@ def test_writer_error_invalidates_chunk_and_blocks_ready_admission(
 
 
 def test_runtime_staging_rejects_removable_volume() -> None:
-    removable_root = storage_root()
     with pytest.raises(ValueError, match="local temporary storage"):
         ExactOpportunityDailyWriter(
-            f"{removable_root}/exact-staging",
+            "/Volumes/NARROWGATE_TEST_REMOVABLE/exact-staging",
             runtime_identity=_identity(),
         )
 
