@@ -7,6 +7,7 @@ This repository history is a reconstructed public import created on 2026-08-12. 
 - Old public root: `774a4d03f5d025e82cc82c224db1d6cd3e25e819`.
 - New reconstructed root: `f150ef7b7a99258c5b04fd06a1750e3377470c05`.
 - Planned public history: 116 commits and 1,678 paths.
+- Post-plan validation and governance corrections add four transparent commits, for 120 commits after this receipt update and 1,709 public paths.
 - Old history is retained only in a verified, FileVault-backed owner-only backup and a local archive ref. Neither is distributed.
 - Private owner evidence, machine-specific paths, raw market data, private bundles, environment files, logs, and the two legacy snapshot archives are excluded from the reconstructed public tree.
 - The final operational pointer is `operational_baseline_identity_20260812_v11` and retains its explicit `owner_risk_accepted_promotion` and `research_hard_gate_passed=false` semantics.
@@ -39,6 +40,14 @@ The reconstructed history must first be pushed to `rebuilt-main-20260812`, pass 
 
 The machine-readable receipt contains the plan, amendment, result-ledger, root, and tag hashes used to audit this reconstruction.
 
+## Local Validation
+
+The committed candidate passed both governance audits with zero findings, the full public test suite with 2,781 passes and 298 explicit skips, a fresh C++ extension build, 93 dedicated Python/C++ parity tests, CLI smoke tests, and the public deployment dry-run. The public dry-run uses a synthetic bundle with ML and all actions disabled; it grants no research, action, baseline, or live authority.
+
+The owner-private deployment preflight remains correctly fail-closed because an owner bundle's frozen metadata hash does not match the current public runtime contract. No private artifact hash was rewritten to conceal that mismatch. This owner deployment blocker is independent of the public-history publication gate.
+
 ## Post-Reconstruction Validation Fix
 
 The frozen plan produced 116 commits. The first public-documentation audit then correctly found that two public projection SHA values still described the pre-normalization CRLF bytes of their CSV targets. A 117th, explicitly post-reconstruction validation commit synchronizes those two projection hashes and records this correction here. It changes neither research semantics nor private-source identity.
+
+Two further post-reconstruction governance commits make unavailable historical reproductions explicit in public-clone test output, bind build metadata to operational baseline v11, enable CI on the temporary reconstruction branch, and provide a hash-bound synthetic deployment fixture. This receipt update is the fourth transparent post-plan commit.

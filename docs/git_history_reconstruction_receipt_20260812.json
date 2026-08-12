@@ -3,7 +3,7 @@
   "reconstructed_history": true,
   "scientific_rerun": false,
   "projection_date": "2026-08-12",
-  "receipt_generated_at_utc": "2026-08-12T13:10:01Z",
+  "receipt_generated_at_utc": "2026-08-12T13:41:12Z",
   "repository": "xiao-nanbei/NarrowGateMaker",
   "branch": "main",
   "old_public_root": {
@@ -41,6 +41,11 @@
     "commit_count_after_final_binding": 116,
     "post_reconstruction_validation_fix_count": 1,
     "commit_count_after_validation_fix": 117,
+    "post_reconstruction_governance_commit_count": 2,
+    "validated_candidate_head_before_receipt_update": "f3ef067d7cea263250f82b6b3b992e3d54f7eae9",
+    "commit_count_before_receipt_update": 119,
+    "expected_commit_count_after_receipt_update": 120,
+    "public_tree_path_count_before_receipt_update": 1709,
     "single_root_required": true,
     "old_root_must_not_be_ancestor": true,
     "private_paths_allowed": false,
@@ -72,8 +77,16 @@
     "committed_relative_link_check": "passed_for_available_targets",
     "staged_path_plan_match": "passed_per_commit",
     "staged_whitespace_check": "passed_per_commit_after_recorded_input_amendments",
-    "public_documentation_audit": "passed_after_projection_hash_validation_fix",
-    "final_repository_validation_required_before_main_replacement": true,
+    "public_documentation_audit": "passed; 678 documents, 1008 source files, 243 projections, 557 links, zero findings",
+    "private_evidence_audit": "passed; 20 owner roots, 497 private files, 7407 catalog entries, zero findings",
+    "full_pytest": "passed; 2781 passed, 298 explicitly skipped, zero failed",
+    "cpp_extension_build": "passed",
+    "python_cpp_parity": "passed; 93 tests",
+    "cli_smoke": "passed; doctor, quote-demo, order-level score demo",
+    "public_deploy_dry_run": "passed; synthetic no-authority bundle with ML and actions disabled",
+    "owner_private_deploy_preflight": "fail-closed; owner bundle metadata hash does not match the current public runtime contract",
+    "owner_private_bundle_hashes_rewritten": false,
+    "final_repository_validation_required_before_main_replacement": false,
     "github_ci_required_before_main_replacement": true,
     "fresh_clone_required_before_main_replacement": true
   },
@@ -84,7 +97,7 @@
     "archive_refs_published": false,
     "old_history_bundle_published": false,
     "tags_must_be_pushed_individually": true,
-    "status_at_receipt_creation": "local reconstruction complete; remote publication pending validation"
+    "status_at_receipt_creation": "local reconstruction and validation complete; temporary-branch publication, GitHub CI, and fresh-clone validation pending"
   },
   "post_reconstruction_validation_fixes": {
     "projection_hash_sync_after_crlf_normalization": [
