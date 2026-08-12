@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 
 def _escape(value: object) -> str:
@@ -31,11 +32,28 @@ def main() -> int:
               "pytest reported failure without cached node IDs")
         return 1
 
+    details: dict[str, str] = {}
+    junit_path = Path(".pytest-results.xml")
+    if junit_path.is_file():
+        root = ET.parse(junit_path).getroot()
+        for case in root.iter("testcase"):
+            failure = case.find("failure")
+            if failure is None:
+                failure = case.find("error")
+            if failure is None:
+                continue
+            classname = str(case.get("classname", "")).replace(".", "/")
+            name = str(case.get("name", ""))
+            key = f"{classname}.py::{name}"
+            text = (failure.text or failure.get("message") or "").strip()
+            details[key] = text[-3_000:]
+
     for nodeid in failing:
         path = nodeid.split("::", 1)[0]
+        detail = details.get(nodeid, nodeid)
         print(
             f"::error file={_escape(path)},line=1,title=Pytest failure::"
-            f"{_escape(nodeid)}",
+            f"{_escape(detail)}",
             flush=True,
         )
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")

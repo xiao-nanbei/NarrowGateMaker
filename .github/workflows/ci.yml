@@ -48,7 +48,7 @@ jobs:
         id: pytest
         continue-on-error: true
         run: |
-          pytest -q
+          pytest -q --junitxml=.pytest-results.xml
 
       - name: Publish failing pytest node IDs
         if: steps.pytest.outcome == 'failure'
