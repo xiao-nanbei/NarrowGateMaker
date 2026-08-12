@@ -1,0 +1,273 @@
+{
+  "schema_version": "volatility_time_add_rearm_full_path_preflight.v1",
+  "family_id": "volatility_time_add_rearm_full_path_preflight_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-07-29T08:30:00Z",
+  "scope": "Development-only authoritative Python full-path mechanics preflight; no reward, PnL, markout, Validation, holdout, randomized action, or live authority",
+  "permissions": {
+    "reward_or_pnl_read": false,
+    "markout_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_created": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "predecessor_identity": {
+    "variance_clock_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v2_1_20260729/development/report.json",
+      "sha256": "aac2b686dc6841ceace468c38da3d61a072a098efa5cb8f162af332a281a7148"
+    },
+    "live_stack_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_live_stack_parity_v1_20260729/development/report.json",
+      "sha256": "816882235421a7871cb2c967594c97c9664557faccbaae9ad50c09e0558e072f"
+    },
+    "authority": "variance-time clock mechanics passed; complete candidate path and C++ q90 parity remained blocked"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ],
+    "source_split": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/evidence_split_dynamic_fill_hazard_m0_native_strict_frozen_v3.json",
+      "sha256": "8d9688f0d8a6b8883421a0853ffc9d533f6fd59222cda9f87f2fc83d0e410967"
+    }
+  },
+  "operational_config_identity": {
+    "path": "${NARROWGATE_LIVE_CONFIG}",
+    "sha256": "8653e44ba400903434110a1c0a9b63ea80e3a36337c38e89909ed842c58c1da3",
+    "required_semantics": {
+      "ml_enabled": false,
+      "fill_cooldown_s": 85.0,
+      "consecutive_reset": "opposite_fill_only",
+      "reducing_cooldown_s": 0.0,
+      "max_consecutive_losses": 3,
+      "loss_cooldown_s": 30.0,
+      "buy_q90_enabled": true
+    }
+  },
+  "source_identity": {
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2",
+    "normalized_l2_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/manifest.json",
+      "sha256": "f47e044b0607d135de713f8cbf13dad82decc051786dd4a896f21e014129b517"
+    },
+    "normalized_l2_quality": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+      "sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc"
+    },
+    "native_orderbook_root": "${NARROWGATE_RETIRED_MARKETDATA_ROOT}/cryptohftdata",
+    "market_source_manifest_canonical_sha256": "8f375ff7afa566a960f59c98c5496cd4cd01749d94f113306e65130a9c5b9396",
+    "queue_calibration": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+      "sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd"
+    },
+    "p3_artifact": {
+      "path": "models/saved_btcusdc_causal_v7_time_calendar_semantics_20260726/fill_prob_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    "window_cache_dir": "${NARROWGATE_RETIRED_DATA_ROOT}/window_cache"
+  },
+  "execution_trade_identity": {
+    "source": "Binance USD-M individual trades",
+    "manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/trade_features_causal_v3_20260727/manifest.json",
+      "sha256": "af385300d2852c0e6cc8d3e5f1b50984e649dee6e33450cf44740dc189a72292"
+    },
+    "quality_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/causal_v9_through_20260725_20260727/execution_trade_quality.csv",
+      "sha256": "b61ccb04fe703927dc919ed7cb5fd06c0f109dd7d1b61e89d1a0807357539bf0"
+    }
+  },
+  "buy_q90_identity": {
+    "model": {
+      "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json",
+      "sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6"
+    },
+    "policy": {
+      "path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+      "sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a"
+    },
+    "python_semantics": "native snapshot/delta exact-level scorer with cancel request, ACK race, queue reset, recovery, and re-entry",
+    "cpp_supported": false
+  },
+  "latency_identity": {
+    "samples": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+      "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2"
+    },
+    "mode": "avg",
+    "profile_id": "aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14",
+    "environment": "aws-ap-northeast-1-tokyo",
+    "baseline_clip_quantile": 0.99,
+    "shared_random_path_between_arms": true,
+    "exact_historical_receive_time_required_for_this_preflight": false
+  },
+  "variance_clock": {
+    "rate_unit": "bps2_per_s",
+    "rolling_window_s": 60,
+    "max_bbo_source_age_ms": 2000,
+    "max_abs_return_bps_1s": 100.0,
+    "feature_ready_delay_ms": 0,
+    "max_feature_age_ms": 2000,
+    "minimum_wall_time_ms": 5000,
+    "maximum_wall_time_ms": 600000,
+    "reference_rate_bps2_per_s": {
+      "BUY": 0.36641541732494454,
+      "SELL": 0.602085631184333
+    },
+    "budget": "reference_rate_bps2_per_s * 85s * consecutive_same_side_fill_units",
+    "stale_behavior": "freeze_qv",
+    "episode_budget_frozen_at_start": true
+  },
+  "replay_contract": {
+    "engine": "python_authoritative",
+    "initial_state": "daily_fresh_start",
+    "clock": "merged_100ms",
+    "clock_interval_ms": 100,
+    "execution_trade_source": "individual_trades",
+    "native_warmup_hours": 24,
+    "queue_mode": "strict_native_exact_level",
+    "trace_decisions_max": 200000,
+    "trace_quotes_max": 200000,
+    "trace_profile": "mechanics_only",
+    "rng_seed": 42,
+    "sync_mode": "deterministic_stress_only",
+    "sync_stress_seed": 20260729,
+    "sync_stress_interval_s": 21600.0,
+    "control": "explicit_wall_time_85n",
+    "candidate": "variance_time_rearm",
+    "future_fills_reused_between_arms": false,
+    "cross_day_state_carried": false,
+    "promotion_eligible": false
+  },
+  "gates": {
+    "classification": "judgmental pre-registered mechanics support thresholds",
+    "action_support_authority": "candidate_final_gate_stack",
+    "control_candidate_path_difference_is_diagnostic_only": true,
+    "material_timing_delta_ms": 5000,
+    "minimum_mechanical_episodes_per_side": 100,
+    "minimum_action_change_days_per_side": 10,
+    "unmasked_action_effective_rate_day_cluster_lcb_must_exceed": 0.0,
+    "bootstrap_draws": 2000,
+    "bootstrap_seed": 20260729,
+    "control_contract_must_pass": true,
+    "candidate_path_must_regenerate_order_and_fill_outcomes": true,
+    "economic_metrics_are_not_gates": true
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "80400ff27bff0c796f354b81d7eedb9f38accf9128aad9efea128517582e1fe7",
+    "source_sha256": {
+      "models/backtest_tick.py": "74700886c893ba1a28c7e322550131b60e279f98e4af482f770ab600a4cbccfd",
+      "models/backtest_config.py": "bd3214ea40a53266c2f16128c2b18a0881feeca4dd2fc93e52e34029f1fca12a",
+      "models/data_windows.py": "e8e09f4abc02ab0ae2217d5d208d4db32c1dfda3926c7d25e8586ecdca41881d",
+      "models/exchange_book_replay.py": "26a44e25a0cc332a2b2b5c286d008ac8401cfe75ddb747e8091ad621b1b15754",
+      "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "strategy/fill_cooldown.py": "0aedc148e15ba34de0a13a0a8789d3d3706e94e272875402f9df6fb39e0324b7",
+      "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+      "strategy/dynamic_fill_hazard_model.py": "65a42affcd3f6a4200d7f80b1d38a2054c61f64bb080a501dd029a730acf0c94",
+      "live/config.py": "8d1354ca9761d6364c949fff977906022a149e36070accc370b2034f074060a7",
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_feasibility_v2.py": "518b9f7d78f59e93e977d0e692d0abb94ba43f192103167e89cc075394ac9952",
+      "tests/test_volatility_time_add_rearm_full_path_preflight.py": "9ff461f4eb5949a19ff74cf4a0a2e944d2b328bbc2d82e6c3093ecb0d918d8d6"
+    }
+  },
+  "test_identity": {
+    "junit_xml": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/inputs/full_path_contract_tests.xml",
+      "sha256": "359ff011e12e9963ea5d3b745fbaa73962f3526ab77068bbbc20e16a49c6caac"
+    },
+    "required_test_names": [
+      "test_explicit_wall_time_control_reproduces_legacy_default",
+      "test_variance_time_rearm_regenerates_downstream_orders_and_fills",
+      "test_variance_time_full_path_fails_closed_on_contract_drift",
+      "test_episode_denominator_counts_lineage_once_and_attributes_blocker",
+      "test_later_rearm_is_attributed_to_variance_clock",
+      "test_later_rearm_is_unmasked_when_fill_cd_is_the_only_final_blocker",
+      "test_mechanics_trace_rejects_economic_fields",
+      "test_order_path_difference_uses_mechanics_only_multisets",
+      "test_operational_order_state_does_not_treat_missing_decision_as_action",
+      "test_operational_order_state_detects_regenerated_exposure",
+      "test_online_variance_clock_releases_on_the_causal_path",
+      "test_cpp_variance_time_matches_python"
+    ]
+  },
+  "authority_contract": {
+    "mechanical_timing_change_is_not_action_effective_rate": true,
+    "unmasked_action_effective_is_computed_from_candidate_final_gate_stack": true,
+    "control_candidate_order_state_difference_is_regenerated_path_diagnostic_only": true,
+    "full_candidate_path_regenerates_orders_fills_inventory_and_blockers": true,
+    "sync_stress_is_not_historical_event_evidence": true,
+    "aws_receive_time_is_separate_transport_and_live_gate": true,
+    "cpp_q90_development_is_allowed_only_after_full_path_support_passes": true,
+    "randomized_action_identity_may_be_created_by_this_family": false,
+    "existing_live_stack_spec_must_remain_unchanged": true
+  },
+  "frozen_decision": "evaluate_development_full_path_mechanics_then_close_or_allow_cpp_q90_parity_work"
+}

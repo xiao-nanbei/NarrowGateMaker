@@ -1,0 +1,232 @@
+{
+  "schema_version": "volatility_time_add_rearm_live_stack_parity.v1",
+  "family_id": "volatility_time_add_rearm_live_stack_parity_v1",
+  "research_family": "F09_campaign_action_uplift",
+  "frozen_at_utc": "2026-07-29T00:24:30Z",
+  "scope": "Development-only mechanics and Python/C++ parity; no reward, PnL, markout, Validation, holdout, action, or live authority",
+  "permissions": {
+    "reward_or_pnl_read": false,
+    "markout_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  },
+  "predecessor_identity": {
+    "family_id": "volatility_time_add_rearm_feasibility_v2_1",
+    "report_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v2_1_20260729/development/report.json",
+    "report_sha256": "aac2b686dc6841ceace468c38da3d61a072a098efa5cb8f162af332a281a7148",
+    "manifest_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v2_1_20260729/development/manifest.json",
+    "manifest_sha256": "80b2fac641829df3a75426f95d2b9091bf0af05140e8550615d14fc2ae40af4c",
+    "evaluation_episodes_sha256": "1f2ae70f8ffd66786c212b1f9f35226b4ae445f6db089385b41c899be3de38ad",
+    "authority": "variance-time clock mechanics only"
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "embargo_days_not_read": [
+      "2026-06-27",
+      "2026-07-09"
+    ],
+    "validation_days_not_read": [
+      "2026-06-28",
+      "2026-06-29",
+      "2026-07-01",
+      "2026-07-02",
+      "2026-07-03",
+      "2026-07-04",
+      "2026-07-05",
+      "2026-07-06",
+      "2026-07-07",
+      "2026-07-08"
+    ],
+    "sealed_holdout_days_not_read": [
+      "2026-07-10",
+      "2026-07-11",
+      "2026-07-12",
+      "2026-07-14",
+      "2026-07-15",
+      "2026-07-16",
+      "2026-07-17",
+      "2026-07-18",
+      "2026-07-19",
+      "2026-07-20"
+    ],
+    "source_split_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/evidence_split_dynamic_fill_hazard_m0_native_strict_frozen_v3.json",
+    "source_split_sha256": "8d9688f0d8a6b8883421a0853ffc9d533f6fd59222cda9f87f2fc83d0e410967"
+  },
+  "source_identity": {
+    "fill_trace_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v1_20260729/source_replay/campaign_outcome_replay_volatility_time_add_rearm_feasibility_source_v1_btcusdc.fill_trace.csv",
+    "fill_trace_sha256": "c64df393ffd2ab1624ba067563a22295702471e6dec17ee7ae54d1927803832b",
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2",
+    "normalized_l2_quality_path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+    "normalized_l2_quality_sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc",
+    "bbo_source_manifest_sha256": "079de70d7017dd1b0bf9b1ff7590669f55ed0c3f6ca7003fb5df05a29fffc7c4",
+    "bbo_source_contract": "hash all 40 target-day and 40 D-1 warmup BBO files actually read; target days must be formal-eligible; D-1 is warmup-only"
+  },
+  "lineage_contract": {
+    "baseline_reset_policy": "opposite_fill_only",
+    "counter_unit": "consecutive_same_side_fill_units",
+    "order_size_btc": 0.001,
+    "lot_size_btc": 0.001,
+    "daily_fresh_start_reconstruction": "exclude fills before the second within-day side transition",
+    "minimum_reconstructible_fill_rate": 0.95,
+    "continuous_live_lineage_required_for_offline_mechanics": false,
+    "continuous_live_lineage_required_for_live_authorization": true
+  },
+  "mechanical_timing_contract": {
+    "material_delta_s": 5.0,
+    "legacy_candidate_effective_rate_name": "read-only predecessor alias",
+    "canonical_name": "mechanical_effective_rate",
+    "unmasked_action_effective_rate_definition": "fraction of candidate rearm decisions that alter the final quote action after all non-fill-cooldown blockers on the regenerated candidate path",
+    "unmasked_action_effective_rate_available_before_full_strategy_integration": false
+  },
+  "operational_config_identity": {
+    "path": "${NARROWGATE_LIVE_CONFIG}",
+    "sha256": "8653e44ba400903434110a1c0a9b63ea80e3a36337c38e89909ed842c58c1da3",
+    "expected_values": {
+      "strategy.dynamic_fill_hazard_shadow_enabled": true,
+      "strategy.dynamic_fill_hazard_shadow_model_sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6",
+      "strategy.dynamic_fill_hazard_action_enabled": true,
+      "strategy.dynamic_fill_hazard_action_policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+      "strategy.fill_cooldown": 85.0,
+      "strategy.fill_cooldown_consecutive_reset_policy": "opposite_fill_only",
+      "strategy.fill_cooldown_reducing": 0.0,
+      "risk.cooldown_after_loss": 30.0,
+      "risk.max_consecutive_losses": 3,
+      "risk.sync_adjust_degrade_enabled": true,
+      "risk.sync_adjust_degrade_count": 2,
+      "risk.sync_adjust_abs_qty_threshold": 0.005,
+      "risk.sync_adjust_degrade_window_s": 300.0,
+      "risk.sync_adjust_pause_s": 120.0
+    }
+  },
+  "buy_q90_identity": {
+    "model_path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/fill_hazard_bundle.json",
+    "model_sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6",
+    "policy_path": "models/saved_btcusdc_dynamic_fill_hazard_20260724/buy_exposure_adverse_q90_policy.json",
+    "policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a",
+    "python_semantics": "cancel request, cancel ACK, ACK-before-fill race, queue reset, score recovery, and re-entry",
+    "cpp_semantics": "fail closed until native snapshot/delta scheduler and exact-level scorer exist"
+  },
+  "sync_degrade_identity": {
+    "event_tape_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_live_stack_parity_v1_20260729/inputs/sync_degrade_events_20260720.json",
+    "event_tape_sha256": "9083c11cfe9ed24c3aec7e4a1b128680ffeebc8799e71cbb503eb04f2e3b3c31",
+    "source_log_path": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260721/ng_live_20260720/maker_2026-07-20_context.log",
+    "source_log_sha256": "62b48cd9d3ed69bcacee5a84bf095db50f725870d694b7524051d4075a809b86",
+    "environment": "aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+    "promotion_evidence_mode": "frozen_tape_only",
+    "zero_trigger_tape_interpretation": "observational full-window no-trigger coverage; trigger behavior remains synthetic parity evidence only"
+  },
+  "latency_identity": {
+    "offline_randomized_replay_requires_exact_historical_aws_receive_time": false,
+    "live_authorization_requires_aws_transport_gate": true,
+    "artifacts": [
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.json",
+        "sha256": "762ba2a2a6c38ebb7ae2392a367ceb713bfb7f6838faaf3abcf7135886e36f3f"
+      },
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+        "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2"
+      },
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/market_data_latency_20260712/robust_latency_summary.json",
+        "sha256": "f6a70efb463724a054754803ba36a2cb1a63a4882c0bd298d00d798d98cae6c9"
+      },
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/market_data_latency_20260712/latency_5m_bins.json",
+        "sha256": "7fa3d990fd215e453648da3a393202eaa2edfff8de1998d7f6a010846eb0dbeb"
+      }
+    ]
+  },
+  "implementation_identity": {
+    "evaluator_sha256": "367da0be4b66b01a6618f83253783c0eff739918af8b75f355dc1f0bd58e7498",
+    "source_sha256": {
+      "strategy/fill_cooldown.py": "4e1923ce51dbd671ad1d18d95c59a63c8ff864443a01b668f4e0f300d64f5a93",
+      "strategy/replay_controls.py": "9dfc7b98463fbe6952bf3aa55a33794c4524462e95ea0991e9c405b9cd45db79",
+      "models/backtest_tick.py": "615859759761907ac85a331e4874ade2f67eab199b8a685f42e8ec405e20d21c",
+      "models/replay_contract.py": "2da4ee2511beccce54546388c6e02e7dfc1d8ec9257d79c4f56ed99f90afa494",
+      "models/exchange_book_replay.py": "26a44e25a0cc332a2b2b5c286d008ac8401cfe75ddb747e8091ad621b1b15754",
+      "cpp/narrowgate_cpp/tick_replay.cpp": "13dc9a1b4a61526f1847ae200a15594b31709479757004c86d1554cc5ac065a0",
+      "cpp/narrowgate_cpp/tick_replay.hpp": "1229101a7a9e0b75a79ea8d39e8aa040a943c59aff271602c41456fbad89bca8",
+      "cpp/narrowgate_cpp/bindings.cpp": "4e58d4475af249a745a2fca6d81ae0bc60cce61a0d48f36cf305a060e73d76d7",
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_feasibility.py": "b1197193a69b0b5bc043325ce73032aba2e56ee5e0a24f005b9ce15d68bb3a5c",
+      "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_feasibility_v2.py": "518b9f7d78f59e93e977d0e692d0abb94ba43f192103167e89cc075394ac9952",
+      "tests/test_replay_path_dependent_controls.py": "198082fce218ccea77c5946094d4947b1d17399319b8d1e7e0fbc49289554f45",
+      "tests/test_replay_contract.py": "b80a9de1bf4c14a0c5e8b1afda983ab6176ad0798fed21aac7f63e98c7e2a389",
+      "tests/test_fill_cooldown_contract.py": "509f9d0aca19fa62bbb72a9a94348a4980069d632ddff62fc2cff4c315643b5d",
+      "tests/test_variance_time_rearm.py": "416431661e4029abaf08f2003dbdc71556f93d4c01dce606d5d0f5fc18957d09",
+      "tests/test_volatility_time_add_rearm_live_stack_parity.py": "a18964f2b8c2806007b84d60c86e1c462a3d191815156beae3a368015b36298a"
+    },
+    "native_module_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_live_stack_parity_v1_20260729/inputs/narrowgate_cpp.cpython-312-darwin.so",
+    "native_module_sha256": "0ab56d39cd3b87d4f38cfc35ea6e18f9cafd76f34fa25b19385e67dfc88425d2",
+    "predecessor_blocker_contract_path": "research/families/f09_campaign_action_uplift/docs/replay_path_dependent_blockers_v1_spec_20260729.json",
+    "predecessor_blocker_contract_sha256": "7ccf76915ae8a3ada340a47697b3adcc962d4bf2b45d0ff1d3cdebec8a176ec8"
+  },
+  "test_identity": {
+    "junit_xml_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_live_stack_parity_v1_20260729/inputs/live_stack_parity_tests.xml",
+    "junit_xml_sha256": "f6a62f8c52f0ef123ba24a2efd5bf5bf56b1dada398456da00d9a1ea17c255e8",
+    "required_test_names": [
+      "test_cpp_variance_time_matches_python",
+      "test_zero_duration_reducing_fill_preserves_absolute_add_deadline",
+      "test_consecutive_loss_cooldown_is_path_dependent_and_python_cpp_equal",
+      "test_frozen_sync_event_blocks_only_exposure_side_in_python_and_cpp",
+      "test_buy_q90_replays_cancel_pre_ack_fill_recovery_and_reentry",
+      "test_cpp_fails_closed_when_buy_q90_requires_native_depth",
+      "test_lineage_requires_two_within_day_side_transitions",
+      "test_bbo_manifest_requires_and_hashes_dminus1"
+    ]
+  },
+  "authority_contract": {
+    "isolated_variance_clock_parity_is_not_full_strategy_parity": true,
+    "mechanical_effective_rate_is_not_action_effective_rate": true,
+    "full_candidate_path_must_regenerate_orders_fills_inventory_and_blockers": true,
+    "continuous_live_lineage_is_separate_from_daily_fresh_start_offline_replay": true,
+    "aws_receive_time_is_separate_transport_and_live_authorization_gate": true,
+    "historical_exact_aws_receive_time_absence_does_not_block_offline_randomized_replay": true,
+    "future_intervention_unit": "same-side cooldown lineage until opposite fill or explicit reset",
+    "randomized_action_may_be_created_by_this_identity": false
+  },
+  "frozen_decision": "evaluate_development_mechanics_only_and_hold_randomized_action"
+}

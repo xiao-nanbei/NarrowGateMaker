@@ -1,0 +1,137 @@
+{
+  "schema_version": "volatility_time_add_rearm_feasibility.v2_1",
+  "family_id": "volatility_time_add_rearm_feasibility_v2_1",
+  "created_at_utc": "2026-07-29T00:00:00+00:00",
+  "research_scope": "Development-only BBO-clock mechanics and blocker-parity feasibility; no reward, PnL, markout, action uplift, Validation, holdout, or live authorization",
+  "hypothesis": "Replacing the sparse trade-close clock with completed-bucket normalized-BBO variance preserves the equal-reference variance-time contrast and produces supported two-sided timing variation, while blocker parity remains an independent prerequisite for any action experiment.",
+  "predecessor_identity": {
+    "family_id": "volatility_time_add_rearm_feasibility_v2",
+    "status": "invalidated_preflight_valid_interval_overcount",
+    "contract_change": "clip clock-coverage diagnostics to the actual candidate release; rearm state machine, BBO source, panels, candidate, and all frozen gates are unchanged",
+    "invalidated_output_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v2_20260729/development/INVALIDATED.json"
+  },
+  "baseline": {
+    "reset_policy": "opposite_fill_only",
+    "consecutive_state": "same-side fill quantity units; add and reducing fills both increment; opposite-side fill clears the other side; expiry and campaign end do not add an extra reset",
+    "cooldown_formula": "85s * max(1, consecutive_same_side_fill_units)",
+    "process_restart_behavior": "state snapshot must restore consecutive units, remaining cooldown, and last fill side/time; restart episodes are excluded"
+  },
+  "candidate": {
+    "name": "variance_time_rearm",
+    "budget_formula": "B_side_episode = nu_ref_side * 85s * max(1, consecutive_same_side_fill_units)",
+    "budget_freeze_time": "exposure-increasing fill episode start",
+    "only_changed_mechanism": "elapsed-time measure for exposure-increasing add rearm",
+    "reducing_quotes_modified": false,
+    "order_size_modified": false,
+    "inventory_limit_modified": false,
+    "shock_refill_recovery_used_for_selection": false
+  },
+  "mechanics": {
+    "base_cooldown_s": 85.0,
+    "order_size_btc": 0.001,
+    "lot_size_btc": 0.001,
+    "minimum_wall_time_ms": 5000,
+    "maximum_wall_time_ms": 600000,
+    "opposite_fill_behavior": "terminate opposite-side episode and reset its consecutive units",
+    "new_same_side_add_fill_behavior": "restart episode with the newly accumulated same-side fill-unit budget",
+    "same_side_reducing_fill_behavior": "increment consecutive units without starting a reducing cooldown",
+    "campaign_end_behavior": "preserve_state_no_extra_reset",
+    "stale_variance_behavior": "freeze QV; never impute a default rate"
+  },
+  "variance_clock": {
+    "price_source": "normalized_l2_100ms_v2 BTCUSDC executable BBO mid",
+    "source_timestamp_semantics": "CryptoHFT transaction timestamp in the normalized historical source; not AWS Tokyo receive time",
+    "mid_formula": "0.5 * (best_bid + best_ask)",
+    "bucket_rule": "for [t,t+1s), use the last valid BBO with timestamp strictly less than t+1s",
+    "rolling_window_s": 60,
+    "difference_interval_s": 1,
+    "variance_unit": "(USDC/BTC)^2/s",
+    "rate_formula": "nu_t = 1e8 * sigma_sq_price_per_s / mid_t^2",
+    "rate_unit": "bps^2/s",
+    "feature_ready_rule": "completed bucket becomes visible at bucket_end + ready_delay_ms",
+    "reference_ready_delay_ms": 0,
+    "ready_delay_scenarios_ms": [0, 250, 1000],
+    "max_bbo_source_age_ms": 500,
+    "max_feature_age_ms": 2000,
+    "max_abs_return_bps_1s": 500.0,
+    "ml_volatility_allowed": false,
+    "quote_core_blended_volatility_allowed": false,
+    "future_backfill_allowed": false,
+    "receive_time_limit": "clock mechanics may qualify, but transaction-time historical data cannot satisfy current-live receive-time parity or authorize an action"
+  },
+  "panels": {
+    "source_split_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/native_strict_universe_20260724/evidence_split_dynamic_fill_hazard_m0_native_strict_frozen_v3.json",
+    "source_split_sha256": "8d9688f0d8a6b8883421a0853ffc9d533f6fd59222cda9f87f2fc83d0e410967",
+    "development_days": [
+      "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-22", "2026-04-23", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04",
+      "2026-05-05", "2026-05-06", "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31", "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06",
+      "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16",
+      "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"
+    ],
+    "reference_days": [
+      "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20", "2026-04-22", "2026-04-23", "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04",
+      "2026-05-05", "2026-05-06", "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31", "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06"
+    ],
+    "evaluation_days": [
+      "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15", "2026-06-16",
+      "2026-06-17", "2026-06-18", "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26"
+    ],
+    "embargo_days_not_read": ["2026-06-27", "2026-07-09"],
+    "validation_days_not_read": ["2026-06-28", "2026-06-29", "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06", "2026-07-07", "2026-07-08"],
+    "sealed_holdout_days_not_read": ["2026-07-10", "2026-07-11", "2026-07-12", "2026-07-14", "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18", "2026-07-19", "2026-07-20"]
+  },
+  "gates": {
+    "material_timing_delta_s": 5.0,
+    "minimum_episodes_per_side": 100,
+    "minimum_days_per_side": 10,
+    "minimum_n1_episodes_per_side": 50,
+    "minimum_n2_episodes_per_side": 10,
+    "minimum_start_variance_valid_rate": 0.95,
+    "minimum_aggregate_valid_time_rate": 0.95,
+    "maximum_wall_cap_rate": 0.50,
+    "minimum_earlier_material_rate": 0.05,
+    "minimum_later_material_rate": 0.05,
+    "minimum_candidate_effective_rate": 0.20,
+    "python_cpp_mismatch_allowed": 0,
+    "all_ready_delay_scenarios_must_pass": true
+  },
+  "blocker_parity_contract": {
+    "buy_q90_replayed": false,
+    "consecutive_loss_cooldown_replayed": false,
+    "sync_degrade_event_semantics_frozen": false,
+    "adverse_defense_stale_replayed": true,
+    "observational_diagnostic_path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_blocker_attribution_20260729.md",
+    "observational_diagnostic_sha256": "27715e70e0197545545c0ac62434164efa5cddd5f079b6987f5194feb57d959d",
+    "permission_rule": "clock mechanics cannot authorize an action until all three missing current-live blocker identities are explicit"
+  },
+  "outcome_access": {
+    "reward_or_pnl_allowed": false,
+    "markout_allowed": false,
+    "campaign_terminal_allowed": false,
+    "validation_allowed": false,
+    "sealed_holdout_allowed": false
+  },
+  "source_identity": {
+    "expected_fill_trace_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_feasibility_v1_20260729/source_replay/campaign_outcome_replay_volatility_time_add_rearm_feasibility_source_v1_btcusdc.fill_trace.csv",
+    "expected_fill_trace_sha256": "c64df393ffd2ab1624ba067563a22295702471e6dec17ee7ae54d1927803832b",
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2",
+    "normalized_l2_quality_path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+    "normalized_l2_quality_sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc",
+    "source_reuse_boundary": "reuse only the outcome-free lifecycle columns from the frozen v1 baseline fill trace; no accounting or reward columns are loaded"
+  },
+  "implementation_identity": {
+    "feasibility_runner_v2_sha256": "518b9f7d78f59e93e977d0e692d0abb94ba43f192103167e89cc075394ac9952",
+    "frozen_v1_helper_sha256": "b1197193a69b0b5bc043325ce73032aba2e56ee5e0a24f005b9ce15d68bb3a5c",
+    "fill_cooldown_contract_sha256": "7f0d954149b753a712c475bde8159e8d781ba921451c427bc164846983b93e4e",
+    "cpp_bindings_sha256": "36916a260003d2de7001e2048656fc60a481dc6a21f70712da7c24ef55e2a4e6",
+    "cpp_tick_replay_sha256": "d5cf5e2e732594bd30c3e6282b4a8b914884d69d3d857a7881831e112e1e37df",
+    "cpp_tick_replay_header_sha256": "9beea3f1ba28aa2135fb42fd3c9ff31d70817fa3a9189a9855abc4ce9ebbe0e8"
+  },
+  "permissions": {
+    "feasibility_evidence_only": true,
+    "randomized_action_experiment_authorized": false,
+    "validation_access_allowed": false,
+    "sealed_holdout_access_allowed": false,
+    "live_deployment_authorized": false
+  }
+}

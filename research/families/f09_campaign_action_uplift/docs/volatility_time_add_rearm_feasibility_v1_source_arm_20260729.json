@@ -1,0 +1,10 @@
+[
+  {
+    "name": "baseline",
+    "group": "mechanics_baseline_without_unreplayed_q90",
+    "overrides": {
+      "dynamic_fill_hazard_action_enabled": false
+    },
+    "note": "Development-only cooldown mechanics source. Current live BUY q90 cancel/re-enter is frozen as a separate unsupported replay treatment and disabled here because formal replay lacks its cancel-ACK, ACK-before-fill, queue-reset, and recovery re-entry state machine. This arm has no action or live authority."
+  }
+]

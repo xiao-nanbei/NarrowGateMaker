@@ -1,0 +1,144 @@
+{
+  "schema_version": "volatility_time_add_rearm_negative_result_attribution.v1",
+  "family_id": "volatility_time_add_rearm_negative_result_attribution_v1",
+  "mode": "diagnostic_only_post_result",
+  "pre_registered": false,
+  "development_days": [
+    "2026-04-17",
+    "2026-04-18",
+    "2026-04-19",
+    "2026-04-20",
+    "2026-04-22",
+    "2026-04-23",
+    "2026-05-01",
+    "2026-05-02",
+    "2026-05-03",
+    "2026-05-04",
+    "2026-05-05",
+    "2026-05-06",
+    "2026-05-13",
+    "2026-05-29",
+    "2026-05-30",
+    "2026-05-31",
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-17",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-23",
+    "2026-06-24",
+    "2026-06-25",
+    "2026-06-26"
+  ],
+  "input_identity": {
+    "randomized_spec": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_spec_20260729.json",
+      "sha256": "4f071f46209bebab0fc8e6d93d9ca7356ba8241db7ff0ec2b6c328f2b3133b80"
+    },
+    "randomized_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/report.json",
+      "sha256": "6f940b2d5994d0e647d5c6fda0550ab509fbb894372283417ad7447349f60df7"
+    },
+    "randomized_lineage_panel": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/randomized_lineage_panel.parquet",
+      "sha256": "29658261f0881d8f56d58cc28f7f4c5d8c4a0b9acb978cf7b77e5b9d99a08b18"
+    },
+    "randomized_market_source_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_randomized_replay_v1_20260729/development/market_source_manifest.json",
+      "sha256": "4c984dd6757c4c00c7359df0cb98662c2e45f7d6688b8ade428a38f1d7266003"
+    },
+    "randomized_postrun_audit": {
+      "path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_randomized_replay_v1_postrun_audit_20260729.json",
+      "sha256": "a4863c532bff5911445a0392f43a037b1a3a8f0ccd6ec588b343a59ec7b71b03"
+    },
+    "normalized_l2_root": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2",
+    "normalized_l2_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/manifest.json",
+      "sha256": "f47e044b0607d135de713f8cbf13dad82decc051786dd4a896f21e014129b517"
+    },
+    "normalized_l2_quality": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2/daily_quality.csv",
+      "sha256": "b4fa3d5b4f78d81f48bd6fb67badf53e41ffc2530f2cc1b16fb8925a23569bcc"
+    },
+    "full_path_mechanical_panel": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/volatility_time_add_rearm_full_path_preflight_v1_20260729/development/mechanical_episode_support.parquet",
+      "sha256": "43278ba33bc07f2ace5f9326983605ef8e17185da59386102726b43fcc182977"
+    },
+    "evaluator": {
+      "path": "research/families/f09_campaign_action_uplift/audit/volatility_time_add_rearm_negative_result_attribution.py",
+      "sha256": "8b7a1675160e942c15e4be797119680d1b7a3cc647b57f7bbea49b63ba48a2c1"
+    }
+  },
+  "value_bridge": {
+    "identity": "terminal_campaign_pnl = pre_assignment_campaign_pnl + reward + post_lineage_continuation_value",
+    "pre_assignment_campaign_pnl": "decision_mtm - campaign_start_pnl",
+    "post_lineage_continuation_value": "terminal_campaign_pnl - pre_assignment_campaign_pnl - reward",
+    "decision_to_campaign_terminal_value": "terminal_campaign_pnl - pre_assignment_campaign_pnl",
+    "reward_components": "reward = fill_value - campaign_cost - queue_cost",
+    "units": "USDC_per_randomized_lineage"
+  },
+  "variance_clock": {
+    "rolling_window_s": 60,
+    "max_bbo_source_age_ms": 2000,
+    "max_abs_return_bps_1s": 100.0,
+    "feature_ready_delay_ms": 0,
+    "max_feature_age_ms": 2000,
+    "reference_rate_bps2_per_s": {
+      "BUY": 0.36641541732494454,
+      "SELL": 0.602085631184333
+    }
+  },
+  "diagnostic_strata": {
+    "order_size_btc": 0.001,
+    "inventory_units_at_assignment": ["1", "2", "3", "4+"],
+    "variance_ratio_cutpoints": [0.5, 1.0, 2.0],
+    "variance_labels": ["<0.5x", "0.5-1x", "1-2x", ">=2x"],
+    "pointwise_intervals_only": true,
+    "multiple_comparison_selection_allowed": false,
+    "inventory_layer_is_not_consecutive_fill_units": true
+  },
+  "bootstrap": {
+    "cluster": "UTC_day",
+    "draws": 5000,
+    "seed": 2026072907
+  },
+  "storage_gate": {
+    "minimum_free_gib": 61.25,
+    "estimated_output_gib": 0.05
+  },
+  "unsupported_attribution": {
+    "earlier_later_rearm": "not persisted on the randomized full path",
+    "consecutive_same_side_fill_units": "not persisted on the randomized lineage panel",
+    "baseline_path_join": "diagnostic coverage only; path-divergent rows must not be labeled from baseline mechanics"
+  },
+  "forbidden_uses": [
+    "retune_variance_budget",
+    "change_reward_or_scorecard",
+    "select_state_thresholds_for_the_closed_action",
+    "read_validation_or_sealed_holdout",
+    "register_action_from_pointwise_strata",
+    "authorize_shadow_or_live"
+  ],
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "ranking_or_selection_authorized": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false
+  }
+}
