@@ -1,0 +1,159 @@
+{
+  "schema_version": "narrowgate_placement_fill_full_curve_spec.v1",
+  "family_id": "placement_fill_full_curve_cif_v1",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "research_status": "frozen_before_full_curve_development_fit",
+  "revision_reason": "replace judgmental 1s/5s/10s binary targets with one event/censor lifecycle and a complete fill-before-cancel-ACK curve",
+  "evidence_scope": "v4 Validation was read before this family was designed, so the prior Development and Validation panels are trainable Development for this new estimand; prior sealed holdout remains family-specific future evidence",
+  "lineage": {
+    "v4_validation_report": "docs/placement_fill_cif_v4_validation_20260727.md",
+    "v4_validation_report_sha256": "1b5b58da352d83356b8811ff32c0d349ef32fea67c9ad24d17c813f28c047d56",
+    "v4_result": "13/18 transfer cells passed; the fixed-horizon gate family was closed",
+    "implementation": "models/audit/full_curve_fill_cif.py",
+    "implementation_sha256": "d0647ca234a1020cb35427154122bff040dcd754aec2b44c7ef6f4bd23d92481"
+  },
+  "source_identity": {
+    "placement_panel_roots": [
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v1_development_20260726",
+        "manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v1_development_20260726/manifest.json",
+        "manifest_sha256": "a42d77d2e7a9cf320d646baa9f3e8e870c75457263d55762da4ed55aefd5f9a9"
+      },
+      {
+        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v4_validation_20260727",
+        "manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v4_validation_20260727/manifest.json",
+        "manifest_sha256": "9b360c6387ea6de1df02973756b415c0b29a1dea2c2686d4e42f0dd34bb222a2"
+      }
+    ],
+    "feature_timing": "feature_ready_ts_ns <= submit_ts_ns",
+    "execution_book": "BTCUSDC native snapshot/delta normalized at 100ms",
+    "external_reference_enabled": false
+  },
+  "panels": {
+    "development": {
+      "trainable": true,
+      "sealed": false,
+      "days": [
+        "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20",
+        "2026-04-22", "2026-04-23", "2026-05-01", "2026-05-02",
+        "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06",
+        "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31",
+        "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06",
+        "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10",
+        "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14",
+        "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18",
+        "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22",
+        "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",
+        "2026-06-28", "2026-06-29", "2026-07-01", "2026-07-02",
+        "2026-07-03", "2026-07-04", "2026-07-05", "2026-07-06",
+        "2026-07-07", "2026-07-08"
+      ]
+    },
+    "embargo_1": {
+      "trainable": false,
+      "sealed": false,
+      "days": ["2026-07-09"]
+    },
+    "validation": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-07-10", "2026-07-11", "2026-07-12", "2026-07-14",
+        "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-18"
+      ]
+    },
+    "embargo_2": {
+      "trainable": false,
+      "sealed": false,
+      "days": ["2026-07-19"]
+    },
+    "sealed_holdout": {
+      "trainable": false,
+      "sealed": true,
+      "days": ["2026-07-20", "2026-07-22", "2026-07-23", "2026-07-25"]
+    }
+  },
+  "placement_estimand": {
+    "risk_origin": "decision_before_submit",
+    "actions": ["closer_1tick", "current", "farther_1tick"],
+    "activation_factor": "P(activation | do(action), x0)",
+    "active_fill_curve": "P(T_fill <= t, T_fill < T_cancel_ACK | activated, do(action), x0)",
+    "decision_curve": "activation probability times active-fill CIF shifted by the Development p50 activation latency; p95 is retained as a latency stress query",
+    "cancel_ack": "competing action-specific stopping boundary",
+    "administrative_end": "right censoring",
+    "fixed_horizon_training_labels": false,
+    "shadow_fill_feedback": false
+  },
+  "development_fit": {
+    "mode": "expanding_chronological",
+    "past_only": true,
+    "minimum_train_days": 25,
+    "embargo_days": 1,
+    "outer_test_days": 5,
+    "hazard_calibration_days": 5,
+    "risk_interval_ms": 100,
+    "risk_interval_basis": "native normalized L2 state resolution",
+    "maximum_negative_intervals_per_action": 4,
+    "risk_sampling": "deterministic midpoint quadrature with exact inverse sampling weight and every event interval retained",
+    "prediction_chunk_size": 5000,
+    "model": {
+      "kind": "LightGBM binary discrete hazard",
+      "learning_rate": 0.05,
+      "n_estimators": 120,
+      "num_leaves": 7,
+      "max_depth": 3,
+      "min_child_samples": 1000,
+      "reg_lambda": 10.0,
+      "max_bin": 127,
+      "random_state": 20260727,
+      "n_jobs": 6,
+      "monotone_features": {
+        "distance_ticks": -1,
+        "distance_vol_units_elapsed": -1
+      }
+    }
+  },
+  "reporting": {
+    "development_exposure_quantiles": [0.25, 0.5, 0.75],
+    "frozen_empirical_horizons_ms": {
+      "p25": 5010,
+      "p50": 5816,
+      "p75": 7900
+    },
+    "maximum_support_quantile": 0.99,
+    "frozen_maximum_support_ms": 34500,
+    "legacy_diagnostic_horizons_ms": [1000, 5000, 10000],
+    "legacy_horizons_are_report_only": true,
+    "cell_level_pass_fail": false,
+    "curve_level_gate": "not frozen in v1; Development is diagnostic and cannot unlock Validation",
+    "probability_metrics": [
+      "integrated Brier improvement",
+      "calibration-in-the-large",
+      "observed/predicted curve",
+      "average precision",
+      "time monotonicity",
+      "distance monotonicity"
+    ]
+  },
+  "active_order_estimand": {
+    "family_id": "active_order_continuation_surface_v1",
+    "status": "separate_and_not_built_by_this_pipeline",
+    "risk_origin": "currently active order snapshot",
+    "keep_horizon": "remaining TTL plus cancel-ACK exposure if the policy later cancels",
+    "replace_horizon": "new activation latency plus reset queue plus replacement cancel-ACK exposure",
+    "keep_preserves_queue": true,
+    "replace_resets_queue": true
+  },
+  "campaign_estimand": {
+    "status": "separate_and_not_built_by_this_pipeline",
+    "risk_origin": "inventory campaign transition",
+    "endpoint": "repair, terminal MTM, or administrative censor",
+    "time_scale": "empirical minute-scale campaign lifecycle, never placement-report seconds"
+  },
+  "permissions": {
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}
