@@ -1,0 +1,453 @@
+{
+  "arms": [
+    "current_v2",
+    "conditional_v4_1_oof"
+  ],
+  "canonical_spec_identity_sha256": "6979e49f9fe3d75b012d384bef9a19f0dcc3c2dd3e8cf13795134e1a9f8f6226",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "day_inputs": {
+    "2026-05-15": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-05-15-f909794950cf202407f7a139a8f8d104946e465a937efd51b72dffd623843770.npz",
+        "sha256": "14a44f63024f48da3efdee0dc16a440c379ae2392e258de37c4a014285a2088a"
+      },
+      "fold_id": "fold_01_validation_early"
+    },
+    "2026-06-03": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-03-fe2155b1afe3e282eb572bb4c5a0801f831e5e6d0398711ad052e034f44bdb32.npz",
+        "sha256": "b7d67b815b14bdb49deac4351bba09f76b9640334676a91a1503a23fa50de407"
+      },
+      "fold_id": "fold_01_validation_early"
+    },
+    "2026-06-06": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-06-e4ef4dc080274af8adaf51f63b8cb3ed3a9b2f8842e26c2255071ead73bf793a.npz",
+        "sha256": "418a0aa59b9dd6ef16b2c73a495326a175c55b13ca39af1937a3cda1ba7a1f32"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-07": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-07-5a4b7dfa29807954554f17acc602f1a2f899ca030a7c5b4af106bde55c24e67c.npz",
+        "sha256": "3155d45594fe41d3e276bece25ed2e6d4a6b52ad499c3009b74514ecfadb034f"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-08": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-08-caa5640cff5e9dacbe6b0f74b503d0351053eab77a18cba0636cd64da3eaa21f.npz",
+        "sha256": "4f41835eb17cf52612cc35f6ee66b59eed5057c61844f37e19e231226fcb83a9"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-09": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-09-2a3ef0e7ec44ca4b37eeaf0f3b9a81a2376b41922cf1c431a705789a085ac5e1.npz",
+        "sha256": "d3964aaa0d02dc0191df6ad94d78f4cfdc404c811f0eeab5bcb702b0076e9830"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-13": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-13-5498e32210ede64d2b4540411aef24487624b4e4584bcc9e6c5d8e9aa7bbd555.npz",
+        "sha256": "b98c89edb5d39d71c08f72882b5756d4686123e4507bbf59d1a1297045d1975d"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-15": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-15-c535b234417dac9d74e69c0e380ded610090bac6cad01199f968ea853203c4b3.npz",
+        "sha256": "ba383dc1e3ddc6e3fe883cb776a39cad7a44c07fde8f6a33ea66837b907c9465"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-16": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-16-759b71ca38f150d8d904d275b0a92f9af5c4104ba285d75b5e83fbcbf152fde2.npz",
+        "sha256": "d0565b26be3e94afeacbe172c8a164206700e83b6a9eb5708c5a283ffcbb6125"
+      },
+      "fold_id": "fold_02_validation_late"
+    },
+    "2026-06-19": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-19-d6d1de4e7efca65e1e6917307c82208e25bea0e9b0b8a5545b22fcce22132ad6.npz",
+        "sha256": "de4c93b1d519bea46d068fb314897907a18e53756bb271e68948e0eed8b416ed"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-20": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-20-d11bcbd9fb12a9cc7c9cc5407ca434573dffd8479e38b4e7f566543842cbe47f.npz",
+        "sha256": "456cbd9851900576582f954002830e8952814d8a909c5c25acb5ca48a712e92e"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-21": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-21-d41e5a57f40c925285648ac8b6e04473b7611301d943a4d3ccf40dae83d611ca.npz",
+        "sha256": "6b89ed4fdedd6881d2f4c0c27c0aae8667d203e9ff7e4b1165b1fe30bba73ec5"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-22": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-22-fef029acecf5881a7031c17df634b588b111999e1e6f4f92227912f7b4daf460.npz",
+        "sha256": "3811b3ab706bc4243d1c73990f86a2422033fb7725db753bfb6fe2730b4b8ac6"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-23": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-23-5efd8d2e19f3b474485a5178396da228f9e73539411fd877260a982929008db3.npz",
+        "sha256": "ad86fc3c744c7c770ae1aaa1374d1a82253b575d91b682348cd8d7172da6ed62"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-26": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-26-73329cc0de97890406394cdd8ea6b43dd4f51163920ff59ed055be7aa432fb5c.npz",
+        "sha256": "a8c51b27e2f1fffd531b5165753b74e8b9979445d0924647a2b72ea0acf5feaa"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-06-29": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-06-29-29fe7960e7c960abb7866d9d8703739391db6beff9d67e2d105a1d5d337e9eb6.npz",
+        "sha256": "f4beed16ea7297c85e438a50c2bcfd12587d78d2e0563070064a2a7f86fa3917"
+      },
+      "fold_id": "fold_03_test_early"
+    },
+    "2026-07-03": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-03-b8b5b2f47cf175f038b2112e318e4d377da6c23ea0ee221e50cdd94c703f3bbf.npz",
+        "sha256": "a85f2bec18352d32bc9c2e4f63fa48fa99348957c46484ed61cdafd8e2e767ca"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-04": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-04-d7d5f3e39dd6aa93aa7f008c41702eaba466c6020bd0ade6f685b85016f8b446.npz",
+        "sha256": "b0b68baed6e13bd057b136d64db1cc868fb353c10bb3077c3a21d11b342a43cc"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-05": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-05-94fbf3622daf5745254cc1042f1d49161ffc6b7cd4482284b539d9941349dd4c.npz",
+        "sha256": "23e51ecb14f5f5d4c4ac88ca41dc49e79a8268685737e490c824ca944e4d7b7e"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-06": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-06-d02771294d945f8b2e5e3cbee4c608ccf729314bd4c463b73b57f73d8a2845f8.npz",
+        "sha256": "a5ab1943ed9073b77925825b81fc227eff3c09287a7f41fedd8465d350e90b15"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-07": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-07-7d488db97664e8a68bdd5262cecd948e3a34ae1811acf34f781e6ff0671724dd.npz",
+        "sha256": "79d8cc8dca9592847352d3d34c1f339bc06f93fec673be817ab5c35cb549b85a"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-08": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-08-865bc653c722fab48fbbdfc96ccaaf7facf3c6a940ec86401cc0f86caa46ded5.npz",
+        "sha256": "feb24388c7ac67e3e1bb65c3beabcb3228fa0468983d62e99dc198c0c462455e"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-09": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-09-7a68c0ee7bdbb8be26aabffb271b9429d0673213f02fd58750e9500185bf8366.npz",
+        "sha256": "6d8504d04d8f51432b99ef10721e3af5bcbcae26cf3617fe6ccdef00162e6839"
+      },
+      "fold_id": "fold_04_test_late"
+    },
+    "2026-07-10": {
+      "context": {
+        "path": "${NARROWGATE_CACHE_ROOT}/p3_touch_window_context_v1/BTCUSDC-native-2026-07-10-49a62b3ff65514705a5990c1c975f659ad812b726e40340d82418a339b248f83.npz",
+        "sha256": "9f93c65a4ff40642a312f1e91f875023ff3890b95cc900faea5c4853bfefce67"
+      },
+      "fold_id": "fold_04_test_late"
+    }
+  },
+  "estimand": {
+    "day_boundary": "fresh_start_historical_native_day",
+    "economic_unit": "USDC_per_native_replay_day",
+    "historical_evidence_only": true,
+    "primary_outcome": "candidate_minus_current_v2_terminal_mtm_pnl_usdc",
+    "question": "does the frozen OOF conditional touch curve improve the full maker quote path when mapped into the existing P3 quote ABI",
+    "secondary_outcomes": [
+      "fills",
+      "maker_markout",
+      "absolute_inventory_time",
+      "daily_pnl_q10",
+      "executable_quote_coordinate_change"
+    ]
+  },
+  "evaluation": {
+    "bootstrap_draws": 20000,
+    "bootstrap_seed": 20260803,
+    "confidence_interval_and_positive_day_rate": "evidence_strength_not_authority",
+    "daily_q10_relative_noninferiority_margin": 0.1,
+    "fill_retention_maximum": 1.2,
+    "fill_retention_minimum": 0.8,
+    "hard_gate_rule": "all_hard_gates_required_for_historical_directional_support",
+    "maximum_abs_inventory_time_ratio": 1.2,
+    "minimum_daily_context_coverage": 0.95,
+    "minimum_daily_mapping_valid_fraction": 0.95,
+    "minimum_matched_quote_change_rate": 0.000001,
+    "minimum_positive_day_rate": 0.55,
+    "preferred_efficiency_metric": "relative_pnl_improvement_divided_by_absolute_relative_fill_change"
+  },
+  "fold_artifacts": {
+    "fold_01_validation_early": {
+      "calibration": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_01_validation_early/positive_platt.json",
+        "sha256": "4c0ad66873c65974f30d745361c202fade9a804182c4cf7cd6b534a15c39e270"
+      },
+      "model": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_01_validation_early/model.txt",
+        "sha256": "75f5a3498f089cee1103b2eb7e2cf8ed91d1f24d55efdad991919d4c9b211d50"
+      }
+    },
+    "fold_02_validation_late": {
+      "calibration": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_02_validation_late/positive_platt.json",
+        "sha256": "c0c39048beb1abad2f17ec043fa449857e39870f2ca405e9bf2b43bdda49b110"
+      },
+      "model": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_02_validation_late/model.txt",
+        "sha256": "74c5ee4811759363f0c50fa549ce73375355d0245c936c5ee89312d0365bedc8"
+      }
+    },
+    "fold_03_test_early": {
+      "calibration": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_03_test_early/positive_platt.json",
+        "sha256": "c9efff1a45d9b2f53023886baf869ed64760048531a61fbdde0708f6725f1a63"
+      },
+      "model": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_03_test_early/model.txt",
+        "sha256": "00599c84ac9db8a6fd532f28e3e50f315ba99216eda2998c017da7fc9795fe13"
+      }
+    },
+    "fold_04_test_late": {
+      "calibration": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_04_test_late/positive_platt.json",
+        "sha256": "414cbd43259c08692ca28584b8242afd91082d6a38e1aa3a832dd033d862306c"
+      },
+      "model": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/models/fold_04_test_late/model.txt",
+        "sha256": "a98e84ebafb21d0c6bb09837a26d8b53c23611b960b9181f4cdf2aee7b0a9171"
+      }
+    }
+  },
+  "fold_ids": [
+    "fold_01_validation_early",
+    "fold_02_validation_late",
+    "fold_03_test_early",
+    "fold_04_test_late"
+  ],
+  "identities": {
+    "backtest_config": {
+      "path": "models/backtest_config.py",
+      "sha256": "7cb4e197bf612a85fdfdd05df88d00ee268f8b147e956b7e5d75ff26855ea61d"
+    },
+    "backtest_tick": {
+      "path": "models/backtest_tick.py",
+      "sha256": "463f9f70313a3765f028ff8595ac5661b1261765bcbf53957d06010afdbe10e1"
+    },
+    "book_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/normalized_l2_research_union_v1/manifest.json",
+      "sha256": "fe851cf4c8aeafd7bcc5312e41fbcaef4f81a9fc1faaa12cc309315ff62623f5"
+    },
+    "cpp_bindings": {
+      "path": "cpp/narrowgate_cpp/bindings.cpp",
+      "sha256": "53c8c009e6d770fdcbfd6b3135f54552a751250c3c7648b434857610399ae417"
+    },
+    "cpp_native_module": {
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "sha256": "5498880a645656a8bb6732f3c02a0b6b17a938a832102a389012815fd4bea03e"
+    },
+    "cpp_tick_replay_header": {
+      "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+      "sha256": "43b7711da67b4ca57f8022caf5fea2394b0b68c4264e468871579f604a7739e9"
+    },
+    "cpp_tick_replay_source": {
+      "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+      "sha256": "f729241ee3b1d42949152b214821a327e2a6c72f26cf4505afa7b17f6dea52b8"
+    },
+    "current_v2_p3": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714"
+    },
+    "data_windows": {
+      "path": "models/data_windows.py",
+      "sha256": "91a690baf9636a5f9f6665d5f4a5385b114d4efebb00f82eb2a32455bf6b7223"
+    },
+    "feature_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802/causal_feature_manifest.json",
+      "sha256": "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+    },
+    "mapping_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_conditional_quote_mapping.py",
+      "sha256": "ed2fd184e7ba6e3148b82bcd4c1d9d416f37ce7dbfe8841b244c26de3e480cf3"
+    },
+    "model_bundle": {
+      "path": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802/bundle_meta.json",
+      "sha256": "4bbd2746e360f99c7d58afbfd6b3cfd79b1fbc1f8d1f00fac0768616a50318e3"
+    },
+    "native_panel_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_native_full_path_ml_ab_spec_20260802.json",
+      "sha256": "2839d2506364a6c63e48924736b9281f67610e57ac6ce350896ad9e893832a41"
+    },
+    "operational_baseline_pointer": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "eecf1b2f2127d427029aa963e9885047ffb50fa0220108cd4bcdb77c0db8e8c2"
+    },
+    "operational_baseline_v7": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v7.json",
+      "sha256": "c4fe893b62ba7d972f293ec2afa789af0e9229c3cdb01bedc79200cd26d88672"
+    },
+    "operational_config": {
+      "path": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36"
+    },
+    "quote_path_implementation": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_conditional_quote_path.py",
+      "sha256": "971ffdd6c406abab8cccb4f8f1f44bafbb6fc9a4969b6994eac266a34ea2be03"
+    },
+    "quote_trace_comparison": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_quote_path_comparison.py",
+      "sha256": "12d34ace0dec4336f287c310f17025ce6e2eb5e6e60d4973c69e11b4f2166d62"
+    },
+    "v4_1_coverage_override_result": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_1_20260803/result.json",
+      "sha256": "3e87103fedd33db5860424ba2fe4eab2d580cbd207631af6d57a9a92db1decae"
+    },
+    "v4_1_coverage_override_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_1_spec_20260803.json",
+      "sha256": "d681fcf83f2a8d2689e8245d3132b76b7d91f3d1a8486e00e19c671c2c38d47a"
+    },
+    "v4_prediction_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_20260803/report.json",
+      "sha256": "bf3fb78215708649b2c42784b64e34783b6440276a16881ded3c7ec57f49423b"
+    },
+    "v4_prediction_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_spec_20260803.json",
+      "sha256": "9b0badd0c1a0e102530a128082d8bd73531c789b143c6a881b67208f9f5ec9e1"
+    }
+  },
+  "identity": "p3_touch_conditional_curve_quote_mapping_v1",
+  "mapping": {
+    "boundary_optimum": "invalid_fallback_current_v2",
+    "delta_star": "smallest_grid_argmax_distance_times_pair_touch_probability",
+    "distance_grid": {
+      "maximum": 120,
+      "minimum": 0.5,
+      "step": 0.5,
+      "unit": "USDC_per_BTC"
+    },
+    "feature_contract": {
+      "calm_upper": 0.75,
+      "horizon_s": 10,
+      "shock_lower": 1.5
+    },
+    "hold_rule": "sample_and_hold_until_next_10s_bucket",
+    "invalid_or_missing_context": "fallback_current_v2_for_that_10s_bucket",
+    "kappa_eff": "adjacent_grid_central_log_probability_slope",
+    "parameter_search": false,
+    "side_aggregation": "equal_opportunity_arithmetic_mean",
+    "side_weights": {
+      "BUY": 0.5,
+      "SELL": 0.5
+    }
+  },
+  "only_changed_component": "p3_curve_to_quote_mapping",
+  "panels": [
+    {
+      "days": [
+        "2026-05-15",
+        "2026-06-03",
+        "2026-06-06",
+        "2026-06-07",
+        "2026-06-08",
+        "2026-06-09",
+        "2026-06-13",
+        "2026-06-15",
+        "2026-06-16"
+      ],
+      "independent_confirmation": false,
+      "role": "historical_native_validation_oof"
+    },
+    {
+      "days": [
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-26",
+        "2026-06-29",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
+        "2026-07-07",
+        "2026-07-08",
+        "2026-07-09",
+        "2026-07-10"
+      ],
+      "independent_confirmation": false,
+      "role": "historical_native_late_diagnostic_oof"
+    }
+  ],
+  "paths": {
+    "book_root": "${NARROWGATE_DATA_ROOT}/normalized_l2_research_union_v1",
+    "feature_dir": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802",
+    "model_dir": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802",
+    "overlay_cache_dir": "${NARROWGATE_CACHE_ROOT}/p3_conditional_quote_overlay_v1",
+    "window_cache_dir": "${NARROWGATE_CACHE_ROOT}/window_cache"
+  },
+  "permissions": {
+    "action_authority": false,
+    "historical_oof_economic_evidence": true,
+    "historical_panels_previously_read": true,
+    "independent_confirmation": false,
+    "live_authority": false,
+    "operational_p3_replacement_authorized": false,
+    "overwrite_current_v2_artifact": false,
+    "prediction_authority": false,
+    "quote_mapping_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read_as_new_identity": false
+  },
+  "predecessor_prediction_identity": "p3_touch_volatility_conditioned_v4_1",
+  "replay": {
+    "buy_fill_selection_action_enabled_both_arms": false,
+    "dynamic_p3_ready_rule": "latest_overlay_timestamp_lte_replay_event_timestamp",
+    "engine": "cpp",
+    "execution_trade_source": "individual_trades",
+    "markout_side_asymmetry_sign": 1,
+    "ml_enabled_both_arms": true,
+    "observational_shadows_omitted_as_action_inert": true,
+    "q90_action_enabled_both_arms": false,
+    "queue_ahead_mode": "exact_level",
+    "sync_adjust_replay_mode": "disabled",
+    "tick_size": 0.1,
+    "trace_limit_must_not_bind": true,
+    "trace_quotes_max_per_arm_day": 100000,
+    "window_cache_write_enabled": false
+  },
+  "schema_version": "narrowgate_conditional_p3_quote_path.v1.spec",
+  "storage": {
+    "authoritative_outputs": "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}",
+    "conditional_overlay_cache": "internal_small_reusable_npz",
+    "raw_or_window_data_duplication": false,
+    "window_cache": "internal_read_only"
+  }
+}
