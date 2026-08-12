@@ -1,0 +1,77 @@
+{
+  "schema_version": "narrowgate_placement_fill_empirical_pending_fit_spec.v1",
+  "family_id": "placement_fill_empirical_pending_nuisance_v3",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "frozen_before_schema-complete_development_rerun",
+  "supersedes": {
+    "path": "docs/placement_fill_empirical_pending_nuisance_v3_fit_spec_v2_20260728.json",
+    "sha256": "fa63716fc2405459d574c0d0d53616fe6f75ff0984d599d373e23eef3004c6fa",
+    "report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_empirical_pending_nuisance_v3_development_20260728_v2/report.json",
+      "sha256": "db964fe3c07736a58b28ce63c2d21641e1356a58d6b7daa6f2bb7a4e6e7b16c5"
+    },
+    "reason": "add fold identity and evaluate common-support monotonicity at every frozen pre-request and pending report cut without changing any gate"
+  },
+  "source_identity": {
+    "family_spec": {
+      "path": "docs/placement_fill_empirical_pending_nuisance_v3_spec_20260728.json",
+      "sha256": "45979003b605a08a94eeaffc6023e76e315deb22f5b88737cd41d80cd763c12a"
+    },
+    "v2_report": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/oof_v2/report.json",
+      "sha256": "1f9ea35aafd0429c60a2262ba01afb84447e1c2646b01cf49e8e265a1ec762af"
+    },
+    "v2_evaluator": {
+      "path": "models/audit/evaluate_request_state_race.py",
+      "sha256": "1fd6579722820400424fe65f1b0601c3ba339640b09df89ef9e5c7336ec65f67"
+    },
+    "request_state_manifest": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/manifest.json",
+      "sha256": "d52ad98d425246cd869e6d3abdeb0711ce95cc3cf4518faa55b8f4fadf510d30"
+    },
+    "request_state_index": {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/request_state/development_index.csv",
+      "sha256": "2a19988a2d78cf1ae597378f0c463357be90d21f61c142a9874d19b4bcf71ee1"
+    }
+  },
+  "panels": {
+    "development_days": [
+      "2026-04-13", "2026-04-17", "2026-04-18", "2026-04-19",
+      "2026-04-20", "2026-04-22", "2026-04-23", "2026-04-30",
+      "2026-05-01", "2026-05-02", "2026-05-03", "2026-05-04",
+      "2026-05-05", "2026-05-06", "2026-05-07", "2026-05-08",
+      "2026-05-09", "2026-05-10", "2026-05-11", "2026-05-12",
+      "2026-05-13", "2026-05-14", "2026-05-15", "2026-05-16",
+      "2026-05-29", "2026-05-30", "2026-05-31", "2026-06-02",
+      "2026-06-03", "2026-06-05", "2026-06-06", "2026-06-07",
+      "2026-06-08", "2026-06-09", "2026-06-10", "2026-06-11",
+      "2026-06-12", "2026-06-13", "2026-06-14", "2026-06-15",
+      "2026-06-16", "2026-06-17", "2026-06-18", "2026-06-19",
+      "2026-06-20", "2026-06-21", "2026-06-22", "2026-06-23",
+      "2026-06-24", "2026-06-25"
+    ],
+    "fold_identity": "exactly reuse v2 report folds; no fold recomputation",
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "implementation": {
+    "evaluator": "models/audit/evaluate_empirical_pending_nuisance.py",
+    "evaluator_sha256": "1007efc0a6c26d159cac94ed57671b0d5432824fc49a8d670d6ccca27f60d20c",
+    "tests": "tests/test_empirical_pending_nuisance.py",
+    "tests_sha256": "b9d2788bd8168e61ffbf00c8682253f8430d9c5a1a6df405ccdb1ec7f76a9b73"
+  },
+  "output": {
+    "development_directory": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_empirical_pending_nuisance_v3_development_20260728_v3",
+    "must_not_exist_before_run": true,
+    "artifact": "pending_nuisance_artifact.json",
+    "report": "report.json"
+  },
+  "permissions": {
+    "development_access": true,
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}

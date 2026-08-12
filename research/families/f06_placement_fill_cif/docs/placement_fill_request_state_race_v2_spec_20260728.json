@@ -1,0 +1,273 @@
+{
+  "extends": "placement_fill_cif_v1_spec_20260726.json",
+  "extends_sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
+  "schema_version": "narrowgate_placement_fill_request_state_race_spec.v2",
+  "family_id": "placement_fill_request_state_race_v2",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "last_materially_modified": "2026-07-28",
+  "research_status": "frozen_before_corrected_development_outcomes_after_ml_context_abi_repair",
+  "revision_reason": "v1 calibrated marginal request-to-ACK latency but did not re-sample causal state at request or represent conditional dependence between pending fill and ACK survival; the first v2 Development build was invalidated before model outcomes because replay silently enabled the 13-head path while live ml.enabled=false and did not separate causal feature context from model inference",
+  "panels": {
+    "development": {
+      "trainable": true,
+      "sealed": false,
+      "days": [
+        "2026-04-13",
+        "2026-04-17",
+        "2026-04-18",
+        "2026-04-19",
+        "2026-04-20",
+        "2026-04-22",
+        "2026-04-23",
+        "2026-04-30",
+        "2026-05-01",
+        "2026-05-02",
+        "2026-05-03",
+        "2026-05-04",
+        "2026-05-05",
+        "2026-05-06",
+        "2026-05-07",
+        "2026-05-08",
+        "2026-05-09",
+        "2026-05-10",
+        "2026-05-11",
+        "2026-05-12",
+        "2026-05-13",
+        "2026-05-14",
+        "2026-05-15",
+        "2026-05-16",
+        "2026-05-29",
+        "2026-05-30",
+        "2026-05-31",
+        "2026-06-02",
+        "2026-06-03",
+        "2026-06-05",
+        "2026-06-06",
+        "2026-06-07",
+        "2026-06-08",
+        "2026-06-09",
+        "2026-06-10",
+        "2026-06-11",
+        "2026-06-12",
+        "2026-06-13",
+        "2026-06-14",
+        "2026-06-15",
+        "2026-06-16",
+        "2026-06-17",
+        "2026-06-18",
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-24",
+        "2026-06-25"
+      ]
+    },
+    "embargo_1": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-06-26"
+      ]
+    },
+    "validation": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-06-27",
+        "2026-06-28",
+        "2026-06-29",
+        "2026-07-01",
+        "2026-07-02",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
+        "2026-07-07"
+      ]
+    },
+    "embargo_2": {
+      "trainable": false,
+      "sealed": false,
+      "days": [
+        "2026-07-08"
+      ]
+    },
+    "sealed_holdout": {
+      "trainable": false,
+      "sealed": true,
+      "days": [
+        "2026-07-09",
+        "2026-07-10",
+        "2026-07-11",
+        "2026-07-12",
+        "2026-07-15",
+        "2026-07-16",
+        "2026-07-17",
+        "2026-07-18",
+        "2026-07-19",
+        "2026-07-20",
+        "2026-07-21",
+        "2026-07-22",
+        "2026-07-23",
+        "2026-07-25"
+      ]
+    }
+  },
+  "source_identity": {
+    "strict_day_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/minimal_good_day_reaudit_20260727/normalized_strict_days_sequence84.csv",
+    "strict_day_manifest_sha256": "5450fa6cb9ff402b15af88fce2aa5c5da3e7546f75b1f4864c7dfcbde6cc7c01",
+    "normalized_l2_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_minimal141_20260727/manifest.json",
+    "normalized_l2_manifest_sha256": "61b219e212f43fa8de942637354603f906a25d9b6f5a22a8950989e4d09e5064",
+    "normalized_l2_daily_quality": "${NARROWGATE_RETIRED_DATA_ROOT}/normalized_l2_100ms_v2_minimal141_20260727/daily_quality.csv",
+    "normalized_l2_daily_quality_sha256": "5da3d182457e42ac64fdc47d78dc38f79739590ab48f5548fe4807c4bf1dd041",
+    "native_exchange_book_root": "${NARROWGATE_RETIRED_MARKETDATA_ROOT}/cryptohftdata",
+    "gap_segment_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/minimal_good_day_reaudit_20260727/order_level_gap_segments_v1/native_l2_gap_manifest.json",
+    "gap_segment_manifest_sha256": "dbb71cb9d0f2ccf44daffb8789bb4b610c55d30435164cf5f68e6b5be1571a00",
+    "feature_context_manifest": "${NARROWGATE_RETIRED_DATA_ROOT}/features_btcusdc_causal_v10_minimal141_context_20260728/causal_feature_manifest.json",
+    "feature_context_manifest_sha256": "4b4cef9fb3542badfd552f51f0b973a13d5af62dfbbf7b92d3826dd3002d7e3c",
+    "config": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "fc3515cafb70615c920dbc17dffafabde7b7ec345fb63bd5e56bf071512b05f0",
+    "p3_artifact": "models/saved_btcusdc_causal_v7_time_calendar_semantics_20260726/fill_prob_params.json",
+    "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "queue_calibration": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
+    "queue_calibration_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+    "latency_telemetry": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+    "latency_telemetry_sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
+    "book_visibility_profile": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260719/day_20260718/quote_decisions_2026-07-18.csv",
+    "book_visibility_profile_sha256": "c47929a6e0212017762277edbb5b6008b799e0bdb827e72d8d47e8d6310d5825",
+    "latency_sampler_version": "keyed_splitmix64_v1",
+    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux",
+    "latency_seed": 20260718
+  },
+  "good_day_contract": {
+    "order_level_days": 76,
+    "continuous_campaign_days": 46,
+    "gap_censored_order_days": 30,
+    "maximum_native_source_age_ms": 5000,
+    "no_order_risk_interval_may_cross_gap_segment": true,
+    "grade_b_does_not_authorize_whole_day_campaign_outcomes": true
+  },
+  "placement_estimand": {
+    "risk_origin": "decision_before_submit",
+    "actions": [
+      "closer_1tick",
+      "current",
+      "farther_1tick"
+    ],
+    "distance_delta_ticks": [
+      -1,
+      0,
+      1
+    ],
+    "cancel_request": "deterministic frozen baseline policy stopping time with reason",
+    "request_state": "re-sampled from strictly visible state at request; same-ms exchange events excluded",
+    "terminal_states": [
+      "pre_request_fill",
+      "pending_cancel_fill",
+      "cancel_ack",
+      "gap_or_administrative_censor"
+    ],
+    "external_reference_enabled": false
+  },
+  "three_phase_model": {
+    "pre_request_fill": "dynamic discrete-time fill risk from activation until request or right censor",
+    "pending_cancel_fill": "dynamic fill risk after request while remaining quantity is live",
+    "conditional_ack_survival": "request-to-ACK survival conditional on request reason and request-time state",
+    "shared_observed_state": [
+      "system active-order count",
+      "pending-cancel count",
+      "same-request batch size",
+      "BBO/depth/imbalance/microprice",
+      "market return and taker-flow path",
+      "book refill/cancel/flip activity",
+      "order age, remaining quantity and queue path at request"
+    ],
+    "dependence_contract": "pending-fill and ACK heads receive the same observed request-time load/shock state; independence is only conditional on this state and is audited",
+    "request_state_windows_ms": [
+      25,
+      50,
+      100,
+      250,
+      500,
+      1000
+    ],
+    "window_role": "past-state feature basis only; not prediction or action horizons",
+    "fit": "BUY/SELL and role-aware past-only outer folds with inner expanding calibration",
+    "validation_access": false
+  },
+  "curve_level_gate": {
+    "unit": "complete action-specific CIF curve",
+    "report_points": "Development active-lifetime p25/p50/p75 frozen only after Development fit and before Validation",
+    "required": [
+      "probability simplex and monotone CIF",
+      "day-clustered fill and ACK calibration intervals",
+      "integrated proper-score improvement",
+      "conditional pending-fill/ACK dependence residual audit",
+      "BUY/SELL and role support"
+    ],
+    "fixed_1s_5s_10s_cells_are_diagnostic_only": true,
+    "prediction_does_not_authorize_action": true
+  },
+  "cache_contract": {
+    "baseline_window_cache_version": 12,
+    "request_state_cache": "content addressed by placement/data/config/P3/queue/latency/code/native-module identity",
+    "paired_placement_mechanics_cache": "content addressed by baseline traces, native L2 and trade hashes, queue mechanics, C++ ABI and source hashes",
+    "sparse_queue_tape_cache": "content addressed by watch manifest, native L2 hashes and active-order queue builder identity",
+    "paired_placement_mechanics_schema": "paired_placement_mechanics_cache.v2",
+    "sparse_queue_tape_schema": "active_order_queue_tape_cache.v2",
+    "native_queue_tape_schema": "active_order_queue_tape_v3",
+    "model_or_threshold_not_in_mechanics_cache_key": true,
+    "cache_checksum_validation_required": true,
+    "raw_l2_identity_uses_content_sha256_not_mtime": true
+  },
+  "implementation_identity_at_freeze": {
+    "placement_fill_panel.py": "d9a76505baa07f4b6f874ee78a6a9a25eda7d10a43aa46dd34aa33647ce49969",
+    "paired_order_lifecycle.py": "056f70b277eaa80e2d12804511c6243acfe7bf1f8d317545a2e093b573611b4f",
+    "paired_order_lifecycle_smoke.py": "49c9d05f326f9fa84e3d0154b9d6d9ea8da6c4375b2e269e3fccdfbaebfad586",
+    "request_state_features.py": "a67311c444ab7a8c248ef082a61598df976a3b8478c115f5ae7a119cafed4f8e",
+    "request_state_panel.py": "02d1d2ce97f86186962196c0365a2b4ee04592f6d98c04fc5994c64beb4ef138",
+    "request_state_race.py": "17a5b5cb4f5713d1e30c9a72a7b2f778569749ce7338185bcafad916d8f38117",
+    "risk_set_expansion.py": "d4f4fe783ff00e91ca1cf24c0393e6609b97659d879469d2272bc3b5393d5cfa",
+    "sparse_order_lifecycle.py": "b201d1f98abcab97ed8a94211c3e44e884d85b898cb1f8de7376fb5fcb82b4b4",
+    "content_addressed_cache.py": "26ca65fc161fab19739a2b71d93f91ee308dc1af8f5fa5b99ccf180b601f8bdf",
+    "native_gap_segments.py": "434915b9e501732d537dad97b47664ba57ce2113f483c6f9ba0774c24d27ab2d",
+    "full_curve_fill_cif.py": "a77814e64e22f9b59efc61320b42bbf720995934aef74ec796e085a3b1c0c415",
+    "active_order_queue.py": "db2873aa08359e749ffa5293117a6d2e0459541eb47ea8678c7e827fe8159882",
+    "build_active_order_queue_tape.py": "0a57cbe2494a9c62d55442316c0933e2661bb0bce880cb14829f0afe0b133b53",
+    "download_cryptohft_orderbook.py": "e5107617e72cc92dfdb92506f5cbf6840e7a3642b4dc9ccdf4bcbbea155a3208",
+    "data_quality.py": "c7acd2987a381c6e646cfd1619c0759125219f492e57f654277d5f1a1e2f5ed6",
+    "local_order_value_replay.py": "6d1c048511c55062d4fd62f632d53cf493e4f4eb339373e657c66f3d90e72f12",
+    "data_windows.py": "e8e09f4abc02ab0ae2217d5d208d4db32c1dfda3926c7d25e8586ecdca41881d",
+    "tick_ab.py": "4cf3411784b2cd2b952c2c72e3838445958aed5d17e84dfc409f24f22191c05d",
+    "backtest_tick.py": "2e2932815d80b43b5a9fb02564fad0da37a79b4beed5ff8ffddc697e888b3e2b",
+    "backtest_config.py": "8842309f7a0ca527cde928874c1c4bfb506db1c3a6fb64dda940a541aae56b8f",
+    "live/config.py": "c04fc14755b6f7bf934475f9fcf14601b9cc8e932932921c9c18059469d7d950",
+    "request_state_features.cpp": "3ef39826b4e4f467ad89a40cb02f6cf47c6edd113145e28096dd8c9cabd4352a",
+    "request_state_features.hpp": "adcfe897c1101657aae3a82efe36130ec226b0c219e0c642f1fdf517b1061f0b",
+    "risk_set_expansion.cpp": "272472450ee955b396764280df701c1839d43a9c55c30b7d8affbac2cf9c3cd6",
+    "risk_set_expansion.hpp": "45ad741a9124c541750e7096cf2a6c110d23696d13eb7c2e09ec33da4c48b850",
+    "sparse_order_lifecycle.cpp": "b6e072a50613786b909eadeca5ff39de3dd1b01e1a020eaa9d9fa85d2fbd3296",
+    "sparse_order_lifecycle.hpp": "0b8a644dd81b7460ec41726c85946ad9cececdb5f19d1017e62dde0b550595f6",
+    "bindings.cpp": "a08a43789e2b0b685e99d68aaa530c77b3882d2667480ee50f76a55ebf9c2f57",
+    "cpp/CMakeLists.txt": "284034f544c5391487a0b92094b76115ae4a48872a3326cd0991b739c88e24fd",
+    "narrowgate_cpp.cpython-312-darwin.so": "eae3fe36ae34a7c79fd63c00cbd4433e41d24eeadf0ebb4ca8cd08c9aaba0fa1"
+  },
+  "invalidated_artifacts": [
+    {
+      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v2/placement",
+      "reason": "replay omitted the live ml.enabled=false identity and coupled BUY fill-selection feature context to 13-head inference",
+      "outcome_access": "no Development model outcome or Validation/holdout outcome was used",
+      "reuse_allowed": false
+    }
+  ],
+  "permissions": {
+    "development_access": true,
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true,
+    "keep_replace_requires_separate_active_order_estimand": true
+  }
+}

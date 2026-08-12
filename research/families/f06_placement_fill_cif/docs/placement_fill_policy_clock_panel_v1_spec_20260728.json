@@ -1,0 +1,69 @@
+{
+  "extends": "placement_fill_cif_v1_spec_20260726.json",
+  "extends_sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
+  "schema_version": "narrowgate_placement_fill_policy_clock_panel_spec.v1",
+  "family_id": "placement_fill_policy_clock_race_v1",
+  "created_at_utc": "2026-07-28T00:00:00Z",
+  "research_status": "frozen_before_policy_clock_panel_rebuild",
+  "evidence_scope": "Development-only lifecycle rebuild; Validation and sealed holdout remain unread",
+  "revision_reason": "record the deterministic baseline cancel-request reason together with request and ACK timestamps so policy-clock and path-trigger parity can be audited without treating cancel ACK as a stationary market hazard",
+  "source_identity": {
+    "config": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "fc3515cafb70615c920dbc17dffafabde7b7ec345fb63bd5e56bf071512b05f0"
+  },
+  "lineage": {
+    "structural_contract": "placement_fill_policy_clock_race_v1_spec_20260727.json",
+    "structural_contract_sha256": "f2412f2efa4565b36d90213575c0698b12686dde7ce3d60dfeb3f32a22ff4f79",
+    "placement_builder": "models/audit/placement_fill_panel.py",
+    "placement_builder_sha256": "4f38759b130dd12c6f42cdfde3433a11aee88d9f86123e0ab2bf445ce96f4ece",
+    "paired_lifecycle": "models/audit/paired_order_lifecycle.py",
+    "paired_lifecycle_sha256": "c16e208fb20b748f8a2e8efc9deb64f0b38401bcaf1c78ca9244692651150ce9",
+    "paired_lifecycle_builder": "models/audit/paired_order_lifecycle_smoke.py",
+    "paired_lifecycle_builder_sha256": "49c9d05f326f9fa84e3d0154b9d6d9ea8da6c4375b2e269e3fccdfbaebfad586"
+  },
+  "placement_estimand": {
+    "risk_origin": "decision_before_submit",
+    "lifecycle_event_profile": "placement_start_stop",
+    "lifecycle_events": [
+      "submit",
+      "activate",
+      "reject",
+      "cancel_request_with_reason",
+      "cancel_ack",
+      "partial_fill",
+      "full_fill",
+      "day_end_censor"
+    ],
+    "actions": [
+      "closer_1tick",
+      "current",
+      "farther_1tick"
+    ],
+    "distance_delta_ticks": [
+      -1,
+      0,
+      1
+    ],
+    "primary": "action_specific_activation_and_fill_before_mechanistic_cancel_ack",
+    "cancel_request": "deterministic frozen baseline replay stopping time; reason is retained",
+    "cancel_ack": "request timestamp plus environment-tagged request-to-ACK latency",
+    "pending_cancel": "order remains fillable through ACK; partial and full fills are retained",
+    "shadow_fill_feedback": false,
+    "external_reference_enabled": false
+  },
+  "policy_request_reason_contract": {
+    "missing_reason_on_request_is_invalid": true,
+    "scheduled_classes": [
+      "requote_replace",
+      "fragile_ttl"
+    ],
+    "path_trigger_class": "all other non-empty reasons",
+    "classification_is_reporting_only": true
+  },
+  "permissions": {
+    "validation_access": false,
+    "sealed_holdout_access": false,
+    "action_or_live_authorization": false,
+    "prediction_only": true
+  }
+}
