@@ -1,0 +1,73 @@
+{
+  "schema_version": "external_information_decay_family.v1",
+  "family_id": "external_information_decay_v1",
+  "created_at_utc": "2026-07-27T00:00:00Z",
+  "status": "frozen_before_development_screening",
+  "research_only": true,
+  "live_action_authority": false,
+  "estimand": "daily AUC(M1 local+Binance+Bitget/Bybit/OKX spot/perp) minus AUC(M0 local+Binance) for future BTCUSDC direction as a function of integer-second horizon",
+  "data_contract": {
+    "state_resolution_s": 1,
+    "subsecond_claim_allowed": false,
+    "feature_visibility": "right_edge_causal",
+    "external_visibility_delay_s": 1,
+    "latency_profile": "aws_tokyo_t3_medium_amzn2023_native_public_ws_20260711_p50_bucketed_1s",
+    "good_day_manifest": "logs/data_audit/cleanup_20260705_align_btcusdt_reference/minimal_complete_good_days_2026.csv",
+    "good_day_manifest_sha256": "04f8abe8db3c947b47e94f0dbe31be291f6fc30759ee4c15fe12597979a90c2a"
+  },
+  "horizon_support": {
+    "grid_s": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    "selection_points_were_not_chosen_from_external_model_outcomes": true,
+    "upper_bound_rule": "ceil Development current-order active-lifetime p95",
+    "upper_bound_rule_class": "judgmental_engineering_support",
+    "placement_panel": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/placement_fill_cif_v1_development_20260726/partitions",
+    "placement_spec": "docs/placement_fill_cif_v1_spec_20260726.json",
+    "placement_spec_sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
+    "observed_active_orders": 659358,
+    "development_days": 40,
+    "active_lifetime_quantiles_s": {
+      "p25": 5.005,
+      "p50": 5.706,
+      "p75": 7.633,
+      "p95": 17.378
+    }
+  },
+  "training_contract": {
+    "profiles": ["m0_local_binance", "m1_external_all"],
+    "target_kinds": ["dir"],
+    "train_days": 69,
+    "development_selection_days": 20,
+    "outer_embargo_days": 1,
+    "inner_early_stop_days": 7,
+    "inner_early_stop_embargo_days": 1,
+    "train_row_stride": 1,
+    "early_stop_row_stride": 1,
+    "historical_split_field_used_for_development_selection": "validation",
+    "test_and_late_access": false
+  },
+  "selection_contract": {
+    "cluster": "UTC_day",
+    "bootstrap_trials": 2000,
+    "bootstrap_seed": 20260727,
+    "minimum_common_paired_days": 10,
+    "formal_rule": "maximize simultaneous lower bound among horizons whose two-sided 95% simultaneous lower bound is positive",
+    "diagnostics": [
+      "mean and median daily AUC gain",
+      "positive-day rate",
+      "bootstrap best-horizon frequency",
+      "diagnostic peak horizon",
+      "post-peak half-gain horizon"
+    ]
+  },
+  "implementation_identity": {
+    "model_schema_version": "external_venue_model.v3",
+    "feature_schema_version": "external_venue_trade_state.v4",
+    "model_code_sha256": "25be18653e8ac3445e4e91fc572e39dcbd02a7658b7a3605c2b7fb7678af45c4",
+    "feature_code_sha256": "777461c00113fb18e5b9782619e74f4b86a54362e6b307f56b6ed12c1f3f75fa"
+  },
+  "governance": {
+    "historical_1s_3s_5s_results": "diagnostic_only",
+    "prediction_does_not_authorize_action": true,
+    "formal_confirmation_requires_new_frozen_eligible_days": true
+  }
+}
