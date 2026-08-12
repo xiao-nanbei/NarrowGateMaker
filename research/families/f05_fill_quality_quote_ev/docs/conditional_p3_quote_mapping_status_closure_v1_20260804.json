@@ -1,0 +1,78 @@
+{
+  "schema_version": "conditional_p3_quote_mapping_status_closure.v1",
+  "identity": "conditional_p3_quote_mapping_status_closure_v1",
+  "as_of": "2026-08-04",
+  "status": "close_current_f05_sparse_value_quote_selector_retain_conditional_p3_prediction",
+  "classification": "interpretive_governance_only",
+  "frozen_artifacts_modified": false,
+  "scope": {
+    "conditional_p3_prediction_surface_closed": false,
+    "scalar_compression_adapter_closed": true,
+    "f05_sparse_value_quote_selector_closed": true,
+    "full_regenerated_path_executed": false,
+    "f09_action_created": false,
+    "operational_p3_replaced": false
+  },
+  "prediction_surface": {
+    "identity": "p3_touch_volatility_conditioned_v4_1",
+    "status": "historical_development_touch_prediction_supported_owner_coverage_override",
+    "spec": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_1_spec_20260803.json",
+    "spec_sha256": "4453af96039f4430de4ee353a0a38e11a1060ea265f8defc76c42223b7dd01ae",
+    "result": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_volatility_conditioned_v4_1_20260803/result.json",
+    "result_sha256": "3e87103fedd33db5860424ba2fe4eab2d580cbd207631af6d57a9a92db1decae",
+    "independent_confirmation": false,
+    "authorized_use": "shadow_prediction_or_input_evidence_only"
+  },
+  "quote_mappings": {
+    "scalar_compression": {
+      "identity": "conditional_p3_scalar_compression_adapter_v1",
+      "status": "closed_historical_oof",
+      "report": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_development_20260803.md",
+      "report_sha256": "8bb6186f40ed121a0d333470a216ff884fe89386569904bd6863a842f5201e73",
+      "contract_errata": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_contract_errata_20260803.json",
+      "contract_errata_sha256": "92e587719beb36b3e47d9e250c680fea473d08f07de42a313a5de54c1d812c3f",
+      "failure": "side_averaging_and_dynamic_delta_kappa_compression_mismatched_touch_probability_to_fill_hazard_and_double_narrowed_quotes"
+    },
+    "sparse_terminal_value_selector": {
+      "identity": "conditional_p3_joint_quote_sparse_value_diagnostic_v1",
+      "status": "closed_development_no_executable_candidate",
+      "report": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_sparse_value_diagnostic_v1_development_20260804.md",
+      "report_sha256": "83adbb7e9d25f19ee6477099df4e7d812f7b60bc9dd6d9a0c406b4256b8e3dc0",
+      "authoritative_report": "${NARROWGATE_DATA_ROOT}/reports/conditional_p3_joint_quote_sparse_value_diagnostic_v1_20260804/report.json",
+      "authoritative_report_sha256": "1178770144e749272f2df13445d9abcf30467ab02dfaf4dae650ee48ed6ac118",
+      "paired_buckets": 282,
+      "complete_value_buckets": 269,
+      "value_coverage": 0.9539007092198581,
+      "outer_oof_days": 13,
+      "outer_oof_buckets": 126,
+      "supported_action_fold_cells": 0,
+      "baseline_fallback_rate": 1.0,
+      "economic_threshold_usdc_per_bucket": 0.0001,
+      "strongest_early_point_estimate_usdc_per_bucket": 0.000037,
+      "later_fold_intervals_cross_zero": true,
+      "failure": "economic_resolution_and_chronological_stability_absent"
+    }
+  },
+  "governance": {
+    "contract": "research/shared/experiment_governance/docs/dual_path_research_progression_contract_v1.md",
+    "contract_sha256": "8b8040f6c208e5a9e3438f1796823b582585667ed3f8e19f3189c8690c5a488d",
+    "hard_gate_path": "failed_result_retained_immutable",
+    "owner_path": "stopped_at_f05_no_executable_candidate",
+    "future_owner_promotion_label_if_independently_supported": "owner_risk_accepted_promotion",
+    "development_economic_outcomes_read": true,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "operational_state": {
+    "p3_identity": "p3_touch_calibration_v2",
+    "p3_changed": false,
+    "conditional_p3_v4_1_live_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "next_routing": {
+    "conditional_p3": "retain_as_shadow_prediction_or_input_evidence_without_new_quote_mapping_search_on_consumed_development",
+    "full_13_arm_replay": "not_authorized_without_a_supported_candidate",
+    "next_independent_action_question": "exit_urgency_strength_0_5_control_vs_0_candidate_under_quote_snapshot_atomicity_v2_baseline"
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "canonical_spec_identity_sha256": "6dfab92a0724dce0d43f5bbe1144f932d43a40621dc8c15d1e792a54b947bb40",
+  "development_days": [
+    "2026-05-12",
+    "2026-05-13",
+    "2026-05-15",
+    "2026-05-29",
+    "2026-05-30",
+    "2026-05-31",
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-23",
+    "2026-06-24",
+    "2026-06-25"
+  ],
+  "evaluation": {
+    "bootstrap_samples": 5000,
+    "confidence": 0.95,
+    "economic_epsilon_usdc": 0.0001,
+    "embargo_days": 1,
+    "min_train_days": 12,
+    "random_seed": 20260804,
+    "test_days": 5
+  },
+  "identities": {
+    "diagnostic_implementation": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/conditional_p3_joint_quote_sparse_value_diagnostic.py",
+      "sha256": "4ff05dedbfbc62f75bf62632eef5b6a9e9642b0cc4eaca279efa9fe730572297",
+      "size_bytes": 29971
+    },
+    "f06_value_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/placement_marginal_fill_value_feasibility_v1_development_20260729/report.json",
+      "sha256": "4ec56ade6197d1c9aa0e9bb8812df654eb33bdac7803410175a4f80691c7fcdd",
+      "size_bytes": 6983
+    },
+    "owner_progression_result": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/conditional_p3_joint_quote_value_owner_progression_v1_20260804/result.json",
+      "sha256": "f223a1cdace586f8d14b52868f4249e4071637350b23005f5fa66858c2800a91",
+      "size_bytes": 4307
+    },
+    "owner_progression_spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_value_owner_progression_v1_spec_20260804.json",
+      "sha256": "5dda2dafb84da299fc56171c4b6080d56fb786db2eb33dc579a0676de9eab398",
+      "size_bytes": 4258
+    },
+    "preflight_side_support": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/conditional_p3_joint_quote_value_preflight_v1_development_20260803/side_support.parquet",
+      "sha256": "bf553ca29e83df0f80b4218c2faa808d17183cd4b61e4fbf9e2b34a30db66650",
+      "size_bytes": 121703
+    }
+  },
+  "identity": "conditional_p3_joint_quote_sparse_value_diagnostic_v1",
+  "joint_actions": [
+    "baseline__BUY_current__SELL_current",
+    "BUY_closer_1tick__SELL_current",
+    "BUY_farther_1tick__SELL_current",
+    "BUY_closer_2tick__SELL_current",
+    "BUY_farther_2tick__SELL_current",
+    "BUY_closer_4tick__SELL_current",
+    "BUY_farther_4tick__SELL_current",
+    "SELL_closer_1tick__BUY_current",
+    "SELL_farther_1tick__BUY_current",
+    "SELL_closer_2tick__BUY_current",
+    "SELL_farther_2tick__BUY_current",
+    "SELL_closer_4tick__BUY_current",
+    "SELL_farther_4tick__BUY_current"
+  ],
+  "model": {
+    "hyperparameter_search": false,
+    "ridge_alpha": 10.0
+  },
+  "permissions": {
+    "action_authorized": false,
+    "development_economic_outcomes_read": true,
+    "hard_gate_passed": false,
+    "live_authorized": false,
+    "owner_progression": true,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "conditional_p3_joint_quote_sparse_value_diagnostic.v1.spec",
+  "target_contract": {
+    "cross_side_interactions_identified": false,
+    "full_regenerated_path": false,
+    "p3_usage": "ordinary_direct_value_model_input",
+    "proxy_only": true,
+    "target": "single_side_baseline_terminal_overlay_delta_usdc",
+    "touch_probability_multiplied_outside_model": false,
+    "unit": "USDC_per_canonical_joint_quote_bucket"
+  }
+}
