@@ -6,7 +6,7 @@ build-backend = "scikit_build_core.build"
 name = "narrowgate-btcusdc-cpp"
 version = "0.0.0"
 description = "C++ acceleration hooks for NarrowGate BTCUSDC research and replay paths."
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
 [tool.scikit-build]
 cmake.source-dir = "."

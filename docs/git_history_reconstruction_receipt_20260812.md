@@ -51,3 +51,7 @@ The owner-private deployment preflight remains correctly fail-closed because an 
 The frozen plan produced 116 commits. The first public-documentation audit then correctly found that two public projection SHA values still described the pre-normalization CRLF bytes of their CSV targets. A 117th, explicitly post-reconstruction validation commit synchronizes those two projection hashes and records this correction here. It changes neither research semantics nor private-source identity.
 
 Two further post-reconstruction governance commits make unavailable historical reproductions explicit in public-clone test output, bind build metadata to operational baseline v11, enable CI on the temporary reconstruction branch, and provide a hash-bound synthetic deployment fixture. This receipt update is the fourth transparent post-plan commit.
+
+## Temporary-Branch CI Correction
+
+The first temporary-branch CI run exposed a stale Python 3.10 packaging declaration: 66 public modules use `datetime.UTC`, whose standard-library contract begins with Python 3.11. Rather than mechanically rewrite SHA-bound research sources, the repository package, C++ package, CI matrix, CI documentation, and both workflow skills now state the actual Python `>=3.11` runtime contract. This correction creates a 121-commit publication candidate and requires a fresh CI run before `main` can be replaced.

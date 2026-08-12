@@ -32,4 +32,4 @@ Real-data golden replay tests are intentionally opt-in:
 RUN_NARROWGATE_GOLDEN=1 $PYTHON -m pytest tests/test_cpp_tick_replay_golden_parity.py -q
 ```
 
-The hosted GitHub Actions matrix covers Python 3.10, 3.11, and the live-runtime minor 3.12. It runs synthetic/native parity tests but does not have the external `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` market-data identity required by the real-data golden windows. A skipped golden test in hosted CI is therefore an explicit data-availability boundary, not a recorded golden pass; release evidence must attach the separate `RUN_NARROWGATE_GOLDEN=1` result and its input hashes.
+The repository requires Python 3.11 or newer. The hosted GitHub Actions matrix covers Python 3.11 and the live-runtime minor 3.12. It runs synthetic/native parity tests but does not have the external `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` market-data identity required by the real-data golden windows. A skipped golden test in hosted CI is therefore an explicit data-availability boundary, not a recorded golden pass; release evidence must attach the separate `RUN_NARROWGATE_GOLDEN=1` result and its input hashes.

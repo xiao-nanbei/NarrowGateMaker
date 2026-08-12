@@ -3,7 +3,7 @@
   "reconstructed_history": true,
   "scientific_rerun": false,
   "projection_date": "2026-08-12",
-  "receipt_generated_at_utc": "2026-08-12T13:41:12Z",
+  "receipt_generated_at_utc": "2026-08-12T13:51:42Z",
   "repository": "xiao-nanbei/NarrowGateMaker",
   "branch": "main",
   "old_public_root": {
@@ -45,6 +45,8 @@
     "validated_candidate_head_before_receipt_update": "f3ef067d7cea263250f82b6b3b992e3d54f7eae9",
     "commit_count_before_receipt_update": 119,
     "expected_commit_count_after_receipt_update": 120,
+    "post_receipt_compatibility_fix_count": 1,
+    "expected_publication_commit_count": 121,
     "public_tree_path_count_before_receipt_update": 1709,
     "single_root_required": true,
     "old_root_must_not_be_ancestor": true,
@@ -106,6 +108,14 @@
     ],
     "research_semantics_changed": false,
     "private_source_identity_changed": false
+  },
+  "temporary_branch_ci_correction": {
+    "initial_run_id": 31602844311,
+    "initial_python_310_result": "failed during collection because datetime.UTC is unavailable before Python 3.11",
+    "codebase_datetime_utc_import_file_count": 66,
+    "resolution": "align Python package, C++ package, CI, documentation, and skills to the actual Python >=3.11 runtime contract",
+    "frozen_research_sources_mechanically_rewritten": false,
+    "revalidation_required": true
   },
   "identity_model": {
     "git": "public source, documentation, version, diff, rollback, and release identity",

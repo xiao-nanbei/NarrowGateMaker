@@ -236,11 +236,11 @@ Use this skill when user asks for:
 - Before handoff, run `scripts/audit_public_documentation.py` and, on an authorized owner checkout, `scripts/audit_private_evidence.py`. Public archive members, structured process identifiers, private locators, projection publishability, private catalog hashes, permissions, and source/projection dual identities must all pass.
 
 ## Python Interpreter Rule (Mandatory)
-- The repository contract is Python `>=3.10`. For every local Python command, first set `PYTHON="${NARROWGATE_ROOT}/.venv/bin/python"`; from the repository root this is `.venv/bin/python`.
-- Before tests, scripts, downloads, preprocessing, training, replay, lint, or compilation, fail fast unless `$PYTHON` exists, is executable, and reports Python 3.10 or newer. A newer project venv is valid; do not require the minor version to equal 3.10.
+- The repository contract is Python `>=3.11`. For every local Python command, first set `PYTHON="${NARROWGATE_ROOT}/.venv/bin/python"`; from the repository root this is `.venv/bin/python`.
+- Before tests, scripts, downloads, preprocessing, training, replay, lint, or compilation, fail fast unless `$PYTHON` exists, is executable, and reports Python 3.11 or newer. A newer project venv is valid; do not require the minor version to equal 3.11.
 - Never try bare `python`, bare `python3`, or `/usr/bin/python3` first. The local macOS system interpreter is Python 3.9 and is unsupported. Do not run under 3.9 and only then retry with the venv.
-- Use `$PYTHON -m pytest`, `$PYTHON -m pip`, `$PYTHON -m ruff`, `$PYTHON -m py_compile`, and `$PYTHON path/to/script.py`. If the venv is missing or below 3.10, report the environment problem; do not silently fall back or rebuild it.
-- On the current remote live host, resolve the deployed NarrowGate venv and apply the same `>=3.10` preflight rather than assuming the local macOS path.
+- Use `$PYTHON -m pytest`, `$PYTHON -m pip`, `$PYTHON -m ruff`, `$PYTHON -m py_compile`, and `$PYTHON path/to/script.py`. If the venv is missing or below 3.11, report the environment problem; do not silently fall back or rebuild it.
+- On the current remote live host, resolve the deployed NarrowGate venv and apply the same `>=3.11` preflight rather than assuming the local macOS path.
 
 ## Local macOS Command Rule (Mandatory)
 - For local long-running, batch, download, preprocessing, training, or backtest commands, wrap the resolved project interpreter with macOS `caffeinate` so it keeps running if the display sleeps, for example: `PYTHON="${NARROWGATE_ROOT}/.venv/bin/python"; caffeinate -dimsu "$PYTHON" models/backtest_tick.py ...`.
