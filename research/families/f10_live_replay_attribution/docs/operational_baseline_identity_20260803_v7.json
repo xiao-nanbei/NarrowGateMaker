@@ -1,0 +1,110 @@
+{
+  "schema_version": "narrowgate_operational_baseline_identity.v7",
+  "baseline_id": "btc_usdc_causal_v12_q90_shadow_buy_fill_selection_shadow_only_baseline_20260803",
+  "effective_at_utc": "2026-08-02T23:21:27Z",
+  "operational_status": "active_operational_and_backtest_baseline",
+  "promotion_class": "owner_operational_shadow_action_separation",
+  "research_gate_passed": false,
+  "baseline_promotion_authorized": true,
+  "predecessor": {
+    "baseline_id": "btc_usdc_causal_v12_semantics_v6_q90_and_buy_fill_selection_actions_suspended_baseline_20260803",
+    "identity": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v6.json",
+    "identity_sha256": "43c6c89692b50101c17dd35c2038a39f7b9708fd3b4c9527f2fe18bc9e564e0b",
+    "historical_identity_modified": false
+  },
+  "operational_release": {
+    "identity": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_shadow_action_separation_operational_release_v2_20260803.json",
+    "identity_sha256": "d3709b2809cfba6fac7629d71c7d43e18b0c9648573daeb0fff285d329bccf65",
+    "report": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_shadow_action_separation_operational_release_v2_20260803.md",
+    "report_sha256": "7f2148d9fc6629c06fdf5c0cf0c721b5a846a0d2e5384ead8c5174aeff211549"
+  },
+  "config": {
+    "canonical_private_source": "${NARROWGATE_LIVE_CONFIG}",
+    "remote_runtime_source": "live/config.yaml",
+    "sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36",
+    "ml_enabled": true,
+    "buy_fill_selection_shadow_enabled": true,
+    "buy_fill_selection_live_enabled": false,
+    "dynamic_fill_hazard_shadow_enabled": true,
+    "dynamic_fill_hazard_action_enabled": false,
+    "q90_action_status": "suspended_terminal_active_riskset_integrity",
+    "q90_post_cancel_recovery_contract_supported": false,
+    "p3_kappa_eff_override": 0.0
+  },
+  "model": {
+    "enabled": true,
+    "directory": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary",
+    "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
+    "bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "training_summary_sha256": "59daa283301ee819aab593dd762cd5b1b4e5662f6451e64f08e0d256759131df",
+    "heads_loaded": 13,
+    "feature_columns_per_head": 173,
+    "feature_semantics_version": 6,
+    "feature_dag_id": "live_10s_signal_cutoff.v1",
+    "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+    "runtime_schema_check": "pass"
+  },
+  "p3": {
+    "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+    "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "schema_version": "narrowgate_p3_touch_calibration.v2",
+    "event_type": "touch",
+    "horizon_s": 10.0,
+    "distance_unit": "USDC_per_BTC",
+    "effective_kappa": 0.0673564264343969
+  },
+  "runtime_code": {
+    "deployment_scope": "minimal_shadow_action_separation_patch_on_v6_remote_runtime",
+    "live/main.py": "23a30116c6b5509215e9c0f5816b47584a3903ac5300afe432fa1b251087037d",
+    "live/config.py": "076d2fda4f34ab1537d2bd81ba03a66b35cf26f297257ae732e10489e0833b57",
+    "strategy/maker_engine.py": "88a1c8f2185938f6d3455a575cf8e3cf8ae43c3f1f818b90c8b6cf2838f03103",
+    "strategy/signal.py": "1cc78062509e737c5753c805269310745c0c7c40718816913573c650e675a14f",
+    "strategy/quote_core.py": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+    "strategy/model_contract.py": "3b56b641c204153da461de0ad7b7445d10ec1a3caffa60a95de8e94d487d0a25",
+    "features/feature_dag.py": "68554be350b225f4ad6af02c4cf9ac4cadc9be92b7f4c7c547d8a10f7f27342f",
+    "cpp/narrowgate_cpp/streaming_features.cpp": "e31d22769f194ef57bd3af2c1343d9ef6026c73ad1e18053a6ce0fa06c62e883",
+    "market_fusion.py": "3bef291f7b9686f9c16645d2d695c308d46136301ba2bcc31c4462a4f65d7880"
+  },
+  "deployment": {
+    "method": "remote_base_minimal_patch_and_controlled_restart",
+    "python_version": "3.12.13",
+    "runtime_python_entrypoint": ".venv-active/bin/python3",
+    "runtime_profile": "native",
+    "previous_pid": "<private-process-id>",
+    "current_pid": "<private-process-id>",
+    "rollback_directory": "deploy_backups/buy_fill_shadow_split_20260802T231556Z",
+    "remote_preflight": "pass",
+    "single_process_verified": true,
+    "models_active": true,
+    "quote_loop_active": true,
+    "first_health_buy_fill_selection_action_count": 0,
+    "first_health_shadow_eval_count": 0,
+    "first_health_shadow_eval_denominator_note": "BUY was reducing at the first health sample; no exposure-increasing BUY opportunity had occurred",
+    "severe_startup_error": false
+  },
+  "backtest_baseline": {
+    "status": "active_default_control",
+    "config_source": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "ef76fe03d32bb9842987ecc6d5d905397a6568e13a78776949b42bd3d6855e36",
+    "control_arm": "causal_v12_ml_on_q90_action_off_buy_fill_selection_action_off",
+    "buy_fill_selection_shadow_observation": true,
+    "continuous_state_required": true,
+    "historical_frozen_specs_rewritten": false
+  },
+  "permissions": {
+    "operational_baseline_active": true,
+    "owner_operational_baseline_authorized": true,
+    "owner_live_canary_authorized": false,
+    "backtest_default_control_authorized": true,
+    "baseline_promotion_authorized": true,
+    "research_prediction_authority": false,
+    "research_live_authority": false,
+    "action_experiment_authorized": false,
+    "buy_fill_selection_shadow_authorized": true,
+    "buy_fill_selection_action_authorized": false,
+    "buy_fill_selection_automatic_reenable_authorized": false,
+    "q90_action_live_authorized": false,
+    "q90_shadow_observation_authorized": true,
+    "automatic_live_rollback_authorized": false
+  }
+}

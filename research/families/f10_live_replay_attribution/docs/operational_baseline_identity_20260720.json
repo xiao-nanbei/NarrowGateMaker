@@ -1,0 +1,77 @@
+{
+  "schema_version": "narrowgate_operational_baseline_identity.v1",
+  "baseline_id": "btc_usdc_empirical_p3_20260720",
+  "deployed_at_utc": "2026-07-19T17:58:44Z",
+  "config": {
+    "sha256": "1ba03a6d9c4e091d531346f70fccedde882bd8ab1fc2cd4ddbe31e995ff5f601",
+    "canonical_private_source": "${NARROWGATE_LIVE_CONFIG}",
+    "p3_kappa_eff_override": 0.0
+  },
+  "runtime_code": {
+    "strategy/maker_engine.py": "cac354132f5548f1fa8c099feee8f25040fbbd346562a2657d96bb9dc49019ef",
+    "live/main.py": "ae4dbb1814dadf6a5d861c6b2a55e1d2debaa90a55319c9741f5b69589763cd6",
+    "live/config.py": "448fb94ea906d1face2b0426d85707deb0978a0f9bc32fc4f91c8b75585b317c"
+  },
+  "runtime_profile": {
+    "cpp_quote_core": true,
+    "cpp_signal_features": true,
+    "cpp_global_flow": true,
+    "cpp_live_routing": true,
+    "cpp_strict": true
+  },
+  "model": {
+    "directory": "models/saved_btcusdc_causal_v3_calonly_20260717",
+    "experiment_manifest_sha256": "aa5169cd72b35ed22b4100c5681d55e7f34a7258504d83a0a816b450ba6f7fcf",
+    "research_causal_v4_bundle_is_not_live": true
+  },
+  "p3": {
+    "path": "models/saved_btcusdc_causal_v3_calonly_20260717/fill_prob_params.json",
+    "sha256": "f051ed23a5f0508a199164e283fcb8d6fc3170e0385464b587b486d334e0e652",
+    "schema_version": "narrowgate_p3_touch_calibration.v2",
+    "model_type": "empirical_survival",
+    "delta_star": 13.999085981719634,
+    "effective_kappa": 0.06743811359073745,
+    "effective_source": "artifact"
+  },
+  "active_strategy_summary": {
+    "gamma": 0.046,
+    "order_size": 0.001,
+    "max_inventory": 0.026,
+    "quote_horizon_s": 1.0,
+    "max_spread_bps": 20.0,
+    "dynamic_cap_base_bps": 20.0,
+    "dynamic_cap_alpha": 0.25,
+    "dynamic_cap_max_mult": 2.0,
+    "kappa_ratio": 1.1,
+    "depth_kappa_ratio": 1.0,
+    "vol_power": 1.5,
+    "adverse_markout_threshold": 3.0,
+    "adverse_markout_pause_threshold": 5.0,
+    "adverse_spread_mult": 1.5,
+    "defense_spread_mult": 1.5,
+    "fill_cooldown": 85.0,
+    "replace_min_price_change_ticks": 15.0,
+    "replace_min_price_change_ticks_reducing": 15.0,
+    "replace_min_interval_ms": 1000.0,
+    "replace_min_interval_ms_reducing": 125.0
+  },
+  "comparison_contract": {
+    "required": [
+      "same code hashes",
+      "same config hash",
+      "same P3 artifact hash",
+      "same model bundle hash",
+      "same queue artifact hash",
+      "same data and initial-state hashes",
+      "same latency profile",
+      "same random seed"
+    ],
+    "historical_p3_override_0_055_is_forbidden_as_control": true,
+    "legacy_gtx_ioc_incident_replica_is_forbidden_as_control": true
+  },
+  "known_replay_limit": {
+    "queue_v3_q070_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+    "queue_v3_q070_status": "calibration_conditional_not_promoted",
+    "default_queue_file_is_not_a_valid_strict_identity": true
+  }
+}

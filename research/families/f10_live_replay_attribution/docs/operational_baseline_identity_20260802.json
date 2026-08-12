@@ -1,0 +1,125 @@
+{
+  "schema_version": "narrowgate_operational_baseline_identity.v3",
+  "baseline_id": "btc_usdc_causal_v12_semantics_v6_owner_authorized_canary_20260802",
+  "effective_at_utc": "2026-08-01T23:41:55Z",
+  "operational_status": "active_live_canary",
+  "promotion_class": "owner_directed_live_canary",
+  "research_gate_passed": false,
+  "baseline_promotion_authorized": false,
+  "deployment": {
+    "method": "graceful_restart_at_flat",
+    "process_restarted": true,
+    "python_version": "3.12.13",
+    "runtime_python_entrypoint": ".venv/bin/python3",
+    "venv_identity": ".venv_and_.venv-active_resolve_to_.venv-py312",
+    "previous_python_rollback_environment": ".venv-py39-rollback",
+    "previous_baseline_id": "btc_usdc_causal_v7_ml_off_empirical_p3",
+    "rollback_config": "deploy_backups/live_config_pre_v12_canary_20260802T232102Z.yaml",
+    "rollback_config_sha256": "2752f93243c635e87073b5b82089ea0bdaeb6a0ec3183c374c9e64a84481a670",
+    "rollback_runtime_archive": "deploy_backups/runtime_pre_v12_canary_20260802T232102Z.tar.gz",
+    "rollback_runtime_archive_sha256": "ff6a846ecb8d4d682170042b82563ea27a8830b055950dc8127c0d44bcee5082"
+  },
+  "config": {
+    "sha256": "93a1a203aacee95466dc032f8b9fc7916b7a2daaf2ee31a1b1142506362ebc4f",
+    "canonical_private_source": "${NARROWGATE_LIVE_CONFIG}",
+    "ml_enabled": true,
+    "p3_kappa_eff_override": 0.0
+  },
+  "runtime_code": {
+    "live/main.py": "dfb066f73d223986759abb7227a13cdc75e33bd0d80bdd6a01711133b367f4a8",
+    "live/config.py": "f3399a6cf6e51276ba1b081664d23eddaed1aee7e44032503ede3f3b19b2bbb4",
+    "strategy/maker_engine.py": "e256a4b5921ba5ab67bb503efebb0e6f96a85466aa75dc05ebae94745d8d9706",
+    "strategy/signal.py": "1cc78062509e737c5753c805269310745c0c7c40718816913573c650e675a14f",
+    "strategy/quote_core.py": "1fe96eb46dc86f91073e75d0d82bf0831a37cafb2126a3c5aec80e3d4148db59",
+    "strategy/model_contract.py": "3b56b641c204153da461de0ad7b7445d10ec1a3caffa60a95de8e94d487d0a25",
+    "features/feature_dag.py": "68554be350b225f4ad6af02c4cf9ac4cadc9be92b7f4c7c547d8a10f7f27342f",
+    "cpp/narrowgate_cpp/streaming_features.cpp": "e31d22769f194ef57bd3af2c1343d9ef6026c73ad1e18053a6ce0fa06c62e883",
+    "market_fusion.py": "3bef291f7b9686f9c16645d2d695c308d46136301ba2bcc31c4462a4f65d7880"
+  },
+  "runtime_profile": {
+    "profile": "native",
+    "cpp_quote_core": true,
+    "cpp_signal_features": true,
+    "cpp_global_flow": true,
+    "cpp_live_routing": true,
+    "cpp_strict": true
+  },
+  "model": {
+    "enabled": true,
+    "directory": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary",
+    "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
+    "live_canary_authorization_sha256": "903864ba8cc5497044d90257fc6f65d31d9bf1490b1a51e2779ef185cef5d589",
+    "bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "training_summary_sha256": "59daa283301ee819aab593dd762cd5b1b4e5662f6451e64f08e0d256759131df",
+    "heads_loaded": 13,
+    "feature_columns_per_head": 173,
+    "feature_semantics_version": 6,
+    "feature_dag_id": "live_10s_signal_cutoff.v1",
+    "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+    "runtime_schema_check": "pass"
+  },
+  "p3": {
+    "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+    "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "schema_version": "narrowgate_p3_touch_calibration.v2",
+    "event_type": "touch",
+    "horizon_s": 10.0,
+    "distance_unit": "USDC_per_BTC",
+    "effective_kappa": 0.0673564264343969
+  },
+  "unchanged_runtime_contracts": [
+    "order_size",
+    "max_inventory",
+    "P3",
+    "queue",
+    "latency",
+    "cooldown",
+    "q90_policy",
+    "hard_safety_gates"
+  ],
+  "historical_evidence": {
+    "decision": "close_causal_v12_economic_screen_on_historical_native_panels",
+    "ranking_score": null,
+    "historical_panels_previously_read": true,
+    "independent_confirmation": false,
+    "transport_development_days": 22,
+    "transport_development_pnl_delta_usdc": 4.41195879599901,
+    "transport_development_pnl_lcb95_usdc_per_day": -0.9288345131226801,
+    "transport_development_fill_retention": 0.8871789845128406,
+    "transport_development_inventory_time_ratio": 1.1265410823690842,
+    "late_diagnostic_days": 22,
+    "late_diagnostic_pnl_delta_usdc": 26.706579043999398,
+    "late_diagnostic_pnl_lcb95_usdc_per_day": 0.4957285313908972,
+    "late_diagnostic_fill_retention": 0.858684985279686,
+    "late_diagnostic_campaign_q10_gate_passed": false,
+    "interpretation": "Strong historical diagnostic motivated a low-cost owner-authorized live canary; it does not repair failed frozen gates or create independent confirmation."
+  },
+  "startup_boundary_repair": {
+    "initial_canary_attempt_status": "failed_closed_then_rolled_back",
+    "initial_failure": "REST warmup to delayed first WS execution trade omitted causal flat bars and triggered the exact 1s grid invariant",
+    "fix": "bridge the final prefill bar to the first newer live execution bucket with causal flat bars while retaining exact-grid fail-fast",
+    "targeted_tests_passed": 28,
+    "full_tests_passed": 1258,
+    "full_tests_skipped": 4,
+    "cpp_strict_real_bundle_startup_smoke": "pass"
+  },
+  "runtime_verification": {
+    "remote_preflight": "pass",
+    "python_cpp_abi": "cp312_linux_x86_64",
+    "models_active": true,
+    "quote_decisions_advanced": true,
+    "non_neutral_model_predictions_observed": true,
+    "startup_survived_multiple_complete_10s_buckets": true,
+    "market_tape_recording_enabled": false,
+    "severe_log_after_successful_restart": false
+  },
+  "permissions": {
+    "operational_baseline_active": true,
+    "owner_live_canary_authorized": true,
+    "research_prediction_authority": false,
+    "research_live_authority": false,
+    "baseline_promotion_authorized": false,
+    "action_experiment_authorized": false,
+    "automatic_live_rollback_authorized": false
+  }
+}

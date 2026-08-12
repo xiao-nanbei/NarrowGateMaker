@@ -1,0 +1,126 @@
+{
+  "schema_version": "narrowgate_operational_baseline_identity.v2",
+  "baseline_id": "btc_usdc_causal_v5_normalized100ms_20260725",
+  "effective_at_utc": "2026-07-25T14:44:50Z",
+  "promotion_class": "user_directed_trial",
+  "research_gate_passed": false,
+  "deployment": {
+    "method": "sighup_hot_reload",
+    "process_restarted": false,
+    "order_and_inventory_state_preserved": true,
+    "remote_rollback_config": "logs/deploy_backups/20260725T143645Z_causal_v5/live.config.yaml.before",
+    "previous_baseline_id": "btc_usdc_empirical_p3_20260720"
+  },
+  "config": {
+    "sha256": "71d5516680055b30fbd17cf8fe092c6011daf18c33ba5ed2246161aa7d1dde9a",
+    "canonical_private_source": "${NARROWGATE_LIVE_CONFIG}",
+    "p3_kappa_eff_override": 0.0
+  },
+  "runtime_code": {
+    "live/main.py": "4efb106652644537d5ca3c2e13a883afc3c5f966d672ce4f0e2023ea53454da7",
+    "live/config.py": "ff12d355031e1e3aab1cdfd26aec9e057fc9cd3a45cc0682815189ee8c99d87f",
+    "strategy/maker_engine.py": "b09a9052329644b596b2c183ddad583d26e2036eecb517dd69ace356f79aee33",
+    "strategy/signal.py": "573e893dbcf7557f9af06da34b2083989493df1b6f110b7052bee911e3066b8f",
+    "strategy/quote_core.py": "ceeb0a3a9b198300984fe0ebb336d1e2f5ff91564588b8fce263bca3f3d56605",
+    "market_fusion.py": "3bef291f7b9686f9c16645d2d695c308d46136301ba2bcc31c4462a4f65d7880"
+  },
+  "runtime_profile": {
+    "profile": "native",
+    "cpp_quote_core": true,
+    "cpp_signal_features": true,
+    "cpp_global_flow": true,
+    "cpp_live_routing": true,
+    "cpp_strict": true
+  },
+  "model": {
+    "enabled": true,
+    "directory": "models/saved_btcusdc_causal_v5_normalized100ms_20260725",
+    "bundle_tree_sha256": "f699db42699892ae2fdc9a60f6006bdc599b988f561b5e66f0dd206b26799175",
+    "training_summary_sha256": "3ce6027cbdcfd01562df9e942503a68103ee10ea2ecbe33703ab621c5d95ceb9",
+    "feature_manifest_sha256": "3d858cca624fed9d61a92437cb0f2682de94723f9944af69c9ea98436cb3530e",
+    "heads_loaded": 13,
+    "feature_columns_per_head": 195,
+    "runtime_schema_check": "pass"
+  },
+  "p3": {
+    "path": "models/saved_btcusdc_causal_v5_normalized100ms_20260725/fill_prob_params.json",
+    "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "schema_version": "narrowgate_p3_touch_calibration.v2",
+    "model_type": "empirical_survival",
+    "delta_star": 13.999085981719634,
+    "effective_kappa": 0.0673564264343969,
+    "effective_source": "artifact"
+  },
+  "data_identity": {
+    "normalized_l2_100ms_manifest_sha256": "f47e044b0607d135de713f8cbf13dad82decc051786dd4a896f21e014129b517",
+    "repaired_trade_features_manifest_sha256": "bd7ea637b4e34f98269cd0524a06c30f6922f4a4d86399ce373bbc15ef11583d"
+  },
+  "active_strategy_summary": {
+    "gamma": 0.046,
+    "order_size": 0.001,
+    "max_inventory": 0.026,
+    "quote_horizon_s": 1.0,
+    "max_spread_bps": 20.0,
+    "dynamic_cap_base_bps": 20.0,
+    "dynamic_cap_alpha": 0.25,
+    "dynamic_cap_max_mult": 2.0,
+    "kappa_ratio": 1.1,
+    "depth_kappa_ratio": 1.0,
+    "vol_power": 1.5,
+    "adverse_markout_threshold": 3.0,
+    "adverse_markout_pause_threshold": 5.0,
+    "adverse_spread_mult": 1.5,
+    "defense_spread_mult": 1.5,
+    "fill_cooldown": 85.0,
+    "replace_min_price_change_ticks": 15.0,
+    "replace_min_price_change_ticks_reducing": 15.0,
+    "replace_min_interval_ms": 1000.0,
+    "replace_min_interval_ms_reducing": 125.0,
+    "ml_vol_blend": 0.5,
+    "ml_asym_strength": 0.1
+  },
+  "active_auxiliary_actions": {
+    "buy_fill_selection": {
+      "enabled": true,
+      "artifact_sha256": "5b5271f8c8166c160bb67e45f721f8337114fd71bb57f9824c4f85db701ce9a3"
+    },
+    "buy_exposure_adverse_q90_cancel_reenter": {
+      "enabled": true,
+      "hazard_bundle_sha256": "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6",
+      "policy_sha256": "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a"
+    }
+  },
+  "replay_calibration": {
+    "queue_v3_q070_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
+    "queue_v3_q070_status": "live_conditional_reference",
+    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux"
+  },
+  "research_evidence": {
+    "validation20_raw_delta_usdc": 3.5564,
+    "validation20_terminal_delta_usdc": -0.2288,
+    "test17_raw_delta_usdc": 2.1422,
+    "test17_terminal_delta_usdc": 0.4696,
+    "raw_and_terminal_intervals_cross_zero": true,
+    "fills_retention_range": [
+      0.9146,
+      0.9264
+    ],
+    "inventory_time_increased": true,
+    "interpretation": "operational baseline by explicit user decision; not strict alpha promotion"
+  },
+  "comparison_contract": {
+    "required": [
+      "same runtime code hashes",
+      "same config hash",
+      "same P3 artifact hash",
+      "same model bundle hash",
+      "same queue artifact hash",
+      "same data and initial-state hashes",
+      "same latency profile",
+      "same random seed"
+    ],
+    "historical_causal_v3_is_rollback_only": true,
+    "historical_p3_override_0_055_is_forbidden_as_control": true,
+    "legacy_gtx_ioc_incident_replica_is_forbidden_as_control": true
+  }
+}
