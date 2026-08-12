@@ -1,0 +1,104 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_calendar_ab_execution_binding.v1.1",
+  "identity": "causal_v12_1s_restart_aware_continuous_calendar_ab_v1_1_execution_binding",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "execution_plan_skeleton_candidate_unbound_results_closed",
+  "canonical_amendment_sha256": "7fd7b336ea5cc36ca8ffd942d8a67d7a3aa45e361a9730e38d5f5aa3c370abf5",
+  "parent_preflight": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_preflight_20260805.json",
+    "sha256": "ba1c881d53d0197976557d53f786dafc0ae05f82c92d5ffbb7a3b50831def777"
+  },
+  "parent_precommit_drift": {
+    "legacy_sha256_recorded_in_parent_preflight": "f949c9f607372cce7aa0b184a188320f2588ffb2de37980d95e2b6441ae6f9d0",
+    "current_parent_precommit": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
+      "sha256": "af079850d7173b82bf431eabaf5165fa5d5216352f588fb1fb7cdae1803c9882"
+    },
+    "current_parent_canonical_sha256": "7bc07d9b4a47affaf317f556ca7bb51a69769270a8a90574f0c2d1239aa40b62",
+    "resolution": "successor_amendment_only_original_documents_unchanged"
+  },
+  "source_artifact_manifest": {
+    "schema_version": "restart_aware_continuous_source_manifest.v1",
+    "canonical_sha256": "1bb7f8b76a5e439f64881268ee100da95508ccfc8e21a2f1759a5a493f92d147",
+    "day_count": 71,
+    "native_day_count": 52,
+    "provider_normalized_sensitivity_day_count": 19,
+    "artifact_count": 213,
+    "artifact_roles_per_day": [
+      "bbo",
+      "l2",
+      "feature"
+    ],
+    "each_artifact_size_and_sha256_required": true,
+    "provider_exact_queue_authority": false,
+    "provider_exact_lifecycle_authority": false,
+    "exact_authority_excludes_frozen_restart_gaps": true,
+    "provider_continuous_economic_sensitivity_authority": true
+  },
+  "execution_interfaces": {
+    "restart_boundary_contract_id": "restart_boundary_contract.v1",
+    "restart_boundary": {
+      "path": "models/replay/restart_boundary.py",
+      "sha256": "2461b369766babc6589cc1ad92b09f987cdfc7102309ff44105ed3c7552553c3"
+    },
+    "restart_required_methods": [
+      "register_active_order",
+      "begin_maintenance",
+      "request_cancel",
+      "partial_fill",
+      "cancel_reject",
+      "terminal",
+      "enter_offline",
+      "begin_restart",
+      "complete_warmup"
+    ],
+    "continuous_accounting_contract_id": "continuous_accounting_contract.v1",
+    "continuous_accounting": {
+      "path": "models/replay/continuous_accounting.py",
+      "sha256": "ad04ea1ca8557bae1c58a4b16ce0b0d9bfb4867754860141960a5a5f387893e6"
+    },
+    "accounting_required_methods": [
+      "mark",
+      "enter_planned_restart",
+      "resume_after_warmup",
+      "fill",
+      "record_gap",
+      "close_utc_day",
+      "accounting_audit"
+    ],
+    "cancel_drain_requires_observed_terminal_ack_or_fill": true,
+    "orders_remaining_at_offline_boundary_fail_closed": true,
+    "fresh_snapshot_before_warmup": true,
+    "warmup_source_coverage_required": true,
+    "feature_ready_not_after_decision": true
+  },
+  "candidate_dag_contract": {
+    "semantic_identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+    "feature_dag_id": "causal_v12_full_trainable_1s.v1",
+    "cadence_ms": 1000,
+    "head_count": 13,
+    "canonical_payload_sha256": "99f348864689f5dfef50aeeecf380036240975e42f7d75c09ea7467c1ef93354",
+    "head_linkage_sha256": "378884f18e84dacafb8f6cce95ff50d10fbc4d274a9d1cd7154002cf04acc155",
+    "source_clock_manifest_sha256": "f2c473dac79a387e56c4aa1d166cfb511575a2de7f8666c0aef32067e4d1ad7e",
+    "bundle_relation": "training_identity_feature_order_heads_and_cadence_must_match"
+  },
+  "execution_status": {
+    "candidate_identity_bound": false,
+    "full_path_runner_bound": false,
+    "execution_requests_materialized": false,
+    "economic_results_schema_bound": false,
+    "economic_results_read": false,
+    "execution_plan_skeleton": true
+  },
+  "permissions": {
+    "execution_plan_validation_authorized": true,
+    "full_path_execution_authorized": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "baseline_replacement_authorized": false
+  }
+}

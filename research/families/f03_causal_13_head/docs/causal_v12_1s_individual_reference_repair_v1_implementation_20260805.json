@@ -1,0 +1,72 @@
+{
+  "schema_version": "f03_causal_v12_1s_individual_reference_repair_implementation.v1",
+  "identity": "causal_v12_1s_individual_reference_repair_v1",
+  "date": "2026-08-05",
+  "scope": {
+    "reference_artifacts_repaired": true,
+    "metrics_repair_included": false,
+    "orico_source_spec_modified": false,
+    "frozen_panels_modified": false,
+    "alternate_aggtrade_artifacts_used": false,
+    "predictions_read": false,
+    "economic_outcomes_read": false,
+    "pnl_read": false
+  },
+  "repair_days": [
+    "2026-04-12",
+    "2026-05-07",
+    "2026-05-08",
+    "2026-05-10",
+    "2026-05-11",
+    "2026-05-14",
+    "2026-05-16"
+  ],
+  "source_contract": {
+    "authority": "binance_futures_official_daily_individual_trades",
+    "clock": "binance_exchange_trade_time_ms",
+    "raw_root": "${NARROWGATE_DATA_ROOT}/raw_trades/BTCUSDT",
+    "raw_filename": "BTCUSDT-trades-YYYY-MM-DD.csv",
+    "raw_header": "id,price,qty,quote_qty,time,is_buyer_maker",
+    "bars_1s_aggregate_fallback_allowed": false
+  },
+  "admission": {
+    "formal_reference_root": "${NARROWGATE_DATA_ROOT}/reference_bars_1s_trades_v1",
+    "batch_manifest_path": "${NARROWGATE_DATA_ROOT}/reference_bars_1s_trades_v1/admission_manifests/causal_v12_1s_2026_native_reference_repair_v1_20260805.json",
+    "batch_manifest_sha256": "a9042fb74969cd7c177d74bf2d26797252177992c64e521db1698c53a584201d",
+    "batch_identity_sha256": "107b9b2ec7822cde0a167331322e1b85853184742e1321d723d8eeb6e40b552c",
+    "per_day_marker": ".parquet.meta.json published after parquet",
+    "atomic_admission": true,
+    "generator_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_individual_reference_repair.py",
+    "generator_sha256": "95aa49d6c57ee1051dfcfd3d7efde57916dd5c56bc48e86d09c65a8ba3aab733",
+    "source_rows": 19931644,
+    "bar_rows": 570739,
+    "parquet_bytes": 22530739
+  },
+  "mendel_exact_profile_rerun": {
+    "profile_id": "native_historical_minimal141_individual_reference_v1_candidate",
+    "auditor_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_2026_native_source_coverage.py",
+    "market_data_root": "${NARROWGATE_DATA_ROOT}",
+    "required_reference_manifest": "${NARROWGATE_DATA_ROOT}/reference_bars_1s_trades_v1/admission_manifests/causal_v12_1s_2026_native_reference_repair_v1_20260805.json",
+    "command": ".venv/bin/python -m research.families.f03_causal_13_head.audit.causal_v12_1s_2026_native_source_coverage --market-data-root ${NARROWGATE_DATA_ROOT} --output ${NARROWGATE_EPHEMERAL_ROOT}/causal_v12_1s_2026_native_source_coverage_post_reference_repair_final_20260805.json",
+    "observed_output_path": "${NARROWGATE_EPHEMERAL_ROOT}/causal_v12_1s_2026_native_source_coverage_post_reference_repair_final_20260805.json",
+    "observed_output_sha256": "70cec635c523471f26ee4822b78feec425da359ed60e9a0218f8423c29bf563e",
+    "audit_identity_sha256": "d250c1d3725e1bc18c1be3b37fa4f63ff213aeb433da680d8b90093c6128a8b1",
+    "reference_authority_blocker": false,
+    "panel_postcheck": {
+      "transport_development": "22/22",
+      "late_diagnostic": "22/22",
+      "economic_22_plus_22": "44/44",
+      "development_40": "40/40"
+    },
+    "attribution_note": "The postcheck is a joint exact-profile observation. This implementation report claims only removal of the seven-day individual-reference blocker and does not claim or describe the separate metrics repair."
+  },
+  "permissions": {
+    "feature_materialization_authorized": false,
+    "training_authorized": false,
+    "transport_scoring_authorized": false,
+    "economic_replay_authorized": false,
+    "action_authorized": false,
+    "baseline_authorized": false,
+    "live_authorized": false
+  }
+}

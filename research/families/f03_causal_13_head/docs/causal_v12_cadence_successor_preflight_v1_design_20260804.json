@@ -1,0 +1,248 @@
+{
+  "schema_version": "causal_v12_cadence_successor_design.v1",
+  "identity": "causal_v12_cadence_successor_preflight_v1",
+  "created_at_utc": "2026-08-04T00:00:00Z",
+  "last_materially_modified": "2026-08-04",
+  "purpose": "read_only_inventory_of_fixed_v12_label_horizons_and_separate_inference_cadence_retraining_identities",
+  "authority_boundaries": {
+    "action_authorized": false,
+    "artifacts_mutated": false,
+    "economic_outcomes_read": false,
+    "live_authorized": false,
+    "model_training_executed": false,
+    "prediction_outcomes_read": false,
+    "registry_modified": false
+  },
+  "artifact_identities": {
+    "baseline_identity": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
+      "sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638"
+    },
+    "baseline_pointer": {
+      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62"
+    },
+    "bundle_meta": {
+      "path": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802/bundle_meta.json",
+      "sha256": "4bbd2746e360f99c7d58afbfd6b3cfd79b1fbc1f8d1f00fac0768616a50318e3"
+    },
+    "feature_generator": {
+      "path": "features/feature_engineer.py",
+      "sha256": "c926fe0cc65e160400cc3c2b034f04288154d8355b0b58d264bf67cdc1d138fa"
+    },
+    "feature_manifest": {
+      "path": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802/causal_feature_manifest.json",
+      "sha256": "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+    },
+    "live_signal_implementation": {
+      "path": "strategy/signal.py",
+      "sha256": "10eb1db8687cdf64b890b44f05e09bfe66d150277fcc0bef218a5ec0df0b3e5f"
+    },
+    "native_transport_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_native_transport_audit_spec_20260802.json",
+      "sha256": "db46ab26d29d3f74c5311bcd82f2714cf9cad4ef534af9fcf8c48fd42f6a9504"
+    },
+    "postfit_native_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_postfit_native_oos_20260726_31_spec_20260802.json",
+      "sha256": "e2b652722ac0f1d0e2d2af1938fc6ca3224de4d5b3774252debe55dfae3d1411"
+    },
+    "training_spec": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_expanded_source_aware_semantics_v6_train_spec_20260802.json",
+      "sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328"
+    },
+    "training_summary": {
+      "path": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802/training_summary.json",
+      "sha256": "59daa283301ee819aab593dd762cd5b1b4e5662f6451e64f08e0d256759131df"
+    }
+  },
+  "current_reference": {
+    "identity": "causal_v12_expanded_source_aware_semantics_v6_canonical_10s_reference",
+    "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
+    "inference_cadence_ms": 10000,
+    "inference_behavior": "completed_10s_bucket_then_sample_and_hold",
+    "feature_dag_id": "live_10s_signal_cutoff.v1",
+    "feature_semantics_version": 6,
+    "label_semantics_version": 3,
+    "label_contract_identity": "causal_v12_13_head_label_contract_v3_preserved",
+    "label_horizon_change_in_scope": false,
+    "head_names": [
+      "dir_10s",
+      "ret_10s",
+      "vol_10s",
+      "dir_30s",
+      "ret_30s",
+      "vol_30s",
+      "dir_60s",
+      "ret_60s",
+      "vol_60s",
+      "tox_bid_5s",
+      "tox_ask_5s",
+      "tox_bid_10s",
+      "tox_ask_10s"
+    ],
+    "runtime_source_fragments": [
+      "Only produces a NEW prediction when a complete 10s bucket has elapsed",
+      "return list(range(start_ms, completed_exclusive_ms, 10_000))"
+    ],
+    "operational_baseline": {
+      "baseline_id": "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_retired_baseline_20260804",
+      "ml_enabled": true,
+      "dynamic_fill_hazard_action_enabled": false,
+      "buy_fill_selection_live_enabled": false
+    }
+  },
+  "feature_basis_inventory": [
+    {
+      "name": "tick_state_trailing_basis",
+      "window_seconds": [
+        3,
+        5,
+        10
+      ],
+      "required_feature_examples": [
+        "tick_mom_3s",
+        "tick_mom_5s",
+        "tick_mom_10s"
+      ],
+      "is_estimand_horizon": false
+    },
+    {
+      "name": "taker_tempo_trailing_basis",
+      "window_seconds": [
+        5,
+        10,
+        30,
+        60
+      ],
+      "required_feature_examples": [
+        "taker_quote_imbalance_5s",
+        "taker_quote_imbalance_10s",
+        "taker_quote_imbalance_30s",
+        "taker_quote_imbalance_60s"
+      ],
+      "is_estimand_horizon": false
+    },
+    {
+      "name": "local_microstructure_trailing_basis",
+      "window_seconds": [
+        5,
+        30,
+        60,
+        300
+      ],
+      "required_feature_examples": [
+        "volatility_5s",
+        "volatility_30s",
+        "volatility_60s",
+        "volatility_300s"
+      ],
+      "is_estimand_horizon": false
+    },
+    {
+      "name": "cross_market_return_trailing_basis",
+      "window_seconds": [
+        10,
+        30,
+        60
+      ],
+      "required_feature_examples": [
+        "cv_ref_perp_ret_10s",
+        "cv_ref_perp_ret_30s",
+        "cv_ref_perp_ret_60s"
+      ],
+      "is_estimand_horizon": false
+    },
+    {
+      "name": "volatility_regime_trailing_basis",
+      "window_seconds": [
+        21600,
+        86400
+      ],
+      "required_feature_examples": [
+        "vol_regime_6h",
+        "vol_regime_24h"
+      ],
+      "is_estimand_horizon": false
+    }
+  ],
+  "candidate_cadence_identities": [
+    {
+      "identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+      "inference_cadence_ms": 1000,
+      "feature_dag_id": "live_1s_signal_cutoff.v1",
+      "feature_semantics_identity": "causal_13_head_features_canonical_1s.v1",
+      "label_contract_identity": "causal_v12_13_head_label_contract_v3_preserved",
+      "label_horizon_change_in_scope": false,
+      "outcome_selected": false,
+      "overlapping_label_training_contract_frozen": false,
+      "chronological_calibration_contract_frozen": false,
+      "required_retraining_artifacts": {
+        "cadence_feature_generator": null,
+        "cadence_feature_manifest": null,
+        "cadence_feature_parity_contract": null,
+        "cadence_source_manifest": null,
+        "cadence_training_spec": null,
+        "model_output_identity": null
+      }
+    },
+    {
+      "identity": "causal_v12_cadence_2s_source_aware_semantics_successor_v1",
+      "inference_cadence_ms": 2000,
+      "feature_dag_id": "live_2s_signal_cutoff.v1",
+      "feature_semantics_identity": "causal_13_head_features_canonical_2s.v1",
+      "label_contract_identity": "causal_v12_13_head_label_contract_v3_preserved",
+      "label_horizon_change_in_scope": false,
+      "outcome_selected": false,
+      "overlapping_label_training_contract_frozen": false,
+      "chronological_calibration_contract_frozen": false,
+      "required_retraining_artifacts": {
+        "cadence_feature_generator": null,
+        "cadence_feature_manifest": null,
+        "cadence_feature_parity_contract": null,
+        "cadence_source_manifest": null,
+        "cadence_training_spec": null,
+        "model_output_identity": null
+      }
+    },
+    {
+      "identity": "causal_v12_cadence_5s_source_aware_semantics_successor_v1",
+      "inference_cadence_ms": 5000,
+      "feature_dag_id": "live_5s_signal_cutoff.v1",
+      "feature_semantics_identity": "causal_13_head_features_canonical_5s.v1",
+      "label_contract_identity": "causal_v12_13_head_label_contract_v3_preserved",
+      "label_horizon_change_in_scope": false,
+      "outcome_selected": false,
+      "overlapping_label_training_contract_frozen": false,
+      "chronological_calibration_contract_frozen": false,
+      "required_retraining_artifacts": {
+        "cadence_feature_generator": null,
+        "cadence_feature_manifest": null,
+        "cadence_feature_parity_contract": null,
+        "cadence_source_manifest": null,
+        "cadence_training_spec": null,
+        "model_output_identity": null
+      }
+    }
+  ],
+  "historical_panel_policy": {
+    "all_2026_panels_diagnostic_only": true,
+    "independent_confirmation": false,
+    "native_transport_development_days": 22,
+    "native_late_diagnostic_days": 22,
+    "postfit_grade_a_diagnostic_days": 5,
+    "postfit_gap_sensitivity_days": 1,
+    "reuse_for_candidate_selection": false,
+    "reuse_for_independent_confirmation": false
+  },
+  "bounded_successor_rules": {
+    "candidate_cadences_compared_only_after_all_three_are_frozen": true,
+    "cadence_is_the_only_estimand_change_in_first_successor": true,
+    "current_2025_train_only_membership_may_seed_new_specs_but_all_features_and_labels_must_be_rebuilt": true,
+    "forward_filling_current_10s_features_is_forbidden": true,
+    "label_horizon_search_is_a_separate_successor": true,
+    "normalizer_and_calibrator_must_be_fit_inside_chronological_training_folds": true,
+    "outer_2026_historical_panels_are_diagnostic_only": true,
+    "promotion_requires_new_full_path_economic_identity": true,
+    "live_baseline_remains_unchanged": true
+  }
+}

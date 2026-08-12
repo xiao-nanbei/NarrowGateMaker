@@ -1,0 +1,61 @@
+{
+  "action_authorized": false,
+  "created_at_utc": "2026-08-05T05:49:51.820187+00:00",
+  "economic_outcomes_read": false,
+  "f03_component_semantics_sha256": "c4ea3df82a0ba8f0cf1cf98332695e561a3692c183b3f5f3d2ae1ba4665df7ef",
+  "feature_count": 173,
+  "fill_path_authority": false,
+  "live_authorized": false,
+  "native_build_receipt": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_native_build_receipt_v3_20260805.json",
+    "receipt_sha256": "e9d87ce0251f522cbc5261dd6e87a3acbb2acb2a7b442fb206004e3d351c92d7",
+    "sha256": "7d19d0f7d0c483e3ed913dba9f9c4f13b0d4609232c0077f962bb6d0dee075f5",
+    "size_bytes": 10712
+  },
+  "native_complete_day_count": 2,
+  "native_complete_day_reports": [
+    {
+      "comparison_stream_sha256": "b4dd09d851a64f4be41607725c11692a05e632dbd0d38aa45f9c59edfc902c6b",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_successor_parity_v6_20260805/native_2026-04-17.json",
+      "profile_id": "native_historical_minimal141_individual_reference_v1",
+      "sha256": "54d65548dc0648a64992b346c2ccb8630fba0e08dbfbc823fee5c891d4d31110",
+      "size_bytes": 100861,
+      "utc_day": "2026-04-17"
+    },
+    {
+      "comparison_stream_sha256": "8b478755270a63f721ee209297413e0cb89e94752a29f737af50f773c69a4113",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_successor_parity_v6_20260805/native_2026-06-26.json",
+      "profile_id": "native_historical_minimal141_individual_reference_v1",
+      "sha256": "d688893e0b0d73680647d9a383123863dd42b762b1683e28199300e341d2e31f",
+      "size_bytes": 100753,
+      "utc_day": "2026-06-26"
+    }
+  ],
+  "order_lifecycle_authority": false,
+  "parity_gate_identity_sha256": "3a64af6f6f0bf3cc8b138b43122be50a4a47fb6266c574658123a7067df97b16",
+  "pnl_authority": false,
+  "predictions_read": false,
+  "provider_complete_day_count": 2,
+  "provider_complete_day_reports": [
+    {
+      "comparison_stream_sha256": "0e934070891b0c45dedb2c54ad47dbb20429fe37a1522ce8cb15775b02a1235c",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_successor_parity_v6_20260805/provider_2025-08-02.json",
+      "profile_id": "provider_normalized_v1",
+      "sha256": "bc1e1bc71d21f91ecbc37205d63304bd4dee5f5b2451d81278eac9eda75a4031",
+      "size_bytes": 100568,
+      "utc_day": "2025-08-02"
+    },
+    {
+      "comparison_stream_sha256": "57deb8c1311389957c02b844cbe99859d2e72af666785d2c6dd97586c525bdd6",
+      "path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_successor_parity_v6_20260805/provider_2025-11-29.json",
+      "profile_id": "provider_normalized_v1",
+      "sha256": "6a1ff7b139bd7afffb31e3f88d63e113c78693ca87ce86a1e956eeb90294b8f6",
+      "size_bytes": 100579,
+      "utc_day": "2025-11-29"
+    }
+  ],
+  "queue_authority": false,
+  "schema_version": "causal_v12_1s_real_day_parity_training_gate.v6",
+  "status": "provider_and_native_early_late_full_cpp_stratified_python_173_field_parity_passed",
+  "training_authorized": true
+}

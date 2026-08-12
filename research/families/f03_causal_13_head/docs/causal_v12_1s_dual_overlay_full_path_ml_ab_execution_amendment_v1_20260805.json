@@ -1,0 +1,112 @@
+{
+  "schema_version": "causal_v12_1s_dual_overlay_full_path_ml_ab_execution_amendment.v1",
+  "identity": "causal_v12_1s_native_40day_v9_10s_vs_1s_ml_on_full_path_v1",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "implemented_local_pre_outcome_blocked",
+  "predecessor_abi": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_ml_ab_replay.py",
+    "sha256": "88d86f5c0edd9e100d17397d2d759a9459813663ad0804ede4269ef636fbf5ce",
+    "comparison": "ml_off_vs_candidate_1s_ml_on",
+    "status_for_frozen_estimand": "blocked",
+    "reason": "the frozen control is current v9 causal-v12 10s ML-ON, not ML-OFF"
+  },
+  "successor_abi": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_dual_overlay_ml_ab_replay.py",
+    "sha256": "8e31d778f6f3bbb91403197c4900ee69345cc97211b53a7cb41d2b36d8486a84",
+    "comparison": "candidate_1s_ml_on_minus_v9_10s_ml_on",
+    "control_ml_data_required_nonempty": true,
+    "control_ml_enabled": true,
+    "candidate_ml_enabled": true,
+    "candidate_bundle_head_count_required": 13,
+    "existing_quote_abi_projection_heads": [
+      "dir_10s",
+      "vol_10s",
+      "ret_10s",
+      "tox_bid_10s",
+      "tox_ask_10s"
+    ],
+    "unused_bundle_heads_are_not_claimed_as_economically_tested": true,
+    "disable_ml_params_forbidden": true,
+    "shared_market_context_and_queue": true,
+    "only_arm_difference": "feature_model_and_inference_cadence"
+  },
+  "panel_runner": {
+    "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_native_40day_full_path_ml_ab.py",
+    "sha256": "e834ca73de8de1058d3ecf651bbfca3005c4399e1d0f481d89cc60d55f5b52bb",
+    "prepare_is_economic_outcome_blind": true,
+    "daily_atomic_admission": true,
+    "resume_safe": true,
+    "validation_forbidden": true,
+    "sealed_holdout_forbidden": true,
+    "default_output_root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v1",
+    "score_profile": "action_alpha_v2",
+    "raw_hard_failures_preserved": true,
+    "owner_route_only_override": "fills_retention_0.80_to_1.20",
+    "missing_replay_metric_policy": "fail_closed_with_named_blocker"
+  },
+  "frozen_bindings": {
+    "precommit_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
+    "precommit_sha256": "9d4c07b4956bb3263b190e052561cc532b6026e22ded616bde166f100abbd01a",
+    "operational_baseline_pointer_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+    "operational_baseline_pointer_sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62",
+    "v9_model_bundle_content_identity_sha256": "16985f95b6abce38a436db06ed537683e4173fa51a4bfe3ccdeebaed2a4e178c",
+    "control_source_plan_path": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f07_order_lifecycle_v2_40day_v1_4/execution_plan.json",
+    "control_source_plan_sha256": "50e906267939a741082c3505207a8d9441667fd0a1ed085b5b142faeadda2b78",
+    "scorecard_path": "models/audit/experiment_scorecard_v2.py",
+    "scorecard_sha256": "200862bb883a714cdfbab254b1074f17db06ee5642dc81dfd706a0d41641ab14",
+    "score_profile_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_action_alpha_v2_score_profile_20260805.json",
+    "score_profile_sha256": "fae99d6e7e2926847fe4a97767db66315bc1196805c1a26dc23a33ed6a93b9f2"
+  },
+  "control_overlay_pre_outcome_audit": {
+    "economic_outcomes_read": false,
+    "days_checked": 40,
+    "days_passed": 28,
+    "days_failed": 12,
+    "required_grid": "UTC day start through 23:59:50 inclusive at 10-second cadence",
+    "required_rows_per_day": 8640,
+    "future_timestamp_days": [],
+    "missing_initial_bucket_days": [
+      "2026-04-17",
+      "2026-04-22",
+      "2026-05-01",
+      "2026-05-13",
+      "2026-05-29",
+      "2026-06-02",
+      "2026-06-05",
+      "2026-06-17"
+    ],
+    "missing_terminal_bucket_days": [
+      "2026-05-06",
+      "2026-05-13",
+      "2026-05-31",
+      "2026-06-16",
+      "2026-06-26"
+    ],
+    "noncanonical_prior_row_days": [
+      "2026-06-17"
+    ],
+    "formal_control_overlay_panel_eligible": false,
+    "repair_rule": "rebuild missing control overlays from the pointer-bound v12 bundle and the same hash-bound market contexts; do not pad, forward-fill, or splice rows in the execution runner"
+  },
+  "candidate_inputs": {
+    "formal_candidate_bundle_provided": false,
+    "formal_40day_overlay_panel_provided": false,
+    "prepare_execution_eligible": false
+  },
+  "test_bindings": {
+    "dual_overlay_test_path": "tests/test_causal_v12_1s_dual_overlay_ml_ab_replay.py",
+    "dual_overlay_test_sha256": "994a2ecb9d5c82c3de9f53c9a28e5bd0b3498101805020e889f5e3dee457351f",
+    "panel_runner_test_path": "tests/test_causal_v12_1s_native_40day_full_path_ml_ab.py",
+    "panel_runner_test_sha256": "e3bdec337e20063f389851a78092391f040f0c4afd10b24c63e66e6a55730a31",
+    "focused_result": "10 passed"
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "development_pnl_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

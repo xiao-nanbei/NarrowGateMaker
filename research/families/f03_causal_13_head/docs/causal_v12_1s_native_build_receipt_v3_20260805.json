@@ -1,0 +1,256 @@
+{
+  "created_at_utc": "2026-08-05T03:33:23.863224+00:00",
+  "economic_outcomes_read": false,
+  "f03_component_semantics": {
+    "f03_cpp_header": {
+      "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.hpp",
+      "sha256": "24767818cc885729d9cf270a3a03215518ef9ef52045bb1c4256957b0b281645",
+      "size_bytes": 4528
+    },
+    "f03_cpp_source": {
+      "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp",
+      "sha256": "8b0a2ea147347d9d190c3c88226c50c92f51ef804f9743a6344fc1a7a21ebac7",
+      "size_bytes": 89071
+    },
+    "f03_exported_abi": {
+      "batch_abi": "causal_v12_1s_cpp_daily_batch.v1",
+      "feature_abi": "causal_v12_1s_cpp_feature_parity.v1",
+      "feature_count": 173,
+      "feature_names_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+      "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+      "lag_state_vocabulary": [
+        "ready",
+        "warmup_insufficient",
+        "undefined_or_zero_denominator",
+        "execution_l2_exact_bucket_missing_no_carry",
+        "execution_l2_late_at_cutoff",
+        "metrics_missing_or_stale_no_default",
+        "cross_market_missing_or_stale_no_forward_fill"
+      ]
+    },
+    "f03_python_components": [
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_cpp_batch.py",
+        "sha256": "829d8d832b1ad3e4971bd65de583505e83bafe6819eb8b58a47a46066bdcd6f7",
+        "size_bytes": 7559
+      },
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_daily_sources.py",
+        "sha256": "57f912ad7073dde1bec8b516199cd7feeae038fb9bc6bb1f26adf85c1055c29a",
+        "size_bytes": 57359
+      },
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_feature_generator.py",
+        "sha256": "65862a0387c21016474be27bf7047b1d1d19637786f39a3380f0114cb8d65409",
+        "size_bytes": 27647
+      },
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_full_schema.py",
+        "sha256": "83a706e61e8db0bcb1d0e296a07b648f233a06f1e8739a67830f32420dc21d47",
+        "size_bytes": 37202
+      },
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_panel_materializer.py",
+        "sha256": "9fdb8f652c884bb543b5086a15e2dd60de5b7af489c2fb19ce126a4046db5de1",
+        "size_bytes": 37138
+      },
+      {
+        "path": "research/families/f03_causal_13_head/audit/causal_v12_1s_schema.py",
+        "sha256": "2279a9f1d8bc8043007842429d9e12112097368f15bdd77fa0c12ff280cc775c",
+        "size_bytes": 10737
+      }
+    ],
+    "identity_sha256": "c4ea3df82a0ba8f0cf1cf98332695e561a3692c183b3f5f3d2ae1ba4665df7ef",
+    "loaded_extension": {
+      "module": "narrowgate_cpp",
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "python_abi": {
+        "cache_tag": "cpython-312",
+        "executable": "${NARROWGATE_LOCAL_HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12",
+        "extension_suffix": ".cpython-312-darwin.so",
+        "implementation": "cpython",
+        "machine": "arm64",
+        "platform": "macosx-11.0-arm64",
+        "soabi": "cpython-312-darwin",
+        "version": "3.12.13"
+      },
+      "sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+      "size_bytes": 1298120
+    }
+  },
+  "full_bindings_source": {
+    "path": "cpp/narrowgate_cpp/bindings.cpp",
+    "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0",
+    "size_bytes": 221376
+  },
+  "full_bindings_source_role": "provenance_not_f03_cache_semantics",
+  "full_build_provenance": {
+    "build_inputs": [
+      {
+        "path": "cpp/CMakeLists.txt",
+        "sha256": "acc2243c14bdec8838f802ba1cd3768f13c9a365717ab26f5e6285409890a66c",
+        "size_bytes": 2486
+      },
+      {
+        "path": "cpp/narrowgate_cpp/bindings.cpp",
+        "sha256": "c35d62b99f9bafae2bcefb67dcc8f795b5012a2687256f1fafc8534d1ca606e0",
+        "size_bytes": 221376
+      },
+      {
+        "path": "cpp/narrowgate_cpp/common.hpp",
+        "sha256": "1e9a4e645252e50bd16c321c69641809f5aeea60db0fd1b634eab183bd363b39",
+        "size_bytes": 7767
+      },
+      {
+        "path": "cpp/narrowgate_cpp/dynamic_fill_hazard.cpp",
+        "sha256": "687c377abfcd38438558d7f48226167258101ea94768b9433821f9e49d8e1c8c",
+        "size_bytes": 45294
+      },
+      {
+        "path": "cpp/narrowgate_cpp/dynamic_fill_hazard.hpp",
+        "sha256": "533132126fa1ed2d32fc11b2fed6bb58726f4965b5cc64a0106934c786dc7eba",
+        "size_bytes": 15594
+      },
+      {
+        "path": "cpp/narrowgate_cpp/global_flow.cpp",
+        "sha256": "5ca0fdf02a343815aa90e84565fe990b1489d5e0bfffda5d8c46c9e5082ac452",
+        "size_bytes": 12447
+      },
+      {
+        "path": "cpp/narrowgate_cpp/global_flow.hpp",
+        "sha256": "d0a7c8af2a585f672b2a7ace2111234c654ed61f0509ee6cf39702ae94df421f",
+        "size_bytes": 6802
+      },
+      {
+        "path": "cpp/narrowgate_cpp/quote_core.cpp",
+        "sha256": "78e45da444d3b741c493c31ac5d3c25b01e97b76f4cb2ec2360c1723b8390066",
+        "size_bytes": 35457
+      },
+      {
+        "path": "cpp/narrowgate_cpp/quote_core.hpp",
+        "sha256": "dd1810c8cd428039039471547ece8b9ffa9480e0463996eaf9ed69612ecdf3de",
+        "size_bytes": 9242
+      },
+      {
+        "path": "cpp/narrowgate_cpp/streaming_features.cpp",
+        "sha256": "e31d22769f194ef57bd3af2c1343d9ef6026c73ad1e18053a6ce0fa06c62e883",
+        "size_bytes": 29551
+      },
+      {
+        "path": "cpp/narrowgate_cpp/streaming_features.hpp",
+        "sha256": "5476a07544d4888a83aab13d59b813ffe57718a1f376b5e9f7a32060fd3f5efb",
+        "size_bytes": 12873
+      },
+      {
+        "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+        "sha256": "df59d45ea3fd0dc4a67a5220a6060ff32a7bf699178def0cc2aec3183e1c9eb5",
+        "size_bytes": 284333
+      },
+      {
+        "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+        "sha256": "b3f7e77a996aed112661b2c74961247a0e53ba32d0e6a207795a3b66993bd7b0",
+        "size_bytes": 38300
+      },
+      {
+        "path": "cpp/pyproject.toml",
+        "sha256": "439b0b2b5254b480ec8a6c5bec4c21aaf416ec67625a53920a02d15febf9eea6",
+        "size_bytes": 355
+      },
+      {
+        "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp",
+        "sha256": "8b0a2ea147347d9d190c3c88226c50c92f51ef804f9743a6344fc1a7a21ebac7",
+        "size_bytes": 89071
+      },
+      {
+        "path": "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.hpp",
+        "sha256": "24767818cc885729d9cf270a3a03215518ef9ef52045bb1c4256957b0b281645",
+        "size_bytes": 4528
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/request_state_features.cpp",
+        "sha256": "3ef39826b4e4f467ad89a40cb02f6cf47c6edd113145e28096dd8c9cabd4352a",
+        "size_bytes": 15082
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/request_state_features.hpp",
+        "sha256": "adcfe897c1101657aae3a82efe36130ec226b0c219e0c642f1fdf517b1061f0b",
+        "size_bytes": 2300
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/risk_set_expansion.cpp",
+        "sha256": "272472450ee955b396764280df701c1839d43a9c55c30b7d8affbac2cf9c3cd6",
+        "size_bytes": 3158
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/risk_set_expansion.hpp",
+        "sha256": "45ad741a9124c541750e7096cf2a6c110d23696d13eb7c2e09ec33da4c48b850",
+        "size_bytes": 648
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/sparse_order_lifecycle.cpp",
+        "sha256": "b6e072a50613786b909eadeca5ff39de3dd1b01e1a020eaa9d9fa85d2fbd3296",
+        "size_bytes": 21410
+      },
+      {
+        "path": "research/families/f06_placement_fill_cif/cpp/sparse_order_lifecycle.hpp",
+        "sha256": "0b8a644dd81b7460ec41726c85946ad9cececdb5f19d1017e62dde0b550595f6",
+        "size_bytes": 3104
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.cpp",
+        "sha256": "912c53d708abcc54c7e23c7de0f000a362867beccb93b3e62f546162a84766c4",
+        "size_bytes": 8872
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.hpp",
+        "sha256": "506c96bfcc31e9034521e530484946662e0804291caac6695eed1a5dfd151ef6",
+        "size_bytes": 1031
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp",
+        "sha256": "b73db8d7e967144d99c5ee49232d778d515e5c62d1371d693c69bf9e450b41f0",
+        "size_bytes": 16080
+      },
+      {
+        "path": "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp",
+        "sha256": "256de756267de1abcf7efe8bf64609540b3f06e02a1bc36e2cf0246f7f1c6eb5",
+        "size_bytes": 5573
+      }
+    ],
+    "capture_role": "post_build_identity_attestation",
+    "identity_sha256": "0ddab3fedc26db3b8eb59815e75ad31160a83d45fe33dbbacf71f81268023dad",
+    "loaded_extension": {
+      "module": "narrowgate_cpp",
+      "path": ".venv/lib/python3.12/site-packages/narrowgate_cpp.cpython-312-darwin.so",
+      "python_abi": {
+        "cache_tag": "cpython-312",
+        "executable": "${NARROWGATE_LOCAL_HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12",
+        "extension_suffix": ".cpython-312-darwin.so",
+        "implementation": "cpython",
+        "machine": "arm64",
+        "platform": "macosx-11.0-arm64",
+        "soabi": "cpython-312-darwin",
+        "version": "3.12.13"
+      },
+      "sha256": "4ceeb79b7f6c1f50a8d5f40824cac95e8452b1569c0dd3ed5569a684305dcac0",
+      "size_bytes": 1298120
+    },
+    "python_abi": {
+      "cache_tag": "cpython-312",
+      "executable": "${NARROWGATE_LOCAL_HOME}/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12",
+      "extension_suffix": ".cpython-312-darwin.so",
+      "implementation": "cpython",
+      "machine": "arm64",
+      "platform": "macosx-11.0-arm64",
+      "soabi": "cpython-312-darwin",
+      "version": "3.12.13"
+    },
+    "reported_extension_abis": {
+      "order_lifecycle_journal_v2": "order_lifecycle_journal_v2_cpp_event_stream_mirror.v2"
+    }
+  },
+  "receipt_sha256": "e9d87ce0251f522cbc5261dd6e87a3acbb2acb2a7b442fb206004e3d351c92d7",
+  "schema_version": "causal_v12_1s_native_build_receipt.v1",
+  "status": "post_build_identity_captured_not_training_authority",
+  "training_authorized": false
+}

@@ -1,0 +1,117 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_execution.v1.2.contract",
+  "identity": "causal_v12_1s_v9_10s_vs_1s_restart_aware_71d_execution_v1_2",
+  "created_at_utc": "2026-08-05T00:00:00Z",
+  "last_materially_modified": "2026-08-05",
+  "status": "execution_layer_implemented_policy_artifacts_unbound_outcomes_closed",
+  "parent": {
+    "preflight": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_preflight_20260805.json",
+      "sha256": "ba1c881d53d0197976557d53f786dafc0ae05f82c92d5ffbb7a3b50831def777"
+    },
+    "execution_binding_amendment": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_1_execution_binding_amendment_20260805.json",
+      "sha256": "9f7614804794cf5b85f1210421ce2ae607330482d4991063b2ab6bfef836bdfd"
+    },
+    "calendar_start_day": "2026-04-17",
+    "calendar_end_day": "2026-06-26",
+    "calendar_day_count": 71,
+    "native_day_count": 52,
+    "provider_normalized_day_count": 19,
+    "source_artifact_count": 213,
+    "restart_interval_count": 107,
+    "source_artifact_manifest_sha256": "1bb7f8b76a5e439f64881268ee100da95508ccfc8e21a2f1759a5a493f92d147",
+    "restart_timeline_sha256": "a825ac2c8ff34dd8fa15d60d27b7c12b0f6a0763d82758f42daacb4c711ba0d7"
+  },
+  "arms": {
+    "control": {
+      "identity": "current_v9_causal_v12_10s_ml_on",
+      "cadence_ms": 10000,
+      "ml_enabled": true,
+      "q90_action_enabled": false,
+      "buy_fill_selection_enabled": false
+    },
+    "candidate": {
+      "identity": "true_causal_v12_1s_ml_on_successor",
+      "cadence_ms": 1000,
+      "ml_enabled": true,
+      "q90_action_enabled": false,
+      "buy_fill_selection_enabled": false
+    },
+    "required_artifacts_per_arm": [
+      "bundle_meta",
+      "feature_dag",
+      "operational_config",
+      "baseline_identity",
+      "initial_state",
+      "latency_profile",
+      "engine_state_schema",
+      "one_or_more_overlay_indices",
+      "exact_71_day_overlay_manifest_and_data_bindings"
+    ],
+    "candidate_additional_required_artifact": "primary_native_40day_economic_receipt_hash_only"
+  },
+  "execution": {
+    "operation_kinds": [
+      "online",
+      "cancel_drain",
+      "offline_gap",
+      "warmup_resume",
+      "utc_accounting",
+      "panel_terminal"
+    ],
+    "single_continuous_state_per_arm": true,
+    "same_calendar_clock_both_arms": true,
+    "same_restart_schedule_both_arms": true,
+    "same_latency_random_path_both_arms": true,
+    "arm_inventory_and_order_paths_isolated": true,
+    "cash_position_entry_campaign_cross_midnight": true,
+    "utc_midnight_is_accounting_and_cluster_slice_only": true,
+    "utc_midnight_forced_flat": false,
+    "utc_midnight_state_reset": false,
+    "maintenance_cancel_ack_or_terminal_required": true,
+    "maintenance_clears_orders_queue_cursors_and_runtime_only_state": true,
+    "gap_trading_allowed": false,
+    "inventory_mtm_through_gap": true,
+    "past_only_warmup_required_before_reentry": true,
+    "panel_terminal_inventory_mtm_exactly_once": true,
+    "panel_terminal_forced_flat": false
+  },
+  "authority": {
+    "native_online_exact_queue_and_lifecycle": true,
+    "provider_continuous_pnl_inventory_campaign_sensitivity_only": true,
+    "provider_exact_queue_authority": false,
+    "provider_exact_lifecycle_authority": false,
+    "provider_q90_authority": false,
+    "gap_exact_execution_authority": false,
+    "substitute_for_40_day_exact_native_primary": false
+  },
+  "durability": {
+    "output_root_prefix": "${NARROWGATE_DATA_ROOT}/cache",
+    "operation_receipts_streamed": true,
+    "paired_checkpoints_after_each_operation": true,
+    "economic_state_hash_chain": true,
+    "engine_state_hash_chain": true,
+    "atomic_staging_rename": true,
+    "file_and_directory_fsync": true,
+    "source_and_policy_hash_revalidation_before_run": true,
+    "resume_requires_progress_checkpoint_identity_agreement": true
+  },
+  "current_permissions": {
+    "outcome_blind_prepare_authorized": true,
+    "outcome_blind_validate_authorized": true,
+    "full_execution_authorized": false,
+    "economic_outcomes_read": false,
+    "economic_results_aggregated": false,
+    "promotion_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "baseline_replacement_authorized": false
+  },
+  "unblock_conditions": [
+    "exact current-v9 10s ML-ON 71-day policy artifact manifest",
+    "exact true-1s ML-ON bundle and 71-day provider/native overlay artifact manifest",
+    "all bundle, DAG, index, daily manifest and data SHA256 bindings pass",
+    "overlay source strata exactly match the frozen 52 native and 19 provider days"
+  ]
+}

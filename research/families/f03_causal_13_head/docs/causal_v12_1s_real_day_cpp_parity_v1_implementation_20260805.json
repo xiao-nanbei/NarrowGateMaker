@@ -1,0 +1,107 @@
+{
+  "schema_version": "causal_v12_1s_real_day_cpp_parity_implementation.v1",
+  "identity": "causal_v12_1s_real_day_cpp_parity_v1",
+  "date": "2026-08-05",
+  "last_materially_modified": "2026-08-05",
+  "status": "runner_and_contracts_passed_real_source_parity_pending_final_cpp_batch_and_materializer_identity",
+  "implementation": {
+    "runner_path": "research/families/f03_causal_13_head/audit/causal_v12_1s_real_day_cpp_parity.py",
+    "runner_sha256": "8fd5397787391bdb3382ed33c9a39b8127d9769bd7b49af11e5b060b4cf34875",
+    "test_path": "tests/test_causal_v12_1s_real_day_cpp_parity.py",
+    "test_sha256": "ace38914be42d95365e1279b64d7496253e6931b35593f09c0bea312d92f96be",
+    "orico_source_spec_builder_sha256": "ed78beea07d34d2ddb8fda62cf566726bbdbc6bc4f9ed282f3d458ea30830a99",
+    "expected_cpp_abi_version": "causal_v12_1s_cpp_feature_parity.v1",
+    "final_panel_materializer_identity_bound": false,
+    "final_cpp_batch_identity_bound": false
+  },
+  "input_contract": {
+    "requires_atomically_admitted_panel_manifest": true,
+    "requires_bound_source_probe_identity": true,
+    "rehashes_panel_manifest_panel_source_probe_and_every_physical_source": true,
+    "reconstructs_cpp_inputs_from_physical_sources": true,
+    "panel_feature_values_used_as_cpp_inputs": false,
+    "manifest_or_source_identity_mismatch_behavior": "fail_fast",
+    "labels_read": false,
+    "predictions_read": false,
+    "economic_outcomes_read": false
+  },
+  "feature_contract": {
+    "cadence_ms": 1000,
+    "feature_count": 173,
+    "feature_order_sha256": "5a6947850dfabefbf4e36bdbe986e39c96324e3714efb16d3410a4443ea1b797",
+    "feature_contract_sha256": "99f348864689f5dfef50aeeecf380036240975e42f7d75c09ea7467c1ef93354",
+    "source_manifest_sha256": "f2c473dac79a387e56c4aa1d166cfb511575a2de7f8666c0aef32067e4d1ad7e",
+    "compared_fields_per_feature": [
+      "value",
+      "valid",
+      "source_latest_ts_ms",
+      "feature_ready_ts_ms",
+      "observation_count",
+      "lag_state"
+    ],
+    "value_rtol": 2e-12,
+    "value_atol": 2e-12,
+    "bitwise_cpp_value_identity_required": false,
+    "bitwise_cpp_value_identity_role": "diagnostic_only"
+  },
+  "local_probe_test_policy": {
+    "probe_root": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_real_source_probe_20260805_v3",
+    "execution_rule": "execute_only_when_probe_code_identity_equals_current_code_identity",
+    "identity_mismatch_test_behavior": "pytest_skip_stale_local_diagnostic",
+    "production_runner_identity_mismatch_behavior": "fail_fast",
+    "current_test_result": "skipped_stale_local_diagnostic",
+    "real_source_parity_status": "pending_final_cpp_batch_and_materializer_identity"
+  },
+  "stale_diagnostics": [
+    {
+      "artifact_root": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_real_source_probe_20260805_v2",
+      "status": "stale_after_daily_source_reader_code_identity_changed",
+      "bound_daily_source_reader_sha256": "22d00155bbca8d3eaa5cd90b74e015f515e25072da6b2c609cc45c354c26cb01",
+      "parity_runner_expected_behavior": "fail_closed",
+      "deleted_or_rewritten": false
+    },
+    {
+      "artifact_root": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_real_source_probe_20260805_v3",
+      "status": "stale_while_panel_materializer_and_cpp_batch_identity_are_moving",
+      "bound_daily_source_reader_sha256": "03782d3e1d69a11af8b0aa8bedecf2d91b7ad648c6553048064453c7b1d1753c",
+      "parity_runner_expected_behavior": "fail_closed",
+      "deleted_or_rewritten": false
+    }
+  ],
+  "transient_artifact": {
+    "artifact_root": "${NARROWGATE_EPHEMERAL_ROOT}/f03_1s_real_source_probe_20260805_v4",
+    "status": "not_selected_not_parity_evidence_during_moving_identity",
+    "deleted_or_rewritten": false
+  },
+  "streaming_contract": {
+    "panel_read_mode": "pyarrow_parquet_iter_batches",
+    "full_day_cutoffs_supported": true,
+    "all_result_rows_retained_in_memory": false,
+    "online_state_retained": "173_field_error_stats_plus_cutoff_and_comparison_hashes",
+    "full_day_executed_in_this_implementation_record": false
+  },
+  "verification": {
+    "focused_runner_tests_passed": 11,
+    "focused_runner_tests_skipped_stale_local_probe": 1,
+    "runner_cpp_and_materializer_regressions_passed": 37,
+    "runner_cpp_and_materializer_regressions_skipped_stale_local_probe": 1,
+    "ruff_check_passed": true,
+    "ruff_format_check_passed": true,
+    "json_validation_passed": true,
+    "git_diff_check_passed": true
+  },
+  "permissions": {
+    "full_day_materialization_started": false,
+    "training_authorized": false,
+    "economic_outcomes_read": false,
+    "action_authorized": false,
+    "live_deployment_authorized": false,
+    "baseline_update_authorized": false
+  },
+  "remaining": [
+    "wait for the cpp_batch and panel materializer implementation identity to stabilize",
+    "atomically generate a new two-row probe from the final current source-spec builder and code identity",
+    "run the strict real-source Python/C++ parity without changing the production identity gate",
+    "only after the probe passes, run the same contract on separately admitted complete-day artifacts"
+  ]
+}
