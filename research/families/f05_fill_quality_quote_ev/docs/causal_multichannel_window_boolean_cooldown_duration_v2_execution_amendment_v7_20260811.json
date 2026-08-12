@@ -1,0 +1,50 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v7",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v7",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v6_20260811.json",
+    "sha256": "7e333deee8e42df61889bbc42753a0fc26000f013df5b523a0e70aaf59e8ebea"
+  },
+  "implementation_binding_replacements": {
+    "strict_label_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "sha256": "afe2d83c47a1438191534e52dbe07454da015bf17894f7e66f2aac9ba6bcc422",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "test_sha256": "062d321730921b4ff9f42a91c45a8a52b3cd32cbf5c853caa2e598924cf5eb4f"
+    }
+  },
+  "target_receipt_abi_contract": {
+    "producer": "strict_label_panel_runner",
+    "consumer": "strict_label_runner",
+    "required_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_label_panel_runner.v1.native_cache_target_72h_receipt.v3",
+    "v2_target_receipt_accepted": false,
+    "v3_target_receipt_required": true,
+    "duplicate_72h_scheduler_scan_allowed_after_v3_receipt_validation": false,
+    "economic_outcomes_read": false
+  },
+  "cache_and_label_compatibility": {
+    "immutable_native_hour_cache_reusable": true,
+    "v2_partial_segment_receipts_reusable": false,
+    "v2_target_receipts_reusable": false,
+    "v3_segment_and_target_receipts_required": true,
+    "formal_labels_previously_generated": false,
+    "nested_oof_previously_run": false
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

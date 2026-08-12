@@ -1,0 +1,96 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v6",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v6",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v5_20260811.json",
+    "sha256": "67436ebe25da5963c881f665b96cedc79ebc6a8bee93620149d6657b20dd20ed"
+  },
+  "implementation_binding_replacements": {
+    "strict_label_panel_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "sha256": "73b7a20f0058f766a55e5319ee31a4d210f2b9a6ca335eaa0162959dfa22fb79",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "test_sha256": "a107757d175b641b78397455a0fb393a9bf0077241e9433cb891157611fa93a2"
+    },
+    "native_sequence_support_mapping": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_sequence_support.py",
+      "sha256": "4638262688a89fb0b8eabaa0a1fbcbd9c8fcbc82563191fb10d15ede054f1ac9",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_sequence_support.py",
+      "test_sha256": "4f430e1b5c8daa80eedf38a7839895e371600e5715934562a893d9efc15de52d"
+    }
+  },
+  "native_sequence_support_artifact": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/strict_native_sequence_support_mapping_v1.json",
+    "file_sha256": "8b2e766c8c2c27ea945dca4ad582181454d3a7b850aae86594b10fb4b25f5739",
+    "canonical_report_sha256": "70bebc2d08c402566fcaf9de47b67d669375953470360d489bcf0bb98b06bcee",
+    "upstream_sequence_audit_json_sha256": "f1784983ae75feeced4a6c3dac9f00f7e4e623352e320b35ebc2609fa3b16765",
+    "upstream_sequence_audit_csv_sha256": "042db7f53fb0de37e42deb0fc25125a45762f9556451147dff4a40f908b07d51",
+    "requested_days": 50,
+    "frozen_formal_days": 41,
+    "formal_sequence_supported_days": 41,
+    "frozen_reduced_days": 9,
+    "known_D_plus_1_sequence_failure_targets": [
+      "2026-04-20",
+      "2026-04-23"
+    ],
+    "upstream_sequence_unconfirmed_reduced_targets": [
+      "2026-05-06",
+      "2026-05-13"
+    ],
+    "economic_outcomes_read": false
+  },
+  "source_window_segmentation_contract": {
+    "coalescing_rule": "coalesce D-1/D/D+1 windows only when their closed UTC-day intervals overlap",
+    "calendar_adjacency_without_interval_overlap_may_coalesce": false,
+    "formal_unique_source_days": 57,
+    "formal_unique_source_hours": 1368,
+    "formal_segment_count": 8,
+    "warmup_strictness": "D-1 gaps may recover only through a snapshot before the target boundary",
+    "target_start_required_state": "initialized and snapshot-seeded before consuming target-boundary events",
+    "D_and_D_plus_1_strict_counter_delta_required": 0,
+    "strict_counter_fields": [
+      "source_gap_events",
+      "sequence_gaps",
+      "invalid_sequence_messages",
+      "message_time_reversals",
+      "event_timestamp_fallback_events",
+      "receive_timestamp_fallback_events",
+      "unknown_timestamp_source_events"
+    ],
+    "target_receipt_derivation": "72 hourly identities from exactly one validated overlapping-window segment",
+    "prebuild_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_label_panel_runner.v1.native_cache_prebuild_union.v3"
+  },
+  "failure_reclassification": {
+    "observed_failure_timestamp_ns": 1776760490266000000,
+    "observed_failure_utc": "2026-04-21T08:34:50.266000Z",
+    "failed_prebuild_schema": "native_cache_prebuild_union.v2",
+    "root_cause": "calendar-adjacent but non-overlapping source windows were merged, so a gap belonging only to the next target's D-1 warmup was incorrectly treated as post-target strict exposure",
+    "denominator_change_required": false,
+    "formal_target_2026_04_22_status": "retained; target and D+1 are strict eligible and D-1 is snapshot-recovered before target start",
+    "economic_outcomes_read_before_reclassification": false
+  },
+  "cache_and_label_compatibility": {
+    "immutable_native_hour_cache_reusable": true,
+    "v2_partial_segment_receipts_reusable": false,
+    "v3_segment_and_target_receipts_required": true,
+    "formal_labels_previously_generated": false,
+    "nested_oof_previously_run": false
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

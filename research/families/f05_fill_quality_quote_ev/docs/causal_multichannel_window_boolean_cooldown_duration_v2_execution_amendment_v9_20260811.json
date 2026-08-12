@@ -1,0 +1,139 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v9",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v9",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v8_20260811.json",
+    "sha256": "864a0256eb0b4f209e8bc26875449c5bca05255f3d91a56030c78fc35bfb957b"
+  },
+  "implementation_binding_replacements": {
+    "python_replay": {
+      "path": "models/backtest_tick.py",
+      "sha256": "379daa3c31bd1261b7d755d11bff476a803836c3992306e6b130a3ea7b1c7f1b",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_binding.py",
+      "test_sha256": "d41bb89c1bea0951a5ca7df7d3578cdee2a08a130afcbd39fca4ccbc6a407b96"
+    },
+    "shared_prefix_executor": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "sha256": "218ceba4491faa7ae359ce9c60bf48e947bf321f970186874eae8fd3e52a9816",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+      "test_sha256": "96245955c666e877f3c229b50007c7bf2f25040155aa5223c3b23366860f9fcd"
+    },
+    "strict_label_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "sha256": "94e0063452ec434898f1aabc0c5dda9c75ef906db094eedaa3b14aa4bc656035",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_labels.py",
+      "test_sha256": "1fe06a603af8a2112245b7cd23246fd3b4e55b56d7859eb414300edc7df8253a"
+    },
+    "label_panel": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "sha256": "a3f7c47940a62b61e8f55bb7c430eae5ac579e03fee97bc80f51c948b65b0c2d",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_label_panel.py",
+      "test_sha256": "3c4cd7d547d457732d88693c066ff10beb34ac94b893a0dd551404fa00feb8d8"
+    },
+    "strict_label_panel_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "sha256": "a61bac08f74ba345ddaea647e674d7ad9b50e528cc63d2c614f398d1ce53fdde",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "test_sha256": "403f866c8260a0f0c95ab51b371e238fca2c3a6417396477d35bf443f1a31772"
+    },
+    "study_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
+      "sha256": "2e14210695496aed4f82d1afa09d334115f537bb991aa31fc3c95e244e51c36d",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
+      "test_sha256": "a6eebeb240902e7e9b7210263debb83f39f7bb7d110257de5115606304a9f17d"
+    },
+    "nested_chronological_oof": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "sha256": "f196dd3d0924e30e58dd62dcc3f73c9d452ab75a38397d213906f0a352e986db",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_nested_oof.py",
+      "test_sha256": "f9adeee733e6823e4cf783b6074f4b97b924c91cc2d24509a37060de48ac6e2e"
+    },
+    "mechanics_receipt_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_mechanics_receipt.py",
+      "sha256": "ab38333cd30c3f9120412dee446e1afb2a2af3fac9ce99fa4c1cc49583563cb5",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_mechanics_receipt.py",
+      "test_sha256": "e52236759a33e8591151634fad20c3b632fe8561f29ddf9c246ea4c749ea60ba"
+    }
+  },
+  "formal_identity_hardening_replacement": {
+    "shared_prefix_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.posix_cow_shared_prefix.v5",
+    "opportunity_manifest_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_one_shot_opportunity.v5",
+    "arm_result_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_one_shot_arm.v6",
+    "strict_day_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_one_shot_labels.v1.day.v2",
+    "label_panel_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_native_label_panel.v3",
+    "panel_runner_progress_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_label_panel_runner.v1.progress.v2",
+    "panel_runner_panel_schema": "causal_multichannel_window_boolean_cooldown_duration_v2.strict_label_panel_runner.v1.panel.v2"
+  },
+    "strict_queue_trace_contract": {
+    "parent_or_common_prefix_queue_failure": "fatal",
+    "treatment_suffix_queue_failure": "retain_only_affected_arm_as_unsupported",
+    "assignment_trace_cursor_required": true,
+    "treatment_trace_is_assignment_cursor_suffix": true,
+    "trace_must_be_unbounded_and_untruncated": true,
+    "trace_row_count_must_equal_treatment_missing_count": true,
+    "duplicate_order_id_activate_ts_ms_allowed": false,
+    "required_trace_fields": [
+      "order_id",
+      "side",
+      "price",
+      "price_tick",
+      "activate_ts_ms",
+      "status",
+      "reason",
+      "asof_exchange_ts_ns",
+      "segment_id",
+      "snapshot_min_tick",
+      "snapshot_max_tick"
+    ]
+  },
+  "unsupported_label_contract": {
+    "economic_point_label_status": "unsupported_redacted",
+    "assignment_to_washout_value_usdc": null,
+    "exact_queue_claim_allowed": false,
+    "opportunity_and_arm_retained_for_denominator_audit": true,
+    "unrelated_arm_or_opportunity_invalidated": false
+  },
+  "formal_execution_identity": {
+    "formal_run_directory": "formal_full_support_41d_v9",
+    "day_execution_identity": "v9",
+    "day_output_layout": "support_identity=<support>/feature_block=M2/execution_identity=v9/days/<day>",
+    "v7_or_v8_formal_output_reusable": false,
+    "old_schema_or_progress_reusable": false
+  },
+  "mechanics_receipt_contract": {
+    "receipt_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_benchmark_v11",
+    "required_before_formal_execution": true,
+    "full_support_day_required": true,
+    "complete_side_specific_eight_arm_bundle_required": true,
+    "queue_trace_and_redaction_contract_verified": true,
+    "aggregate_economic_statistics_read": false
+  },
+  "cache_and_label_compatibility": {
+    "immutable_native_hour_cache_reusable": true,
+    "v3_segment_and_target_receipts_reusable": true,
+    "outcome_blind_2025_predicate_artifacts_reusable": true,
+    "v7_formal_opportunity_or_arm_manifests_reusable": false,
+    "v8_formal_opportunity_or_arm_manifests_reusable": false,
+    "v7_or_v8_partial_staging_reusable": false,
+    "v9_formal_labels_previously_generated": false,
+    "nested_oof_previously_run_under_v9": false
+  },
+  "permissions": {
+    "mechanics_receipt_admitted": false,
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

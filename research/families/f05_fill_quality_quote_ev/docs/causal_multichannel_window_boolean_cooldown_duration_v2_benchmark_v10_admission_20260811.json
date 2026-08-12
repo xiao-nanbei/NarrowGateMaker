@@ -1,0 +1,61 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.engineering_benchmark_admission.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "benchmark_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_benchmark_v10",
+  "created_at_utc": "2026-08-10T18:37:07Z",
+  "artifact_root": "${NARROWGATE_DATA_ROOT}/reports/causal_multichannel_window_boolean_cooldown_duration_v2_20260810/engineering_benchmarks/causal_multichannel_window_boolean_cooldown_duration_v2_benchmark_v10",
+  "target_day": "2026-04-17",
+  "day_manifest": {
+    "path": "support_identity=full_D_minus_1_D_D_plus_1/feature_block=M2/days/2026-04-17/manifest.json",
+    "sha256": "fe9fcd80618ce3da91af6a573ed03daf22629fbf3778521d259481e878142868"
+  },
+  "day_success_marker": {
+    "path": "support_identity=full_D_minus_1_D_D_plus_1/feature_block=M2/days/2026-04-17/_SUCCESS",
+    "sha256": "c8831b0aceff7339b482277c6b2fd2f61e6f16dacd0be8f39e22d4e377fdc60b"
+  },
+  "assignment_snapshots": {
+    "path": "support_identity=full_D_minus_1_D_D_plus_1/feature_block=M2/days/2026-04-17/assignment_snapshots.parquet",
+    "sha256": "2f17c179d557537acc7a088f715a0d41e92297565a77ee473f048ab1cc50173e",
+    "rows": 551
+  },
+  "execution": {
+    "limited_opportunities": 48,
+    "complete_eight_arm_bundles": 48,
+    "strict_exact_eight_arm_bundles": 22,
+    "fail_closed_nonexact_bundles": 26,
+    "arm_paths": 384,
+    "unsupported_arm_paths": 162,
+    "queue_missing_count": 0,
+    "queue_invalidated_order_count": 310,
+    "queue_ambiguous_event_count": 316,
+    "source_gap_events": 0,
+    "new_assignments_after_target_day_boundary": 0,
+    "pending_supervisors": 0,
+    "side_role_counts": {
+      "BUY_opener": 19,
+      "BUY_add": 15,
+      "SELL_opener": 13,
+      "SELL_add": 1
+    }
+  },
+  "admission": {
+    "all_manifest_and_success_hashes_verified": true,
+    "all_four_side_role_cells_observed": true,
+    "denominator_generation_mechanics_verified": true,
+    "strict_label_execution_eligible": true,
+    "durable_copy_verified_before_atomic_rename": true
+  },
+  "outcome_boundary": {
+    "engineering_benchmark_labels_generated": true,
+    "engineering_benchmark_economic_values_read": false,
+    "formal_41_day_development_labels_generated": false,
+    "nested_oof_run": false,
+    "validation_read": false,
+    "holdout_read": false
+  },
+  "permissions": {
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

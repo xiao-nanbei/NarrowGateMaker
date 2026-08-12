@@ -1,0 +1,63 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_duration_v2.execution_amendment.v2",
+  "identity": "causal_multichannel_window_boolean_cooldown_duration_v2",
+  "amendment_identity": "causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v2",
+  "base_spec": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json",
+    "sha256": "7064c12f1872c0ac7f9d07d15dd60dcc9053360256f309fe5d67fd96834b784f"
+  },
+  "predecessor_execution_amendment": {
+    "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_execution_amendment_v1_20260811.json",
+    "sha256": "70f765b50cb6271aa9033f7a236d3f416d07303aedb56830c1cbe1636085ee41"
+  },
+  "implementation_binding_replacements": {
+    "strict_label_panel_runner": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "sha256": "cacf8e2870eae7a79e07f33e56815a6394e715462bf503fc95e0a6d3809e0a51",
+      "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
+      "test_sha256": "b4e73614de517b5b52fc2bd3f6d7f619c40961deef9f9b2dc17b3594f5e7ea00"
+    }
+  },
+  "parallelism_contract": {
+    "formal_day_worker_default": 1,
+    "formal_day_worker_cap": 2,
+    "formal_day_worker_contract_changed": false,
+    "prebuild_worker_default": 2,
+    "prebuild_worker_cap": 4,
+    "prebuild_parallel_unit": "disjoint contiguous source-day segment",
+    "prebuild_economic_outcomes_read": false,
+    "prebuild_duration_arms_run": false,
+    "prebuild_hour_cache_publish": "per-hour lock plus atomic rename",
+    "prebuild_segment_receipt_publish": "parent-validated atomic JSON",
+    "interrupted_prebuild_may_resume_from_valid_hour_cache": true
+  },
+  "outcome_blind_engineering_evidence": {
+    "observed_two_worker_cpu_utilization": "approximately one full core per worker",
+    "observed_worker_rss_bytes": [780208128, 944545792],
+    "observed_system_memory_free_fraction": 0.51,
+    "independent_source_segments": 5,
+    "unique_source_hours": 1368,
+    "naive_target_hour_scans": 2952,
+    "economic_values_read": false
+  },
+  "semantic_compatibility": {
+    "feature_schema_changed": false,
+    "assignment_snapshot_changed": false,
+    "duration_vocabulary_changed": false,
+    "queue_or_fill_semantics_changed": false,
+    "one_shot_label_estimand_changed": false,
+    "nested_oof_changed": false,
+    "formal_day_concurrency_changed": false,
+    "benchmark_reexecution_required": false
+  },
+  "permissions": {
+    "formal_development_labels_generated": false,
+    "economic_outcomes_read": false,
+    "nested_oof_run": false,
+    "unified_policy_frozen": false,
+    "repeated_policy_run": false,
+    "research_supported": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}
