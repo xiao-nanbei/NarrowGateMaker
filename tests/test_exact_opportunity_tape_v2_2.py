@@ -205,9 +205,10 @@ def test_writer_error_invalidates_chunk_and_blocks_ready_admission(
 
 
 def test_runtime_staging_rejects_removable_volume() -> None:
+    removable_root = Path("/", "Volumes", "NARROWGATE_TEST_REMOVABLE")
     with pytest.raises(ValueError, match="local temporary storage"):
         ExactOpportunityDailyWriter(
-            "/Volumes/NARROWGATE_TEST_REMOVABLE/exact-staging",
+            removable_root / "exact-staging",
             runtime_identity=_identity(),
         )
 
