@@ -1,0 +1,159 @@
+{
+  "canonical_spec_identity_sha256": "93e3848df131d853c8038b6061b4ba7b5c178b135ceb72e21494e97a97dc350a",
+  "created_at_utc": "2026-08-03T00:00:00Z",
+  "days": [
+    "2026-05-12",
+    "2026-05-13",
+    "2026-05-15",
+    "2026-05-29",
+    "2026-05-30",
+    "2026-05-31",
+    "2026-06-02",
+    "2026-06-03",
+    "2026-06-05",
+    "2026-06-06",
+    "2026-06-07",
+    "2026-06-08",
+    "2026-06-09",
+    "2026-06-10",
+    "2026-06-11",
+    "2026-06-12",
+    "2026-06-13",
+    "2026-06-14",
+    "2026-06-15",
+    "2026-06-16",
+    "2026-06-18",
+    "2026-06-19",
+    "2026-06-20",
+    "2026-06-21",
+    "2026-06-22",
+    "2026-06-23",
+    "2026-06-24",
+    "2026-06-25"
+  ],
+  "estimand": {
+    "candidate_distances": [
+      "closer_4tick",
+      "closer_2tick",
+      "closer_1tick",
+      "current",
+      "farther_1tick",
+      "farther_2tick",
+      "farther_4tick"
+    ],
+    "decision_denominator": "F06 baseline-eligible place/replace/keep opportunities",
+    "distance_origin": "same decision-time side-specific BBO",
+    "distance_support_usdc_per_btc": [
+      0.5,
+      120.0
+    ],
+    "distance_unit": "USDC_per_BTC",
+    "event_type": "strict_future_aggressive_reach",
+    "fill_or_queue_interpretation": false,
+    "horizon_s": 10.0,
+    "label_interval": "decision_ts_exclusive_to_decision_plus_10s_exclusive",
+    "model_or_calibration_refit": false,
+    "p3_role": "ordinary prediction input only",
+    "side_specific": true
+  },
+  "gates": {
+    "bootstrap_draws": 20000,
+    "bootstrap_seed": 20260803,
+    "maximum_iace_worsening": 0.002,
+    "minimum_candidate_distance_coverage": 0.95,
+    "minimum_context_coverage": 0.95,
+    "minimum_supported_days": 30,
+    "require_both_side_score_improvement": true,
+    "require_zero_monotonicity_violations": true,
+    "required_oof_fold_count": 4
+  },
+  "historical_evidence_boundary": {
+    "development_only": true,
+    "f06_development_economic_outcomes_previously_read": true,
+    "independent_confirmation": false,
+    "mechanics_informed_successor": true,
+    "p3_v4_historical_validation_and_test_diagnostics_previously_read": true,
+    "this_audit_reads_fill_or_economic_outcomes": false,
+    "validation_or_holdout_reopened": false
+  },
+  "identity": "p3_touch_decision_cadence_transport_v1",
+  "implementation_identities": {
+    "decision_context": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_decision_cadence_context.py",
+      "sha256": "8d5272100ee48d516049935456a00a0bf271489a3a0dd53211a15b502e4f9a0c",
+      "size_bytes": 22005
+    },
+    "transport_evaluator": {
+      "path": "research/families/f02_empirical_p3_touch/audit/p3_touch_decision_cadence_transport.py",
+      "sha256": "be9663bf6572bcaf92bcf40dc7362d34be880f690e6655eac0a3948e65faa458",
+      "size_bytes": 32868
+    },
+    "transport_runner": {
+      "path": "research/families/f02_empirical_p3_touch/audit/run_p3_touch_decision_cadence_transport.py",
+      "sha256": "cc0ea5dad34056625aa8ca2a42e51e9405ea52c72735100e8d720d6bd6b14b97",
+      "size_bytes": 12505
+    }
+  },
+  "input_identities": {
+    "f06_development_index": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/development_index.csv",
+      "sha256": "6105a5172d2be2c2f65c5f5bf12233d71cb8e0b45020d3a5ce47583c774ac275",
+      "size_bytes": 4767
+    },
+    "p3_v2_artifact": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s_params.json",
+      "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+      "size_bytes": 425652
+    },
+    "p3_v2_report": {
+      "path": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_recalibration_normalized100ms_v2_20260725/p3_touch_10s.json",
+      "sha256": "58c077054a81644c5c04129435edb5e0ac6cc18e4532706f3e2fc63606f6e57e",
+      "size_bytes": 431154
+    },
+    "p3_v4_1_spec": {
+      "path": "research/families/f02_empirical_p3_touch/docs/p3_touch_volatility_conditioned_v4_1_spec_20260803.json",
+      "sha256": "d681fcf83f2a8d2689e8245d3132b76b7d91f3d1a8486e00e19c671c2c38d47a",
+      "size_bytes": 3291
+    }
+  },
+  "output_directory": "${NARROWGATE_DATA_ROOT}/reports/p3_touch_decision_cadence_transport_v1_development_20260803",
+  "paths": {
+    "bbo_root": "${NARROWGATE_DATA_ROOT}/normalized_l2_100ms_v2/bbo",
+    "placement_root": "${NARROWGATE_DATA_ROOT}/reports/placement_fill_request_state_race_v2_development_20260728_v3/placement/partitions",
+    "trade_root": "${NARROWGATE_DATA_ROOT}/raw"
+  },
+  "permissions": {
+    "action_authority": false,
+    "aws_receive_time_transport_supported": false,
+    "economic_outcomes_read": false,
+    "independent_confirmation": false,
+    "live_authority": false,
+    "model_refit_authority": false,
+    "quote_mapping_authority": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "schema_version": "narrowgate_p3_touch_decision_cadence_transport.v1.spec",
+  "source_clock_boundary": {
+    "aws_receive_time": false,
+    "bbo_source_identity": "normalized_l2_100ms_v2.BTCUSDC.historical_causal_observation",
+    "bbo_timestamp_semantics": "normalized_v2_causal_observation_time_ms",
+    "decision_bbo_exact_integer_tick_match_required": true,
+    "feature_ready_lte_decision_required": true,
+    "historical_transport_only": true
+  },
+  "supplemental_next_trade_identities": {
+    "2026-05-14": {
+      "sha256": "0e639cc9bd635898af9602bab8ba1f50628745a95ad955db11befd9347b457d0",
+      "size_bytes": 37797019
+    },
+    "2026-05-16": {
+      "sha256": "03fb13f77c057e6189d5b89a6c64c66db5146220d855a7818aa4b39df86c46c3",
+      "size_bytes": 14908021
+    },
+    "2026-06-17": {
+      "sha256": "bd9d308d32ddf871cd80a2342808565004924073ddc0450e2ce04b1d4f3527c9",
+      "size_bytes": 39760377
+    }
+  }
+}
