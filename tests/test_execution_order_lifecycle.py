@@ -1,0 +1,357 @@
+from __future__ import annotations
+
+import pytest
+
+from execution.order_lifecycle import (
+    OrderLifecyclePhase,
+    QuantityWeightedOrderLifecycle,
+    TerminalPolicyRoute,
+    terminal_policy_route,
+)
+from strategy.order_manager import OrderManager, OrderState, Side
+
+
+def test_journal_snapshot_detaches_event_history_from_live_lifecycle() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(0.001, 1_000_000_000)
+    snapshot = lifecycle.journal_snapshot()
+
+    assert snapshot.latest_event().event == "submit"
+    lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)
+
+    assert len(snapshot.events()) == 1
+    assert snapshot.phase == OrderLifecyclePhase.SUBMITTED
+    assert len(lifecycle.events()) == 2
+    assert lifecycle.phase == OrderLifecyclePhase.ACTIVE
+
+
+def test_quantity_weighted_exposure_tracks_partial_fill_and_terminal() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(2_000_000_000)
+    lifecycle.observe_fill(
+        remaining_after=0.0004,
+        visibility_ts_ns=4_000_000_000,
+    )
+    lifecycle.request_cancel(5_000_000_000)
+    lifecycle.exchange_terminal(
+        9_000_000_000,
+        reason="cancel_ack",
+    )
+
+    assert lifecycle.phase == OrderLifecyclePhase.EXCHANGE_TERMINAL
+    assert lifecycle.first_fill_latency_s == pytest.approx(2.0)
+    assert lifecycle.exposure_btc_s() == pytest.approx(0.004)
+    assert lifecycle.exposure_btc_s(now_ns=20_000_000_000) == pytest.approx(
+        0.004
+    )
+
+    lifecycle.enter_post_cancel_recovery(9_000_000_000)
+    assert lifecycle.phase == OrderLifecyclePhase.POST_CANCEL_RECOVERY
+    assert not lifecycle.fill_risk_active
+    lifecycle.mark_reentry_eligible(10_000_000_000)
+    assert lifecycle.phase == OrderLifecyclePhase.REENTRY_ELIGIBLE
+    with pytest.raises(ValueError, match="outside the exchange fill-risk set"):
+        lifecycle.observe_fill(
+            remaining_after=0.0,
+            visibility_ts_ns=11_000_000_000,
+            full_fill=True,
+        )
+
+
+def test_partial_fill_during_cancel_pending_stays_in_fill_risk_set() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(2_000_000_000)
+    lifecycle.request_cancel(3_000_000_000)
+    lifecycle.observe_fill(
+        remaining_after=0.0004,
+        visibility_ts_ns=4_000_000_000,
+    )
+
+    assert lifecycle.phase == OrderLifecyclePhase.CANCEL_PENDING
+    assert lifecycle.fill_risk_active
+    assert lifecycle.remaining_quantity == pytest.approx(0.0004)
+
+
+def test_exchange_and_visibility_exposure_are_distinct_estimands() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(
+        2_200_000_000,
+        exchange_ts_ns=2_000_000_000,
+    )
+    lifecycle.observe_fill(
+        remaining_after=0.0004,
+        visibility_ts_ns=4_500_000_000,
+        exchange_ts_ns=4_000_000_000,
+    )
+    lifecycle.request_cancel(5_000_000_000)
+    lifecycle.exchange_terminal(
+        9_000_000_000,
+        reason="cancel_ack",
+        exchange_ts_ns=8_000_000_000,
+    )
+
+    snapshot = lifecycle.snapshot()
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
+        0.0041
+    )
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(
+        0.0036
+    )
+    assert snapshot[
+        "quantity_time_exposure_visibility_minus_exchange_btc_s"
+    ] == pytest.approx(0.0005)
+    assert snapshot["exchange_exposure_valid"] is True
+    assert snapshot["exchange_exposure_complete"] is True
+    assert snapshot["first_fill_latency_visible_s"] == pytest.approx(2.3)
+    assert snapshot["first_fill_latency_exchange_s"] == pytest.approx(2.0)
+
+
+def test_missing_exchange_activation_invalidates_only_physical_exposure() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(2_000_000_000)
+
+    activation_snapshot = lifecycle.snapshot()
+    assert activation_snapshot["exchange_exposure_valid"] is False
+    assert activation_snapshot["exchange_exposure_complete"] is False
+    assert activation_snapshot["quantity_time_exposure_exchange_btc_s"] is None
+    assert (
+        activation_snapshot["exchange_exposure_invalid_reason"]
+        == "missing_exchange_timestamp:activate"
+    )
+
+    lifecycle.observe_fill(
+        remaining_after=0.0004,
+        visibility_ts_ns=4_000_000_000,
+        exchange_ts_ns=3_500_000_000,
+    )
+
+    snapshot = lifecycle.snapshot(now_ns=5_000_000_000)
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
+        0.0024
+    )
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
+    assert snapshot["exchange_exposure_valid"] is False
+    assert (
+        snapshot["exchange_exposure_invalid_reason"]
+        == "missing_exchange_timestamp:activate"
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "remaining", "expected"),
+    [
+        ("cancel_ack", 0.0004, TerminalPolicyRoute.PROSPECTIVE_CANCEL_REENTRY),
+        ("cancel_ack", 0.0, TerminalPolicyRoute.TERMINAL_COMPLETE),
+        ("full_fill", 0.0, TerminalPolicyRoute.TERMINAL_COMPLETE),
+        ("rejected", 0.001, TerminalPolicyRoute.BASELINE_RESUBMIT),
+        ("expired", 0.001, TerminalPolicyRoute.BASELINE_RESUBMIT),
+        ("local_shutdown_cancel", 0.001, TerminalPolicyRoute.SHUTDOWN_NO_REENTRY),
+        ("unknown", 0.001, TerminalPolicyRoute.UNSUPPORTED),
+    ],
+)
+def test_terminal_policy_route_is_reason_and_quantity_specific(
+    reason: str,
+    remaining: float,
+    expected: TerminalPolicyRoute,
+) -> None:
+    assert terminal_policy_route(reason, remaining) == expected
+
+
+def test_full_fill_cannot_enter_post_cancel_recovery() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(
+        2_000_000_000,
+        exchange_ts_ns=1_900_000_000,
+    )
+    lifecycle.observe_fill(
+        remaining_after=0.0,
+        visibility_ts_ns=3_000_000_000,
+        exchange_ts_ns=2_900_000_000,
+        full_fill=True,
+    )
+
+    with pytest.raises(ValueError, match="cancel ACK with remaining quantity"):
+        lifecycle.enter_post_cancel_recovery(3_000_000_000)
+
+
+def test_unknown_terminal_reason_fails_before_terminal_transition() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(
+        2_000_000_000,
+        exchange_ts_ns=1_900_000_000,
+    )
+    with pytest.raises(ValueError, match="unsupported order terminal reason"):
+        lifecycle.exchange_terminal(
+            3_000_000_000,
+            exchange_ts_ns=2_900_000_000,
+            reason="unknown",
+        )
+    assert lifecycle.phase == OrderLifecyclePhase.ACTIVE
+    assert lifecycle.fill_risk_active is True
+
+
+def test_cancel_reject_restores_partial_fill_phase_and_exposure() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.activate(2_000_000_000)
+    lifecycle.observe_fill(
+        remaining_after=0.0004,
+        visibility_ts_ns=3_000_000_000,
+    )
+    lifecycle.request_cancel(4_000_000_000)
+    lifecycle.cancel_rejected(5_000_000_000)
+
+    assert lifecycle.phase == OrderLifecyclePhase.PARTIALLY_FILLED
+    assert lifecycle.fill_risk_active
+    assert lifecycle.exposure_btc_s(now_ns=6_000_000_000) == pytest.approx(
+        0.0022
+    )
+
+
+def test_order_manager_reconcile_preserves_partial_fill_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timestamps = iter(
+        [
+            1_000_000_000,
+            2_000_000_000,
+            4_000_000_000,
+            6_000_000_000,
+        ]
+    )
+    monkeypatch.setattr(
+        "strategy.order_manager.time.time_ns",
+        lambda: next(timestamps),
+    )
+    manager = OrderManager()
+    cid = manager.create_order("BTCUSDC", Side.BUY, 100.0, 0.001)
+    manager.confirm_new(cid, 42, exchange_ts_ns=2_000_000_000)
+    manager.on_order_update(
+        {
+            "c": cid,
+            "X": "PARTIALLY_FILLED",
+            "i": 42,
+            "z": "0.0006",
+            "L": "100.0",
+            "ap": "100.0",
+            "T": 3_500,
+            "_local_receive_ts_ns": 3_000_000_000,
+        }
+    )
+    manager.mark_pending_cancel(cid)
+
+    assert manager.reconcile_pending_cancel(
+        cid,
+        exchange_open=True,
+        exchange_oid=42,
+    )
+    order = manager.get_order(cid)
+    assert order is not None
+    assert order.state == OrderState.PARTIALLY_FILLED
+    assert order.lifecycle_phase == OrderLifecyclePhase.PARTIALLY_FILLED.value
+    assert order.remaining_qty == pytest.approx(0.0004)
+
+
+def test_order_manager_exposes_quantity_weighted_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timestamps = iter(
+        [
+            1_000_000_000,
+            2_000_000_000,
+            3_000_000_000,
+        ]
+    )
+    monkeypatch.setattr(
+        "strategy.order_manager.time.time_ns",
+        lambda: next(timestamps),
+    )
+    terminal: list[tuple[str, str]] = []
+    lifecycle_callbacks: list[str] = []
+    manager = OrderManager(
+        on_terminal=lambda order, reason: terminal.append(
+            (order.client_order_id, reason)
+        ),
+        on_lifecycle_event=lambda _order, event_type, _event: lifecycle_callbacks.append(
+            event_type
+        ),
+    )
+    cid = manager.create_order("BTCUSDC", Side.BUY, 100.0, 0.001)
+    manager.confirm_new(cid, 42, exchange_ts_ns=2_000_000_000)
+    manager.on_order_update(
+        {
+            "c": cid,
+            "X": "NEW",
+            "i": 42,
+            "T": 2_500,
+            "_local_receive_ts_ns": 2_600_000_000,
+        }
+    )
+    order_after_new = manager.get_order(cid)
+    assert order_after_new is not None
+    assert [event["event"] for event in order_after_new.lifecycle.events()] == [
+        "submit",
+        "activate",
+    ]
+    assert lifecycle_callbacks == ["rest_ack"]
+    manager.mark_pending_cancel(cid)
+
+    manager.on_order_update(
+        {
+            "c": cid,
+            "X": "PARTIALLY_FILLED",
+            "i": 42,
+            "z": "0.0006",
+            "L": "100.0",
+            "ap": "100.0",
+            "T": 3_500,
+            "_local_receive_ts_ns": 4_000_000_000,
+        }
+    )
+    order = manager.get_order(cid)
+    assert order is not None
+    assert order.state == OrderState.PENDING_CANCEL
+    assert order.lifecycle_phase == OrderLifecyclePhase.CANCEL_PENDING.value
+
+    manager.on_order_update(
+        {
+            "c": cid,
+            "X": "CANCELED",
+            "i": 42,
+            "T": 5_500,
+            "_local_receive_ts_ns": 6_000_000_000,
+        }
+    )
+    snapshot = manager.lifecycle_snapshot(cid)
+    assert snapshot is not None
+    assert snapshot["phase"] == OrderLifecyclePhase.EXCHANGE_TERMINAL.value
+    assert snapshot["remaining_quantity"] == pytest.approx(0.0004)
+    assert snapshot["first_fill_latency_s"] == pytest.approx(2.0)
+    assert snapshot["quantity_time_exposure_btc_s"] == pytest.approx(0.0028)
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
+        0.0028
+    )
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(
+        0.0023
+    )
+    assert snapshot["exchange_exposure_complete"] is True
+    assert terminal == [(cid, "cancel_ack")]

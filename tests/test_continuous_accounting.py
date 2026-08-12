@@ -1,0 +1,113 @@
+from datetime import UTC, datetime
+
+import pytest
+
+from models.replay.continuous_accounting import ContinuousAccountingLedger
+from models.replay.replay_state_checkpoint import ContinuousReplayState
+
+
+def _ts(day: int) -> int:
+    return int(datetime(2026, 1, day, tzinfo=UTC).timestamp() * 1_000)
+
+
+def _ledger() -> ContinuousAccountingLedger:
+    return ContinuousAccountingLedger(
+        ContinuousReplayState(
+            arm_id="control",
+            checkpoint_ts_ms=_ts(1),
+            cash_usdc=0.0,
+            position_btc=0.0,
+            average_entry_price=0.0,
+            cumulative_realized_pnl_usdc=0.0,
+            cumulative_fees_usdc=0.0,
+            equity_anchor_usdc=0.0,
+            last_mark_price=100.0,
+            cumulative_pnl_usdc=0.0,
+        )
+    )
+
+
+def test_daily_slices_add_to_continuous_pnl_without_midnight_flatten() -> None:
+    ledger = _ledger()
+    ledger.fill(
+        ts_ms=_ts(1) + 1_000,
+        side="BUY",
+        quantity_btc=1.0,
+        price=100.0,
+        new_campaign_id="LONG-1",
+    )
+    first = ledger.close_utc_day(day_end_ts_ms=_ts(2), mark_price=105.0)
+
+    assert first.pnl_usdc == pytest.approx(5.0)
+    assert ledger.state.position_btc == 1.0
+    assert ledger.state.economic_campaign is not None
+
+    ledger.fill(
+        ts_ms=_ts(2) + 1_000,
+        side="SELL",
+        quantity_btc=1.0,
+        price=110.0,
+    )
+    second = ledger.close_utc_day(day_end_ts_ms=_ts(3), mark_price=110.0)
+    audit = ledger.accounting_audit()
+
+    assert second.pnl_usdc == pytest.approx(5.0)
+    assert sum(row.pnl_usdc for row in ledger.daily_slices) == pytest.approx(10.0)
+    assert ledger.state.cumulative_pnl_usdc == pytest.approx(10.0)
+    assert audit["closed_daily_additivity_error_usdc"] == pytest.approx(0.0)
+    assert ledger.closed_campaigns[0].value_usdc == pytest.approx(10.0)
+
+
+def test_gap_inventory_is_marked_while_strategy_is_offline() -> None:
+    ledger = _ledger()
+    ledger.fill(
+        ts_ms=_ts(1) + 1_000,
+        side="SELL",
+        quantity_btc=0.002,
+        price=100_000.0,
+        new_campaign_id="SHORT-1",
+    )
+    gap = ledger.record_gap(
+        gap_id="maintenance-1",
+        start_ts_ms=_ts(1) + 2_000,
+        end_ts_ms=_ts(1) + 3_000,
+        start_mark_price=100_000.0,
+        end_mark_price=101_000.0,
+    )
+
+    assert gap.pnl_usdc == pytest.approx(-2.0)
+    assert ledger.state.position_btc == pytest.approx(-0.002)
+    assert ledger.state.cumulative_pnl_usdc == pytest.approx(-2.0)
+
+
+def test_restart_transition_preserves_economics_and_waits_for_warmup() -> None:
+    ledger = _ledger()
+    ledger.fill(
+        ts_ms=_ts(1) + 1_000,
+        side="BUY",
+        quantity_btc=0.001,
+        price=100.0,
+        new_campaign_id="LONG-1",
+    )
+    cash = ledger.state.cash_usdc
+    position = ledger.state.position_btc
+
+    stopped = ledger.enter_planned_restart(_ts(1) + 2_000)
+    assert stopped.restart_generation == 1
+    assert not stopped.quoting_enabled
+    assert stopped.cash_usdc == cash
+    assert stopped.position_btc == position
+    with pytest.raises(ValueError, match="future"):
+        ledger.resume_after_warmup(
+            decision_ts_ms=_ts(1) + 3_000,
+            feature_ready_ts_ms=_ts(1) + 3_001,
+        )
+
+    ready = ledger.resume_after_warmup(
+        decision_ts_ms=_ts(1) + 3_000,
+        feature_ready_ts_ms=_ts(1) + 3_000,
+    )
+    assert ready.quoting_enabled
+    assert ready.restart_generation == 1
+    assert ready.cash_usdc == cash
+    assert ready.position_btc == position
