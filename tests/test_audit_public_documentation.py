@@ -284,3 +284,21 @@ def test_public_source_rejects_known_private_host(
     kinds = {row["kind"] for row in result["findings"]}
     assert "source_ssh_target" in kinds
     assert "source_known_private_ipv4" in kinds
+
+
+def test_public_source_rejects_known_private_ipv4_between_underscores(
+    tmp_path: Path,
+) -> None:
+    repo = _init_repo(tmp_path)
+    private_ipv4 = ".".join(("52", "194", "209", "205"))
+    (repo / "example.py").write_text(
+        f'ARCHIVE = "aws_{private_ipv4}_20260811"\n',
+        encoding="utf-8",
+    )
+
+    result = audit(repo)
+
+    assert result["passed"] is False
+    assert any(
+        row["kind"] == "source_known_private_ipv4" for row in result["findings"]
+    )

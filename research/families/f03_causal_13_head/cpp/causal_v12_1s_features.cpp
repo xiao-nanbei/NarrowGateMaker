@@ -178,58 +178,65 @@ std::optional<double> sample_std(const std::vector<double>& values) {
     if (values.size() < 2) {
         return std::nullopt;
     }
-    const long double average = precise_sum(values) /
-        static_cast<long double>(values.size());
+    // Python's math.fsum oracle rounds the mean to binary64 before centering.
+    // Keep that rounding point explicit so x86 extended precision and platforms
+    // where long double equals double produce the same feature values.
+    const double average = mean(values).value();
     long double squared = 0.0L;
     for (const double value : values) {
-        const long double delta = static_cast<long double>(value) - average;
-        squared += delta * delta;
+        const double delta = value - average;
+        const double term = delta * delta;
+        squared += static_cast<long double>(term);
     }
-    return std::sqrt(std::max(0.0L, squared /
-        static_cast<long double>(values.size() - 1)));
+    const double variance = static_cast<double>(squared) /
+        static_cast<double>(values.size() - 1);
+    return std::sqrt(std::max(0.0, variance));
 }
 
 std::optional<double> skew(const std::vector<double>& values) {
     if (values.size() < 5) {
         return std::nullopt;
     }
-    const long double average = precise_sum(values) /
-        static_cast<long double>(values.size());
+    const double average = mean(values).value();
     long double second = 0.0L;
     long double third = 0.0L;
     for (const double value : values) {
-        const long double delta = static_cast<long double>(value) - average;
-        second += delta * delta;
-        third += delta * delta * delta;
+        const double delta = value - average;
+        const double squared = delta * delta;
+        second += static_cast<long double>(squared);
+        third += static_cast<long double>(squared * delta);
     }
-    second /= static_cast<long double>(values.size());
-    third /= static_cast<long double>(values.size());
-    if (second <= 0.0L) {
+    const double second_moment = static_cast<double>(second) /
+        static_cast<double>(values.size());
+    const double third_moment = static_cast<double>(third) /
+        static_cast<double>(values.size());
+    if (second_moment <= 0.0) {
         return 0.0;
     }
-    return static_cast<double>(third / std::pow(second, 1.5L));
+    return third_moment / std::pow(second_moment, 1.5);
 }
 
 std::optional<double> kurtosis(const std::vector<double>& values) {
     if (values.size() < 5) {
         return std::nullopt;
     }
-    const long double average = precise_sum(values) /
-        static_cast<long double>(values.size());
+    const double average = mean(values).value();
     long double second = 0.0L;
     long double fourth = 0.0L;
     for (const double value : values) {
-        const long double delta = static_cast<long double>(value) - average;
-        const long double squared = delta * delta;
-        second += squared;
-        fourth += squared * squared;
+        const double delta = value - average;
+        const double squared = delta * delta;
+        second += static_cast<long double>(squared);
+        fourth += static_cast<long double>(squared * squared);
     }
-    second /= static_cast<long double>(values.size());
-    fourth /= static_cast<long double>(values.size());
-    if (second <= 0.0L) {
+    const double second_moment = static_cast<double>(second) /
+        static_cast<double>(values.size());
+    const double fourth_moment = static_cast<double>(fourth) /
+        static_cast<double>(values.size());
+    if (second_moment <= 0.0) {
         return 0.0;
     }
-    return static_cast<double>(fourth / (second * second) - 3.0L);
+    return fourth_moment / (second_moment * second_moment) - 3.0;
 }
 
 std::optional<double> ratio(const double numerator, const double denominator) {
