@@ -1,0 +1,102 @@
+{
+  "schema_version": "causal_13_head_native_transport_audit.v1",
+  "identity": "causal_v12_postfit_native_oos_20260726_31_v1",
+  "created_at_utc": "2026-08-02T00:41:22Z",
+  "decision_before_outcomes": "evaluate_the_frozen_v12_bundle_without_refit_recalibration_or_threshold_selection",
+  "feature_dir": "${NARROWGATE_DATA_ROOT}/features_btcusdc_causal_v12_postfit_oos_20260726_31_20260802",
+  "feature_manifest_sha256": "678892190d06c124d27032d298146727f42d54626639014f6336d26a35d260e5",
+  "feature_semantics_version": 6,
+  "feature_dag_id": "live_10s_signal_cutoff.v1",
+  "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+  "model_dir": "${NARROWGATE_DATA_ROOT}/model_runs/causal_v12_expanded_source_aware_semantics_v6_20260802",
+  "training_spec_sha256": "45ece69f8ea22ff35f5d1726dfa3a8ff5a8aab8297b66490af9d8287d8ee9328",
+  "training_summary_sha256": "59daa283301ee819aab593dd762cd5b1b4e5662f6451e64f08e0d256759131df",
+  "model_artifact_manifest_sha256": "2a97c0d804666cea80f1e1747b737a780d0dc24442b03ea2e103fb53a39bbd75",
+  "audit_implementation_sha256": "108a167bcdcd33a91555db74091da25bcab18997d2fe9644194ded66b7e0a0ca",
+  "data_identity": {
+    "normalized_l2_manifest_sha256": "1876f47877f7c87aafd01e5626368da02d399afead26a8d4aa71c0c4615a5d2a",
+    "normalized_l2_daily_quality_sha256": "39382887ca4a361c4a4aebf52c713ae48dbe6b68747cef7f2dcd1e45ed1bb235",
+    "maximum_gap_quality_sha256": "2b903583b0e96221d52619bd0a947593b5a37d61eea3ca2cb30cd53c24321ff4",
+    "taker_tempo_manifest_sha256": "36955ba239a08640699302f55d98eefc0fe6a13f2574fea859b730471f2ed3d9",
+    "grade_a_maximum_contiguous_gap_s": 5.0,
+    "grade_a_days": [
+      "2026-07-26",
+      "2026-07-27",
+      "2026-07-29",
+      "2026-07-30",
+      "2026-07-31"
+    ],
+    "sensitivity_days": [
+      "2026-07-28"
+    ],
+    "sensitivity_reason": "normalized_l2_max_contiguous_gap_419_735_seconds"
+  },
+  "panels": [
+    {
+      "split": "postfit_oos_grade_a",
+      "dataset_file": "dataset_postfit_grade_a.parquet",
+      "dataset_sha256": "756d8398a5145ca6fe324feda33114d29ab3f8c241155d5787473f2b8801e9a7",
+      "role": "postfit_native_oos_diagnostic_grade_a",
+      "independent_confirmation": false,
+      "days": [
+        "2026-07-26",
+        "2026-07-27",
+        "2026-07-29",
+        "2026-07-30",
+        "2026-07-31"
+      ]
+    },
+    {
+      "split": "postfit_sensitivity",
+      "dataset_file": "dataset_postfit_sensitivity.parquet",
+      "dataset_sha256": "3fbe36c9f478f38df50f37c14c09c55133a1655ddc80b75d19fe8e35e12a1f95",
+      "role": "postfit_native_gap_sensitivity",
+      "independent_confirmation": false,
+      "days": [
+        "2026-07-28"
+      ]
+    }
+  ],
+  "diagnostic_gates": {
+    "classification": "auc_gt_0_5_and_brier_skill_gt_0",
+    "regression": "spearman_ic_gt_0_and_rmse_skill_gt_0",
+    "primary_panel": "postfit_native_oos_diagnostic_grade_a",
+    "sensitivity_panel_cannot_rescue_primary": true,
+    "all_13_heads_required_for_family_level_pass": true
+  },
+  "metric_contract": {
+    "classification": [
+      "auc",
+      "average_precision",
+      "brier_skill_vs_2025_train_prevalence",
+      "log_loss",
+      "calibration_intercept_log_odds",
+      "calibration_slope"
+    ],
+    "regression": [
+      "mae_skill_vs_2025_train_mean",
+      "rmse_skill_vs_2025_train_mean",
+      "spearman_ic",
+      "pearson_ic",
+      "calibration_intercept",
+      "calibration_slope"
+    ],
+    "daily_stability_required": true,
+    "buy_sell_toxicity_separate": true,
+    "feature_drift_required": true
+  },
+  "prior_exposure_boundary": {
+    "used_by_v12_training": false,
+    "used_by_v12_historical_native_transport_panels": false,
+    "v12_predictions_or_pnl_previously_read": false,
+    "globally_unseen_dates": false,
+    "known_prior_project_use": "live_and_F10_diagnostics",
+    "correct_interpretation": "family_specific_postfit_oos_diagnostic_not_global_sealed_holdout"
+  },
+  "calibrator_fitted": false,
+  "historical_panels_previously_read": false,
+  "independent_confirmation": false,
+  "prediction_authority": false,
+  "action_authority": false,
+  "live_authority": false
+}

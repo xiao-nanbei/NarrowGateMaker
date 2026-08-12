@@ -1,0 +1,112 @@
+{
+  "schema_version": "causal_v12_owner_amended_economic_rescore.v2",
+  "experiment_id": "causal_v12_owner_amended_late22_plus_postfit5_economic_rescore_v2",
+  "created_at_utc": "2026-08-02T01:30:00Z",
+  "amendment_context": {
+    "owner_instruction": "replace_the_90_percent_fill_floor_with_a_symmetric_plus_or_minus_20_percent_activity_band_and_prioritize_relative_loss_reduction_over_relative_fill_reduction",
+    "outcome_informed_amendment": true,
+    "original_v1_specs_remain_frozen": true,
+    "retrospective_rescore_only": true,
+    "cannot_create_independent_confirmation": true
+  },
+  "sources": [
+    {
+      "label": "historical_native_late22",
+      "role": "historical_native_late_diagnostic",
+      "days": [
+        "2026-06-19",
+        "2026-06-20",
+        "2026-06-21",
+        "2026-06-22",
+        "2026-06-23",
+        "2026-06-26",
+        "2026-06-29",
+        "2026-07-03",
+        "2026-07-04",
+        "2026-07-05",
+        "2026-07-06",
+        "2026-07-07",
+        "2026-07-08",
+        "2026-07-09",
+        "2026-07-10",
+        "2026-07-16",
+        "2026-07-17",
+        "2026-07-18",
+        "2026-07-19",
+        "2026-07-20",
+        "2026-07-22",
+        "2026-07-23"
+      ],
+      "daily": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/causal_v12_native_full_path_ml_ab_20260802/daily.csv",
+        "sha256": "6b851c66c3f66e4d7f5cfe7c0e6c27b78808749f308cdadd926c6e7196b9232d"
+      },
+      "campaigns": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/causal_v12_native_full_path_ml_ab_20260802/campaigns.parquet",
+        "sha256": "9620ac99dc9c912b7ff37531e78461427c7a8000fe86147f59be9c4bcbbb0e88"
+      }
+    },
+    {
+      "label": "postfit_native_grade_a5",
+      "role": "postfit_native_oos_diagnostic_grade_a",
+      "days": [
+        "2026-07-26",
+        "2026-07-27",
+        "2026-07-29",
+        "2026-07-30",
+        "2026-07-31"
+      ],
+      "daily": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/causal_v12_postfit_native_full_path_ml_ab_20260802/daily.csv",
+        "sha256": "9766f920dc65cb6241c632779e8f3de3bb6df63b1a0d1f5316e786a42ce179ca"
+      },
+      "campaigns": {
+        "path": "${NARROWGATE_DATA_ROOT}/reports/causal_v12_postfit_native_full_path_ml_ab_20260802/campaigns.parquet",
+        "sha256": "ff18bc59d43aeeeba145b39d3fa1ccc0cd4b5d662a04c14c9b2a249a8d72f76b"
+      }
+    }
+  ],
+  "bootstrap": {
+    "cluster_unit": "UTC_day",
+    "draws": 20000,
+    "seed": 20260802
+  },
+  "economic_hierarchy": {
+    "primary": "closed_campaign_terminal_value_usdc_per_day",
+    "secondary": "total_terminal_mtm_pnl_usdc_per_day",
+    "diagnostic_only": [
+      "day_end_open_campaign_mtm_usdc",
+      "day_end_inventory_btc"
+    ],
+    "state_continuity_requirement_for_future_confirmation": "carry_inventory_cash_cooldown_campaign_and_model_state_across_UTC_midnight",
+    "UTC_day_role": "inference_cluster_not_strategy_reset_boundary"
+  },
+  "gates": {
+    "minimum_fill_retention": 0.8,
+    "maximum_fill_retention": 1.2,
+    "minimum_loss_fill_selectivity_ratio": 1.0,
+    "maximum_inventory_time_ratio": 1.05,
+    "campaign_q10_mean_daily_delta_minimum_usdc": 0.0,
+    "campaign_cvar10_mean_daily_delta_minimum_usdc": 0.0,
+    "side_maker_value_tolerance_bps": 0.05
+  },
+  "value_provenance": {
+    "fill_activity_plus_or_minus_20_percent": "owner_judgmental_amendment_after_outcomes_for_future_use",
+    "loss_fill_selectivity_ratio_above_one": "economic_proportional_thinning_benchmark_with_judgmental_gate_status",
+    "closed_campaign_primary": "live_continuity_estimand_choice_plus_accounting_identity",
+    "day_end_open_MTM_diagnostic_only": "administrative_censoring_contract_not_zero_economic_value",
+    "UTC_day_clustering": "statistical_dependence_contract",
+    "campaign_q10_and_cvar": "retained_user_required_tail_diagnostics",
+    "bootstrap_draws_and_seed": "judgmental_computation_contract"
+  },
+  "permissions": {
+    "historical_panels_previously_read": true,
+    "postfit_panel_predictions_and_pnl_previously_read": true,
+    "independent_confirmation": false,
+    "prediction_authority": false,
+    "action_authority": false,
+    "live_authority": false
+  },
+  "implementation_sha256": "642564af28610d7da9753d98d591237e509440594f8bc86b2876bfe5f10eaa63",
+  "canonical_spec_identity_sha256": "eb3c5fedd3a638cdb93c14e9ebd3a8915448a8495a30bfdc5f7cd0a35f4ea707"
+}
