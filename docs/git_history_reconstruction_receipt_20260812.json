@@ -39,6 +39,8 @@
     "pre_final_commit": "f72294039122d16dbdd9c1628c9bf9feb02fa1fc",
     "final_commit_binding": "this receipt is introduced by the final planned commit",
     "commit_count_after_final_binding": 116,
+    "post_reconstruction_validation_fix_count": 1,
+    "commit_count_after_validation_fix": 117,
     "single_root_required": true,
     "old_root_must_not_be_ancestor": true,
     "private_paths_allowed": false,
@@ -70,6 +72,7 @@
     "committed_relative_link_check": "passed_for_available_targets",
     "staged_path_plan_match": "passed_per_commit",
     "staged_whitespace_check": "passed_per_commit_after_recorded_input_amendments",
+    "public_documentation_audit": "passed_after_projection_hash_validation_fix",
     "final_repository_validation_required_before_main_replacement": true,
     "github_ci_required_before_main_replacement": true,
     "fresh_clone_required_before_main_replacement": true
@@ -82,6 +85,14 @@
     "old_history_bundle_published": false,
     "tags_must_be_pushed_individually": true,
     "status_at_receipt_creation": "local reconstruction complete; remote publication pending validation"
+  },
+  "post_reconstruction_validation_fixes": {
+    "projection_hash_sync_after_crlf_normalization": [
+      "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260805.csv",
+      "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260808.csv"
+    ],
+    "research_semantics_changed": false,
+    "private_source_identity_changed": false
   },
   "identity_model": {
     "git": "public source, documentation, version, diff, rollback, and release identity",

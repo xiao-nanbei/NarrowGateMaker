@@ -2057,7 +2057,7 @@
       "public_path": "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260805.csv",
       "unit_id": "research/shared/replay_lifecycle",
       "source_private_sha256": "66563e9856369a2d4aaaa64661dad086d6758ce89a0970af238bd58842ea2015",
-      "public_projection_sha256": "aa90f01b3a5e957e73290ef103b0f76b3b73419dda6d7322a0546b482ce9db07",
+      "public_projection_sha256": "84a4c1eff0c0576ef331f97351d1dcc06891e6cfb6eb5ae1422cbb7321b9dbc5",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1096
@@ -2066,7 +2066,7 @@
       "public_path": "research/shared/replay_lifecycle/docs/internal_cache_reference_audit_v1_20260808.csv",
       "unit_id": "research/shared/replay_lifecycle",
       "source_private_sha256": "e9cea7e402e75ae588a9fd198b325c5d0fd95a40aaf0ad6679435613f7ca6099",
-      "public_projection_sha256": "20daa1a070927ec1675b048ce422f7db8c219299c82904e80a71dc4982c8e3e5",
+      "public_projection_sha256": "54865b0e437a6efac7050e6f189f4befa8e70ebddeb90d0b345e383a8a296336",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1096

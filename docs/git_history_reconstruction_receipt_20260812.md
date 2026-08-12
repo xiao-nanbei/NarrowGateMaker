@@ -38,3 +38,7 @@ The `rebuild/*` annotated tags identify reconstructed public research records, n
 The reconstructed history must first be pushed to `rebuilt-main-20260812`, pass repository validation and GitHub CI, and pass validation from a fresh clone. The public `main` branch may then be replaced only with `--force-with-lease` against the frozen old remote commit. Archive refs and the old-history bundle must never be pushed.
 
 The machine-readable receipt contains the plan, amendment, result-ledger, root, and tag hashes used to audit this reconstruction.
+
+## Post-Reconstruction Validation Fix
+
+The frozen plan produced 116 commits. The first public-documentation audit then correctly found that two public projection SHA values still described the pre-normalization CRLF bytes of their CSV targets. A 117th, explicitly post-reconstruction validation commit synchronizes those two projection hashes and records this correction here. It changes neither research semantics nor private-source identity.
