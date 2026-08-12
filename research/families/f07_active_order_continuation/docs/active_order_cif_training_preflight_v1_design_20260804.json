@@ -1,0 +1,121 @@
+{
+  "schema_version": "active_order_cif_training_preflight_contract.v1",
+  "identity": "active_order_cif_training_preflight_v1",
+  "family": "F07_active_order_continuation",
+  "status": "implemented_current_live_failed_closed",
+  "frozen_at_utc": "2026-08-04T00:00:00Z",
+  "last_materially_modified": "2026-08-04",
+  "purpose": "Bounded mechanics-only readiness audit for a future F07 lifecycle-CIF training identity. The audit reads only a validated baseline-epoch manifest and lifecycle-journal schema/metadata.",
+  "implementation_identity": {
+    "path": "research/families/f07_active_order_continuation/audit/active_order_cif_training_preflight.py",
+    "sha256": "5987305a36b33323bc929b34b4f703728aaa1ad00ffad5b5f148b55448f160f5",
+    "report_schema_version": "active_order_cif_training_preflight_report.v1"
+  },
+  "bound_contracts": {
+    "baseline_epoch_manifest": {
+      "schema_version": "narrowgate_baseline_epoch_manifest.v1",
+      "implementation_path": "models/replay/baseline_epoch_manifest.py",
+      "implementation_sha256": "7393602838e9985ae4685a863d6d9b30496c640434abdc7349cdee46ad967429"
+    },
+    "future_lifecycle_journal": {
+      "schema_version": "order_lifecycle_journal.v2",
+      "metadata_schema_version": "order_lifecycle_journal_v2_dataset_metadata.v1",
+      "implementation_path": "execution/order_lifecycle_journal_v2.py",
+      "implementation_sha256": "c24bdfd8514afc38773c3dc1a0c16dd52829a1309fbe875ec897458450a9ae64"
+    },
+    "cif_kernel": {
+      "identity": "active_order_competing_risk_cif_100ms_v1",
+      "implementation_path": "research/families/f07_active_order_continuation/audit/active_order_competing_risk_cif.py",
+      "implementation_sha256": "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72"
+    }
+  },
+  "bounded_input_contract": {
+    "baseline_epoch_manifest_only": true,
+    "lifecycle_journal_schema_metadata_only": true,
+    "raw_lifecycle_rows_read": false,
+    "pnl_read": false,
+    "reward_read": false,
+    "markout_read": false,
+    "campaign_terminal_value_read": false,
+    "maximum_epoch_count": 512,
+    "maximum_metadata_day_count": 400,
+    "extra_metadata_columns": "fail_closed"
+  },
+  "data_semantics": {
+    "risk_grid_ms": 100,
+    "risk_grid_clock": "causal_visibility_clock",
+    "competing_causes_in_order": [
+      "favorable_fill",
+      "adverse_fill",
+      "cancel_ack",
+      "other_terminal"
+    ],
+    "full_fill_cause_rule": "consume only the identity and SHA256 of a separately frozen upstream classifier; this preflight does not read its markout or economic labels",
+    "partial_fill": "end the current remaining-quantity spell and start a new positive-remaining spell at the same last grid edge",
+    "local_shutdown": "right censor only; never encode as exchange terminal",
+    "left_truncation": "delayed entry at the first authoritative observation with explicit reason and entry timestamp",
+    "dual_clocks": [
+      "event_visibility_ts_ns",
+      "event_exchange_ts_ns"
+    ],
+    "epoch_pooling_before_epoch_specific_audit": false
+  },
+  "readiness_layers": {
+    "baseline_epoch_ready": "all epochs fully bound at first decision, restart audit complete, no unbound interval, and lifecycle estimation authorized",
+    "lifecycle_data_admission_ready": "v2 runtime producer, lossless event batches, atomic admitted tape, epoch binding, grid, causes, clocks, spell and censor contracts all pass",
+    "training_identity_registration_ready": "data admission plus a frozen chronological 40-day panel, Python panel builder and the bound Python CIF kernel",
+    "chronological_python_cpp_lockstep_execution_ready": "training registration plus C++ panel/kernel and event/checkpoint lockstep runners"
+  },
+  "current_live_v1_audit": {
+    "baseline_manifest_path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
+    "baseline_manifest_canonical_sha256": "f05ec4fbcc331837997779ded0a916c6105e3265f7854c823db2425b3510a69f",
+    "preflight_report_canonical_sha256": "f56cfc22d05b9ec383e6d8187f40c9eea9ae753ce8b01b598542b62576eabd04",
+    "baseline_epoch_ready": false,
+    "lifecycle_data_admission_ready": false,
+    "training_identity_registration_ready": false,
+    "chronological_python_cpp_lockstep_execution_ready": false,
+    "current_journal_authoritative": false,
+    "reason": "The current live producer writes only the latest v1 lifecycle snapshot after a callback. It is not the v2 all-unseen-event batch emitter and has no admitted v2 dataset or lockstep evidence."
+  },
+  "missing_runtime_integrations": [
+    "all_unseen_lifecycle_event_batch_emission",
+    "atomic_callback_batch_commit",
+    "durable_lifecycle_cursor_checkpoint",
+    "lifecycle_writer_health_accounting",
+    "live_order_manager_order_lifecycle_journal_v2_batch_emitter",
+    "replay_order_manager_order_lifecycle_journal_v2_batch_emitter"
+  ],
+  "missing_artifacts": [
+    "authoritative_order_lifecycle_journal_v2_tape",
+    "cpp_active_order_competing_risk_cif_kernel",
+    "cpp_f07_cif_panel_builder",
+    "frozen_f07_chronological_40_day_panel_manifest",
+    "frozen_full_fill_cause_classifier",
+    "live_producer_sha256",
+    "order_lifecycle_journal_v2_admission_manifest",
+    "order_lifecycle_journal_v2_health_manifest",
+    "python_cpp_checkpoint_resume_lockstep_runner",
+    "python_cpp_event_lockstep_runner",
+    "python_f07_cif_panel_builder",
+    "replay_producer_sha256"
+  ],
+  "permissions": {
+    "lifecycle_panel_generation_authorized": false,
+    "model_training_authorized": false,
+    "prediction_evaluation_authorized": false,
+    "economic_outcome_read_authorized": false,
+    "q90_action_authorized": false,
+    "q90_threshold_change_authorized": false,
+    "action_experiment_authorized": false,
+    "live_deployment_authorized": false,
+    "baseline_update_authorized": false
+  },
+  "required_next_order": [
+    "integrate the v2 all-unseen-event batch emitter into both live and authoritative replay",
+    "publish atomically admitted v2 lifecycle tape, admission manifest and writer health manifest",
+    "complete a fully bound baseline-epoch manifest and bind every order to one authorized epoch",
+    "freeze the 40-day chronological panel and upstream full-fill cause-classifier identity",
+    "implement and hash Python/C++ panel builders, C++ CIF kernel and event/checkpoint lockstep runners",
+    "rerun this preflight before registering any training identity"
+  ]
+}
