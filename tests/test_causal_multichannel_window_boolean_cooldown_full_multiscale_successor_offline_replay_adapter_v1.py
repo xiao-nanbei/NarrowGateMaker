@@ -728,6 +728,16 @@ def _write_observation_manifest(
         "continuation_only_days": list(continuation_days),
         "continuation_days_create_target_assignments": False,
         "continuation_days_create_economic_test_rows": False,
+        "permissions": {
+            "action_authorized": False,
+            "actions_read": False,
+            "economic_outcomes_read": False,
+            "labels_read": False,
+            "live_authorized": False,
+            "model_trained": False,
+            "sealed_holdout_read": False,
+            "validation_read": False,
+        },
         "days": day_rows,
     }
     payload["canonical_manifest_sha256"] = adapter_module._document_sha256(
@@ -825,6 +835,52 @@ def test_valid_observation_binding_has_30_targets_34_context_and_six_workers(
     assert options.cache.root == (tmp_path / "cache" / "replay_dag" / "f05").resolve()
     assert observation_payload["selected_target_day_count"] == 30
     assert observation_payload["observation_context_day_count"] == 34
+
+
+def test_legacy_observation_semantics_are_derived_only_from_false_permissions(
+    tmp_path: Path,
+) -> None:
+    observation_path, observation_payload = _write_observation_manifest(tmp_path)
+    observation_payload.pop("continuation_days_create_economic_test_rows")
+    for row in observation_payload["days"]:
+        row.pop("economic_test_row_eligible")
+        row.pop("washout_continuation_eligible")
+    observation_payload["canonical_manifest_sha256"] = adapter_module._document_sha256(
+        observation_payload,
+        "canonical_manifest_sha256",
+    )
+    observation_path.write_text(
+        json.dumps(observation_payload, sort_keys=True),
+        encoding="ascii",
+    )
+    rows = _portable_binding_rows(tmp_path, observation_path, observation_payload)
+
+    options = adapter_module._resolve_execution_options(rows)
+
+    assert options.workers == 6
+
+
+def test_legacy_observation_semantics_reject_any_enabled_permission(
+    tmp_path: Path,
+) -> None:
+    observation_path, observation_payload = _write_observation_manifest(tmp_path)
+    observation_payload.pop("continuation_days_create_economic_test_rows")
+    for row in observation_payload["days"]:
+        row.pop("economic_test_row_eligible")
+        row.pop("washout_continuation_eligible")
+    observation_payload["permissions"]["economic_outcomes_read"] = True
+    observation_payload["canonical_manifest_sha256"] = adapter_module._document_sha256(
+        observation_payload,
+        "canonical_manifest_sha256",
+    )
+    observation_path.write_text(
+        json.dumps(observation_payload, sort_keys=True),
+        encoding="ascii",
+    )
+    rows = _portable_binding_rows(tmp_path, observation_path, observation_payload)
+
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="permissions"):
+        adapter_module._resolve_execution_options(rows)
 
 
 def test_portable_day_cache_cannot_escape_governed_replay_dag_root(

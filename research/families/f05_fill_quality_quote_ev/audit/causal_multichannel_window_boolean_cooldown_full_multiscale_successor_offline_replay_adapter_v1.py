@@ -1584,9 +1584,21 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
         )
     if set(continuation) != set(REQUIRED_ADDITIONAL_CONTEXT_DAYS):
         raise OfflineReplayAdapterError("continuation-only day universe drifted")
+    if payload.get("continuation_days_create_target_assignments") is not False:
+        raise OfflineReplayAdapterError(
+            "continuation-only days cannot create assignments or economic rows"
+        )
+    permissions = payload.get("permissions")
+    if not isinstance(permissions, Mapping) or any(
+        value is not False for value in permissions.values()
+    ):
+        raise OfflineReplayAdapterError(
+            "native observation batch permissions must remain false"
+        )
+    explicit_economic_contract = "continuation_days_create_economic_test_rows" in payload
     if (
-        payload.get("continuation_days_create_target_assignments") is not False
-        or payload.get("continuation_days_create_economic_test_rows") is not False
+        explicit_economic_contract
+        and payload.get("continuation_days_create_economic_test_rows") is not False
     ):
         raise OfflineReplayAdapterError(
             "continuation-only days cannot create assignments or economic rows"
@@ -1609,8 +1621,6 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
         missing_fields = {
             "observation_role",
             "target_assignment_eligible",
-            "economic_test_row_eligible",
-            "washout_continuation_eligible",
         } - set(row)
         if missing_fields:
             raise OfflineReplayAdapterMechanicsMissing(
@@ -1620,12 +1630,34 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
         if (
             row.get("observation_role") != "continuation_only"
             or row.get("target_assignment_eligible") is not False
-            or row.get("economic_test_row_eligible") is not False
-            or row.get("washout_continuation_eligible") is not True
         ):
             raise OfflineReplayAdapterError(
                 f"continuation-only day is assignment/economic eligible: {day}"
             )
+        row_has_economic_contract = "economic_test_row_eligible" in row
+        row_has_washout_contract = "washout_continuation_eligible" in row
+        if row_has_economic_contract != row_has_washout_contract:
+            raise OfflineReplayAdapterError(
+                f"continuation-only day has a partial explicit semantics contract: {day}"
+            )
+        if (
+            row_has_economic_contract
+            and (
+                row.get("economic_test_row_eligible") is not False
+                or row.get("washout_continuation_eligible") is not True
+            )
+        ):
+            raise OfflineReplayAdapterError(
+                f"continuation-only day is assignment/economic eligible: {day}"
+            )
+    if explicit_economic_contract != all(
+        "economic_test_row_eligible" in by_day[day]
+        and "washout_continuation_eligible" in by_day[day]
+        for day in continuation
+    ):
+        raise OfflineReplayAdapterError(
+            "native observation batch has a mixed continuation semantics contract"
+        )
 
 
 def _validate_one_shot_frames(
