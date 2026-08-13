@@ -119,6 +119,10 @@ _EMA_PAIR_RE = re.compile(
     r"ema_pair_h(?P<fast>[0-9]+(?:p[0-9]+)?)s_h"
     r"(?P<slow>[0-9]+(?:p[0-9]+)?)s"
 )
+_CANONICAL_EMA_PAIR_RE = re.compile(
+    r"__h(?P<fast>[0-9]+(?:p[0-9]+)?)s__h"
+    r"(?P<slow>[0-9]+(?:p[0-9]+)?)s(?:::|$)"
+)
 _FIXED_DURATION_ACTION_RE = re.compile(r"^FIXED_([1-9][0-9]*)S$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -1076,7 +1080,8 @@ def _pair_token(value: float) -> str:
 
 
 def _parse_ema_pair(name: str) -> tuple[float, float] | None:
-    match = _EMA_PAIR_RE.search(str(name))
+    text = str(name)
+    match = _EMA_PAIR_RE.search(text) or _CANONICAL_EMA_PAIR_RE.search(text)
     if match is None:
         return None
     return (

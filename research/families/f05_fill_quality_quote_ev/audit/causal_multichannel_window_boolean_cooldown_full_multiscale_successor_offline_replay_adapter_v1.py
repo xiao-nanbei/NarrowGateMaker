@@ -18,6 +18,7 @@ import fcntl
 import hashlib
 import importlib
 import json
+import math
 import os
 import re
 import shutil
@@ -42,6 +43,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_native_observation_batch_v1 as observation_batch,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_predicate_view_v1 as predicate_view,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_repeated_policy_backend_v1 as backend,
@@ -111,6 +115,10 @@ FIXED_PANEL_BUILDER_MODULE = (
 FIXED_OBSERVATION_CACHE_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
     "causal_multichannel_window_boolean_cooldown_native_observation_cache"
+)
+FIXED_OWNER_PREDICATE_BUNDLE_PATH = (
+    "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/"
+    "predicate_bundle.json"
 )
 
 _FIXED_CANONICAL_API_SYMBOLS: Mapping[str, tuple[str, str]] = {
@@ -200,6 +208,11 @@ _M2_INCREMENTAL_CHANNELS = frozenset(
     for spec in feature_schema.CHANNELS_BY_BLOCK["M2"]
     if spec.name
     not in {item.name for item in feature_schema.CHANNELS_BY_BLOCK["M1"]}
+)
+_NON_MID_CHANNELS = frozenset(
+    spec.name
+    for spec in feature_schema.CHANNELS_BY_BLOCK["M2"]
+    if spec.name != "mid_usdc_per_btc"
 )
 _E2_SEMANTIC_TOKENS: Mapping[str, tuple[str, ...]] = {
     "direction": (
@@ -892,26 +905,153 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 ("compiled_fixed_repeated_policy",),
                 context=f"sequential:{job.utc_day}",
             )
+        fold_policy_identity = _fold_policy_identity(fitted)
         artifact = repeated.ArtifactIdentityBinding(
             executed_artifact_scope=(
                 repeated.ExecutedArtifactScope.LEARNING_ALGORITHM_FOLD_POLICY
             ),
-            executed_policy_identity=(
-                f"{fitted.ladder_name}:{fitted.side}:{fitted.selected_profile}"
-            ),
+            executed_policy_identity=fold_policy_identity,
             executed_policy_sha256=fitted.expected_executed_policy_sha256,
             executed_predicate_bundle_sha256=_canonical_sha256(
                 fitted.policy_payload
             ),
-            learning_algorithm_identity=fitted.ladder_name,
+            learning_algorithm_identity=fold_policy_identity,
             learning_algorithm_artifact_sha256=fitted.policy_sha256,
         )
         if isinstance(fitted.policy, BooleanCooldownPolicy):
-            candidate_delegate = repeated.build_target_side_candidate_evaluator(
-                target_side=repeated.CandidateTargetSide(target_side),
-                target_policy=fitted.policy,
-                artifact_binding=artifact,
+            frozen_predicates = predicate_view.load_frozen_predicate_bundle(
+                resolve_portable_path(FIXED_OWNER_PREDICATE_BUNDLE_PATH).resolve(),
+                expected_file_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+            )
+            target_evaluator = successor.ResearchBooleanCooldownPolicyEvaluator(
+                policies={
+                    "BUY": fitted.policy if target_side == "BUY" else None,
+                    "SELL": fitted.policy if target_side == "SELL" else None,
+                },
+                policy_identity=artifact.executed_policy_identity,
+                policy_sha256=artifact.executed_policy_sha256,
+                predicate_bundle_sha256=artifact.executed_predicate_bundle_sha256,
                 expected_identity_hashes=identity_hashes,
+            )
+
+            class _ArtifactAwareTargetEvaluator:
+                def __init__(self) -> None:
+                    self.policy_identity = artifact.executed_policy_identity
+                    self.policy_sha256 = artifact.executed_policy_sha256
+                    self.predicate_bundle_sha256 = (
+                        artifact.executed_predicate_bundle_sha256
+                    )
+                    self._evaluations = 0
+
+                @property
+                def binding_valid(self) -> bool:
+                    return True
+
+                @property
+                def binding_error(self) -> None:
+                    return None
+
+                def evaluate(self, snapshot: Any, baseline_duration_ms: Any) -> Any:
+                    self._evaluations += 1
+                    if not isinstance(snapshot, successor.CooldownAssignmentSnapshotV2):
+                        raise OfflineReplayAdapterError("candidate snapshot type drifted")
+                    if not snapshot.policy_input_valid or snapshot.policy_input is None:
+                        raise OfflineReplayAdapterError("candidate snapshot policy input invalid")
+                    if snapshot.policy_input.snapshot_id != snapshot.snapshot_id:
+                        raise OfflineReplayAdapterError("candidate snapshot identity drifted")
+                    feature = snapshot.feature_row.to_dict()
+                    policy_feature = snapshot.policy_input.feature_row.to_dict()
+                    if feature != policy_feature:
+                        raise OfflineReplayAdapterError("candidate policy feature row drifted")
+                    if (
+                        snapshot.feature_block != "M2"
+                        or feature.get("feature_block") != "M2"
+                        or feature.get("support_valid") is not True
+                        or feature.get("channel_support_valid") is not True
+                        or feature.get("warmup_admitted") is not True
+                    ):
+                        raise OfflineReplayAdapterError("candidate feature support invalid")
+                    side = str(feature.get("side", "")).upper()
+                    if side != target_side:
+                        raise OfflineReplayAdapterError("candidate target side drifted")
+                    try:
+                        baseline_value = float(baseline_duration_ms)
+                        frozen_baseline_value = float(
+                            feature.get("baseline_duration_ms")
+                        )
+                    except (TypeError, ValueError) as exc:
+                        raise OfflineReplayAdapterError(
+                            "candidate baseline duration is not numeric"
+                        ) from exc
+                    if (
+                        not math.isfinite(baseline_value)
+                        or baseline_value <= 0.0
+                        or not baseline_value.is_integer()
+                        or not math.isfinite(frozen_baseline_value)
+                        or frozen_baseline_value <= 0.0
+                        or not frozen_baseline_value.is_integer()
+                    ):
+                        raise OfflineReplayAdapterError("candidate baseline duration invalid")
+                    baseline = int(baseline_value)
+                    frozen_baseline = int(frozen_baseline_value)
+                    if frozen_baseline != baseline:
+                        raise OfflineReplayAdapterError("candidate baseline duration drifted")
+                    observed_hashes = snapshot.identity_hashes.to_dict()
+                    if any(
+                        observed_hashes.get(name) != expected
+                        for name, expected in identity_hashes.items()
+                    ):
+                        raise OfflineReplayAdapterError("candidate snapshot hash drifted")
+                    values = predicate_view.materialize_snapshot_predicates(
+                        predicate_names=fitted.policy.predicate_columns,
+                        feature_row=feature,
+                        side=side,
+                        baseline_duration_ms=baseline,
+                        bundle=frozen_predicates,
+                    )
+                    return target_evaluator.evaluate_predicates(
+                        side=side,
+                        predicate_values=values,
+                        baseline_duration_ms=baseline,
+                        snapshot_id=str(snapshot.snapshot_id),
+                    )
+
+                def evaluate_predicates(
+                    self,
+                    *,
+                    side: str,
+                    predicate_values: Mapping[str, Any],
+                    baseline_duration_ms: Any,
+                    snapshot_id: str,
+                ) -> Any:
+                    return target_evaluator.evaluate_predicates(
+                        side=side,
+                        predicate_values=predicate_values,
+                        baseline_duration_ms=baseline_duration_ms,
+                        snapshot_id=snapshot_id,
+                    )
+
+                def audit(self) -> dict[str, Any]:
+                    return {
+                        "identity": self.policy_identity,
+                        "policy_sha256": self.policy_sha256,
+                        "predicate_bundle_sha256": self.predicate_bundle_sha256,
+                        "evaluations": self._evaluations,
+                        "artifact_aware_predicate_view": predicate_view.IDENTITY,
+                        "frozen_2025_predicate_bundle_sha256": (
+                            frozen_predicates.file_sha256
+                        ),
+                        "delegate": target_evaluator.audit(),
+                        "research_only": True,
+                    }
+
+            candidate_delegate = repeated.TargetSideDelegatingEvaluator(
+                target_side=repeated.CandidateTargetSide(target_side),
+                target_evaluator=_ArtifactAwareTargetEvaluator(),
+                b0_evaluator=repeated.build_exact_current_owner_evaluator(
+                    expected_identity_hashes=identity_hashes
+                ),
+                artifact_binding=artifact,
             )
         else:
             class _FixedDecisionPolicyEvaluator:
@@ -1216,6 +1356,19 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
     )
 
 
+def _fold_policy_identity(fitted: nested.FittedCandidate) -> str:
+    if not isinstance(fitted, nested.FittedCandidate):
+        raise OfflineReplayAdapterError("fold policy identity requires FittedCandidate")
+    parts = (
+        str(fitted.ladder_name).strip(),
+        str(fitted.side).strip().upper(),
+        str(fitted.selected_profile).strip(),
+    )
+    if any(not part for part in parts):
+        raise OfflineReplayAdapterError("fold policy identity component is empty")
+    return ":".join(parts)
+
+
 def _execute_fixed_day_job(job: _DayReplayJob) -> _DayReplayJobResult:
     """Run the sole fixed bridge; caller-supplied executors are never accepted."""
 
@@ -1292,7 +1445,24 @@ def _fixed_policy(side: str, kind: str) -> BooleanCooldownPolicy:
 
 
 def _contains_pair(name: str, prefix: str) -> bool:
-    return prefix in name.lower()
+    expected = successor._parse_ema_pair(prefix)
+    observed = successor._parse_ema_pair(str(name).lower())
+    return expected is not None and observed == expected
+
+
+def _is_mid_ema_predicate(name: str) -> bool:
+    lowered = str(name).lower()
+    return "::mid_usdc_per_btc__h" in lowered or lowered.startswith(
+        "predicate::ema_pair_"
+    )
+
+
+def _is_non_mid_market_predicate(name: str) -> bool:
+    lowered = str(name).lower()
+    return any(
+        f"::{channel.lower()}::" in lowered or f"::{channel.lower()}__" in lowered
+        for channel in _NON_MID_CHANNELS
+    )
 
 
 def _is_true_m2_predicate(name: str) -> bool:
@@ -1322,7 +1492,13 @@ def _validate_e2_semantics(names: Sequence[str]) -> None:
     for prefix in successor.full_ema_pair_prefixes():
         pair_names = tuple(name for name in lowered if _contains_pair(name, prefix))
         for semantic, tokens in _E2_SEMANTIC_TOKENS.items():
-            if not any(any(token in name for token in tokens) for name in pair_names):
+            if semantic == "normalized_distance":
+                present = any(any(token in name for token in tokens) for name in pair_names) or any(
+                    "tri::quantile::" in name and "distance" in name for name in pair_names
+                )
+            else:
+                present = any(any(token in name for token in tokens) for name in pair_names)
+            if not present:
                 missing.append(f"{prefix}:{semantic}")
     if missing:
         raise OfflineReplayAdapterMechanicsMissing(
@@ -1870,7 +2046,8 @@ class _CanonicalOfflineReplayAdapter:
         e1 = tuple(
             name
             for name in names
-            if any(
+            if _is_mid_ema_predicate(name)
+            and any(
                 _contains_pair(name, prefix)
                 and any(token in name.lower() for token in ("ordering", "favorable"))
                 for prefix in prefixes
@@ -1886,7 +2063,12 @@ class _CanonicalOfflineReplayAdapter:
                 context="E1 full 45-pair universe",
             )
         e2 = tuple(
-            name for name in names if any(_contains_pair(name, prefix) for prefix in prefixes)
+            name
+            for name in names
+            if _is_mid_ema_predicate(name)
+            and name
+            not in {successor.CURRENT_SHORT_CROSS, successor.CURRENT_LONG_CROSS}
+            and any(_contains_pair(name, prefix) for prefix in prefixes)
         )
         _validate_e2_semantics(e2)
         m0 = tuple(
@@ -1897,12 +2079,17 @@ class _CanonicalOfflineReplayAdapter:
         if successor.CURRENT_CAMPAIGN_AGE not in m0:
             m0 = tuple(sorted((*m0, successor.CURRENT_CAMPAIGN_AGE)))
         e3 = tuple(sorted(set((*m0, *e2))))
-        m2_incremental = tuple(name for name in names if _is_true_m2_predicate(name))
+        multichannel_incremental = tuple(
+            name for name in names if _is_non_mid_market_predicate(name)
+        )
+        m2_incremental = tuple(
+            name for name in multichannel_incremental if _is_true_m2_predicate(name)
+        )
         if not m2_incremental:
             raise OfflineReplayAdapterMechanicsMissing(
                 ("true_trade_or_depth_predicate",), context="M2 incremental universe"
             )
-        m2 = tuple(sorted(set((*e3, *m2_incremental))))
+        m2 = tuple(sorted(set((*e3, *multichannel_incremental))))
         continuous = tuple(
             sorted(str(name) for name in mechanics.panel.continuous_features.columns)
         )
@@ -2013,8 +2200,10 @@ class _CanonicalOfflineReplayAdapter:
             or e3_profile.max_literals_per_clause < 3
         ):
             raise OfflineReplayAdapterError("E3 does not make high-order AND/OR/NOT reachable")
-        if set(m2) - set(e3) != set(m2_incremental):
-            raise OfflineReplayAdapterError("M2 adds something other than true trade/depth")
+        if set(m2) - set(e3) != set(multichannel_incremental):
+            raise OfflineReplayAdapterError("M2 cumulative market feature construction drifted")
+        if not set(m2_incremental) <= set(m2) - set(e3):
+            raise OfflineReplayAdapterError("M2 lacks true trade/depth incremental predicates")
         return ladder, comparator
 
     def generate_outer_train_one_shot_labels(

@@ -183,6 +183,12 @@ def _bundle_fixture(
         ),
         "exact_current_predicate_bundle_sha256": offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
         "exact_current_private_config_sha256": offline.ACTIVE_PRIVATE_CONFIG_SHA256,
+        "predicate_view": {
+            "mode": "preexpanded_bound_panel_v1",
+            "boolean_features_sha256": bindings["boolean_features"]["sha256"],
+            "expanded_predicate_count": len(boolean.columns) - 2,
+            "economic_outcomes_read": False,
+        },
         "files": bindings,
     }
     panel["canonical_panel_manifest_sha256"] = backend._document_sha256(

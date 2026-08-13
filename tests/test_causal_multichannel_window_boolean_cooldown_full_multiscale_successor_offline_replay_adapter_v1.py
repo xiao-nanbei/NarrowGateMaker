@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 from collections.abc import Mapping
 from dataclasses import replace
@@ -267,6 +268,27 @@ def _fitted_candidate() -> nested.FittedCandidate:
     )
 
 
+def test_fold_policy_identity_is_shared_by_executed_and_learning_artifacts() -> None:
+    fitted = _fitted_candidate()
+    identity = adapter_module._fold_policy_identity(fitted)
+    repeated = importlib.import_module(adapter_module.FIXED_REPEATED_POLICY_BRIDGE_MODULE)
+
+    binding = repeated.ArtifactIdentityBinding(
+        executed_artifact_scope=(
+            repeated.ExecutedArtifactScope.LEARNING_ALGORITHM_FOLD_POLICY
+        ),
+        executed_policy_identity=identity,
+        executed_policy_sha256=fitted.expected_executed_policy_sha256,
+        executed_predicate_bundle_sha256=adapter_module._canonical_sha256(
+            fitted.policy_payload
+        ),
+        learning_algorithm_identity=identity,
+        learning_algorithm_artifact_sha256=fitted.policy_sha256,
+    )
+
+    assert binding.executed_policy_identity == binding.learning_algorithm_identity
+
+
 def _sequential_request(
     rows: pd.DataFrame,
     *,
@@ -391,6 +413,8 @@ def test_search_contract_exposes_full_ladder_and_complete_feature_universes() ->
         e1 = by_name["E1_FULL_EMA_BANK"].feature_names_by_side[side]
         assert successor.audit_full_ema_universe(e1)["all_45_pairs_present"] is True
         e2 = by_name["E2_DIRECTIONAL_EMA"].feature_names_by_side[side]
+        assert successor.CURRENT_SHORT_CROSS not in e2
+        assert successor.CURRENT_LONG_CROSS not in e2
         for prefix in successor.full_ema_pair_prefixes():
             pair = tuple(name for name in e2 if prefix in name)
             assert len(pair) >= len(adapter_module._E2_SEMANTIC_TOKENS)

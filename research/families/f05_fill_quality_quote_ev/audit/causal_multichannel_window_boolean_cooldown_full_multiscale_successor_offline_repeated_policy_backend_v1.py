@@ -18,7 +18,7 @@ import importlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -26,11 +26,15 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
+from data_paths import resolve_portable_path
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_nested_oof_v1 as nested,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_orchestrator_v1 as orchestrator,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_predicate_view_v1 as predicate_view,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1 as offline,
@@ -315,6 +319,8 @@ class OutcomeBlindMechanics:
     bindings: FormalExecutionBindings
     file_sha256: Mapping[str, str]
     mechanics_receipt_sha256: str
+    predicate_bundle_path: Path | None = None
+    predicate_view_receipt: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -563,12 +569,70 @@ def load_outcome_blind_mechanics(
     ]
     if not boolean_columns or not continuous_columns:
         raise OfflineRepeatedPolicyBackendError("formal feature blocks are empty")
-    boolean = indexed["boolean_features"].loc[:, boolean_columns]
-    if not np.isin(boolean.to_numpy(copy=False), (-1, 0, 1)).all():
+    primitive_boolean = indexed["boolean_features"].loc[:, boolean_columns]
+    if not np.isin(primitive_boolean.to_numpy(copy=False), (-1, 0, 1)).all():
         raise OfflineRepeatedPolicyBackendError("Boolean features are not three-valued")
     continuous = indexed["continuous_features"].loc[:, continuous_columns]
     if any(not pd.api.types.is_numeric_dtype(dtype) for dtype in continuous.dtypes):
         raise OfflineRepeatedPolicyBackendError("continuous features must be numeric")
+
+    owner_artifacts = bundle.panel_manifest.get("owner_artifacts")
+    predicate_entry = (
+        owner_artifacts.get("predicate_bundle")
+        if isinstance(owner_artifacts, Mapping)
+        else None
+    )
+    preexpanded = bundle.panel_manifest.get("predicate_view")
+    if isinstance(predicate_entry, Mapping):
+        if str(predicate_entry.get("sha256")) != offline.ACTIVE_PREDICATE_BUNDLE_SHA256:
+            raise OfflineRepeatedPolicyBackendError("formal predicate bundle identity drifted")
+        try:
+            predicate_bundle_path = resolve_portable_path(
+                str(predicate_entry.get("path", ""))
+            ).resolve()
+            frozen_predicates = predicate_view.load_frozen_predicate_bundle(
+                predicate_bundle_path,
+                expected_file_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+            )
+            boolean, predicate_view_receipt = predicate_view.materialize_panel_predicates(
+                metadata=metadata,
+                primitive_boolean=primitive_boolean,
+                continuous=continuous,
+                bundle=frozen_predicates,
+            )
+        except (ValueError, predicate_view.OfflinePredicateViewError) as exc:
+            raise OfflineRepeatedPolicyBackendError(
+                "formal predicate view materialization failed closed"
+            ) from exc
+    elif isinstance(preexpanded, Mapping):
+        try:
+            expanded_predicate_count = int(
+                preexpanded.get("expanded_predicate_count", -1)
+            )
+        except (TypeError, ValueError) as exc:
+            raise OfflineRepeatedPolicyBackendError(
+                "preexpanded predicate count is malformed"
+            ) from exc
+        if (
+            preexpanded.get("mode") != "preexpanded_bound_panel_v1"
+            or preexpanded.get("economic_outcomes_read") is not False
+            or str(preexpanded.get("boolean_features_sha256"))
+            != file_hashes["boolean_features"]
+            or expanded_predicate_count != len(primitive_boolean.columns)
+        ):
+            raise OfflineRepeatedPolicyBackendError("preexpanded predicate view binding drifted")
+        predicate_bundle_path = None
+        boolean = primitive_boolean.copy()
+        predicate_view_receipt = {
+            "identity": "preexpanded_bound_panel_v1",
+            "boolean_features_sha256": file_hashes["boolean_features"],
+            "expanded_predicate_count": len(boolean.columns),
+            "economic_outcomes_read": False,
+        }
+    else:
+        raise OfflineRepeatedPolicyBackendError(
+            "formal panel lacks a bound predicate view or predicate bundle"
+        )
 
     owner_rows = indexed["exact_owner_actions"]
     if "exact_owner_action" not in owner_rows:
@@ -619,7 +683,7 @@ def load_outcome_blind_mechanics(
         raise OfflineRepeatedPolicyBackendError("replay input receipt SHA256 is invalid")
 
     panel = nested.NestedOofPanel(
-        metadata=metadata.loc[:, list(nested.REQUIRED_METADATA_COLUMNS)].copy(),
+        metadata=metadata.copy(),
         boolean_features=boolean.copy(),
         continuous_features=continuous.copy(),
         exact_owner_actions=owner_actions.copy(),
@@ -636,9 +700,11 @@ def load_outcome_blind_mechanics(
         "file_sha256": file_hashes,
         "metadata_sha256": _frame_sha256(panel.metadata),
         "boolean_features_sha256": _frame_sha256(panel.boolean_features),
+        "primitive_boolean_features_sha256": _frame_sha256(primitive_boolean),
         "continuous_features_sha256": _frame_sha256(panel.continuous_features),
         "exact_owner_actions_sha256": _frame_sha256(panel.exact_owner_actions),
         "replay_inputs_sha256": _frame_sha256(replay_inputs),
+        "predicate_view_receipt": predicate_view_receipt,
         "bindings": bindings.payload(),
         "economic_outcomes_present": False,
     }
@@ -649,6 +715,8 @@ def load_outcome_blind_mechanics(
         fold_manifest=folds,
         bindings=bindings,
         file_sha256=file_hashes,
+        predicate_bundle_path=predicate_bundle_path,
+        predicate_view_receipt=predicate_view_receipt,
         mechanics_receipt_sha256=_canonical_sha256(mechanics_body),
     )
 

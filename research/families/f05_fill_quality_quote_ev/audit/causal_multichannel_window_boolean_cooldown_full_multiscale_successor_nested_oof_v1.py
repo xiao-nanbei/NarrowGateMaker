@@ -943,12 +943,21 @@ def _e2_pair_semantic_audit(names: Sequence[str]) -> dict[str, tuple[str, ...]]:
     normalized = tuple(str(name).lower() for name in names)
     missing: dict[str, tuple[str, ...]] = {}
     for prefix in full_ema_pair_prefixes():
-        pair_names = tuple(name for name in normalized if prefix in name)
-        absent = tuple(
-            semantic
-            for semantic, tokens in _E2_PAIR_SEMANTICS.items()
-            if not any(any(token in name for token in tokens) for name in pair_names)
+        canonical = "__" + prefix.removeprefix("ema_pair_").replace("s_h", "s__h") + "::"
+        pair_names = tuple(
+            name for name in normalized if prefix in name or canonical in name
         )
+        absent_items: list[str] = []
+        for semantic, tokens in _E2_PAIR_SEMANTICS.items():
+            if semantic == "normalized_distance":
+                present = any(any(token in name for token in tokens) for name in pair_names) or any(
+                    "tri::quantile::" in name and "distance" in name for name in pair_names
+                )
+            else:
+                present = any(any(token in name for token in tokens) for name in pair_names)
+            if not present:
+                absent_items.append(semantic)
+        absent = tuple(absent_items)
         if absent:
             missing[prefix] = absent
     return missing
