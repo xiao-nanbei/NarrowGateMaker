@@ -237,6 +237,15 @@ def test_only_hash_bound_manifest_enters_formal_loader(
         orchestrator.parse_args(
             ["bind", str(path), str(tmp_path / "out.json"), "--fold", "custom"]
         )
+    mechanics = orchestrator.parse_args(
+        [
+            "diagnose-one-day",
+            str(path),
+            "--output",
+            str(tmp_path / "mechanics.json"),
+        ]
+    )
+    assert mechanics.command == "diagnose-one-day"
 
 
 def test_legacy_unbound_mechanics_panel_cannot_enter_formal_loader(

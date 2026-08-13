@@ -448,6 +448,18 @@ def test_control_fork_requires_exact_pre_quarantine_fill_prefix() -> None:
             authoritative_control_fills=tampered,
         )
 
+    candidate_trace, _ = study._run_duration_arm(
+        target,
+        action,
+        window=window,
+        base=_replay_params(),
+        shared=_shared(window),
+        engine="cpp",
+        require_control_prefix_parity=False,
+    )
+    assert candidate_trace["control_prefix_parity_match"] is None
+    assert candidate_trace["control_prefix_fill_count"] is None
+
 
 def test_cpp_python_opportunity_parity_uses_field_level_tolerances() -> None:
     window = _synthetic_window()

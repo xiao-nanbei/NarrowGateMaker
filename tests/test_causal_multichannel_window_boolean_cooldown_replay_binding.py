@@ -168,6 +168,10 @@ class _Decision:
 
 
 class _RepeatedPolicyEvaluator:
+    policy_identity = "synthetic-repeated-policy"
+    policy_sha256 = "a" * 64
+    predicate_bundle_sha256 = "b" * 64
+
     def __init__(self) -> None:
         self.snapshot_ids: list[str] = []
 
@@ -210,6 +214,140 @@ def test_python_replay_executes_repeated_policy_at_every_exposure_fill() -> None
     assert result["_cooldown_duration_policy_audit"] == {
         "evaluations": len(decisions)
     }
+
+
+def test_one_shot_fork_uses_exact_owner_prefix_and_overrides_only_target() -> None:
+    baseline_params = _params(_emitter())
+    baseline_params["cooldown_duration_policy_evaluator"] = _RepeatedPolicyEvaluator()
+    baseline_params["trace_fills_max"] = 100
+    baseline = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        baseline_params,
+    )
+    target = baseline["_cooldown_duration_opportunity_trace"][0]
+
+    params = _params(_emitter())
+    params.update(
+        {
+            "cooldown_duration_policy_evaluator": _RepeatedPolicyEvaluator(),
+            "cooldown_duration_fork_enabled": True,
+            "cooldown_duration_fork_action": "FIXED_DURATION_MS",
+            "cooldown_duration_fork_target_ordinal": int(
+                target["exposure_fill_ordinal"]
+            ),
+            "cooldown_duration_fork_target_ts_ms": int(
+                target["fill_visible_ts_ms"]
+            ),
+            "cooldown_duration_fork_target_side": str(target["side"]),
+            "cooldown_duration_fork_target_order_id": int(target["order_id"]),
+            "cooldown_duration_fork_target_campaign_id": int(
+                target["campaign_id"]
+            ),
+            "cooldown_duration_fork_expected_baseline_ms": float(
+                target["baseline_duration_ms"]
+            ),
+            "cooldown_duration_fork_fixed_ms": 2_000.0,
+            "cooldown_duration_fork_baseline_policy_enabled": True,
+            "cooldown_duration_fork_expected_owner_action": "FIXED_1S",
+            "cooldown_duration_fork_expected_owner_policy_sha256": "a" * 64,
+        }
+    )
+    fork = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        params,
+    )
+
+    trace = fork["_cooldown_duration_fork_trace"]
+    assert (
+        trace["schema_version"]
+        == "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
+    )
+    assert trace["exact_owner_baseline_policy_enabled"] is True
+    assert trace["exact_owner_action"] == "FIXED_1S"
+    assert trace["exact_owner_baseline_duration_ms"] == 1_000.0
+    assert trace["applied_duration_ms"] == 2_000.0
+    assert trace["exact_owner_policy_sha256"] == "a" * 64
+    assert fork["_cooldown_duration_policy_decisions"][0]["action_id"] == "FIXED_1S"
+
+
+def test_legacy_one_shot_fork_keeps_v2_schema_without_exact_owner_fields() -> None:
+    baseline = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        _params(_emitter()),
+    )
+    target = baseline["_cooldown_duration_opportunity_trace"][0]
+    params = _params(_emitter())
+    params.update(
+        {
+            "cooldown_duration_fork_enabled": True,
+            "cooldown_duration_fork_action": "CONTROL_85N",
+            "cooldown_duration_fork_target_ordinal": int(
+                target["exposure_fill_ordinal"]
+            ),
+            "cooldown_duration_fork_target_ts_ms": int(
+                target["fill_visible_ts_ms"]
+            ),
+            "cooldown_duration_fork_target_side": str(target["side"]),
+            "cooldown_duration_fork_target_order_id": int(target["order_id"]),
+            "cooldown_duration_fork_target_campaign_id": int(
+                target["campaign_id"]
+            ),
+            "cooldown_duration_fork_expected_baseline_ms": float(
+                target["baseline_duration_ms"]
+            ),
+        }
+    )
+    fork = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        params,
+    )
+
+    trace = fork["_cooldown_duration_fork_trace"]
+    assert (
+        trace["schema_version"]
+        == "multiscale_ema_boolean_cooldown_duration_fork_trace.v2"
+    )
+    assert "exact_owner_action" not in trace
+    assert "exact_owner_policy_sha256" not in trace
+
+
+def test_one_shot_fork_rejects_unbound_policy_combination() -> None:
+    params = _params(_emitter())
+    params.update(
+        {
+            "cooldown_duration_policy_evaluator": _RepeatedPolicyEvaluator(),
+            "cooldown_duration_fork_enabled": True,
+            "cooldown_duration_fork_action": "CONTROL_85N",
+            "cooldown_duration_fork_target_ordinal": 1,
+            "cooldown_duration_fork_target_ts_ms": BASE_MS + 1_000,
+            "cooldown_duration_fork_target_side": "BUY",
+            "cooldown_duration_fork_target_order_id": 1,
+            "cooldown_duration_fork_target_campaign_id": 1,
+            "cooldown_duration_fork_expected_baseline_ms": 85_000.0,
+        }
+    )
+    with np.testing.assert_raises_regex(
+        ValueError, "cannot share one-shot cooldown execution"
+    ):
+        bt._simulate_tick_with_engine(
+            "python",
+            _trades(),
+            np.empty(0, dtype=np.int64),
+            np.empty(0, dtype=np.float64),
+            params,
+        )
 
 
 def test_cpp_replay_rejects_python_repeated_policy() -> None:

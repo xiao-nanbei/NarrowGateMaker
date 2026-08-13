@@ -20,6 +20,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import shutil
 import time
 import uuid
@@ -1332,9 +1333,31 @@ def _run_duration_arm(
     shared: Mapping[str, Any],
     engine: str,
     authoritative_control_fills: Sequence[Mapping[str, Any]] | None = None,
+    require_control_prefix_parity: bool = True,
+    exact_owner_baseline_policy_enabled: bool = False,
+    expected_exact_owner_action: str | None = None,
+    expected_exact_owner_policy_sha256: str | None = None,
 ) -> tuple[dict[str, Any], float]:
     if engine not in {"cpp", "python"}:
         raise StudyError(f"unsupported duration fork replay engine: {engine}")
+    if not isinstance(require_control_prefix_parity, bool):
+        raise StudyError("control-prefix parity requirement must be Boolean")
+    if not isinstance(exact_owner_baseline_policy_enabled, bool):
+        raise StudyError("exact-owner baseline policy requirement must be Boolean")
+    if exact_owner_baseline_policy_enabled:
+        if engine != "python":
+            raise StudyError("exact-owner baseline duration forks require Python replay")
+        if (
+            base.get("cooldown_v2_snapshot_emitter") is None
+            or base.get("cooldown_duration_policy_evaluator") is None
+        ):
+            raise StudyError("exact-owner duration fork lacks its runtime")
+        if not str(expected_exact_owner_action or "").strip():
+            raise StudyError("exact-owner duration fork lacks its row-wise action")
+        if re.fullmatch(
+            r"[0-9a-f]{64}", str(expected_exact_owner_policy_sha256 or "")
+        ) is None:
+            raise StudyError("exact-owner duration fork lacks its policy SHA256")
     params = _prepare_base_params(base, trace_opportunities=False)
     params.update(
         {
@@ -1350,6 +1373,15 @@ def _run_duration_arm(
             ),
             "cooldown_duration_fork_fixed_ms": (
                 float(action.fixed_duration_ms) if action.fixed_duration_ms is not None else 0.0
+            ),
+            "cooldown_duration_fork_baseline_policy_enabled": bool(
+                exact_owner_baseline_policy_enabled
+            ),
+            "cooldown_duration_fork_expected_owner_action": (
+                str(expected_exact_owner_action or "")
+            ),
+            "cooldown_duration_fork_expected_owner_policy_sha256": (
+                str(expected_exact_owner_policy_sha256 or "")
             ),
         }
     )
@@ -1375,6 +1407,18 @@ def _run_duration_arm(
     for field, value in expected.items():
         if trace.get(field) != value:
             raise StudyError(f"duration fork trace {field} drifted")
+    if exact_owner_baseline_policy_enabled:
+        if (
+            trace.get("exact_owner_baseline_policy_enabled") is not True
+            or trace.get("exact_owner_action") != expected_exact_owner_action
+            or trace.get("exact_owner_policy_sha256")
+            != expected_exact_owner_policy_sha256
+            or not math.isfinite(
+                float(trace.get("exact_owner_baseline_duration_ms", math.nan))
+            )
+            or float(trace["exact_owner_baseline_duration_ms"]) <= 0.0
+        ):
+            raise StudyError("duration fork exact-owner baseline identity drifted")
     if (
         trace.get("washout_protocol")
         != "first_flat_exposure_quarantine_scheduler_drained_v2"
@@ -1461,9 +1505,19 @@ def _run_duration_arm(
             raise StudyError("duration fork washout retained inventory")
         if abs(float(trace.get("accounting_residual_usdc", math.nan))) > 1e-6:
             raise StudyError("duration fork accounting residual exceeded 1e-6 USDC")
-    if action.policy_id == "CONTROL_85N":
+    parity_requested = require_control_prefix_parity and (
+        exact_owner_baseline_policy_enabled or action.policy_id == "CONTROL_85N"
+    )
+    if parity_requested:
+        expected_noop_action = (
+            str(expected_exact_owner_action)
+            if exact_owner_baseline_policy_enabled
+            else "CONTROL_85N"
+        )
+        if action.policy_id != expected_noop_action:
+            raise StudyError("control-prefix parity was requested for a non-B0 action")
         if authoritative_control_fills is None:
-            raise StudyError("CONTROL_85N fork lacks authoritative control fill path")
+            raise StudyError("B0-equivalent fork lacks authoritative control fill path")
         cutoff_ms = (
             int(trace["quarantine_ts_ms"])
             if bool(trace["quarantine_entered"])
@@ -1479,7 +1533,7 @@ def _run_duration_arm(
         )
         if fork_prefix != control_prefix:
             raise StudyError(
-                "CONTROL_85N fork diverged before the common washout quarantine"
+                "B0-equivalent fork diverged before the common washout quarantine"
             )
         trace["control_prefix_parity_match"] = True
         trace["control_prefix_fill_count"] = len(fork_prefix)

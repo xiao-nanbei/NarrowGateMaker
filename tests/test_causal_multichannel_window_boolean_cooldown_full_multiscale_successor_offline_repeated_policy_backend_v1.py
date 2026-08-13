@@ -292,6 +292,9 @@ class _NeverCalledAdapter:
     def build_search_contract(self, _mechanics: backend.OutcomeBlindMechanics):
         raise AssertionError("search contract must not be requested in this test")
 
+    def run_exact_owner_one_day_mechanics(self, _mechanics):
+        raise AssertionError("one-day mechanics must not be requested in this test")
+
     def generate_outer_train_one_shot_labels(self, _request, _replay_inputs):
         self.label_called = True
         raise AssertionError("outer-test request reached the replay adapter")
@@ -578,6 +581,60 @@ def test_formal_preflight_reports_missing_canonical_replay_fields_without_econom
         "order_id",
         "portable_replay_binding_path",
     } <= set(missing)
+
+
+def test_backend_one_day_mechanics_keeps_identity_and_permissions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = _bundle_fixture(tmp_path)
+    mechanics = backend.load_outcome_blind_mechanics(bundle)
+
+    class _MechanicsAdapter(_NeverCalledAdapter):
+        def run_exact_owner_one_day_mechanics(self, _mechanics):
+            assert _mechanics is mechanics
+            return {
+                "identity": self.identity,
+                "status": "exact_owner_one_day_mechanics_complete",
+                "adapter_artifact_sha256": self.artifact_sha256,
+                "execution_manifest_sha256": (
+                    mechanics.bindings.execution_manifest_sha256
+                ),
+                "source_manifest_sha256": mechanics.bindings.source_manifest_sha256,
+                "panel_manifest_sha256": mechanics.bindings.panel_manifest_sha256,
+                "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+                "worker_count": 1,
+                "opportunity_count": 2,
+                "exact_owner_noop_parity_count": 2,
+                "economic_values_persisted": False,
+                "economic_values_used_for_selection": False,
+                "validation_read": False,
+                "sealed_holdout_read": False,
+                "action_authorized": False,
+                "live_authorized": False,
+            }
+
+    adapter = _MechanicsAdapter()
+    monkeypatch.setattr(
+        orchestrator,
+        "load_formal_offline_bundle",
+        lambda _path: bundle,
+    )
+    monkeypatch.setattr(backend, "_load_canonical_replay_adapter", lambda: adapter)
+    monkeypatch.setattr(
+        backend,
+        "load_outcome_blind_mechanics",
+        lambda _bundle: mechanics,
+    )
+
+    result = backend.run_exact_owner_one_day_mechanics(
+        bundle.execution_manifest_path
+    )
+
+    assert result["worker_count"] == 1
+    assert result["exact_owner_noop_parity_count"] == 2
+    assert result["economic_values_persisted"] is False
+    assert result["live_authorized"] is False
 
 
 def test_sequential_receipt_drift_is_rejected_before_rows_are_used(tmp_path: Path) -> None:

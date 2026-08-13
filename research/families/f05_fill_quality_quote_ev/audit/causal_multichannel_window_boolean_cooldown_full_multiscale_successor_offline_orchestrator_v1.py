@@ -694,6 +694,56 @@ def run_formal_offline_economics(
     return payload
 
 
+def run_formal_exact_owner_one_day_mechanics(
+    execution_manifest_path: Path,
+    *,
+    output_path: Path,
+) -> Mapping[str, Any]:
+    """Run and immutably admit the fixed one-day exact-B0 mechanics receipt."""
+
+    bundle = load_formal_offline_bundle(execution_manifest_path)
+    backend = importlib.import_module(CANONICAL_BACKEND_MODULE)
+    runner = getattr(backend, "run_exact_owner_one_day_mechanics", None)
+    if not callable(runner):
+        raise OfflineOrchestratorError(
+            "canonical backend one-day mechanics entry is unavailable"
+        )
+    result = runner(execution_manifest_path)
+    if not isinstance(result, Mapping):
+        raise OfflineOrchestratorError(
+            "canonical backend one-day mechanics returned a custom payload"
+        )
+    if (
+        result.get("status") != "exact_owner_one_day_mechanics_complete"
+        or result.get("execution_manifest_sha256")
+        != bundle.execution_manifest["canonical_execution_manifest_sha256"]
+        or result.get("worker_count") != 1
+        or result.get("exact_owner_noop_parity_count")
+        != result.get("opportunity_count")
+        or result.get("economic_values_persisted") is not False
+        or result.get("economic_values_used_for_selection") is not False
+        or result.get("validation_read") is not False
+        or result.get("sealed_holdout_read") is not False
+        or result.get("action_authorized") is not False
+        or result.get("live_authorized") is not False
+    ):
+        raise OfflineOrchestratorError(
+            "canonical one-day mechanics receipt failed its hard contract"
+        )
+    destination = output_path.expanduser().resolve()
+    if destination.exists():
+        raise OfflineOrchestratorError(
+            f"immutable one-day mechanics receipt already exists: {destination}"
+        )
+    payload = dict(result)
+    payload["canonical_receipt_sha256"] = _document_sha256(
+        payload,
+        "canonical_receipt_sha256",
+    )
+    _atomic_json(destination, payload)
+    return payload
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -704,6 +754,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("manifest", type=Path)
     preflight.add_argument("--output", type=Path)
+    mechanics_one_day = subparsers.add_parser("diagnose-one-day")
+    mechanics_one_day.add_argument("manifest", type=Path)
+    mechanics_one_day.add_argument("--output", type=Path, required=True)
     run = subparsers.add_parser("run")
     run.add_argument("manifest", type=Path)
     run.add_argument("--output-dir", type=Path, required=True)
@@ -747,6 +800,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             _atomic_json(output_path, payload)
             result = payload
+    elif args.command == "diagnose-one-day":
+        result = run_formal_exact_owner_one_day_mechanics(
+            args.manifest,
+            output_path=args.output,
+        )
     else:
         result = run_formal_offline_economics(
             args.manifest,

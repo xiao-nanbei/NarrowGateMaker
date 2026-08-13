@@ -156,6 +156,7 @@ _COMMON_REPLAY_COLUMNS = frozenset(
         "exact_owner_policy_sha256",
         "exact_owner_predicate_bundle_sha256",
         "exact_owner_private_config_sha256",
+        "exact_owner_action",
         "replay_input_receipt_sha256",
         "economic_outcomes_read",
         "labels_read",
@@ -481,6 +482,18 @@ def _normalize_side(value: Any) -> str:
     if side not in {"BUY", "SELL"}:
         raise OfflineReplayAdapterError(f"invalid cooldown side: {value!r}")
     return side
+
+
+def _requires_control_prefix_parity(
+    side: Any, policy_id: Any, exact_owner_action: Any
+) -> bool:
+    normalized_side = _normalize_side(side)
+    normalized_policy = str(policy_id).strip()
+    normalized_owner = str(exact_owner_action).strip()
+    vocabulary = duration_vocabulary(normalized_side)
+    if normalized_policy not in vocabulary or normalized_owner not in vocabulary:
+        raise OfflineReplayAdapterError("duration policy is outside the frozen vocabulary")
+    return normalized_policy == normalized_owner
 
 
 def _validated_worker_count(value: Any = DEFAULT_DAY_WORKERS) -> int:
@@ -855,12 +868,23 @@ def _canonical_day_request(
 
 
 def _canonical_day_projection(job: _DayReplayJob) -> tuple[Any, Any]:
-    rows = job.payload.get("replay_inputs")
-    binding = job.payload.get("portable_binding")
+    return _canonical_day_projection_from_rows(
+        utc_day=job.utc_day,
+        binding=job.payload.get("portable_binding"),
+        rows=job.payload.get("replay_inputs"),
+    )
+
+
+def _canonical_day_projection_from_rows(
+    *,
+    utc_day: str,
+    binding: Any,
+    rows: Any,
+) -> tuple[Any, Any]:
     if not isinstance(rows, pd.DataFrame) or not isinstance(binding, Mapping):
         raise OfflineReplayAdapterError("fixed day projection payload is malformed")
     request = _canonical_day_request(
-        binding=binding, utc_day=job.utc_day, replay_inputs=rows
+        binding=binding, utc_day=utc_day, replay_inputs=rows
     )
     projection_module = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
     replay = projection_module._materialize_replay_inputs(request)
@@ -879,8 +903,81 @@ def _canonical_day_projection(job: _DayReplayJob) -> tuple[Any, Any]:
     return request, replay
 
 
+def _day_identity_hashes(request: Any) -> dict[str, str]:
+    projection = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
+    return dict(
+        projection.CanonicalB0MechanicsAdapter().identity_hashes(request)
+    )
+
+
+def _build_day_snapshot_emitter(
+    request: Any,
+    replay: Any,
+    *,
+    utc_day: str,
+    identity_hashes: Mapping[str, str],
+) -> Any:
+    panel_builder = importlib.import_module(FIXED_PANEL_BUILDER_MODULE)
+    cache_module = importlib.import_module(FIXED_OBSERVATION_CACHE_MODULE)
+    emitter_module = importlib.import_module(FIXED_SNAPSHOT_EMITTER_MODULE)
+    cutoff_ns = (
+        int(pd.Timestamp(utc_day, tz="UTC").timestamp()) + 86_400
+    ) * 1_000_000_000
+    target = cache_module.open_admitted_observation_cache(
+        request.native_observation_root, utc_day, deep=False
+    )
+    continuation = cache_module.open_admitted_observation_cache(
+        request.native_observation_root, replay.continuation_day, deep=False
+    )
+    observations = panel_builder._stitch_observation_caches(
+        target.observations(),
+        continuation.observations_between(
+            start_feature_ready_ts_ns=cutoff_ns,
+            end_feature_ready_ts_ns=cutoff_ns + 86_400 * 1_000_000_000,
+        ),
+    )
+    return emitter_module.CooldownV2ReplayEmitter(
+        feature_block="M2",
+        observations=observations,
+        warmup_cutoff_ts_ns=cutoff_ns - 86_400 * 1_000_000_000,
+        warmup_identity=str(
+            request.source_receipts["native_source_binding_sha256"]
+        ),
+        identity_hashes=identity_hashes,
+        source_cursor_prefixes={
+            "market": f"offline-sequential-market:{utc_day}",
+            "depth": f"offline-sequential-depth:{utc_day}",
+            "trade": f"offline-sequential-trade:{utc_day}",
+        },
+        retain_snapshots=False,
+    )
+
+
+def _exact_owner_runtime_params(
+    request: Any,
+    replay: Any,
+    *,
+    utc_day: str,
+    identity_hashes: Mapping[str, str],
+) -> dict[str, Any]:
+    repeated = importlib.import_module(FIXED_REPEATED_POLICY_BRIDGE_MODULE)
+    params = dict(replay.params)
+    params["cooldown_v2_snapshot_emitter"] = _build_day_snapshot_emitter(
+        request,
+        replay,
+        utc_day=utc_day,
+        identity_hashes=identity_hashes,
+    )
+    params["cooldown_duration_policy_evaluator"] = (
+        repeated.build_exact_current_owner_evaluator(
+            expected_identity_hashes=identity_hashes
+        )
+    )
+    return params
+
+
 def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
-    _request, replay = _canonical_day_projection(job)
+    request, replay = _canonical_day_projection(job)
     study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
     backtest = importlib.import_module(FIXED_BACKTEST_MODULE)
     rows = job.payload["replay_inputs"]
@@ -890,6 +987,7 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     actions = {action.policy_id: action for action in actions_by_side[side]}
     if tuple(actions) != vocabulary:
         raise OfflineReplayAdapterError("fixed duration action vocabulary drifted")
+    identity_hashes = _day_identity_hashes(request)
     window = SimpleNamespace(
         trades=replay.trades,
         var_ts_ms=replay.var_ts_ms,
@@ -902,7 +1000,15 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
         "var_ti": replay.var_ti,
         "var_retsq": replay.var_retsq,
     }
-    control_params = study._prepare_base_params(replay.params, trace_opportunities=False)
+    control_params = study._prepare_base_params(
+        _exact_owner_runtime_params(
+            request,
+            replay,
+            utc_day=job.utc_day,
+            identity_hashes=identity_hashes,
+        ),
+        trace_opportunities=False,
+    )
     control_params["trace_fills_max"] = study.TRACE_LIMIT
     control_result = backtest._simulate_tick_with_engine(
         "python",
@@ -917,15 +1023,35 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     supported = pd.DataFrame(False, index=rows.index, columns=vocabulary, dtype=bool)
     for opportunity_id, opportunity in rows.iterrows():
         raw = opportunity.to_dict()
+        exact_owner_action = str(raw["exact_owner_action"])
         for action_id in vocabulary:
+            require_control_parity = _requires_control_prefix_parity(
+                side, action_id, exact_owner_action
+            )
+            arm_base = _exact_owner_runtime_params(
+                request,
+                replay,
+                utc_day=job.utc_day,
+                identity_hashes=identity_hashes,
+            )
+            if require_control_parity:
+                arm_base["trace_fills_max"] = study.TRACE_LIMIT
             trace, _elapsed = study._run_duration_arm(
                 raw,
                 actions[action_id],
                 window=window,
-                base=replay.params,
+                base=arm_base,
                 shared=shared,
                 engine="python",
-                authoritative_control_fills=control_fills,
+                authoritative_control_fills=(
+                    control_fills if require_control_parity else None
+                ),
+                require_control_prefix_parity=require_control_parity,
+                exact_owner_baseline_policy_enabled=True,
+                expected_exact_owner_action=exact_owner_action,
+                expected_exact_owner_policy_sha256=(
+                    offline.ACTIVE_OWNER_POLICY_SHA256
+                ),
             )
             complete = bool(trace.get("arm_washout_complete", False)) and not bool(
                 trace.get("right_censored", False)
@@ -944,53 +1070,148 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     )
 
 
+def _execute_exact_owner_one_day_mechanics(
+    *,
+    utc_day: str,
+    portable_binding: Mapping[str, Any],
+    rows: pd.DataFrame,
+) -> Mapping[str, Any]:
+    """Replay every admitted opportunity under its exact owner action only."""
+
+    request, replay = _canonical_day_projection_from_rows(
+        utc_day=utc_day,
+        binding=portable_binding,
+        rows=rows,
+    )
+    study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
+    backtest = importlib.import_module(FIXED_BACKTEST_MODULE)
+    _duration_binding, actions_by_side = _load_frozen_duration_action_contract()
+    identity_hashes = _day_identity_hashes(request)
+    window = SimpleNamespace(
+        trades=replay.trades,
+        var_ts_ms=replay.var_ts_ms,
+        var_ssq=replay.var_ssq,
+    )
+    shared = {
+        "ml_data": replay.ml_data,
+        "bbo_data": replay.bbo_data,
+        "l2_data": replay.l2_data,
+        "var_ti": replay.var_ti,
+        "var_retsq": replay.var_retsq,
+    }
+    control_params = study._prepare_base_params(
+        _exact_owner_runtime_params(
+            request,
+            replay,
+            utc_day=utc_day,
+            identity_hashes=identity_hashes,
+        ),
+        trace_opportunities=False,
+    )
+    control_params["trace_fills_max"] = study.TRACE_LIMIT
+    control_result = backtest._simulate_tick_with_engine(
+        "python",
+        replay.trades,
+        replay.var_ts_ms,
+        replay.var_ssq,
+        control_params,
+        **shared,
+    )
+    control_fills = tuple(control_result.get("_fill_trace") or ())
+    action_counts: dict[str, int] = {}
+    side_counts: dict[str, int] = {}
+    role_counts: dict[str, int] = {}
+    complete_count = 0
+    right_censored_count = 0
+    for _opportunity_id, opportunity in rows.iterrows():
+        raw = opportunity.to_dict()
+        side = _normalize_side(raw["side"])
+        action_id = str(raw["exact_owner_action"])
+        actions = {
+            action.policy_id: action for action in actions_by_side[side]
+        }
+        if action_id not in actions:
+            raise OfflineReplayAdapterError(
+                "one-day mechanics owner action escaped the frozen vocabulary"
+            )
+        trace, _elapsed = study._run_duration_arm(
+            raw,
+            actions[action_id],
+            window=window,
+            base=_exact_owner_runtime_params(
+                request,
+                replay,
+                utc_day=utc_day,
+                identity_hashes=identity_hashes,
+            ),
+            shared=shared,
+            engine="python",
+            authoritative_control_fills=control_fills,
+            require_control_prefix_parity=True,
+            exact_owner_baseline_policy_enabled=True,
+            expected_exact_owner_action=action_id,
+            expected_exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+        )
+        if (
+            trace.get("schema_version")
+            != "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
+            or trace.get("exact_owner_action") != action_id
+        ):
+            raise OfflineReplayAdapterError(
+                "one-day mechanics exact-owner trace identity drifted"
+            )
+        action_counts[action_id] = action_counts.get(action_id, 0) + 1
+        side_counts[side] = side_counts.get(side, 0) + 1
+        role = str(raw["role_at_fill"])
+        role_counts[role] = role_counts.get(role, 0) + 1
+        if bool(trace.get("arm_washout_complete", False)) and not bool(
+            trace.get("right_censored", False)
+        ):
+            complete_count += 1
+        else:
+            right_censored_count += 1
+    row_count = int(len(rows))
+    if sum(action_counts.values()) != row_count:
+        raise OfflineReplayAdapterError("one-day mechanics opportunity census drifted")
+    return {
+        "utc_day": utc_day,
+        "opportunity_count": row_count,
+        "exact_owner_noop_parity_count": row_count,
+        "complete_washout_count": complete_count,
+        "right_censored_count": right_censored_count,
+        "action_counts": dict(sorted(action_counts.items())),
+        "side_counts": dict(sorted(side_counts.items())),
+        "role_counts": dict(sorted(role_counts.items())),
+        "market_window_identity_sha256": replay.market_window_identity_sha256,
+        "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
+        "latency_identity_sha256": replay.latency_identity_sha256,
+        "queue_random_identity_sha256": replay.queue_random_identity_sha256,
+        "trace_schema_version": (
+            "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
+        ),
+        "economic_values_computed_inside_replay": True,
+        "economic_values_persisted": False,
+        "economic_values_used_for_selection": False,
+    }
+
+
 def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
     request, replay = _canonical_day_projection(job)
     repeated = importlib.import_module(FIXED_REPEATED_POLICY_BRIDGE_MODULE)
     owner = importlib.import_module(FIXED_OWNER_FULL_PATH_MODULE)
-    panel_builder = importlib.import_module(FIXED_PANEL_BUILDER_MODULE)
-    cache_module = importlib.import_module(FIXED_OBSERVATION_CACHE_MODULE)
-    emitter_module = importlib.import_module(FIXED_SNAPSHOT_EMITTER_MODULE)
-    b0_projection = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
     fitted = job.payload["candidate"]
     target_side = _normalize_side(job.payload["target_side"])
     cutoff_ns = (
         int(pd.Timestamp(job.utc_day, tz="UTC").timestamp()) + 86_400
     ) * 1_000_000_000
-    identity_hashes = b0_projection.CanonicalB0MechanicsAdapter().identity_hashes(
-        request
-    )
+    identity_hashes = _day_identity_hashes(request)
 
     def emitter_factory() -> Any:
-        target = cache_module.open_admitted_observation_cache(
-            request.native_observation_root, job.utc_day, deep=False
-        )
-        continuation = cache_module.open_admitted_observation_cache(
-            request.native_observation_root, replay.continuation_day, deep=False
-        )
-        start_ns = cutoff_ns
-        end_ns = start_ns + 86_400 * 1_000_000_000
-        observations = panel_builder._stitch_observation_caches(
-            target.observations(),
-            continuation.observations_between(
-                start_feature_ready_ts_ns=start_ns,
-                end_feature_ready_ts_ns=end_ns,
-            ),
-        )
-        return emitter_module.CooldownV2ReplayEmitter(
-            feature_block="M2",
-            observations=observations,
-            warmup_cutoff_ts_ns=cutoff_ns - 86_400 * 1_000_000_000,
-            warmup_identity=str(
-                request.source_receipts["native_source_binding_sha256"]
-            ),
+        return _build_day_snapshot_emitter(
+            request,
+            replay,
+            utc_day=job.utc_day,
             identity_hashes=identity_hashes,
-            source_cursor_prefixes={
-                "market": f"offline-sequential-market:{job.utc_day}",
-                "depth": f"offline-sequential-depth:{job.utc_day}",
-                "trade": f"offline-sequential-trade:{job.utc_day}",
-            },
-            retain_snapshots=False,
         )
 
     exact_owner = repeated.build_exact_current_owner_evaluator(
@@ -1686,6 +1907,9 @@ def _validate_replay_input_frame(
         values = set(rows[column].tolist())
         if values != {expected}:
             raise OfflineReplayAdapterError(f"replay input contract drifted: {column}")
+    allowed_owner_actions = set(duration_vocabulary(_normalize_side(side)))
+    if set(rows["exact_owner_action"].astype(str)) - allowed_owner_actions:
+        raise OfflineReplayAdapterError("row-wise exact owner action vocabulary drifted")
     for column in (
         "replay_input_receipt_sha256",
         "exact_owner_policy_sha256",
@@ -2137,6 +2361,77 @@ class _CanonicalOfflineReplayAdapter:
                 "live_authorized": False,
             },
         }
+
+    def run_exact_owner_one_day_mechanics(
+        self,
+        mechanics: backend.OutcomeBlindMechanics,
+    ) -> Mapping[str, Any]:
+        """Exercise the first admitted UTC day without retaining economic values."""
+
+        if not isinstance(mechanics, backend.OutcomeBlindMechanics):
+            raise OfflineReplayAdapterError(
+                "one-day mechanics requires OutcomeBlindMechanics"
+            )
+        _require_exact_b0_bindings(mechanics.bindings)
+        if not mechanics.selected_days:
+            raise OfflineReplayAdapterError("one-day mechanics lacks admitted days")
+        utc_day = mechanics.selected_days[0]
+        rows = mechanics.replay_inputs.loc[
+            mechanics.replay_inputs["utc_day"] == utc_day
+        ].copy()
+        if rows.empty or set(rows["side"].map(_normalize_side)) != {"BUY", "SELL"}:
+            raise OfflineReplayAdapterError(
+                "one-day mechanics must cover both sides on the first admitted day"
+            )
+        validated: list[pd.DataFrame] = []
+        for side in ("BUY", "SELL"):
+            side_rows = rows.loc[rows["side"].map(_normalize_side) == side].copy()
+            validated.append(
+                _validate_replay_input_frame(
+                    side_rows,
+                    bindings=mechanics.bindings,
+                    replay_input_sha256=_frame_sha256(side_rows),
+                    side=side,
+                    days=(utc_day,),
+                )
+            )
+        rows = pd.concat(validated, axis=0).loc[rows.index]
+        _require_executable_replay_inputs(
+            rows,
+            context="exact-owner one-day mechanics",
+            label_scope=False,
+        )
+        _validate_d_plus_one_contract(rows)
+        options = _resolve_execution_options(rows)
+        diagnostic = dict(
+            _execute_exact_owner_one_day_mechanics(
+                utc_day=utc_day,
+                portable_binding=options.binding,
+                rows=rows,
+            )
+        )
+        result: dict[str, Any] = {
+            "schema_version": f"{IDENTITY}.exact_owner_one_day_mechanics.v1",
+            "identity": self.identity,
+            "status": "exact_owner_one_day_mechanics_complete",
+            "adapter_artifact_sha256": self.artifact_sha256,
+            "execution_manifest_sha256": (
+                mechanics.bindings.execution_manifest_sha256
+            ),
+            "source_manifest_sha256": mechanics.bindings.source_manifest_sha256,
+            "panel_manifest_sha256": mechanics.bindings.panel_manifest_sha256,
+            "fold_manifest_sha256": mechanics.bindings.fold_manifest_sha256,
+            "mechanics_receipt_sha256": mechanics.mechanics_receipt_sha256,
+            "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+            "worker_count": 1,
+            **diagnostic,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        }
+        result["receipt_sha256"] = _document_sha256(result, "receipt_sha256")
+        return result
 
     def build_search_contract(
         self,

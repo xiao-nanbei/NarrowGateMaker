@@ -2854,6 +2854,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     cooldown_duration_policy_evaluator = params.get(
         "cooldown_duration_policy_evaluator"
     )
+    cooldown_duration_fork_baseline_policy_enabled = bool(
+        params.get("cooldown_duration_fork_baseline_policy_enabled", False)
+    )
     if cooldown_duration_policy_evaluator is not None:
         required_methods = {"evaluate", "audit"}
         missing_methods = sorted(
@@ -2938,6 +2941,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     cooldown_duration_fork_fixed_ms = float(
         params.get("cooldown_duration_fork_fixed_ms", 0.0) or 0.0
     )
+    cooldown_duration_fork_expected_owner_action = str(
+        params.get("cooldown_duration_fork_expected_owner_action", "") or ""
+    ).strip()
+    cooldown_duration_fork_expected_owner_policy_sha256 = str(
+        params.get("cooldown_duration_fork_expected_owner_policy_sha256", "")
+        or ""
+    ).strip()
     if cooldown_duration_fork_enabled:
         if cooldown_duration_fork_action not in {
             "CONTROL_85N",
@@ -2962,6 +2972,28 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             or cooldown_duration_fork_fixed_ms <= 0.0
         ):
             raise ValueError("fixed cooldown duration must be positive and finite")
+        if cooldown_duration_fork_baseline_policy_enabled:
+            if cooldown_duration_policy_evaluator is None:
+                raise ValueError(
+                    "one-shot exact-owner baseline requires a policy evaluator"
+                )
+            if not cooldown_duration_fork_expected_owner_action:
+                raise ValueError(
+                    "one-shot exact-owner baseline lacks the expected owner action"
+                )
+            if not re.fullmatch(
+                r"[0-9a-f]{64}",
+                cooldown_duration_fork_expected_owner_policy_sha256,
+            ):
+                raise ValueError(
+                    "one-shot exact-owner baseline lacks a policy SHA256"
+                )
+            if str(
+                getattr(cooldown_duration_policy_evaluator, "policy_sha256", "")
+            ) != cooldown_duration_fork_expected_owner_policy_sha256:
+                raise ValueError(
+                    "one-shot exact-owner baseline evaluator identity drifted"
+                )
         if ema_add_wait_fork_enabled or any(
             bool(params.get(name, False))
             for name in (
@@ -2990,10 +3022,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     if cooldown_duration_policy_evaluator is not None and (
         cooldown_duration_shared_prefix_executor is not None
-        or cooldown_duration_fork_enabled
+        or (
+            cooldown_duration_fork_enabled
+            and not cooldown_duration_fork_baseline_policy_enabled
+        )
     ):
         raise ValueError(
             "repeated cooldown policy cannot share one-shot cooldown execution"
+        )
+    if cooldown_duration_fork_baseline_policy_enabled and (
+        not cooldown_duration_fork_enabled
+        or cooldown_duration_shared_prefix_executor is not None
+    ):
+        raise ValueError(
+            "one-shot exact-owner baseline is only valid for an explicit fork"
         )
     if cooldown_duration_policy_evaluator is not None and (
         ema_add_wait_fork_enabled
@@ -6291,6 +6333,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     cooldown_duration_fork_assignment_equity_usdc = 0.0
     cooldown_duration_fork_assignment_inventory_btc = 0.0
     cooldown_duration_fork_baseline_ms = 0.0
+    cooldown_duration_fork_exact_owner_baseline_ms = 0.0
+    cooldown_duration_fork_exact_owner_action = ""
     cooldown_duration_fork_applied_ms = 0.0
     cooldown_duration_fork_deadline_ts_ms = 0
     cooldown_duration_fork_quarantine = False
@@ -11197,6 +11241,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal cooldown_duration_fork_assignment_equity_usdc
         nonlocal cooldown_duration_fork_assignment_inventory_btc
         nonlocal cooldown_duration_fork_baseline_ms
+        nonlocal cooldown_duration_fork_exact_owner_baseline_ms
+        nonlocal cooldown_duration_fork_exact_owner_action
         nonlocal cooldown_duration_fork_applied_ms
         nonlocal cooldown_duration_fork_deadline_ts_ms
         nonlocal cooldown_duration_fork_reason
@@ -11452,20 +11498,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
             trace_cooldown_duration_opportunities.append(opportunity)
 
-        if repeated_policy_applied_ms is not None:
-            return repeated_policy_applied_ms
-
-        if not cooldown_duration_fork_enabled:
-            return baseline_ms
         target_matches = bool(
-            ordinal == cooldown_duration_fork_target_ordinal
+            cooldown_duration_fork_enabled
+            and ordinal == cooldown_duration_fork_target_ordinal
             and int(fill_ts_ms) == cooldown_duration_fork_target_ts_ms
             and normalized_side == cooldown_duration_fork_target_side
             and order_id == cooldown_duration_fork_target_order_id
             and anticipated_campaign_id
             == cooldown_duration_fork_target_campaign_id
         )
-        if not target_matches:
+        if cooldown_duration_fork_enabled and not target_matches:
             if (
                 cooldown_duration_fork_assigned
                 and normalized_side == cooldown_duration_fork_target_side
@@ -11473,6 +11515,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # A later exposure fill creates a new baseline lineage.  The
                 # one-shot target override must not leak into it.
                 cooldown_duration_target_override_active = False
+            if repeated_policy_applied_ms is not None:
+                return repeated_policy_applied_ms
+            return baseline_ms
+        if not cooldown_duration_fork_enabled:
+            if repeated_policy_applied_ms is not None:
+                return repeated_policy_applied_ms
             return baseline_ms
         if cooldown_duration_fork_assigned:
             raise RuntimeError("cooldown duration fork attempted a second assignment")
@@ -11491,6 +11539,23 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
         cooldown_duration_fork_assignment_inventory_btc = float(q)
         cooldown_duration_fork_baseline_ms = baseline_ms
+        cooldown_duration_fork_exact_owner_baseline_ms = (
+            float(repeated_policy_applied_ms)
+            if repeated_policy_applied_ms is not None
+            else baseline_ms
+        )
+        cooldown_duration_fork_exact_owner_action = (
+            str(raw_decision.action_id)
+            if repeated_policy_applied_ms is not None
+            else "CONTROL_85N"
+        )
+        if cooldown_duration_fork_baseline_policy_enabled and (
+            cooldown_duration_fork_exact_owner_action
+            != cooldown_duration_fork_expected_owner_action
+        ):
+            raise RuntimeError(
+                "one-shot exact-owner target action drifted from the admitted panel"
+            )
         cooldown_duration_fork_applied_ms = (
             baseline_ms
             if cooldown_duration_fork_action == "CONTROL_85N"
@@ -11503,7 +11568,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
         )
         cooldown_duration_target_control_deadline_ts_ms = int(
-            opportunity["baseline_deadline_ts_ms"]
+            round(
+                float(fill_ts_ms)
+                + float(cooldown_duration_fork_exact_owner_baseline_ms)
+            )
         )
         cooldown_duration_fork_assignment_buy_fills = int(nfb)
         cooldown_duration_fork_assignment_sell_fills = int(nfa)
@@ -26391,6 +26459,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "target_campaign_id": cooldown_duration_fork_target_campaign_id,
             "target_side": cooldown_duration_fork_target_side,
         }
+        if cooldown_duration_fork_baseline_policy_enabled:
+            assignment_state.update(
+                {
+                    "exact_owner_baseline_duration_ms": (
+                        cooldown_duration_fork_exact_owner_baseline_ms
+                    ),
+                    "exact_owner_action": cooldown_duration_fork_exact_owner_action,
+                    "exact_owner_baseline_policy_enabled": True,
+                    "exact_owner_policy_sha256": (
+                        cooldown_duration_fork_expected_owner_policy_sha256
+                    ),
+                }
+            )
         assignment_state_sha256 = hashlib.sha256(
             json.dumps(
                 assignment_state,
@@ -26401,7 +26482,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ).hexdigest()
         cooldown_duration_fork_trace = {
             "schema_version": (
-                "multiscale_ema_boolean_cooldown_duration_fork_trace.v2"
+                "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
+                if cooldown_duration_fork_baseline_policy_enabled
+                else "multiscale_ema_boolean_cooldown_duration_fork_trace.v2"
             ),
             "action": cooldown_duration_fork_action,
             "side": cooldown_duration_fork_target_side,
@@ -26492,6 +26575,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "hazard_owner_count": len(dynamic_fill_hazard_paths)
             + int(dynamic_fill_hazard_hold is not None),
         }
+        if cooldown_duration_fork_baseline_policy_enabled:
+            cooldown_duration_fork_trace.update(
+                {
+                    "exact_owner_baseline_duration_ms": (
+                        cooldown_duration_fork_exact_owner_baseline_ms
+                    ),
+                    "exact_owner_action": cooldown_duration_fork_exact_owner_action,
+                    "exact_owner_baseline_policy_enabled": True,
+                    "exact_owner_policy_sha256": (
+                        cooldown_duration_fork_expected_owner_policy_sha256
+                    ),
+                }
+            )
 
     if post_cooldown_inventory_budget_enabled:
         for budget_side in ("BUY", "SELL"):

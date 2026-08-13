@@ -212,6 +212,7 @@ def _common_replay_inputs(
 ) -> pd.DataFrame:
     observed_days = days or tuple(DAY for _ in row_ids)
     index = pd.Index(row_ids, name="opportunity_id")
+    exact_owner_action = "CONTROL_85N" if side == "BUY" else "FIXED_166S"
     return pd.DataFrame(
         {
             "utc_day": observed_days,
@@ -231,6 +232,7 @@ def _common_replay_inputs(
             "exact_owner_private_config_sha256": tuple(
                 offline.ACTIVE_PRIVATE_CONFIG_SHA256 for _ in row_ids
             ),
+            "exact_owner_action": tuple(exact_owner_action for _ in row_ids),
             "replay_input_receipt_sha256": tuple("8" * 64 for _ in row_ids),
             "economic_outcomes_read": tuple(False for _ in row_ids),
             "labels_read": tuple(False for _ in row_ids),
@@ -403,6 +405,25 @@ def test_duration_action_contract_does_not_open_historical_baseline(
     assert tuple(action.policy_id for action in actions["SELL"]) == duration_vocabulary(
         "SELL"
     )
+
+
+def test_control_prefix_parity_tracks_exact_current_owner_role() -> None:
+    assert adapter_module._requires_control_prefix_parity(
+        "BUY", "CONTROL_85N", "CONTROL_85N"
+    )
+    assert not adapter_module._requires_control_prefix_parity(
+        "BUY", "FIXED_79S", "CONTROL_85N"
+    )
+    assert not adapter_module._requires_control_prefix_parity(
+        "SELL", "CONTROL_85N", "FIXED_211S"
+    )
+    assert adapter_module._requires_control_prefix_parity(
+        "SELL", "FIXED_211S", "FIXED_211S"
+    )
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="vocabulary"):
+        adapter_module._requires_control_prefix_parity(
+            "SELL", "FIXED_173S", "FIXED_211S"
+        )
 
 
 def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api() -> None:

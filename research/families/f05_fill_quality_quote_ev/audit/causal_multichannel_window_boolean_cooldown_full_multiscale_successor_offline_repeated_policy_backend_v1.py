@@ -371,6 +371,11 @@ class CanonicalReplayAdapter(Protocol):
         mechanics: OutcomeBlindMechanics,
     ) -> Mapping[str, Any]: ...
 
+    def run_exact_owner_one_day_mechanics(
+        self,
+        mechanics: OutcomeBlindMechanics,
+    ) -> Mapping[str, Any]: ...
+
     def generate_outer_train_one_shot_labels(
         self,
         request: CanonicalOuterTrainReplayRequest,
@@ -645,6 +650,13 @@ def load_outcome_blind_mechanics(
 
     replay_inputs = indexed["replay_inputs"]
     replay_inputs = replay_inputs.copy()
+    if "exact_owner_action" in replay_inputs:
+        if not replay_inputs["exact_owner_action"].astype(str).equals(owner_actions):
+            raise OfflineRepeatedPolicyBackendError(
+                "replay input exact owner action drifted from the admitted panel"
+            )
+    else:
+        replay_inputs["exact_owner_action"] = owner_actions
     for target, source in REPLAY_METADATA_DIRECT_BINDINGS.items():
         if source not in metadata:
             continue
@@ -728,6 +740,7 @@ def _validate_adapter_shape(adapter: Any) -> CanonicalReplayAdapter:
     for method in (
         "preflight_formal_panel_schema",
         "preflight_formal_economics",
+        "run_exact_owner_one_day_mechanics",
         "build_search_contract",
         "generate_outer_train_one_shot_labels",
         "evaluate_repeated_policy",
@@ -1284,6 +1297,53 @@ def run_canonical_offline_economics(
     )
 
 
+def run_exact_owner_one_day_mechanics(
+    execution_manifest_path: Path,
+) -> Mapping[str, Any]:
+    """Run the fixed first admitted day as a no-selection exact-B0 diagnostic."""
+
+    if not isinstance(execution_manifest_path, Path):
+        raise TypeError("formal mechanics accepts only an execution-manifest Path")
+    bundle = orchestrator.load_formal_offline_bundle(execution_manifest_path)
+    adapter = _load_canonical_replay_adapter()
+    schema_preflight = _preflight_bound_panel_schema(bundle, adapter)
+    if schema_preflight["status"] != FORMAL_PANEL_SCHEMA_READY_STATUS:
+        raise OfflineRepeatedPolicyBackendError(
+            "one-day mechanics requires a formally ready panel schema"
+        )
+    mechanics = load_outcome_blind_mechanics(bundle)
+    preflight = _preflight_adapter(mechanics, adapter)
+    if preflight["status"] != MECHANICS_READY_STATUS:
+        raise OfflineRepeatedPolicyBackendError(
+            "one-day mechanics requires a formally ready replay adapter"
+        )
+    result = adapter.run_exact_owner_one_day_mechanics(mechanics)
+    if not isinstance(result, Mapping):
+        raise OfflineRepeatedPolicyBackendError(
+            "one-day exact-owner mechanics returned a custom payload"
+        )
+    expected = {
+        "identity": adapter.identity,
+        "adapter_artifact_sha256": adapter.artifact_sha256,
+        "execution_manifest_sha256": mechanics.bindings.execution_manifest_sha256,
+        "source_manifest_sha256": mechanics.bindings.source_manifest_sha256,
+        "panel_manifest_sha256": mechanics.bindings.panel_manifest_sha256,
+        "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "worker_count": 1,
+        "economic_values_persisted": False,
+        "economic_values_used_for_selection": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    if any(result.get(field) != value for field, value in expected.items()):
+        raise OfflineRepeatedPolicyBackendError(
+            "one-day exact-owner mechanics identity or permissions drifted"
+        )
+    return dict(result)
+
+
 def preflight_canonical_offline_economics(
     execution_manifest_path: Path,
 ) -> Mapping[str, Any]:
@@ -1371,5 +1431,6 @@ __all__ = [
     "build_outer_train_label_replay_receipt",
     "build_sequential_replay_receipt",
     "preflight_canonical_offline_economics",
+    "run_exact_owner_one_day_mechanics",
     "run_canonical_offline_economics",
 ]
