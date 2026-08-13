@@ -1,0 +1,65 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.source_coverage_blocked.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "blocked_missing_canonical_fields",
+  "last_materially_modified": "2026-08-13",
+  "source_commit": "ab3551544b4088cc77a7be465fc4bcba03a07969",
+  "source_annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/v1-source-20260813",
+  "formal_execution_manifest": {
+    "artifact_id": "f05-full-multiscale-offline-formal-execution-manifest-v1",
+    "path": "${NARROWGATE_DATA_ROOT}/reports/f05_full_multiscale_offline_formal_v1/canonical_offline_v1/formal_execution_manifest.json",
+    "file_sha256": "35650f5f2dd898119c8afbaf44ffaa3ea72cd137cc844d953c158bce51943a01",
+    "canonical_sha256": "8f8e121ff5c47cc86d4fb8a6a325b934dffb3ddcc58b985efa456de01e20834a",
+    "size_bytes": 13408
+  },
+  "formal_preflight": {
+    "artifact_id": "f05-full-multiscale-offline-formal-preflight-v1",
+    "path": "${NARROWGATE_DATA_ROOT}/reports/f05_full_multiscale_offline_formal_v1/canonical_offline_v1/formal_preflight.json",
+    "file_sha256": "231ea51705fa65b2d26ef5c4a32e1753c7dd4415e66089e400822792cf9dab4b",
+    "canonical_sha256": "bfa9ccb06c533d5cd94ff0febc2ce63ec02d0cdf36b024ff11bb2e16bad712a1",
+    "size_bytes": 6106
+  },
+  "admitted_mechanics": {
+    "selected_day_count": 30,
+    "opportunity_count": 3516,
+    "mechanics_panel_canonical_sha256": "52f2bb0d514a6104a9d59cbcbd3021f67e0cee117006d8eaff85abec52634e07",
+    "source_manifest_canonical_sha256": "1e156e6d505b78f66a7a2d0d30eccfdb5eb97f46c0ba2f9c844baa381f32dfd7",
+    "economic_outcomes_present": false,
+    "candidate_actions_generated": false
+  },
+  "missing_canonical_fields": [
+    "assignment_equity_usdc",
+    "assignment_to_common_washout_required",
+    "campaign_cluster_id",
+    "campaign_id",
+    "d_plus_1_context_receipt_sha256",
+    "d_plus_1_feature_identity_sha256",
+    "d_plus_1_market_identity_sha256",
+    "d_plus_1_native_observation_sha256",
+    "d_plus_1_new_target_assignments_allowed",
+    "d_plus_1_utc_day",
+    "day_input_sha256",
+    "day_replay_workers",
+    "exposure_fill_ordinal",
+    "latency_identity_sha256",
+    "market_window_identity_sha256",
+    "model_overlay_identity_sha256",
+    "observation_end_ts_ns",
+    "order_id",
+    "portable_day_cache_root",
+    "portable_replay_binding_path",
+    "portable_replay_binding_sha256",
+    "queue_random_identity_sha256",
+    "target_day_end_terminalized"
+  ],
+  "stop_rule": "Do not run formal economics until every missing canonical field is produced by natural offline canonical replay inputs and the immutable preflight is re-bound under a new identity. Do not create a live companion, shadow, observer, or candidate-specific capture path.",
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_performed": false,
+    "owner_policy_unchanged": true
+  }
+}
