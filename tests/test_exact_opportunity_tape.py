@@ -359,6 +359,30 @@ class _QueryRest:
         return dict(self.response or {})
 
 
+class _RawQueryRest:
+    def __init__(self, response: object) -> None:
+        self.response = response
+
+    def query_order(self, **_kwargs):
+        return self.response
+
+
+def _query_response_for_order(order, **overrides) -> dict[str, object]:
+    response: dict[str, object] = {
+        "symbol": order.symbol,
+        "clientOrderId": order.client_order_id,
+        "side": order.side.value,
+        "status": "NEW",
+        "orderId": order.order_id or 77,
+        "price": str(order.price),
+        "origQty": str(order.quantity),
+        "executedQty": str(order.filled_qty),
+        "avgPrice": "0",
+    }
+    response.update(overrides)
+    return response
+
+
 class _BlockingSubmitRest:
     def __init__(self) -> None:
         self.entered = threading.Event()
@@ -546,6 +570,137 @@ def test_rest_minus_2013_cannot_release_pending_cancel_ownership() -> None:
 
     assert resolution == "exchange_not_found_terminal_still_unknown"
     assert engine._ask_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_CANCEL
+
+
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("pending_state", [OrderState.PENDING_NEW, OrderState.PENDING_CANCEL])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+@pytest.mark.parametrize(
+    "malformed_kind",
+    [
+        "none",
+        "list",
+        "bad_status_type",
+        "unknown_status",
+        "bad_order_id",
+        "bad_orig_qty",
+        "bad_executed_qty",
+    ],
+)
+def test_malformed_query_response_keeps_pending_ownership(
+    route: str,
+    pending_state: OrderState,
+    side: Side,
+    malformed_kind: str,
+) -> None:
+    submit_rest = _SubmitTimeoutRest() if pending_state == OrderState.PENDING_NEW else _Rest()
+    engine = _bare_engine(submit_rest)
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
+    assert cid is not None
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    if pending_state == OrderState.PENDING_CANCEL:
+        engine.orders.mark_pending_cancel(cid)
+        order = engine.orders.get_order(cid)
+        assert order is not None
+    assert order.state == pending_state
+    lifecycle_events_before = tuple(engine.orders.lifecycle_events(cid))
+
+    response: object
+    if malformed_kind == "none":
+        response = None
+    elif malformed_kind == "list":
+        response = []
+    elif malformed_kind == "bad_status_type":
+        response = _query_response_for_order(order, status=[])
+    elif malformed_kind == "unknown_status":
+        response = _query_response_for_order(order, status="UNKNOWN")
+    elif malformed_kind == "bad_order_id":
+        response = _query_response_for_order(order, orderId="not-an-order-id")
+    elif malformed_kind == "bad_orig_qty":
+        response = _query_response_for_order(order, origQty=[])
+    else:
+        response = _query_response_for_order(order, executedQty="0.002")
+    engine.rest = _RawQueryRest(response)
+
+    if pending_state == OrderState.PENDING_NEW:
+        resolution = engine.reconcile_pending_new_order(order)
+    else:
+        resolution = engine.reconcile_pending_cancel_order(order)
+
+    assert resolution == "query_malformed_still_unknown"
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
+    retained = engine.orders.get_order(cid)
+    assert retained is order
+    assert retained.state == pending_state
+    assert tuple(engine.orders.lifecycle_events(cid)) == lifecycle_events_before
+    assert retained.lifecycle.snapshot()["exchange_exposure_complete"] is False
+
+
+@pytest.mark.parametrize("status", ["PARTIALLY_FILLED", "FILLED"])
+def test_reconcile_derives_fill_price_from_cumulative_quote_quantity(status: str) -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    executed_qty = "0.0005" if status == "PARTIALLY_FILLED" else "0.001"
+    engine.rest = _RawQueryRest(
+        {
+            **_query_response_for_order(
+                order,
+                status=status,
+                executedQty=executed_qty,
+                cummulativeQuoteQty=str(float(executed_qty) * 99.8),
+            ),
+            "avgPrice": None,
+        }
+    )
+
+    resolution = engine.reconcile_pending_new_order(order)
+
+    assert resolution == f"exchange_status_{status.lower()}_reconciled"
+    retained = engine.orders.get_order(cid)
+    if status == "PARTIALLY_FILLED":
+        assert retained is not None
+        assert retained.filled_qty == pytest.approx(0.0005)
+    else:
+        assert retained is not None
+        assert retained.state == OrderState.FILLED
+        assert retained.filled_qty == pytest.approx(0.001)
+
+
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_pending_cancel_query_order_id_mismatch_keeps_ownership(
+    route: str,
+    side: Side,
+) -> None:
+    engine = _bare_engine(_Rest())
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
+    assert cid is not None
+    engine.orders.mark_pending_cancel(cid)
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    engine.rest = _RawQueryRest(
+        _query_response_for_order(order, orderId=order.order_id + 1)
+    )
+
+    resolution = engine.reconcile_pending_cancel_order(order)
+
+    assert resolution == "query_malformed_still_unknown"
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
     assert engine.orders.get_order(cid).state == OrderState.PENDING_CANCEL
 
 

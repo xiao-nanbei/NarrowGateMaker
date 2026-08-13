@@ -2,7 +2,7 @@
 
 Last materially modified: 2026-08-13
 
-Status: `implemented_local_verified_not_deployed`.
+Status: `implemented_local_predeploy_blocked`.
 
 ## Boundary
 
@@ -16,6 +16,8 @@ A timeout, connection reset, HTTP 5xx, response loss, malformed response, or oth
 
 A reconciliation query returning `-2013` means that the query did not find the order at that instant; it does not prove that the original order never existed. The lifecycle therefore remains censored or unsupported and cannot be converted to exact-zero exposure.
 
+A reconciliation response must be a mapping whose status, order ID, client ID, symbol, side, original quantity, and cumulative executed quantity are type-valid and consistent with the locally owned order. `None`, sequences, malformed mappings, identity mismatches, quantity regressions, and impossible status/quantity combinations return `query_malformed_still_unknown`; they do not mutate lifecycle state, release side ownership, or enter exact-zero exposure. Filled query responses may provide either an average fill price or Binance cumulative quote quantity, and neither source is treated as an activation clock.
+
 A reconciliation query returning `NEW`, `PARTIALLY_FILLED`, or `FILLED` may restore known account quantities and terminal status, but its `updateTime` is not the historical activation timestamp. The unknown activation prefix remains censored, and no activation or fill clock is fabricated from that field.
 
 A later private user-stream `NEW`, `PARTIALLY_FILLED`, `FILLED`, or `EXPIRED` event does not retroactively make the unknown submit prefix observable. Genuine private fill-event time may identify the fill event itself, but activation and the preceding exchange-exposure interval remain censored.
@@ -26,14 +28,14 @@ An order in `PENDING_CANCEL` is not terminal merely because a bulk open-order qu
 
 Controlled startup requires a successful post-cancel account-position reconciliation before the prospective epoch, writers, or market/user streams start. A missing or failed position response blocks startup instead of assuming local inventory is authoritative.
 
-The lifecycle event, journal row, asynchronous writer, remote spool, and resume path carry visible-exposure validity, exchange-exposure validity, completeness, and invalid-reason fields. `submit_ack_unknown` and `submit_ack_unknown_censored` are admitted event identities rather than writer-quarantine errors.
+The lifecycle event, journal row, asynchronous writer, remote spool, and resume path carry visible-exposure validity, exchange-exposure validity, completeness, and invalid-reason fields. `submit_ack_unknown` and `submit_ack_unknown_censored` are admitted event identities rather than writer-quarantine errors. A durability test now writes the unknown-ACK prefix, closes the asynchronous remote-spool writer, restarts the same admitted session, writes the shutdown censor, and verifies ordered unique rows with zero drops, errors, or quarantines.
 
 ## Covered Paths
 
 The implementation covers BUY and SELL, opening, ordinary reducing, and emergency reducing close orders, explicit `-5022`, malformed or unknown acknowledgement, REST `-2013`, REST `NEW`/`PARTIALLY_FILLED`/`FILLED`, private user-stream recovery, orphan terminal fills, pending-cancel reconciliation, same-side orphan conflicts, and required startup position convergence. It preserves ownership while an order may still exist and distinguishes local shutdown censoring from an exchange terminal event.
 
-The focused local lifecycle regression contains 167 passing tests and zero failures. Unknown-ACK journal events produced zero expected quarantine cases in this suite. No EC2 preflight, runtime release, or post-start admission was performed.
+The focused local lifecycle regression contains 230 passing tests and zero failures. The machine-verifiable command, source hashes, test hashes, and durability coverage are recorded in [the predeploy test receipt](order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json). Unknown-ACK journal events produced zero quarantine cases in this suite. No EC2 preflight, runtime release, rollback receipt, or post-start admission was performed.
 
 ## Permission
 
-This local implementation has no deployment receipt and grants no research, action, or live authority. A future runtime release requires a separate preflight, runtime amendment, rollback receipt, and post-start lifecycle admission; it cannot ride on an F05 research deployment because no such deployment exists.
+This implementation remains predeploy-blocked even though its focused local tests pass. It has no clean release tag or deployment receipt and grants no research, action, or live authority. A future runtime release requires a clean commit and annotated tag, separate preflight, independent runtime amendment, rollback receipt, and post-start lifecycle admission; it cannot ride on an F05 research deployment because no such deployment exists.

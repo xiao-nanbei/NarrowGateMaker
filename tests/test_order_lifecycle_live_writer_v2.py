@@ -153,6 +153,102 @@ def test_submit_ack_unknown_is_durable_without_quarantine_or_writer_error(
     assert rows[-1]["exchange_exposure_valid"] is False
 
 
+def test_submit_ack_unknown_survives_async_close_restart_in_remote_spool(
+    tmp_path: Path,
+) -> None:
+    order = _order()
+    journal_root = tmp_path / "journal"
+    epoch_root = tmp_path / "epochs" / "epoch-unknown-restart"
+    epoch_root.mkdir(parents=True)
+    identity = {
+        "baseline_epoch_id": "epoch-unknown-restart",
+        "storage_profile": BOUNDED_REMOTE_SPOOL,
+        "hash": "9" * 64,
+    }
+
+    first = OrderLifecycleLiveWriterV2(
+        journal_root,
+        session_id="epoch-unknown-restart",
+        baseline_epoch_id="epoch-unknown-restart",
+        runtime_identity=identity,
+        queue_size=8,
+        storage_format="jsonl",
+        heartbeat_interval_s=0.05,
+        storage_profile=BOUNDED_REMOTE_SPOOL,
+        epoch_root=epoch_root,
+        session_max_duration_s=120.0,
+        session_max_bytes=1024 * 1024,
+    )
+    assert first.enqueue_order_event(order, "submit") is True
+    _wait_for(first, 1)
+    order.lifecycle.mark_submit_ack_unknown(
+        2_000_000_000,
+        reason="submit_response_unknown",
+    )
+    assert first.enqueue_order_event(
+        order,
+        "submit_ack_unknown",
+        {"_local_receive_ts_ns": 2_000_000_000},
+    )
+    _wait_for(first, 2)
+    first_final = first.close(drain_timeout_s=1.0)
+    assert first_final["remote_spool_valid"] is True
+    assert first_final["drop_count"] == 0
+    assert first_final["error_count"] == 0
+
+    restarted = OrderLifecycleLiveWriterV2(
+        journal_root,
+        session_id="epoch-unknown-restart",
+        baseline_epoch_id="epoch-unknown-restart",
+        runtime_identity=identity,
+        queue_size=8,
+        storage_format="jsonl",
+        heartbeat_interval_s=0.05,
+        storage_profile=BOUNDED_REMOTE_SPOOL,
+        epoch_root=epoch_root,
+        session_max_duration_s=120.0,
+        session_max_bytes=1024 * 1024,
+    )
+    assert restarted.health_snapshot()["core_health"]["restart_count"] == 1
+    order.lifecycle.censor_submit_ack_unknown(
+        3_000_000_000,
+        reason="local_shutdown_unknown_ack",
+    )
+    assert restarted.enqueue_order_event(
+        order,
+        "submit_ack_unknown_censored",
+        {
+            "_local_receive_ts_ns": 3_000_000_000,
+            "_reason": "local_shutdown_unknown_ack",
+        },
+    )
+    _wait_for(restarted, 1)
+    restarted_final = restarted.close(drain_timeout_s=1.0)
+    assert restarted_final["remote_spool_valid"] is True
+    assert restarted_final["drop_count"] == 0
+    assert restarted_final["error_count"] == 0
+    assert restarted_final["core_health"]["callbacks_quarantined"] == 0
+
+    rows = [
+        json.loads(line)
+        for path in (
+            journal_root / "session-epoch-unknown-restart" / "parts"
+        ).glob("*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    rows.sort(key=lambda row: int(row["lifecycle_sequence"]))
+    assert [row["lifecycle_event"] for row in rows] == [
+        "submit",
+        "submit_ack_unknown",
+        "submit_ack_unknown_censored",
+    ]
+    assert len({row["event_id"] for row in rows}) == 3
+    assert rows[-1]["terminal_observation"] == "LOCAL_SHUTDOWN_CENSOR"
+    assert rows[-1]["visible_exposure_complete"] is False
+    assert rows[-1]["exchange_exposure_complete"] is False
+
+
 def test_worker_failure_invalidates_tape_without_raising_to_producer(
     tmp_path: Path,
 ) -> None:

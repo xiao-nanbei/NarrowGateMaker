@@ -151,6 +151,16 @@ logger = logging.getLogger("maker_engine")
 
 
 _QUOTE_ASSET_SUFFIXES = ("USDC", "USDT", "BUSD", "FDUSD", "USD")
+_REST_RECONCILE_STATUSES = frozenset(
+    {
+        "NEW",
+        "PARTIALLY_FILLED",
+        "FILLED",
+        "CANCELED",
+        "EXPIRED",
+        "REJECTED",
+    }
+)
 
 
 def _prospective_state_plain(
@@ -7170,6 +7180,187 @@ class MakerEngine:
             "_submit_ack_reconciled": True,
         }
 
+    @staticmethod
+    def _rest_reconcile_number(
+        value: Any,
+        *,
+        field: str,
+        strictly_positive: bool,
+    ) -> float:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError(f"{field} has unsupported type")
+        if isinstance(value, str) and not value.strip():
+            raise ValueError(f"{field} is empty")
+        try:
+            normalized = float(value)
+        except Exception as exc:
+            raise ValueError(f"{field} is not numeric") from exc
+        if not math.isfinite(normalized):
+            raise ValueError(f"{field} is not finite")
+        if strictly_positive and normalized <= 0.0:
+            raise ValueError(f"{field} must be positive")
+        if not strictly_positive and normalized < 0.0:
+            raise ValueError(f"{field} must be nonnegative")
+        return normalized
+
+    @staticmethod
+    def _rest_reconcile_order_id(value: Any) -> int:
+        if isinstance(value, bool):
+            raise ValueError("orderId has unsupported type")
+        if isinstance(value, int):
+            normalized = value
+        elif isinstance(value, str) and value.strip().isdigit():
+            normalized = int(value.strip())
+        else:
+            raise ValueError("orderId has unsupported type")
+        if normalized <= 0:
+            raise ValueError("orderId must be positive")
+        return normalized
+
+    def _validated_rest_reconcile_response(
+        self,
+        response: Any,
+        *,
+        order: Any,
+        cid: str,
+    ) -> tuple[dict[str, Any], str] | None:
+        """Validate one authoritative query row without mutating order state."""
+
+        try:
+            if not isinstance(response, Mapping):
+                raise ValueError("response is not a mapping")
+            normalized = dict(response)
+
+            status_value = normalized.get("status")
+            if not isinstance(status_value, str):
+                raise ValueError("status has unsupported type")
+            status = status_value.strip().upper()
+            if status not in _REST_RECONCILE_STATUSES:
+                raise ValueError("status is missing or unsupported")
+
+            order_id = self._rest_reconcile_order_id(normalized.get("orderId"))
+            existing_order_id = int(getattr(order, "order_id", 0) or 0)
+            if existing_order_id > 0 and order_id != existing_order_id:
+                raise ValueError("orderId does not match local ownership")
+
+            response_cid = normalized.get("clientOrderId")
+            if not isinstance(response_cid, str) or response_cid.strip() != cid:
+                raise ValueError("clientOrderId does not match local ownership")
+            response_symbol = normalized.get("symbol")
+            if (
+                not isinstance(response_symbol, str)
+                or response_symbol.strip() != str(getattr(order, "symbol", ""))
+            ):
+                raise ValueError("symbol does not match local order")
+            response_side = normalized.get("side")
+            expected_side = str(getattr(getattr(order, "side", None), "value", ""))
+            if (
+                not isinstance(response_side, str)
+                or response_side.strip().upper() != expected_side
+            ):
+                raise ValueError("side does not match local order")
+
+            original_quantity = self._rest_reconcile_number(
+                normalized.get("origQty"),
+                field="origQty",
+                strictly_positive=True,
+            )
+            executed_quantity = self._rest_reconcile_number(
+                normalized.get("executedQty"),
+                field="executedQty",
+                strictly_positive=False,
+            )
+            expected_quantity = float(getattr(order, "quantity", 0.0) or 0.0)
+            current_filled = float(getattr(order, "filled_qty", 0.0) or 0.0)
+            quantity_tolerance = max(1e-12, abs(expected_quantity) * 1e-9)
+            if not math.isclose(
+                original_quantity,
+                expected_quantity,
+                rel_tol=1e-9,
+                abs_tol=quantity_tolerance,
+            ):
+                raise ValueError("origQty does not match local order")
+            if executed_quantity + quantity_tolerance < current_filled:
+                raise ValueError("executedQty regresses local cumulative fill")
+            if executed_quantity > original_quantity + quantity_tolerance:
+                raise ValueError("executedQty exceeds origQty")
+            if status == "NEW" and executed_quantity > quantity_tolerance:
+                raise ValueError("NEW status has nonzero executedQty")
+            if status == "PARTIALLY_FILLED" and not (
+                executed_quantity > quantity_tolerance
+                and executed_quantity < original_quantity - quantity_tolerance
+            ):
+                raise ValueError("PARTIALLY_FILLED quantity is inconsistent")
+            if status == "FILLED" and not math.isclose(
+                executed_quantity,
+                original_quantity,
+                rel_tol=1e-9,
+                abs_tol=quantity_tolerance,
+            ):
+                raise ValueError("FILLED quantity is inconsistent")
+            if status == "REJECTED" and executed_quantity > quantity_tolerance:
+                raise ValueError("REJECTED status has nonzero executedQty")
+
+            price = self._rest_reconcile_number(
+                normalized.get("price"),
+                field="price",
+                strictly_positive=False,
+            )
+            average_fill_price_raw = normalized.get("avgPrice")
+            cumulative_quote_raw = normalized.get("cummulativeQuoteQty")
+            cumulative_quote: float | None = None
+            if cumulative_quote_raw is not None:
+                cumulative_quote = self._rest_reconcile_number(
+                    cumulative_quote_raw,
+                    field="cummulativeQuoteQty",
+                    strictly_positive=False,
+                )
+            if average_fill_price_raw is None:
+                if executed_quantity > quantity_tolerance:
+                    if cumulative_quote is None or cumulative_quote <= 0.0:
+                        raise ValueError(
+                            "filled quantity lacks avgPrice or cumulative quote quantity"
+                        )
+                    average_fill_price = cumulative_quote / executed_quantity
+                else:
+                    average_fill_price = 0.0
+            else:
+                average_fill_price = self._rest_reconcile_number(
+                    average_fill_price_raw,
+                    field="avgPrice",
+                    strictly_positive=False,
+                )
+            if executed_quantity > quantity_tolerance and average_fill_price <= 0.0:
+                raise ValueError("filled quantity requires positive avgPrice")
+            if executed_quantity <= quantity_tolerance and (
+                cumulative_quote is not None and cumulative_quote > quantity_tolerance
+            ):
+                raise ValueError("zero executed quantity has nonzero cumulative quote quantity")
+
+            normalized.update(
+                {
+                    "status": status,
+                    "orderId": order_id,
+                    "clientOrderId": cid,
+                    "symbol": str(getattr(order, "symbol", "")),
+                    "side": expected_side,
+                    "origQty": original_quantity,
+                    "executedQty": executed_quantity,
+                    "price": price,
+                    "avgPrice": average_fill_price,
+                }
+            )
+            return normalized, status
+        except Exception as exc:
+            logger.warning(
+                "ORDER_RECONCILE_MALFORMED cid=%s state=%s response_type=%s reason=%s",
+                cid,
+                getattr(getattr(order, "state", None), "name", "unknown"),
+                type(response).__name__,
+                exc,
+            )
+            return None
+
     def reconcile_pending_new_order(self, order: Any) -> str:
         """Resolve one stale submit without treating an unknown ACK as zero exposure."""
 
@@ -7194,21 +7385,14 @@ class MakerEngine:
             logger.warning("PENDING_NEW_RECONCILE_FAILED cid=%s err=%s", cid, exc)
             return "query_failed_ack_still_unknown"
 
-        status = str(response.get("status", "")).upper()
-        if status not in {
-            "NEW",
-            "PARTIALLY_FILLED",
-            "FILLED",
-            "CANCELED",
-            "EXPIRED",
-            "REJECTED",
-        }:
-            logger.warning(
-                "PENDING_NEW_RECONCILE_UNKNOWN_STATUS cid=%s status=%s",
-                cid,
-                status or "missing",
-            )
-            return "unknown_exchange_status_ack_still_unknown"
+        validated = self._validated_rest_reconcile_response(
+            response,
+            order=order,
+            cid=cid,
+        )
+        if validated is None:
+            return "query_malformed_still_unknown"
+        response, status = validated
 
         event = self._rest_reconciled_order_event(
             response=response,
@@ -7245,21 +7429,14 @@ class MakerEngine:
             logger.warning("PENDING_CANCEL_RECONCILE_FAILED cid=%s err=%s", cid, exc)
             return "query_failed_terminal_still_unknown"
 
-        status = str(response.get("status", "")).upper()
-        if status not in {
-            "NEW",
-            "PARTIALLY_FILLED",
-            "FILLED",
-            "CANCELED",
-            "EXPIRED",
-            "REJECTED",
-        }:
-            logger.warning(
-                "PENDING_CANCEL_RECONCILE_UNKNOWN_STATUS cid=%s status=%s",
-                cid,
-                status or "missing",
-            )
-            return "unknown_exchange_status_terminal_still_unknown"
+        validated = self._validated_rest_reconcile_response(
+            response,
+            order=order,
+            cid=cid,
+        )
+        if validated is None:
+            return "query_malformed_still_unknown"
+        response, status = validated
 
         event = self._rest_reconciled_order_event(
             response=response,

@@ -1,0 +1,61 @@
+{
+  "schema_version": "order_lifecycle_unknown_submit_ack_correctness_v1.predeploy_test_receipt.v1",
+  "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
+  "status": "implemented_local_predeploy_blocked",
+  "executed_at_utc_date": "2026-08-13",
+  "public_base_commit": "d91820e34210709adbe128d6ec6790a63b601053",
+  "execution": {
+    "python": ".venv/bin/python",
+    "argv": [
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_exact_opportunity_tape.py",
+      "tests/test_execution_order_lifecycle.py",
+      "tests/test_live_maker_close_ioc.py",
+      "tests/test_live_prospective_epoch_startup.py",
+      "tests/test_live_replace_throttle.py",
+      "tests/test_order_lifecycle_journal_v2.py",
+      "tests/test_order_lifecycle_journal_writer_v2.py",
+      "tests/test_order_lifecycle_live_writer_v2.py",
+      "tests/test_order_lifecycle_v2_runtime_compatibility_v1_6.py"
+    ],
+    "passed": 230,
+    "failed": 0,
+    "skipped": 0
+  },
+  "source_sha256": {
+    "strategy/maker_engine.py": "9217d28414e6c5244ffced32718662b0222247ab70ed6c56fba786303bb2b20c",
+    "strategy/order_manager.py": "350558d6ec0208ca9c1cabadcb1feba43c95e97226380fa1e505100fe35eb983",
+    "execution/order_lifecycle.py": "09233195aa23d6dfe1f7631d576dcdc6cca05dc9e1d92d79be0481aee23e5a8d",
+    "execution/order_lifecycle_journal_v2.py": "d4617bde2a88e6ee440c0f4b0e81f8e044985b184c22bb2737cbe27b397779ca",
+    "execution/order_lifecycle_live_writer_v2.py": "a2b8c1bb8c8cb8f272ad927baca0dfd26069cd6b377e9250ae1aaa7bdee05e56"
+  },
+  "test_sha256": {
+    "tests/test_exact_opportunity_tape.py": "c14a26d44cddc2447f9d57f65d90fd7ebd8f57063c1356edf8f92f3beabaa1f9",
+    "tests/test_execution_order_lifecycle.py": "33162615daacdf36634323ff56a3c0b263617ed6970a22fcb3a3376a27010839",
+    "tests/test_live_maker_close_ioc.py": "f73799650c20a54601f5916d301daa4c80af3f8573925c6f4cb22ce3e01f7f44",
+    "tests/test_live_prospective_epoch_startup.py": "2c4f8a36991ca0865840f0e79580a097fbea21517778ef992d78863df0921e2f",
+    "tests/test_live_replace_throttle.py": "8fc5a625caf74b24a2cae78727bf3c0d40bd1177a59baedc73770e976f53900c",
+    "tests/test_order_lifecycle_journal_v2.py": "f713cdb4b82bebb406b5bf51c3c4509184f673970658ce8df0ae02ab55bd5849",
+    "tests/test_order_lifecycle_journal_writer_v2.py": "8238d4bb7222f799f83b054ac11d1e12e9e4ccf2ddfe5b85934438e70a65b92e",
+    "tests/test_order_lifecycle_live_writer_v2.py": "72712ef1d5dbfc00db41492bbe943a8ebd9bc75b83fa95b4436b616bfd2add6f",
+    "tests/test_order_lifecycle_v2_runtime_compatibility_v1_6.py": "0897fc0cf952b11f952a70234c91e7ad17b0b4246a0c7183681dc1451adc0012"
+  },
+  "coverage": {
+    "malformed_query_none_list_and_mapping": true,
+    "status_order_id_and_quantity_validation": true,
+    "opening_and_reducing": true,
+    "pending_new_and_pending_cancel": true,
+    "buy_and_sell": true,
+    "remote_spool_async_close_restart_resume": true,
+    "writer_quarantine_count": 0,
+    "writer_error_count": 0
+  },
+  "permissions": {
+    "deployed": false,
+    "research_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

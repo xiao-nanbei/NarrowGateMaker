@@ -1,13 +1,15 @@
 {
   "schema_version": "order_lifecycle_unknown_submit_ack_correctness_v1.amendment.v1",
   "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
-  "status": "implemented_local_verified_not_deployed",
+  "status": "implemented_local_predeploy_blocked",
   "last_materially_modified": "2026-08-13",
   "semantics": {
     "structured_exchange_minus_5022": "never_activated_exact_zero_exposure",
     "timeout_connection_reset_5xx_response_loss_unknown_ack": "pending_new_reconcile_same_side_ownership_retained",
     "malformed_submit_response_missing_status_or_order_id": "pending_new_reconcile_same_side_ownership_retained",
     "rest_minus_2013": "censored_or_unsupported_not_exact_zero",
+    "rest_query_non_mapping_or_malformed": "query_malformed_still_unknown_pending_ownership_retained",
+    "rest_query_identity_and_quantity_validation": "status_order_id_client_id_symbol_side_and_quantity_must_be_consistent",
     "rest_new_partially_filled_filled": "quantities_and_status_known_activation_prefix_censored",
     "rest_update_time_used_as_activation_clock": false,
     "rest_update_time_used_as_fill_clock": false,
@@ -44,13 +46,22 @@
     "owner_policy_changed": false
   },
   "verification": {
-    "focused_core_tests_passed": 167,
+    "focused_core_tests_passed": 230,
     "focused_core_tests_failed": 0,
     "buy_sell_opening_reducing_paths_covered": true,
     "journal_unknown_ack_quarantine_count": 0,
+    "async_close_restart_remote_spool_durability_passed": true,
+    "test_receipt": "research/shared/replay_lifecycle/docs/order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json",
     "ec2_preflight_run": false,
     "runtime_release_receipt_exists": false
   },
+  "predeploy_blockers": [
+    "clean_commit_and_annotated_tag_required",
+    "independent_runtime_amendment_required",
+    "ec2_preflight_required",
+    "rollback_receipt_required",
+    "post_start_lifecycle_admission_required"
+  ],
   "permissions": {
     "deployed": false,
     "research_authorized": false,
