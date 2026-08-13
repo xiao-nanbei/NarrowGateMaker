@@ -179,13 +179,19 @@ def test_submit_ack_unknown_survives_async_close_restart_in_remote_spool(
         session_max_duration_s=120.0,
         session_max_bytes=1024 * 1024,
     )
-    assert first.enqueue_order_event(order, "submit") is True
+    engine = MakerEngine.__new__(MakerEngine)
+    engine._order_lifecycle_live_writer_v2 = first
+    engine._order_lifecycle_journal_path = "/must/not/be-written.csv"
+    engine._append_row = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        AssertionError("synchronous lifecycle writer was reached")
+    )
+    engine._record_order_lifecycle_journal(order, "submit", {})
     _wait_for(first, 1)
     order.lifecycle.mark_submit_ack_unknown(
         2_000_000_000,
         reason="submit_response_unknown",
     )
-    assert first.enqueue_order_event(
+    engine._record_order_lifecycle_journal(
         order,
         "submit_ack_unknown",
         {"_local_receive_ts_ns": 2_000_000_000},
@@ -210,11 +216,12 @@ def test_submit_ack_unknown_survives_async_close_restart_in_remote_spool(
         session_max_bytes=1024 * 1024,
     )
     assert restarted.health_snapshot()["core_health"]["restart_count"] == 1
+    engine._order_lifecycle_live_writer_v2 = restarted
     order.lifecycle.censor_submit_ack_unknown(
         3_000_000_000,
         reason="local_shutdown_unknown_ack",
     )
-    assert restarted.enqueue_order_event(
+    engine._record_order_lifecycle_journal(
         order,
         "submit_ack_unknown_censored",
         {

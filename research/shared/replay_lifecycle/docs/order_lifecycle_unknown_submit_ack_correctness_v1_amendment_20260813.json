@@ -2,7 +2,7 @@
   "schema_version": "order_lifecycle_unknown_submit_ack_correctness_v1.amendment.v1",
   "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
   "status": "implemented_local_predeploy_blocked",
-  "last_materially_modified": "2026-08-13",
+  "last_materially_modified": "2026-08-14",
   "semantics": {
     "structured_exchange_minus_5022": "never_activated_exact_zero_exposure",
     "timeout_connection_reset_5xx_response_loss_unknown_ack": "pending_new_reconcile_same_side_ownership_retained",
@@ -51,13 +51,13 @@
     "buy_sell_opening_reducing_paths_covered": true,
     "journal_unknown_ack_quarantine_count": 0,
     "async_close_restart_remote_spool_durability_passed": true,
+    "maker_engine_async_bridge_covered": true,
     "test_receipt": "research/shared/replay_lifecycle/docs/order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json",
     "ec2_preflight_run": false,
     "runtime_release_receipt_exists": false
   },
   "predeploy_blockers": [
-    "clean_commit_and_annotated_tag_required",
-    "independent_runtime_amendment_required",
+    "independent_runtime_deployment_amendment_required",
     "ec2_preflight_required",
     "rollback_receipt_required",
     "post_start_lifecycle_admission_required"

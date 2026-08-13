@@ -2,8 +2,13 @@
   "schema_version": "order_lifecycle_unknown_submit_ack_correctness_v1.predeploy_test_receipt.v1",
   "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
   "status": "implemented_local_predeploy_blocked",
-  "executed_at_utc_date": "2026-08-13",
-  "public_base_commit": "d91820e34210709adbe128d6ec6790a63b601053",
+  "initial_execution_at_utc_date": "2026-08-13",
+  "last_reverified_at_utc_date": "2026-08-14",
+  "implementation_commit": "6e5a29b5648ada8fdd913dbd7920603075c02060",
+  "implementation_tag": "research/shared/replay-lifecycle/order-lifecycle-unknown-submit-ack-correctness/v1-predeploy-20260813",
+  "verification_base_commit": "e0a7428a54426eaf168fac56e5c5eb65317c74d8",
+  "verification_worktree_clean": false,
+  "verification_worktree_uncommitted_by_owner_request": true,
   "execution": {
     "python": ".venv/bin/python",
     "argv": [
@@ -39,7 +44,7 @@
     "tests/test_live_replace_throttle.py": "8fc5a625caf74b24a2cae78727bf3c0d40bd1177a59baedc73770e976f53900c",
     "tests/test_order_lifecycle_journal_v2.py": "f713cdb4b82bebb406b5bf51c3c4509184f673970658ce8df0ae02ab55bd5849",
     "tests/test_order_lifecycle_journal_writer_v2.py": "8238d4bb7222f799f83b054ac11d1e12e9e4ccf2ddfe5b85934438e70a65b92e",
-    "tests/test_order_lifecycle_live_writer_v2.py": "72712ef1d5dbfc00db41492bbe943a8ebd9bc75b83fa95b4436b616bfd2add6f",
+    "tests/test_order_lifecycle_live_writer_v2.py": "96c39d82e36fa4b49efcacac58387ac95f96c260b581510dc376a7335770f6ed",
     "tests/test_order_lifecycle_v2_runtime_compatibility_v1_6.py": "0897fc0cf952b11f952a70234c91e7ad17b0b4246a0c7183681dc1451adc0012"
   },
   "coverage": {
@@ -49,6 +54,7 @@
     "pending_new_and_pending_cancel": true,
     "buy_and_sell": true,
     "remote_spool_async_close_restart_resume": true,
+    "maker_engine_async_bridge_and_sync_writer_bypass": true,
     "writer_quarantine_count": 0,
     "writer_error_count": 0
   },

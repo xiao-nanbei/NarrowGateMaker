@@ -1,6 +1,6 @@
 # Unknown Submit ACK Lifecycle Correctness V1
 
-Last materially modified: 2026-08-13
+Last materially modified: 2026-08-14
 
 Status: `implemented_local_predeploy_blocked`.
 
@@ -28,14 +28,14 @@ An order in `PENDING_CANCEL` is not terminal merely because a bulk open-order qu
 
 Controlled startup requires a successful post-cancel account-position reconciliation before the prospective epoch, writers, or market/user streams start. A missing or failed position response blocks startup instead of assuming local inventory is authoritative.
 
-The lifecycle event, journal row, asynchronous writer, remote spool, and resume path carry visible-exposure validity, exchange-exposure validity, completeness, and invalid-reason fields. `submit_ack_unknown` and `submit_ack_unknown_censored` are admitted event identities rather than writer-quarantine errors. A durability test now writes the unknown-ACK prefix, closes the asynchronous remote-spool writer, restarts the same admitted session, writes the shutdown censor, and verifies ordered unique rows with zero drops, errors, or quarantines.
+The lifecycle event, journal row, asynchronous writer, remote spool, and resume path carry visible-exposure validity, exchange-exposure validity, completeness, and invalid-reason fields. `submit_ack_unknown` and `submit_ack_unknown_censored` are admitted event identities rather than writer-quarantine errors. The durability test routes the unknown-ACK prefix through the `MakerEngine` asynchronous lifecycle bridge, proves the synchronous CSV path is unreachable, closes the remote-spool writer, restarts the same admitted session, routes the shutdown censor through the resumed bridge, and verifies ordered unique rows with zero drops, errors, or quarantines.
 
 ## Covered Paths
 
 The implementation covers BUY and SELL, opening, ordinary reducing, and emergency reducing close orders, explicit `-5022`, malformed or unknown acknowledgement, REST `-2013`, REST `NEW`/`PARTIALLY_FILLED`/`FILLED`, private user-stream recovery, orphan terminal fills, pending-cancel reconciliation, same-side orphan conflicts, and required startup position convergence. It preserves ownership while an order may still exist and distinguishes local shutdown censoring from an exchange terminal event.
 
-The focused local lifecycle regression contains 230 passing tests and zero failures. The machine-verifiable command, source hashes, test hashes, and durability coverage are recorded in [the predeploy test receipt](order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json). Unknown-ACK journal events produced zero quarantine cases in this suite. No EC2 preflight, runtime release, rollback receipt, or post-start admission was performed.
+The focused local lifecycle regression was re-run on 2026-08-14 and contains 230 passing tests and zero failures. The machine-verifiable command, source hashes, test hashes, and durability coverage are recorded in [the predeploy test receipt](order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json). Unknown-ACK journal events produced zero quarantine cases in this suite. No EC2 preflight, runtime release, rollback receipt, or post-start admission was performed.
 
 ## Permission
 
-This implementation remains predeploy-blocked even though its focused local tests pass. It has no clean release tag or deployment receipt and grants no research, action, or live authority. A future runtime release requires a clean commit and annotated tag, separate preflight, independent runtime amendment, rollback receipt, and post-start lifecycle admission; it cannot ride on an F05 research deployment because no such deployment exists.
+This implementation remains predeploy-blocked even though its focused local tests pass and the lifecycle implementation has a clean predeploy commit and annotated tag. It has no deployment execution amendment, EC2 preflight, rollback receipt, runtime release receipt, or post-start lifecycle admission and grants no research, action, or live authority. Any future runtime release must remain independent of F05 and requires those deployment controls from a clean release identity.
