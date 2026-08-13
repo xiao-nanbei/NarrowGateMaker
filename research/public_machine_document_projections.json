@@ -2002,8 +2002,8 @@
     {
       "public_path": "research/registry.json",
       "unit_id": "research/shared/experiment_governance",
-      "source_private_sha256": "4ed518e6680816227e5175748bf3cea82309578912f5da06243111f6ffd74a23",
-      "public_projection_sha256": "6105471dd8bf25baf02b0f25a25803401c26b45e9cbb9c16dfd2b7642d412b03",
+      "source_private_sha256": "c37a9b6f804b9121b56067194c6a814e84ff313ac105bc0061859784aed9a2c3",
+      "public_projection_sha256": "20553da6e180c8456651982b2c5d74d1a9f9b27598344eaa4b41eba30287c065",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 19

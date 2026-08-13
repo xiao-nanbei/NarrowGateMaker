@@ -1,0 +1,65 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.sequential_mechanics_admission.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "sequential_mechanics_v2_admitted_pre_economic",
+  "last_materially_modified": "2026-08-14",
+  "previous_blocker": {
+    "status": "blocked_missing_canonical_fields",
+    "missing_field_count": 23,
+    "historical_receipt_preserved": true
+  },
+  "panel": {
+    "artifact_id": "f05-full-multiscale-offline-sequential-mechanics-panel-v2",
+    "availability": "private evidence store; not distributed with the public repository",
+    "selected_day_count": 30,
+    "replacement_day_count": 0,
+    "opportunity_count": 3516,
+    "table_count": 5,
+    "rows_per_table": 3516,
+    "row_key_sha256": "e481d8a61eecb71a36e6e3c8f2be1630c483a466a5418adc583d6398c29330ec",
+    "sequential_builder_canonical_sha256": "239517216f4fcc129d6b5c326c3eab4472100bad3e0e187488d6f5ea51ae6a4a",
+    "merged_panel_canonical_sha256": "5dbfef3e8be58ab55002ca33ea5ce209217ec1f238eeb395fffcd87f45ff7b77",
+    "mechanics_manifest_file_sha256": "1e04cb79ba435b642f143c8809cb562a6182fe2d3d5444707a1e733f9ae9d992",
+    "mechanics_manifest_canonical_sha256": "3ea83f62774a5b79b38007fc64ff23e8ff07c021a2721e69927ca212af09e7a2",
+    "formal_execution_eligible": true,
+    "missing_sequential_fields": [],
+    "predecessor_opportunity_ids_matched": true,
+    "candidate_actions_generated": false,
+    "labels_read": false,
+    "economic_outcomes_read": false
+  },
+  "bindings": {
+    "source_manifest_canonical_sha256": "1e156e6d505b78f66a7a2d0d30eccfdb5eb97f46c0ba2f9c844baa381f32dfd7",
+    "selection_sha256": "b3f7a2c8565a689db126222a8fa7c850b739dfea7c98ee7b054b513d3d2e18c7",
+    "fold_manifest_sha256": "b50bc105a282c0c19ed35484bbb741945fdd600c187733b6201deff77cb04c82",
+    "exact_owner_policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "exact_owner_predicate_bundle_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "exact_owner_private_config_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85",
+    "implementation_commit": "984fca2f70407e858b121b857225bd7bb35547f5",
+    "implementation_annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/sequential-mechanics-v2-code-20260813"
+  },
+  "verification": {
+    "panel_builder_validate_exit_code": 0,
+    "mechanics_validate_panel_exit_code": 0,
+    "targeted_pytest_passed": 310,
+    "targeted_pytest_failed": 0,
+    "targeted_pytest_skipped": 0,
+    "targeted_pytest_scope": "full_multiscale_successor plus unknown_ack and lifecycle_journal durability",
+    "historical_full_suite_claim": "historical_claim_present_machine_receipt_missing",
+    "historical_full_suite_formal_gate_credit": false
+  },
+  "next_gate": {
+    "status": "pending_clean_commit_tag_and_formal_preflight",
+    "economic_access_allowed": false,
+    "required_preflight_status": "formal_offline_replay_mechanics_ready"
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_allowed": false,
+    "owner_policy_modified": false
+  }
+}

@@ -1,8 +1,8 @@
 {
   "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.execution.v1",
   "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
-  "status": "blocked_missing_canonical_fields",
-  "last_materially_modified": "2026-08-13",
+  "status": "sequential_mechanics_v2_admitted_pre_economic",
+  "last_materially_modified": "2026-08-14",
   "formal_entry": {
     "module": "research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_orchestrator_v1",
     "function": "run_formal_offline_economics",
@@ -25,33 +25,11 @@
     "b0_mechanics_adapter_executable": true,
     "economic_replay_bridge_executable": true,
     "canonical_replay_adapter_source_sha256": "4c4613b5bfbfee89c856f300fdc5230dda91c7d47f8f0a6a4d0ec56821d87fc1",
-    "formal_preflight_status": "blocked_missing_canonical_fields",
+    "formal_preflight_status": "pending_clean_commit_tag_and_formal_preflight",
     "missing_canonical_bindings": [],
-    "missing_canonical_fields": [
-      "assignment_equity_usdc",
-      "assignment_to_common_washout_required",
-      "campaign_cluster_id",
-      "campaign_id",
-      "d_plus_1_context_receipt_sha256",
-      "d_plus_1_feature_identity_sha256",
-      "d_plus_1_market_identity_sha256",
-      "d_plus_1_native_observation_sha256",
-      "d_plus_1_new_target_assignments_allowed",
-      "d_plus_1_utc_day",
-      "day_input_sha256",
-      "day_replay_workers",
-      "exposure_fill_ordinal",
-      "latency_identity_sha256",
-      "market_window_identity_sha256",
-      "model_overlay_identity_sha256",
-      "observation_end_ts_ns",
-      "order_id",
-      "portable_day_cache_root",
-      "portable_replay_binding_path",
-      "portable_replay_binding_sha256",
-      "queue_random_identity_sha256",
-      "target_day_end_terminalized"
-    ]
+    "missing_canonical_fields": [],
+    "previous_blocked_preflight_status": "blocked_missing_canonical_fields",
+    "previous_blocked_preflight_missing_field_count": 23
   },
   "admitted_source": {
     "path": "${NARROWGATE_DATA_ROOT}/reports/f05_full_multiscale_offline_source_audit_v1/canonical_offline_v1/canonical_source_manifest.json",
@@ -85,6 +63,19 @@
       "opportunity_count": 3516,
       "economic_outcomes_present": false,
       "candidate_actions_generated": false
+    },
+    "sequential_mechanics_panel_v2": {
+      "artifact_id": "f05-full-multiscale-offline-sequential-mechanics-panel-v2",
+      "canonical_manifest_sha256": "3ea83f62774a5b79b38007fc64ff23e8ff07c021a2721e69927ca212af09e7a2",
+      "manifest_file_sha256": "1e04cb79ba435b642f143c8809cb562a6182fe2d3d5444707a1e733f9ae9d992",
+      "builder_canonical_sha256": "239517216f4fcc129d6b5c326c3eab4472100bad3e0e187488d6f5ea51ae6a4a",
+      "merged_panel_canonical_sha256": "5dbfef3e8be58ab55002ca33ea5ce209217ec1f238eeb395fffcd87f45ff7b77",
+      "selected_day_count": 30,
+      "opportunity_count": 3516,
+      "formal_execution_eligible": true,
+      "missing_sequential_fields": [],
+      "economic_outcomes_present": false,
+      "candidate_actions_generated": false
     }
   },
   "exact_owner": {
@@ -111,17 +102,21 @@
     "features_only_manifest_revalidated": true,
     "native_observation_batch_admitted": true,
     "five_file_mechanics_panel_admitted": true,
-    "five_file_mechanics_panel_status": "offline_outcome_blind_mechanics_panel_admitted",
+    "five_file_mechanics_panel_status": "offline_outcome_blind_sequential_mechanics_panel_admitted",
     "formal_orchestrator_bypass_tests_passed": true,
     "formal_orchestrator_bypass_test_scope": "local_unbound_pre_economic_only",
-    "full_test_suite_passed": true,
-    "full_test_suite_passed_count": 3035,
-    "full_test_suite_skipped_count": 316,
+    "targeted_machine_receipt_available": true,
+    "targeted_test_suite_passed_count": 310,
+    "targeted_test_suite_failed_count": 0,
+    "targeted_test_suite_skipped_count": 0,
+    "historical_full_test_suite_claim": "3035_passed_316_skipped_machine_receipt_missing",
+    "historical_full_test_suite_formal_gate_credit": false,
     "ruff_passed": true,
     "public_private_audits_passed": true,
     "clean_commit_created": true,
     "annotated_tag_created": true,
-    "economic_access_allowed": false
+    "economic_access_allowed": false,
+    "sequential_mechanics_admission_receipt": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1_sequential_mechanics_admission_20260814.json"
   },
   "permissions": {
     "economic_outcomes_read": false,
