@@ -753,7 +753,9 @@ def _preflight_adapter(
     if status != MECHANICS_READY_STATUS:
         if not isinstance(blockers, list) or not blockers:
             raise OfflineRepeatedPolicyBackendError("blocked adapter preflight lacks blockers")
-    elif blockers is not None and blockers != ():
+    elif blockers is not None and (
+        not isinstance(blockers, (list, tuple)) or len(blockers) != 0
+    ):
         raise OfflineRepeatedPolicyBackendError("ready adapter preflight carries blockers")
     return dict(result)
 

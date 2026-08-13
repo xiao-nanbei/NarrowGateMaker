@@ -295,6 +295,46 @@ class _NeverCalledAdapter:
         raise AssertionError("invalid sequential request reached replay")
 
 
+@pytest.mark.parametrize("empty_blockers", (None, [], ()))
+def test_ready_adapter_preflight_accepts_only_empty_blocker_census(
+    tmp_path: Path,
+    empty_blockers: object,
+) -> None:
+    mechanics = backend.load_outcome_blind_mechanics(_bundle_fixture(tmp_path))
+
+    class _ReadyAdapter(_NeverCalledAdapter):
+        def preflight_formal_economics(self, _mechanics):
+            result = dict(super().preflight_formal_economics(_mechanics))
+            if empty_blockers is not None:
+                result["missing_canonical_fields"] = empty_blockers
+            return result
+
+    result = backend._preflight_adapter(mechanics, _ReadyAdapter())
+
+    assert result["status"] == backend.MECHANICS_READY_STATUS
+
+
+@pytest.mark.parametrize("invalid_blockers", (["field"], "field", {"field"}))
+def test_ready_adapter_preflight_rejects_nonempty_or_malformed_blockers(
+    tmp_path: Path,
+    invalid_blockers: object,
+) -> None:
+    mechanics = backend.load_outcome_blind_mechanics(_bundle_fixture(tmp_path))
+
+    class _ReadyAdapter(_NeverCalledAdapter):
+        def preflight_formal_economics(self, _mechanics):
+            return {
+                **super().preflight_formal_economics(_mechanics),
+                "missing_canonical_fields": invalid_blockers,
+            }
+
+    with pytest.raises(
+        backend.OfflineRepeatedPolicyBackendError,
+        match="ready adapter preflight carries blockers",
+    ):
+        backend._preflight_adapter(mechanics, _ReadyAdapter())
+
+
 def test_mechanics_loader_accepts_only_outcome_blind_aligned_panel(tmp_path: Path) -> None:
     mechanics = backend.load_outcome_blind_mechanics(_bundle_fixture(tmp_path))
     assert len(mechanics.selected_days) == 30
