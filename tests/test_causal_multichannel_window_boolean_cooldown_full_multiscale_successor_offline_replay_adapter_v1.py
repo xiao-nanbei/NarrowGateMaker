@@ -331,6 +331,46 @@ def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api()
     assert set(result["permissions"].values()) == {False}
 
 
+def test_formal_preflight_returns_backend_mechanics_ready_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = _common_replay_inputs(("sell-row",), side="SELL")
+    mechanics = replace(_mechanics(), replay_inputs=rows)
+    monkeypatch.setattr(
+        adapter_module,
+        "_validate_replay_input_frame",
+        lambda frame, **_kwargs: frame,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_require_executable_replay_inputs",
+        lambda _rows, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_validate_d_plus_one_contract",
+        lambda _rows: None,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_resolve_execution_options",
+        lambda _rows: SimpleNamespace(binding={}),
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_canonical_day_request",
+        lambda **_kwargs: None,
+    )
+
+    result = adapter_module.build_canonical_replay_adapter().preflight_formal_economics(
+        mechanics
+    )
+
+    assert result["status"] == backend.MECHANICS_READY_STATUS
+    assert result["missing_canonical_fields"] == []
+    assert set(result["permissions"].values()) == {False}
+
+
 def test_factory_and_backend_reject_custom_adapter_injection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

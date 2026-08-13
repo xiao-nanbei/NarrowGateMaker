@@ -1788,7 +1788,7 @@ class _CanonicalOfflineReplayAdapter:
         if not isinstance(mechanics, backend.OutcomeBlindMechanics):
             raise OfflineReplayAdapterError("formal preflight requires OutcomeBlindMechanics")
         _require_exact_b0_bindings(mechanics.bindings)
-        status = "canonical_replay_bridge_ready_no_economic_read"
+        status = backend.MECHANICS_READY_STATUS
         missing: list[str] = []
         if not isinstance(mechanics.replay_inputs, pd.DataFrame) or mechanics.replay_inputs.empty:
             status = MECHANICS_MISSING_STATUS
