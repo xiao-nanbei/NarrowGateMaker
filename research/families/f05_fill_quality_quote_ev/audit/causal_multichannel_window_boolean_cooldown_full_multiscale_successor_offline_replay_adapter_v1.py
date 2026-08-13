@@ -2250,13 +2250,17 @@ class _CanonicalOfflineReplayAdapter:
         *,
         metadata_columns: Sequence[str],
         replay_input_columns: Sequence[str],
+        exact_owner_action_columns: Sequence[str],
     ) -> Mapping[str, Any]:
         """Audit canonical field coverage from bound Parquet schemas only."""
 
         metadata = frozenset(str(value) for value in metadata_columns)
         replay = frozenset(str(value) for value in replay_input_columns)
+        owner_actions = frozenset(str(value) for value in exact_owner_action_columns)
         missing = set(nested.REQUIRED_METADATA_COLUMNS) - metadata
         missing_replay = set(_COMMON_REPLAY_COLUMNS | _EXECUTABLE_REPLAY_COLUMNS) - replay
+        if "exact_owner_action" in missing_replay and "exact_owner_action" in owner_actions:
+            missing_replay.remove("exact_owner_action")
         for target, source in backend.REPLAY_METADATA_DIRECT_BINDINGS.items():
             if target in missing_replay and source in metadata:
                 missing_replay.remove(target)

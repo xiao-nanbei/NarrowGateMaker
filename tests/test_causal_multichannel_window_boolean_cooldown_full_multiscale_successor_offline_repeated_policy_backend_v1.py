@@ -255,9 +255,11 @@ class _NeverCalledAdapter:
         *,
         metadata_columns,
         replay_input_columns,
+        exact_owner_action_columns,
     ) -> dict[str, object]:
         assert metadata_columns
         assert replay_input_columns
+        assert exact_owner_action_columns
         return {
             "identity": self.identity,
             "status": backend.FORMAL_PANEL_SCHEMA_READY_STATUS,

@@ -359,6 +359,7 @@ class CanonicalReplayAdapter(Protocol):
         *,
         metadata_columns: Sequence[str],
         replay_input_columns: Sequence[str],
+        exact_owner_action_columns: Sequence[str],
     ) -> Mapping[str, Any]: ...
 
     def build_search_contract(
@@ -760,7 +761,7 @@ def _preflight_bound_panel_schema(
     if not isinstance(manifest_files, Mapping):
         raise OfflineRepeatedPolicyBackendError("panel file bindings are missing")
     schemas: dict[str, Sequence[str]] = {}
-    for role in ("metadata", "replay_inputs"):
+    for role in ("metadata", "replay_inputs", "exact_owner_actions"):
         binding = manifest_files.get(role)
         if not isinstance(binding, Mapping):
             raise OfflineRepeatedPolicyBackendError(f"panel {role} binding is malformed")
@@ -771,6 +772,7 @@ def _preflight_bound_panel_schema(
     result = adapter.preflight_formal_panel_schema(
         metadata_columns=schemas["metadata"],
         replay_input_columns=schemas["replay_inputs"],
+        exact_owner_action_columns=schemas["exact_owner_actions"],
     )
     if not isinstance(result, Mapping):
         raise OfflineRepeatedPolicyBackendError("panel-schema preflight returned a custom payload")

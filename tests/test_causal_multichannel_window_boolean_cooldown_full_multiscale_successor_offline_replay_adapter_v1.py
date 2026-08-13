@@ -65,11 +65,13 @@ def test_panel_schema_preflight_reports_metadata_and_execution_field_gaps() -> N
     result = adapter.preflight_formal_panel_schema(
         metadata_columns=("utc_day", "panel_role", "side", "assignment_ts_ns"),
         replay_input_columns=tuple(adapter_module._COMMON_REPLAY_COLUMNS - {"side"}),
+        exact_owner_action_columns=("utc_day", "opportunity_id", "exact_owner_action"),
     )
 
     assert result["status"] == backend.CANONICAL_FIELDS_BLOCKED_STATUS
     missing = set(result["missing_canonical_fields"])
     assert "side" not in missing
+    assert "exact_owner_action" not in missing
     assert {
         "campaign_cluster_id",
         "observation_end_ts_ns",
@@ -77,6 +79,27 @@ def test_panel_schema_preflight_reports_metadata_and_execution_field_gaps() -> N
         "assignment_equity_usdc",
         "portable_replay_binding_path",
     } <= missing
+
+
+def test_panel_schema_preflight_requires_exact_owner_action_from_one_bound_table() -> None:
+    adapter = adapter_module.build_canonical_replay_adapter()
+    replay_columns = tuple(
+        adapter_module._COMMON_REPLAY_COLUMNS - {"exact_owner_action"}
+    )
+
+    blocked = adapter.preflight_formal_panel_schema(
+        metadata_columns=tuple(nested.REQUIRED_METADATA_COLUMNS),
+        replay_input_columns=replay_columns,
+        exact_owner_action_columns=("utc_day", "opportunity_id"),
+    )
+    admitted = adapter.preflight_formal_panel_schema(
+        metadata_columns=tuple(nested.REQUIRED_METADATA_COLUMNS),
+        replay_input_columns=replay_columns,
+        exact_owner_action_columns=("utc_day", "opportunity_id", "exact_owner_action"),
+    )
+
+    assert "exact_owner_action" in blocked["missing_canonical_fields"]
+    assert "exact_owner_action" not in admitted["missing_canonical_fields"]
 
 
 def _bindings(**updates: str) -> backend.FormalExecutionBindings:
