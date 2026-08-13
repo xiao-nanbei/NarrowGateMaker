@@ -1,0 +1,72 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.formal_duration_contract_amendment.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "implemented_local_pre_economic_clean_binding_required",
+  "last_materially_modified": "2026-08-14",
+  "formal_v8": {
+    "execution_manifest_artifact_id": "f05-full-multiscale-offline-formal-execution-manifest-v8",
+    "execution_manifest_canonical_sha256": "215ed2eb2f2c3afe9c65d9d048d004b4e6ab37fa1512ab2ff09911c35871991d",
+    "execution_manifest_file_sha256": "db062cde0ee96e34b458ce0ca52b7ee8ba61fd7a8c6510671d8d34c874714670",
+    "preflight_artifact_id": "f05-full-multiscale-offline-formal-preflight-v8",
+    "preflight_canonical_sha256": "fb156501cf847036354e7de0069bb17825ad16aac677082cd934da317459d6f6",
+    "preflight_file_sha256": "1a288b5c1ad01237fc647cad34879f8f9a63468f3a2828cf0bebcc8a3ad117a4",
+    "preflight_status": "formal_offline_replay_mechanics_ready",
+    "run_status": "stopped_before_control_or_candidate_simulation",
+    "blocker": "legacy_duration_loader_required_unavailable_historical_baseline_pointer",
+    "queued_day_jobs": 10,
+    "failed_day_jobs": 10,
+    "progress_receipt_set_sha256": "6e0d1d04281bf57f8515f76a2bc44183bdef5ae21a0dacb27bf4042d1394e2bd",
+    "cache_entries_admitted": 0,
+    "formal_result_exists": false,
+    "duration_arms_executed": false,
+    "economic_labels_generated": false,
+    "candidate_actions_executed": false,
+    "economic_outcomes_read": false,
+    "current_pointer_substituted": false,
+    "reusable_after_source_change": false
+  },
+  "duration_action_contract": {
+    "source_identity": "multiscale_ema_boolean_cooldown_duration_policy_v1.outcome_blind_inputs.v1",
+    "source_sha256": "965400c6fe5408a6f49dd4253c96d6673d4621451af561a2bc7921591c2d7035",
+    "duration_action_universe_sha256": "43f77ba570194607960b65877d833c6137ec81bc61014b201bd4cd98cfd1df96",
+    "buy_action_count": 8,
+    "sell_action_count": 8,
+    "historical_operational_baseline_read": false,
+    "historical_execution_plan_read": false,
+    "economic_outcomes_read": false,
+    "full_legacy_load_contract_called": false
+  },
+  "source_sha256": {
+    "offline_replay_adapter_v1": "5b9034131c13e20a5e5e9bc0ddf8451c732c3fa460f57b3838f79bbf7eae9c18",
+    "adapter_test": "015947d3149269c2b70248e727cc645680a03213bf858737e1c0d3d6f6bfbc84"
+  },
+  "verification": {
+    "focused_pytest_passed": 73,
+    "full_successor_pytest_passed": 264,
+    "pytest_failed": 0,
+    "pytest_skipped": 0,
+    "ruff_passed": true,
+    "public_audit_passed": true,
+    "public_audit_findings": 0,
+    "private_audit_passed": true,
+    "private_audit_findings": 0,
+    "git_diff_check_passed": true
+  },
+  "next_gate": {
+    "clean_commit_required": true,
+    "annotated_tag_required": true,
+    "fresh_formal_manifest_version": "v9",
+    "fresh_preflight_required": true,
+    "required_preflight_status": "formal_offline_replay_mechanics_ready",
+    "formal_v8_reuse_allowed": false
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_allowed": false,
+    "owner_policy_modified": false
+  }
+}

@@ -357,6 +357,113 @@ def _require_sha(value: Any, *, label: str) -> str:
     return digest
 
 
+def _load_frozen_duration_action_contract() -> tuple[
+    Mapping[str, Any], dict[str, tuple[Any, ...]]
+]:
+    """Load only the frozen outcome-blind duration action vocabulary.
+
+    The historical study's full loader also opens its old baseline pointer and
+    execution plan. Neither object defines an action arm in this successor,
+    whose B0 and replay inputs are bound independently.
+    """
+
+    study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
+    required_symbols = (
+        "IDENTITY",
+        "OUTCOME_BLIND_INPUTS",
+        "OUTCOME_BLIND_INPUTS_SHA256",
+        "_validate_file",
+        "_load_source_json",
+        "_duration_actions",
+    )
+    if any(not hasattr(study, name) for name in required_symbols):
+        raise OfflineReplayAdapterMechanicsMissing(
+            ("frozen_duration_action_contract",),
+            context="fixed outcome-blind duration vocabulary",
+        )
+    try:
+        study._validate_file(
+            study.OUTCOME_BLIND_INPUTS,
+            study.OUTCOME_BLIND_INPUTS_SHA256,
+            role="frozen outcome-blind duration inputs",
+        )
+        contract = study._load_source_json(
+            study.OUTCOME_BLIND_INPUTS,
+            role="frozen outcome-blind duration inputs",
+        )
+        if (
+            contract.get("identity") != study.IDENTITY
+            or contract.get("schema_version")
+            != f"{study.IDENTITY}.outcome_blind_inputs.v1"
+        ):
+            raise ValueError("outcome-blind duration identity drifted")
+        permissions = contract.get("permissions")
+        if not isinstance(permissions, Mapping) or any(
+            permissions.get(field) is not False
+            for field in (
+                "development_economic_labels_read",
+                "validation_read",
+                "sealed_holdout_read",
+                "action_authorized",
+                "live_authorized",
+            )
+        ):
+            raise ValueError("outcome-blind duration permissions drifted")
+        actions_by_side: dict[str, tuple[Any, ...]] = {}
+        action_payload: dict[str, list[dict[str, Any]]] = {}
+        for side in ("BUY", "SELL"):
+            actions = tuple(study._duration_actions(contract, side))
+            expected = duration_vocabulary(side)
+            if tuple(action.policy_id for action in actions) != expected:
+                raise ValueError(f"{side} frozen duration vocabulary drifted")
+            rows: list[dict[str, Any]] = []
+            for action in actions:
+                payload = dict(action.payload())
+                if not str(payload.get("duration_semantics", "")).strip():
+                    raise ValueError(f"{side} duration semantics are empty")
+                if action.policy_id == "CONTROL_85N":
+                    if (
+                        action.engine_action != "CONTROL_85N"
+                        or action.fixed_duration_s is not None
+                        or action.fixed_duration_ms is not None
+                    ):
+                        raise ValueError("CONTROL_85N duration identity drifted")
+                else:
+                    matched = re.fullmatch(r"FIXED_([1-9][0-9]*)S", action.policy_id)
+                    if (
+                        matched is None
+                        or action.engine_action != "FIXED_DURATION_MS"
+                        or action.fixed_duration_s != int(matched.group(1))
+                        or action.fixed_duration_ms != int(matched.group(1)) * 1_000
+                    ):
+                        raise ValueError(f"{side} fixed duration identity drifted")
+                rows.append(payload)
+            actions_by_side[side] = actions
+            action_payload[side] = rows
+        source_sha256 = _require_sha(
+            study.OUTCOME_BLIND_INPUTS_SHA256,
+            label="outcome-blind duration contract SHA256",
+        )
+    except OfflineReplayAdapterError:
+        raise
+    except Exception as exc:
+        raise OfflineReplayAdapterMechanicsMissing(
+            ("frozen_duration_action_contract",),
+            context="fixed outcome-blind duration vocabulary",
+        ) from exc
+    binding = {
+        "schema_version": f"{IDENTITY}.duration_action_contract.v1",
+        "source_identity": f"{study.IDENTITY}.outcome_blind_inputs.v1",
+        "source_sha256": source_sha256,
+        "duration_action_universe_sha256": _canonical_sha256(action_payload),
+        "actions": action_payload,
+        "historical_operational_baseline_read": False,
+        "historical_execution_plan_read": False,
+        "economic_outcomes_read": False,
+    }
+    return binding, actions_by_side
+
+
 def _normalize_day(value: Any) -> str:
     try:
         parsed = pd.Timestamp(value)
@@ -779,8 +886,8 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     rows = job.payload["replay_inputs"]
     vocabulary = tuple(str(value) for value in job.payload["duration_vocabulary"])
     side = _normalize_side(_unique_column_value(rows, "side"))
-    contract, _, _ = study._load_contract()
-    actions = {action.policy_id: action for action in study._duration_actions(contract, side)}
+    _duration_binding, actions_by_side = _load_frozen_duration_action_contract()
+    actions = {action.policy_id: action for action in actions_by_side[side]}
     if tuple(actions) != vocabulary:
         raise OfflineReplayAdapterError("fixed duration action vocabulary drifted")
     window = SimpleNamespace(
@@ -1966,7 +2073,15 @@ class _CanonicalOfflineReplayAdapter:
         _require_exact_b0_bindings(mechanics.bindings)
         status = backend.MECHANICS_READY_STATUS
         missing: list[str] = []
-        if not isinstance(mechanics.replay_inputs, pd.DataFrame) or mechanics.replay_inputs.empty:
+        duration_action_contract: Mapping[str, Any] | None = None
+        try:
+            duration_action_contract, _actions = _load_frozen_duration_action_contract()
+        except OfflineReplayAdapterMechanicsMissing as exc:
+            status = MECHANICS_MISSING_STATUS
+            missing = list(exc.missing)
+        if status == MECHANICS_MISSING_STATUS:
+            pass
+        elif not isinstance(mechanics.replay_inputs, pd.DataFrame) or mechanics.replay_inputs.empty:
             status = MECHANICS_MISSING_STATUS
             missing = sorted(_COMMON_REPLAY_COLUMNS | _EXECUTABLE_REPLAY_COLUMNS)
         else:
@@ -2013,6 +2128,7 @@ class _CanonicalOfflineReplayAdapter:
             "adapter_artifact_sha256": self.artifact_sha256,
             "missing_canonical_fields": missing,
             "fixed_canonical_api_bindings": _fixed_api_bindings(),
+            "duration_action_contract": duration_action_contract,
             "permissions": {
                 "economic_outcomes_read": False,
                 "validation_read": False,

@@ -337,6 +337,74 @@ def test_factory_identity_and_artifact_hash_match_backend_constant() -> None:
     )
 
 
+def test_duration_action_contract_does_not_open_historical_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contract = {
+        "identity": "frozen-duration-study",
+        "schema_version": "frozen-duration-study.outcome_blind_inputs.v1",
+        "permissions": {
+            "development_economic_labels_read": False,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        },
+    }
+    actions_by_side: dict[str, tuple[SimpleNamespace, ...]] = {}
+    for side in ("BUY", "SELL"):
+        actions: list[SimpleNamespace] = []
+        for policy_id in duration_vocabulary(side):
+            fixed_s = None if policy_id == "CONTROL_85N" else int(
+                policy_id.removeprefix("FIXED_").removesuffix("S")
+            )
+            payload = {
+                "policy_id": policy_id,
+                "engine_action": (
+                    "CONTROL_85N" if fixed_s is None else "FIXED_DURATION_MS"
+                ),
+                "fixed_duration_s": fixed_s,
+                "fixed_duration_ms": None if fixed_s is None else fixed_s * 1_000,
+                "duration_semantics": "frozen test semantics",
+            }
+            actions.append(
+                SimpleNamespace(
+                    **payload,
+                    payload=lambda value=payload: dict(value),
+                )
+            )
+        actions_by_side[side] = tuple(actions)
+    fake_study = SimpleNamespace(
+        IDENTITY="frozen-duration-study",
+        OUTCOME_BLIND_INPUTS=Path("unused-private-source.json"),
+        OUTCOME_BLIND_INPUTS_SHA256=SHA_A,
+        _validate_file=lambda *_args, **_kwargs: None,
+        _load_source_json=lambda *_args, **_kwargs: contract,
+        _duration_actions=lambda _contract, side: actions_by_side[side],
+        _load_contract=lambda: pytest.fail("historical baseline loader was called"),
+    )
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name: (
+            fake_study
+            if name == adapter_module.FIXED_ONE_SHOT_REPLAY_MODULE
+            else real_import(name)
+        ),
+    )
+
+    binding, actions = adapter_module._load_frozen_duration_action_contract()
+
+    assert binding["source_sha256"] == SHA_A
+    assert binding["historical_operational_baseline_read"] is False
+    assert binding["historical_execution_plan_read"] is False
+    assert tuple(action.policy_id for action in actions["BUY"]) == duration_vocabulary("BUY")
+    assert tuple(action.policy_id for action in actions["SELL"]) == duration_vocabulary(
+        "SELL"
+    )
+
+
 def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api() -> None:
     adapter = adapter_module.build_canonical_replay_adapter()
 
@@ -350,6 +418,9 @@ def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api()
     assert set(result["fixed_canonical_api_bindings"]) == set(
         adapter_module._FIXED_CANONICAL_API_SYMBOLS
     )
+    assert result["duration_action_contract"][
+        "historical_operational_baseline_read"
+    ] is False
     assert set(result["permissions"].values()) == {False}
 
 
@@ -390,6 +461,7 @@ def test_formal_preflight_returns_backend_mechanics_ready_status(
 
     assert result["status"] == backend.MECHANICS_READY_STATUS
     assert result["missing_canonical_fields"] == []
+    assert result["duration_action_contract"]["historical_execution_plan_read"] is False
     assert set(result["permissions"].values()) == {False}
 
 
