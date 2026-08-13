@@ -315,6 +315,66 @@ def test_preinjected_economic_files_or_columns_fail_closed(tmp_path: Path, mode:
         backend.load_outcome_blind_mechanics(bundle)
 
 
+def test_strict_false_outcome_blind_replay_declarations_are_not_economic_columns(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "replay_inputs.parquet"
+    pd.DataFrame(
+        {
+            "candidate_actions_generated": [False, False],
+            "economic_outcomes_read": [False, False],
+            "labels_read": [False, False],
+        }
+    ).to_parquet(path, index=False)
+
+    frame = backend._verify_bound_panel_file(
+        "replay_inputs",
+        path,
+        _parquet_binding(path),
+    )
+
+    assert frame.shape == (2, 3)
+
+
+@pytest.mark.parametrize(
+    ("column", "values"),
+    (
+        ("candidate_actions_generated", [False, True]),
+        ("economic_outcomes_read", [False, True]),
+        ("labels_read", [False, True]),
+        ("economic_outcomes_read", [False, None]),
+        ("economic_outcomes_read", ["false", "false"]),
+    ),
+)
+def test_outcome_blind_replay_declarations_fail_closed_unless_strict_false(
+    tmp_path: Path,
+    column: str,
+    values: list[object],
+) -> None:
+    path = tmp_path / "replay_inputs.parquet"
+    pd.DataFrame({column: values}).to_parquet(path, index=False)
+
+    with pytest.raises(
+        backend.OfflineRepeatedPolicyBackendError,
+        match="replay declaration",
+    ):
+        backend._verify_bound_panel_file(
+            "replay_inputs",
+            path,
+            _parquet_binding(path),
+        )
+
+
+def test_outcome_blind_declaration_is_forbidden_outside_replay_inputs(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "metadata.parquet"
+    pd.DataFrame({"economic_outcomes_read": [False]}).to_parquet(path, index=False)
+
+    with pytest.raises(backend.OfflineRepeatedPolicyBackendError, match="economic"):
+        backend._verify_bound_panel_file("metadata", path, _parquet_binding(path))
+
+
 def test_exact_b0_drift_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(backend.OfflineRepeatedPolicyBackendError, match="exact B0"):
         backend.load_outcome_blind_mechanics(_bundle_fixture(tmp_path, b0_drift=True))

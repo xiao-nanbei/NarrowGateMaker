@@ -83,6 +83,13 @@ _FORBIDDEN_ECONOMIC_COLUMN_PARTS = (
     "markout",
     "value_label",
 )
+_OUTCOME_BLIND_REPLAY_DECLARATIONS = frozenset(
+    {
+        "candidate_actions_generated",
+        "economic_outcomes_read",
+        "labels_read",
+    }
+)
 _INDEX_COLUMNS = ("utc_day", "opportunity_id")
 REPLAY_METADATA_DIRECT_BINDINGS = {
     "side": "side",
@@ -192,12 +199,34 @@ def _parquet_schema(path: Path) -> tuple[int, Mapping[str, Any]]:
     }
 
 
-def _economic_columns(columns: Sequence[Any]) -> tuple[str, ...]:
+def _economic_columns(columns: Sequence[Any], *, role: str) -> tuple[str, ...]:
     return tuple(
         str(column)
         for column in columns
+        if not (
+            role == "replay_inputs"
+            and str(column) in _OUTCOME_BLIND_REPLAY_DECLARATIONS
+        )
         if any(token in str(column).lower() for token in _FORBIDDEN_ECONOMIC_COLUMN_PARTS)
     )
+
+
+def _verify_outcome_blind_replay_declarations(
+    frame: pd.DataFrame,
+    *,
+    schema: Mapping[str, Any],
+) -> None:
+    schema_types = dict(zip(schema["columns"], schema["types"], strict=True))
+    for column in sorted(_OUTCOME_BLIND_REPLAY_DECLARATIONS & set(frame.columns)):
+        if schema_types.get(column) != "bool":
+            raise OfflineRepeatedPolicyBackendError(
+                f"replay declaration {column} must be non-nullable Boolean false"
+            )
+        values = frame[column]
+        if values.isna().any() or set(values.tolist()) != {False}:
+            raise OfflineRepeatedPolicyBackendError(
+                f"replay declaration {column} must be false for every row"
+            )
 
 
 def _verify_bound_panel_file(
@@ -218,14 +247,17 @@ def _verify_bound_panel_file(
         raise OfflineRepeatedPolicyBackendError(f"panel {role} row count drifted")
     if "schema" in binding and binding["schema"] != schema:
         raise OfflineRepeatedPolicyBackendError(f"panel {role} schema drifted")
-    if forbidden := _economic_columns(schema["columns"]):
+    if forbidden := _economic_columns(schema["columns"], role=role):
         raise OfflineRepeatedPolicyBackendError(
             f"panel {role} contains pre-injected economic columns: {sorted(forbidden)}"
         )
     try:
-        return pd.read_parquet(resolved)
+        frame = pd.read_parquet(resolved)
     except (OSError, ValueError) as exc:
         raise OfflineRepeatedPolicyBackendError(f"cannot load panel {role}") from exc
+    if role == "replay_inputs":
+        _verify_outcome_blind_replay_declarations(frame, schema=schema)
+    return frame
 
 
 def _ordered_day_audit(values: pd.Series, selected_days: Sequence[str], *, role: str) -> pd.Series:
