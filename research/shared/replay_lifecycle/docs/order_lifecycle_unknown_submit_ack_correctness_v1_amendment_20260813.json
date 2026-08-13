@@ -1,0 +1,60 @@
+{
+  "schema_version": "order_lifecycle_unknown_submit_ack_correctness_v1.amendment.v1",
+  "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
+  "status": "implemented_local_verified_not_deployed",
+  "last_materially_modified": "2026-08-13",
+  "semantics": {
+    "structured_exchange_minus_5022": "never_activated_exact_zero_exposure",
+    "timeout_connection_reset_5xx_response_loss_unknown_ack": "pending_new_reconcile_same_side_ownership_retained",
+    "malformed_submit_response_missing_status_or_order_id": "pending_new_reconcile_same_side_ownership_retained",
+    "rest_minus_2013": "censored_or_unsupported_not_exact_zero",
+    "rest_new_partially_filled_filled": "quantities_and_status_known_activation_prefix_censored",
+    "rest_update_time_used_as_activation_clock": false,
+    "rest_update_time_used_as_fill_clock": false,
+    "private_stream_after_unknown_ack": "event_status_and_genuine_fill_event_time_may_be_known_activation_prefix_remains_censored",
+    "orphan_terminal_cumulative_fill": "preserved_before_terminalization",
+    "same_side_submit_ownership": "reserved_before_rest_request_and_revalidated_after_response",
+    "same_side_nonterminal_orphan_conflict": "retain_both_lifecycles_latch_all_new_submit_entrypoints_fail_closed",
+    "post_conflict_current_requote_fallthrough": "opening_and_reducing_submit_entrypoints_reject_before_local_order_creation_or_rest",
+    "post_reservation_pre_rest_conflict": "locally_reject_release_reservation_and_do_not_call_exchange",
+    "emergency_reducing_submit": "reserve_same_side_ownership_before_market_rest_and_hold_unknown_ack_for_reconciliation",
+    "pending_cancel_missing_from_bulk_open_orders": "not_terminal_individual_client_order_reconciliation_required",
+    "startup_post_cancel_position_sync": "required_before_epoch_writers_or_streams"
+  },
+  "journal_contract": {
+    "submit_ack_unknown_accepted": true,
+    "submit_ack_unknown_censored_accepted": true,
+    "visible_exposure_validity_propagated": true,
+    "exchange_exposure_validity_propagated": true,
+    "completeness_and_invalid_reason_propagated": true,
+    "writer_quarantine_expected": false
+  },
+  "scope": {
+    "buy": true,
+    "sell": true,
+    "opening": true,
+    "reducing_close": true,
+    "emergency_reducing_close": true,
+    "private_user_stream_recovery": true,
+    "orphan_terminal_fill_recovery": true,
+    "pending_cancel_reconciliation": true,
+    "startup_position_convergence": true,
+    "quote_policy_changed": false,
+    "f05_companion_required": false,
+    "owner_policy_changed": false
+  },
+  "verification": {
+    "focused_core_tests_passed": 167,
+    "focused_core_tests_failed": 0,
+    "buy_sell_opening_reducing_paths_covered": true,
+    "journal_unknown_ack_quarantine_count": 0,
+    "ec2_preflight_run": false,
+    "runtime_release_receipt_exists": false
+  },
+  "permissions": {
+    "deployed": false,
+    "research_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  }
+}

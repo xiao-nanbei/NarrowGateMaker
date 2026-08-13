@@ -23,9 +23,17 @@ def test_enabled_startup_binds_writer_before_websocket_and_main_loop(
 
     engine.start = start_engine
 
+    def sync_position(*, required=False) -> bool:
+        assert required is True
+        assert events == ["engine_start"]
+        events.append("position_converged")
+        return True
+
+    engine.sync_position = sync_position
+
     def initialize(**kwargs):
         assert kwargs["engine"] is engine
-        assert events == ["engine_start"]
+        assert events == ["engine_start", "position_converged"]
         engine.writer_attached = True
         events.append("epoch_published_writer_attached")
         return SimpleNamespace(epoch_id="epoch-1"), SimpleNamespace()
@@ -43,13 +51,15 @@ def test_enabled_startup_binds_writer_before_websocket_and_main_loop(
 
     ws = SimpleNamespace(start=start_ws)
     cfg = SimpleNamespace(
+        symbol="BTCUSDC",
         lifecycle_journal_v2=SimpleNamespace(enabled=True),
     )
+    rest = SimpleNamespace(get_orders=lambda **_kwargs: [])
     epoch, writer = live_main.start_engine_with_prospective_collection(
         cfg=cfg,
         engine=engine,
         ws=ws,
-        rest=object(),
+        rest=rest,
         config_path=Path("config.yaml"),
         native_runtime={},
         dry_run=False,
@@ -59,9 +69,99 @@ def test_enabled_startup_binds_writer_before_websocket_and_main_loop(
     assert writer is not None
     assert events == [
         "engine_start",
+        "position_converged",
         "epoch_published_writer_attached",
         "ws_start",
     ]
+
+
+def test_unresolved_startup_order_blocks_epoch_and_websocket(monkeypatch) -> None:
+    events = []
+    engine = SimpleNamespace(
+        start=lambda: events.append("engine_start"),
+        sync_position=lambda **_kwargs: events.append("position_sync"),
+    )
+    ws = SimpleNamespace(start=lambda _rest: events.append("ws_start"))
+    cfg = SimpleNamespace(
+        symbol="BTCUSDC",
+        lifecycle_journal_v2=SimpleNamespace(enabled=True),
+    )
+    rest = SimpleNamespace(
+        get_orders=lambda **_kwargs: [
+            {
+                "symbol": "BTCUSDC",
+                "clientOrderId": "mm_B_unresolved",
+                "orderId": 42,
+                "side": "BUY",
+                "status": "NEW",
+                "price": "100.0",
+                "origQty": "0.001",
+                "executedQty": "0",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("epoch must not be published")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="ownership did not converge"):
+        live_main.start_engine_with_prospective_collection(
+            cfg=cfg,
+            engine=engine,
+            ws=ws,
+            rest=rest,
+            config_path=Path("config.yaml"),
+            native_runtime={},
+            dry_run=False,
+        )
+
+    assert events == ["engine_start"]
+
+
+def test_post_cancel_position_sync_failure_blocks_epoch_and_websocket(
+    monkeypatch,
+) -> None:
+    events = []
+
+    def failed_sync(*, required=False):
+        assert required is True
+        events.append("position_sync")
+        raise RuntimeError("position unavailable")
+
+    engine = SimpleNamespace(
+        start=lambda: events.append("engine_start"),
+        sync_position=failed_sync,
+    )
+    ws = SimpleNamespace(start=lambda _rest: events.append("ws_start"))
+    cfg = SimpleNamespace(
+        symbol="BTCUSDC",
+        lifecycle_journal_v2=SimpleNamespace(enabled=True),
+    )
+    rest = SimpleNamespace(get_orders=lambda **_kwargs: [])
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("epoch must not be published")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="position unavailable"):
+        live_main.start_engine_with_prospective_collection(
+            cfg=cfg,
+            engine=engine,
+            ws=ws,
+            rest=rest,
+            config_path=Path("config.yaml"),
+            native_runtime={},
+            dry_run=False,
+        )
+
+    assert events == ["engine_start", "position_sync"]
 
 
 def test_nested_active_order_state_fails_before_epoch_publication(

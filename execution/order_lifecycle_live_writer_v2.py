@@ -142,6 +142,8 @@ class _LifecycleWorkItem:
     source_event_type: str
     received_ts_ns: int
     exchange_ts_ns: int | None
+    orphan_adoption: bool
+    left_truncation_reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +155,8 @@ class _PreparedLifecycleWorkItem:
     symbol: str
     side: str
     callback: OrderLifecycleJournalV2SourceCallback
+    orphan_adoption: bool
+    left_truncation_reason: str
 
 
 def _snapshot_inconsistency_reason(
@@ -175,6 +179,18 @@ def _snapshot_inconsistency_reason(
         or visible_exposure != latest.quantity_time_exposure_visible_btc_s
     ):
         return "visible_exposure_mismatch"
+    if bool(lifecycle.visible_exposure_valid) != bool(
+        latest.visible_exposure_valid
+    ):
+        return "visible_valid_mismatch"
+    if bool(lifecycle.visible_exposure_complete) != bool(
+        latest.visible_exposure_complete
+    ):
+        return "visible_complete_mismatch"
+    if str(lifecycle.visible_exposure_invalid_reason) != str(
+        latest.visible_exposure_invalid_reason
+    ):
+        return "visible_invalid_reason_mismatch"
     if bool(lifecycle.exchange_exposure_valid) != bool(latest.exchange_exposure_valid):
         return "exchange_valid_mismatch"
     if lifecycle.exchange_exposure_valid and lifecycle.activation_exchange_ts_ns > 0:
@@ -186,6 +202,14 @@ def _snapshot_inconsistency_reason(
             return "exchange_exposure_mismatch"
     elif latest.quantity_time_exposure_exchange_btc_s is not None:
         return "exchange_exposure_availability_mismatch"
+    if bool(lifecycle.exchange_exposure_complete) != bool(
+        latest.exchange_exposure_complete
+    ):
+        return "exchange_complete_mismatch"
+    if str(lifecycle.exchange_exposure_invalid_reason) != str(
+        latest.exchange_exposure_invalid_reason
+    ):
+        return "exchange_invalid_reason_mismatch"
     return None
 
 
@@ -217,6 +241,11 @@ def _normalize_local_shutdown_censor(
     if not lifecycle._events:
         raise ValueError("local shutdown lifecycle has no event")
     latest = lifecycle._events[-1]
+    if latest.event in {
+        "local_shutdown_censor",
+        "submit_ack_unknown_censored",
+    }:
+        return
     if latest.event != "exchange_terminal" or latest.reason not in {
         "administrative_cancel",
         "local_shutdown_cancel",
@@ -238,6 +267,8 @@ def _normalize_local_shutdown_censor(
         phase_after=prior_phase.value,
         quantity_time_exposure_exchange_btc_s=prior_exchange_exposure,
         exchange_exposure_valid=prior_exchange_valid,
+        visible_exposure_complete=False,
+        exchange_exposure_complete=False,
     )
     lifecycle.phase = prior_phase
     lifecycle.terminal_ts_ns = 0
@@ -519,6 +550,8 @@ class OrderLifecycleLiveWriterV2:
             symbol=str(item.symbol).strip(),
             side=str(item.side).strip(),
             callback=callback,
+            orphan_adoption=bool(item.orphan_adoption),
+            left_truncation_reason=str(item.left_truncation_reason),
         )
 
     def enqueue_order_event(
@@ -572,6 +605,10 @@ class OrderLifecycleLiveWriterV2:
                 source_event_type=callback_type,
                 received_ts_ns=received_ts_ns,
                 exchange_ts_ns=exchange_ts_ns,
+                orphan_adoption=bool(getattr(order, "orphan_adoption", False)),
+                left_truncation_reason=str(
+                    getattr(order, "left_truncation_reason", "")
+                ),
             )
             self._queue.put_nowait(item)
             elapsed_ns = time.monotonic_ns() - started
@@ -619,6 +656,8 @@ class OrderLifecycleLiveWriterV2:
                 symbol=item.symbol,
                 side=item.side,
                 exchange_order_id=item.exchange_order_id,
+                orphan_adoption=item.orphan_adoption,
+                left_truncation_reason=item.left_truncation_reason,
             )
             self._registered.add(item.lifecycle_id)
         elif item.exchange_order_id is not None:

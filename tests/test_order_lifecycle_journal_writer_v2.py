@@ -378,30 +378,7 @@ def test_explicit_local_shutdown_censor_is_durable_and_closes_observation(
         == "committed"
     )
 
-    events = [dict(event) for event in lifecycle.events()]
-    events.append(
-        {
-            "sequence": 3,
-            "event": "local_shutdown_censor",
-            "visibility_ts_ns": 3_200_000_000,
-            "exchange_ts_ns": 0,
-            "phase_before": "ACTIVE",
-            "phase_after": "ACTIVE",
-            "remaining_qty_before": 0.001,
-            "remaining_qty_after": 0.001,
-            "quantity_time_exposure_btc_s": 0.001,
-            "quantity_time_exposure_visible_btc_s": 0.001,
-            "quantity_time_exposure_exchange_btc_s": 0.0,
-            "exchange_exposure_valid": True,
-            "reason": "local_shutdown_cancel",
-        }
-    )
-    snapshot = dict(lifecycle.snapshot())
-    snapshot["quantity_time_exposure_btc_s"] = 0.001
-    snapshot["quantity_time_exposure_visible_btc_s"] = 0.001
-    snapshot["quantity_time_exposure_visibility_minus_exchange_btc_s"] = 0.001
-    monkeypatch.setattr(lifecycle, "events", lambda: tuple(events))
-    monkeypatch.setattr(lifecycle, "snapshot", lambda: dict(snapshot))
+    lifecycle.local_shutdown_censor(3_200_000_000)
 
     censored = bridge.submit_callback(
         lifecycle_id="epoch-v9:client-17",

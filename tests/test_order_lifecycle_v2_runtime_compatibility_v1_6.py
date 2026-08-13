@@ -145,7 +145,7 @@ def _build_fingerprint_fixture(
 
 
 def test_mechanical_reconstruction_matches_frozen_predecessor() -> None:
-    successor = (subject.ROOT / subject.SUCCESSOR_LOGICAL_PATH).read_bytes()
+    successor = subject.frozen_successor_path().read_bytes()
     predecessor = subject.reconstruct_predecessor(successor)
     assert len(predecessor) == subject.PREDECESSOR_SIZE_BYTES
     assert hashlib.sha256(predecessor).hexdigest() == subject.PREDECESSOR_SHA256
@@ -169,8 +169,9 @@ def test_source_attestation_is_canonical_bound_and_mechanics_only(
     )
     assert payload["predecessor_source"]["sha256"] == subject.PREDECESSOR_SHA256
     assert payload["successor_source"]["sha256"] == subject.file_sha256(
-        subject.ROOT / subject.SUCCESSOR_LOGICAL_PATH
+        subject.frozen_successor_path()
     )
+    assert payload["successor_source"]["sha256"] == subject.FROZEN_SUCCESSOR_SHA256
     assert payload["scope"]["economic_outcomes_read"] is False
     assert payload["permissions"] == subject.DENIED_PERMISSIONS
 
@@ -220,7 +221,7 @@ def test_source_attestation_rejects_different_predecessor_plan_path(
 
 
 def test_mechanical_reconstruction_rejects_any_helper_drift() -> None:
-    successor = (subject.ROOT / subject.SUCCESSOR_LOGICAL_PATH).read_bytes()
+    successor = subject.frozen_successor_path().read_bytes()
     drifted = successor.replace(b"return self._events[-1]", b"return self._events[0]", 1)
     with pytest.raises(subject.RuntimeCompatibilityError, match="helper block"):
         subject.reconstruct_predecessor(drifted)
@@ -239,7 +240,7 @@ def test_bound_call_surface_fails_on_helper_reference(tmp_path: Path) -> None:
 
 
 def test_deterministic_scenario_fingerprints_match() -> None:
-    successor = (subject.ROOT / subject.SUCCESSOR_LOGICAL_PATH).read_bytes()
+    successor = subject.frozen_successor_path().read_bytes()
     predecessor = subject.reconstruct_predecessor(successor)
     result = subject._deterministic_behavior_equivalence(predecessor, successor)
     assert result["passed"] is True

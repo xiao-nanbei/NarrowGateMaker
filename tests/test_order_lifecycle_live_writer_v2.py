@@ -87,6 +87,72 @@ def test_live_adapter_commits_callbacks_off_thread_and_reports_latency(
     assert final["formal_collection_valid"] is True
 
 
+def test_submit_ack_unknown_is_durable_without_quarantine_or_writer_error(
+    tmp_path: Path,
+) -> None:
+    order = _order()
+    runtime = OrderLifecycleLiveWriterV2(
+        tmp_path,
+        session_id="epoch-unknown-ack",
+        baseline_epoch_id="epoch-unknown-ack",
+        runtime_identity={
+            "baseline_epoch_id": "epoch-unknown-ack",
+            "hash": "f" * 64,
+        },
+        queue_size=8,
+        storage_format="jsonl",
+        heartbeat_interval_s=0.05,
+    )
+    assert runtime.enqueue_order_event(order, "submit") is True
+    _wait_for(runtime, 1)
+    order.lifecycle.mark_submit_ack_unknown(
+        2_000_000_000,
+        reason="submit_response_unknown",
+    )
+    assert runtime.enqueue_order_event(
+        order,
+        "submit_ack_unknown",
+        {"_local_receive_ts_ns": 2_000_000_000},
+    )
+    _wait_for(runtime, 2)
+    order.lifecycle.censor_submit_ack_unknown(
+        3_000_000_000,
+        reason="local_shutdown_unknown_ack",
+    )
+    assert runtime.enqueue_order_event(
+        order,
+        "submit_ack_unknown_censored",
+        {
+            "_local_receive_ts_ns": 3_000_000_000,
+            "_reason": "local_shutdown_unknown_ack",
+        },
+    )
+    health = _wait_for(runtime, 3)
+    assert health["core_health"]["callbacks_quarantined"] == 0
+    assert health["drop_count"] == 0
+    assert health["error_count"] == 0
+    assert health["rows_committed"] == 3
+    final = runtime.close(drain_timeout_s=1.0)
+    assert final["formal_collection_valid"] is True
+
+    rows = [
+        json.loads(line)
+        for path in (
+            tmp_path / "session-epoch-unknown-ack" / "parts"
+        ).glob("*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    rows.sort(key=lambda row: int(row["lifecycle_sequence"]))
+    assert [row["lifecycle_event"] for row in rows] == [
+        "submit",
+        "submit_ack_unknown",
+        "submit_ack_unknown_censored",
+    ]
+    assert rows[-1]["visible_exposure_valid"] is False
+    assert rows[-1]["exchange_exposure_valid"] is False
+
+
 def test_worker_failure_invalidates_tape_without_raising_to_producer(
     tmp_path: Path,
 ) -> None:
@@ -660,10 +726,7 @@ def test_local_shutdown_is_persisted_as_censor_not_exchange_terminal(
         },
     )
     _wait_for(runtime, 2)
-    order.lifecycle.exchange_terminal(
-        3_000_000_000,
-        reason="local_shutdown_cancel",
-    )
+    order.lifecycle.local_shutdown_censor(3_000_000_000)
     assert runtime.enqueue_order_event(
         order,
         "local_shutdown_cancel",

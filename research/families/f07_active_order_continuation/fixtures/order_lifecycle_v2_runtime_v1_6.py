@@ -42,7 +42,6 @@ _BASELINE_RESUBMIT_REASONS = frozenset({"expired", "rejected"})
 _SHUTDOWN_REASONS = frozenset(
     {"administrative_cancel", "local_shutdown_cancel", "shutdown"}
 )
-_CENSORED_TERMINAL_REASONS = frozenset({"submit_ack_unknown_censored"})
 
 
 def terminal_policy_route(
@@ -119,13 +118,8 @@ class OrderLifecycleEvent:
     remaining_qty_after: float
     quantity_time_exposure_btc_s: float
     quantity_time_exposure_visible_btc_s: float
-    visible_exposure_valid: bool
-    visible_exposure_complete: bool
-    visible_exposure_invalid_reason: str
     quantity_time_exposure_exchange_btc_s: float | None
     exchange_exposure_valid: bool
-    exchange_exposure_complete: bool
-    exchange_exposure_invalid_reason: str
     reason: str = ""
 
 
@@ -155,14 +149,9 @@ class QuantityWeightedOrderLifecycle:
     terminal_policy_route_name: str = ""
     quantity_time_exposure_btc_s: float = 0.0
     quantity_time_exposure_exchange_accumulated_btc_s: float = 0.0
-    visible_exposure_valid: bool = True
-    visible_exposure_complete: bool = False
-    visible_exposure_invalid_reason: str = ""
     exchange_exposure_valid: bool = True
     exchange_exposure_complete: bool = False
     exchange_exposure_invalid_reason: str = ""
-    locally_censored: bool = False
-    submit_ack_unknown_observed: bool = False
     _last_event_ts_ns: int = field(init=False, repr=False)
     _last_exchange_event_ts_ns: int = field(default=0, init=False, repr=False)
     _events: list[OrderLifecycleEvent] = field(
@@ -227,22 +216,6 @@ class QuantityWeightedOrderLifecycle:
         if self.exchange_exposure_valid:
             self.exchange_exposure_invalid_reason = str(reason)
         self.exchange_exposure_valid = False
-
-    def _invalidate_visible_exposure(self, reason: str) -> None:
-        if self.visible_exposure_valid:
-            self.visible_exposure_invalid_reason = str(reason)
-        self.visible_exposure_valid = False
-
-    def mark_activation_unknown(self, *, reason: str) -> None:
-        """Invalidate exposure clocks without inventing an activation event."""
-
-        normalized = str(reason).strip()
-        if not normalized:
-            raise ValueError("activation-unknown reason must be non-empty")
-        if self.phase != OrderLifecyclePhase.SUBMITTED:
-            raise ValueError("activation can be unknown only before observed activation")
-        self._invalidate_visible_exposure(normalized)
-        self._invalidate_exchange_exposure(normalized)
 
     def _validate_exchange_timestamp(
         self,
@@ -370,11 +343,6 @@ class QuantityWeightedOrderLifecycle:
                 quantity_time_exposure_visible_btc_s=float(
                     self.quantity_time_exposure_btc_s
                 ),
-                visible_exposure_valid=bool(self.visible_exposure_valid),
-                visible_exposure_complete=bool(self.visible_exposure_complete),
-                visible_exposure_invalid_reason=str(
-                    self.visible_exposure_invalid_reason
-                ),
                 quantity_time_exposure_exchange_btc_s=(
                     float(
                         self.quantity_time_exposure_exchange_accumulated_btc_s
@@ -384,10 +352,6 @@ class QuantityWeightedOrderLifecycle:
                     else None
                 ),
                 exchange_exposure_valid=bool(self.exchange_exposure_valid),
-                exchange_exposure_complete=bool(self.exchange_exposure_complete),
-                exchange_exposure_invalid_reason=str(
-                    self.exchange_exposure_invalid_reason
-                ),
                 reason=str(reason),
             )
         )
@@ -401,8 +365,6 @@ class QuantityWeightedOrderLifecycle:
         exchange_ts_ns: int = 0,
         reason: str = "",
     ) -> None:
-        if self.locally_censored:
-            raise ValueError("locally censored lifecycle cannot transition")
         before = self.phase
         remaining_before, _ = self._accrue(visibility_ts_ns)
         if target == before:
@@ -448,143 +410,6 @@ class QuantityWeightedOrderLifecycle:
         )
         if self.activation_ts_ns <= 0:
             self.activation_ts_ns = int(visibility_ts_ns)
-
-    def mark_submit_ack_unknown(
-        self,
-        visibility_ts_ns: int,
-        *,
-        reason: str,
-    ) -> None:
-        """Record an indeterminate submit response without inventing a terminal state."""
-
-        if self.phase != OrderLifecyclePhase.SUBMITTED:
-            raise ValueError("submit ACK can be unknown only before activation")
-        if not str(reason).strip():
-            raise ValueError("submit ACK unknown reason must be non-empty")
-        self.submit_ack_unknown_observed = True
-        self._invalidate_visible_exposure("submit_ack_unknown")
-        self._invalidate_exchange_exposure("submit_ack_unknown")
-        self._transition(
-            OrderLifecyclePhase.SUBMITTED,
-            event="submit_ack_unknown",
-            visibility_ts_ns=int(visibility_ts_ns),
-            reason="submit_response_unknown",
-        )
-
-    def activate_with_unknown_prefix(
-        self,
-        visibility_ts_ns: int,
-        *,
-        reason: str = "rest_reconcile_activation_unknown",
-    ) -> None:
-        """Observe an active order while preserving an unidentified prefix."""
-
-        if self.phase != OrderLifecyclePhase.SUBMITTED:
-            raise ValueError("unknown-prefix activation requires submitted phase")
-        normalized_reason = str(reason).strip()
-        if not normalized_reason:
-            raise ValueError("unknown-prefix activation reason must be non-empty")
-        self.mark_activation_unknown(reason=normalized_reason)
-        self._transition(
-            OrderLifecyclePhase.ACTIVE,
-            event="activate_unknown_prefix",
-            visibility_ts_ns=int(visibility_ts_ns),
-            reason=normalized_reason,
-        )
-
-    def observe_fill_with_unknown_activation(
-        self,
-        *,
-        remaining_after: float,
-        visibility_ts_ns: int,
-        full_fill: bool,
-    ) -> None:
-        """Record a REST-reconciled fill without inventing activation/fill clocks."""
-
-        if self.phase != OrderLifecyclePhase.SUBMITTED:
-            raise ValueError("unknown-activation fill requires submitted phase")
-        remaining, terminal = validate_fill_terminal_claim(
-            remaining_after=remaining_after,
-            full_fill_claimed=full_fill,
-        )
-        self.mark_activation_unknown(reason="rest_reconcile_activation_unknown")
-        before = self.phase
-        remaining_before, _ = self._accrue(int(visibility_ts_ns))
-        if remaining > remaining_before + QUANTITY_INCREASE_ABS_TOLERANCE_BTC:
-            raise ValueError("remaining order quantity increased after fill")
-        self.remaining_quantity = remaining
-        if remaining < remaining_before - PARTIAL_FILL_PROGRESS_ABS_TOLERANCE_BTC:
-            self.first_fill_ts_ns = int(visibility_ts_ns)
-        if terminal:
-            self.phase = OrderLifecyclePhase.EXCHANGE_TERMINAL
-            self.terminal_ts_ns = int(visibility_ts_ns)
-            self.terminal_reason = "full_fill"
-            self.terminal_policy_route_name = (
-                TerminalPolicyRoute.TERMINAL_COMPLETE.value
-            )
-            self.visible_exposure_complete = False
-            self.exchange_exposure_complete = False
-            event = "full_fill"
-        else:
-            self.phase = OrderLifecyclePhase.PARTIALLY_FILLED
-            event = "partial_fill"
-        self._record(
-            event=event,
-            visibility_ts_ns=int(visibility_ts_ns),
-            exchange_ts_ns=0,
-            phase_before=before,
-            remaining_before=remaining_before,
-            reason="",
-        )
-
-    def censor_submit_ack_unknown(
-        self,
-        visibility_ts_ns: int,
-        *,
-        reason: str = "local_shutdown_unknown_ack",
-    ) -> None:
-        """End local observation without asserting exchange terminality."""
-
-        if self.phase != OrderLifecyclePhase.SUBMITTED:
-            raise ValueError("submit ACK censor requires submitted phase")
-        self.mark_activation_unknown(reason="submit_ack_unknown_censored")
-        before = self.phase
-        remaining_before, _ = self._accrue(int(visibility_ts_ns))
-        self.visible_exposure_complete = False
-        self.exchange_exposure_complete = False
-        self._record(
-            event="submit_ack_unknown_censored",
-            visibility_ts_ns=int(visibility_ts_ns),
-            exchange_ts_ns=0,
-            phase_before=before,
-            remaining_before=remaining_before,
-            reason=str(reason),
-        )
-        self.locally_censored = True
-
-    def local_shutdown_censor(
-        self,
-        visibility_ts_ns: int,
-        *,
-        reason: str = "local_shutdown_cancel",
-    ) -> None:
-        """Stop local observation while leaving exchange terminality unknown."""
-
-        if self.locally_censored:
-            return
-        before = self.phase
-        remaining_before, _ = self._accrue(int(visibility_ts_ns))
-        self.visible_exposure_complete = False
-        self.exchange_exposure_complete = False
-        self._record(
-            event="local_shutdown_censor",
-            visibility_ts_ns=int(visibility_ts_ns),
-            exchange_ts_ns=0,
-            phase_before=before,
-            remaining_before=remaining_before,
-            reason=str(reason),
-        )
-        self.locally_censored = True
 
     def request_cancel(self, visibility_ts_ns: int) -> None:
         if self.phase == OrderLifecyclePhase.CANCEL_PENDING:
@@ -669,7 +494,6 @@ class QuantityWeightedOrderLifecycle:
                 and self.activation_exchange_ts_ns > 0
                 and self.terminal_exchange_ts_ns > 0
             )
-            self.visible_exposure_complete = bool(self.visible_exposure_valid)
             event = "full_fill"
         else:
             if before != OrderLifecyclePhase.CANCEL_PENDING:
@@ -694,10 +518,7 @@ class QuantityWeightedOrderLifecycle:
         if self.phase == OrderLifecyclePhase.EXCHANGE_TERMINAL:
             return
         route = terminal_policy_route(reason, self.remaining_quantity)
-        if (
-            route == TerminalPolicyRoute.UNSUPPORTED
-            and str(reason).strip().lower() not in _CENSORED_TERMINAL_REASONS
-        ):
+        if route == TerminalPolicyRoute.UNSUPPORTED:
             raise ValueError(f"unsupported order terminal reason: {reason}")
         was_fill_risk_active = self.fill_risk_active
         if was_fill_risk_active:
@@ -705,17 +526,6 @@ class QuantityWeightedOrderLifecycle:
                 exchange_ts_ns,
                 visibility_ts_ns,
                 event=f"exchange_terminal:{reason}",
-            )
-        self.visible_exposure_complete = bool(self.visible_exposure_valid)
-        if route == TerminalPolicyRoute.UNSUPPORTED:
-            self.exchange_exposure_complete = False
-        elif not was_fill_risk_active:
-            self.exchange_exposure_complete = bool(self.exchange_exposure_valid)
-        else:
-            self.exchange_exposure_complete = bool(
-                self.exchange_exposure_valid
-                and self.activation_exchange_ts_ns > 0
-                and int(exchange_ts_ns) > 0
             )
         self._transition(
             OrderLifecyclePhase.EXCHANGE_TERMINAL,
@@ -728,6 +538,14 @@ class QuantityWeightedOrderLifecycle:
         self.terminal_exchange_ts_ns = max(0, int(exchange_ts_ns))
         self.terminal_reason = str(reason)
         self.terminal_policy_route_name = route.value
+        if not was_fill_risk_active:
+            self.exchange_exposure_complete = True
+        else:
+            self.exchange_exposure_complete = bool(
+                self.exchange_exposure_valid
+                and self.activation_exchange_ts_ns > 0
+                and self.terminal_exchange_ts_ns > 0
+            )
 
     def enter_post_cancel_recovery(self, visibility_ts_ns: int) -> None:
         route = terminal_policy_route(
@@ -824,9 +642,6 @@ class QuantityWeightedOrderLifecycle:
             "reentry_eligible_ts_ns": int(self.reentry_eligible_ts_ns),
             "quantity_time_exposure_btc_s": visible_exposure,
             "quantity_time_exposure_visible_btc_s": visible_exposure,
-            "visible_exposure_valid": bool(self.visible_exposure_valid),
-            "visible_exposure_complete": bool(self.visible_exposure_complete),
-            "visible_exposure_invalid_reason": self.visible_exposure_invalid_reason,
             "quantity_time_exposure_exchange_btc_s": exchange_exposure,
             "quantity_time_exposure_visibility_minus_exchange_btc_s": (
                 visible_exposure - exchange_exposure
@@ -840,7 +655,6 @@ class QuantityWeightedOrderLifecycle:
             "exchange_exposure_valid": bool(self.exchange_exposure_valid),
             "exchange_exposure_complete": bool(self.exchange_exposure_complete),
             "exchange_exposure_invalid_reason": self.exchange_exposure_invalid_reason,
-            "locally_censored": bool(self.locally_censored),
         }
 
     def events(self) -> tuple[dict[str, object], ...]:

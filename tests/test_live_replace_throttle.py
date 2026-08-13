@@ -128,7 +128,7 @@ def test_pending_replace_coalesce_does_not_block_pause_cancel_path() -> None:
     )
 
 
-def test_stale_pending_cancel_reconcile_clears_missing_exchange_order() -> None:
+def test_stale_pending_cancel_open_order_absence_keeps_ownership() -> None:
     orders = OrderManager()
     cid = orders.create_order("BTCUSDC", Side.SELL, price=100.0, quantity=0.001)
     orders.confirm_new(cid, 123)
@@ -136,9 +136,9 @@ def test_stale_pending_cancel_reconcile_clears_missing_exchange_order() -> None:
     orders._orders[cid].update_time = time.time() - 31.0
 
     assert [o.client_order_id for o in orders.get_stale_pending_cancel_orders(30.0)] == [cid]
-    assert orders.reconcile_pending_cancel(cid, exchange_open=False)
-    assert orders.active_count() == 0
-    assert orders.get_order(cid).state == OrderState.CANCELED
+    assert not orders.reconcile_pending_cancel(cid, exchange_open=False)
+    assert orders.active_count() == 1
+    assert orders.get_order(cid).state == OrderState.PENDING_CANCEL
 
 
 def test_stale_pending_cancel_reconcile_reopens_exchange_order() -> None:

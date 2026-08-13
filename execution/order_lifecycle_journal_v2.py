@@ -37,13 +37,25 @@ _SOURCE_EVENT_FIELDS = (
     "remaining_qty_after",
     "quantity_time_exposure_btc_s",
     "quantity_time_exposure_visible_btc_s",
+    "visible_exposure_valid",
+    "visible_exposure_complete",
+    "visible_exposure_invalid_reason",
     "quantity_time_exposure_exchange_btc_s",
     "exchange_exposure_valid",
+    "exchange_exposure_complete",
+    "exchange_exposure_invalid_reason",
     "reason",
 )
 
 _FILL_RISK_PHASES = frozenset({"ACTIVE", "PARTIALLY_FILLED", "CANCEL_PENDING"})
-_LOCAL_SHUTDOWN_REASONS = frozenset({"administrative_cancel", "local_shutdown_cancel", "shutdown"})
+_LOCAL_SHUTDOWN_REASONS = frozenset(
+    {
+        "administrative_cancel",
+        "local_shutdown_cancel",
+        "local_shutdown_unknown_ack",
+        "shutdown",
+    }
+)
 _EXCHANGE_TERMINAL_REASONS = frozenset(
     {
         "cancel_ack",
@@ -56,7 +68,12 @@ _EXCHANGE_TERMINAL_REASONS = frozenset(
 )
 _EVENT_REASONS = {
     "submit": frozenset({""}),
+    "submit_ack_unknown": frozenset({"submit_response_unknown"}),
+    "submit_ack_unknown_censored": frozenset({"local_shutdown_unknown_ack"}),
     "activate": frozenset({""}),
+    "activate_unknown_prefix": frozenset(
+        {"orphan_adoption", "rest_reconcile_activation_unknown"}
+    ),
     "cancel_request": frozenset({""}),
     "cancel_rejected": frozenset({""}),
     "partial_fill": frozenset({""}),
@@ -68,6 +85,8 @@ _EVENT_REASONS = {
 }
 _EVENT_TRANSITIONS = {
     "submit": frozenset({("SUBMITTED", "SUBMITTED")}),
+    "submit_ack_unknown": frozenset({("SUBMITTED", "SUBMITTED")}),
+    "submit_ack_unknown_censored": frozenset({("SUBMITTED", "SUBMITTED")}),
     "activate": frozenset(
         {
             ("SUBMITTED", "ACTIVE"),
@@ -75,6 +94,7 @@ _EVENT_TRANSITIONS = {
             ("CANCEL_PENDING", "ACTIVE"),
         }
     ),
+    "activate_unknown_prefix": frozenset({("SUBMITTED", "ACTIVE")}),
     "cancel_request": frozenset(
         {
             ("ACTIVE", "CANCEL_PENDING"),
@@ -90,6 +110,7 @@ _EVENT_TRANSITIONS = {
     "partial_fill": frozenset(
         {
             ("ACTIVE", "PARTIALLY_FILLED"),
+            ("SUBMITTED", "PARTIALLY_FILLED"),
             ("PARTIALLY_FILLED", "PARTIALLY_FILLED"),
             ("CANCEL_PENDING", "CANCEL_PENDING"),
         }
@@ -97,6 +118,7 @@ _EVENT_TRANSITIONS = {
     "full_fill": frozenset(
         {
             ("ACTIVE", "EXCHANGE_TERMINAL"),
+            ("SUBMITTED", "EXCHANGE_TERMINAL"),
             ("PARTIALLY_FILLED", "EXCHANGE_TERMINAL"),
             ("CANCEL_PENDING", "EXCHANGE_TERMINAL"),
         }
@@ -303,6 +325,7 @@ class OrderLifecycleJournalV2Batch:
 
 @dataclass(frozen=True, slots=True)
 class _DerivedEventState:
+    visible_invalid_reason: str
     exchange_invalid_reason: str
     visible_complete: bool
     exchange_complete: bool
@@ -381,6 +404,7 @@ def _validate_source_events(
     previous_exchange = 0
     previous_visible_exposure = 0.0
     previous_exchange_exposure = 0.0
+    visible_invalid_reason = ""
     exchange_invalid_reason = ""
     visible_complete = False
     exchange_complete = False
@@ -485,7 +509,31 @@ def _validate_source_events(
             raise ValueError("visible quantity-time exposure regressed")
         previous_visible_exposure = visible_exposure
 
+        source_visible_valid = bool(event["visible_exposure_valid"])
+        source_visible_complete = bool(event["visible_exposure_complete"])
+        source_visible_invalid_reason = str(
+            event["visible_exposure_invalid_reason"]
+        )
+        if source_visible_valid:
+            if source_visible_invalid_reason:
+                raise ValueError("valid visible exposure cannot carry an invalid reason")
+            if visible_invalid_reason:
+                raise ValueError("visible exposure validity recovered after invalidation")
+        else:
+            if not source_visible_invalid_reason:
+                raise ValueError("invalid visible exposure requires a reason")
+            if not visible_invalid_reason:
+                visible_invalid_reason = source_visible_invalid_reason
+            elif visible_invalid_reason != source_visible_invalid_reason:
+                raise ValueError("visible exposure invalid reason changed")
+            if source_visible_complete:
+                raise ValueError("invalid visible exposure cannot be complete")
+
         source_exchange_valid = bool(event["exchange_exposure_valid"])
+        source_exchange_complete = bool(event["exchange_exposure_complete"])
+        source_exchange_invalid_reason = str(
+            event["exchange_exposure_invalid_reason"]
+        )
         exchange_exposure = event["quantity_time_exposure_exchange_btc_s"]
         if not source_exchange_valid and exchange_exposure is not None:
             raise ValueError("invalid exchange exposure must be null")
@@ -497,13 +545,17 @@ def _validate_source_events(
                 raise ValueError("exchange quantity-time exposure regressed")
             previous_exchange_exposure = exchange_value
 
+        if source_exchange_valid:
+            if source_exchange_invalid_reason:
+                raise ValueError("valid exchange exposure cannot carry an invalid reason")
+        elif not source_exchange_invalid_reason:
+            raise ValueError("invalid exchange exposure requires a reason")
         if not source_exchange_valid and not exchange_invalid_reason:
-            if exchange_ts is None and event_name in _EVENTS_REQUIRING_EXCHANGE_CLOCK:
-                exchange_invalid_reason = f"missing_exchange_timestamp:{event_name}"
-            elif exchange_ts is None and event_name == "exchange_terminal":
-                exchange_invalid_reason = f"missing_exchange_timestamp:{exchange_clock_event}"
-            else:
-                exchange_invalid_reason = "source_lifecycle_marked_invalid"
+            exchange_invalid_reason = source_exchange_invalid_reason
+        elif not source_exchange_valid and (
+            exchange_invalid_reason != source_exchange_invalid_reason
+        ):
+            raise ValueError("exchange exposure invalid reason changed")
         if source_exchange_valid and exchange_invalid_reason:
             raise ValueError("exchange exposure validity recovered after invalidation")
 
@@ -513,23 +565,27 @@ def _validate_source_events(
         if event_name == "full_fill":
             terminal_observation = "EXCHANGE_TERMINAL"
             exchange_terminal_reason = "full_fill"
-            visible_complete = True
-            exchange_complete = bool(source_exchange_valid and exchange_ts)
+            visible_complete = source_visible_complete
+            exchange_complete = source_exchange_complete
         elif event_name == "exchange_terminal":
             terminal_observation = "EXCHANGE_TERMINAL"
             exchange_terminal_reason = reason
-            visible_complete = True
-            exchange_complete = bool(source_exchange_valid and exchange_ts)
-        elif event_name == "local_shutdown_censor":
+            visible_complete = source_visible_complete
+            exchange_complete = source_exchange_complete
+        elif event_name in {"local_shutdown_censor", "submit_ack_unknown_censored"}:
             if exchange_ts is not None:
                 raise ValueError("local shutdown censor cannot carry an exchange event timestamp")
             terminal_observation = "LOCAL_SHUTDOWN_CENSOR"
             local_censor_reason = reason
-            visible_complete = False
-            exchange_complete = False
+            visible_complete = source_visible_complete
+            exchange_complete = source_exchange_complete
+        else:
+            visible_complete = source_visible_complete
+            exchange_complete = source_exchange_complete
 
         derived.append(
             _DerivedEventState(
+                visible_invalid_reason=visible_invalid_reason,
                 exchange_invalid_reason=exchange_invalid_reason,
                 visible_complete=visible_complete,
                 exchange_complete=exchange_complete,
@@ -583,6 +639,18 @@ def _validate_snapshot(
     )
     if bool(snapshot["fill_risk_active"]) != expected_fill_risk:
         raise ValueError("lifecycle snapshot fill-risk state is inconsistent")
+    if bool(snapshot["visible_exposure_valid"]) != bool(
+        last["visible_exposure_valid"]
+    ):
+        raise ValueError("lifecycle snapshot visible validity is inconsistent")
+    if str(snapshot["visible_exposure_invalid_reason"]) != (
+        last_derived.visible_invalid_reason
+    ):
+        raise ValueError("lifecycle snapshot visible invalid reason is inconsistent")
+    if bool(snapshot["visible_exposure_complete"]) != bool(
+        last["visible_exposure_complete"]
+    ):
+        raise ValueError("lifecycle snapshot visible completeness is inconsistent")
     if bool(snapshot["exchange_exposure_valid"]) != bool(last["exchange_exposure_valid"]):
         raise ValueError("lifecycle snapshot exchange validity is inconsistent")
     if not bool(snapshot["exchange_exposure_valid"]):
@@ -590,7 +658,9 @@ def _validate_snapshot(
             last_derived.exchange_invalid_reason
         ):
             raise ValueError("lifecycle snapshot exchange invalid reason is inconsistent")
-    if bool(snapshot["exchange_exposure_complete"]) != last_derived.exchange_complete:
+    if bool(snapshot["exchange_exposure_complete"]) != bool(
+        last["exchange_exposure_complete"]
+    ):
         raise ValueError("lifecycle snapshot exchange completeness is inconsistent")
     return snapshot
 
@@ -679,7 +749,11 @@ def validate_order_lifecycle_journal_v2_payload(
             raise ValueError("event and callback exchange clocks disagree")
 
     exchange_order_id = payload["exchange_order_id"]
-    if event_name != "submit":
+    if event_name not in {
+        "submit",
+        "submit_ack_unknown",
+        "submit_ack_unknown_censored",
+    }:
         _require_id("exchange order id", exchange_order_id)
     elif exchange_order_id is not None:
         _require_id("exchange order id", exchange_order_id)
@@ -707,7 +781,7 @@ def validate_order_lifecycle_journal_v2_payload(
         str(payload["phase_after"]) in _FILL_RISK_PHASES
         and remaining_after > TERMINAL_REMAINDER_ABS_TOLERANCE_BTC
     )
-    if event_name == "local_shutdown_censor":
+    if event_name in {"local_shutdown_censor", "submit_ack_unknown_censored"}:
         if payload["fill_risk_active_after"] is not None:
             raise ValueError("physical fill-risk state must be unknown after local censor")
     elif payload["fill_risk_active_after"] is None or (
@@ -770,7 +844,10 @@ def validate_order_lifecycle_journal_v2_payload(
     elif terminal_observation == "LOCAL_SHUTDOWN_CENSOR":
         if exchange_reason or censor_reason not in _LOCAL_SHUTDOWN_REASONS:
             raise ValueError("local shutdown censor classification is inconsistent")
-        if event_name != "local_shutdown_censor" or reason != censor_reason:
+        if event_name not in {
+            "local_shutdown_censor",
+            "submit_ack_unknown_censored",
+        } or reason != censor_reason:
             raise ValueError("local shutdown event and censor reason disagree")
         if str(payload["phase_after"]) == "EXCHANGE_TERMINAL":
             raise ValueError("local shutdown censor cannot assert exchange-terminal phase")
@@ -785,6 +862,7 @@ def validate_order_lifecycle_journal_v2_payload(
             "full_fill",
             "exchange_terminal",
             "local_shutdown_censor",
+            "submit_ack_unknown_censored",
         }:
             raise ValueError("terminal lifecycle event lacks terminal classification")
     else:
@@ -931,7 +1009,11 @@ class OrderLifecycleJournalV2BatchEmitter:
             sequence = int(event["sequence"])
             state = derived[sequence - 1]
             exchange_ts = _optional_exchange_ts(event["exchange_ts_ns"])
-            if self.exchange_order_id is None and str(event["event"]) != "submit":
+            if self.exchange_order_id is None and str(event["event"]) not in {
+                "submit",
+                "submit_ack_unknown",
+                "submit_ack_unknown_censored",
+            }:
                 raise ValueError("non-submit lifecycle event lacks exchange order id")
             row = OrderLifecycleJournalV2Row(
                 schema_version=ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
@@ -974,7 +1056,10 @@ class OrderLifecycleJournalV2BatchEmitter:
                 remaining_quantity_after=float(event["remaining_qty_after"]),
                 fill_risk_active_after=(
                     None
-                    if str(event["event"]) == "local_shutdown_censor"
+                    if str(event["event"]) in {
+                        "local_shutdown_censor",
+                        "submit_ack_unknown_censored",
+                    }
                     else bool(
                         str(event["phase_after"]) in _FILL_RISK_PHASES
                         and float(event["remaining_qty_after"])
@@ -984,17 +1069,21 @@ class OrderLifecycleJournalV2BatchEmitter:
                 quantity_time_exposure_visible_btc_s=float(
                     event["quantity_time_exposure_visible_btc_s"]
                 ),
-                visible_exposure_valid=True,
-                visible_exposure_complete=state.visible_complete,
-                visible_exposure_invalid_reason="",
+                visible_exposure_valid=bool(event["visible_exposure_valid"]),
+                visible_exposure_complete=bool(event["visible_exposure_complete"]),
+                visible_exposure_invalid_reason=str(
+                    event["visible_exposure_invalid_reason"]
+                ),
                 quantity_time_exposure_exchange_btc_s=(
                     float(event["quantity_time_exposure_exchange_btc_s"])
                     if event["quantity_time_exposure_exchange_btc_s"] is not None
                     else None
                 ),
                 exchange_exposure_valid=bool(event["exchange_exposure_valid"]),
-                exchange_exposure_complete=state.exchange_complete,
-                exchange_exposure_invalid_reason=(state.exchange_invalid_reason),
+                exchange_exposure_complete=bool(event["exchange_exposure_complete"]),
+                exchange_exposure_invalid_reason=str(
+                    event["exchange_exposure_invalid_reason"]
+                ),
             )
             validate_order_lifecycle_journal_v2_payload(asdict(row))
             rows.append(row)

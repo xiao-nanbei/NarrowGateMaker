@@ -3,8 +3,9 @@
 
 The frozen v1.5 plan names the predecessor ``order_lifecycle.py`` bytes.  A
 later live-journal optimization added two read-only helpers while the 40-day
-emitter was still running.  This module does not relax that plan's hash gate.
-It instead:
+emitter was still running.  The corresponding v1.6 successor bytes are kept
+as a public frozen fixture because the active lifecycle runtime has continued
+to evolve.  This module does not relax that plan's hash gate.  It instead:
 
 1. reconstructs the exact predecessor from the current successor;
 2. proves the source delta and bound F07 call surface are closed;
@@ -51,6 +52,12 @@ PARITY_SCHEMA_VERSION = "active_order_lifecycle_cif_cpp_inference_parity_report.
 PREDECESSOR_SHA256 = "447c21ef8150891e8faffefbb16665d33cf4325e214ac1e5538b902ccf137ec8"
 PREDECESSOR_SIZE_BYTES = 23_802
 SUCCESSOR_LOGICAL_PATH = "execution/order_lifecycle.py"
+FROZEN_SUCCESSOR_FIXTURE_PATH = (
+    "research/families/f07_active_order_continuation/fixtures/"
+    "order_lifecycle_v2_runtime_v1_6.py"
+)
+FROZEN_SUCCESSOR_SHA256 = "2981b6154f8e7e5aaa2af6c8f2e2720877f7ad214b2a2692f31f8af291496d33"
+FROZEN_SUCCESSOR_SIZE_BYTES = 24_333
 HELPER_NAMES = frozenset({"journal_snapshot", "latest_event"})
 
 _COPY_IMPORT = b"from copy import copy\n"
@@ -233,6 +240,19 @@ def artifact_identity(path: Path) -> dict[str, object]:
         "size_bytes": int(resolved.stat().st_size),
         "sha256": file_sha256(resolved),
     }
+
+
+def frozen_successor_path() -> Path:
+    """Return the immutable v1.6 source fixture after byte-level validation."""
+
+    path = (ROOT / FROZEN_SUCCESSOR_FIXTURE_PATH).resolve()
+    if not path.is_file():
+        raise RuntimeCompatibilityError(f"frozen v1.6 successor source is missing: {path}")
+    if path.stat().st_size != FROZEN_SUCCESSOR_SIZE_BYTES:
+        raise RuntimeCompatibilityError("frozen v1.6 successor source size differs")
+    if file_sha256(path) != FROZEN_SUCCESSOR_SHA256:
+        raise RuntimeCompatibilityError("frozen v1.6 successor source SHA256 differs")
+    return path
 
 
 def _validate_artifact(value: Mapping[str, object], *, label: str) -> Path:
@@ -485,7 +505,7 @@ def build_source_attestation(
     plan_path = predecessor_plan_path.expanduser().resolve()
     plan = _read_json(plan_path, label="predecessor execution plan")
     predecessor_artifact = _validate_predecessor_plan_structure(plan)
-    successor_path = (ROOT / SUCCESSOR_LOGICAL_PATH).resolve()
+    successor_path = frozen_successor_path()
     successor = successor_path.read_bytes()
     predecessor = reconstruct_predecessor(successor)
     semantic_diff = _source_semantic_diff(predecessor, successor)
@@ -608,7 +628,7 @@ def validate_source_attestation(
     if not isinstance(successor_reference, Mapping):
         raise RuntimeCompatibilityError("attestation successor source is missing")
     successor_path = _validate_artifact(successor_reference, label="successor source")
-    if successor_path != (ROOT / SUCCESSOR_LOGICAL_PATH).resolve():
+    if successor_path != frozen_successor_path():
         raise RuntimeCompatibilityError("attestation successor source path differs")
     successor_bytes = successor_path.read_bytes()
     reconstructed = reconstruct_predecessor(successor_bytes)
@@ -704,7 +724,16 @@ def build_successor_plan(
     plan["cache_root"] = str(resolved_cache)
     plan["prepared_at_utc"] = datetime.now(timezone.utc).isoformat()
 
-    successor_artifact = artifact_identity(ROOT / SUCCESSOR_LOGICAL_PATH)
+    current_successor_path = (ROOT / SUCCESSOR_LOGICAL_PATH).resolve()
+    current_successor = artifact_identity(current_successor_path)
+    if (
+        current_successor["sha256"] != FROZEN_SUCCESSOR_SHA256
+        or current_successor["size_bytes"] != FROZEN_SUCCESSOR_SIZE_BYTES
+    ):
+        raise RuntimeCompatibilityError(
+            "historical v1.6 successor plan cannot be rebuilt from the evolved lifecycle runtime"
+        )
+    successor_artifact = current_successor
     successor_artifact["logical_path"] = SUCCESSOR_LOGICAL_PATH
     runtime_rows = plan["global_execution_identity"]["runtime_code_artifacts"]
     for index, row in enumerate(runtime_rows):

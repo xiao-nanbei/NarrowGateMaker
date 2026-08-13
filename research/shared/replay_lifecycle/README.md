@@ -1,6 +1,6 @@
 # R: Replay, Queue, And Lifecycle
 
-Last materially modified: 2026-08-04
+Last materially modified: 2026-08-13
 
 Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
 
@@ -30,3 +30,5 @@ The current substrate is contract-complete but is not yet bound to the authorita
 See `docs/versioned_continuous_replay_substrate_v1.md` for modes, state ownership, and the distinction between continuity effects and tail-governance effects.
 
 The live quote-input atomicity successor is documented in `docs/quote_decision_snapshot_atomicity_v2_implementation_20260804.md`. It binds depth mid, the optional completed-bar pricing anchor, depth-derived quote features, bookTicker BBO, generations, split visibility/source clocks, and lock timing to one immutable requote snapshot. It is locally verified and deployment-eligible, but carries no economic or action authority.
+
+The independent [unknown-submit-ACK correctness amendment](docs/order_lifecycle_unknown_submit_ack_correctness_v1_amendment_20260813.md) is locally implemented and verified but has not been deployed. Only a structured exchange `-5022` response that explicitly says the order was not recorded may establish exact-zero exposure; timeout, response loss, malformed submit replies, REST `-2013`, and a reconciled fill with an unknown activation prefix remain censored while preserving same-side ownership. This amendment is production lifecycle correctness work, not an F05 companion, shadow, action, or research writer, and it grants no strategy or live authority by itself.

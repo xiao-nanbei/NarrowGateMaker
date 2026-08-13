@@ -68,6 +68,8 @@ class Order:
         default=None,
         repr=False,
     )
+    orphan_adoption: bool = False
+    left_truncation_reason: str = ""
 
     @property
     def is_terminal(self) -> bool:
@@ -209,6 +211,64 @@ class OrderManager:
         if rejected is not None and self._on_terminal:
             self._on_terminal(rejected, "rejected")
 
+    def mark_submit_ack_unknown(self, cid: str, reason: str) -> bool:
+        """Keep a submit in-flight until exchange/user-stream reconciliation."""
+
+        now_ns = time.time_ns()
+        pending = None
+        with self._lock:
+            order = self._orders.get(cid)
+            if order is None or order.state != OrderState.PENDING_NEW:
+                return False
+            if order.lifecycle is not None:
+                order.lifecycle.mark_submit_ack_unknown(
+                    now_ns,
+                    reason=str(reason),
+                )
+            order.update_time = now_ns / 1_000_000_000.0
+            pending = order
+            logger.error("ORDER_SUBMIT_ACK_UNKNOWN %s: %s", cid, reason)
+        if pending is not None and self._on_lifecycle_event:
+            self._on_lifecycle_event(
+                pending,
+                "submit_ack_unknown",
+                {
+                    "_local_receive_ts_ns": now_ns,
+                    "_reason": str(reason),
+                    "_point_identified": False,
+                },
+            )
+        return pending is not None
+
+    def censor_submit_ack_unknown(self, cid: str, reason: str) -> bool:
+        """Censor local observation during shutdown without releasing live ownership."""
+
+        now_ns = time.time_ns()
+        censored = None
+        with self._lock:
+            order = self._orders.get(cid)
+            if order is None or order.state != OrderState.PENDING_NEW:
+                return False
+            if order.lifecycle is not None:
+                order.lifecycle.censor_submit_ack_unknown(
+                    now_ns,
+                    reason="local_shutdown_unknown_ack",
+                )
+            order.update_time = now_ns / 1_000_000_000.0
+            censored = order
+            logger.error("ORDER_SUBMIT_ACK_CENSORED %s: %s", cid, reason)
+        if censored is not None and self._on_lifecycle_event:
+            self._on_lifecycle_event(
+                censored,
+                "submit_ack_unknown_censored",
+                {
+                    "_local_receive_ts_ns": now_ns,
+                    "_reason": str(reason),
+                    "_point_identified": False,
+                },
+            )
+        return censored is not None
+
     def mark_pending_cancel(self, cid: str):
         """Mark order as awaiting cancel confirmation."""
         now_ns = time.time_ns()
@@ -278,6 +338,51 @@ class OrderManager:
         value_ms = int(event.get("T", 0) or 0)
         return max(0, value_ms) * 1_000_000
 
+    def _apply_terminal_status_fill(
+        self,
+        order: Order,
+        event: dict,
+        *,
+        visibility_ts_ns: int,
+        exchange_ts_ns: int,
+        reconciled_unknown_prefix: bool,
+    ) -> tuple[bool, bool]:
+        """Apply quantity reported by a terminal ACK before ending its lifecycle."""
+
+        is_new_fill = self._apply_fill(order, event)
+        if not is_new_fill:
+            return False, False
+        full_fill = order.remaining_qty <= 1e-10
+        lifecycle = order.lifecycle
+        if lifecycle is None:
+            return True, full_fill
+        if lifecycle.phase == OrderLifecyclePhase.SUBMITTED:
+            if reconciled_unknown_prefix:
+                lifecycle.observe_fill_with_unknown_activation(
+                    remaining_after=order.remaining_qty,
+                    visibility_ts_ns=visibility_ts_ns,
+                    full_fill=full_fill,
+                )
+            else:
+                lifecycle.activate(
+                    visibility_ts_ns,
+                    exchange_ts_ns=exchange_ts_ns,
+                )
+                lifecycle.observe_fill(
+                    remaining_after=order.remaining_qty,
+                    visibility_ts_ns=visibility_ts_ns,
+                    exchange_ts_ns=exchange_ts_ns,
+                    full_fill=full_fill,
+                )
+        else:
+            lifecycle.observe_fill(
+                remaining_after=order.remaining_qty,
+                visibility_ts_ns=visibility_ts_ns,
+                exchange_ts_ns=exchange_ts_ns,
+                full_fill=full_fill,
+            )
+        return True, full_fill
+
     def on_order_update(self, event: dict):
         """
         Process ORDER_TRADE_UPDATE from WebSocket user_data stream.
@@ -305,6 +410,7 @@ class OrderManager:
         oid = int(event.get("i", 0))
         visibility_ts_ns = self._visibility_ts_ns(event)
         exchange_ts_ns = self._exchange_ts_ns(event)
+        reconciled_unknown_prefix = bool(event.get("_submit_ack_reconciled", False))
         terminal_reason = ""
         lifecycle_event_type = ""
 
@@ -325,12 +431,17 @@ class OrderManager:
                     self._adopted_fill = None
                     self._adopted_cancel = None
                     self._adopted_terminal = None
+                    self._adopted_lifecycle_event = None
                     self._adopt_orphan(cid, oid, event)
                     adopted_fill = self._adopted_fill
                     adopted_cancel = self._adopted_cancel
                     adopted_terminal = self._adopted_terminal
-                # Fire adopted-order callbacks outside lock
+                    adopted_lifecycle_event = self._adopted_lifecycle_event
+                # The lifecycle callback only snapshots into a bounded queue;
+                # fill/inventory callbacks retain their historical behavior.
                 if cid.startswith("mm_"):
+                    if adopted_lifecycle_event and self._on_lifecycle_event:
+                        self._on_lifecycle_event(*adopted_lifecycle_event)
                     if adopted_fill and self._on_fill:
                         self._on_fill(adopted_fill[0], adopted_fill[1])
                     if adopted_cancel and self._on_cancel:
@@ -341,6 +452,18 @@ class OrderManager:
                             adopted_terminal[1],
                         )
                 return
+
+            # A private user-stream callback does not carry the internal REST
+            # reconciliation marker.  Preserve the unknown activation prefix
+            # whenever the original submit response was indeterminate.
+            reconciled_unknown_prefix = bool(
+                reconciled_unknown_prefix
+                or (
+                    order.lifecycle is not None
+                    and order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+                    and order.lifecycle.submit_ack_unknown_observed
+                )
+            )
 
             prev_state = order.state
             is_new_fill = False
@@ -368,11 +491,17 @@ class OrderManager:
                             order.state = OrderState.PARTIALLY_FILLED
                         lifecycle_event_type = "cancel_rejected"
                     elif order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED:
-                        order.lifecycle.activate(
-                            visibility_ts_ns,
-                            exchange_ts_ns=exchange_ts_ns,
-                        )
-                        lifecycle_event_type = "activate"
+                        if reconciled_unknown_prefix:
+                            order.lifecycle.activate_with_unknown_prefix(
+                                visibility_ts_ns
+                            )
+                            lifecycle_event_type = "activate_unknown_prefix"
+                        else:
+                            order.lifecycle.activate(
+                                visibility_ts_ns,
+                                exchange_ts_ns=exchange_ts_ns,
+                            )
+                            lifecycle_event_type = "activate"
 
             elif status == "PARTIALLY_FILLED":
                 order.state = (
@@ -383,15 +512,28 @@ class OrderManager:
                 is_new_fill = self._apply_fill(order, event)
                 if is_new_fill and order.lifecycle is not None:
                     if order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED:
-                        order.lifecycle.activate(
-                            visibility_ts_ns,
+                        if reconciled_unknown_prefix:
+                            order.lifecycle.observe_fill_with_unknown_activation(
+                                remaining_after=order.remaining_qty,
+                                visibility_ts_ns=visibility_ts_ns,
+                                full_fill=False,
+                            )
+                        else:
+                            order.lifecycle.activate(
+                                visibility_ts_ns,
+                                exchange_ts_ns=exchange_ts_ns,
+                            )
+                            order.lifecycle.observe_fill(
+                                remaining_after=order.remaining_qty,
+                                visibility_ts_ns=visibility_ts_ns,
+                                exchange_ts_ns=exchange_ts_ns,
+                            )
+                    else:
+                        order.lifecycle.observe_fill(
+                            remaining_after=order.remaining_qty,
+                            visibility_ts_ns=visibility_ts_ns,
                             exchange_ts_ns=exchange_ts_ns,
                         )
-                    order.lifecycle.observe_fill(
-                        remaining_after=order.remaining_qty,
-                        visibility_ts_ns=visibility_ts_ns,
-                        exchange_ts_ns=exchange_ts_ns,
-                    )
                     lifecycle_event_type = "partial_fill"
 
             elif status == "FILLED":
@@ -403,16 +545,30 @@ class OrderManager:
                             order.lifecycle.phase
                             == OrderLifecyclePhase.SUBMITTED
                         ):
-                            order.lifecycle.activate(
-                                visibility_ts_ns,
+                            if reconciled_unknown_prefix:
+                                order.lifecycle.observe_fill_with_unknown_activation(
+                                    remaining_after=0.0,
+                                    visibility_ts_ns=visibility_ts_ns,
+                                    full_fill=True,
+                                )
+                            else:
+                                order.lifecycle.activate(
+                                    visibility_ts_ns,
+                                    exchange_ts_ns=exchange_ts_ns,
+                                )
+                                order.lifecycle.observe_fill(
+                                    remaining_after=0.0,
+                                    visibility_ts_ns=visibility_ts_ns,
+                                    exchange_ts_ns=exchange_ts_ns,
+                                    full_fill=True,
+                                )
+                        else:
+                            order.lifecycle.observe_fill(
+                                remaining_after=0.0,
+                                visibility_ts_ns=visibility_ts_ns,
                                 exchange_ts_ns=exchange_ts_ns,
+                                full_fill=True,
                             )
-                        order.lifecycle.observe_fill(
-                            remaining_after=0.0,
-                            visibility_ts_ns=visibility_ts_ns,
-                            exchange_ts_ns=exchange_ts_ns,
-                            full_fill=True,
-                        )
                     else:
                         order.lifecycle.exchange_terminal(
                             visibility_ts_ns,
@@ -424,40 +580,82 @@ class OrderManager:
                 lifecycle_event_type = "full_fill"
 
             elif status == "CANCELED":
-                order.state = OrderState.CANCELED
-                if order.lifecycle is not None:
+                is_new_fill, fill_completed = self._apply_terminal_status_fill(
+                    order,
+                    event,
+                    visibility_ts_ns=visibility_ts_ns,
+                    exchange_ts_ns=exchange_ts_ns,
+                    reconciled_unknown_prefix=reconciled_unknown_prefix,
+                )
+                order.state = OrderState.FILLED if fill_completed else OrderState.CANCELED
+                if order.lifecycle is not None and not fill_completed:
+                    if (
+                        reconciled_unknown_prefix
+                        and order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+                    ):
+                        order.lifecycle.mark_activation_unknown(
+                            reason="rest_reconcile_activation_unknown"
+                        )
                     order.lifecycle.exchange_terminal(
                         visibility_ts_ns,
-                        exchange_ts_ns=exchange_ts_ns,
+                        exchange_ts_ns=(0 if reconciled_unknown_prefix else exchange_ts_ns),
                         reason="cancel_ack",
                     )
                 self._move_to_history(order.client_order_id)
-                terminal_reason = "cancel_ack"
-                lifecycle_event_type = "cancel_ack"
+                terminal_reason = "full_fill" if fill_completed else "cancel_ack"
+                lifecycle_event_type = "full_fill" if fill_completed else "cancel_ack"
 
             elif status == "EXPIRED":
-                order.state = OrderState.EXPIRED
-                if order.lifecycle is not None:
+                is_new_fill, fill_completed = self._apply_terminal_status_fill(
+                    order,
+                    event,
+                    visibility_ts_ns=visibility_ts_ns,
+                    exchange_ts_ns=exchange_ts_ns,
+                    reconciled_unknown_prefix=reconciled_unknown_prefix,
+                )
+                order.state = OrderState.FILLED if fill_completed else OrderState.EXPIRED
+                if order.lifecycle is not None and not fill_completed:
+                    if (
+                        reconciled_unknown_prefix
+                        and order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+                    ):
+                        order.lifecycle.mark_activation_unknown(
+                            reason="rest_reconcile_activation_unknown"
+                        )
                     order.lifecycle.exchange_terminal(
                         visibility_ts_ns,
-                        exchange_ts_ns=exchange_ts_ns,
+                        exchange_ts_ns=(0 if reconciled_unknown_prefix else exchange_ts_ns),
                         reason="expired",
                     )
                 self._move_to_history(order.client_order_id)
-                terminal_reason = "expired"
-                lifecycle_event_type = "expired"
+                terminal_reason = "full_fill" if fill_completed else "expired"
+                lifecycle_event_type = "full_fill" if fill_completed else "expired"
 
             elif status == "REJECTED":
-                order.state = OrderState.REJECTED
-                if order.lifecycle is not None:
+                is_new_fill, fill_completed = self._apply_terminal_status_fill(
+                    order,
+                    event,
+                    visibility_ts_ns=visibility_ts_ns,
+                    exchange_ts_ns=exchange_ts_ns,
+                    reconciled_unknown_prefix=reconciled_unknown_prefix,
+                )
+                order.state = OrderState.FILLED if fill_completed else OrderState.REJECTED
+                if order.lifecycle is not None and not fill_completed:
+                    if (
+                        reconciled_unknown_prefix
+                        and order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+                    ):
+                        order.lifecycle.mark_activation_unknown(
+                            reason="rest_reconcile_activation_unknown"
+                        )
                     order.lifecycle.exchange_terminal(
                         visibility_ts_ns,
-                        exchange_ts_ns=exchange_ts_ns,
+                        exchange_ts_ns=(0 if reconciled_unknown_prefix else exchange_ts_ns),
                         reason="rejected",
                     )
                 self._move_to_history(order.client_order_id)
-                terminal_reason = "rejected"
-                lifecycle_event_type = "rejected"
+                terminal_reason = "full_fill" if fill_completed else "rejected"
+                lifecycle_event_type = "full_fill" if fill_completed else "rejected"
 
             order.update_time = visibility_ts_ns / 1_000_000_000.0
             logger.info(
@@ -474,7 +672,7 @@ class OrderManager:
                 lifecycle_event_type,
                 dict(event),
             )
-        if status in ("FILLED", "PARTIALLY_FILLED") and is_new_fill and self._on_fill:
+        if is_new_fill and self._on_fill:
             self._on_fill(order, event)
         if status == "CANCELED" and self._on_cancel:
             self._on_cancel(order)
@@ -533,10 +731,12 @@ class OrderManager:
                 initial_quantity=qty,
                 submitted_ts_ns=visibility_ts_ns,
             ),
+            orphan_adoption=True,
+            left_truncation_reason="exchange_callback_without_local_submit",
         )
-        order.lifecycle.activate(
+        order.lifecycle.activate_with_unknown_prefix(
             visibility_ts_ns,
-            exchange_ts_ns=exchange_ts_ns,
+            reason="orphan_adoption",
         )
         # Already inside self._lock — mutate directly, no nested lock
         self._orders[cid] = order
@@ -557,60 +757,82 @@ class OrderManager:
                     visibility_ts_ns=visibility_ts_ns,
                     exchange_ts_ns=exchange_ts_ns,
                 )
-        elif status == "FILLED":
-            order.state = OrderState.FILLED
-            is_new_fill = self._apply_fill(order, event)
-            if is_new_fill:
-                order.lifecycle.observe_fill(
-                    remaining_after=0.0,
-                    visibility_ts_ns=visibility_ts_ns,
-                    exchange_ts_ns=exchange_ts_ns,
-                    full_fill=True,
+        elif status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+            is_new_fill, fill_completed = self._apply_terminal_status_fill(
+                order,
+                event,
+                visibility_ts_ns=visibility_ts_ns,
+                exchange_ts_ns=exchange_ts_ns,
+                reconciled_unknown_prefix=False,
+            )
+            terminal_reason = {
+                "FILLED": "full_fill",
+                "CANCELED": "cancel_ack",
+                "EXPIRED": "expired",
+                "REJECTED": "rejected",
+            }[status]
+            if status == "FILLED" and not fill_completed:
+                # FILLED without a complete cumulative quantity is an invalid
+                # exchange claim.  Keep the adopted order in the active risk
+                # set instead of manufacturing a terminal quantity.
+                order.state = (
+                    OrderState.PARTIALLY_FILLED
+                    if order.filled_qty > 0.0
+                    else OrderState.OPEN
+                )
+                logger.error(
+                    "ORPHAN_FILLED_QUANTITY_INCOMPLETE cid=%s filled=%s qty=%s",
+                    cid,
+                    order.filled_qty,
+                    order.quantity,
                 )
             else:
-                order.lifecycle.exchange_terminal(
-                    visibility_ts_ns,
-                    exchange_ts_ns=exchange_ts_ns,
-                    reason="full_fill",
+                order.state = (
+                    OrderState.FILLED
+                    if fill_completed
+                    else {
+                        "CANCELED": OrderState.CANCELED,
+                        "EXPIRED": OrderState.EXPIRED,
+                        "REJECTED": OrderState.REJECTED,
+                    }.get(status, OrderState.FILLED)
                 )
-            self._move_to_history(cid)
-        elif status == "CANCELED":
-            order.state = OrderState.CANCELED
-            order.lifecycle.exchange_terminal(
-                visibility_ts_ns,
-                exchange_ts_ns=exchange_ts_ns,
-                reason="cancel_ack",
-            )
-            self._move_to_history(cid)
-        elif status == "EXPIRED":
-            order.state = OrderState.EXPIRED
-            order.lifecycle.exchange_terminal(
-                visibility_ts_ns,
-                exchange_ts_ns=exchange_ts_ns,
-                reason="expired",
-            )
-            self._move_to_history(cid)
-        elif status == "REJECTED":
-            order.state = OrderState.REJECTED
-            order.lifecycle.exchange_terminal(
-                visibility_ts_ns,
-                exchange_ts_ns=exchange_ts_ns,
-                reason="rejected",
-            )
-            self._move_to_history(cid)
+                if not fill_completed:
+                    order.lifecycle.exchange_terminal(
+                        visibility_ts_ns,
+                        exchange_ts_ns=exchange_ts_ns,
+                        reason=terminal_reason,
+                    )
+                self._move_to_history(cid)
         order.update_time = visibility_ts_ns / 1_000_000_000.0
 
         # Store fill/cancel info so caller can trigger callbacks outside lock
         self._adopted_fill = (order, event) if is_new_fill else None
         self._adopted_cancel = order if status == "CANCELED" else None
         terminal_reason = {
-            "FILLED": "full_fill",
-            "CANCELED": "cancel_ack",
-            "EXPIRED": "expired",
-            "REJECTED": "rejected",
+            "FILLED": "full_fill" if order.is_terminal else "",
+            "CANCELED": "full_fill" if order.state == OrderState.FILLED else "cancel_ack",
+            "EXPIRED": "full_fill" if order.state == OrderState.FILLED else "expired",
+            "REJECTED": "full_fill" if order.state == OrderState.FILLED else "rejected",
         }.get(status, "")
         self._adopted_terminal = (
             (order, terminal_reason) if terminal_reason else None
+        )
+        lifecycle_event_type = {
+            "NEW": "activate_unknown_prefix",
+            "PARTIALLY_FILLED": "partial_fill",
+            "FILLED": (
+                "full_fill"
+                if order.is_terminal
+                else ("partial_fill" if is_new_fill else "activate_unknown_prefix")
+            ),
+            "CANCELED": "full_fill" if order.state == OrderState.FILLED else "cancel_ack",
+            "EXPIRED": "full_fill" if order.state == OrderState.FILLED else "expired",
+            "REJECTED": "full_fill" if order.state == OrderState.FILLED else "rejected",
+        }.get(status, "")
+        self._adopted_lifecycle_event = (
+            (order, lifecycle_event_type, dict(event))
+            if lifecycle_event_type
+            else None
         )
 
     # ── queries ──
@@ -685,14 +907,13 @@ class OrderManager:
         exchange_open: bool,
         exchange_oid: int = 0,
     ) -> bool:
-        """Resolve a stale local PENDING_CANCEL using REST open-order truth.
+        """Restore a stale cancel only from an affirmatively open REST row.
 
-        If the order is absent from exchange open orders, treat the missing
-        user-stream cancel as a completed cancel.  If it is still open at the
-        exchange, restore local OPEN state so the next requote can manage it.
+        Absence from the open-order endpoint cannot distinguish cancellation,
+        fill, expiry, response loss, or temporary visibility gaps.  It must not
+        release local ownership; the caller must query the individual order.
         """
         now_ns = time.time_ns()
-        canceled_order = None
         with self._lock:
             o = self._orders.get(cid)
             if not o or o.state != OrderState.PENDING_CANCEL:
@@ -721,48 +942,53 @@ class OrderManager:
                     o.order_id,
                 )
             else:
-                o.state = OrderState.CANCELED
-                o.update_time = now_ns / 1_000_000_000.0
-                if o.lifecycle is not None:
-                    o.lifecycle.exchange_terminal(
-                        now_ns,
-                        reason="cancel_ack_reconciled",
-                    )
-                self._move_to_history(cid)
-                canceled_order = o
                 logger.warning(
-                    "STALE_PENDING_CANCEL_CLEARED %s %s→CANCELED",
+                    "STALE_PENDING_CANCEL_OPEN_ORDER_ABSENCE_UNRESOLVED %s",
                     cid,
-                    prev_state.name,
                 )
-        if canceled_order is not None:
-            if self._on_lifecycle_event:
-                self._on_lifecycle_event(
-                    canceled_order,
-                    "cancel_ack_reconciled",
-                    {"_local_receive_ts_ns": now_ns},
-                )
-            if self._on_cancel:
-                self._on_cancel(canceled_order)
-            if self._on_terminal:
-                self._on_terminal(canceled_order, "cancel_ack_reconciled")
+                return False
         return True
 
     def cancel_all_local(self):
-        """Mark all active orders as canceled (for emergency shutdown)."""
+        """Censor local shutdown without releasing unresolved submit ownership."""
         now_ns = time.time_ns()
         terminal_orders = []
+        unknown_submit_orders = []
         with self._lock:
             for cid in list(self._orders.keys()):
                 order = self._orders[cid]
+                if (
+                    order.lifecycle is not None
+                    and order.lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+                ):
+                    if not order.lifecycle.locally_censored:
+                        order.lifecycle.censor_submit_ack_unknown(
+                            now_ns,
+                            reason="local_shutdown_unknown_ack",
+                        )
+                    order.update_time = now_ns / 1_000_000_000.0
+                    unknown_submit_orders.append(order)
+                    continue
                 order.state = OrderState.CANCELED
                 if order.lifecycle is not None:
-                    order.lifecycle.exchange_terminal(
-                        now_ns,
-                        reason="local_shutdown_cancel",
-                    )
+                    if not order.lifecycle.locally_censored:
+                        order.lifecycle.local_shutdown_censor(
+                            now_ns,
+                            reason="local_shutdown_cancel",
+                        )
                 terminal_orders.append(order)
                 self._move_to_history(cid)
+        for order in unknown_submit_orders:
+            if self._on_lifecycle_event:
+                self._on_lifecycle_event(
+                    order,
+                    "submit_ack_unknown_censored",
+                    {
+                        "_local_receive_ts_ns": now_ns,
+                        "_reason": "local_shutdown_unknown_ack",
+                        "_point_identified": False,
+                    },
+                )
         for order in terminal_orders:
             if self._on_lifecycle_event:
                 self._on_lifecycle_event(

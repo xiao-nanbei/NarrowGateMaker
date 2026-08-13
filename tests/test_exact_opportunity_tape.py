@@ -4,6 +4,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -18,7 +19,7 @@ from research.families.f04_external_market_alpha.audit.exact_opener_opportunity_
     validate_exact_opportunity_tape,
 )
 from strategy.maker_engine import MakerEngine
-from strategy.order_manager import OrderManager, Side
+from strategy.order_manager import OrderManager, OrderState, Side
 
 
 def _row(event_type: str, event_ts_ns: int, side: str, **updates):
@@ -302,11 +303,453 @@ def test_order_manager_emits_native_lifecycle_callbacks(
 
 
 class _Rest:
-    def new_order(self, **_kwargs):
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def new_order(self, **kwargs):
+        self.calls.append(dict(kwargs))
         return {"orderId": 42, "status": "NEW"}
 
     def cancel_order(self, **_kwargs):
         return {}
+
+
+class _SubmitTimeoutRest:
+    def new_order(self, **_kwargs):
+        raise TimeoutError("submit response lost")
+
+
+class _ExchangeError(RuntimeError):
+    def __init__(self, code: int, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.exchange_response_authoritative = True
+
+
+class _StructuredRejectRest:
+    def __init__(self, code: int, message: str) -> None:
+        self.code = code
+        self.message = message
+
+    def new_order(self, **_kwargs):
+        raise _ExchangeError(self.code, self.message)
+
+
+class _MessageOnlyRejectRest:
+    def new_order(self, **_kwargs):
+        raise RuntimeError("exchange said -5022 but supplied no structured code")
+
+
+class _MalformedSubmitRest:
+    def __init__(self, response: object) -> None:
+        self.response = response
+
+    def new_order(self, **_kwargs):
+        return self.response
+
+
+class _QueryRest:
+    def __init__(self, response=None, error: BaseException | None = None) -> None:
+        self.response = response
+        self.error = error
+
+    def query_order(self, **_kwargs):
+        if self.error is not None:
+            raise self.error
+        return dict(self.response or {})
+
+
+class _BlockingSubmitRest:
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.calls: list[dict[str, object]] = []
+
+    def new_order(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        self.entered.set()
+        assert self.release.wait(timeout=5.0)
+        return {"orderId": 43, "status": "NEW"}
+
+
+def _bare_engine(rest) -> MakerEngine:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.cfg.symbol = "BTCUSDC"
+    engine.rest = rest
+    engine._qty_precision = 3
+    engine._price_precision = 1
+    engine._order_ref_lock = threading.RLock()
+    engine._order_context_lock = threading.RLock()
+    engine._order_policy_context = {}
+    engine._bid_cid = None
+    engine._ask_cid = None
+    engine._close_gtx_rejects = 0
+    engine._record_exact_order_event = lambda *_args, **_kwargs: None
+    engine._log_order_outcome = lambda *_args, **_kwargs: None
+    engine._record_perf_rest_latency = lambda *_args, **_kwargs: None
+    engine.orders = OrderManager()
+    return engine
+
+
+def test_submit_timeout_stays_pending_for_reconcile_instead_of_zero_exposure() -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert cid is not None
+    assert engine._bid_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    snapshot = engine.orders.lifecycle_snapshot(cid)
+    assert snapshot is not None
+    assert snapshot["phase"] == "SUBMITTED"
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
+    assert engine.orders.lifecycle_events(cid)[-1]["event"] == "submit_ack_unknown"
+
+
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_structured_gtx_minus_5022_is_exact_zero_exposure(side: Side) -> None:
+    engine = _bare_engine(
+        _StructuredRejectRest(-5022, "Post Only order will be rejected")
+    )
+
+    cid = engine._place_order("BTCUSDC", side, 99.9, 0.001)
+
+    assert cid is None
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) is None
+    rejected = next(iter(engine.orders._history.values()))
+    snapshot = rejected.lifecycle.snapshot()
+    assert rejected.state == OrderState.REJECTED
+    assert snapshot["terminal_reason"] == "rejected"
+    assert snapshot["exchange_exposure_complete"] is True
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == 0.0
+
+
+def test_message_only_minus_5022_remains_unknown_and_side_owned() -> None:
+    engine = _bare_engine(_MessageOnlyRejectRest())
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert cid is not None
+    assert engine._bid_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    assert engine.orders.lifecycle_snapshot(cid)["exchange_exposure_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"status": "NEW"},
+        {"orderId": 88},
+        {"orderId": "not-an-integer", "status": "NEW"},
+    ],
+)
+@pytest.mark.parametrize("reducing", [False, True])
+def test_malformed_submit_response_remains_pending_and_owned(
+    response: object,
+    reducing: bool,
+) -> None:
+    engine = _bare_engine(_MalformedSubmitRest(response))
+
+    if reducing:
+        engine._place_close_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+        cid = engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+
+    assert cid is not None
+    assert engine._ask_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    snapshot = engine.orders.lifecycle_snapshot(cid)
+    assert engine.orders.lifecycle_events(cid)[-1]["event"] == "submit_ack_unknown"
+    assert snapshot["exchange_exposure_complete"] is False
+
+
+def test_structured_gtx_minus_5022_close_is_exact_zero_exposure() -> None:
+    engine = _bare_engine(
+        _StructuredRejectRest(-5022, "Post Only order will be rejected")
+    )
+
+    engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert engine._bid_cid is None
+    rejected = next(iter(engine.orders._history.values()))
+    snapshot = rejected.lifecycle.snapshot()
+    assert rejected.state == OrderState.REJECTED
+    assert snapshot["exchange_exposure_complete"] is True
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == 0.0
+
+
+@pytest.mark.parametrize("response", [{}, {"orderId": 89}])
+def test_emergency_close_unknown_response_retains_reducing_ownership(
+    response: object,
+) -> None:
+    engine = _bare_engine(_MalformedSubmitRest(response))
+    engine.inventory = SimpleNamespace(net_position=0.001)
+    engine._running = True
+
+    engine._emergency_close(100.0)
+
+    cid = engine._ask_cid
+    assert engine.is_running is False
+    assert cid is not None
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    snapshot = engine.orders.lifecycle_snapshot(cid)
+    assert engine.orders.lifecycle_events(cid)[-1]["event"] == "submit_ack_unknown"
+    assert snapshot["exchange_exposure_complete"] is False
+
+
+def test_emergency_close_timeout_retains_reducing_ownership() -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+    engine.inventory = SimpleNamespace(net_position=-0.001)
+    engine._running = True
+
+    engine._emergency_close(100.0)
+
+    cid = engine._bid_cid
+    assert engine.is_running is False
+    assert cid is not None
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    assert engine.orders.lifecycle_snapshot(cid)["exchange_exposure_complete"] is False
+
+
+def test_rest_minus_2013_cannot_release_unknown_submit_ownership() -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+    cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    assert cid is not None
+    engine.rest = _QueryRest(
+        error=_ExchangeError(-2013, "Order does not exist")
+    )
+
+    resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
+
+    assert resolution == "exchange_not_found_ack_still_unknown"
+    assert engine._ask_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    snapshot = engine.orders.lifecycle_snapshot(cid)
+    assert snapshot["phase"] == "SUBMITTED"
+    assert snapshot["exchange_exposure_complete"] is False
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
+
+
+def test_rest_minus_2013_cannot_release_pending_cancel_ownership() -> None:
+    engine = _bare_engine(
+        _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
+    )
+    cid = engine.orders.create_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    engine.orders.confirm_new(cid, 71)
+    engine.orders.mark_pending_cancel(cid)
+    engine._ask_cid = cid
+
+    resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
+
+    assert resolution == "exchange_not_found_terminal_still_unknown"
+    assert engine._ask_cid == cid
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_CANCEL
+
+
+def test_pending_cancel_reconcile_applies_fill_before_releasing_ownership() -> None:
+    engine = _bare_engine(
+        _QueryRest(
+            response={
+                "symbol": "BTCUSDC",
+                "clientOrderId": "pending-cancel",
+                "side": "BUY",
+                "status": "FILLED",
+                "orderId": 72,
+                "price": "99.9",
+                "origQty": "0.001",
+                "executedQty": "0.001",
+                "avgPrice": "99.8",
+                "updateTime": 1_900_000_000_000,
+            }
+        )
+    )
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.rest.response["clientOrderId"] = cid
+    engine.orders.confirm_new(cid, 72)
+    engine.orders.mark_pending_cancel(cid)
+    engine._bid_cid = cid
+
+    resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
+
+    order = engine.orders.get_order(cid)
+    assert resolution == "exchange_status_filled_reconciled"
+    assert order is not None
+    assert order.state == OrderState.FILLED
+    assert order.filled_qty == pytest.approx(0.001)
+    assert engine.orders.active_count() == 0
+
+
+def test_same_side_orphan_conflict_stops_quoting_and_keeps_both_orders() -> None:
+    engine = _bare_engine(_Rest())
+    engine._running = True
+    engine.orders = OrderManager(on_lifecycle_event=engine._on_order_lifecycle_event)
+    tracked = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(tracked, 41)
+    engine._bid_cid = tracked
+
+    engine.orders.on_order_update(
+        {
+            "s": "BTCUSDC",
+            "c": "mm_B_conflicting_orphan",
+            "S": "BUY",
+            "X": "NEW",
+            "i": 42,
+            "p": "99.8",
+            "q": "0.001",
+            "T": 1_900_000_000_000,
+            "_local_receive_ts_ns": 1_900_000_100_000_000_000,
+        }
+    )
+
+    assert engine.is_running is False
+    assert engine._bid_cid == tracked
+    assert {
+        order.client_order_id for order in engine.orders.get_active_by_side(Side.BUY)
+    } == {tracked, "mm_B_conflicting_orphan"}
+
+
+def test_rest_in_flight_orphan_cannot_escape_same_side_ownership_guard() -> None:
+    rest = _BlockingSubmitRest()
+    engine = _bare_engine(rest)
+    engine._running = True
+    engine.orders = OrderManager(on_lifecycle_event=engine._on_order_lifecycle_event)
+    result: dict[str, str | None] = {}
+
+    submit = threading.Thread(
+        target=lambda: result.setdefault(
+            "cid",
+            engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001),
+        )
+    )
+    submit.start()
+    assert rest.entered.wait(timeout=5.0)
+    reserved_cid = engine._ask_cid
+    assert reserved_cid is not None
+
+    engine.orders.on_order_update(
+        {
+            "s": "BTCUSDC",
+            "c": "mm_S_inflight_orphan",
+            "S": "SELL",
+            "X": "NEW",
+            "i": 44,
+            "p": "100.2",
+            "q": "0.001",
+            "T": 1_900_000_000_000,
+            "_local_receive_ts_ns": 1_900_000_100_000_000_000,
+        }
+    )
+    assert engine._order_submit_fail_closed is True
+    rest.release.set()
+    submit.join(timeout=5.0)
+
+    assert not submit.is_alive()
+    assert result["cid"] == reserved_cid
+    assert engine.is_running is False
+    assert engine._ask_cid == reserved_cid
+    assert {
+        order.client_order_id for order in engine.orders.get_active_by_side(Side.SELL)
+    } == {reserved_cid, "mm_S_inflight_orphan"}
+    assert len(rest.calls) == 1
+
+    assert engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001) is None
+    engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert len(rest.calls) == 1
+    assert engine.orders.get_active_by_side(Side.BUY) == []
+
+
+@pytest.mark.parametrize("reducing", (False, True))
+def test_latched_conflict_between_reservation_and_rest_aborts_submit(
+    reducing: bool,
+) -> None:
+    rest = _Rest()
+    engine = _bare_engine(rest)
+    engine._running = True
+    engine.orders = OrderManager(on_lifecycle_event=engine._on_order_lifecycle_event)
+    reserve = engine._reserve_side_order_ownership
+
+    def reserve_then_latch(*, side: Side, cid: str) -> bool:
+        admitted = reserve(side=side, cid=cid)
+        engine._order_submit_fail_closed = True
+        engine._running = False
+        return admitted
+
+    engine._reserve_side_order_ownership = reserve_then_latch
+    if reducing:
+        result = engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    else:
+        result = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert result is None
+    assert rest.calls == []
+    assert engine._bid_cid is None
+    assert engine.orders.active_count() == 0
+
+
+@pytest.mark.parametrize(
+    ("status", "executed_qty", "expected_state"),
+    [
+        ("NEW", "0", OrderState.OPEN),
+        ("PARTIALLY_FILLED", "0.0004", OrderState.PARTIALLY_FILLED),
+        ("FILLED", "0.001", OrderState.FILLED),
+    ],
+)
+def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
+    status: str,
+    executed_qty: str,
+    expected_state: OrderState,
+) -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    engine.rest = _QueryRest(
+        response={
+            "symbol": "BTCUSDC",
+            "clientOrderId": cid,
+            "side": "BUY",
+            "status": status,
+            "orderId": 77,
+            "price": "99.9",
+            "origQty": "0.001",
+            "executedQty": executed_qty,
+            "avgPrice": "99.8" if executed_qty != "0" else "0",
+            "updateTime": 1_900_000_000_000,
+        }
+    )
+
+    resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
+
+    order = engine.orders.get_order(cid)
+    snapshot = order.lifecycle.snapshot()
+    assert resolution == f"exchange_status_{status.lower()}_reconciled"
+    assert order.state == expected_state
+    assert order.filled_qty == pytest.approx(float(executed_qty))
+    assert snapshot["activation_ts_ns"] == 0
+    assert snapshot["activation_exchange_ts_ns"] == 0
+    assert snapshot["first_fill_exchange_ts_ns"] == 0
+    assert snapshot["terminal_exchange_ts_ns"] == 0
+    assert snapshot["visible_exposure_valid"] is False
+    assert snapshot["exchange_exposure_valid"] is False
+    assert snapshot["visible_exposure_complete"] is False
+    assert snapshot["exchange_exposure_complete"] is False
+
+
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_reducing_close_submit_timeout_remains_pending_and_owned(side: Side) -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+
+    engine._place_close_order("BTCUSDC", side, 99.9, 0.001)
+
+    cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    assert cid is not None
+    assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
+    snapshot = engine.orders.lifecycle_snapshot(cid)
+    assert snapshot["phase"] == "SUBMITTED"
+    assert snapshot["exchange_exposure_complete"] is False
 
 
 def test_live_producer_links_submit_and_cancel_to_origin_decision(
@@ -363,7 +806,7 @@ def test_live_producer_links_submit_and_cancel_to_origin_decision(
         record_requote_perf=False,
     )
     assert cid
-    assert engine._cancel_order(
+    assert not engine._cancel_order(
         cid,
         record_requote_perf=False,
         trigger_decision_id="g-next:BUY",

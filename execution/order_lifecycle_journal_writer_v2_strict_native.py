@@ -52,7 +52,14 @@ _EXCHANGE_TERMINAL_REASONS = frozenset(
         "rejected",
     }
 )
-_LOCAL_SHUTDOWN_REASONS = frozenset({"administrative_cancel", "local_shutdown_cancel", "shutdown"})
+_LOCAL_SHUTDOWN_REASONS = frozenset(
+    {
+        "administrative_cancel",
+        "local_shutdown_cancel",
+        "local_shutdown_unknown_ack",
+        "shutdown",
+    }
+)
 
 JournalStorageFormat = Literal["parquet", "jsonl"]
 FaultInjector = Callable[[str, Mapping[str, Any]], None]
@@ -181,7 +188,10 @@ def _validate_terminal_semantics(payloads: Sequence[Mapping[str, Any]]) -> None:
         elif observation == "LOCAL_SHUTDOWN_CENSOR":
             if local_reason not in _LOCAL_SHUTDOWN_REASONS or exchange_reason:
                 raise ValueError("unsupported local shutdown censor reason")
-            if event != "local_shutdown_censor":
+            if event not in {
+                "local_shutdown_censor",
+                "submit_ack_unknown_censored",
+            }:
                 raise ValueError("local shutdown censor requires an explicit lifecycle event")
             local_censor_positions.append(index)
         elif observation != "NONE":

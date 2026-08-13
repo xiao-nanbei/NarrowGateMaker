@@ -207,6 +207,184 @@ def test_unknown_terminal_reason_fails_before_terminal_transition() -> None:
     assert lifecycle.fill_risk_active is True
 
 
+def test_submit_ack_unknown_remains_submitted_until_authoritative_activation() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(
+        initial_quantity=0.001,
+        submitted_ts_ns=1_000_000_000,
+    )
+    lifecycle.mark_submit_ack_unknown(
+        2_000_000_000,
+        reason="transport_timeout",
+    )
+
+    assert lifecycle.phase == OrderLifecyclePhase.SUBMITTED
+    assert lifecycle.exchange_exposure_btc_s() is None
+    assert lifecycle.events()[-1]["event"] == "submit_ack_unknown"
+
+    lifecycle.activate(3_000_000_000, exchange_ts_ns=2_500_000_000)
+    assert lifecycle.phase == OrderLifecyclePhase.ACTIVE
+    assert lifecycle.visible_exposure_valid is False
+    assert lifecycle.exchange_exposure_valid is False
+    assert lifecycle.activation_ts_ns == 3_000_000_000
+
+
+def test_reconciled_unknown_submit_can_be_censored_but_not_zero_encoded() -> None:
+    manager = OrderManager()
+    cid = manager.create_order("BTCUSDC", Side.SELL, 100.0, 0.001)
+    assert manager.mark_submit_ack_unknown(cid, "response_lost") is True
+    assert manager.censor_submit_ack_unknown(cid, "terminal_without_private_callback")
+
+    snapshot = manager.lifecycle_snapshot(cid)
+    assert snapshot is not None
+    assert snapshot["phase"] == OrderLifecyclePhase.SUBMITTED.value
+    assert snapshot["locally_censored"] is True
+    assert snapshot["terminal_policy_route"] == ""
+    assert snapshot["visible_exposure_valid"] is False
+    assert snapshot["exchange_exposure_complete"] is False
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
+    assert manager.lifecycle_events(cid)[-1]["event"] == "submit_ack_unknown_censored"
+    order = manager.get_order(cid)
+    assert order is not None
+    assert order.state == OrderState.PENDING_NEW
+    assert manager.get_active_by_side(Side.SELL) == [order]
+
+
+def test_shutdown_censor_keeps_unknown_submit_in_active_ownership() -> None:
+    terminal = []
+    manager = OrderManager(on_terminal=lambda order, reason: terminal.append((order, reason)))
+    cid = manager.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert manager.mark_submit_ack_unknown(cid, "response_lost") is True
+
+    manager.cancel_all_local()
+
+    order = manager.get_order(cid)
+    assert order is not None
+    assert order.state == OrderState.PENDING_NEW
+    assert manager.get_active_by_side(Side.BUY) == [order]
+    assert terminal == []
+    snapshot = manager.lifecycle_snapshot(cid)
+    assert snapshot is not None
+    assert snapshot["locally_censored"] is True
+    assert snapshot["exchange_exposure_complete"] is False
+    assert manager.lifecycle_events(cid)[-1]["event"] == "submit_ack_unknown_censored"
+
+
+def test_orphan_adoption_is_left_truncated_without_fabricated_activation_clock() -> None:
+    lifecycle_callbacks = []
+    manager = OrderManager(
+        on_lifecycle_event=lambda order, event, payload: lifecycle_callbacks.append(
+            (order, event, payload)
+        )
+    )
+
+    manager.on_order_update(
+        {
+            "s": "BTCUSDC",
+            "c": "mm_B_restart_orphan",
+            "S": "BUY",
+            "X": "NEW",
+            "i": 17,
+            "p": "99.9",
+            "q": "0.001",
+            "T": 1_900_000_000_000,
+            "_local_receive_ts_ns": 1_900_000_100_000_000_000,
+        }
+    )
+
+    order = manager.get_order("mm_B_restart_orphan")
+    assert order is not None
+    assert order.orphan_adoption is True
+    assert order.left_truncation_reason == "exchange_callback_without_local_submit"
+    snapshot = manager.lifecycle_snapshot(order.client_order_id)
+    assert snapshot is not None
+    assert snapshot["phase"] == OrderLifecyclePhase.ACTIVE.value
+    assert snapshot["activation_ts_ns"] == 0
+    assert snapshot["activation_exchange_ts_ns"] == 0
+    assert snapshot["visible_exposure_valid"] is False
+    assert snapshot["exchange_exposure_valid"] is False
+    assert lifecycle_callbacks[0][1] == "activate_unknown_prefix"
+
+
+@pytest.mark.parametrize(
+    ("status", "executed_qty", "expected_state"),
+    [
+        ("PARTIALLY_FILLED", "0.0004", OrderState.PARTIALLY_FILLED),
+        ("FILLED", "0.001", OrderState.FILLED),
+        ("EXPIRED", "0.0004", OrderState.EXPIRED),
+    ],
+)
+def test_private_fill_after_unknown_submit_preserves_unknown_activation_prefix(
+    status: str,
+    executed_qty: str,
+    expected_state: OrderState,
+) -> None:
+    manager = OrderManager()
+    cid = manager.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert manager.mark_submit_ack_unknown(cid, "response_lost")
+
+    manager.on_order_update(
+        {
+            "s": "BTCUSDC",
+            "c": cid,
+            "S": "BUY",
+            "X": status,
+            "i": 77,
+            "p": "99.9",
+            "q": "0.001",
+            "z": executed_qty,
+            "L": "99.8",
+            "ap": "99.8",
+            "T": 1_900_000_000_000,
+            "_local_receive_ts_ns": 1_900_000_100_000_000_000,
+        }
+    )
+
+    order = manager.get_order(cid)
+    assert order is not None
+    assert order.state == expected_state
+    assert order.filled_qty == pytest.approx(float(executed_qty))
+    snapshot = manager.lifecycle_snapshot(cid)
+    assert snapshot is not None
+    assert snapshot["activation_ts_ns"] == 0
+    assert snapshot["activation_exchange_ts_ns"] == 0
+    assert snapshot["visible_exposure_valid"] is False
+    assert snapshot["exchange_exposure_valid"] is False
+
+
+def test_orphan_expiry_preserves_cumulative_fill_before_terminal() -> None:
+    fills = []
+    manager = OrderManager(on_fill=lambda order, event: fills.append((order, event)))
+
+    manager.on_order_update(
+        {
+            "s": "BTCUSDC",
+            "c": "mm_S_restart_partial_expiry",
+            "S": "SELL",
+            "X": "EXPIRED",
+            "i": 91,
+            "p": "100.1",
+            "q": "0.001",
+            "z": "0.0004",
+            "L": "100.1",
+            "ap": "100.1",
+            "T": 1_900_000_000_000,
+            "_local_receive_ts_ns": 1_900_000_100_000_000_000,
+        }
+    )
+
+    order = manager.get_order("mm_S_restart_partial_expiry")
+    assert order is not None
+    assert order.state == OrderState.EXPIRED
+    assert order.filled_qty == pytest.approx(0.0004)
+    assert order.remaining_qty == pytest.approx(0.0006)
+    assert len(fills) == 1
+    snapshot = manager.lifecycle_snapshot(order.client_order_id)
+    assert snapshot is not None
+    assert snapshot["terminal_reason"] == "expired"
+    assert snapshot["activation_ts_ns"] == 0
+    assert snapshot["visible_exposure_valid"] is False
+
+
 def test_cancel_reject_restores_partial_fill_phase_and_exposure() -> None:
     lifecycle = QuantityWeightedOrderLifecycle(
         initial_quantity=0.001,

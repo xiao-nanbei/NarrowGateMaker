@@ -394,6 +394,16 @@ def start_engine_with_prospective_collection(
     """Start warmup, bind collection, then permit the first WS event."""
 
     engine.start()
+    startup_open_orders = _initial_exchange_open_orders(rest, symbol=cfg.symbol)
+    if startup_open_orders:
+        raise RuntimeError(
+            "startup open-order ownership did not converge after cancel"
+        )
+    # The pre-start position sync can become stale if a predecessor order fills
+    # while startup cancellation is converging.  Once zero open orders is
+    # authoritative, require one more account-position snapshot before the
+    # epoch or user stream can become visible.
+    engine.sync_position(required=True)
     epoch, writer = initialize_prospective_lifecycle_collection(
         cfg=cfg,
         engine=engine,
@@ -472,6 +482,25 @@ class DryRunClient:
     def cancel_open_orders(self, **kwargs):
         self._logger.info(f"[DRY] CANCEL_ALL {kwargs}")
         return []
+
+    def get_orders(self, **kwargs):
+        self._logger.info(f"[DRY] GET_OPEN_ORDERS {kwargs}")
+        return []
+
+    def query_order(self, **kwargs):
+        self._logger.info(f"[DRY] QUERY_ORDER {kwargs}")
+        return {
+            "symbol": self.cfg.symbol,
+            "clientOrderId": kwargs.get("origClientOrderId", ""),
+            "orderId": self._order_id,
+            "status": "NEW",
+            "side": "BUY",
+            "price": "0",
+            "origQty": "0",
+            "executedQty": "0",
+            "avgPrice": "0",
+            "updateTime": int(time.time() * 1000.0),
+        }
 
     def get_position_risk(self, **kwargs):
         return [{"symbol": self.cfg.symbol,
@@ -727,52 +756,31 @@ def main():
                 engine.sync_position()
                 last_sync = now
 
-            # Stale order cleanup (PENDING_NEW stuck > 30s)
+            # Stale submit reconciliation. An unknown REST response must never
+            # be rewritten as a confirmed pre-activation rejection.
             if now - last_stale >= stale_interval:
                 stale = engine.orders.get_stale_orders(max_age=30.0)
                 for o in stale:
                     logger.warning(f"STALE order {o.client_order_id} "
                                    f"stuck in PENDING_NEW for "
-                                   f"{now - o.create_time:.0f}s, rejecting")
-                    engine.orders.confirm_rejected(
-                        o.client_order_id, "STALE_TIMEOUT")
+                                   f"{now - o.create_time:.0f}s, reconciling")
+                    resolution = engine.reconcile_pending_new_order(o)
+                    logger.warning(
+                        "STALE_PENDING_NEW_RECONCILE cid=%s resolution=%s",
+                        o.client_order_id,
+                        resolution,
+                    )
                 stale_cancel = engine.orders.get_stale_pending_cancel_orders(max_age=30.0)
-                if stale_cancel:
-                    open_orders = None
-                    get_orders = getattr(rest, "get_orders", None)
-                    if callable(get_orders):
-                        try:
-                            open_orders = get_orders(symbol=cfg.symbol)
-                        except Exception as e:
-                            logger.warning(
-                                "STALE_PENDING_CANCEL_RECONCILE_FAILED count=%d err=%s",
-                                len(stale_cancel),
-                                e,
-                            )
-                    if open_orders is not None:
-                        open_by_cid = {
-                            str(o.get("clientOrderId", "")): o
-                            for o in open_orders
-                            if str(o.get("clientOrderId", ""))
-                        }
-                        for o in stale_cancel:
-                            exchange_order = open_by_cid.get(o.client_order_id)
-                            exchange_oid = 0
-                            if exchange_order is not None:
-                                try:
-                                    exchange_oid = int(exchange_order.get("orderId", 0) or 0)
-                                except Exception:
-                                    exchange_oid = 0
-                            reconciled = engine.orders.reconcile_pending_cancel(
-                                o.client_order_id,
-                                exchange_open=exchange_order is not None,
-                                exchange_oid=exchange_oid,
-                            )
-                            if reconciled and exchange_order is not None:
-                                engine.record_reconciled_order_lifecycle(
-                                    o.client_order_id,
-                                    "cancel_rejected_reconciled",
-                                )
+                for o in stale_cancel:
+                    # Open-order absence is not a terminal ACK.  Query the
+                    # individual order so cumulative fills and the exact
+                    # terminal status are reconciled before ownership release.
+                    resolution = engine.reconcile_pending_cancel_order(o)
+                    logger.warning(
+                        "STALE_PENDING_CANCEL_RECONCILE cid=%s resolution=%s",
+                        o.client_order_id,
+                        resolution,
+                    )
                 last_stale = now
 
             # Health check
@@ -1126,8 +1134,8 @@ def main():
         logger.critical(f"Fatal error: {e}", exc_info=True)
     finally:
         logger.info("Shutting down...")
-        engine.stop()
         ws.stop()
+        engine.stop()
         logger.info("Shutdown complete")
 
 

@@ -1089,6 +1089,7 @@ class MakerEngine:
 
         # State
         self._running = False
+        self._order_submit_fail_closed = False
         self._last_requote_time = 0.0
         self._cooldown_until = 0.0
         self._requote_count = 0
@@ -2526,6 +2527,30 @@ class MakerEngine:
         event_type: str,
         event: dict[str, Any],
     ) -> None:
+        if bool(getattr(order, "orphan_adoption", False)) and not bool(
+            getattr(order, "is_terminal", False)
+        ):
+            with self._order_ref_lock:
+                current_cid = self._bid_cid if order.side == Side.BUY else self._ask_cid
+                orphan_cid = str(order.client_order_id)
+                if current_cid is None or current_cid == orphan_cid:
+                    if order.side == Side.BUY:
+                        self._bid_cid = orphan_cid
+                    else:
+                        self._ask_cid = orphan_cid
+                else:
+                    # Two active same-side orders cannot be represented by the
+                    # single-owner quote loop.  Keep both in OrderManager for
+                    # reconciliation and stop new quoting immediately.
+                    self._order_submit_fail_closed = True
+                    self._running = False
+                    logger.critical(
+                        "ORDER_OWNERSHIP_CONFLICT side=%s tracked=%s orphan=%s; "
+                        "quoting stopped pending operator reconciliation",
+                        order.side.value,
+                        current_cid,
+                        orphan_cid,
+                    )
         self._record_exact_order_event(order, event_type, event)
 
     def record_reconciled_order_lifecycle(
@@ -5835,7 +5860,11 @@ class MakerEngine:
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
             )
-            self._bid_cid = None
+            if bid_cancel_requested:
+                self._bid_cid = None
+            else:
+                bid_needs_update = False
+                bid_pending_coalesce = True
         if ask_cancel_first and ask_alive:
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
@@ -5847,7 +5876,11 @@ class MakerEngine:
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
             )
-            self._ask_cid = None
+            if ask_cancel_requested:
+                self._ask_cid = None
+            else:
+                ask_needs_update = False
+                ask_pending_coalesce = True
 
         bid_action = "none"
         ask_action = "none"
@@ -6623,17 +6656,199 @@ class MakerEngine:
             ),
         )
 
+    @staticmethod
+    def _exchange_error_code(error: BaseException) -> int | None:
+        """Return a code only when its exchange-response provenance is explicit."""
+
+        try:
+            from binance.error import ClientError
+        except ImportError:  # pragma: no cover - production dependency is required
+            ClientError = ()  # type: ignore[assignment,misc]
+
+        authoritative = isinstance(error, ClientError) or bool(
+            getattr(error, "exchange_response_authoritative", False)
+        )
+        if not authoritative:
+            return None
+
+        for attribute in ("error_code", "code"):
+            value = getattr(error, attribute, None)
+            try:
+                if value is not None:
+                    return int(value)
+            except (TypeError, ValueError):
+                pass
+        return None
+
+    @staticmethod
+    def _validated_submit_response(
+        response: Any,
+        *,
+        route: str,
+    ) -> tuple[dict[str, Any], int, str]:
+        """Require an explicit exchange order identity and status after submit."""
+
+        if not isinstance(response, Mapping):
+            raise RuntimeError(f"malformed {route} response: expected mapping")
+        normalized = dict(response)
+        status = str(normalized.get("status") or "").strip().upper()
+        try:
+            order_id = int(normalized.get("orderId") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"malformed {route} response: invalid orderId"
+            ) from exc
+        missing = []
+        if not status:
+            missing.append("status")
+        if order_id <= 0:
+            missing.append("orderId")
+        if missing:
+            raise RuntimeError(
+                f"malformed {route} response: missing {','.join(missing)}"
+            )
+        return normalized, order_id, status
+
+    def _hold_submit_with_unknown_ack(
+        self,
+        *,
+        cid: str,
+        side: Side,
+        error: BaseException,
+    ) -> None:
+        if not self.orders.mark_submit_ack_unknown(cid, str(error)):
+            raise RuntimeError("submit ACK became unknown outside PENDING_NEW")
+        self._verify_side_order_ownership(side=side, cid=cid, phase="submit_ack_unknown")
+
+    def _side_order_reference(self, side: Side) -> Optional[str]:
+        return self._bid_cid if side == Side.BUY else self._ask_cid
+
+    def _set_side_order_reference(self, side: Side, cid: Optional[str]) -> None:
+        if side == Side.BUY:
+            self._bid_cid = cid
+        else:
+            self._ask_cid = cid
+
+    def _same_side_nonterminal_cids(self, side: Side) -> tuple[str, ...]:
+        orders = (
+            self.orders.get_bid_orders()
+            if side == Side.BUY
+            else self.orders.get_ask_orders()
+        )
+        return tuple(
+            str(order.client_order_id)
+            for order in orders
+            if not bool(getattr(order, "is_terminal", False))
+        )
+
+    def _stop_for_side_ownership_conflict(
+        self,
+        *,
+        side: Side,
+        cid: str,
+        phase: str,
+        current_cid: Optional[str],
+        active_cids: tuple[str, ...],
+    ) -> None:
+        self._order_submit_fail_closed = True
+        self._running = False
+        logger.critical(
+            "ORDER_OWNERSHIP_CONFLICT side=%s phase=%s candidate=%s tracked=%s "
+            "active=%s; quoting stopped pending operator reconciliation",
+            side.value,
+            phase,
+            cid,
+            current_cid or "none",
+            ",".join(active_cids) or "none",
+        )
+
+    def _reserve_side_order_ownership(self, *, side: Side, cid: str) -> bool:
+        """Reserve the single-owner side before the REST request can become visible."""
+
+        active_cids = self._same_side_nonterminal_cids(side)
+        other_active = tuple(value for value in active_cids if value != cid)
+        with self._order_ref_lock:
+            current_cid = self._side_order_reference(side)
+            if current_cid not in {None, cid} or other_active:
+                self._stop_for_side_ownership_conflict(
+                    side=side,
+                    cid=cid,
+                    phase="pre_submit_reservation",
+                    current_cid=current_cid,
+                    active_cids=active_cids,
+                )
+                return False
+            self._set_side_order_reference(side, cid)
+        return True
+
+    def _verify_side_order_ownership(self, *, side: Side, cid: str, phase: str) -> bool:
+        """Recheck the pointer and all same-side lifecycles after a submit transition."""
+
+        active_cids = self._same_side_nonterminal_cids(side)
+        other_active = tuple(value for value in active_cids if value != cid)
+        with self._order_ref_lock:
+            current_cid = self._side_order_reference(side)
+            if current_cid not in {None, cid} or other_active:
+                self._stop_for_side_ownership_conflict(
+                    side=side,
+                    cid=cid,
+                    phase=phase,
+                    current_cid=current_cid,
+                    active_cids=active_cids,
+                )
+                return False
+            self._set_side_order_reference(side, cid)
+        return True
+
+    def _release_side_order_ownership(self, *, side: Side, cid: str) -> None:
+        with self._order_ref_lock:
+            if self._side_order_reference(side) == cid:
+                self._set_side_order_reference(side, None)
+
+    def _abort_reserved_submit_if_fail_closed(self, *, side: Side, cid: str) -> bool:
+        """Reject a locally reserved order if a conflict latched before REST."""
+
+        with self._order_ref_lock:
+            blocked = bool(getattr(self, "_order_submit_fail_closed", False))
+        if not blocked:
+            return False
+        self.orders.confirm_rejected(
+            cid,
+            "local submit blocked by latched order-ownership conflict",
+        )
+        order = self.orders.get_order(cid)
+        if order is not None:
+            self._log_order_outcome("reject_ownership_fail_closed", order)
+        self._pop_order_context(cid)
+        self._release_side_order_ownership(side=side, cid=cid)
+        logger.critical(
+            "ORDER_SUBMIT_ABORTED_BEFORE_REST side=%s cid=%s; "
+            "operator reconciliation required",
+            side.value,
+            cid,
+        )
+        return True
+
     def _place_order(self, symbol: str, side: Side,
                      price: float, quantity: float,
                      reduce_only: bool = False,
                      decision_context: Optional[dict] = None,
                      record_requote_perf: bool = True) -> Optional[str]:
         """Send limit order to exchange."""
+        if getattr(self, "_order_submit_fail_closed", False):
+            logger.critical(
+                "ORDER_SUBMIT_BLOCKED_FAIL_CLOSED side=%s; operator reconciliation required",
+                side.value,
+            )
+            return None
         # Floor quantity to lot_size so local state matches exchange-accepted qty
         qty_str = self._fmt_qty(quantity)
         quantity = float(qty_str)
 
         cid = self.orders.create_order(symbol, side, price, quantity)
+        if not self._reserve_side_order_ownership(side=side, cid=cid):
+            self.orders.confirm_rejected(cid, "local same-side ownership conflict before submit")
+            return None
         if decision_context is not None:
             self._set_order_context(cid, decision_context)
         self._record_exact_order_event(
@@ -6641,6 +6856,7 @@ class MakerEngine:
             "submit",
         )
 
+        request_started = False
         try:
             params = dict(
                 symbol=symbol,
@@ -6654,26 +6870,59 @@ class MakerEngine:
             )
             if reduce_only:
                 params["reduceOnly"] = "true"
+            if self._abort_reserved_submit_if_fail_closed(side=side, cid=cid):
+                return None
             rest_start = time.perf_counter()
             try:
+                request_started = True
                 resp = self.rest.new_order(**params)
             finally:
                 if record_requote_perf:
                     self._record_perf_rest_latency(
                         "new", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
-            oid = resp.get("orderId", 0)
-            status = resp.get("status", "NEW")
+            resp, oid, status = self._validated_submit_response(
+                resp,
+                route="limit-order submit",
+            )
 
-            if status == "EXPIRED":
-                # GTX rejected: order would cross the book
-                self.orders.confirm_rejected(cid, "GTX_CROSSED")
+            if status != "NEW":
+                order = self.orders.get_order(cid)
+                if status not in {
+                    "PARTIALLY_FILLED",
+                    "FILLED",
+                    "CANCELED",
+                    "EXPIRED",
+                    "REJECTED",
+                }:
+                    self._hold_submit_with_unknown_ack(cid=cid, side=side, error=RuntimeError(
+                        f"unrecognized new-order response status: {status or 'missing'}"
+                    ))
+                    return cid
+                self.orders.on_order_update(
+                    self._rest_reconciled_order_event(
+                        response=resp,
+                        order=order,
+                        cid=cid,
+                        status=status,
+                    )
+                )
                 order = self.orders.get_order(cid)
                 if order is not None:
-                    self._log_order_outcome("reject_gtx", order)
-                self._pop_order_context(cid)
-                logger.debug(f"GTX expired (would cross): {side.value} {quantity}@{price}")
-                return None
+                    self._log_order_outcome(
+                        f"submit_result_{status.lower()}",
+                        order,
+                    )
+                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                    self._pop_order_context(cid)
+                    self._release_side_order_ownership(side=side, cid=cid)
+                    return None
+                self._verify_side_order_ownership(
+                    side=side,
+                    cid=cid,
+                    phase=f"submit_result_{status.lower()}",
+                )
+                return cid
 
             self.orders.confirm_new(
                 cid,
@@ -6684,26 +6933,37 @@ class MakerEngine:
             if order is not None:
                 self._log_order_outcome("placed", order)
 
-            with self._order_ref_lock:
-                if side == Side.BUY:
-                    self._bid_cid = cid
-                else:
-                    self._ask_cid = cid
+            self._verify_side_order_ownership(side=side, cid=cid, phase="submit_new")
             return cid
 
         except Exception as e:
-            self.orders.confirm_rejected(cid, str(e))
-            order = self.orders.get_order(cid)
-            if order is not None:
-                self._log_order_outcome("reject_error", order)
-            self._pop_order_context(cid)
-            err_str = str(e)
-            if "-5022" in err_str:
-                # Post Only would cross book — treat as GTX rejection, not error
+            error_code = self._exchange_error_code(e)
+            if not request_started or error_code == -5022:
+                self.orders.confirm_rejected(cid, str(e))
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        "reject_gtx" if error_code == -5022 else "reject_local_error",
+                        order,
+                    )
+                self._pop_order_context(cid)
+                self._release_side_order_ownership(side=side, cid=cid)
+            else:
+                self._hold_submit_with_unknown_ack(cid=cid, side=side, error=e)
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome("submit_ack_unknown", order)
+            if error_code == -5022:
+                # The exchange positively rejected this pre-activation GTX order.
                 logger.debug(f"GTX rejected (would cross): {side.value} {quantity}@{price}")
+            elif request_started:
+                logger.error(
+                    "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
+                    f"{side.value} {quantity}@{price}: {e}"
+                )
             else:
                 logger.error(f"Order place failed: {side.value} {quantity}@{price}: {e}")
-            return None
+            return cid if request_started and error_code != -5022 else None
 
     def _place_close_order(self, symbol: str, side: Side,
                           price: float, quantity: float,
@@ -6712,17 +6972,29 @@ class MakerEngine:
         """Send one reduce-only close order using the caller-selected TIF."""
         MAX_GTX_REJECTS = 3
 
+        if getattr(self, "_order_submit_fail_closed", False):
+            logger.critical(
+                "CLOSE_ORDER_SUBMIT_BLOCKED_FAIL_CLOSED side=%s; "
+                "operator reconciliation required",
+                side.value,
+            )
+            return
+
         # Floor quantity to lot_size so local state matches exchange-accepted qty
         qty_str = self._fmt_qty(quantity)
         quantity = float(qty_str)
 
         cid = self.orders.create_order(symbol, side, price, quantity)
+        if not self._reserve_side_order_ownership(side=side, cid=cid):
+            self.orders.confirm_rejected(cid, "local same-side ownership conflict before submit")
+            return
         if decision_context is not None:
             self._set_order_context(cid, decision_context)
         self._record_exact_order_event(
             self.orders.get_order(cid),
             "submit",
         )
+        request_started = False
         try:
             tif = "IOC" if use_ioc else "GTX"
             params = dict(
@@ -6736,42 +7008,64 @@ class MakerEngine:
                 newOrderRespType="RESULT",
                 reduceOnly="true",
             )
+            if self._abort_reserved_submit_if_fail_closed(side=side, cid=cid):
+                return
             rest_start = time.perf_counter()
             try:
+                request_started = True
                 resp = self.rest.new_order(**params)
             finally:
                 self._record_perf_rest_latency(
                     "new", (time.perf_counter() - rest_start) * 1_000_000.0
                 )
-            oid = resp.get("orderId", 0)
-            status = resp.get("status", "NEW")
+            resp, oid, status = self._validated_submit_response(
+                resp,
+                route="close-order submit",
+            )
 
-            if status == "EXPIRED":
+            if status != "NEW":
+                order = self.orders.get_order(cid)
+                if status not in {
+                    "PARTIALLY_FILLED",
+                    "FILLED",
+                    "CANCELED",
+                    "EXPIRED",
+                    "REJECTED",
+                }:
+                    self._hold_submit_with_unknown_ack(cid=cid, side=side, error=RuntimeError(
+                        f"unrecognized close-order response status: {status or 'missing'}"
+                    ))
+                    return
+                self.orders.on_order_update(
+                    self._rest_reconciled_order_event(
+                        response=resp,
+                        order=order,
+                        cid=cid,
+                        status=status,
+                    )
+                )
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        f"close_submit_result_{status.lower()}",
+                        order,
+                    )
                 if use_ioc:
-                    # Keep IOC escalation latched. A marketable limit can still
-                    # expire if the touch moves before exchange arrival; retry
-                    # from the next fresh BBO instead of falling back to GTX.
-                    self.orders.confirm_rejected(cid, "IOC_EXPIRED")
-                    order = self.orders.get_order(cid)
-                    if order is not None:
-                        self._log_order_outcome("reject_ioc_expired", order)
-                    self._pop_order_context(cid)
                     self._close_gtx_rejects = max(
                         self._close_gtx_rejects,
                         MAX_GTX_REJECTS,
                     )
-                    logger.warning(f"IOC close expired: {side.value} {quantity}@{price}")
-                else:
-                    self.orders.confirm_rejected(cid, "GTX_CROSSED")
-                    order = self.orders.get_order(cid)
-                    if order is not None:
-                        self._log_order_outcome("reject_gtx_close", order)
-                    self._pop_order_context(cid)
+                elif status == "EXPIRED":
                     self._close_gtx_rejects += 1
-                    logger.warning(
-                        f"GTX close rejected ({self._close_gtx_rejects}/{MAX_GTX_REJECTS}): "
-                        f"{side.value} {quantity}@{price}"
-                    )
+                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                    self._pop_order_context(cid)
+                    self._release_side_order_ownership(side=side, cid=cid)
+                    return
+                self._verify_side_order_ownership(
+                    side=side,
+                    cid=cid,
+                    phase=f"close_submit_result_{status.lower()}",
+                )
                 return
 
             # A passive close accepted by the exchange clears the rejection
@@ -6792,25 +7086,42 @@ class MakerEngine:
             if order is not None:
                 self._log_order_outcome("placed_close", order)
 
-            if side == Side.BUY:
-                self._bid_cid = cid
-            else:
-                self._ask_cid = cid
+            self._verify_side_order_ownership(side=side, cid=cid, phase="close_submit_new")
 
             if use_ioc:
                 logger.info(f"IOC close placed: {side.value} {quantity}@{price}")
 
         except Exception as e:
-            self.orders.confirm_rejected(cid, str(e))
-            order = self.orders.get_order(cid)
-            err_str = str(e)
-            if "-5022" in err_str and not use_ioc:
+            error_code = self._exchange_error_code(e)
+            exact_gtx_reject = error_code == -5022 and not use_ioc
+            if not request_started or exact_gtx_reject:
+                self.orders.confirm_rejected(cid, str(e))
+                order = self.orders.get_order(cid)
+                self._pop_order_context(cid)
+                self._release_side_order_ownership(side=side, cid=cid)
+            else:
+                self._hold_submit_with_unknown_ack(cid=cid, side=side, error=e)
+                order = self.orders.get_order(cid)
+            if exact_gtx_reject:
                 if order is not None:
                     self._log_order_outcome("reject_gtx_close", order)
                 self._close_gtx_rejects += 1
                 logger.warning(
                     f"GTX close rejected ({self._close_gtx_rejects}/{MAX_GTX_REJECTS}): "
                     f"{side.value} {quantity}@{price}"
+                )
+            elif request_started:
+                if order is not None:
+                    self._log_order_outcome("submit_ack_unknown_close", order)
+                if use_ioc:
+                    self._close_gtx_rejects = max(
+                        self._close_gtx_rejects,
+                        MAX_GTX_REJECTS,
+                    )
+                logger.error(
+                    "Close submit ACK unknown; holding PENDING_NEW for reconcile "
+                    f"tif={'IOC' if use_ioc else 'GTX'}: "
+                    f"{side.value} {quantity}@{price}: {e}"
                 )
             else:
                 if order is not None:
@@ -6824,7 +7135,143 @@ class MakerEngine:
                     f"Close order failed tif={'IOC' if use_ioc else 'GTX'}: "
                     f"{side.value} {quantity}@{price}: {e}"
                 )
+
+    def _rest_reconciled_order_event(
+        self,
+        *,
+        response: Mapping[str, Any],
+        order: Any,
+        cid: str,
+        status: str,
+    ) -> dict[str, Any]:
+        """Translate a REST status without treating updateTime as an event clock."""
+
+        current_filled = float(getattr(order, "filled_qty", 0.0) or 0.0)
+        cumulative_fill = float(response.get("executedQty", current_filled) or 0.0)
+        incremental_fill = max(0.0, cumulative_fill - current_filled)
+        average_fill_price = float(response.get("avgPrice", 0.0) or 0.0)
+        return {
+            "s": str(response.get("symbol") or self.cfg.symbol),
+            "c": str(response.get("clientOrderId") or cid),
+            "S": str(response.get("side") or order.side.value),
+            "X": str(status).upper(),
+            "i": int(response.get("orderId", 0) or 0),
+            "l": str(incremental_fill),
+            "L": str(average_fill_price),
+            "z": str(cumulative_fill),
+            "ap": str(average_fill_price),
+            "n": "0",
+            "N": "USDC",
+            "p": str(response.get("price", order.price)),
+            "q": str(response.get("origQty", order.quantity)),
+            "T": 0,
+            "_local_receive_ts_ns": time.time_ns(),
+            "_exchange_ts_ns": 0,
+            "_submit_ack_reconciled": True,
+        }
+
+    def reconcile_pending_new_order(self, order: Any) -> str:
+        """Resolve one stale submit without treating an unknown ACK as zero exposure."""
+
+        if order is None or getattr(order, "state", None) != OrderState.PENDING_NEW:
+            return "not_pending_new"
+        query_order = getattr(self.rest, "query_order", None)
+        if not callable(query_order):
+            return "query_order_unavailable"
+        cid = str(order.client_order_id)
+        try:
+            response = query_order(
+                symbol=self.cfg.symbol,
+                origClientOrderId=cid,
+            )
+        except Exception as exc:
+            if self._exchange_error_code(exc) == -2013:
+                logger.warning(
+                    "PENDING_NEW_RECONCILE_NOT_FOUND cid=%s; ACK remains unknown",
+                    cid,
+                )
+                return "exchange_not_found_ack_still_unknown"
+            logger.warning("PENDING_NEW_RECONCILE_FAILED cid=%s err=%s", cid, exc)
+            return "query_failed_ack_still_unknown"
+
+        status = str(response.get("status", "")).upper()
+        if status not in {
+            "NEW",
+            "PARTIALLY_FILLED",
+            "FILLED",
+            "CANCELED",
+            "EXPIRED",
+            "REJECTED",
+        }:
+            logger.warning(
+                "PENDING_NEW_RECONCILE_UNKNOWN_STATUS cid=%s status=%s",
+                cid,
+                status or "missing",
+            )
+            return "unknown_exchange_status_ack_still_unknown"
+
+        event = self._rest_reconciled_order_event(
+            response=response,
+            order=order,
+            cid=cid,
+            status=status,
+        )
+        self.orders.on_order_update(event)
+        if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
             self._pop_order_context(cid)
+        return f"exchange_status_{status.lower()}_reconciled"
+
+    def reconcile_pending_cancel_order(self, order: Any) -> str:
+        """Resolve a stale cancel from an individual authoritative order row."""
+
+        if order is None or getattr(order, "state", None) != OrderState.PENDING_CANCEL:
+            return "not_pending_cancel"
+        query_order = getattr(self.rest, "query_order", None)
+        if not callable(query_order):
+            return "query_order_unavailable"
+        cid = str(order.client_order_id)
+        try:
+            response = query_order(
+                symbol=self.cfg.symbol,
+                origClientOrderId=cid,
+            )
+        except Exception as exc:
+            if self._exchange_error_code(exc) == -2013:
+                logger.warning(
+                    "PENDING_CANCEL_RECONCILE_NOT_FOUND cid=%s; terminal state unknown",
+                    cid,
+                )
+                return "exchange_not_found_terminal_still_unknown"
+            logger.warning("PENDING_CANCEL_RECONCILE_FAILED cid=%s err=%s", cid, exc)
+            return "query_failed_terminal_still_unknown"
+
+        status = str(response.get("status", "")).upper()
+        if status not in {
+            "NEW",
+            "PARTIALLY_FILLED",
+            "FILLED",
+            "CANCELED",
+            "EXPIRED",
+            "REJECTED",
+        }:
+            logger.warning(
+                "PENDING_CANCEL_RECONCILE_UNKNOWN_STATUS cid=%s status=%s",
+                cid,
+                status or "missing",
+            )
+            return "unknown_exchange_status_terminal_still_unknown"
+
+        event = self._rest_reconciled_order_event(
+            response=response,
+            order=order,
+            cid=cid,
+            status=status,
+        )
+        event["_submit_ack_reconciled"] = False
+        self.orders.on_order_update(event)
+        if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+            self._pop_order_context(cid)
+        return f"exchange_status_{status.lower()}_reconciled"
 
     def _cancel_all_orders(self):
         """Cancel all active orders."""
@@ -6834,7 +7281,7 @@ class MakerEngine:
 
         marked_ids: list[str] = []
         for order in active:
-            if order.state == OrderState.PENDING_CANCEL:
+            if order.state in {OrderState.PENDING_NEW, OrderState.PENDING_CANCEL}:
                 continue
             self.orders.mark_pending_cancel(order.client_order_id)
             marked_ids.append(order.client_order_id)
@@ -6865,14 +7312,21 @@ class MakerEngine:
         if not order or order.is_terminal:
             return True
 
-        already_pending = order.state == OrderState.PENDING_CANCEL
-        self.orders.mark_pending_cancel(cid)
-        if not already_pending:
-            self._record_exact_order_event(
-                order,
-                "cancel_request",
-                trigger_decision_id=trigger_decision_id,
+        if order.state == OrderState.PENDING_NEW:
+            logger.warning(
+                "CANCEL_DEFERRED_SUBMIT_ACK_UNKNOWN cid=%s; ownership retained",
+                cid,
             )
+            return False
+        already_pending = order.state == OrderState.PENDING_CANCEL
+        if already_pending:
+            return False
+        self.orders.mark_pending_cancel(cid)
+        self._record_exact_order_event(
+            order,
+            "cancel_request",
+            trigger_decision_id=trigger_decision_id,
+        )
         try:
             rest_start = time.perf_counter()
             try:
@@ -6885,10 +7339,10 @@ class MakerEngine:
                     self._record_perf_rest_latency(
                         "cancel", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
-            return True
+            resolved = self.orders.get_order(cid)
+            return bool(resolved is None or resolved.is_terminal)
         except Exception as e:
-            if not already_pending:
-                self.orders.cancel_rejected(cid, str(e))
+            self.orders.cancel_rejected(cid, str(e))
             logger.error(f"Cancel order {cid} failed: {e}")
             return False
 
@@ -6897,13 +7351,11 @@ class MakerEngine:
         self._cancel_active_side_orders(side, "FILL_CD_CANCEL")
 
     def _cancel_active_side_orders(self, side: str, reason: str):
-        """Cancel every active order on one side and clear the tracked quote cid."""
+        """Request side cancellation without releasing unresolved ownership."""
         if side == "BUY":
             active_orders = self.orders.get_bid_orders()
-            self._bid_cid = None
         else:
             active_orders = self.orders.get_ask_orders()
-            self._ask_cid = None
 
         canceled = 0
         seen = set()
@@ -6912,11 +7364,32 @@ class MakerEngine:
             if cid in seen or not order.is_active:
                 continue
             seen.add(cid)
-            self._cancel_order(cid)
+            resolved = self._cancel_order(cid)
+            if resolved:
+                with self._order_ref_lock:
+                    if side == "BUY" and self._bid_cid == cid:
+                        self._bid_cid = None
+                    elif side == "SELL" and self._ask_cid == cid:
+                        self._ask_cid = None
             canceled += 1
 
         if canceled:
             logger.info(f"{reason}: {side} active_orders_canceled={canceled}")
+
+    def _cancel_tracked_order_before_replacement(self, side: Side) -> bool:
+        """Return true only after the tracked order is authoritatively terminal."""
+
+        cid = self._bid_cid if side == Side.BUY else self._ask_cid
+        if not cid:
+            return True
+        if not self._cancel_order(cid):
+            return False
+        with self._order_ref_lock:
+            if side == Side.BUY and self._bid_cid == cid:
+                self._bid_cid = None
+            elif side == Side.SELL and self._ask_cid == cid:
+                self._ask_cid = None
+        return True
 
     def _block_stale_quote_data(self, book_age: float, max_age: float):
         """Cancel live quotes and skip requote when execution book data is stale."""
@@ -7026,11 +7499,11 @@ class MakerEngine:
 
         # Cancel any order on the opening side (should not exist, but safety)
         if q > 0 and self._ask_cid is None and self._bid_cid:
-            self._cancel_order(self._bid_cid)
-            self._bid_cid = None
+            if not self._cancel_tracked_order_before_replacement(Side.BUY):
+                return
         elif q < 0 and self._bid_cid is None and self._ask_cid:
-            self._cancel_order(self._ask_cid)
-            self._ask_cid = None
+            if not self._cancel_tracked_order_before_replacement(Side.SELL):
+                return
 
         # Round close quantity to lot_size
         close_qty = min(qty, cfg.strategy.order_size)
@@ -7047,15 +7520,13 @@ class MakerEngine:
         if use_ioc:
             # Tier 3: IOC taker — cancel existing order and send IOC
             if close_side == Side.SELL:
-                if self._ask_cid:
-                    self._cancel_order(self._ask_cid)
-                    self._ask_cid = None
+                if not self._cancel_tracked_order_before_replacement(Side.SELL):
+                    return
                 touch = best_bid if best_bid > 0.0 else mid
                 close_price = math.floor((touch - 2.0 * tick) / tick) * tick
             else:
-                if self._bid_cid:
-                    self._cancel_order(self._bid_cid)
-                    self._bid_cid = None
+                if not self._cancel_tracked_order_before_replacement(Side.BUY):
+                    return
                 touch = best_ask if best_ask > 0.0 else mid
                 close_price = math.ceil((touch + 2.0 * tick) / tick) * tick
             close_price = round(close_price, self._price_precision)
@@ -7084,8 +7555,8 @@ class MakerEngine:
                     drift = abs(close_price - ask_order.price) / ask_order.price
                     if drift <= cfg.strategy.requote_threshold_bps / 10000.0:
                         return  # keep existing close order
-                    self._cancel_order(self._ask_cid)
-                    self._ask_cid = None
+                    if not self._cancel_tracked_order_before_replacement(Side.SELL):
+                        return
             self._place_close_order(
                 cfg.symbol,
                 Side.SELL,
@@ -7104,8 +7575,8 @@ class MakerEngine:
                     drift = abs(close_price - bid_order.price) / bid_order.price
                     if drift <= cfg.strategy.requote_threshold_bps / 10000.0:
                         return
-                    self._cancel_order(self._bid_cid)
-                    self._bid_cid = None
+                    if not self._cancel_tracked_order_before_replacement(Side.BUY):
+                        return
             self._place_close_order(
                 cfg.symbol,
                 Side.BUY,
@@ -7128,8 +7599,6 @@ class MakerEngine:
         """
         self.inventory.set_timeout_closing()
         self._cancel_all_orders()
-        self._bid_cid = None
-        self._ask_cid = None
         self._close_gtx_rejects = 0  # reset for new closing sequence
         self._close_start_time = time.time()  # track start for stale-time escalation
 
@@ -7142,6 +7611,7 @@ class MakerEngine:
 
     def _emergency_close(self, mid: float):
         """Emergency: cancel all orders and close position at market."""
+        self._running = False
         self._cancel_all_orders()
         q = self.inventory.net_position
 
@@ -7151,13 +7621,29 @@ class MakerEngine:
             qty = abs(q)
             logger.critical(f"EMERGENCY_CLOSE: {side_str} {qty:.4f}")
             cid = self.orders.create_order(self.cfg.symbol, side, 0.0, qty)
+            if not self._reserve_side_order_ownership(side=side, cid=cid):
+                self.orders.confirm_rejected(
+                    cid,
+                    "local same-side ownership conflict before emergency submit",
+                )
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        "reject_emergency_ownership_conflict",
+                        order,
+                    )
+                return
             self._record_exact_order_event(
                 self.orders.get_order(cid),
                 "submit",
             )
+            request_started = False
             try:
+                if self._abort_reserved_submit_if_fail_closed(side=side, cid=cid):
+                    return
                 rest_start = time.perf_counter()
                 try:
+                    request_started = True
                     resp = self.rest.new_order(
                         symbol=self.cfg.symbol,
                         side=side_str,
@@ -7165,21 +7651,93 @@ class MakerEngine:
                         quantity=self._fmt_qty(qty),
                         newClientOrderId=cid,
                         reduceOnly=True,
+                        newOrderRespType="RESULT",
                     )
                 finally:
                     self._record_perf_rest_latency(
                         "new", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
-                self.orders.confirm_new(
-                    cid,
-                    resp.get("orderId", 0),
-                    exchange_ts_ns=self._rest_exchange_timestamp_ns(resp),
+                resp, oid, status = self._validated_submit_response(
+                    resp,
+                    route="emergency-close submit",
                 )
+                if status == "NEW":
+                    self.orders.confirm_new(
+                        cid,
+                        oid,
+                        exchange_ts_ns=self._rest_exchange_timestamp_ns(resp),
+                    )
+                    order = self.orders.get_order(cid)
+                    if order is not None:
+                        self._log_order_outcome("placed_emergency_close", order)
+                    self._verify_side_order_ownership(
+                        side=side,
+                        cid=cid,
+                        phase="emergency_submit_new",
+                    )
+                    return
+                if status not in {
+                    "PARTIALLY_FILLED",
+                    "FILLED",
+                    "CANCELED",
+                    "EXPIRED",
+                    "REJECTED",
+                }:
+                    raise RuntimeError(
+                        f"unrecognized emergency-close response status: {status}"
+                    )
+                order = self.orders.get_order(cid)
+                self.orders.on_order_update(
+                    self._rest_reconciled_order_event(
+                        response=resp,
+                        order=order,
+                        cid=cid,
+                        status=status,
+                    )
+                )
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        f"emergency_submit_result_{status.lower()}",
+                        order,
+                    )
+                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                    self._pop_order_context(cid)
+                    self._release_side_order_ownership(side=side, cid=cid)
+                else:
+                    self._verify_side_order_ownership(
+                        side=side,
+                        cid=cid,
+                        phase=f"emergency_submit_result_{status.lower()}",
+                    )
             except Exception as e:
-                self.orders.confirm_rejected(cid, str(e))
-                logger.error(f"Emergency close failed: {e}")
-
-        self._running = False
+                error_code = self._exchange_error_code(e)
+                if not request_started or error_code == -5022:
+                    self.orders.confirm_rejected(cid, str(e))
+                    self._release_side_order_ownership(side=side, cid=cid)
+                    order = self.orders.get_order(cid)
+                    if order is not None:
+                        self._log_order_outcome(
+                            "reject_emergency_close",
+                            order,
+                        )
+                else:
+                    self._hold_submit_with_unknown_ack(
+                        cid=cid,
+                        side=side,
+                        error=e,
+                    )
+                    order = self.orders.get_order(cid)
+                    if order is not None:
+                        self._log_order_outcome(
+                            "submit_ack_unknown_emergency_close",
+                            order,
+                        )
+                logger.error(
+                    "Emergency close submit failed%s: %s",
+                    " with unknown ACK" if request_started and error_code != -5022 else "",
+                    e,
+                )
 
     # ── fill callbacks ──
 
@@ -7416,11 +7974,9 @@ class MakerEngine:
         q = self.inventory.net_position
         max_inv = self.cfg.strategy.max_inventory
         if q >= max_inv and self._bid_cid:
-            self._cancel_order(self._bid_cid)
-            self._bid_cid = None
+            self._cancel_tracked_order_before_replacement(Side.BUY)
         elif q <= -max_inv and self._ask_cid:
-            self._cancel_order(self._ask_cid)
-            self._ask_cid = None
+            self._cancel_tracked_order_before_replacement(Side.SELL)
 
         if order.is_terminal:
             self._pop_order_context(order.client_order_id)
@@ -7534,9 +8090,13 @@ class MakerEngine:
             self.rest.cancel_open_orders(symbol=self.cfg.symbol)
             logger.info("Startup: canceled all existing exchange orders")
         except Exception as e:
-            # -2011 = "Unknown order" means no orders to cancel (OK)
-            if "-2011" not in str(e):
-                logger.warning(f"Startup cancel failed: {e}")
+            # Only a structured exchange -2011 response establishes that no
+            # cancellable order exists. Transport errors must stop startup.
+            if self._exchange_error_code(e) != -2011:
+                self._running = False
+                raise RuntimeError(
+                    "startup open-order cancellation was not authoritative"
+                ) from e
 
         # Set leverage
         try:
@@ -7592,8 +8152,8 @@ class MakerEngine:
 
     # ── exchange sync ──
 
-    def sync_position(self):
-        """Sync local position with exchange (call periodically)."""
+    def sync_position(self, *, required: bool = False) -> bool:
+        """Sync local position with exchange; optionally fail closed on error."""
         try:
             sync_start = time.time()  # before REST call
             positions = self.rest.get_position_risk(symbol=self.cfg.symbol)
@@ -7602,6 +8162,13 @@ class MakerEngine:
                     qty = float(pos.get("positionAmt", 0))
                     entry = float(pos.get("entryPrice", 0))
                     self.inventory.sync_from_exchange(qty, entry, sync_start)
-                    break
+                    return True
+            if required:
+                raise RuntimeError("position response omitted the configured symbol")
+            logger.error("Position sync omitted configured symbol %s", self.cfg.symbol)
+            return False
         except Exception as e:
             logger.error(f"Position sync failed: {e}")
+            if required:
+                raise RuntimeError("required position sync failed") from e
+            return False
