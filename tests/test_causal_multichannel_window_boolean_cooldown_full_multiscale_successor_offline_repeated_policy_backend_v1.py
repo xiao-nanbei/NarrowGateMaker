@@ -484,6 +484,41 @@ def test_replay_fields_are_bound_from_same_panel_metadata_when_not_duplicated(
     assert set(mechanics.replay_inputs["role_at_fill"]) == {"opener", "add"}
 
 
+def test_formal_provider_adds_fold_scope_without_mutating_admitted_rows() -> None:
+    source = pd.DataFrame(
+        {"utc_day": ["2026-06-27"], "side": ["SELL"]},
+        index=pd.Index(["row-1"], name="opportunity_id"),
+    )
+
+    scoped = backend._bind_outer_train_replay_scope(
+        source,
+        outer_fold_id="outer1",
+    )
+
+    assert "outer_fold_id" not in source
+    assert "fold_row_role" not in source
+    assert scoped["outer_fold_id"].tolist() == ["outer1"]
+    assert scoped["fold_row_role"].tolist() == ["outer_train"]
+
+
+@pytest.mark.parametrize("reserved", ["outer_fold_id", "fold_row_role"])
+def test_formal_provider_rejects_preinjected_fold_scope(reserved: str) -> None:
+    source = pd.DataFrame(
+        {
+            "utc_day": ["2026-06-27"],
+            "side": ["SELL"],
+            reserved: ["caller-controlled"],
+        },
+        index=pd.Index(["row-1"], name="opportunity_id"),
+    )
+
+    with pytest.raises(
+        backend.OfflineRepeatedPolicyBackendError,
+        match="pre-injected formal fold scope",
+    ):
+        backend._bind_outer_train_replay_scope(source, outer_fold_id="outer1")
+
+
 def test_missing_real_replay_adapter_returns_schema_bound_blocker(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

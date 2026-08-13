@@ -967,7 +967,10 @@ class CanonicalFoldScopedLabelProvider:
             request_body
         ):
             raise OfflineRepeatedPolicyBackendError("label request mechanics binding drifted")
-        replay_inputs = self.mechanics.replay_inputs.loc[index].copy()
+        replay_inputs = _bind_outer_train_replay_scope(
+            self.mechanics.replay_inputs.loc[index],
+            outer_fold_id=request.outer_fold_id,
+        )
         adapter_request = CanonicalOuterTrainReplayRequest(
             label_request=request,
             replay_input_sha256=_frame_sha256(replay_inputs),
@@ -1000,6 +1003,26 @@ class CanonicalFoldScopedLabelProvider:
             }
         )
         return batch
+
+
+def _bind_outer_train_replay_scope(
+    replay_inputs: pd.DataFrame,
+    *,
+    outer_fold_id: str,
+) -> pd.DataFrame:
+    reserved = {"outer_fold_id", "fold_row_role"}
+    present = sorted(reserved & set(replay_inputs.columns))
+    if present:
+        raise OfflineRepeatedPolicyBackendError(
+            f"replay inputs pre-injected formal fold scope: {present}"
+        )
+    normalized_fold = str(outer_fold_id).strip()
+    if not normalized_fold:
+        raise OfflineRepeatedPolicyBackendError("outer-train fold identity is empty")
+    scoped = replay_inputs.copy()
+    scoped["outer_fold_id"] = normalized_fold
+    scoped["fold_row_role"] = "outer_train"
+    return scoped
 
 
 class CanonicalSequentialEvaluator:

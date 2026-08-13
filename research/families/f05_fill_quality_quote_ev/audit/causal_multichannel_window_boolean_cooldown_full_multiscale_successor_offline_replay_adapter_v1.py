@@ -2242,11 +2242,17 @@ class _CanonicalOfflineReplayAdapter:
         )
         if tuple(str(value) for value in rows.index) != tuple(label.row_ids):
             raise OfflineReplayAdapterError("one-shot replay rows escaped the purged request")
-        if any("test" in str(value).lower() for value in rows.get("fold_row_role", ())):
-            raise OfflineReplayAdapterError("outer-test rows are forbidden in label replay")
-        if "outer_fold_id" in rows and set(rows["outer_fold_id"].astype(str)) != {
-            label.outer_fold_id
-        }:
+        missing_scope = sorted(
+            {"fold_row_role", "outer_fold_id"}.difference(rows.columns)
+        )
+        if missing_scope:
+            raise OfflineReplayAdapterError(
+                "formal label replay scope is missing provider-owned fields: "
+                + ", ".join(missing_scope)
+            )
+        if set(rows["fold_row_role"].astype(str)) != {"outer_train"}:
+            raise OfflineReplayAdapterError("label replay row role is not outer_train")
+        if set(rows["outer_fold_id"].astype(str)) != {label.outer_fold_id}:
             raise OfflineReplayAdapterError("one-shot outer fold identity drifted")
         _require_executable_replay_inputs(
             rows, context="outer-train one-shot replay", label_scope=True

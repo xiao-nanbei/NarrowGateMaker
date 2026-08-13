@@ -448,7 +448,7 @@ def test_outer_test_rows_are_rejected_before_mechanics_fallback() -> None:
     rows["outer_fold_id"] = "outer1"
     rows["fold_row_role"] = "outer_test"
     request = _outer_train_request(rows)
-    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="outer-test"):
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="row role"):
         adapter_module.build_canonical_replay_adapter().generate_outer_train_one_shot_labels(
             request, rows
         )
@@ -456,6 +456,8 @@ def test_outer_test_rows_are_rejected_before_mechanics_fallback() -> None:
 
 def test_current_replay_schema_fails_closed_and_names_d_plus_one_fields() -> None:
     rows = _common_replay_inputs()
+    rows["outer_fold_id"] = "outer1"
+    rows["fold_row_role"] = "outer_train"
     request = _outer_train_request(rows)
     with pytest.raises(adapter_module.OfflineReplayAdapterMechanicsMissing) as captured:
         adapter_module.build_canonical_replay_adapter().generate_outer_train_one_shot_labels(
