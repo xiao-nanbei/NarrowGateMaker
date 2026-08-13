@@ -1,6 +1,6 @@
 {
   "schema_version": "narrowgate_public_machine_document_projections_v1",
-  "last_materially_modified": "2026-08-12",
+  "last_materially_modified": "2026-08-13",
   "contract": "docs/public_private_documentation_contract.md",
   "private_layout": "research/PRIVATE_EVIDENCE.md",
   "entries": [
@@ -2002,8 +2002,8 @@
     {
       "public_path": "research/registry.json",
       "unit_id": "research/shared/experiment_governance",
-      "source_private_sha256": "93cb1fcc8681cb6e0bb9fb956cdd0dc8137f44d003068302221b64da8dbfe37a",
-      "public_projection_sha256": "2f5f9de18b066e7f181d425fc7d5de43ae16d8d5ae7c19b0ddc2c479486864e5",
+      "source_private_sha256": "ff35b902e486958e690c886791e2c5511c1dacdbf5a666e9ad431f6b2c467849",
+      "public_projection_sha256": "16046d292b20b556e393a4fa885bac20c1dd2cef3184fc1b0d8f7f02e7361221",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 19

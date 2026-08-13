@@ -1,0 +1,132 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.execution.v2",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1",
+  "status": "withdrawn_before_deployment_no_economic_read",
+  "last_materially_modified": "2026-08-13",
+  "public_base_commit": "e07b23dc6dc16668fa3a6f21a373f3e7e0527e80",
+  "preregistration_cutoff_utc": "2026-08-12T17:45:29Z",
+  "withdrawal": {
+    "companion_deployed": false,
+    "companion_rows": 0,
+    "live_runtime_changed": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "owner_policy_unchanged": true,
+    "collection_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "score_profile_contract": {
+    "schema_version": "narrowgate_score_profile.v1",
+    "profile_id": "action_alpha_v1",
+    "profile_sha256": "2c1d739632a918f2dd83d0c19143e0ff0cc9aecedfc79a549441d1732bb42fd9"
+  },
+  "bindings": {
+    "spec": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1_spec_20260813.json",
+      "sha256": "b161c389bb672954a9ff6455541b60d9a4349999badc3e361b6a1208d5c64b59"
+    },
+    "mechanics": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.py",
+      "sha256": "9ee2745962366b3aa150c15f76ec14521c8be161ea7bfbd9780c477663f86f92"
+    },
+    "nested_oof_and_scorecards": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_nested_oof_v1.py",
+      "sha256": "eb6605c557dbff457faa39b4b145a656a2ccdac5a530d6b34f4b3cfb21032345"
+    },
+    "final_refit": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_final_refit_v1.py",
+      "sha256": "763b3ffa5d266ad38d30753e1733f9c4184e85e5c230b8ec9fcb93356732eea3"
+    },
+    "restart_aware_repeated_policy": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_repeated_policy_v1.py",
+      "sha256": "db1ee0c0a4659f322eee2cb2d6443588c795186d4b0d4e2e6cb06487d05603d4"
+    },
+    "exact_artifact_confirmation": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_confirmation_v1.py",
+      "sha256": "122eaa5166de28a01366782e57bf2159e313134828a02cbd304434275015d5cf"
+    },
+    "transport_adapter": {
+      "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_successor_transport_adapter_v1.py",
+      "sha256": "efe7c5a660a8b33285050079423df18f1299317f7afd748a56af6eca9cd6eb42"
+    },
+    "shared_coverage": {
+      "path": "strategy/boolean_cooldown_coverage.py",
+      "sha256": "669745bfdadbd633279db7c505d56ccf22b0c1efd580be405bde1b31090e385a"
+    },
+    "inactive_successor_runtime": {
+      "path": "strategy/boolean_cooldown_successor.py",
+      "sha256": "77b707c5f0adc0bac4fc3ed01335aa69de54e233ca9d85dffe3911b8da2b456c"
+    },
+    "owner_interpretation_manifest": {
+      "path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_policy_v1_interpretation_manifest_20260813.json",
+      "sha256": "69c38cfd2beb87f6fdf50876d874497404db51bee229ca3cd431603b800d87bd"
+    },
+    "active_owner_policy": {
+      "artifact_id": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+      "availability": "private evidence store; not distributed with the public repository",
+      "sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29"
+    },
+    "active_predicate_bundle": {
+      "artifact_id": "causal_multichannel_window_boolean_cooldown_predicate_bundle_v1",
+      "availability": "private evidence store; not distributed with the public repository",
+      "sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37"
+    }
+  },
+  "implementation_acceptance": {
+    "all_45_ema_pairs_reachable": true,
+    "direction_recency_persistence_distance_slope_curvature_convergence_expansion_in_universe": true,
+    "higher_order_multi_rule_reachable": true,
+    "inner_train_only_feature_pool": true,
+    "unknown_target_neutral_zero_allowed": false,
+    "per_action_identified_mask_required": true,
+    "one_action_matched_control_per_learned_candidate": true,
+    "continuous_comparator_paired_with_each_learned_candidate": true,
+    "continuous_minus_boolean_hierarchy_enforced": true,
+    "day_and_week_simultaneous_value_bands": true,
+    "day_and_week_simultaneous_tail_lifecycle_inventory_bands": true,
+    "canonical_action_alpha_v1_scorecard_emitted_per_candidate": true,
+    "learning_algorithm_oof_and_final_refit_identity_separated": true,
+    "exact_final_artifact_future_confirmation_required": true,
+    "exact_owner_tri_state_research_live_parity_cases": 54,
+    "semantic_simplification_audit_only": true,
+    "registered_treatment_interval_sha256_bound_across_three_manifests": true,
+    "outcome_blind_atomic_day_admission": true,
+    "four_outer_three_inner_fold_freezer": true,
+    "restart_aware_arm_state_chain": true,
+    "unsupported_day_zero_delta_forbidden": true,
+    "one_shot_outer_policy_pnl_forbidden": true,
+    "gtx_minus_5022_exact_zero_requires_positive_exchange_rejection": true,
+    "transport_or_response_unknown_ack_reconcile_or_censor": true,
+    "active_owner_policy_changed": false
+  },
+  "verification": {
+    "successor_and_lifecycle_targeted_tests_passed": 352,
+    "focused_lifecycle_core_tests_passed": 136,
+    "formal_orchestrator_adapter_tests_passed": 64,
+    "withdrawn_companion_files_absent": 6,
+    "withdrawn_companion_forbidden_live_symbol_count": 0,
+    "ruff_new_successor_modules": "passed",
+    "python_undefined_name_audit_on_touched_legacy_modules": "passed"
+  },
+  "current_formal_status": {
+    "required_feature_ready_active_days": 0,
+    "admitted_feature_ready_active_days": 0,
+    "economic_outcomes_read": false,
+    "nested_oof_economics_run": false,
+    "final_refit_artifact_frozen": false,
+    "exact_final_artifact_confirmation_run": false,
+    "prospective_collection_live_enabled": false,
+    "prospective_identity_withdrawn": true,
+    "offline_successor_status": "offline_orchestrator_incomplete"
+  },
+  "permissions": {
+    "historical_40_50_71_selection_use": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "active_owner_policy_modified": false
+  }
+}

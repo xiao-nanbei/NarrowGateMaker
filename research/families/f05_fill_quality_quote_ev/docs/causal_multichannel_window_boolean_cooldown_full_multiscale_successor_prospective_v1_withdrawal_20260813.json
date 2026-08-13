@@ -1,0 +1,49 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_prospective_v1.withdrawal.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1",
+  "successor_identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "withdrawn_before_deployment_no_economic_read",
+  "last_materially_modified": "2026-08-13",
+  "facts": {
+    "companion_deployed": false,
+    "companion_rows": 0,
+    "live_runtime_changed": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "owner_policy_unchanged": true,
+    "collection_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false
+  },
+  "removed_live_surface": {
+    "shadow_retained": false,
+    "companion_retained": false,
+    "observer_retained": false,
+    "writer_retained": false,
+    "journal_retained": false,
+    "feature_dump_retained": false,
+    "hypothetical_action_log_retained": false,
+    "candidate_telemetry_retained": false
+  },
+  "preserved_owner_runtime": {
+    "policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "predicate_bundle_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "private_live_config_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85",
+    "buy_policy": "CONTROL_85N",
+    "sell_duration_actions_s": [166, 211, 1748],
+    "reducing_quote_changed": false,
+    "quote_price_changed": false,
+    "quote_size_changed": false,
+    "ber_changed": false,
+    "p3_changed": false,
+    "q90_action_changed": false,
+    "inventory_limit_changed": false
+  },
+  "separate_local_amendment": {
+    "identity": "order_lifecycle_unknown_submit_ack_correctness_v1",
+    "status": "implemented_local_verified_not_deployed",
+    "part_of_f05_companion": false
+  },
+  "final_conclusion": "F05 prospective companion was withdrawn before deployment. The active owner policy and EC2 runtime were not changed. The next research stage is an offline, family-specific historical Development source audit. No economic outcomes, Validation, or sealed holdout have been read. No new action or live authority exists."
+}

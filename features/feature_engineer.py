@@ -623,7 +623,11 @@ def _calendar_bounds_for_tag(tag: Optional[str], index: pd.DatetimeIndex) -> tup
     return start, end
 
 
-def densify_bars_1s(bars_1s: pd.DataFrame, calendar_tag: Optional[str] = None) -> pd.DataFrame:
+def densify_bars_1s(
+    bars_1s: pd.DataFrame,
+    calendar_tag: Optional[str] = None,
+    ensure_through_day_tag: Optional[str] = None,
+) -> pd.DataFrame:
     """Pad sparse traded-second bars to a dense UTC 1s axis."""
     if bars_1s is None or bars_1s.empty:
         return bars_1s.copy()
@@ -634,6 +638,13 @@ def densify_bars_1s(bars_1s: pd.DataFrame, calendar_tag: Optional[str] = None) -
     bars = bars[~bars.index.duplicated(keep="last")]
 
     start, end = _calendar_bounds_for_tag(calendar_tag, bars.index)
+    if ensure_through_day_tag:
+        target_end = (
+            pd.Timestamp(ensure_through_day_tag, tz="UTC")
+            + pd.Timedelta(days=1)
+            - pd.Timedelta(seconds=1)
+        )
+        end = max(end, target_end)
     bars = bars.reindex(pd.date_range(start, end, freq="1s", tz="UTC"))
 
     close_fill = bars["close"].ffill().bfill()
@@ -1711,12 +1722,17 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
                 sample_weight_reference_date: Optional[object] = None,
                 sample_weight_lambda: float = 0.1,
                 require_execution_l2: bool = False,
-                require_taker_tempo: bool = False) -> pd.DataFrame:
+                require_taker_tempo: bool = False,
+                include_labels: bool = True) -> pd.DataFrame:
     """处理单个 UTC 日数据：1s bars → 10s特征。"""
     data_lookup_tag = day_tag
     qprint(f"  补齐 dense 1s UTC 主时间轴...")
     sparse_rows = len(bars_1s)
-    bars_1s = densify_bars_1s(bars_1s, calendar_tag=calendar_tag)
+    bars_1s = densify_bars_1s(
+        bars_1s,
+        calendar_tag=calendar_tag,
+        ensure_through_day_tag=output_day_tag,
+    )
     qprint(f"  dense 1s: {sparse_rows:,} → {len(bars_1s):,} 行")
 
     # --- tick-by-tick momentum (在1s精度上计算，然后采样到10s) ---
@@ -1783,8 +1799,14 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
     qprint(f"  计算时间特征...")
     bars_10s = add_time_features(bars_10s)
 
-    qprint(f"  计算标签...")
-    bars_10s = add_labels(bars_10s, bars_1s, symbol=symbol, config_path=config_path)
+    if include_labels:
+        qprint(f"  计算标签...")
+        bars_10s = add_labels(
+            bars_10s,
+            bars_1s,
+            symbol=symbol,
+            config_path=config_path,
+        )
 
     qprint(f"  计算样本权重...")
     bars_10s = add_sample_weights(
@@ -1892,6 +1914,7 @@ def write_causal_feature_manifest(
     sample_weight_lambda: float,
     require_execution_l2: bool,
     require_taker_tempo: bool,
+    labels_materialized: bool = True,
 ) -> Path:
     """Bind a versioned feature panel to code, config, and daily content."""
     quote_params = _load_label_quote_params(symbol, config_path=config_path)
@@ -2113,6 +2136,7 @@ def write_causal_feature_manifest(
             "trailing_five_seconds_from_causal_left_labelled_1s_bars"
         ),
         "label_semantics_version": 3,
+        "labels_materialized": bool(labels_materialized),
         "label_window_semantics": "left_closed_right_open_[t,t+h)",
         "label_return_direction_semantics": (
             "fill within h, then maker markout h after fill; decision outcome spans h..2h"
@@ -2255,6 +2279,14 @@ def main():
             "sidecar is missing; bind every daily sidecar hash"
         ),
     )
+    parser.add_argument(
+        "--features-only",
+        action="store_true",
+        help=(
+            "materialize causal inference features without computing any future "
+            "direction, return, volatility, or toxicity labels"
+        ),
+    )
     parser.add_argument("--verbose", action="store_true",
                         help="逐日输出特征工程细节和完整特征列")
     args = parser.parse_args()
@@ -2382,6 +2414,7 @@ def main():
                 sample_weight_lambda=args.lam,
                 require_execution_l2=args.require_execution_l2,
                 require_taker_tempo=args.require_taker_tempo,
+                include_labels=not args.features_only,
             ))
         features = pd.concat(feature_chunks).sort_index()
         features = filter_frame_for_orderbook_quality(features, symbol, label="feature")
@@ -2406,6 +2439,29 @@ def main():
     print("划分训练/验证/测试集...")
 
     daily_tags = [t for t, _ in feature_paths if _is_day_tag(t)]
+    if args.features_only:
+        split = {"inference": sorted(daily_tags)}
+        causal_manifest_path = write_causal_feature_manifest(
+            out_dir,
+            symbol=symbol,
+            feature_paths=feature_paths,
+            warmup_days=args.warmup_days,
+            market_stage=market_stage,
+            reference_symbol=reference_symbol,
+            config_path=config_path,
+            split=split,
+            sample_weight_reference_date=sample_weight_reference_date,
+            sample_weight_lambda=args.lam,
+            require_execution_l2=args.require_execution_l2,
+            require_taker_tempo=args.require_taker_tempo,
+            labels_materialized=False,
+        )
+        print(f"Causal feature manifest: {causal_manifest_path}")
+        print(
+            "features-only inference panel: "
+            f"days={len(daily_tags)}, labels_materialized=false"
+        )
+        return
     # Incremental good-day extension commonly targets one date with --file.
     # The daily parquet is already complete at this point; a chronological
     # dataset split only makes sense when enough distinct days were requested.
@@ -2521,6 +2577,7 @@ def main():
         sample_weight_lambda=args.lam,
         require_execution_l2=args.require_execution_l2,
         require_taker_tempo=args.require_taker_tempo,
+        labels_materialized=not args.features_only,
     )
     print(f"Causal feature manifest: {causal_manifest_path}")
 

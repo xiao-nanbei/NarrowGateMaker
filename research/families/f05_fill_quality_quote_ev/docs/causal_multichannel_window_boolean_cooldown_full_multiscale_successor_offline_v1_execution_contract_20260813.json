@@ -1,0 +1,103 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.execution.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "formal_preflight_pending_clean_annotated_tag",
+  "last_materially_modified": "2026-08-13",
+  "formal_entry": {
+    "module": "research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_orchestrator_v1",
+    "function": "run_formal_offline_economics",
+    "accepted_user_input": "canonical_execution_manifest_path_only",
+    "custom_dataframe_allowed": false,
+    "custom_day_list_allowed": false,
+    "custom_fold_allowed": false,
+    "custom_evaluator_allowed": false,
+    "one_shot_aggregation_allowed": false
+  },
+  "formal_backend": {
+    "module": "research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_repeated_policy_backend_v1",
+    "function": "run_canonical_offline_economics",
+    "preflight_function": "preflight_canonical_offline_economics",
+    "control": "B0_CURRENT_EXACT",
+    "outer_train_labels": "one_shot_replay_generated_inside_purged_outer_train_only",
+    "outer_test_economics": "paired_repeated_sequential_policy",
+    "python_authoritative_modeled_queue": true,
+    "same_millisecond_ambiguity_policy": "censor",
+    "b0_mechanics_adapter_executable": true,
+    "economic_replay_bridge_executable": true,
+    "canonical_replay_adapter_source_sha256": "4c4613b5bfbfee89c856f300fdc5230dda91c7d47f8f0a6a4d0ec56821d87fc1",
+    "formal_preflight_status": "pending_clean_annotated_tag",
+    "missing_canonical_bindings": []
+  },
+  "admitted_source": {
+    "path": "${NARROWGATE_DATA_ROOT}/reports/f05_full_multiscale_offline_source_audit_v1/canonical_offline_v1/canonical_source_manifest.json",
+    "canonical_sha256": "1e156e6d505b78f66a7a2d0d30eccfdb5eb97f46c0ba2f9c844baa381f32dfd7",
+    "file_sha256": "813711c1b4ff3b341cfb7a60b8c78837a02cbd60f72ca4e4003647f2e0babf7a",
+    "selected_day_count": 30
+  },
+  "admitted_outcome_blind_inputs": {
+    "features_v2": {
+      "artifact_id": "f05-full-multiscale-offline-causal-features-only-v2",
+      "manifest_file_sha256": "0ec7f63df73157191bce345d5fc95780cdb1b70d662fafc55ac214fe6f0f989a",
+      "daily_manifest_sha256": "cade2270c639c8de748356e590171c17c2382b9ca98b0c431d2b918e3be92b31",
+      "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+      "labels_materialized": false
+    },
+    "native_observation_batch_v2": {
+      "artifact_id": "f05-full-multiscale-offline-native-observation-batch-v2",
+      "manifest_file_sha256": "c365d6f2198d29a02f08bcff0aea71bad84127dfebd33d5c6485a08ed5d2dd9f",
+      "canonical_manifest_sha256": "de5b075bff99e5841be8f85b00aef98e573a2a41c56de1288ebe0ee41acf6122",
+      "selected_target_days": 30,
+      "observation_context_days": 34,
+      "continuation_only_days": 4,
+      "labels_materialized": false,
+      "economic_outcomes_read": false
+    },
+    "mechanics_panel_v1": {
+      "artifact_id": "f05-full-multiscale-offline-mechanics-panel-v1",
+      "canonical_manifest_sha256": "52f2bb0d514a6104a9d59cbcbd3021f67e0cee117006d8eaff85abec52634e07",
+      "manifest_file_sha256": "c44efae6f78e5aa740da7daf00f9df550de020401c891ebbe7d48af8a7aebce9",
+      "selected_day_count": 30,
+      "opportunity_count": 3516,
+      "economic_outcomes_present": false,
+      "candidate_actions_generated": false
+    }
+  },
+  "exact_owner": {
+    "policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "predicate_bundle_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "private_config_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
+  },
+  "pending_bindings": [
+    "final_public_commit",
+    "annotated_execution_tag",
+    "all_execution_contract_source_sha256"
+  ],
+  "pre_economic_gate": {
+    "source_manifest_revalidated": true,
+    "normalized_book_view_revalidated": true,
+    "native_hour_cache_revalidated": true,
+    "features_only_manifest_revalidated": true,
+    "native_observation_batch_admitted": true,
+    "five_file_mechanics_panel_admitted": true,
+    "five_file_mechanics_panel_status": "offline_outcome_blind_mechanics_panel_admitted",
+    "formal_orchestrator_bypass_tests_passed": true,
+    "formal_orchestrator_bypass_test_scope": "local_unbound_pre_economic_only",
+    "full_test_suite_passed": true,
+    "full_test_suite_passed_count": 3035,
+    "full_test_suite_skipped_count": 316,
+    "ruff_passed": true,
+    "public_private_audits_passed": true,
+    "clean_commit_created": false,
+    "annotated_tag_created": false,
+    "economic_access_allowed": false
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_allowed": false,
+    "owner_policy_modified": false
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.spec.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1",
+  "research_type": "preregistered_incremental_sequential_policy_successor",
+  "status": "withdrawn_before_deployment_no_economic_read",
+  "last_materially_modified": "2026-08-13",
+  "preregistration_cutoff_utc": "2026-08-12T17:45:29Z",
+  "first_eligible_full_utc_day": "2026-08-13",
+  "minimum_feature_ready_active_treatment_days": 30,
+  "withdrawal": {
+    "companion_deployed": false,
+    "companion_rows": 0,
+    "live_runtime_changed": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "owner_policy_unchanged": true,
+    "collection_authorized": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "successor_identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1"
+  },
+  "public_base_commit": "e07b23dc6dc16668fa3a6f21a373f3e7e0527e80",
+  "primary_estimand": "repeated_sequential_campaign_terminal_usdc_new_policy_minus_exact_current_owner_policy",
+  "score_profile_contract": {
+    "schema_version": "narrowgate_score_profile.v1",
+    "profile_id": "action_alpha_v1",
+    "profile_sha256": "2c1d739632a918f2dd83d0c19143e0ff0cc9aecedfc79a549441d1732bb42fd9"
+  },
+  "primary_baseline": {
+    "identity": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+    "policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "predicate_bundle_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "operational_baseline": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json",
+    "active_policy_modified": false,
+    "owner_risk_accepted_promotion_preserved": true
+  },
+  "consumed_evidence": {
+    "historical_panels": [
+      "40_day_development",
+      "50_day_development",
+      "71_day_restart_aware_development"
+    ],
+    "allowed_uses": [
+      "implementation_regression",
+      "mechanics_verification",
+      "historical_interpretation"
+    ],
+    "selection_or_promotion_use_allowed": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "new_development_denominator": {
+    "status": "withdrawn_historical_design",
+    "selection_rule": "first_30_chronological_closed_UTC_days_with_at_least_one_feature_ready_treatment_event_and_complete_registered_treatment_interval_coverage_passing_all_source_clock_lifecycle_and_admission_gates",
+    "registered_treatment_interval_semantics": "outcome_blind_intervals_frozen_before_capture; a bounded interval may count but never represents unrecorded daemon uptime",
+    "registered_treatment_intervals_bound_by_sha256_across_lifecycle_market_and_decision_manifests": true,
+    "continuous_24h_strategy_runtime_required": false,
+    "maintenance_day_counts": false,
+    "zero_eligible_event_day_counts": false,
+    "zero_feature_ready_treatment_day_counts": false,
+    "source_incomplete_day_counts": false,
+    "outcome_based_day_selection_forbidden": true
+  },
+  "outcome_blind_day_admission": {
+    "status": "withdrawn_historical_design_not_executable",
+    "source_bundle_schema": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.prospective_day_source_bundle.v2",
+    "required_bound_manifests": [
+      "lifecycle_day_admission",
+      "market_day_admission",
+      "decision_day_admission"
+    ],
+    "all_bindings_require_sha256": true,
+    "economic_fields_forbidden": true,
+    "atomic_immutable_admission": true,
+    "coverage_reason_census_required": true,
+    "fold_manifest_frozen_only_after_30_admitted_days": true,
+    "public_cli_commands": [
+      "produce-day",
+      "status",
+      "freeze-folds",
+      "audit-owner-artifact"
+    ]
+  },
+  "candidate_ladder": [
+    "B0_CURRENT_EXACT",
+    "B1_CAMPAIGN_AGE_ONLY",
+    "B2_CAMPAIGN_PLUS_H16_H256",
+    "B3_CURRENT_SEMANTIC_EQUIVALENT",
+    "E1_FULL_EMA_BANK",
+    "E2_DIRECTIONAL_EMA",
+    "E3_HIGHER_ORDER_BOOLEAN",
+    "M2_TRUE_INCREMENTAL",
+    "ACTION_MATCHED_CONTROLS::<E1_FULL_EMA_BANK|E2_DIRECTIONAL_EMA|E3_HIGHER_ORDER_BOOLEAN|M2_TRUE_INCREMENTAL>"
+  ],
+  "action_contract": {
+    "trigger": "exposure_increasing_fill",
+    "evaluation": "once_per_fill_lineage_assignment",
+    "buy_sell_pooled_promotion": false,
+    "reducing_quote_changed": false,
+    "duration_expiry_forces_order": false,
+    "dynamic_rearm_in_scope": false,
+    "duration_vocabulary_changed": false,
+    "discovery_control": "row_wise_exact_current_owner_policy_action_not_fixed_CONTROL_85N"
+  },
+  "feature_universe": {
+    "ema_half_lives_s": [
+      0.5,
+      1.0,
+      2.0,
+      4.0,
+      8.0,
+      16.0,
+      32.0,
+      64.0,
+      128.0,
+      256.0
+    ],
+    "ema_fast_slow_pair_count": 45,
+    "all_pairs_eligible_before_inner_screen": true,
+    "directional_predicates": [
+      "golden_or_death_direction",
+      "last_cross_direction",
+      "cross_age",
+      "persistence",
+      "distance",
+      "normalized_distance",
+      "slope",
+      "curvature",
+      "convergence",
+      "expansion"
+    ],
+    "m2_incremental_channels": [
+      "aggressive_trade_flow",
+      "trade_count_and_tempo",
+      "depth_and_imbalance",
+      "depletion_and_refill",
+      "target_price_displayed_quantity",
+      "queue_state"
+    ]
+  },
+  "bounded_search": {
+    "exhaustive_architecture_closure": false,
+    "feature_pool_built_per_purged_inner_train": true,
+    "feature_screen": "inner_train_identified_action_value_then_feature_quality",
+    "feature_budget": 1024,
+    "per_action_identified_only_tree": true,
+    "max_depth": 6,
+    "max_leaf_nodes": 32,
+    "minimum_samples_leaf": 30,
+    "max_ordered_rules": 7,
+    "max_or_clauses_per_rule": 16,
+    "max_literals_per_clause": 6,
+    "neutral_zero_unknown_target_allowed": false,
+    "unknown_target_contract": "per_action_missing_mask_identified_only_objective",
+    "candidate_effect_reference": "candidate_duration_minus_row_wise_exact_owner_policy_duration"
+  },
+  "chronological_split": {
+    "active_day_count": 30,
+    "outer_folds": [
+      {
+        "train_active_day_ordinals": [
+          1,
+          10
+        ],
+        "test_active_day_ordinals": [
+          11,
+          15
+        ]
+      },
+      {
+        "train_active_day_ordinals": [
+          1,
+          15
+        ],
+        "test_active_day_ordinals": [
+          16,
+          20
+        ]
+      },
+      {
+        "train_active_day_ordinals": [
+          1,
+          20
+        ],
+        "test_active_day_ordinals": [
+          21,
+          25
+        ]
+      },
+      {
+        "train_active_day_ordinals": [
+          1,
+          25
+        ],
+        "test_active_day_ordinals": [
+          26,
+          30
+        ]
+      }
+    ],
+    "inner_folds": 3,
+    "minimum_inner_train_active_days": 5,
+    "purge": "observation_end_and_descendant_state_washout_aware",
+    "outer_test_used_once": true
+  },
+  "unknown_lifecycle_contract": {
+    "exchange_confirmed_preactivation_gtx_minus_5022": "exact_zero_exposure",
+    "transport_timeout_or_response_loss_or_unknown_ack": "reconcile_or_censor_never_zero"
+  },
+  "coverage_reason_codes": [
+    "eligible_feature_ready",
+    "ineligible_event",
+    "warmup_incomplete",
+    "feature_stale",
+    "predicate_unobserved",
+    "safety_fallback",
+    "policy_control",
+    "source_unavailable",
+    "cache_unavailable",
+    "binding_invalid",
+    "lifecycle_unidentified",
+    "gtx_preactivation_exact_zero",
+    "gtx_ack_unknown_censored"
+  ],
+  "hierarchy": {
+    "positive_value_steps": [
+      "E1_minus_B0_B1_B2_B3_and_E1_action_matched",
+      "E2_minus_E1_and_E2_action_matched",
+      "E3_minus_E2_and_E3_action_matched",
+      "M2_minus_E3_and_M2_action_matched"
+    ],
+    "representation_step": "continuous_minus_each_of_E1_E2_E3_M2",
+    "representation_rule": "positive_simultaneous_LCB_means_continuous_superior_and_blocks_boolean_freeze"
+  },
+  "economic_hard_gates": {
+    "candidate_and_closed_campaign_day_and_week_simultaneous_lcb": ">0",
+    "negative_terminal_q10_cvar_mae_repair_censoring_inventory_day_and_week_simultaneous_lcb": ">=0",
+    "daily_positive_rate_min": 0.55,
+    "fill_retention": [
+      0.85,
+      1.2
+    ],
+    "candidate_rate": [
+      0.05,
+      0.75
+    ],
+    "minimum_common_rows": 200,
+    "minimum_effective_sample_size": 100,
+    "maximum_unsupported_mass": 0.05,
+    "minimum_behavior_propensity": 0.05,
+    "maximum_overlap_violations": 0,
+    "leave_one_and_leave_two_top_day_mean": ">0",
+    "canonical_scorecard_hard_gates": "all_pass",
+    "canonical_scorecard_ranking_score": "non_null"
+  },
+  "oof_identity_contract": {
+    "oof_evidence_scope": "learning_algorithm_fold_specific_policies",
+    "exact_final_artifact_oof_available": false,
+    "final_refit_requires_later_independent_canonical_confirmation": true
+  },
+  "permissions": {
+    "new_economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "final_policy_frozen": false,
+    "repeated_policy_economics_run": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "active_owner_policy_changed": false
+  },
+  "execution_state": {
+    "research_boolean_policy_evaluator_executable": true,
+    "paired_repeated_policy_contract_executable": true,
+    "exact_owner_control_policy_required_in_both_mechanics_and_economics": true,
+    "unsupported_day_zero_difference_substitution_allowed": false,
+    "one_shot_effect_aggregation_as_outer_policy_pnl_allowed": false,
+    "prospective_source_to_full_path_replay_adapter_executable": false,
+    "prospective_day_emitter_and_atomic_admission_executable": false,
+    "nested_oof_economic_orchestrator_executable": true,
+    "canonical_scorecard_emitter_executable": true,
+    "final_refit_artifact_freezer_executable": true,
+    "exact_final_artifact_prospective_confirmation_executable": false,
+    "restart_aware_repeated_policy_state_chain_executable": true,
+    "receive_time_transport_contract_executable": true,
+    "formal_new_economic_panel_active_days": 0,
+    "formal_new_economic_panel_active_days_semantics": "withdrawn_design_zero_rows_not_an_evidence_denominator",
+    "formal_economic_oof_run": false,
+    "prospective_collection_live_enabled": false
+  },
+  "public_implementation": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.py",
+  "interpretation_manifest": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_policy_v1_interpretation_manifest_20260813.json"
+}
