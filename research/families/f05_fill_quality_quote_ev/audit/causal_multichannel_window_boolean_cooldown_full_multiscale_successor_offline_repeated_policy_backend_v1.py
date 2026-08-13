@@ -87,6 +87,7 @@ _INDEX_COLUMNS = ("utc_day", "opportunity_id")
 REPLAY_METADATA_DIRECT_BINDINGS = {
     "side": "side",
     "assignment_ts_ns": "assignment_ts_ns",
+    "observation_end_ts_ns": "observation_end_ts_ns",
     "baseline_duration_ms": "baseline_duration_ms",
     "role_at_fill": "role_at_fill",
     "inventory_after_fill_btc": "inventory_after_fill_btc",

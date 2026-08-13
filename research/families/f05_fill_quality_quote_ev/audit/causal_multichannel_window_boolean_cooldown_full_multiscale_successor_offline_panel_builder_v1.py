@@ -14,6 +14,7 @@ import concurrent.futures
 import hashlib
 import importlib
 import json
+import math
 import os
 import re
 import shutil
@@ -43,6 +44,7 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_features import (
     M0_REQUIRED_FIELDS,
+    CausalWindowObservation,
 )
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_native_observation_cache import (
     NativeObservationCacheError,
@@ -57,15 +59,21 @@ from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_windo
     CooldownAssignmentSnapshotV2,
 )
 
-IDENTITY = f"{offline.IDENTITY}.offline_panel_builder_v1"
+LEGACY_PANEL_IDENTITY = f"{offline.IDENTITY}.offline_panel_builder_v1"
+IDENTITY = f"{offline.IDENTITY}.offline_sequential_panel_v2"
 SCHEMA_VERSION = f"{IDENTITY}.manifest.v1"
 DAY_SCHEMA_VERSION = f"{IDENTITY}.day_manifest.v1"
 ADAPTER_RESULT_SCHEMA = f"{IDENTITY}.adapter_result.v1"
+SEQUENTIAL_REPLAY_INPUT_IDENTITY = (
+    "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+    "offline_sequential_replay_input_v2"
+)
+OPPORTUNITY_ID_SCHEMA_VERSION = f"{LEGACY_PANEL_IDENTITY}.opportunity_id.v1"
 PANEL_ROLE = "family_specific_unconsumed_historical_development"
 QUEUE_IDENTITY = "modeled_queue_with_same_millisecond_ambiguity_censoring"
 SAME_MILLISECOND_AMBIGUITY_POLICY = "censor"
 REPLAY_ENGINE = "python"
-CANONICAL_ADAPTER_IDENTITY = f"{offline.IDENTITY}.offline_b0_mechanics_adapter_v1"
+CANONICAL_ADAPTER_IDENTITY = f"{offline.IDENTITY}.offline_b0_mechanics_adapter_v2"
 CANONICAL_ADAPTER_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
     "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
@@ -80,6 +88,12 @@ EXPECTED_CONTINUATION_ONLY_DAYS = (
     "2026-07-03",
     "2026-07-16",
     "2026-08-06",
+)
+FORMAL_DAY_REPLAY_WORKERS = 6
+FORMAL_OPPORTUNITY_COUNT = 3_516
+PORTABLE_BINDING_FILENAME = "portable_replay_binding_v2.json"
+SEQUENTIAL_CACHE_DIRECTORY = (
+    "f05_full_multiscale_successor_offline_sequential_replay_cache_v2"
 )
 
 PANEL_ROLES = mechanics.PANEL_FILE_ROLES
@@ -134,7 +148,10 @@ _ADAPTER_RESULT_FIELDS = frozenset(
         "snapshots_emitted",
         "market_window_identity_sha256",
         "model_overlay_identity_sha256",
+        "latency_identity_sha256",
+        "queue_random_identity_sha256",
         "replay_input_receipt_sha256",
+        "assignment_mechanics",
     }
 )
 
@@ -158,6 +175,8 @@ class OwnerArtifactPaths:
 
 @dataclass(frozen=True, slots=True)
 class ValidatedPanelInputs:
+    project_data_root: Path
+    marketdata_root: Path
     source_manifest_path: Path
     source_manifest: Mapping[str, Any]
     book_view_root: Path
@@ -601,6 +620,8 @@ def validate_inputs(
         "same_millisecond_ambiguity_policy": SAME_MILLISECOND_AMBIGUITY_POLICY,
     }
     return ValidatedPanelInputs(
+        project_data_root=active_layout.project_data_root.expanduser().resolve(),
+        marketdata_root=active_layout.marketdata_root.expanduser().resolve(),
         source_manifest_path=source_path,
         source_manifest=source,
         book_view_root=book_view_root.expanduser().resolve(),
@@ -740,6 +761,9 @@ def _source_receipts(inputs: ValidatedPanelInputs, day: str) -> dict[str, str]:
         "native_observation_role": str(native.get("observation_role")),
         "native_target_assignment_eligible": str(native.get("target_assignment_eligible")).lower(),
         "continuation_day": continuation_day,
+        "continuation_source_day_receipt_sha256": context_hashes["D_plus_1"],
+        "continuation_bbo_sha256": book_hashes[continuation_day]["bbo"],
+        "continuation_l2_sha256": book_hashes[continuation_day]["l2"],
         "continuation_native_cache_manifest_sha256": _require_sha(
             continuation_native.get("cache_manifest_file_sha256"),
             label=f"{continuation_day} native cache manifest",
@@ -773,6 +797,10 @@ def _source_receipts(inputs: ValidatedPanelInputs, day: str) -> dict[str, str]:
         ),
         "features_day_file_sha256": _file_sha256(inputs.feature_files[day]),
         "continuation_features_day_file_sha256": feature_hashes[continuation_day],
+        "feature_dag_sha256": _require_sha(
+            inputs.features_manifest.get("_validated_feature_dag_sha256"),
+            label="features-only Feature DAG",
+        ),
     }
 
 
@@ -793,6 +821,142 @@ def _day_request(inputs: ValidatedPanelInputs, day: str) -> DayMaterializationRe
         source_receipts=_source_receipts(inputs, day),
         input_binding_sha256=inputs.input_binding_sha256,
     )
+
+
+def _portable_bound_path(path: Path, *, inputs: ValidatedPanelInputs) -> str:
+    resolved = path.expanduser().resolve()
+    repository_root = Path(__file__).resolve().parents[4]
+    if resolved == inputs.owner_artifacts.private_config.expanduser().resolve():
+        return "${NARROWGATE_LIVE_CONFIG}"
+    try:
+        return offline._portable_path(
+            resolved,
+            project_data=inputs.project_data_root,
+            market_data=inputs.marketdata_root,
+        )
+    except offline.OfflineSourceGateError:
+        try:
+            relative = resolved.relative_to(repository_root)
+        except ValueError as exc:
+            raise OfflinePanelBuilderError(
+                f"canonical replay input is outside portable roots: {resolved.name}"
+            ) from exc
+        return f"${{NARROWGATE_ROOT}}/{relative.as_posix()}"
+
+
+def _canonical_day_projection(
+    inputs: ValidatedPanelInputs,
+    day: str,
+) -> dict[str, Any]:
+    request = _day_request(inputs, day)
+    payload: dict[str, Any] = {
+        "utc_day": day,
+        "panel_role": request.panel_role,
+        "queue_identity": request.queue_identity,
+        "same_millisecond_ambiguity_policy": (
+            request.same_millisecond_ambiguity_policy
+        ),
+        "bbo_path": _portable_bound_path(request.bbo_path, inputs=inputs),
+        "bbo_sha256": _file_sha256(request.bbo_path),
+        "l2_path": _portable_bound_path(request.l2_path, inputs=inputs),
+        "l2_sha256": _file_sha256(request.l2_path),
+        "features_path": _portable_bound_path(request.features_path, inputs=inputs),
+        "features_sha256": _file_sha256(request.features_path),
+        "source_manifest_path": _portable_bound_path(
+            request.source_manifest_path, inputs=inputs
+        ),
+        "source_manifest_sha256": _file_sha256(request.source_manifest_path),
+        "book_view_manifest_path": _portable_bound_path(
+            request.book_view_manifest_path, inputs=inputs
+        ),
+        "book_view_manifest_sha256": _file_sha256(request.book_view_manifest_path),
+        "features_manifest_path": _portable_bound_path(
+            request.features_manifest_path, inputs=inputs
+        ),
+        "features_manifest_sha256": _file_sha256(request.features_manifest_path),
+        "private_config_path": _portable_bound_path(
+            request.private_config_path, inputs=inputs
+        ),
+        "private_config_sha256": _file_sha256(request.private_config_path),
+        "native_observation_root": _portable_bound_path(
+            request.native_observation_root, inputs=inputs
+        ),
+        "source_receipts": dict(request.source_receipts),
+        "input_binding_sha256": request.input_binding_sha256,
+    }
+    payload["projection_receipt_sha256"] = _canonical_sha256(payload)
+    return payload
+
+
+def _ensure_portable_replay_binding(
+    inputs: ValidatedPanelInputs,
+    *,
+    output_root: Path,
+) -> dict[str, Any]:
+    replay_adapter = importlib.import_module(
+        "research.families.f05_fill_quality_quote_ev.audit."
+        "causal_multichannel_window_boolean_cooldown_full_multiscale_"
+        "successor_offline_replay_adapter_v1"
+    )
+    root = output_root.expanduser().resolve()
+    binding_path = root / "_bindings" / PORTABLE_BINDING_FILENAME
+    cache_root = (
+        inputs.project_data_root
+        / "cache"
+        / "replay_dag"
+        / SEQUENTIAL_CACHE_DIRECTORY
+    ).resolve()
+    try:
+        cache_root.relative_to((inputs.project_data_root / "cache" / "replay_dag").resolve())
+    except ValueError as exc:
+        raise OfflinePanelBuilderError("sequential replay cache escaped its governed root") from exc
+    projections = {
+        day: _canonical_day_projection(inputs, day) for day in inputs.selected_days
+    }
+    binding: dict[str, Any] = {
+        "schema_version": f"{replay_adapter.IDENTITY}.portable_replay_binding.v1",
+        "identity": SEQUENTIAL_REPLAY_INPUT_IDENTITY,
+        "panel_identity": IDENTITY,
+        "selected_days": list(inputs.selected_days),
+        "selected_day_count": len(inputs.selected_days),
+        "fixed_bridge": replay_adapter._expected_fixed_bridge(),
+        "target_day_end_terminalized": False,
+        "d_plus_1_new_target_assignments_allowed": False,
+        "assignment_to_common_washout_required": True,
+        "observation_end_semantics": (
+            "outcome_blind_common_D_plus_1_administrative_bound_v1"
+        ),
+        "native_observation_batch_manifest": {
+            "path": _portable_bound_path(
+                inputs.native_observation_manifest_path, inputs=inputs
+            ),
+            "file_sha256": _file_sha256(inputs.native_observation_manifest_path),
+            "canonical_manifest_sha256": _require_sha(
+                inputs.native_observation_manifest.get("canonical_manifest_sha256"),
+                label="native observation batch canonical identity",
+            ),
+        },
+        "day_projections": projections,
+    }
+    if binding_path.exists():
+        if _load_json(binding_path, label="portable replay binding") != binding:
+            raise OfflinePanelBuilderError("immutable portable replay binding drifted")
+    else:
+        _atomic_json(binding_path, binding)
+        if _load_json(binding_path, label="portable replay binding") != binding:
+            raise OfflinePanelBuilderError("portable replay binding write drifted")
+    binding_sha = _file_sha256(binding_path)
+    return {
+        "path": binding_path,
+        "portable_path": _portable_bound_path(binding_path, inputs=inputs),
+        "sha256": binding_sha,
+        "portable_day_cache_root": offline._portable_path(
+            cache_root,
+            project_data=inputs.project_data_root,
+            market_data=inputs.marketdata_root,
+        ),
+        "day_projections": projections,
+    }
 
 
 def _validate_identity_hashes(
@@ -958,9 +1122,45 @@ def _validate_adapter_result(
     for key in (
         "market_window_identity_sha256",
         "model_overlay_identity_sha256",
+        "latency_identity_sha256",
+        "queue_random_identity_sha256",
         "replay_input_receipt_sha256",
     ):
         result[key] = _require_sha(result.get(key), label=f"B0 adapter {key}")
+    assignment_mechanics = result.get("assignment_mechanics")
+    if (
+        not isinstance(assignment_mechanics, Mapping)
+        or len(assignment_mechanics) != snapshot_count
+        or any(not isinstance(row, Mapping) for row in assignment_mechanics.values())
+    ):
+        raise OfflinePanelBuilderError(
+            "B0 adapter assignment mechanics denominator drifted"
+        )
+    normalized_mechanics: dict[str, dict[str, Any]] = {}
+    expected_fields = {
+        "campaign_id",
+        "order_id",
+        "exposure_fill_ordinal",
+        "assignment_equity_usdc",
+    }
+    for snapshot_id, row in assignment_mechanics.items():
+        if set(row) != expected_fields:
+            raise OfflinePanelBuilderError("B0 assignment mechanics schema drifted")
+        normalized = {
+            "campaign_id": int(row["campaign_id"]),
+            "order_id": int(row["order_id"]),
+            "exposure_fill_ordinal": int(row["exposure_fill_ordinal"]),
+            "assignment_equity_usdc": float(row["assignment_equity_usdc"]),
+        }
+        if (
+            normalized["campaign_id"] <= 0
+            or normalized["order_id"] <= 0
+            or normalized["exposure_fill_ordinal"] <= 0
+            or not math.isfinite(normalized["assignment_equity_usdc"])
+        ):
+            raise OfflinePanelBuilderError("B0 assignment mechanics value drifted")
+        normalized_mechanics[str(snapshot_id)] = normalized
+    result["assignment_mechanics"] = normalized_mechanics
     return result
 
 
@@ -972,7 +1172,7 @@ def _opportunity_id(
 ) -> str:
     return "f05-offline-" + _canonical_sha256(
         {
-            "schema_version": f"{IDENTITY}.opportunity_id.v1",
+            "schema_version": OPPORTUNITY_ID_SCHEMA_VERSION,
             "utc_day": day,
             "snapshot_id": snapshot.snapshot_id,
             "assignment_id": snapshot.assignment_id,
@@ -983,6 +1183,190 @@ def _opportunity_id(
             "input_binding_sha256": input_binding_sha256,
         }
     )
+
+
+def _assignment_identity(
+    snapshot: CooldownAssignmentSnapshotV2,
+) -> tuple[int, int]:
+    """Cross-check the frozen replay assignment identifiers."""
+
+    assignment = str(snapshot.assignment_id).split(":")
+    fill = str(snapshot.fill_event_id).split(":")
+    client = str(snapshot.client_order_id)
+    if (
+        len(assignment) != 6
+        or assignment[0] != "cooldown-v2"
+        or assignment[1] != offline.SYMBOL
+        or len(fill) != 5
+        or fill[0] != "fill"
+        or not client.startswith("replay-order-")
+    ):
+        raise OfflinePanelBuilderError("frozen replay assignment identity is malformed")
+    try:
+        assignment_ts_ms = int(assignment[2])
+        assignment_order_id = int(assignment[4])
+        assignment_ordinal = int(assignment[5])
+        fill_order_id = int(fill[1])
+        fill_partial_ordinal = int(fill[2])
+        fill_ts_ms = int(fill[3])
+        fill_ordinal = int(fill[4])
+        client_order_id = int(client.removeprefix("replay-order-"))
+    except ValueError as exc:
+        raise OfflinePanelBuilderError(
+            "frozen replay assignment identity contains a non-integer component"
+        ) from exc
+    m0 = snapshot.m0_context.to_dict()
+    assignment_ts_ns = int(m0["assignment_ts_ns"])
+    m0_ordinal = m0.get("exposure_fill_ordinal")
+    if (
+        assignment_order_id <= 0
+        or assignment_ordinal <= 0
+        or assignment_order_id != fill_order_id
+        or assignment_order_id != client_order_id
+        or assignment_ordinal != fill_ordinal
+        or (m0_ordinal is not None and assignment_ordinal != int(m0_ordinal))
+    ):
+        raise OfflinePanelBuilderError("frozen replay order/ordinal identities disagree")
+    if (
+        assignment[3] != str(m0["side"])
+        or fill_partial_ordinal != int(snapshot.partial_fill_ordinal)
+        or assignment_ts_ms != fill_ts_ms
+        or assignment_ts_ns != assignment_ts_ms * 1_000_000
+    ):
+        raise OfflinePanelBuilderError("frozen replay fill clock/side identity disagrees")
+    return assignment_order_id, assignment_ordinal
+
+
+def _observation_end_ts_ns(day: str) -> int:
+    target = date.fromisoformat(_require_day(day))
+    return int((target + timedelta(days=2) - date(1970, 1, 1)).days) * 86_400 * 1_000_000_000
+
+
+def _sequential_context_bindings(
+    request: DayMaterializationRequest,
+) -> dict[str, str]:
+    receipts = request.source_receipts
+    continuation_day = _require_day(receipts["continuation_day"])
+    expected = (date.fromisoformat(request.utc_day) + timedelta(days=1)).isoformat()
+    if continuation_day != expected:
+        raise OfflinePanelBuilderError("D+1 continuation day drifted")
+    native_observation = _require_sha(
+        receipts.get("continuation_native_cache_observation_sha256"),
+        label=f"{continuation_day} native observation bytes",
+    )
+    market_identity = _canonical_sha256(
+        {
+            "schema_version": f"{SEQUENTIAL_REPLAY_INPUT_IDENTITY}.D_plus_1_market.v1",
+            "utc_day": continuation_day,
+            "source_day_receipt_sha256": _require_sha(
+                receipts.get("continuation_source_day_receipt_sha256"),
+                label=f"{continuation_day} source receipt",
+            ),
+            "bbo_sha256": _require_sha(
+                receipts.get("continuation_bbo_sha256"),
+                label=f"{continuation_day} BBO bytes",
+            ),
+            "l2_sha256": _require_sha(
+                receipts.get("continuation_l2_sha256"),
+                label=f"{continuation_day} L2 bytes",
+            ),
+            "native_observation_sha256": native_observation,
+            "queue_identity": QUEUE_IDENTITY,
+            "same_millisecond_ambiguity_policy": SAME_MILLISECOND_AMBIGUITY_POLICY,
+        }
+    )
+    feature_identity = _canonical_sha256(
+        {
+            "schema_version": f"{SEQUENTIAL_REPLAY_INPUT_IDENTITY}.D_plus_1_feature.v1",
+            "utc_day": continuation_day,
+            "feature_file_sha256": _require_sha(
+                receipts.get("continuation_features_day_file_sha256"),
+                label=f"{continuation_day} feature bytes",
+            ),
+            "feature_dag_sha256": _require_sha(
+                receipts.get("feature_dag_sha256"),
+                label="Feature DAG",
+            ),
+            "features_daily_manifest_sha256": _require_sha(
+                receipts.get("features_daily_manifest_sha256"),
+                label="features daily manifest",
+            ),
+        }
+    )
+    context_identity = _canonical_sha256(
+        {
+            "schema_version": f"{SEQUENTIAL_REPLAY_INPUT_IDENTITY}.D_plus_1_context.v1",
+            "utc_day": continuation_day,
+            "market_identity_sha256": market_identity,
+            "feature_identity_sha256": feature_identity,
+            "native_observation_sha256": native_observation,
+            "native_observation_receipt_sha256": _require_sha(
+                receipts.get("continuation_native_observation_receipt_sha256"),
+                label=f"{continuation_day} native observation receipt",
+            ),
+            "new_target_assignments_allowed": False,
+            "target_day_end_terminalized": False,
+            "assignment_to_common_washout_required": True,
+        }
+    )
+    return {
+        "d_plus_1_utc_day": continuation_day,
+        "d_plus_1_market_identity_sha256": market_identity,
+        "d_plus_1_feature_identity_sha256": feature_identity,
+        "d_plus_1_native_observation_sha256": native_observation,
+        "d_plus_1_context_receipt_sha256": context_identity,
+    }
+
+
+def _campaign_cluster_id(
+    *,
+    utc_day: str,
+    campaign_id: int,
+    adapter_result: Mapping[str, Any],
+) -> str:
+    return "b0-campaign-" + _canonical_sha256(
+        {
+            "schema_version": f"{SEQUENTIAL_REPLAY_INPUT_IDENTITY}.campaign_cluster.v1",
+            "b0_replay_input_receipt_sha256": adapter_result[
+                "replay_input_receipt_sha256"
+            ],
+            "market_window_identity_sha256": adapter_result[
+                "market_window_identity_sha256"
+            ],
+            "utc_day": utc_day,
+            "campaign_id": int(campaign_id),
+        }
+    )
+
+
+def _predecessor_day_opportunity_sha256(
+    inputs: ValidatedPanelInputs,
+    *,
+    utc_day: str,
+    observed_ids: Sequence[str],
+) -> str | None:
+    if len(inputs.selected_days) != offline.REQUIRED_DAYS or offline.REQUIRED_DAYS != 30:
+        return None
+    path = (
+        inputs.project_data_root
+        / "cache"
+        / "replay_dag"
+        / "f05_full_multiscale_successor_offline_panel_builder_v1"
+        / utc_day
+        / "metadata.parquet"
+    )
+    if not path.is_file():
+        raise OfflinePanelBuilderError(
+            f"predecessor opportunity denominator is missing: {utc_day}"
+        )
+    table = pq.read_table(path, columns=["opportunity_id"])
+    expected = tuple(str(value) for value in table["opportunity_id"].to_pylist())
+    observed = tuple(str(value) for value in observed_ids)
+    if observed != expected or set(observed) != set(expected):
+        raise OfflinePanelBuilderError(
+            f"v2 opportunity IDs drifted from the immutable predecessor: {utc_day}"
+        )
+    return _canonical_sha256(list(expected))
 
 
 def _split_feature_row(
@@ -1046,9 +1430,20 @@ def _project_rows(
     snapshots: Sequence[CooldownAssignmentSnapshotV2],
     decisions: Mapping[str, Any],
     adapter_result: Mapping[str, Any],
+    sequential_binding: Mapping[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
     output = {role: [] for role in PANEL_ROLES}
     seen: set[str] = set()
+    context = _sequential_context_bindings(request)
+    projection = sequential_binding.get("day_projections", {}).get(request.utc_day)
+    if not isinstance(projection, Mapping):
+        raise OfflinePanelBuilderError("portable replay binding lacks target-day projection")
+    day_input_sha256 = _require_sha(
+        projection.get("projection_receipt_sha256"),
+        label=f"{request.utc_day} day input",
+    )
+    observation_end_ts_ns = _observation_end_ts_ns(request.utc_day)
+    assignment_mechanics = adapter_result["assignment_mechanics"]
     for snapshot in snapshots:
         _validate_exposure_fill(snapshot)
         opportunity_id = _opportunity_id(
@@ -1062,7 +1457,30 @@ def _project_rows(
         decision = decisions.get(snapshot.snapshot_id)
         if decision is None:
             raise OfflinePanelBuilderError("snapshot lacks an exact owner B0 decision")
+        mechanics_row = assignment_mechanics.get(str(snapshot.snapshot_id))
+        if not isinstance(mechanics_row, Mapping):
+            raise OfflinePanelBuilderError("snapshot lacks B0 assignment mechanics")
+        campaign_id = int(mechanics_row.get("campaign_id", 0) or 0)
+        assignment_equity_usdc = float(
+            mechanics_row.get("assignment_equity_usdc", float("nan"))
+        )
+        order_id, exposure_fill_ordinal = _assignment_identity(snapshot)
+        if (
+            campaign_id <= 0
+            or not math.isfinite(assignment_equity_usdc)
+            or int(mechanics_row.get("order_id", 0) or 0) != order_id
+            or int(mechanics_row.get("exposure_fill_ordinal", 0) or 0)
+            != exposure_fill_ordinal
+        ):
+            raise OfflinePanelBuilderError("B0 assignment mechanics are invalid")
+        campaign_cluster_id = _campaign_cluster_id(
+            utc_day=request.utc_day,
+            campaign_id=campaign_id,
+            adapter_result=adapter_result,
+        )
         m0 = snapshot.m0_context.to_dict()
+        if observation_end_ts_ns <= int(m0["assignment_ts_ns"]):
+            raise OfflinePanelBuilderError("administrative observation end precedes assignment")
         feature_metadata, boolean, continuous = _split_feature_row(snapshot)
         base = {"utc_day": request.utc_day, "opportunity_id": opportunity_id}
         output["metadata"].append(
@@ -1081,6 +1499,8 @@ def _project_rows(
                 "snapshot_fallback_policy_id": snapshot.fallback_policy_id,
                 "snapshot_fallback_reason": snapshot.fallback_reason,
                 "source_bundle_sha256": snapshot.source_bundle_sha256,
+                "campaign_cluster_id": campaign_cluster_id,
+                "observation_end_ts_ns": observation_end_ts_ns,
                 **m0,
                 **feature_metadata,
             }
@@ -1099,14 +1519,6 @@ def _project_rows(
                 "owner_predicate_bundle_sha256": str(decision.predicate_bundle_sha256),
             }
         )
-        replay_receipt = {
-            "opportunity_id": opportunity_id,
-            "input_binding_sha256": request.input_binding_sha256,
-            "source_receipts": dict(request.source_receipts),
-            "market_window_identity_sha256": adapter_result["market_window_identity_sha256"],
-            "model_overlay_identity_sha256": adapter_result["model_overlay_identity_sha256"],
-            "adapter_replay_input_receipt_sha256": adapter_result["replay_input_receipt_sha256"],
-        }
         output["replay_inputs"].append(
             {
                 **base,
@@ -1150,7 +1562,36 @@ def _project_rows(
                 "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
                 "exact_owner_predicate_bundle_sha256": (offline.ACTIVE_PREDICATE_BUNDLE_SHA256),
                 "exact_owner_private_config_sha256": (offline.ACTIVE_PRIVATE_CONFIG_SHA256),
-                "replay_input_receipt_sha256": _canonical_sha256(replay_receipt),
+                "replay_input_receipt_sha256": adapter_result[
+                    "replay_input_receipt_sha256"
+                ],
+                "portable_replay_binding_path": sequential_binding["portable_path"],
+                "portable_replay_binding_sha256": sequential_binding["sha256"],
+                "portable_day_cache_root": sequential_binding[
+                    "portable_day_cache_root"
+                ],
+                "day_replay_workers": FORMAL_DAY_REPLAY_WORKERS,
+                "day_input_sha256": day_input_sha256,
+                "market_window_identity_sha256": adapter_result[
+                    "market_window_identity_sha256"
+                ],
+                "model_overlay_identity_sha256": adapter_result[
+                    "model_overlay_identity_sha256"
+                ],
+                "latency_identity_sha256": adapter_result[
+                    "latency_identity_sha256"
+                ],
+                "queue_random_identity_sha256": adapter_result[
+                    "queue_random_identity_sha256"
+                ],
+                "campaign_id": campaign_id,
+                "order_id": order_id,
+                "exposure_fill_ordinal": exposure_fill_ordinal,
+                "assignment_equity_usdc": assignment_equity_usdc,
+                **context,
+                "d_plus_1_new_target_assignments_allowed": False,
+                "target_day_end_terminalized": False,
+                "assignment_to_common_washout_required": True,
                 "economic_outcomes_read": False,
                 "labels_read": False,
                 "candidate_actions_generated": False,
@@ -1177,6 +1618,10 @@ def materialize_day(
     active_adapter = adapter or _load_canonical_adapter()
     if getattr(active_adapter, "identity", None) != CANONICAL_ADAPTER_IDENTITY:
         raise OfflinePanelBuilderError("B0 mechanics adapter identity drifted")
+    sequential_binding = _ensure_portable_replay_binding(
+        inputs,
+        output_root=output_root,
+    )
     request = _day_request(inputs, utc_day)
     identity_hashes = _validate_identity_hashes(
         active_adapter.identity_hashes(request), inputs=inputs
@@ -1256,6 +1701,7 @@ def materialize_day(
         snapshots=snapshots,
         decisions=evaluator.decisions,
         adapter_result=adapter_result,
+        sequential_binding=sequential_binding,
     )
     destination = output_root.expanduser().resolve() / utc_day
     if destination.exists():
@@ -1269,6 +1715,11 @@ def materialize_day(
             _write_parquet(path, rows[role])
             file_bindings[role] = _parquet_binding(path)
         row_ids = [row["opportunity_id"] for row in rows["metadata"]]
+        predecessor_opportunity_id_sha256 = _predecessor_day_opportunity_sha256(
+            inputs,
+            utc_day=utc_day,
+            observed_ids=row_ids,
+        )
         manifest: dict[str, Any] = {
             "schema_version": DAY_SCHEMA_VERSION,
             "identity": IDENTITY,
@@ -1280,6 +1731,16 @@ def materialize_day(
             "input_binding_sha256": inputs.input_binding_sha256,
             "adapter_identity": CANONICAL_ADAPTER_IDENTITY,
             "adapter_result_sha256": _canonical_sha256(adapter_result),
+            "sequential_replay_input_identity": SEQUENTIAL_REPLAY_INPUT_IDENTITY,
+            "portable_replay_binding_path": sequential_binding["portable_path"],
+            "portable_replay_binding_sha256": sequential_binding["sha256"],
+            "day_input_sha256": sequential_binding["day_projections"][utc_day][
+                "projection_receipt_sha256"
+            ],
+            "observation_end_semantics": (
+                "outcome_blind_common_D_plus_1_administrative_bound_v1"
+            ),
+            "observation_end_ts_ns": _observation_end_ts_ns(utc_day),
             "owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
             "owner_predicate_bundle_sha256": (offline.ACTIVE_PREDICATE_BUNDLE_SHA256),
             "owner_private_config_sha256": offline.ACTIVE_PRIVATE_CONFIG_SHA256,
@@ -1304,6 +1765,10 @@ def materialize_day(
             "continuation_owner_decision_count": len(all_snapshots) - len(snapshots),
             "new_target_assignments_from_continuation_day": 0,
             "opportunity_id_sha256": _canonical_sha256(row_ids),
+            "predecessor_opportunity_id_sha256": predecessor_opportunity_id_sha256,
+            "predecessor_opportunity_ids_matched": (
+                predecessor_opportunity_id_sha256 is not None
+            ),
             "owner_action_counts": dict(
                 sorted(
                     Counter(
@@ -1389,8 +1854,25 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
         "context_feature_receipts_sha256",
         "native_observation_receipt_sha256",
         "continuation_native_observation_receipt_sha256",
+        "portable_replay_binding_sha256",
+        "day_input_sha256",
     ):
         _require_sha(manifest.get(field), label=f"mechanics day {field}")
+    if (
+        manifest.get("sequential_replay_input_identity")
+        != SEQUENTIAL_REPLAY_INPUT_IDENTITY
+        or manifest.get("observation_end_semantics")
+        != "outcome_blind_common_D_plus_1_administrative_bound_v1"
+        or manifest.get("observation_end_ts_ns")
+        != _observation_end_ts_ns(str(manifest["utc_day"]))
+    ):
+        raise OfflinePanelBuilderError("mechanics day sequential-input contract drifted")
+    binding_path = root.parent / "_bindings" / PORTABLE_BINDING_FILENAME
+    if (
+        not binding_path.is_file()
+        or _file_sha256(binding_path) != manifest["portable_replay_binding_sha256"]
+    ):
+        raise OfflinePanelBuilderError("mechanics day portable binding bytes drifted")
     files = manifest.get("files")
     if not isinstance(files, Mapping) or set(files) != set(PANEL_ROLES):
         raise OfflinePanelBuilderError("mechanics day file census drifted")
@@ -1410,10 +1892,63 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
             row_count, row_keys = len(keys), keys
         elif len(keys) != row_count or keys != row_keys:
             raise OfflinePanelBuilderError(f"mechanics day {role} row order drifted")
+        if role == "metadata":
+            metadata = pq.read_table(
+                path,
+                columns=["observation_end_ts_ns", "campaign_cluster_id"],
+            )
+            if set(metadata["observation_end_ts_ns"].to_pylist()) != {
+                manifest["observation_end_ts_ns"]
+            } or any(
+                not str(value).startswith("b0-campaign-")
+                for value in metadata["campaign_cluster_id"].to_pylist()
+            ):
+                raise OfflinePanelBuilderError("mechanics metadata v2 fields drifted")
+        elif role == "replay_inputs":
+            replay = pq.read_table(
+                path,
+                columns=[
+                    "day_input_sha256",
+                    "portable_replay_binding_sha256",
+                    "d_plus_1_utc_day",
+                    "d_plus_1_new_target_assignments_allowed",
+                    "target_day_end_terminalized",
+                    "assignment_to_common_washout_required",
+                    "campaign_id",
+                    "order_id",
+                    "exposure_fill_ordinal",
+                    "assignment_equity_usdc",
+                ],
+            ).to_pydict()
+            expected_d_plus_1 = (target + timedelta(days=1)).isoformat()
+            if (
+                set(replay["day_input_sha256"]) != {manifest["day_input_sha256"]}
+                or set(replay["portable_replay_binding_sha256"])
+                != {manifest["portable_replay_binding_sha256"]}
+                or set(replay["d_plus_1_utc_day"]) != {expected_d_plus_1}
+                or any(replay["d_plus_1_new_target_assignments_allowed"])
+                or any(replay["target_day_end_terminalized"])
+                or not all(replay["assignment_to_common_washout_required"])
+                or any(int(value) <= 0 for value in replay["campaign_id"])
+                or any(int(value) <= 0 for value in replay["order_id"])
+                or any(int(value) <= 0 for value in replay["exposure_fill_ordinal"])
+                or any(not math.isfinite(float(value)) for value in replay["assignment_equity_usdc"])
+            ):
+                raise OfflinePanelBuilderError("mechanics replay-input v2 fields drifted")
     if row_count != manifest.get("opportunity_count") or _canonical_sha256(
         list(row_keys or ())
     ) != manifest.get("opportunity_id_sha256"):
         raise OfflinePanelBuilderError("mechanics day opportunity census drifted")
+    predecessor_sha = manifest.get("predecessor_opportunity_id_sha256")
+    if predecessor_sha is not None:
+        _require_sha(predecessor_sha, label="predecessor opportunity ID census")
+        if (
+            manifest.get("predecessor_opportunity_ids_matched") is not True
+            or predecessor_sha != manifest.get("opportunity_id_sha256")
+        ):
+            raise OfflinePanelBuilderError("predecessor opportunity-ID receipt drifted")
+    elif manifest.get("predecessor_opportunity_ids_matched") is not False:
+        raise OfflinePanelBuilderError("predecessor opportunity-ID scope drifted")
     return manifest
 
 
@@ -1476,6 +2011,7 @@ def _merged_panel_manifest(
         "continuation_days_create_target_assignments": False,
         "native_observation_schema_version": EXPECTED_NATIVE_OBSERVATION_SCHEMA,
         "input_binding_sha256": inputs.input_binding_sha256,
+        "sequential_replay_input_identity": SEQUENTIAL_REPLAY_INPUT_IDENTITY,
         "day_manifest_sha256": {
             str(row["utc_day"]): str(row["canonical_manifest_sha256"]) for row in day_manifests
         },
@@ -1520,6 +2056,30 @@ def _validate_merged_panel(
             expected_ids = ids
         elif ids != expected_ids:
             raise OfflinePanelBuilderError("merged five-table row identity drifted")
+    if offline.REQUIRED_DAYS == 30:
+        if len(expected_ids or ()) != FORMAL_OPPORTUNITY_COUNT:
+            raise OfflinePanelBuilderError("formal v2 opportunity denominator is not 3,516")
+        predecessor = (
+            inputs.project_data_root
+            / "cache"
+            / "replay_dag"
+            / "f05_full_multiscale_successor_offline_panel_builder_v1"
+            / "panel"
+            / "metadata.parquet"
+        )
+        if not predecessor.is_file():
+            raise OfflinePanelBuilderError("immutable predecessor panel is unavailable")
+        prior_ids = tuple(
+            str(value)
+            for value in pq.read_table(
+                predecessor,
+                columns=["opportunity_id"],
+            )["opportunity_id"].to_pylist()
+        )
+        if expected_ids != prior_ids or set(expected_ids or ()) != set(prior_ids):
+            raise OfflinePanelBuilderError(
+                "formal v2 opportunity denominator drifted from predecessor"
+            )
     return manifest
 
 
@@ -1735,6 +2295,7 @@ def build_selected_days(
         "native_observation_schema_version": EXPECTED_NATIVE_OBSERVATION_SCHEMA,
         "input_binding_sha256": inputs.input_binding_sha256,
         "adapter_identity": CANONICAL_ADAPTER_IDENTITY,
+        "sequential_replay_input_identity": SEQUENTIAL_REPLAY_INPUT_IDENTITY,
         "day_manifest_sha256": {row["utc_day"]: row["canonical_manifest_sha256"] for row in days},
         "merged_panel_manifest_sha256": merged["canonical_manifest_sha256"],
         "reused_day_count": len(reused),
@@ -1781,6 +2342,8 @@ def validate_panel(output_root: Path, *, inputs: ValidatedPanelInputs) -> dict[s
         or result.get("replay_context_days") != list(inputs.replay_context_days)
         or result.get("native_observation_schema_version") != EXPECTED_NATIVE_OBSERVATION_SCHEMA
         or result.get("input_binding_sha256") != inputs.input_binding_sha256
+        or result.get("sequential_replay_input_identity")
+        != SEQUENTIAL_REPLAY_INPUT_IDENTITY
     ):
         raise OfflinePanelBuilderError("panel-builder manifest identity drifted")
     days = [
@@ -1840,7 +2403,7 @@ def _default_cli_paths() -> dict[str, Path]:
         / "models/private/f05_boolean_cooldown_owner_v1/predicate_bundle.json",
         "owner_config": root / "docs/private/live_config.current.local.yaml",
         "output_root": data
-        / "cache/replay_dag/f05_full_multiscale_successor_offline_panel_builder_v1",
+        / "cache/replay_dag/f05_full_multiscale_successor_offline_sequential_panel_v2",
     }
 
 
@@ -1880,6 +2443,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     preflight = subparsers.add_parser("preflight")
     _add_bound_input_arguments(preflight)
+    build_day = subparsers.add_parser("build-day")
+    _add_bound_input_arguments(build_day)
+    build_day.add_argument("--day", required=True)
+    build_day.add_argument(
+        "--output-root",
+        type=Path,
+        default=_default_cli_paths()["output_root"],
+    )
     build = subparsers.add_parser("build")
     _add_bound_input_arguments(build)
     build.add_argument(
@@ -1946,6 +2517,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         inputs = _inputs_from_args(args)
         if args.command == "preflight":
             result = preflight_inputs(inputs)
+        elif args.command == "build-day":
+            result = materialize_day(
+                inputs,
+                args.day,
+                output_root=args.output_root,
+            )
         elif args.command == "build":
             result = build_selected_days(
                 inputs,

@@ -55,7 +55,7 @@ def _replay_inputs() -> adapter._ReplayInputs:
     return adapter._ReplayInputs(
         utc_day="2026-06-27",
         continuation_day="2026-06-28",
-        trades=object(),
+        trades=np.array([1]),
         var_ts_ms=np.array([1], dtype=np.int64),
         var_ssq=np.array([1.0]),
         var_ti=np.array([1.0]),
@@ -66,7 +66,9 @@ def _replay_inputs() -> adapter._ReplayInputs:
         params={"rng_seed": 42},
         market_window_identity_sha256="3" * 64,
         model_overlay_identity_sha256="4" * 64,
-        replay_input_receipt_sha256="5" * 64,
+        latency_identity_sha256="5" * 64,
+        queue_random_identity_sha256="6" * 64,
+        replay_input_receipt_sha256="7" * 64,
     )
 
 
@@ -106,6 +108,15 @@ def test_run_day_executes_only_b0_mechanics_and_returns_no_economics(
 
     def execute(value, *, emitter, evaluator):
         calls.append((value, emitter, evaluator))
+        return {
+            f"snapshot-{index}": {
+                "campaign_id": index,
+                "order_id": index,
+                "exposure_fill_ordinal": index,
+                "assignment_equity_usdc": float(index),
+            }
+            for index in range(1, 8)
+        }
 
     monkeypatch.setattr(adapter, "_execute_outcome_blind_replay", execute)
     result = adapter.CanonicalB0MechanicsAdapter().run_day(
@@ -162,18 +173,44 @@ def test_replay_discards_simulator_economic_result(
     def simulate(*args, **kwargs):
         seen["args"] = args
         seen["kwargs"] = kwargs
-        return {"pnl": 999.0, "labels": [1]}
+        return {
+            "pnl": 999.0,
+            "labels": [1],
+            "_cooldown_duration_opportunity_trace": [
+                {
+                    "exposure_fill_ordinal": 1,
+                    "campaign_id": 3,
+                    "order_id": 7,
+                    "assignment_equity_usdc": 11.5,
+                    "side": "SELL",
+                    "role_at_fill": "add",
+                }
+            ],
+            "_cooldown_v2_snapshot_receipts": [
+                {
+                    "snapshot_id": "snapshot-1",
+                    "exposure_fill_ordinal": 1,
+                    "campaign_id": 3,
+                    "side": "SELL",
+                    "role_at_fill": "add",
+                }
+            ],
+        }
 
     monkeypatch.setattr(adapter.bt, "_simulate_tick_with_engine", simulate)
     emitter, evaluator = object(), object()
-    assert (
-        adapter._execute_outcome_blind_replay(
-            replay,
-            emitter=emitter,
-            evaluator=evaluator,
-        )
-        is None
-    )
+    assert adapter._execute_outcome_blind_replay(
+        replay,
+        emitter=emitter,
+        evaluator=evaluator,
+    ) == {
+        "snapshot-1": {
+            "campaign_id": 3,
+            "order_id": 7,
+            "exposure_fill_ordinal": 1,
+            "assignment_equity_usdc": 11.5,
+        }
+    }
     assert seen["args"][0] == "python"
     assert seen["kwargs"]["ml_data"] is replay.ml_data
     assert seen["args"][4]["cooldown_v2_snapshot_emitter"] is emitter

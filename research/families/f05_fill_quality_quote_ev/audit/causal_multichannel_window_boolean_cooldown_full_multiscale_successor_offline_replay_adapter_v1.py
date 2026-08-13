@@ -166,6 +166,7 @@ _EXECUTABLE_REPLAY_COLUMNS = frozenset(
         "latency_identity_sha256",
         "queue_random_identity_sha256",
         "assignment_ts_ns",
+        "observation_end_ts_ns",
         "fill_visible_ts_ms",
         "campaign_id",
         "order_id",
@@ -678,6 +679,8 @@ def _canonical_day_request(
     receipt = payload.pop("projection_receipt_sha256")
     if receipt != _canonical_sha256(payload):
         raise OfflineReplayAdapterError("canonical day projection receipt drifted")
+    if str(_unique_column_value(replay_inputs, "day_input_sha256")) != str(receipt):
+        raise OfflineReplayAdapterError("day input does not bind the canonical projection receipt")
     if _normalize_day(payload["utc_day"]) != utc_day:
         raise OfflineReplayAdapterError("canonical day projection UTC day drifted")
     if (
@@ -704,7 +707,7 @@ def _canonical_day_request(
     source_receipts = payload["source_receipts"]
     if not isinstance(source_receipts, Mapping):
         raise OfflineReplayAdapterError("canonical day source receipts are malformed")
-    return panel_builder.DayMaterializationRequest(
+    request = panel_builder.DayMaterializationRequest(
         utc_day=utc_day,
         panel_role=payload["panel_role"],
         queue_identity=payload["queue_identity"],
@@ -724,6 +727,11 @@ def _canonical_day_request(
         source_receipts=dict(source_receipts),
         input_binding_sha256=str(payload["input_binding_sha256"]),
     )
+    expected_context = panel_builder._sequential_context_bindings(request)
+    for column, value in expected_context.items():
+        if str(_unique_column_value(replay_inputs, column)) != str(value):
+            raise OfflineReplayAdapterError(f"canonical D+1 receipt drifted: {column}")
+    return request
 
 
 def _canonical_day_projection(job: _DayReplayJob) -> tuple[Any, Any]:
@@ -739,6 +747,8 @@ def _canonical_day_projection(job: _DayReplayJob) -> tuple[Any, Any]:
     expected = {
         "market_window_identity_sha256": replay.market_window_identity_sha256,
         "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
+        "latency_identity_sha256": replay.latency_identity_sha256,
+        "queue_random_identity_sha256": replay.queue_random_identity_sha256,
         "replay_input_receipt_sha256": replay.replay_input_receipt_sha256,
     }
     for column, value in expected.items():
@@ -1446,6 +1456,20 @@ def _validate_d_plus_one_contract(rows: pd.DataFrame) -> None:
         raise OfflineReplayAdapterError("target UTC day-end cannot be treated as terminal")
     if not rows["assignment_to_common_washout_required"].astype(bool).all():
         raise OfflineReplayAdapterError("assignment-to-common-washout continuation is required")
+    assignment = pd.to_numeric(rows["assignment_ts_ns"], errors="coerce")
+    observation_end = pd.to_numeric(rows["observation_end_ts_ns"], errors="coerce")
+    expected_end = rows["utc_day"].map(
+        lambda value: int((pd.Timestamp(value, tz="UTC") + pd.Timedelta(days=2)).value)
+    )
+    if (
+        assignment.isna().any()
+        or observation_end.isna().any()
+        or not observation_end.astype("int64").equals(expected_end.astype("int64"))
+        or (observation_end <= assignment).any()
+    ):
+        raise OfflineReplayAdapterError(
+            "observation_end_ts_ns is not the common outcome-blind D+1 bound"
+        )
 
 
 def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
@@ -1466,6 +1490,14 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
     )
     if (
         binding.get("schema_version") != f"{IDENTITY}.portable_replay_binding.v1"
+        or binding.get("identity")
+        != "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+        "offline_sequential_replay_input_v2"
+        or not str(binding.get("panel_identity", "")).endswith(
+            ".offline_sequential_panel_v2"
+        )
+        or binding.get("selected_day_count") != offline.REQUIRED_DAYS
+        or len(binding.get("selected_days", ())) != offline.REQUIRED_DAYS
         or dict(binding.get("fixed_bridge", {})) != dict(expected_fixed_bridge)
         or binding.get("target_day_end_terminalized") is not False
         or binding.get("d_plus_1_new_target_assignments_allowed") is not False
@@ -1477,6 +1509,17 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
         str(_unique_column_value(rows, "portable_day_cache_root"))
     ).resolve()
     workers = _validated_worker_count(_unique_column_value(rows, "day_replay_workers"))
+    governed_cache_root = (
+        offline.default_layout().project_data_root / "cache" / "replay_dag"
+    ).resolve()
+    try:
+        cache_root.relative_to(governed_cache_root)
+    except ValueError as exc:
+        raise OfflineReplayAdapterError(
+            "portable replay cache escaped the governed replay_dag root"
+        ) from exc
+    if workers != DEFAULT_DAY_WORKERS:
+        raise OfflineReplayAdapterError("formal day replay worker identity drifted")
     return _ExecutionOptions(binding=binding, cache=DayReplayCache(cache_root), workers=workers)
 
 

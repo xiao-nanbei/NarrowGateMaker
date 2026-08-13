@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -21,6 +21,40 @@ from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_windo
     CHANNELS_BY_BLOCK,
     CausalWindowObservation,
 )
+
+SEQUENTIAL_V2_FIELDS_BY_ROLE = {
+    "metadata": frozenset(
+        {
+            "campaign_cluster_id",
+            "observation_end_ts_ns",
+        }
+    ),
+    "replay_inputs": frozenset(
+        {
+            "assignment_equity_usdc",
+            "assignment_to_common_washout_required",
+            "campaign_id",
+            "d_plus_1_context_receipt_sha256",
+            "d_plus_1_feature_identity_sha256",
+            "d_plus_1_market_identity_sha256",
+            "d_plus_1_native_observation_sha256",
+            "d_plus_1_new_target_assignments_allowed",
+            "d_plus_1_utc_day",
+            "day_input_sha256",
+            "day_replay_workers",
+            "exposure_fill_ordinal",
+            "latency_identity_sha256",
+            "market_window_identity_sha256",
+            "model_overlay_identity_sha256",
+            "order_id",
+            "portable_day_cache_root",
+            "portable_replay_binding_path",
+            "portable_replay_binding_sha256",
+            "queue_random_identity_sha256",
+            "target_day_end_terminalized",
+        }
+    ),
+}
 
 
 @dataclass
@@ -62,10 +96,16 @@ class _SyntheticAdapter:
             datetime.fromisoformat(request.utc_day).replace(tzinfo=UTC).timestamp() * 1_000_000_000
         )
         fill_ns = day_start_ns + 100_000_000
+        fill_ms = fill_ns // 1_000_000
+        order_id = 101
+        exposure_fill_ordinal = 1
         snapshot = emitter.capture_exposure_fill(
-            assignment_id=f"assignment-{request.utc_day}",
-            fill_event_id=f"fill-{request.utc_day}",
-            client_order_id=f"order-{request.utc_day}",
+            assignment_id=(
+                f"cooldown-v2:BTCUSDC:{fill_ms}:SELL:"
+                f"{order_id}:{exposure_fill_ordinal}"
+            ),
+            fill_event_id=f"fill:{order_id}:1:{fill_ms}:{exposure_fill_ordinal}",
+            client_order_id=f"replay-order-{order_id}",
             lineage_id="cooldown-sell-lineage",
             lineage_revision=2,
             partial_fill_ordinal=1,
@@ -124,7 +164,17 @@ class _SyntheticAdapter:
             "snapshots_emitted": 1,
             "market_window_identity_sha256": "5" * 64,
             "model_overlay_identity_sha256": "6" * 64,
+            "latency_identity_sha256": "7" * 64,
+            "queue_random_identity_sha256": "8" * 64,
             "replay_input_receipt_sha256": "7" * 64,
+            "assignment_mechanics": {
+                str(snapshot.snapshot_id): {
+                    "campaign_id": 3,
+                    "order_id": order_id,
+                    "exposure_fill_ordinal": exposure_fill_ordinal,
+                    "assignment_equity_usdc": 42.5,
+                }
+            },
         }
         if self.invalid_result:
             result["candidate_actions_generated"] = True
@@ -418,6 +468,16 @@ def test_builds_atomic_outcome_blind_rows_with_exact_owner_action(
     replay = pq.read_table(first / "replay_inputs.parquet").to_pydict()
     boolean = pq.read_table(first / "boolean_features.parquet")
     continuous = pq.read_table(first / "continuous_features.parquet")
+    role_columns = {
+        role: set(pq.read_schema(first / f"{role}.parquet").names)
+        for role in builder.PANEL_ROLES
+    }
+    assert sum(len(fields) for fields in SEQUENTIAL_V2_FIELDS_BY_ROLE.values()) == 23
+    for expected_role, fields in SEQUENTIAL_V2_FIELDS_BY_ROLE.items():
+        assert fields <= role_columns[expected_role]
+        for other_role, columns in role_columns.items():
+            if other_role != expected_role:
+                assert fields.isdisjoint(columns)
     opportunity_id = metadata["opportunity_id"][0]
     assert opportunity_id.startswith("f05-offline-")
     assert owner["exact_owner_action"][0] in builder.OWNER_ACTIONS
@@ -444,6 +504,91 @@ def test_builds_atomic_outcome_blind_rows_with_exact_owner_action(
         columns=["opportunity_id"],
     )["opportunity_id"].to_pylist()
     assert repeated == [opportunity_id]
+
+
+@pytest.mark.parametrize(
+    "observed_ids",
+    (
+        ("opportunity-1", "replacement-opportunity"),
+        ("opportunity-2", "opportunity-1"),
+    ),
+)
+def test_predecessor_opportunity_id_drift_is_rejected(
+    tmp_path: Path,
+    observed_ids: tuple[str, str],
+) -> None:
+    day = offline.PRIMARY_TARGET_DAYS[0]
+    predecessor = (
+        tmp_path
+        / "cache"
+        / "replay_dag"
+        / "f05_full_multiscale_successor_offline_panel_builder_v1"
+        / day
+    )
+    predecessor.mkdir(parents=True)
+    pq.write_table(
+        pa.table({"opportunity_id": ["opportunity-1", "opportunity-2"]}),
+        predecessor / "metadata.parquet",
+    )
+    inputs = SimpleNamespace(
+        selected_days=offline.PRIMARY_TARGET_DAYS,
+        project_data_root=tmp_path,
+    )
+
+    with pytest.raises(
+        builder.OfflinePanelBuilderError,
+        match="opportunity IDs drifted from the immutable predecessor",
+    ):
+        builder._predecessor_day_opportunity_sha256(
+            inputs,
+            utc_day=day,
+            observed_ids=observed_ids,
+        )
+
+
+def test_formal_panel_rejects_predecessor_denominator_drift(tmp_path: Path) -> None:
+    panel_root = tmp_path / "v2" / "panel"
+    panel_root.mkdir(parents=True)
+    selected_days = offline.PRIMARY_TARGET_DAYS
+    opportunity_ids = [
+        f"opportunity-{index:04d}"
+        for index in range(builder.FORMAL_OPPORTUNITY_COUNT - 1)
+    ]
+    table = pa.table(
+        {
+            "utc_day": [selected_days[0]] * len(opportunity_ids),
+            "opportunity_id": opportunity_ids,
+        }
+    )
+    for role in builder.PANEL_ROLES:
+        pq.write_table(table, panel_root / f"{role}.parquet")
+    inputs = SimpleNamespace(
+        selected_days=selected_days,
+        observation_context_days=selected_days,
+        continuation_only_days=(),
+        replay_context_days=selected_days,
+        input_binding_sha256="a" * 64,
+        project_data_root=tmp_path,
+    )
+    manifest = builder._merged_panel_manifest(
+        inputs=inputs,
+        day_manifests=(),
+        panel_root=panel_root,
+    )
+    (panel_root / "manifest.json").write_text(
+        json.dumps(manifest, sort_keys=True),
+        encoding="ascii",
+    )
+
+    with pytest.raises(
+        builder.OfflinePanelBuilderError,
+        match="opportunity denominator is not 3,516",
+    ):
+        builder._validate_merged_panel(
+            panel_root,
+            inputs=inputs,
+            day_manifests=(),
+        )
 
 
 def test_adapter_cannot_generate_candidate_actions_or_leave_partial_day(

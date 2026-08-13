@@ -111,6 +111,8 @@ class _ReplayInputs:
     params: Mapping[str, Any]
     market_window_identity_sha256: str
     model_overlay_identity_sha256: str
+    latency_identity_sha256: str
+    queue_random_identity_sha256: str
     replay_input_receipt_sha256: str
 
 
@@ -131,6 +133,81 @@ def _canonical_sha256(value: Any) -> str:
         allow_nan=False,
     ).encode("ascii")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _identity_value(value: Any) -> Any:
+    """Project frozen replay parameters into a canonical JSON identity."""
+
+    if isinstance(value, np.ndarray):
+        return [_identity_value(item) for item in value.tolist()]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, Mapping):
+        return {
+            str(key): _identity_value(item)
+            for key, item in sorted(value.items(), key=lambda row: str(row[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_identity_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    raise OfflineB0MechanicsAdapterError(
+        f"unsupported replay identity value: {type(value).__name__}"
+    )
+
+
+def _parameter_identity(
+    params: Mapping[str, Any],
+    *,
+    schema_version: str,
+    names: Sequence[str],
+) -> str:
+    return _canonical_sha256(
+        {
+            "schema_version": schema_version,
+            "parameters": {
+                name: _identity_value(params.get(name)) for name in names
+            },
+        }
+    )
+
+
+_LATENCY_IDENTITY_PARAMETERS = (
+    "new_order_latency_ms",
+    "cancel_order_latency_ms",
+    "latency_jitter_ms",
+    "latency_seed",
+    "latency_sampler_version",
+    "latency_stress_enabled",
+    "latency_stress_spike_probability",
+    "latency_stress_spike_multiplier",
+    "latency_profile_id",
+    "latency_environment",
+    "latency_scenario",
+    "live_perf_latency_mode",
+    "_new_order_latency_samples_ms",
+    "_cancel_order_latency_samples_ms",
+    "_exec_book_visibility_delay_samples_ms",
+    "exec_book_visibility_delay_mean_ms",
+)
+
+_QUEUE_RANDOM_IDENTITY_PARAMETERS = (
+    "rng_seed",
+    "queue_ahead_mode",
+    "queue_l2_cancel_ahead_enabled",
+    "exchange_book_queue_mode",
+    "queue_base",
+    "queue_decay",
+    "maker_fill_prob",
+    "buy_fill_prob",
+    "sell_fill_prob",
+    "queue_ahead_buy_exposure_mult",
+    "queue_ahead_buy_reducing_mult",
+    "queue_ahead_sell_exposure_mult",
+    "queue_ahead_sell_reducing_mult",
+    "queue_regime_calibration_enabled",
+    "_queue_calibration",
+)
 
 
 def _file_sha256(path: Path) -> str:
@@ -661,6 +738,24 @@ def _materialize_replay_inputs(
         "prediction_rows": int(len(np.asarray(ml_data[0]))),
     }
     model_overlay_identity = _canonical_sha256(model_overlay_payload)
+    latency_identity = _parameter_identity(
+        params,
+        schema_version=f"{IDENTITY}.latency_identity.v1",
+        names=_LATENCY_IDENTITY_PARAMETERS,
+    )
+    queue_random_names = tuple(
+        dict.fromkeys(
+            (
+                *_QUEUE_RANDOM_IDENTITY_PARAMETERS,
+                *(name for name in sorted(params) if str(name).endswith("_seed")),
+            )
+        )
+    )
+    queue_random_identity = _parameter_identity(
+        params,
+        schema_version=f"{IDENTITY}.queue_random_identity.v1",
+        names=queue_random_names,
+    )
     replay_receipt = _canonical_sha256(
         {
             "schema_version": f"{IDENTITY}.replay_input.v1",
@@ -680,6 +775,8 @@ def _materialize_replay_inputs(
             "replay_engine": "python",
             "queue_identity": panel_builder.QUEUE_IDENTITY,
             "rng_seed": int(params["rng_seed"]),
+            "latency_identity_sha256": latency_identity,
+            "queue_random_identity_sha256": queue_random_identity,
             "target_assignment_interval": f"{days[1]}T00:00:00Z/{days[2]}T00:00:00Z",
             "continuation_context_interval": f"{days[2]}T00:00:00Z/next_utc_midnight",
         }
@@ -698,6 +795,8 @@ def _materialize_replay_inputs(
         params=params,
         market_window_identity_sha256=market_window_identity,
         model_overlay_identity_sha256=model_overlay_identity,
+        latency_identity_sha256=latency_identity,
+        queue_random_identity_sha256=queue_random_identity,
         replay_input_receipt_sha256=replay_receipt,
     )
 
@@ -707,13 +806,17 @@ def _execute_outcome_blind_replay(
     *,
     emitter: Any,
     evaluator: Any,
-) -> None:
+) -> dict[str, dict[str, Any]]:
     params = dict(replay.params)
     params["cooldown_v2_snapshot_emitter"] = emitter
     params["cooldown_duration_policy_evaluator"] = evaluator
-    # The simulator computes its normal internal accounting, but this adapter
-    # intentionally discards the result object without reading any economic key.
-    bt._simulate_tick_with_engine(
+    # This limit is an outcome-blind capacity bound. Each modeled fill is
+    # driven by one individual trade, so the number of exposure assignments
+    # cannot exceed the execution-trade row count.
+    params["trace_cooldown_duration_opportunities_max"] = max(
+        1, int(len(replay.trades))
+    )
+    result = bt._simulate_tick_with_engine(
         "python",
         replay.trades,
         replay.var_ts_ms,
@@ -725,6 +828,67 @@ def _execute_outcome_blind_replay(
         var_ti=replay.var_ti,
         var_retsq=replay.var_retsq,
     )
+    if not isinstance(result, Mapping):
+        raise OfflineB0MechanicsAdapterError("B0 simulator result is not a mapping")
+    raw_opportunities = result.get("_cooldown_duration_opportunity_trace")
+    raw_receipts = result.get("_cooldown_v2_snapshot_receipts")
+    if not isinstance(raw_opportunities, list) or not isinstance(raw_receipts, list):
+        raise OfflineB0MechanicsAdapterError(
+            "B0 simulator lacks outcome-blind assignment mechanics traces"
+        )
+    opportunities: dict[int, Mapping[str, Any]] = {}
+    for raw in raw_opportunities:
+        if not isinstance(raw, Mapping):
+            raise OfflineB0MechanicsAdapterError("B0 assignment trace row is malformed")
+        ordinal = int(raw.get("exposure_fill_ordinal", 0) or 0)
+        if ordinal <= 0 or ordinal in opportunities:
+            raise OfflineB0MechanicsAdapterError(
+                "B0 assignment trace ordinal is invalid or duplicated"
+            )
+        opportunities[ordinal] = raw
+    assignments: dict[str, dict[str, Any]] = {}
+    for raw in raw_receipts:
+        if not isinstance(raw, Mapping):
+            raise OfflineB0MechanicsAdapterError("B0 snapshot receipt is malformed")
+        snapshot_id = str(raw.get("snapshot_id", ""))
+        ordinal = int(raw.get("exposure_fill_ordinal", 0) or 0)
+        opportunity = opportunities.get(ordinal)
+        if not snapshot_id or snapshot_id in assignments or opportunity is None:
+            raise OfflineB0MechanicsAdapterError(
+                "B0 snapshot receipt cannot be joined to assignment mechanics"
+            )
+        campaign_id = int(opportunity.get("campaign_id", 0) or 0)
+        order_id = int(opportunity.get("order_id", 0) or 0)
+        assignment_equity = float(opportunity.get("assignment_equity_usdc", float("nan")))
+        if (
+            campaign_id <= 0
+            or order_id <= 0
+            or not np.isfinite(assignment_equity)
+            or campaign_id != int(raw.get("campaign_id", 0) or 0)
+            or str(opportunity.get("side", "")).upper()
+            != str(raw.get("side", "")).upper()
+            or str(opportunity.get("role_at_fill", ""))
+            != str(raw.get("role_at_fill", ""))
+        ):
+            raise OfflineB0MechanicsAdapterError(
+                "B0 assignment mechanics disagree with the atomic snapshot receipt"
+            )
+        assignments[snapshot_id] = {
+            "campaign_id": campaign_id,
+            "order_id": order_id,
+            "exposure_fill_ordinal": ordinal,
+            "assignment_equity_usdc": assignment_equity,
+        }
+    if len(assignments) != len(raw_receipts) or set(opportunities) != {
+        int(row.get("exposure_fill_ordinal", 0) or 0)
+        for row in raw_receipts
+        if isinstance(row, Mapping)
+    }:
+        raise OfflineB0MechanicsAdapterError(
+            "B0 outcome-blind opportunity and snapshot denominators differ"
+        )
+    # No terminal, markout, PnL, fill-quality, or candidate result key is read.
+    return assignments
 
 
 @dataclass(frozen=True, slots=True)
@@ -835,12 +999,18 @@ class CanonicalB0MechanicsAdapter:
         evaluator: Any,
     ) -> Mapping[str, Any]:
         replay = _materialize_replay_inputs(request)
-        _execute_outcome_blind_replay(replay, emitter=emitter, evaluator=evaluator)
+        assignment_mechanics = _execute_outcome_blind_replay(
+            replay, emitter=emitter, evaluator=evaluator
+        )
         audit = emitter.audit()
         snapshots_emitted = int(audit.snapshots_emitted)
         if snapshots_emitted <= 0 or bool(audit.economic_outcomes_read):
             raise OfflineB0MechanicsAdapterError(
                 "outcome-blind B0 replay emitted no admissible mechanics snapshots"
+            )
+        if len(assignment_mechanics) != snapshots_emitted:
+            raise OfflineB0MechanicsAdapterError(
+                "B0 assignment mechanics did not cover every emitted snapshot"
             )
         return {
             "schema_version": RESULT_SCHEMA,
@@ -857,7 +1027,10 @@ class CanonicalB0MechanicsAdapter:
             "snapshots_emitted": snapshots_emitted,
             "market_window_identity_sha256": replay.market_window_identity_sha256,
             "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
+            "latency_identity_sha256": replay.latency_identity_sha256,
+            "queue_random_identity_sha256": replay.queue_random_identity_sha256,
             "replay_input_receipt_sha256": replay.replay_input_receipt_sha256,
+            "assignment_mechanics": assignment_mechanics,
         }
 
 

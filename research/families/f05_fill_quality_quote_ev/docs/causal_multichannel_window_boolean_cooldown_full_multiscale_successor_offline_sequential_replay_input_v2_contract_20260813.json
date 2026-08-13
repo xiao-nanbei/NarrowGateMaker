@@ -1,0 +1,279 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_sequential_replay_input_v2.contract.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_sequential_replay_input_v2",
+  "status": "frozen_pre_economics",
+  "last_materially_modified": "2026-08-13",
+  "predecessor_panel_identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.offline_panel_builder_v1",
+  "new_panel_identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.offline_sequential_panel_v2",
+  "panel_role": "family_specific_unconsumed_historical_development",
+  "execution_mode": "offline_only",
+  "evidence_clock": "exchange_time",
+  "queue_identity": "modeled_queue_with_same_millisecond_ambiguity_censoring",
+  "same_millisecond_ambiguity_policy": "censor",
+  "denominator": {
+    "selected_day_count": 30,
+    "required_opportunity_count": 3516,
+    "selected_days_unchanged": true,
+    "opportunity_id_namespace": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.offline_panel_builder_v1.opportunity_id.v1",
+    "opportunity_id_set_must_equal_predecessor": true,
+    "denominator_change_requires_new_admission": true
+  },
+  "observation_end_semantics": {
+    "field": "observation_end_ts_ns",
+    "definition": "start_of_D_plus_2_UTC_ns",
+    "meaning": "outcome_blind_common_D_plus_1_administrative_purge_bound",
+    "common_across_actions": true,
+    "actual_arm_terminal_time": "excluded_from_mechanics_panel_and_emitted_later_by_label_or_sequential_replay_receipt",
+    "actual_arm_terminal_field": "actual_arm_terminal_ts_ns",
+    "actual_common_washout_field": "actual_common_washout_ts_ns",
+    "right_censoring_allowed": true,
+    "forced_terminalization_at_bound": false
+  },
+  "formal_replay_parallelism": {
+    "day_replay_workers": 6,
+    "meaning": "execution_parallelism_only_not_an_economic_parameter",
+    "one_day_mechanics_materialization_workers": 1
+  },
+  "fields": {
+    "assignment_equity_usdc": {
+      "placement": "replay_inputs",
+      "source_class": "outcome_blind_B0_assignment_mechanics",
+      "producer": "models.backtest_tick._cooldown_duration_for_exposure_fill",
+      "granularity": "opportunity",
+      "type": "float64",
+      "clock": "assignment_exchange_event_clock",
+      "nullable": false,
+      "validation": "finite_assignment_time_cash_plus_inventory_times_canonical_mid; never read as an outcome label"
+    },
+    "assignment_to_common_washout_required": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_contract",
+      "producer": "sequential_replay_input_v2_contract",
+      "granularity": "panel_constant",
+      "type": "bool",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "must_equal_true"
+    },
+    "campaign_cluster_id": {
+      "placement": "metadata",
+      "source_class": "outcome_blind_B0_assignment_mechanics",
+      "producer": "offline_B0_adapter_from_utc_day_campaign_id_and_market_window_identity",
+      "granularity": "campaign",
+      "type": "string",
+      "clock": "assignment_exchange_event_clock",
+      "nullable": false,
+      "validation": "stable_hash_equal_for_same_B0_campaign_and_distinct_across_day_or_campaign"
+    },
+    "campaign_id": {
+      "placement": "replay_inputs",
+      "source_class": "outcome_blind_B0_assignment_mechanics",
+      "producer": "models.backtest_tick._cooldown_duration_for_exposure_fill",
+      "granularity": "campaign",
+      "type": "int64",
+      "clock": "assignment_exchange_event_clock",
+      "nullable": false,
+      "validation": "positive_and_matches_snapshot_receipt_campaign_id"
+    },
+    "d_plus_1_context_receipt_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "offline_panel_builder_from_D_plus_1_market_feature_native_receipts",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "D_plus_1_context",
+      "nullable": false,
+      "validation": "recompute_canonical_receipt_and_verify_every_bound_source_file"
+    },
+    "d_plus_1_feature_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "features_only_manifest_plus_D_plus_1_feature_file",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "feature_ready",
+      "nullable": false,
+      "validation": "feature_file_bytes_and_feature_DAG_identity_match_manifest"
+    },
+    "d_plus_1_market_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "D_plus_1_source_day_receipt_binding_individual_and_aggregate_trades_plus_normalized_BBO_L2_and_native_observation",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "exchange_time",
+      "nullable": false,
+      "validation": "source_receipt_BBO_and_L2_bytes_rehash_to_bound_values"
+    },
+    "d_plus_1_native_observation_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "admitted_native_observation_batch_D_plus_1_cache_observation_sha256",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "feature_ready",
+      "nullable": false,
+      "validation": "must_equal_cache_observation_sha256; D_plus_1_role_is_continuation_only; observation_receipt_sha256_verifies_the_binding_but_is_not_substituted_for_observation_bytes"
+    },
+    "d_plus_1_new_target_assignments_allowed": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_contract",
+      "producer": "sequential_replay_input_v2_contract",
+      "granularity": "panel_constant",
+      "type": "bool",
+      "clock": "D_plus_1_context",
+      "nullable": false,
+      "validation": "must_equal_false"
+    },
+    "d_plus_1_utc_day": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_assignment_projection",
+      "producer": "target_utc_day_plus_one_natural_UTC_day",
+      "granularity": "target_day",
+      "type": "YYYY-MM-DD",
+      "clock": "UTC_calendar",
+      "nullable": false,
+      "validation": "must_equal_target_day_plus_one"
+    },
+    "day_input_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "portable_day_projection_receipt",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "must_equal_recomputed_projection_receipt_that_rehashes_every_bound_input"
+    },
+    "day_replay_workers": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_contract",
+      "producer": "sequential_replay_input_v2_contract",
+      "granularity": "panel_constant",
+      "type": "int64",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "must_equal_6_and_must_not_change_policy_semantics"
+    },
+    "exposure_fill_ordinal": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_assignment_projection",
+      "producer": "parse_frozen_cooldown_v2_assignment_id",
+      "granularity": "opportunity",
+      "type": "int64",
+      "clock": "assignment_exchange_event_clock",
+      "nullable": false,
+      "validation": "positive_and_matches_fill_event_id_terminal_component"
+    },
+    "latency_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "frozen_replay_parameter_identity",
+      "producer": "offline_B0_adapter_from_submit_cancel_visibility_latency_parameters_and_sample_arrays",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "replay_execution",
+      "nullable": false,
+      "validation": "recompute_from_effective_B0_params_after_writer_only_projection"
+    },
+    "market_window_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "offline_B0_adapter_market_window_identity",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "exchange_time",
+      "nullable": false,
+      "validation": "recompute_from_D_minus_1_D_D_plus_1_source_trade_BBO_L2_receipts"
+    },
+    "model_overlay_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_source_receipt",
+      "producer": "offline_B0_adapter_causal_v12_overlay_identity",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "feature_ready",
+      "nullable": false,
+      "validation": "recompute_from_feature_files_feature_DAG_model_bundle_and_prediction_rows"
+    },
+    "observation_end_ts_ns": {
+      "placement": "metadata",
+      "source_class": "outcome_blind_administrative_bound",
+      "producer": "offline_sequential_panel_v2_builder",
+      "granularity": "target_day",
+      "type": "int64",
+      "clock": "UTC_calendar",
+      "nullable": false,
+      "validation": "must_equal_start_of_D_plus_2_UTC_ns_and_be_after_assignment_ts_ns"
+    },
+    "order_id": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_assignment_projection",
+      "producer": "parse_frozen_cooldown_v2_assignment_id_and_client_order_id",
+      "granularity": "opportunity",
+      "type": "int64",
+      "clock": "assignment_exchange_event_clock",
+      "nullable": false,
+      "validation": "assignment_id_client_order_id_and_fill_event_id_agree"
+    },
+    "portable_day_cache_root": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_execution_binding",
+      "producer": "offline_sequential_panel_v2_builder",
+      "granularity": "panel_constant",
+      "type": "portable_path",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "must_resolve_below_NARROWGATE_DATA_ROOT_cache_replay_dag"
+    },
+    "portable_replay_binding_path": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_execution_binding",
+      "producer": "offline_sequential_panel_v2_builder",
+      "granularity": "panel_constant",
+      "type": "portable_path",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "must_resolve_to_immutable_binding_with_all_30_day_projections"
+    },
+    "portable_replay_binding_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "canonical_execution_binding",
+      "producer": "offline_sequential_panel_v2_builder",
+      "granularity": "panel_constant",
+      "type": "sha256",
+      "clock": "not_applicable",
+      "nullable": false,
+      "validation": "resolved_binding_bytes_must_rehash_exactly"
+    },
+    "queue_random_identity_sha256": {
+      "placement": "replay_inputs",
+      "source_class": "frozen_replay_parameter_identity",
+      "producer": "offline_B0_adapter_from_queue_model_fill_gate_and_random_seed_parameters",
+      "granularity": "target_day",
+      "type": "sha256",
+      "clock": "replay_execution",
+      "nullable": false,
+      "validation": "recompute_from_effective_B0_params_after_writer_only_projection"
+    },
+    "target_day_end_terminalized": {
+      "placement": "replay_inputs",
+      "source_class": "deterministic_contract",
+      "producer": "sequential_replay_input_v2_contract",
+      "granularity": "panel_constant",
+      "type": "bool",
+      "clock": "target_day_boundary",
+      "nullable": false,
+      "validation": "must_equal_false"
+    }
+  },
+  "permissions": {
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "candidate_actions_generated": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_changes_allowed": false,
+    "new_research_writer_allowed": false
+  }
+}

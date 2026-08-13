@@ -5,6 +5,7 @@ import json
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -16,6 +17,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_native_observation_batch_v1 as observation_batch,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_repeated_policy_backend_v1 as backend,
@@ -37,6 +41,18 @@ SHA_A = "a" * 64
 SHA_B = "b" * 64
 SHA_C = "c" * 64
 DAY = "2026-07-01"
+
+
+@pytest.fixture(autouse=True)
+def _governed_test_data_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        offline,
+        "default_layout",
+        lambda: SimpleNamespace(project_data_root=tmp_path),
+    )
 
 
 def _sha256_file(path: Path) -> str:
@@ -513,6 +529,10 @@ def test_d_plus_one_contract_rejects_day_end_terminal_and_new_assignments() -> N
             "d_plus_1_new_target_assignments_allowed": (False,),
             "target_day_end_terminalized": (False,),
             "assignment_to_common_washout_required": (True,),
+            "assignment_ts_ns": (pd.Timestamp(DAY, tz="UTC").value + 1_000_000,),
+            "observation_end_ts_ns": (
+                (pd.Timestamp(DAY, tz="UTC") + pd.Timedelta(days=2)).value,
+            ),
         }
     )
     adapter_module._validate_d_plus_one_contract(rows)
@@ -523,6 +543,148 @@ def test_d_plus_one_contract_rejects_day_end_terminal_and_new_assignments() -> N
     rows.loc[0, "d_plus_1_new_target_assignments_allowed"] = True
     with pytest.raises(adapter_module.OfflineReplayAdapterError, match="target assignments"):
         adapter_module._validate_d_plus_one_contract(rows)
+
+
+@pytest.mark.parametrize("delta_ns", (-1, 1))
+def test_observation_end_rejects_one_nanosecond_drift_from_d_plus_two(
+    delta_ns: int,
+) -> None:
+    expected_end = (pd.Timestamp(DAY, tz="UTC") + pd.Timedelta(days=2)).value
+    rows = pd.DataFrame(
+        {
+            "utc_day": (DAY,),
+            "d_plus_1_utc_day": ("2026-07-02",),
+            "d_plus_1_market_identity_sha256": (SHA_A,),
+            "d_plus_1_feature_identity_sha256": (SHA_B,),
+            "d_plus_1_native_observation_sha256": (SHA_C,),
+            "d_plus_1_context_receipt_sha256": ("d" * 64,),
+            "d_plus_1_new_target_assignments_allowed": (False,),
+            "target_day_end_terminalized": (False,),
+            "assignment_to_common_washout_required": (True,),
+            "assignment_ts_ns": (pd.Timestamp(DAY, tz="UTC").value + 1_000_000,),
+            "observation_end_ts_ns": (expected_end + delta_ns,),
+        }
+    )
+
+    with pytest.raises(
+        adapter_module.OfflineReplayAdapterError,
+        match=r"common outcome-blind D\+1 bound",
+    ):
+        adapter_module._validate_d_plus_one_contract(rows)
+
+
+def _canonical_projection_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict[str, Any], pd.DataFrame, dict[str, str]]:
+    files: dict[str, Path] = {}
+    for name in (
+        "bbo",
+        "l2",
+        "features",
+        "source_manifest",
+        "book_view_manifest",
+        "features_manifest",
+        "private_config",
+    ):
+        path = tmp_path / f"{name}.fixture"
+        path.write_bytes(f"canonical-{name}".encode("ascii"))
+        files[name] = path
+    native_observation_root = tmp_path / "native-observations"
+    native_observation_root.mkdir()
+    payload: dict[str, Any] = {
+        "utc_day": DAY,
+        "panel_role": offline.PANEL_ROLE,
+        "queue_identity": adapter_module.QUEUE_IDENTITY,
+        "same_millisecond_ambiguity_policy": (
+            adapter_module.SAME_MILLISECOND_AMBIGUITY_POLICY
+        ),
+        **{
+            f"{name}_path": str(path)
+            for name, path in files.items()
+        },
+        **{
+            f"{name}_sha256": _sha256_file(path)
+            for name, path in files.items()
+        },
+        "native_observation_root": str(native_observation_root),
+        "source_receipts": {},
+        "input_binding_sha256": "e" * 64,
+    }
+    payload["projection_receipt_sha256"] = adapter_module._canonical_sha256(payload)
+    expected_context = {
+        "d_plus_1_utc_day": "2026-07-02",
+        "d_plus_1_market_identity_sha256": SHA_A,
+        "d_plus_1_feature_identity_sha256": SHA_B,
+        "d_plus_1_native_observation_sha256": SHA_C,
+        "d_plus_1_context_receipt_sha256": "d" * 64,
+    }
+    monkeypatch.setattr(
+        panel_builder,
+        "_sequential_context_bindings",
+        lambda _request: expected_context,
+    )
+    rows = pd.DataFrame(
+        {
+            "day_input_sha256": (payload["projection_receipt_sha256"],),
+            **{name: (value,) for name, value in expected_context.items()},
+        }
+    )
+    return {"day_projections": {DAY: payload}}, rows, expected_context
+
+
+def test_canonical_day_request_rejects_day_input_receipt_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    binding, rows, _expected_context = _canonical_projection_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    rows.loc[0, "day_input_sha256"] = "0" * 64
+
+    with pytest.raises(
+        adapter_module.OfflineReplayAdapterError,
+        match="canonical projection receipt",
+    ):
+        adapter_module._canonical_day_request(
+            binding=binding,
+            utc_day=DAY,
+            replay_inputs=rows,
+        )
+
+
+@pytest.mark.parametrize(
+    "column",
+    (
+        "d_plus_1_market_identity_sha256",
+        "d_plus_1_feature_identity_sha256",
+        "d_plus_1_native_observation_sha256",
+        "d_plus_1_context_receipt_sha256",
+    ),
+)
+def test_canonical_day_request_rejects_any_valid_format_d_plus_one_sha_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    column: str,
+) -> None:
+    binding, rows, expected_context = _canonical_projection_fixture(
+        tmp_path,
+        monkeypatch,
+    )
+    replacement = "0" * 64
+    assert replacement != expected_context[column]
+    rows.loc[0, column] = replacement
+
+    with pytest.raises(
+        adapter_module.OfflineReplayAdapterError,
+        match=f"canonical D\\+1 receipt drifted: {column}",
+    ):
+        adapter_module._canonical_day_request(
+            binding=binding,
+            utc_day=DAY,
+            replay_inputs=rows,
+        )
 
 
 def _fixed_bridge() -> dict[str, Any]:
@@ -581,8 +743,19 @@ def _portable_binding_rows(
     observation_path: Path,
     observation_payload: Mapping[str, Any],
 ) -> pd.DataFrame:
+    selected = tuple(observation_payload["selected_target_days"])
     binding = {
         "schema_version": f"{adapter_module.IDENTITY}.portable_replay_binding.v1",
+        "identity": (
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+            "offline_sequential_replay_input_v2"
+        ),
+        "panel_identity": (
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+            "offline_v1.offline_sequential_panel_v2"
+        ),
+        "selected_days": list(selected),
+        "selected_day_count": len(selected),
         "fixed_bridge": _fixed_bridge(),
         "target_day_end_terminalized": False,
         "d_plus_1_new_target_assignments_allowed": False,
@@ -594,6 +767,7 @@ def _portable_binding_rows(
                 "canonical_manifest_sha256"
             ],
         },
+        "day_projections": {},
     }
     path = tmp_path / "binding.json"
     path.write_text(json.dumps(binding, sort_keys=True), encoding="ascii")
@@ -601,7 +775,7 @@ def _portable_binding_rows(
         {
             "portable_replay_binding_path": (str(path),),
             "portable_replay_binding_sha256": (_sha256_file(path),),
-            "portable_day_cache_root": (str(tmp_path / "cache"),),
+            "portable_day_cache_root": (str(tmp_path / "cache" / "replay_dag" / "f05"),),
             "day_replay_workers": (6,),
         }
     )
@@ -648,9 +822,23 @@ def test_valid_observation_binding_has_30_targets_34_context_and_six_workers(
     rows = _portable_binding_rows(tmp_path, observation_path, observation_payload)
     options = adapter_module._resolve_execution_options(rows)
     assert options.workers == 6
-    assert options.cache.root == (tmp_path / "cache").resolve()
+    assert options.cache.root == (tmp_path / "cache" / "replay_dag" / "f05").resolve()
     assert observation_payload["selected_target_day_count"] == 30
     assert observation_payload["observation_context_day_count"] == 34
+
+
+def test_portable_day_cache_cannot_escape_governed_replay_dag_root(
+    tmp_path: Path,
+) -> None:
+    observation_path, observation_payload = _write_observation_manifest(tmp_path)
+    rows = _portable_binding_rows(tmp_path, observation_path, observation_payload)
+    rows.loc[0, "portable_day_cache_root"] = str(tmp_path / "outside-replay-dag")
+
+    with pytest.raises(
+        adapter_module.OfflineReplayAdapterError,
+        match="cache escaped the governed replay_dag root",
+    ):
+        adapter_module._resolve_execution_options(rows)
 
 
 def test_missing_portable_binding_fails_closed_before_replay(tmp_path: Path) -> None:
