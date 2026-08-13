@@ -199,12 +199,13 @@ def _write_panel_files(
     )
     replay = pa.table(
         {
-            "utc_day": list(days),
-            "replay_input_id": [f"input-{index}" for index, _day in enumerate(days)],
-            "candidate_actions_generated": [False, False],
-            "continuation_creates_target_assignments": [False, False],
-            "economic_outcomes_read": [economic_read_true, False],
-            "labels_read": [False, False],
+            "opportunity_id": opportunity_ids,
+            "utc_day": ordered_days,
+            "replay_input_id": [f"input-{index}" for index in range(4)],
+            "candidate_actions_generated": [False] * 4,
+            "continuation_creates_target_assignments": [False] * 4,
+            "economic_outcomes_read": [economic_read_true, False, False, False],
+            "labels_read": [False] * 4,
         }
     )
     tables = {
@@ -344,9 +345,64 @@ def test_admit_and_validate_outcome_blind_mechanics_panel(
     assert manifest["outer_train_label_generation_required"] is True
     assert manifest["repeated_sequential_policy_required"] is True
     assert manifest["files"]["metadata"]["rows"] == 4
-    assert manifest["files"]["replay_inputs"]["rows"] == 2
+    assert manifest["files"]["replay_inputs"]["rows"] == 4
     assert str(tmp_path) not in panel_manifest.read_text(encoding="ascii")
     assert mechanics.validate_panel(panel_manifest, layout=fixture.layout) == manifest
+
+
+def test_formal_mechanics_admission_binds_sequential_builder_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _source_fixture(tmp_path, monkeypatch)
+    view = _build_view(fixture)
+    panel_files = _write_panel_files(
+        fixture.layout.project_data_root / "panel-files",
+        fixture.selected_days,
+    )
+    builder_manifest = fixture.layout.project_data_root / "builder/manifest.json"
+    builder_manifest.parent.mkdir(parents=True)
+    builder_manifest.write_text("{}\n", encoding="ascii")
+    roots = mechanics.PortableRoots.from_layout(fixture.layout)
+    builder_binding = mechanics._binding(builder_manifest, roots=roots)
+    sequential_receipt = {
+        "identity": "synthetic-sequential-panel-v2",
+        "status": "outcome_blind_b0_mechanics_days_admitted",
+        "selected_days": list(fixture.selected_days),
+        "selected_day_count": len(fixture.selected_days),
+        "input_binding_sha256": "a" * 64,
+        "sequential_replay_input_identity": "synthetic-replay-input-v2",
+        "manifest": builder_binding,
+        "merged_panel_manifest": builder_binding,
+        "portable_replay_binding": builder_binding,
+        "day_manifest_sha256": {day: "b" * 64 for day in fixture.selected_days},
+        "permissions": {
+            "economic_outcomes_read": False,
+            "labels_read": False,
+            "candidate_actions_generated": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        },
+    }
+    monkeypatch.setattr(
+        mechanics,
+        "_validate_sequential_panel_builder",
+        lambda *_args, **_kwargs: sequential_receipt,
+    )
+    panel_manifest = fixture.layout.project_data_root / "reports/formal-mechanics-panel.json"
+    manifest = mechanics.admit_panel(
+        fixture.source_manifest,
+        view,
+        panel_manifest,
+        panel_files=panel_files,
+        owner_artifacts=fixture.owner_artifacts,
+        sequential_panel_builder_manifest_path=builder_manifest,
+        layout=fixture.layout,
+    )
+
+    assert manifest["schema_version"] == mechanics.PANEL_SCHEMA_VERSION
+    assert manifest["formal_execution_eligible"] is True
+    assert manifest["sequential_panel_builder"] == sequential_receipt
 
 
 @pytest.mark.parametrize(
@@ -413,6 +469,37 @@ def test_panel_validation_rejects_file_byte_drift(
     pq.write_table(replacement, panel_files["continuous_features"])
     with pytest.raises(mechanics.OfflineMechanicsError, match="identity drifted"):
         mechanics.validate_panel(panel_manifest, layout=fixture.layout)
+
+
+def test_panel_admission_rejects_replay_input_row_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _source_fixture(tmp_path, monkeypatch)
+    view = _build_view(fixture)
+    panel_files = _write_panel_files(
+        fixture.layout.project_data_root / "panel-files",
+        fixture.selected_days,
+    )
+    replay = pq.read_table(panel_files["replay_inputs"]).to_pydict()
+    replay["opportunity_id"][1], replay["opportunity_id"][2] = (
+        replay["opportunity_id"][2],
+        replay["opportunity_id"][1],
+    )
+    pq.write_table(pa.table(replay), panel_files["replay_inputs"])
+
+    with pytest.raises(
+        mechanics.OfflineMechanicsError,
+        match="replay_inputs row identity drifted from metadata",
+    ):
+        mechanics.admit_panel(
+            fixture.source_manifest,
+            view,
+            fixture.layout.project_data_root / "reports/rejected-replay-order.json",
+            panel_files=panel_files,
+            owner_artifacts=fixture.owner_artifacts,
+            layout=fixture.layout,
+        )
 
 
 def test_owner_hash_drift_and_file_role_injection_fail_closed(

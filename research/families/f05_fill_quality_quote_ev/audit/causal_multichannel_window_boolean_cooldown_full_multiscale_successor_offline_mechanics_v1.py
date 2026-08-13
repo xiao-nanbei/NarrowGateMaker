@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -34,7 +35,13 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 
 MECHANICS_IDENTITY = f"{offline.IDENTITY}.offline_mechanics_v1"
 BOOK_VIEW_SCHEMA_VERSION = f"{MECHANICS_IDENTITY}.normalized_book_view.v2"
-PANEL_SCHEMA_VERSION = f"{offline.IDENTITY}.nested_oof_panel_manifest.v1"
+LEGACY_PANEL_SCHEMA_VERSION = f"{offline.IDENTITY}.nested_oof_panel_manifest.v1"
+PANEL_SCHEMA_VERSION = f"{offline.IDENTITY}.nested_oof_panel_manifest.v2"
+SEQUENTIAL_PANEL_BUILDER_MODULE = (
+    "research.families.f05_fill_quality_quote_ev.audit."
+    "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+    "offline_panel_builder_v1"
+)
 SOURCE_AUTHORITY = "native_normalized_modeled_queue"
 SYMBOL = offline.SYMBOL
 BOOK_KINDS = ("bbo", "l2")
@@ -811,9 +818,7 @@ def _inspect_panel_file(
         )
     if "utc_day" not in columns:
         raise OfflineMechanicsError(f"panel {role} lacks utc_day")
-    required = {"utc_day"}
-    if role != "replay_inputs":
-        required.add("opportunity_id")
+    required = {"utc_day", "opportunity_id"}
     if role == "exact_owner_actions":
         required.add("exact_owner_action")
     if not required.issubset(columns):
@@ -890,6 +895,115 @@ def _owner_bindings(
     return output
 
 
+def _validate_sequential_panel_builder(
+    builder_manifest_path: Path,
+    *,
+    source_path: Path,
+    view_root: Path,
+    panel_files: Mapping[str, Path],
+    owner_artifacts: Mapping[str, Path],
+    layout: offline.OfflineSourceLayout,
+    roots: PortableRoots,
+) -> dict[str, Any]:
+    manifest_path = builder_manifest_path.expanduser().resolve()
+    if manifest_path.name != "manifest.json" or not manifest_path.is_file():
+        raise OfflineMechanicsError("sequential panel builder manifest is missing")
+    builder_root = manifest_path.parent
+    binding_path = builder_root / "_bindings" / "portable_replay_binding_v2.json"
+    binding = _load_json(binding_path, label="sequential replay portable binding")
+    projections = binding.get("day_projections")
+    selected_days = tuple(binding.get("selected_days") or ())
+    if not isinstance(projections, Mapping) or tuple(projections) != selected_days:
+        raise OfflineMechanicsError("sequential replay day projections drifted")
+    if not selected_days:
+        raise OfflineMechanicsError("sequential replay binding has no selected days")
+    first = projections.get(selected_days[0])
+    if not isinstance(first, Mapping):
+        raise OfflineMechanicsError("sequential replay projection is malformed")
+    bound_source = _resolve_portable(first.get("source_manifest_path"), roots=roots)
+    bound_view_manifest = _resolve_portable(
+        first.get("book_view_manifest_path"), roots=roots
+    )
+    features_manifest = _resolve_portable(
+        first.get("features_manifest_path"), roots=roots
+    )
+    native_observation_root = _resolve_portable(
+        first.get("native_observation_root"), roots=roots
+    )
+    native_binding = binding.get("native_observation_batch_manifest")
+    if not isinstance(native_binding, Mapping):
+        raise OfflineMechanicsError("native observation batch binding is malformed")
+    native_observation_manifest = _resolve_portable(
+        native_binding.get("path"), roots=roots
+    )
+    if (
+        bound_source != source_path
+        or bound_view_manifest != view_root / "manifest.json"
+        or str(first.get("private_config_sha256", ""))
+        != _expected_owner_hashes()["private_config"]
+    ):
+        raise OfflineMechanicsError("sequential panel source or owner binding drifted")
+    try:
+        builder = importlib.import_module(SEQUENTIAL_PANEL_BUILDER_MODULE)
+        inputs = builder.validate_inputs(
+            source_manifest_path=bound_source,
+            book_view_root=bound_view_manifest.parent,
+            native_observation_manifest_path=native_observation_manifest,
+            native_observation_root=native_observation_root,
+            features_manifest_path=features_manifest,
+            owner_artifacts=builder.OwnerArtifactPaths(
+                policy=Path(owner_artifacts["policy"]),
+                predicate_bundle=Path(owner_artifacts["predicate_bundle"]),
+                private_config=Path(owner_artifacts["private_config"]),
+            ),
+        )
+        current_binding = builder._ensure_portable_replay_binding(
+            inputs,
+            output_root=builder_root,
+        )
+        validated = builder.validate_panel(builder_root, inputs=inputs)
+    except Exception as exc:
+        raise OfflineMechanicsError(
+            "sequential panel builder failed full source/day/byte validation"
+        ) from exc
+    if current_binding.get("path") != binding_path:
+        raise OfflineMechanicsError("sequential replay binding path drifted")
+    if validated.get("selected_days") != list(selected_days):
+        raise OfflineMechanicsError("sequential panel selected-day order drifted")
+    for role in PANEL_FILE_ROLES:
+        expected = (builder_root / "panel" / f"{role}.parquet").resolve()
+        if Path(panel_files[role]).expanduser().resolve() != expected:
+            raise OfflineMechanicsError(
+                f"panel {role} is not the admitted sequential-builder output"
+            )
+    merged_manifest_path = builder_root / "panel" / "manifest.json"
+    merged = _load_json(merged_manifest_path, label="sequential merged panel manifest")
+    if validated.get("merged_panel_manifest_sha256") != merged.get(
+        "canonical_manifest_sha256"
+    ):
+        raise OfflineMechanicsError("sequential root/merged manifest binding drifted")
+    manifest_binding = _binding(manifest_path, roots=roots)
+    manifest_binding["canonical_sha256"] = validated["canonical_manifest_sha256"]
+    merged_binding = _binding(merged_manifest_path, roots=roots)
+    merged_binding["canonical_sha256"] = merged["canonical_manifest_sha256"]
+    portable_binding = _binding(binding_path, roots=roots)
+    return {
+        "identity": validated["identity"],
+        "status": validated["status"],
+        "selected_days": list(selected_days),
+        "selected_day_count": len(selected_days),
+        "input_binding_sha256": validated["input_binding_sha256"],
+        "sequential_replay_input_identity": validated[
+            "sequential_replay_input_identity"
+        ],
+        "manifest": manifest_binding,
+        "merged_panel_manifest": merged_binding,
+        "portable_replay_binding": portable_binding,
+        "day_manifest_sha256": dict(validated["day_manifest_sha256"]),
+        "permissions": dict(validated["permissions"]),
+    }
+
+
 def admit_panel(
     source_manifest_path: Path,
     book_view_root: Path,
@@ -897,6 +1011,7 @@ def admit_panel(
     *,
     panel_files: Mapping[str, Path],
     owner_artifacts: Mapping[str, Path],
+    sequential_panel_builder_manifest_path: Path | None = None,
     layout: offline.OfflineSourceLayout | None = None,
     repository_root: Path | None = None,
 ) -> dict[str, Any]:
@@ -929,10 +1044,28 @@ def admit_panel(
         for role in PANEL_FILE_ROLES
     }
     metadata_key = inspected["metadata"].get("row_key_sha256")
-    for role in ("boolean_features", "continuous_features", "exact_owner_actions"):
+    for role in (
+        "boolean_features",
+        "continuous_features",
+        "exact_owner_actions",
+        "replay_inputs",
+    ):
         if inspected[role].get("row_key_sha256") != metadata_key:
             raise OfflineMechanicsError(f"panel {role} row identity drifted from metadata")
     owners = _owner_bindings(owner_artifacts, roots=roots)
+    sequential_builder = (
+        None
+        if sequential_panel_builder_manifest_path is None
+        else _validate_sequential_panel_builder(
+            sequential_panel_builder_manifest_path,
+            source_path=source_path,
+            view_root=view_root,
+            panel_files=panel_files,
+            owner_artifacts=owner_artifacts,
+            layout=active_layout,
+            roots=roots,
+        )
+    )
     source_binding = _binding(source_path, roots=roots)
     source_binding["canonical_sha256"] = source["canonical_manifest_sha256"]
     view_manifest_path = view_root / "manifest.json"
@@ -947,10 +1080,18 @@ def admit_panel(
     if tuple(day_receipts) != selected_days:
         raise OfflineMechanicsError("selected day-receipt order drifted")
     manifest: dict[str, Any] = {
-        "schema_version": PANEL_SCHEMA_VERSION,
+        "schema_version": (
+            PANEL_SCHEMA_VERSION
+            if sequential_builder is not None
+            else LEGACY_PANEL_SCHEMA_VERSION
+        ),
         "identity": offline.IDENTITY,
         "mechanics_identity": MECHANICS_IDENTITY,
-        "status": "offline_outcome_blind_mechanics_panel_admitted",
+        "status": (
+            "offline_outcome_blind_sequential_mechanics_panel_admitted"
+            if sequential_builder is not None
+            else "offline_outcome_blind_mechanics_panel_admitted"
+        ),
         "source_manifest": source_binding,
         "source_manifest_sha256": source["canonical_manifest_sha256"],
         "book_view_manifest": view_binding,
@@ -979,6 +1120,9 @@ def admit_panel(
             "live_authorized": False,
         },
     }
+    if sequential_builder is not None:
+        manifest["formal_execution_eligible"] = True
+        manifest["sequential_panel_builder"] = sequential_builder
     manifest["canonical_panel_manifest_sha256"] = canonical_document_sha256(
         manifest, "canonical_panel_manifest_sha256"
     )
@@ -1010,7 +1154,8 @@ def validate_panel(
     roots = PortableRoots.from_layout(active_layout, repository_root=repository_root)
     path = panel_manifest_path.expanduser().resolve()
     manifest = _load_json(path, label="canonical mechanics panel manifest")
-    if manifest.get("schema_version") != PANEL_SCHEMA_VERSION:
+    schema_version = manifest.get("schema_version")
+    if schema_version not in {LEGACY_PANEL_SCHEMA_VERSION, PANEL_SCHEMA_VERSION}:
         raise OfflineMechanicsError("canonical mechanics panel schema drifted")
     if manifest.get("identity") != offline.IDENTITY or manifest.get(
         "mechanics_identity"
@@ -1107,9 +1252,46 @@ def validate_panel(
         if inspected[role] != binding:
             raise OfflineMechanicsError(f"panel {role} byte/schema/day identity drifted")
     metadata_key = inspected["metadata"].get("row_key_sha256")
-    for role in ("boolean_features", "continuous_features", "exact_owner_actions"):
+    for role in (
+        "boolean_features",
+        "continuous_features",
+        "exact_owner_actions",
+        "replay_inputs",
+    ):
         if inspected[role].get("row_key_sha256") != metadata_key:
             raise OfflineMechanicsError(f"panel {role} row identity drifted from metadata")
+    if schema_version == PANEL_SCHEMA_VERSION:
+        if (
+            manifest.get("status")
+            != "offline_outcome_blind_sequential_mechanics_panel_admitted"
+            or manifest.get("formal_execution_eligible") is not True
+        ):
+            raise OfflineMechanicsError("formal sequential mechanics status drifted")
+        expected_builder = _validate_sequential_panel_builder(
+            _resolve_binding(
+                manifest.get("sequential_panel_builder", {}).get("manifest", {}),
+                label="sequential panel builder manifest",
+                roots=roots,
+            ),
+            source_path=source_path,
+            view_root=view_manifest_path.parent,
+            panel_files={
+                role: _resolve_portable(files[role]["path"], roots=roots)
+                for role in PANEL_FILE_ROLES
+            },
+            owner_artifacts={
+                role: _resolve_portable(owners[role]["path"], roots=roots)
+                for role in OWNER_ARTIFACT_ROLES
+            },
+            layout=active_layout,
+            roots=roots,
+        )
+        if manifest.get("sequential_panel_builder") != expected_builder:
+            raise OfflineMechanicsError("sequential panel builder admission drifted")
+    elif "sequential_panel_builder" in manifest or manifest.get(
+        "formal_execution_eligible"
+    ) is not None:
+        raise OfflineMechanicsError("legacy mechanics panel overclaimed formal eligibility")
     selected_set = set(selected_days)
     expected_receipts = {
         row["utc_day"]: row["day_receipt_sha256"]
@@ -1141,6 +1323,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     admit.add_argument("--owner-policy", type=Path, required=True)
     admit.add_argument("--predicate-bundle", type=Path, required=True)
     admit.add_argument("--private-config", type=Path, required=True)
+    admit.add_argument(
+        "--sequential-panel-builder-manifest",
+        type=Path,
+        required=True,
+    )
 
     validate = subparsers.add_parser("validate-panel")
     validate.add_argument("panel_manifest", type=Path)
@@ -1164,6 +1351,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "predicate_bundle": args.predicate_bundle,
                 "private_config": args.private_config,
             },
+            sequential_panel_builder_manifest_path=(
+                args.sequential_panel_builder_manifest
+            ),
         )
     else:
         result = validate_panel(args.panel_manifest)

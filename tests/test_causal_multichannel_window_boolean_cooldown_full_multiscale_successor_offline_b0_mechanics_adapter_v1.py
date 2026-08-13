@@ -180,7 +180,7 @@ def test_replay_discards_simulator_economic_result(
                 {
                     "exposure_fill_ordinal": 1,
                     "campaign_id": 3,
-                    "order_id": 7,
+                    "order_id": 0,
                     "assignment_equity_usdc": 11.5,
                     "side": "SELL",
                     "role_at_fill": "add",
@@ -206,7 +206,7 @@ def test_replay_discards_simulator_economic_result(
     ) == {
         "snapshot-1": {
             "campaign_id": 3,
-            "order_id": 7,
+            "order_id": 0,
             "exposure_fill_ordinal": 1,
             "assignment_equity_usdc": 11.5,
         }

@@ -1154,7 +1154,7 @@ def _validate_adapter_result(
         }
         if (
             normalized["campaign_id"] <= 0
-            or normalized["order_id"] <= 0
+            or normalized["order_id"] < 0
             or normalized["exposure_fill_ordinal"] <= 0
             or not math.isfinite(normalized["assignment_equity_usdc"])
         ):
@@ -1219,7 +1219,7 @@ def _assignment_identity(
     assignment_ts_ns = int(m0["assignment_ts_ns"])
     m0_ordinal = m0.get("exposure_fill_ordinal")
     if (
-        assignment_order_id <= 0
+        assignment_order_id < 0
         or assignment_ordinal <= 0
         or assignment_order_id != fill_order_id
         or assignment_order_id != client_order_id
@@ -1930,7 +1930,7 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
                 or any(replay["target_day_end_terminalized"])
                 or not all(replay["assignment_to_common_washout_required"])
                 or any(int(value) <= 0 for value in replay["campaign_id"])
-                or any(int(value) <= 0 for value in replay["order_id"])
+                    or any(int(value) < 0 for value in replay["order_id"])
                 or any(int(value) <= 0 for value in replay["exposure_fill_ordinal"])
                 or any(not math.isfinite(float(value)) for value in replay["assignment_equity_usdc"])
             ):

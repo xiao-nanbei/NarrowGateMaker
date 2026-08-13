@@ -34,7 +34,7 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 
 IDENTITY = f"{offline.IDENTITY}.formal_orchestrator_v1"
 SCHEMA_VERSION = f"{IDENTITY}.execution_manifest.v1"
-PANEL_SCHEMA_VERSION = f"{offline.IDENTITY}.nested_oof_panel_manifest.v1"
+PANEL_SCHEMA_VERSION = mechanics.PANEL_SCHEMA_VERSION
 CANONICAL_BACKEND_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
     "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
@@ -242,6 +242,14 @@ def _validate_panel_manifest(
 ) -> dict[str, Path]:
     if panel.get("schema_version") != PANEL_SCHEMA_VERSION:
         raise OfflineOrchestratorError("canonical nested-OOF panel schema drifted")
+    if (
+        panel.get("status")
+        != "offline_outcome_blind_sequential_mechanics_panel_admitted"
+        or panel.get("formal_execution_eligible") is not True
+    ):
+        raise OfflineOrchestratorError(
+            "canonical panel is not a formally admitted sequential-builder artifact"
+        )
     if panel.get("identity") != offline.IDENTITY:
         raise OfflineOrchestratorError("canonical panel identity drifted")
     if panel.get("canonical_panel_manifest_sha256") != _document_sha256(
@@ -294,6 +302,30 @@ def _validate_panel_manifest(
         "live_authorized": False,
     }:
         raise OfflineOrchestratorError("canonical panel permissions drifted")
+    sequential_builder = panel.get("sequential_panel_builder")
+    if not isinstance(sequential_builder, Mapping):
+        raise OfflineOrchestratorError("canonical panel lacks its sequential-builder binding")
+    if (
+        sequential_builder.get("status")
+        != "outcome_blind_b0_mechanics_days_admitted"
+        or sequential_builder.get("selected_days") != list(source.get("selected_days") or ())
+        or sequential_builder.get("selected_day_count") != offline.REQUIRED_DAYS
+        or sequential_builder.get("permissions")
+        != {
+            "economic_outcomes_read": False,
+            "labels_read": False,
+            "candidate_actions_generated": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        }
+    ):
+        raise OfflineOrchestratorError("sequential-builder evidence contract drifted")
+    for role in ("manifest", "merged_panel_manifest", "portable_replay_binding"):
+        _resolve_bound_file(
+            sequential_builder.get(role) or {},
+            label=f"sequential builder {role}",
+            repository_root=repository_root,
+        )
     owner_artifacts = panel.get("owner_artifacts")
     expected_owner = {
         "policy": offline.ACTIVE_OWNER_POLICY_SHA256,
@@ -413,7 +445,19 @@ def _load_formal_offline_bundle(
         label="canonical panel manifest",
         repository_root=repository_root,
     )
-    panel = _load_json(panel_path, label="canonical panel manifest")
+    if verify_source_bytes:
+        try:
+            panel = mechanics.validate_panel(
+                panel_path,
+                layout=offline.default_layout(),
+                repository_root=repository_root,
+            )
+        except (mechanics.OfflineMechanicsError, OSError, ValueError) as exc:
+            raise OfflineOrchestratorError(
+                "canonical mechanics panel failed full admission validation"
+            ) from exc
+    else:
+        panel = _load_json(panel_path, label="canonical panel manifest")
     panel_files = _validate_panel_manifest(
         panel,
         source=source,

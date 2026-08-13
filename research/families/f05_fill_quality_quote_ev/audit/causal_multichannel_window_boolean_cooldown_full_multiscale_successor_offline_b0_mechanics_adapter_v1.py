@@ -860,18 +860,25 @@ def _execute_outcome_blind_replay(
         campaign_id = int(opportunity.get("campaign_id", 0) or 0)
         order_id = int(opportunity.get("order_id", 0) or 0)
         assignment_equity = float(opportunity.get("assignment_equity_usdc", float("nan")))
+        receipt_campaign_id = int(raw.get("campaign_id", 0) or 0)
+        opportunity_side = str(opportunity.get("side", "")).upper()
+        receipt_side = str(raw.get("side", "")).upper()
+        opportunity_role = str(opportunity.get("role_at_fill", ""))
+        receipt_role = str(raw.get("role_at_fill", ""))
         if (
             campaign_id <= 0
-            or order_id <= 0
+            or order_id < 0
             or not np.isfinite(assignment_equity)
-            or campaign_id != int(raw.get("campaign_id", 0) or 0)
-            or str(opportunity.get("side", "")).upper()
-            != str(raw.get("side", "")).upper()
-            or str(opportunity.get("role_at_fill", ""))
-            != str(raw.get("role_at_fill", ""))
+            or campaign_id != receipt_campaign_id
+            or opportunity_side != receipt_side
+            or opportunity_role != receipt_role
         ):
             raise OfflineB0MechanicsAdapterError(
-                "B0 assignment mechanics disagree with the atomic snapshot receipt"
+                "B0 assignment mechanics disagree with the atomic snapshot receipt: "
+                f"ordinal={ordinal}, campaign={campaign_id}/{receipt_campaign_id}, "
+                f"order_id={order_id}, side={opportunity_side}/{receipt_side}, "
+                f"role={opportunity_role}/{receipt_role}, "
+                f"assignment_equity_finite={np.isfinite(assignment_equity)}"
             )
         assignments[snapshot_id] = {
             "campaign_id": campaign_id,

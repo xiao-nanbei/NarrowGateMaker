@@ -58,6 +58,11 @@ def _bundle_fixture(
         path = tmp_path / f"{role}.bin"
         path.write_bytes(role.encode("ascii"))
         panel_files[role] = _binding(path)
+    sequential_files = {}
+    for role in ("manifest", "merged_panel_manifest", "portable_replay_binding"):
+        path = tmp_path / f"sequential-{role}.json"
+        path.write_text("{}\n", encoding="ascii")
+        sequential_files[role] = _binding(path)
     owner_files: dict[str, dict[str, str]] = {}
     owner_hashes = {
         "policy": offline.ACTIVE_OWNER_POLICY_SHA256,
@@ -82,6 +87,25 @@ def _bundle_fixture(
         "schema_version": orchestrator.PANEL_SCHEMA_VERSION,
         "identity": offline.IDENTITY,
         "mechanics_identity": orchestrator.mechanics.MECHANICS_IDENTITY,
+        "status": "offline_outcome_blind_sequential_mechanics_panel_admitted",
+        "formal_execution_eligible": True,
+        "sequential_panel_builder": {
+            "identity": "synthetic-sequential-panel-v2",
+            "status": "outcome_blind_b0_mechanics_days_admitted",
+            "selected_days": selected,
+            "selected_day_count": offline.REQUIRED_DAYS,
+            **sequential_files,
+            "input_binding_sha256": "b" * 64,
+            "sequential_replay_input_identity": "synthetic-replay-input-v2",
+            "day_manifest_sha256": {day: "c" * 64 for day in selected},
+            "permissions": {
+                "economic_outcomes_read": False,
+                "labels_read": False,
+                "candidate_actions_generated": False,
+                "action_authorized": False,
+                "live_authorized": False,
+            },
+        },
         "source_authority": orchestrator.mechanics.SOURCE_AUTHORITY,
         "source_manifest": _binding(source_path),
         "source_manifest_sha256": source["canonical_manifest_sha256"],
@@ -212,6 +236,22 @@ def test_only_hash_bound_manifest_enters_formal_loader(
     with pytest.raises(SystemExit):
         orchestrator.parse_args(
             ["bind", str(path), str(tmp_path / "out.json"), "--fold", "custom"]
+        )
+
+
+def test_legacy_unbound_mechanics_panel_cannot_enter_formal_loader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, execution, panel, _source = _bundle_fixture(tmp_path, monkeypatch)
+    panel["schema_version"] = orchestrator.mechanics.LEGACY_PANEL_SCHEMA_VERSION
+    _rewrite_panel(path, execution, panel)
+
+    with pytest.raises(orchestrator.OfflineOrchestratorError, match="schema"):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
         )
 
 

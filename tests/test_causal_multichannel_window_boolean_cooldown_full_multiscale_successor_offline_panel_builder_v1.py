@@ -97,7 +97,7 @@ class _SyntheticAdapter:
         )
         fill_ns = day_start_ns + 100_000_000
         fill_ms = fill_ns // 1_000_000
-        order_id = 101
+        order_id = 0
         exposure_fill_ordinal = 1
         snapshot = emitter.capture_exposure_fill(
             assignment_id=(
