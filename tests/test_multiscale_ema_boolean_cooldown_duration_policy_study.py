@@ -437,7 +437,10 @@ def test_control_fork_requires_exact_pre_quarantine_fill_prefix() -> None:
 
     tampered = [dict(row) for row in baseline["_fill_trace"]]
     tampered[0]["quote_px"] += 0.1
-    with pytest.raises(study.StudyError, match="diverged before"):
+    with pytest.raises(
+        study.StudyError,
+        match="first_difference_index=0",
+    ):
         study._run_duration_arm(
             target,
             action,

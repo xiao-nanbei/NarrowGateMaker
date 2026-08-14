@@ -449,6 +449,92 @@ def test_control_prefix_parity_tracks_exact_current_owner_role() -> None:
         )
 
 
+def test_one_day_exact_owner_parity_enables_fill_trace_for_every_fork(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_arm_bases: list[dict[str, Any]] = []
+    action = SimpleNamespace(policy_id="FIXED_166S")
+
+    fake_study = SimpleNamespace(
+        TRACE_LIMIT=123_456,
+        _prepare_base_params=lambda raw, trace_opportunities: dict(raw),
+        _run_duration_arm=lambda _raw, _action, **kwargs: (
+            captured_arm_bases.append(dict(kwargs["base"]))
+            or {
+                "schema_version": (
+                    "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
+                ),
+                "exact_owner_action": "FIXED_166S",
+                "arm_washout_complete": True,
+                "right_censored": False,
+            },
+            0.0,
+        ),
+    )
+    fake_backtest = SimpleNamespace(
+        _simulate_tick_with_engine=lambda *_args, **_kwargs: {"_fill_trace": []}
+    )
+    real_import = importlib.import_module
+    monkeypatch.setattr(
+        adapter_module.importlib,
+        "import_module",
+        lambda name: (
+            fake_study
+            if name == adapter_module.FIXED_ONE_SHOT_REPLAY_MODULE
+            else fake_backtest
+            if name == adapter_module.FIXED_BACKTEST_MODULE
+            else real_import(name)
+        ),
+    )
+    replay = SimpleNamespace(
+        trades=[],
+        var_ts_ms=[],
+        var_ssq=[],
+        ml_data=None,
+        bbo_data=None,
+        l2_data=None,
+        var_ti=None,
+        var_retsq=None,
+        market_window_identity_sha256=SHA_A,
+        model_overlay_identity_sha256=SHA_B,
+        latency_identity_sha256=SHA_C,
+        queue_random_identity_sha256="d" * 64,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_canonical_day_projection_from_rows",
+        lambda **_kwargs: (SimpleNamespace(), replay),
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_load_frozen_duration_action_contract",
+        lambda: ({}, {"BUY": (), "SELL": (action,)}),
+    )
+    monkeypatch.setattr(adapter_module, "_day_identity_hashes", lambda _request: {})
+    monkeypatch.setattr(
+        adapter_module,
+        "_exact_owner_runtime_params",
+        lambda *_args, **_kwargs: {"trace_fills_max": 0},
+    )
+    rows = pd.DataFrame(
+        {
+            "side": ("SELL",),
+            "exact_owner_action": ("FIXED_166S",),
+            "role_at_fill": ("opener",),
+        },
+        index=pd.Index(("opportunity-1",), name="opportunity_id"),
+    )
+
+    result = adapter_module._execute_exact_owner_one_day_mechanics(
+        utc_day=DAY,
+        portable_binding={},
+        rows=rows,
+    )
+
+    assert result["exact_owner_noop_parity_count"] == 1
+    assert captured_arm_bases == [{"trace_fills_max": fake_study.TRACE_LIMIT}]
+
+
 def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api() -> None:
     adapter = adapter_module.build_canonical_replay_adapter()
 

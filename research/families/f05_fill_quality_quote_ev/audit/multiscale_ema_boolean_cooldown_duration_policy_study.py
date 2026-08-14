@@ -1532,8 +1532,31 @@ def _run_duration_arm(
             cutoff_ms=cutoff_ms,
         )
         if fork_prefix != control_prefix:
+            common_count = min(len(control_prefix), len(fork_prefix))
+            first_difference = next(
+                (
+                    index
+                    for index in range(common_count)
+                    if control_prefix[index] != fork_prefix[index]
+                ),
+                common_count,
+            )
+            control_fill = (
+                control_prefix[first_difference]
+                if first_difference < len(control_prefix)
+                else None
+            )
+            fork_fill = (
+                fork_prefix[first_difference]
+                if first_difference < len(fork_prefix)
+                else None
+            )
             raise StudyError(
-                "B0-equivalent fork diverged before the common washout quarantine"
+                "B0-equivalent fork diverged before the common washout quarantine: "
+                f"cutoff_ms={cutoff_ms}, control_fill_count={len(control_prefix)}, "
+                f"fork_fill_count={len(fork_prefix)}, "
+                f"first_difference_index={first_difference}, "
+                f"control_fill={control_fill!r}, fork_fill={fork_fill!r}"
             )
         trace["control_prefix_parity_match"] = True
         trace["control_prefix_fill_count"] = len(fork_prefix)

@@ -1259,16 +1259,20 @@ def _execute_exact_owner_one_day_mechanics(
             raise OfflineReplayAdapterError(
                 "one-day mechanics owner action escaped the frozen vocabulary"
             )
+        arm_base = _exact_owner_runtime_params(
+            request,
+            replay,
+            utc_day=utc_day,
+            identity_hashes=identity_hashes,
+        )
+        # The parity gate compares the fork's fill prefix with the authoritative
+        # control prefix. Both arms must therefore retain the same fill trace.
+        arm_base["trace_fills_max"] = study.TRACE_LIMIT
         trace, _elapsed = study._run_duration_arm(
             raw,
             actions[action_id],
             window=window,
-            base=_exact_owner_runtime_params(
-                request,
-                replay,
-                utc_day=utc_day,
-                identity_hashes=identity_hashes,
-            ),
+            base=arm_base,
             shared=shared,
             engine="python",
             authoritative_control_fills=control_fills,
