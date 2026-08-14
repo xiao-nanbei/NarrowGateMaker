@@ -751,6 +751,56 @@ def test_atomic_day_cache_round_trip_and_progress_receipt(tmp_path: Path) -> Non
     )
 
 
+def test_shared_prefix_day_audit_accepts_mixed_resume_and_new_work() -> None:
+    adapter_module._validate_shared_prefix_day_audit(
+        {
+            "target_opportunity_count": 3,
+            "target_opportunities_matched": 3,
+            "opportunities_dispatched": 1,
+            "opportunities_resumed": 2,
+            "arm_processes_completed": 8,
+            "completed_manifest_paths": ("one", "two", "three"),
+            "modeled_queue_economics_authorized": True,
+            "exact_owner_baseline_policy_enabled": True,
+        },
+        target_count=3,
+        arms_per_target=8,
+        modeled_queue_economics_authorized=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("opportunities_resumed", 1),
+        ("arm_processes_completed", 24),
+        ("completed_manifest_paths", ("one", "two")),
+    ),
+)
+def test_shared_prefix_day_audit_rejects_resume_accounting_drift(
+    field: str,
+    value: Any,
+) -> None:
+    audit: dict[str, Any] = {
+        "target_opportunity_count": 3,
+        "target_opportunities_matched": 3,
+        "opportunities_dispatched": 1,
+        "opportunities_resumed": 2,
+        "arm_processes_completed": 8,
+        "completed_manifest_paths": ("one", "two", "three"),
+        "modeled_queue_economics_authorized": True,
+        "exact_owner_baseline_policy_enabled": True,
+    }
+    audit[field] = value
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="audit drifted"):
+        adapter_module._validate_shared_prefix_day_audit(
+            audit,
+            target_count=3,
+            arms_per_target=8,
+            modeled_queue_economics_authorized=True,
+        )
+
+
 @pytest.mark.parametrize("workers", (1, 6, 8))
 def test_day_worker_count_accepts_only_frozen_range(workers: int) -> None:
     assert adapter_module._validated_worker_count(workers) == workers

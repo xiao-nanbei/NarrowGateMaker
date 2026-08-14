@@ -1347,6 +1347,32 @@ def _collect_shared_prefix_day_frames(
     return outcomes, supported, evidence
 
 
+def _validate_shared_prefix_day_audit(
+    audit: Mapping[str, Any],
+    *,
+    target_count: int,
+    arms_per_target: int,
+    modeled_queue_economics_authorized: bool,
+) -> None:
+    dispatched = int(audit.get("opportunities_dispatched", -1))
+    resumed = int(audit.get("opportunities_resumed", -1))
+    expected_new_arms = dispatched * arms_per_target
+    manifest_paths = tuple(audit.get("completed_manifest_paths") or ())
+    if (
+        int(audit.get("target_opportunity_count", -1)) != target_count
+        or int(audit.get("target_opportunities_matched", -1)) != target_count
+        or dispatched < 0
+        or resumed < 0
+        or dispatched + resumed != target_count
+        or int(audit.get("arm_processes_completed", -1)) != expected_new_arms
+        or len(manifest_paths) != target_count
+        or audit.get("modeled_queue_economics_authorized")
+        is not modeled_queue_economics_authorized
+        or audit.get("exact_owner_baseline_policy_enabled") is not True
+    ):
+        raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
+
+
 def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     request, replay = _canonical_day_projection(job)
     study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
@@ -1432,18 +1458,12 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
         executor.abort()
         raise
     audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
-    if (
-        int(audit.get("target_opportunity_count", -1)) != len(targets)
-        or int(audit.get("target_opportunities_matched", -1)) != len(targets)
-        or int(audit.get("opportunities_dispatched", 0))
-        + int(audit.get("opportunities_resumed", 0))
-        != len(targets)
-        or int(audit.get("arm_processes_completed", -1))
-        != len(targets) * len(vocabulary)
-        or audit.get("modeled_queue_economics_authorized") is not True
-        or audit.get("exact_owner_baseline_policy_enabled") is not True
-    ):
-        raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
+    _validate_shared_prefix_day_audit(
+        audit,
+        target_count=len(targets),
+        arms_per_target=len(vocabulary),
+        modeled_queue_economics_authorized=True,
+    )
     outcomes, supported, evidence = _collect_shared_prefix_day_frames(
         rows=rows,
         vocabulary=vocabulary,
@@ -1554,17 +1574,12 @@ def _execute_exact_owner_one_day_mechanics(
         replay_wall_time_s = time.perf_counter() - started
         audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
         manifests = tuple(audit.get("completed_manifest_paths") or ())
-        if (
-            int(audit.get("target_opportunity_count", -1)) != row_count
-            or int(audit.get("target_opportunities_matched", -1)) != row_count
-            or int(audit.get("arm_processes_completed", -1)) != row_count
-            or len(manifests) != row_count
-            or audit.get("modeled_queue_economics_authorized") is not False
-            or audit.get("exact_owner_baseline_policy_enabled") is not True
-        ):
-            raise OfflineReplayAdapterError(
-                "one-day shared-prefix mechanics audit drifted"
-            )
+        _validate_shared_prefix_day_audit(
+            audit,
+            target_count=row_count,
+            arms_per_target=1,
+            modeled_queue_economics_authorized=False,
+        )
         observed_ids: set[str] = set()
         for manifest_text in manifests:
             manifest_path = Path(manifest_text)
