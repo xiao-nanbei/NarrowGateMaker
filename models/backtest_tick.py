@@ -11554,7 +11554,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             != cooldown_duration_fork_expected_owner_action
         ):
             raise RuntimeError(
-                "one-shot exact-owner target action drifted from the admitted panel"
+                "one-shot exact-owner target action drifted from the admitted panel: "
+                f"expected={cooldown_duration_fork_expected_owner_action}, "
+                f"observed={cooldown_duration_fork_exact_owner_action}, "
+                f"side={normalized_side}, fill_ts_ms={int(fill_ts_ms)}, "
+                f"order_id={order_id}, campaign_id={anticipated_campaign_id}, "
+                f"baseline_ms={baseline_ms}, "
+                "exact_owner_baseline_ms="
+                f"{cooldown_duration_fork_exact_owner_baseline_ms}"
             )
         cooldown_duration_fork_applied_ms = (
             baseline_ms

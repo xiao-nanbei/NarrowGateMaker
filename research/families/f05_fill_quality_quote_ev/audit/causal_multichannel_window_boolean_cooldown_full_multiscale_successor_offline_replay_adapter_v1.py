@@ -56,6 +56,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1 as successor,
 )
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_runtime_policy as runtime_policy,
+)
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_nested_oof import (
     AndClause,
     BooleanCooldownPolicy,
@@ -119,6 +122,9 @@ FIXED_OBSERVATION_CACHE_MODULE = (
 FIXED_OWNER_PREDICATE_BUNDLE_PATH = (
     "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/"
     "predicate_bundle.json"
+)
+FIXED_OWNER_POLICY_PATH = (
+    "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/policy.json"
 )
 
 _FIXED_CANONICAL_API_SYMBOLS: Mapping[str, tuple[str, str]] = {
@@ -953,6 +959,126 @@ def _build_day_snapshot_emitter(
     )
 
 
+class _ExactOwnerArtifactEvaluator:
+    """Exact B0 evaluator using the same artifact projection as the live policy."""
+
+    def __init__(
+        self,
+        *,
+        expected_identity_hashes: Mapping[str, str],
+        policy_path: Path | None = None,
+        predicate_bundle_path: Path | None = None,
+    ) -> None:
+        self.policy_identity = successor.ACTIVE_OWNER_POLICY_IDENTITY
+        self._expected_identity_hashes = {
+            str(name): _require_sha(value, label=f"snapshot identity {name}")
+            for name, value in expected_identity_hashes.items()
+        }
+        self._policy_path = (
+            resolve_portable_path(FIXED_OWNER_POLICY_PATH).resolve()
+            if policy_path is None
+            else Path(policy_path).expanduser().resolve()
+        )
+        self._predicate_bundle_path = (
+            resolve_portable_path(FIXED_OWNER_PREDICATE_BUNDLE_PATH).resolve()
+            if predicate_bundle_path is None
+            else Path(predicate_bundle_path).expanduser().resolve()
+        )
+        self._delegate = runtime_policy.load_runtime_policy(
+            policy_path=self._policy_path,
+            predicate_bundle_path=self._predicate_bundle_path,
+            expected_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+            expected_predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+        )
+        self.policy_sha256 = str(self._delegate.policy_sha256)
+        self.predicate_bundle_sha256 = str(
+            self._delegate.predicate_bundle_sha256
+        )
+        if not self.binding_valid:
+            raise OfflineReplayAdapterMechanicsMissing(
+                ("exact_owner_artifact_evaluator",),
+                context=str(self.binding_error or "runtime binding invalid"),
+            )
+
+    @property
+    def binding_valid(self) -> bool:
+        return bool(
+            self._delegate.binding_valid
+            and self.policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256
+            and self.predicate_bundle_sha256
+            == offline.ACTIVE_PREDICATE_BUNDLE_SHA256
+        )
+
+    @property
+    def binding_error(self) -> str | None:
+        if self._delegate.binding_error is not None:
+            return str(self._delegate.binding_error)
+        if self.policy_sha256 != offline.ACTIVE_OWNER_POLICY_SHA256:
+            return "exact_owner_policy_sha256_drifted"
+        if self.predicate_bundle_sha256 != offline.ACTIVE_PREDICATE_BUNDLE_SHA256:
+            return "exact_owner_predicate_bundle_sha256_drifted"
+        return None
+
+    def _validate_snapshot_identity(self, snapshot: Any) -> None:
+        if not isinstance(snapshot, successor.CooldownAssignmentSnapshotV2):
+            raise OfflineReplayAdapterError("exact owner snapshot type drifted")
+        observed = snapshot.identity_hashes.to_dict()
+        for name, expected in self._expected_identity_hashes.items():
+            if observed.get(name) != expected:
+                raise OfflineReplayAdapterError(
+                    f"exact owner snapshot identity hash drifted: {name}"
+                )
+
+    def evaluate(self, snapshot: Any, baseline_duration_ms: Any) -> Any:
+        self._validate_snapshot_identity(snapshot)
+        decision = self._delegate.evaluate(snapshot, baseline_duration_ms)
+        if (
+            str(decision.policy_sha256) != offline.ACTIVE_OWNER_POLICY_SHA256
+            or str(decision.predicate_bundle_sha256)
+            != offline.ACTIVE_PREDICATE_BUNDLE_SHA256
+        ):
+            raise OfflineReplayAdapterError("exact owner decision identity drifted")
+        return decision
+
+    def evaluate_predicates(
+        self,
+        *,
+        side: str,
+        predicate_values: Mapping[str, Any],
+        baseline_duration_ms: Any,
+        snapshot_id: str,
+    ) -> Any:
+        return self._delegate.evaluate_predicates(
+            side=side,
+            predicate_values=predicate_values,
+            baseline_duration_ms=baseline_duration_ms,
+            snapshot_id=snapshot_id,
+        )
+
+    def audit(self) -> dict[str, Any]:
+        return {
+            "identity": self.policy_identity,
+            "policy_sha256": self.policy_sha256,
+            "predicate_bundle_sha256": self.predicate_bundle_sha256,
+            "artifact_aware_snapshot_projection": True,
+            "expected_snapshot_identity_hashes": dict(
+                sorted(self._expected_identity_hashes.items())
+            ),
+            "delegate": self._delegate.audit(),
+            "research_only": True,
+            "action_authorized": False,
+            "live_authorized": False,
+        }
+
+
+def _build_exact_owner_artifact_evaluator(
+    *, expected_identity_hashes: Mapping[str, str]
+) -> _ExactOwnerArtifactEvaluator:
+    return _ExactOwnerArtifactEvaluator(
+        expected_identity_hashes=expected_identity_hashes
+    )
+
+
 def _exact_owner_runtime_params(
     request: Any,
     replay: Any,
@@ -960,7 +1086,6 @@ def _exact_owner_runtime_params(
     utc_day: str,
     identity_hashes: Mapping[str, str],
 ) -> dict[str, Any]:
-    repeated = importlib.import_module(FIXED_REPEATED_POLICY_BRIDGE_MODULE)
     params = dict(replay.params)
     params["cooldown_v2_snapshot_emitter"] = _build_day_snapshot_emitter(
         request,
@@ -969,7 +1094,7 @@ def _exact_owner_runtime_params(
         identity_hashes=identity_hashes,
     )
     params["cooldown_duration_policy_evaluator"] = (
-        repeated.build_exact_current_owner_evaluator(
+        _build_exact_owner_artifact_evaluator(
             expected_identity_hashes=identity_hashes
         )
     )
@@ -1214,11 +1339,11 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             identity_hashes=identity_hashes,
         )
 
-    exact_owner = repeated.build_exact_current_owner_evaluator(
+    exact_owner = _build_exact_owner_artifact_evaluator(
         expected_identity_hashes=identity_hashes
     )
     if fitted.expected_executed_policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256:
-        candidate_delegate = repeated.build_exact_current_owner_evaluator(
+        candidate_delegate = _build_exact_owner_artifact_evaluator(
             expected_identity_hashes=identity_hashes
         )
         candidate_predicate_sha = offline.ACTIVE_PREDICATE_BUNDLE_SHA256
@@ -1376,7 +1501,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             candidate_delegate = repeated.TargetSideDelegatingEvaluator(
                 target_side=repeated.CandidateTargetSide(target_side),
                 target_evaluator=_ArtifactAwareTargetEvaluator(),
-                b0_evaluator=repeated.build_exact_current_owner_evaluator(
+                b0_evaluator=_build_exact_owner_artifact_evaluator(
                     expected_identity_hashes=identity_hashes
                 ),
                 artifact_binding=artifact,
@@ -1385,7 +1510,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             class _FixedDecisionPolicyEvaluator:
                 def __init__(self, policy: Any) -> None:
                     self._policy = policy
-                    self._b0 = repeated.build_exact_current_owner_evaluator(
+                    self._b0 = _build_exact_owner_artifact_evaluator(
                         expected_identity_hashes=identity_hashes
                     )
                     self.policy_identity = artifact.executed_policy_identity
@@ -1498,13 +1623,13 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
 
     guarded_candidate = _TargetDayOnlyEvaluator(
         candidate_delegate,
-        repeated.build_exact_current_owner_evaluator(
+        _build_exact_owner_artifact_evaluator(
             expected_identity_hashes=identity_hashes
         ),
     )
     guarded_control = _TargetDayOnlyEvaluator(
         exact_owner,
-        repeated.build_exact_current_owner_evaluator(
+        _build_exact_owner_artifact_evaluator(
             expected_identity_hashes=identity_hashes
         ),
     )

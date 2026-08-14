@@ -6,6 +6,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
+
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_replay_adapter_v1 as offline_replay_adapter,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1 as offline_successor,
+)
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_features import (
     BASE_WINDOW_WIDTH_NS,
     CHANNELS_BY_BLOCK,
@@ -453,6 +461,61 @@ def test_artifact_quantile_literal_is_transformed_on_snapshot_row(
     assert decision.action_id in {"FIXED_211S", "CONTROL_85N"}
     assert decision.fallback_reason in {None, "no_rule_matched"}
     assert decision.support_valid is True
+
+
+def test_formal_exact_owner_bridge_uses_runtime_artifact_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "value::mid_usdc_per_btc__h4s__h16s::signed_distance"
+    predicate = f"tri::quantile::{source}::ge::q5000"
+    policy, bundle, policy_sha, bundle_sha = _write_runtime_artifacts(
+        tmp_path,
+        rules=[
+            _rule(
+                "FIXED_211S",
+                (_literal(predicate),),
+                (_literal(predicate, negated=True),),
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        offline_successor,
+        "ACTIVE_OWNER_POLICY_SHA256",
+        policy_sha,
+    )
+    monkeypatch.setattr(
+        offline_successor,
+        "ACTIVE_PREDICATE_BUNDLE_SHA256",
+        bundle_sha,
+    )
+    snapshot = _snapshot(side="SELL")
+    expected_hashes = snapshot.identity_hashes.to_dict()
+    evaluator = offline_replay_adapter._ExactOwnerArtifactEvaluator(
+        expected_identity_hashes=expected_hashes,
+        policy_path=policy,
+        predicate_bundle_path=bundle,
+    )
+
+    decision = evaluator.evaluate(snapshot, 85_000)
+
+    assert decision.action_id == "FIXED_211S"
+    assert decision.policy_sha256 == policy_sha
+    assert decision.predicate_bundle_sha256 == bundle_sha
+    assert evaluator.audit()["artifact_aware_snapshot_projection"] is True
+
+    drifted = dict(expected_hashes)
+    drifted["code_sha256"] = "0" * 64
+    drifted_evaluator = offline_replay_adapter._ExactOwnerArtifactEvaluator(
+        expected_identity_hashes=drifted,
+        policy_path=policy,
+        predicate_bundle_path=bundle,
+    )
+    with pytest.raises(
+        offline_replay_adapter.OfflineReplayAdapterError,
+        match="identity hash drifted: code_sha256",
+    ):
+        drifted_evaluator.evaluate(snapshot, 85_000)
 
 
 def test_unobserved_first_rule_blocks_later_rule(tmp_path: Path) -> None:
