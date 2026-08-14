@@ -1,0 +1,86 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.formal_v16_replacement_gate_admission.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "formal_v16_replacement_gate_passed_ready_for_fresh_nested_oof",
+  "last_materially_modified": "2026-08-15",
+  "source_identity": {
+    "public_base_commit": "937e1785aff9d41cc13529cf17967aefde6b0b07",
+    "annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-sequential-count-schema-v16-20260815",
+    "annotated_tag_object": "739e398ebad4ed6e8a458e54d3b25ae6db7bab12",
+    "worktree_clean_at_bind": true
+  },
+  "execution_manifest": {
+    "artifact_id": "f05-full-multiscale-offline-formal-execution-manifest-v16",
+    "availability": "private evidence store; not distributed with the public repository",
+    "file_sha256": "680d67cfdeae8a05c1b65ef8c21802a494bc59664c4bc307a4aa47c69f214944",
+    "canonical_sha256": "ef8576cd58fbfe1c40fe49a49fd6d2f350121c1cbf57117a0b0ed2a672d299a9",
+    "bytes": 13433,
+    "panel_days": 30,
+    "mechanics_opportunities": 3516,
+    "panel_manifest_sha256": "c90930f9bdb51996af33efaeb9ef4d5386716f3ba911fcf2e1e935a65a0c8cab",
+    "fold_manifest_sha256": "b50bc105a282c0c19ed35484bbb741945fdd600c187733b6201deff77cb04c82",
+    "nested_fold_manifest_sha256": "2eac695de3c121dd89e4292ce992ce2546e6ae965606cd4bac2865edb5a89556",
+    "source_manifest_sha256": "1e156e6d505b78f66a7a2d0d30eccfdb5eb97f46c0ba2f9c844baa381f32dfd7"
+  },
+  "preflight": {
+    "artifact_id": "f05-full-multiscale-offline-formal-preflight-v16",
+    "availability": "private evidence store; not distributed with the public repository",
+    "file_sha256": "e9d4286b47b779bda64516fac2c71aa3f91805c3abc67abd08397b6c5bc0199c",
+    "canonical_sha256": "52432f5039ebe18ae5ef2d8dcfd06d65dfc0397a197191b1cec50d00a1513526",
+    "bytes": 8696,
+    "status": "formal_offline_replay_mechanics_ready",
+    "adapter_artifact_sha256": "95080bbf5e2daf5624cbdc6aabec6aa5a79247dfbfa8d7437adbfe895733b88f",
+    "missing_canonical_fields": [],
+    "economic_outcomes_read": false
+  },
+  "one_day_gate": {
+    "artifact_id": "f05-full-multiscale-offline-formal-v16-one-day-mechanics-receipt",
+    "availability": "private evidence store; not distributed with the public repository",
+    "file_sha256": "f007239fff444ebae845289c6a8b2854531a0e2ac6e8ccfbe66d5556018437af",
+    "receipt_sha256": "724901bf57ba314ffe059974af6fcbf9afb2063452897414361cc61afe8b543a",
+    "canonical_receipt_sha256": "47befb4a1fa4dc45632d4664a90295085e998316ef9cdb5eaf88a6b7c380135a",
+    "mechanics_receipt_sha256": "ded7de769e60dcd00c6a785b2dbdf22290161af567ceb509382968f524038462",
+    "bytes": 2465,
+    "status": "exact_owner_one_day_mechanics_complete",
+    "utc_day": "2026-06-27",
+    "worker_count": 1,
+    "arm_worker_count": 8,
+    "opportunity_count": 81,
+    "exact_owner_noop_parity_count": 81,
+    "complete_washout_count": 81,
+    "right_censored_count": 0,
+    "replay_wall_time_s": 309.5519154170179,
+    "economic_values_computed_inside_replay": true,
+    "economic_values_persisted": false,
+    "economic_values_used_for_selection": false,
+    "action_counts": {
+      "CONTROL_85N": 54,
+      "FIXED_211S": 19,
+      "FIXED_1748S": 8
+    },
+    "role_counts": {
+      "opener": 39,
+      "add": 42
+    }
+  },
+  "replacement_contract": {
+    "fresh_execution_identity": true,
+    "fresh_cache_identity": true,
+    "v15_cache_reuse_allowed": false,
+    "nested_oof_allowed": true,
+    "candidate_admitted": false,
+    "outer_test_result_admitted": false,
+    "scorecard_admitted": false,
+    "final_report_admitted": false
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "owner_policy_modified": false,
+    "live_runtime_modified": false,
+    "ec2_operation_performed": false,
+    "new_shadow_or_companion_created": false
+  }
+}
