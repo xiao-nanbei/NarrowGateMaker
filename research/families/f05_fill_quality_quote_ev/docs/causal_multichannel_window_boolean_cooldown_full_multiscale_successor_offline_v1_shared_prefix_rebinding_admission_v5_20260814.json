@@ -1,0 +1,105 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.shared_prefix_rebinding_admission.v5",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "sequential_mechanics_shared_prefix_rebinding_v5_admitted_pre_economic",
+  "last_materially_modified": "2026-08-14",
+  "predecessor": {
+    "artifact_id": "f05-full-multiscale-offline-sequential-mechanics-fill-trace-rebinding-v4",
+    "preserved_immutable": true,
+    "formal_v13_preserved_immutable": true,
+    "interrupted_prefinalizer_mechanics_attempt_admitted": false
+  },
+  "implementation": {
+    "scope": "exact_owner_posix_copy_on_write_shared_prefix_and_resumable_opportunity_shards",
+    "strategy_semantics_changed": false,
+    "economic_estimand_changed": false,
+    "latest_commit": "411bcd19313a3027710dd8808bf47caae5d608d8",
+    "annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-resumable-shared-prefix-v2-20260814",
+    "tag_object": "8ae9c37c75be4b41e121ab193aeb84f10fe08b62",
+    "replay_adapter_sha256": "96ec26f84cf9adaa72ef4d5985be0027f92d79fafe62a9ac540d7de27b8d6a84",
+    "shared_prefix_sha256": "72d0006928ba95bf546d85ad651b54969a990ffdf1245f47d3fc64393b1ef6f2",
+    "backtest_tick_sha256": "ba076cb28b5ac393ed8436f8dc71f27e6430c9c22772db5ef670d0695f729bf4",
+    "one_parent_replay_per_day": true,
+    "fork_at_frozen_target_fill": true,
+    "atomic_opportunity_shards": true,
+    "resume_completed_shards": true,
+    "stale_staging_quarantine": true,
+    "resume_accounting_contract": "resumed_plus_newly_dispatched_equals_frozen_target_count"
+  },
+  "panel": {
+    "artifact_id": "f05-full-multiscale-offline-sequential-mechanics-shared-prefix-rebinding-v5",
+    "availability": "private evidence store; not distributed with the public repository",
+    "schema_identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.offline_sequential_panel_v2",
+    "selected_day_count": 30,
+    "replacement_day_count": 0,
+    "failed_day_count": 0,
+    "opportunity_count": 3516,
+    "table_count": 5,
+    "rows_per_table": 3516,
+    "row_key_sha256": "e481d8a61eecb71a36e6e3c8f2be1630c483a466a5418adc583d6398c29330ec",
+    "builder_manifest_file_sha256": "ca0e0b02dad04e97120aa09a374c781dec99d97087cfa7695ddd920ab5d83156",
+    "builder_manifest_canonical_sha256": "7438d19c9081fc56d1b35af78fb06f6f2a2b489fe95e209c8f38f496eb3034e0",
+    "merged_panel_manifest_file_sha256": "a814e0e3edba1279b8d21058e880795be5b0fa9ccac845e1e6faa914d3698fb7",
+    "merged_panel_manifest_canonical_sha256": "9920a13c7f0e6748b52a88ff818fa973f8816d57e51fbfcff1f77701c9ee8f20",
+    "portable_replay_binding_file_sha256": "b5bbeb01f01fabef8c99df55ecd6b649960d3e9b86e0576e7e01d77ea8e46c63",
+    "mechanics_manifest_file_sha256": "85e8bbcf30396a6353289f5e69b87fe9913ccb20d55a6d61edf35ff0dc1ec4a2",
+    "mechanics_manifest_canonical_sha256": "c90930f9bdb51996af33efaeb9ef4d5386716f3ba911fcf2e1e935a65a0c8cab",
+    "formal_execution_eligible": true,
+    "candidate_actions_generated": false,
+    "labels_read": false,
+    "economic_outcomes_read": false
+  },
+  "file_comparison_to_v4": {
+    "metadata_byte_identical": true,
+    "boolean_features_byte_identical": true,
+    "continuous_features_byte_identical": true,
+    "exact_owner_actions_byte_identical": true,
+    "ordered_opportunity_ids_identical": true,
+    "replay_inputs_columns_identical": true,
+    "replay_inputs_changed_rows": 3516,
+    "replay_inputs_only_changed_columns": [
+      "portable_replay_binding_path"
+    ],
+    "v4_replay_inputs_sha256": "e49739a5c6d650223630597caa0c47f9ca8196538f19f6806d507f062cd171d8",
+    "v5_replay_inputs_sha256": "e8062e6354e6db9501d0d19746b6e64e2bbe32284aade34d9a2e46f35405d41d"
+  },
+  "bindings": {
+    "source_manifest_canonical_sha256": "1e156e6d505b78f66a7a2d0d30eccfdb5eb97f46c0ba2f9c844baa381f32dfd7",
+    "selection_sha256": "b3f7a2c8565a689db126222a8fa7c850b739dfea7c98ee7b054b513d3d2e18c7",
+    "fold_manifest_sha256": "b50bc105a282c0c19ed35484bbb741945fdd600c187733b6201deff77cb04c82",
+    "input_binding_sha256": "717d955aa194b1de463615d5263f241d73ae431f245f8a0787174ba4678b3e3f",
+    "exact_owner_policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "exact_owner_predicate_bundle_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "exact_owner_private_config_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
+  },
+  "verification": {
+    "panel_builder_exit_code": 0,
+    "panel_builder_validate_exit_code": 0,
+    "mechanics_admit_panel_exit_code": 0,
+    "mechanics_validate_panel_exit_code": 0,
+    "structured_table_comparison_passed": true,
+    "directed_shared_prefix_tests_passed": 90,
+    "extended_successor_regression_tests_passed": 181,
+    "directed_regression_runs_total": 271,
+    "ruff_passed": true,
+    "py_compile_passed": true,
+    "git_diff_check_passed": true
+  },
+  "next_gate": {
+    "status": "pending_clean_admission_commit_tag_and_formal_v14",
+    "economic_access_allowed": false,
+    "required_preflight_status": "formal_offline_replay_mechanics_ready",
+    "required_one_day_status": "exact_owner_one_day_mechanics_complete",
+    "required_one_day_worker_count": 1
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_allowed": false,
+    "owner_policy_modified": false,
+    "live_runtime_modified": false,
+    "new_shadow_or_companion_created": false
+  }
+}
