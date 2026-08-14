@@ -1,0 +1,106 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1.formal_v15_semantic_fold_reuse_execution_amendment.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1",
+  "status": "pre_economic_execution_optimization_frozen_pending_clean_tag",
+  "last_materially_modified": "2026-08-14",
+  "change_scope": {
+    "one_shot_cross_fold_semantic_cache": true,
+    "global_shared_prefix_arm_workers_before": 4,
+    "global_shared_prefix_arm_workers_after": 8,
+    "existing_global_arm_worker_hard_cap": 8,
+    "day_worker_default": 6,
+    "day_worker_contract_changed": false,
+    "research_estimand_changed": false,
+    "panel_changed": false,
+    "folds_changed": false,
+    "candidate_ladder_changed": false,
+    "duration_vocabulary_changed": false,
+    "statistics_changed": false
+  },
+  "semantic_cache_contract": {
+    "eligible_stage": "outer_train_one_shot",
+    "fold_specific_cache_entry_required": true,
+    "fold_specific_progress_receipt_required": true,
+    "fold_specific_label_receipt_required": true,
+    "semantic_source_is_first_atomic_admission": true,
+    "ignored_provider_owned_columns": [
+      "fold_row_role",
+      "outer_fold_id"
+    ],
+    "all_other_columns_and_index_hash_bound": true,
+    "outer_test_reuse_allowed": false,
+    "sequential_policy_evaluation_reuse_allowed": false,
+    "source_manifest_revalidated_on_load": true,
+    "source_file_hashes_revalidated_on_load": true,
+    "source_frame_hashes_revalidated_on_load": true,
+    "source_receipt_revalidated_on_load": true,
+    "frame_disagreement_policy": "fail_closed"
+  },
+  "outcome_blind_equivalence_audit": {
+    "panel_days": 30,
+    "panel_opportunities": 3516,
+    "outer_train_opportunity_occurrences": 8215,
+    "first_or_changed_opportunities": 2854,
+    "reusable_opportunities": 5361,
+    "reusable_fraction": 0.6525867315885575,
+    "side_day_cells": 134,
+    "reusable_side_day_cells": 86,
+    "folds": [
+      {
+        "fold_id": "outer1",
+        "opportunities": 1343,
+        "reusable_from_prior_fold": 0
+      },
+      {
+        "fold_id": "outer2",
+        "opportunities": 1758,
+        "reusable_from_prior_fold": 1343
+      },
+      {
+        "fold_id": "outer3",
+        "opportunities": 2260,
+        "reusable_from_prior_fold": 1758
+      },
+      {
+        "fold_id": "outer4",
+        "opportunities": 2854,
+        "reusable_from_prior_fold": 2260
+      }
+    ],
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false
+  },
+  "formal_v14_boundary": {
+    "preflight_status": "formal_offline_replay_mechanics_ready",
+    "one_day_status": "exact_owner_one_day_mechanics_complete",
+    "one_day_opportunities": 81,
+    "nested_oof_final_result_admitted_at_amendment_freeze": false,
+    "candidate_policy_admitted_at_amendment_freeze": false,
+    "outer_test_result_admitted_at_amendment_freeze": false,
+    "scorecard_admitted_at_amendment_freeze": false,
+    "interruption_allowed_only_after_v15_replacement_gate": true,
+    "v14_cache_reuse_in_v15_allowed": false
+  },
+  "formal_v15_replacement_gate": {
+    "targeted_tests_required": true,
+    "ruff_required": true,
+    "git_diff_check_required": true,
+    "clean_commit_required": true,
+    "annotated_tag_required": true,
+    "fresh_execution_manifest_required": true,
+    "formal_preflight_required": true,
+    "fixed_one_day_mechanics_required": true,
+    "fresh_cache_identity_required": true
+  },
+  "permissions": {
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "ec2_deployment_allowed": false,
+    "owner_policy_modified": false,
+    "live_runtime_modified": false,
+    "new_shadow_or_companion_created": false
+  }
+}

@@ -353,6 +353,23 @@ def _cache_key(**updates: Any) -> adapter_module.DayReplayCacheKey:
     return adapter_module.DayReplayCacheKey(**values)
 
 
+def _semantic_key(**updates: Any) -> adapter_module.OneShotSemanticCacheKey:
+    values: dict[str, Any] = {
+        "adapter_artifact_sha256": SHA_A,
+        "source_manifest_sha256": SHA_B,
+        "panel_manifest_sha256": SHA_C,
+        "fold_manifest_sha256": "d" * 64,
+        "execution_manifest_sha256": "e" * 64,
+        "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "candidate_policy_sha256": "f" * 64,
+        "side": "SELL",
+        "utc_day": DAY,
+        "semantic_day_input_sha256": "9" * 64,
+    }
+    values.update(updates)
+    return adapter_module.OneShotSemanticCacheKey(**values)
+
+
 def test_factory_identity_and_artifact_hash_match_backend_constant() -> None:
     adapter = adapter_module.build_canonical_replay_adapter()
     assert adapter.identity == backend.CANONICAL_REPLAY_ADAPTER_IDENTITY
@@ -692,6 +709,189 @@ def test_day_cache_key_isolated_by_fold_candidate_stage_and_day_input() -> None:
     )
     hashes = {base.cache_key_sha256, *(item.cache_key_sha256 for item in variants)}
     assert len(hashes) == 1 + len(variants)
+
+
+def test_one_shot_semantic_input_ignores_only_provider_fold_scope() -> None:
+    rows = _common_replay_inputs(("row-1", "row-2"))
+    rows["fold_row_role"] = "outer_train"
+    rows["outer_fold_id"] = "outer1"
+    rebound = rows.copy()
+    rebound["fold_row_role"] = "future-provider-role"
+    rebound["outer_fold_id"] = "outer4"
+    changed = rebound.copy()
+    changed.loc["row-2", "exact_owner_action"] = "FIXED_211S"
+
+    original_sha = adapter_module._one_shot_semantic_day_input_sha256(rows)
+
+    assert adapter_module._one_shot_semantic_day_input_sha256(rebound) == original_sha
+    assert adapter_module._one_shot_semantic_day_input_sha256(changed) != original_sha
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="fold-scope"):
+        adapter_module._one_shot_semantic_day_input_sha256(
+            rows.drop(columns=["outer_fold_id"])
+        )
+
+
+def test_one_shot_semantic_key_isolated_by_all_economic_identities() -> None:
+    base = _semantic_key()
+    variants = (
+        replace(base, adapter_artifact_sha256="1" * 64),
+        replace(base, source_manifest_sha256="2" * 64),
+        replace(base, panel_manifest_sha256="3" * 64),
+        replace(base, fold_manifest_sha256="4" * 64),
+        replace(base, execution_manifest_sha256="5" * 64),
+        replace(base, exact_owner_policy_sha256="6" * 64),
+        replace(base, candidate_policy_sha256="7" * 64),
+        replace(base, side="BUY"),
+        replace(base, utc_day="2026-07-02"),
+        replace(base, semantic_day_input_sha256="8" * 64),
+    )
+    hashes = {
+        base.semantic_key_sha256,
+        *(item.semantic_key_sha256 for item in variants),
+    }
+    assert len(hashes) == 1 + len(variants)
+
+
+def test_semantic_one_shot_cache_rebinds_identical_fold_frames(tmp_path: Path) -> None:
+    cache = adapter_module.DayReplayCache(tmp_path / "cache")
+    semantic_key = _semantic_key()
+    first = _cache_key(
+        stage=adapter_module.ONE_SHOT_STAGE,
+        fold_id="outer1",
+        day_input_sha256="1" * 64,
+    )
+    second = replace(first, fold_id="outer2", day_input_sha256="2" * 64)
+    index = pd.Index(("row-1",), name="opportunity_id")
+    outcomes = pd.DataFrame({"CONTROL_85N": (0.25,)}, index=index)
+    supported = pd.DataFrame({"CONTROL_85N": (True,)}, index=index)
+    evidence = {
+        "semantic_day_input_sha256": semantic_key.semantic_day_input_sha256,
+    }
+
+    cache.admit_one_shot(first, outcomes, supported, evidence=evidence)
+    cache.register_one_shot_semantic(first, semantic_key)
+    rebound = cache.load_semantic_one_shot(semantic_key)
+
+    assert rebound is not None
+    pd.testing.assert_frame_equal(rebound[0], outcomes)
+    pd.testing.assert_frame_equal(rebound[1], supported)
+    assert rebound[2]["source_cache_key_sha256"] == first.cache_key_sha256
+    cache.admit_one_shot(second, outcomes, supported, evidence=evidence)
+    cache.register_one_shot_semantic(second, semantic_key)
+
+
+def test_semantic_one_shot_cache_fails_closed_on_source_drift(tmp_path: Path) -> None:
+    cache = adapter_module.DayReplayCache(tmp_path / "cache")
+    semantic_key = _semantic_key()
+    source = _cache_key(
+        stage=adapter_module.ONE_SHOT_STAGE,
+        day_input_sha256="1" * 64,
+    )
+    index = pd.Index(("row-1",), name="opportunity_id")
+    outcomes = pd.DataFrame({"CONTROL_85N": (0.25,)}, index=index)
+    supported = pd.DataFrame({"CONTROL_85N": (True,)}, index=index)
+    cache.admit_one_shot(
+        source,
+        outcomes,
+        supported,
+        evidence={
+            "semantic_day_input_sha256": semantic_key.semantic_day_input_sha256,
+        },
+    )
+    cache.register_one_shot_semantic(source, semantic_key)
+    outcomes_path = (
+        tmp_path
+        / "cache"
+        / "entries"
+        / source.cache_key_sha256
+        / "outcomes.parquet"
+    )
+    outcomes_path.write_bytes(outcomes_path.read_bytes() + b"drift")
+
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="hash drifted"):
+        cache.load_semantic_one_shot(semantic_key)
+
+
+def test_generate_one_shot_labels_reuses_identical_day_across_outer_folds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = adapter_module.DayReplayCache(tmp_path / "cache")
+    calls = 0
+
+    def fake_run_day_jobs(
+        jobs: list[adapter_module._DayReplayJob],
+        *,
+        workers: int,
+    ) -> list[adapter_module._DayReplayJobResult]:
+        nonlocal calls
+        calls += 1
+        assert workers == 1
+        results: list[adapter_module._DayReplayJobResult] = []
+        for job in jobs:
+            index = job.payload["replay_inputs"].index
+            columns = tuple(job.payload["duration_vocabulary"])
+            results.append(
+                adapter_module._DayReplayJobResult(
+                    utc_day=job.utc_day,
+                    cache_key_sha256=job.cache_key.cache_key_sha256,
+                    frames={
+                        "outcomes": pd.DataFrame(0.0, index=index, columns=columns),
+                        "supported": pd.DataFrame(True, index=index, columns=columns),
+                    },
+                    evidence={"shared_prefix_complete": True},
+                )
+            )
+        return results
+
+    monkeypatch.setattr(
+        adapter_module,
+        "_validate_replay_input_frame",
+        lambda frame, **_kwargs: frame,
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "_require_executable_replay_inputs",
+        lambda _rows, **_kwargs: None,
+    )
+    monkeypatch.setattr(adapter_module, "_validate_d_plus_one_contract", lambda _rows: None)
+    monkeypatch.setattr(
+        adapter_module,
+        "_resolve_execution_options",
+        lambda _rows: adapter_module._ExecutionOptions(
+            binding={"fixed_bridge": {}},
+            cache=cache,
+            workers=1,
+        ),
+    )
+    monkeypatch.setattr(adapter_module, "_run_day_jobs", fake_run_day_jobs)
+    replay_adapter = adapter_module.build_canonical_replay_adapter()
+
+    first_rows = _common_replay_inputs(("row-1",), side="SELL")
+    first_rows["fold_row_role"] = "outer_train"
+    first_rows["outer_fold_id"] = "outer1"
+    first_label = _label_request(("row-1",), outer_fold_id="outer1")
+    first = replay_adapter.generate_outer_train_one_shot_labels(
+        _outer_train_request(first_rows, label=first_label),
+        first_rows,
+    )
+    second_rows = first_rows.copy()
+    second_rows["outer_fold_id"] = "outer2"
+    second_label = _label_request(("row-1",), outer_fold_id="outer2")
+    second = replay_adapter.generate_outer_train_one_shot_labels(
+        _outer_train_request(second_rows, label=second_label),
+        second_rows,
+    )
+
+    assert calls == 1
+    pd.testing.assert_frame_equal(first.outcomes, second.outcomes)
+    pd.testing.assert_frame_equal(first.supported, second.supported)
+    progress = tuple((tmp_path / "cache" / "progress").glob("*.json"))
+    assert len(progress) == 2
+    assert any(
+        json.loads(path.read_text())["detail"] == "semantic_fold_reuse"
+        for path in progress
+    )
 
 
 def test_atomic_day_cache_round_trip_and_progress_receipt(tmp_path: Path) -> None:

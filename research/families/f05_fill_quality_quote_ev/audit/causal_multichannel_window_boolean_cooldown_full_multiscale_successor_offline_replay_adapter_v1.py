@@ -7,9 +7,10 @@ outcome-blind ``replay_inputs`` table contains the complete portable inputs
 needed by the existing one-shot and repeated-policy replay bridges.
 
 The adapter also defines deterministic day-level scheduling and an atomic,
-hash-bound cache contract.  A cache entry is scoped to one UTC day, side,
-fold, stage, candidate policy, exact B0 identity, and formal source identity;
-outer-train labels can therefore never be reused across folds.
+hash-bound cache contract.  Every fold keeps an isolated receipt.  An already
+admitted outer-train day may be rebound across expanding folds only when the
+complete side/day opportunity frame is semantically identical after removing
+the two provider-owned fold-scope columns.
 """
 
 from __future__ import annotations
@@ -80,7 +81,7 @@ SAME_MILLISECOND_AMBIGUITY_POLICY = "censor"
 DEFAULT_DAY_WORKERS = 6
 MIN_DAY_WORKERS = 1
 MAX_DAY_WORKERS = 8
-FORMAL_SHARED_PREFIX_ARM_WORKERS = 4
+FORMAL_SHARED_PREFIX_ARM_WORKERS = 8
 REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-06-29",
     "2026-07-03",
@@ -90,8 +91,10 @@ REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
 
 DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
 DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
+ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
 SEQUENTIAL_STAGES = frozenset({"inner_oof", "outer_oof"})
+_ONE_SHOT_FOLD_SCOPE_COLUMNS = frozenset({"fold_row_role", "outer_fold_id"})
 
 FIXED_ONE_SHOT_REPLAY_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
@@ -599,6 +602,58 @@ class DayReplayCacheKey:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class OneShotSemanticCacheKey:
+    """Fold-agnostic identity for one complete outer-train side/day frame."""
+
+    adapter_artifact_sha256: str
+    source_manifest_sha256: str
+    panel_manifest_sha256: str
+    fold_manifest_sha256: str
+    execution_manifest_sha256: str
+    exact_owner_policy_sha256: str
+    candidate_policy_sha256: str
+    side: str
+    utc_day: str
+    semantic_day_input_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "adapter_artifact_sha256",
+            "source_manifest_sha256",
+            "panel_manifest_sha256",
+            "fold_manifest_sha256",
+            "execution_manifest_sha256",
+            "exact_owner_policy_sha256",
+            "candidate_policy_sha256",
+            "semantic_day_input_sha256",
+        ):
+            _require_sha(getattr(self, name), label=name)
+        object.__setattr__(self, "side", _normalize_side(self.side))
+        object.__setattr__(self, "utc_day", _normalize_day(self.utc_day))
+
+    def payload(self) -> dict[str, str]:
+        return asdict(self)
+
+    @property
+    def semantic_key_sha256(self) -> str:
+        return _canonical_sha256(
+            {"schema_version": ONE_SHOT_SEMANTIC_CACHE_SCHEMA, **self.payload()}
+        )
+
+
+def _one_shot_semantic_day_input_sha256(rows: pd.DataFrame) -> str:
+    """Hash every input byte except the two provider-owned fold-scope columns."""
+
+    missing = sorted(_ONE_SHOT_FOLD_SCOPE_COLUMNS - set(rows.columns))
+    if missing:
+        raise OfflineReplayAdapterError(
+            "semantic one-shot input lacks fold-scope columns: " + ", ".join(missing)
+        )
+    semantic = rows.drop(columns=sorted(_ONE_SHOT_FOLD_SCOPE_COLUMNS))
+    return _frame_sha256(semantic)
+
+
 class DayReplayCache:
     """Atomic cache for deterministic day-level one-shot and sequential results."""
 
@@ -609,14 +664,30 @@ class DayReplayCache:
         self.progress = self.root / "progress"
         self.locks = self.root / "locks"
         self.global_arm_pool = self.root / "shared_prefix_global_arm_pool"
+        self.semantic_one_shot = self.root / "semantic_one_shot"
+        self.semantic_locks = self.root / "semantic_locks"
 
     def _entry(self, key: DayReplayCacheKey) -> Path:
         return self.entries / key.cache_key_sha256
+
+    def _semantic_entry(self, key: OneShotSemanticCacheKey) -> Path:
+        return self.semantic_one_shot / f"{key.semantic_key_sha256}.json"
 
     @contextmanager
     def lock(self, key: DayReplayCacheKey) -> Iterator[None]:
         self.locks.mkdir(parents=True, exist_ok=True)
         path = self.locks / f"{key.cache_key_sha256}.lock"
+        with path.open("a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def semantic_lock(self, key: OneShotSemanticCacheKey) -> Iterator[None]:
+        self.semantic_locks.mkdir(parents=True, exist_ok=True)
+        path = self.semantic_locks / f"{key.semantic_key_sha256}.lock"
         with path.open("a+b") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
@@ -781,6 +852,155 @@ class DayReplayCache:
         if loaded is None:
             return None
         return loaded[0], loaded[1]
+
+    def _semantic_manifest(
+        self, key: OneShotSemanticCacheKey
+    ) -> dict[str, Any] | None:
+        path = self._semantic_entry(key)
+        if not path.is_file():
+            return None
+        payload = _read_json(path, label="one-shot semantic cache manifest")
+        if (
+            payload.get("schema_version") != ONE_SHOT_SEMANTIC_CACHE_SCHEMA
+            or payload.get("semantic_key_sha256") != key.semantic_key_sha256
+            or payload.get("semantic_key") != key.payload()
+            or payload.get("complete") is not True
+            or payload.get("receipt_sha256")
+            != _document_sha256(payload, "receipt_sha256")
+        ):
+            raise OfflineReplayAdapterError("one-shot semantic cache manifest drifted")
+        source_payload = payload.get("source_cache_key")
+        if not isinstance(source_payload, Mapping):
+            raise OfflineReplayAdapterError("semantic cache source key is malformed")
+        try:
+            source_key = DayReplayCacheKey(**dict(source_payload))
+        except (TypeError, OfflineReplayAdapterError) as exc:
+            raise OfflineReplayAdapterError(
+                "semantic cache source key is malformed"
+            ) from exc
+        if payload.get("source_cache_key_sha256") != source_key.cache_key_sha256:
+            raise OfflineReplayAdapterError("semantic cache source key hash drifted")
+        self._validate_semantic_source_key(source_key, key)
+        source_manifest = self._manifest(source_key)
+        if (
+            source_manifest is None
+            or source_manifest.get("kind") != "one_shot"
+            or source_manifest.get("receipt_sha256")
+            != payload.get("source_cache_receipt_sha256")
+        ):
+            raise OfflineReplayAdapterError("semantic cache source receipt drifted")
+        expected_frames = payload.get("source_frame_sha256")
+        if not isinstance(expected_frames, Mapping):
+            raise OfflineReplayAdapterError("semantic cache frame binding is malformed")
+        observed_frames = {
+            name: binding.get("frame_sha256")
+            for name, binding in source_manifest.get("files", {}).items()
+            if isinstance(binding, Mapping)
+        }
+        if dict(expected_frames) != observed_frames:
+            raise OfflineReplayAdapterError("semantic cache frame binding drifted")
+        return payload
+
+    @staticmethod
+    def _validate_semantic_source_key(
+        source_key: DayReplayCacheKey,
+        semantic_key: OneShotSemanticCacheKey,
+    ) -> None:
+        if source_key.stage != ONE_SHOT_STAGE:
+            raise OfflineReplayAdapterError("semantic cache source stage drifted")
+        for name in (
+            "adapter_artifact_sha256",
+            "source_manifest_sha256",
+            "panel_manifest_sha256",
+            "fold_manifest_sha256",
+            "execution_manifest_sha256",
+            "exact_owner_policy_sha256",
+            "candidate_policy_sha256",
+            "side",
+            "utc_day",
+        ):
+            if getattr(source_key, name) != getattr(semantic_key, name):
+                raise OfflineReplayAdapterError(
+                    f"semantic cache source {name} drifted"
+                )
+
+    def register_one_shot_semantic(
+        self,
+        source_key: DayReplayCacheKey,
+        semantic_key: OneShotSemanticCacheKey,
+    ) -> None:
+        """Bind one admitted fold cache as the reusable semantic side/day source."""
+
+        self._validate_semantic_source_key(source_key, semantic_key)
+        source_manifest = self._manifest(source_key)
+        source_frames = self.load_one_shot(source_key)
+        if source_manifest is None or source_frames is None:
+            raise OfflineReplayAdapterError(
+                "cannot register an incomplete one-shot semantic source"
+            )
+        source_evidence = source_manifest.get("evidence")
+        if (
+            not isinstance(source_evidence, Mapping)
+            or source_evidence.get("semantic_day_input_sha256")
+            != semantic_key.semantic_day_input_sha256
+        ):
+            raise OfflineReplayAdapterError(
+                "one-shot source does not bind its semantic day input"
+            )
+        with self.semantic_lock(semantic_key):
+            existing = self._semantic_manifest(semantic_key)
+            if existing is not None:
+                loaded = self.load_semantic_one_shot(semantic_key)
+                if loaded is None:
+                    raise OfflineReplayAdapterError(
+                        "registered semantic cache could not be loaded"
+                    )
+                for observed, expected in zip(source_frames, loaded[:2], strict=True):
+                    if _frame_sha256(observed) != _frame_sha256(expected):
+                        raise OfflineReplayAdapterError(
+                            "semantic one-shot frames disagree across fold receipts"
+                        )
+                return
+            frame_sha256 = {
+                name: binding["frame_sha256"]
+                for name, binding in source_manifest["files"].items()
+            }
+            body: dict[str, Any] = {
+                "schema_version": ONE_SHOT_SEMANTIC_CACHE_SCHEMA,
+                "semantic_key_sha256": semantic_key.semantic_key_sha256,
+                "semantic_key": semantic_key.payload(),
+                "source_cache_key_sha256": source_key.cache_key_sha256,
+                "source_cache_key": source_key.payload(),
+                "source_cache_receipt_sha256": source_manifest["receipt_sha256"],
+                "source_frame_sha256": frame_sha256,
+                "complete": True,
+                "atomic_admission": True,
+            }
+            body["receipt_sha256"] = _document_sha256(body, "receipt_sha256")
+            _atomic_json(self._semantic_entry(semantic_key), body)
+
+    def load_semantic_one_shot(
+        self, key: OneShotSemanticCacheKey
+    ) -> tuple[pd.DataFrame, pd.DataFrame, Mapping[str, Any]] | None:
+        manifest = self._semantic_manifest(key)
+        if manifest is None:
+            return None
+        source_key = DayReplayCacheKey(**dict(manifest["source_cache_key"]))
+        loaded = self.load_one_shot(source_key)
+        if loaded is None:
+            raise OfflineReplayAdapterError("semantic cache source disappeared")
+        source_manifest = self._manifest(source_key)
+        if source_manifest is None:
+            raise OfflineReplayAdapterError("semantic cache source manifest disappeared")
+        evidence = {
+            "semantic_reuse": True,
+            "semantic_key_sha256": key.semantic_key_sha256,
+            "semantic_day_input_sha256": key.semantic_day_input_sha256,
+            "semantic_cache_receipt_sha256": manifest["receipt_sha256"],
+            "source_cache_key_sha256": source_key.cache_key_sha256,
+            "source_cache_receipt_sha256": source_manifest["receipt_sha256"],
+        }
+        return loaded[0], loaded[1], evidence
 
     def load_sequential(self, key: DayReplayCacheKey) -> pd.DataFrame | None:
         loaded = self._load_frames(key, expected_kind="sequential", names=("rows",))
@@ -2709,6 +2929,29 @@ def _cache_key(
     )
 
 
+def _one_shot_semantic_cache_key(
+    *,
+    adapter_artifact_sha256: str,
+    bindings: backend.FormalExecutionBindings,
+    candidate_policy_sha256: str,
+    side: str,
+    utc_day: str,
+    day_rows: pd.DataFrame,
+) -> OneShotSemanticCacheKey:
+    return OneShotSemanticCacheKey(
+        adapter_artifact_sha256=adapter_artifact_sha256,
+        source_manifest_sha256=bindings.source_manifest_sha256,
+        panel_manifest_sha256=bindings.panel_manifest_sha256,
+        fold_manifest_sha256=bindings.fold_manifest_sha256,
+        execution_manifest_sha256=bindings.execution_manifest_sha256,
+        exact_owner_policy_sha256=bindings.exact_owner_policy_sha256,
+        candidate_policy_sha256=candidate_policy_sha256,
+        side=side,
+        utc_day=utc_day,
+        semantic_day_input_sha256=_one_shot_semantic_day_input_sha256(day_rows),
+    )
+
+
 class _CanonicalOfflineReplayAdapter:
     """Fixed implementation of ``backend.CanonicalReplayAdapter``."""
 
@@ -3157,6 +3400,7 @@ class _CanonicalOfflineReplayAdapter:
         collected_outcomes: list[pd.DataFrame] = []
         collected_supported: list[pd.DataFrame] = []
         jobs: list[_DayReplayJob] = []
+        semantic_by_cache_key: dict[str, OneShotSemanticCacheKey] = {}
         for day in sorted(set(rows["utc_day"])):
             day_rows = rows.loc[rows["utc_day"] == day].copy()
             key = _cache_key(
@@ -3169,12 +3413,58 @@ class _CanonicalOfflineReplayAdapter:
                 utc_day=day,
                 day_rows=day_rows,
             )
+            semantic_key = _one_shot_semantic_cache_key(
+                adapter_artifact_sha256=self.artifact_sha256,
+                bindings=request.bindings,
+                candidate_policy_sha256=candidate_bundle_sha,
+                side=side,
+                utc_day=day,
+                day_rows=day_rows,
+            )
             cached = options.cache.load_one_shot(key)
             if cached is not None:
+                options.cache.register_one_shot_semantic(key, semantic_key)
                 collected_outcomes.append(cached[0])
                 collected_supported.append(cached[1])
                 continue
+            semantic_cached = options.cache.load_semantic_one_shot(semantic_key)
+            if semantic_cached is not None:
+                semantic_outcomes, semantic_supported, semantic_evidence = semantic_cached
+                day_ids = tuple(str(value) for value in day_rows.index)
+                expected_index = pd.Index(
+                    day_ids,
+                    name=semantic_outcomes.index.name,
+                )
+                nested._validate_action_label_frames(
+                    semantic_outcomes,
+                    semantic_supported,
+                    expected_index=expected_index,
+                    required_vocabulary=label.duration_vocabulary,
+                    exact_vocabulary=True,
+                )
+                options.cache.admit_one_shot(
+                    key,
+                    semantic_outcomes,
+                    semantic_supported,
+                    evidence=semantic_evidence,
+                )
+                options.cache.write_progress(
+                    key,
+                    state="complete",
+                    detail="semantic_fold_reuse",
+                    counters={
+                        "total_opportunities": len(semantic_outcomes),
+                        "completed_opportunities": len(semantic_outcomes),
+                        "total_arms": int(semantic_outcomes.size),
+                        "completed_arms": int(semantic_outcomes.size),
+                    },
+                )
+                options.cache.register_one_shot_semantic(key, semantic_key)
+                collected_outcomes.append(semantic_outcomes)
+                collected_supported.append(semantic_supported)
+                continue
             options.cache.write_progress(key, state="queued")
+            semantic_by_cache_key[key.cache_key_sha256] = semantic_key
             jobs.append(
                 _DayReplayJob(
                     kind="one_shot",
@@ -3224,7 +3514,20 @@ class _CanonicalOfflineReplayAdapter:
                     job.cache_key,
                     outcomes,
                     supported,
-                    evidence=result.evidence,
+                    evidence={
+                        **dict(result.evidence),
+                        "semantic_reuse": False,
+                        "semantic_key_sha256": semantic_by_cache_key[
+                            job.cache_key.cache_key_sha256
+                        ].semantic_key_sha256,
+                        "semantic_day_input_sha256": semantic_by_cache_key[
+                            job.cache_key.cache_key_sha256
+                        ].semantic_day_input_sha256,
+                    },
+                )
+                options.cache.register_one_shot_semantic(
+                    job.cache_key,
+                    semantic_by_cache_key[job.cache_key.cache_key_sha256],
                 )
                 options.cache.write_progress(
                     job.cache_key,
