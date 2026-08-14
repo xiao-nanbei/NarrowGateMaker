@@ -449,90 +449,37 @@ def test_control_prefix_parity_tracks_exact_current_owner_role() -> None:
         )
 
 
-def test_one_day_exact_owner_parity_enables_fill_trace_for_every_fork(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured_arm_bases: list[dict[str, Any]] = []
-    action = SimpleNamespace(policy_id="FIXED_166S")
-
-    fake_study = SimpleNamespace(
-        TRACE_LIMIT=123_456,
-        _prepare_base_params=lambda raw, trace_opportunities: dict(raw),
-        _run_duration_arm=lambda _raw, _action, **kwargs: (
-            captured_arm_bases.append(dict(kwargs["base"]))
-            or {
-                "schema_version": (
-                    "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
-                ),
-                "exact_owner_action": "FIXED_166S",
-                "arm_washout_complete": True,
-                "right_censored": False,
-            },
-            0.0,
-        ),
-    )
-    fake_backtest = SimpleNamespace(
-        _simulate_tick_with_engine=lambda *_args, **_kwargs: {"_fill_trace": []}
-    )
-    real_import = importlib.import_module
-    monkeypatch.setattr(
-        adapter_module.importlib,
-        "import_module",
-        lambda name: (
-            fake_study
-            if name == adapter_module.FIXED_ONE_SHOT_REPLAY_MODULE
-            else fake_backtest
-            if name == adapter_module.FIXED_BACKTEST_MODULE
-            else real_import(name)
-        ),
-    )
-    replay = SimpleNamespace(
-        trades=[],
-        var_ts_ms=[],
-        var_ssq=[],
-        ml_data=None,
-        bbo_data=None,
-        l2_data=None,
-        var_ti=None,
-        var_retsq=None,
-        market_window_identity_sha256=SHA_A,
-        model_overlay_identity_sha256=SHA_B,
-        latency_identity_sha256=SHA_C,
-        queue_random_identity_sha256="d" * 64,
-    )
-    monkeypatch.setattr(
-        adapter_module,
-        "_canonical_day_projection_from_rows",
-        lambda **_kwargs: (SimpleNamespace(), replay),
-    )
-    monkeypatch.setattr(
-        adapter_module,
-        "_load_frozen_duration_action_contract",
-        lambda: ({}, {"BUY": (), "SELL": (action,)}),
-    )
-    monkeypatch.setattr(adapter_module, "_day_identity_hashes", lambda _request: {})
-    monkeypatch.setattr(
-        adapter_module,
-        "_exact_owner_runtime_params",
-        lambda *_args, **_kwargs: {"trace_fills_max": 0},
-    )
+def test_one_day_exact_owner_targets_only_the_row_wise_owner_arm() -> None:
     rows = pd.DataFrame(
         {
             "side": ("SELL",),
             "exact_owner_action": ("FIXED_166S",),
             "role_at_fill": ("opener",),
+            "exposure_fill_ordinal": (7,),
+            "fill_visible_ts_ms": (1_700_000_000_000,),
+            "order_id": (23,),
+            "campaign_id": (5,),
         },
         index=pd.Index(("opportunity-1",), name="opportunity_id"),
     )
 
-    result = adapter_module._execute_exact_owner_one_day_mechanics(
-        utc_day=DAY,
-        portable_binding={},
+    targets = adapter_module._shared_prefix_target_contracts(
         rows=rows,
+        owner_action_only=True,
     )
 
-    assert result["exact_owner_noop_parity_count"] == 1
-    assert captured_arm_bases == [{"trace_fills_max": fake_study.TRACE_LIMIT}]
+    assert targets == (
+        {
+            "opportunity_id": "opportunity-1",
+            "exposure_fill_ordinal": 7,
+            "fill_visible_ts_ms": 1_700_000_000_000,
+            "side": "SELL",
+            "order_id": 23,
+            "campaign_id": 5,
+            "expected_owner_action": "FIXED_166S",
+            "arm_ids": ("FIXED_166S",),
+        },
+    )
 
 
 def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api() -> None:
@@ -753,9 +700,30 @@ def test_atomic_day_cache_round_trip_and_progress_receipt(tmp_path: Path) -> Non
     index = pd.Index(("row-1",), name="opportunity_id")
     outcomes = pd.DataFrame({"CONTROL_85N": (0.25,)}, index=index)
     supported = pd.DataFrame({"CONTROL_85N": (True,)}, index=index)
-    cache.write_progress(key, state="running")
+    cache.write_progress(
+        key,
+        state="running",
+        counters={
+            "total_opportunities": 3,
+            "completed_opportunities": 1,
+            "total_arms": 24,
+            "completed_arms": 8,
+        },
+    )
+    running = json.loads(
+        (tmp_path / "cache" / "progress" / f"{key.cache_key_sha256}.json").read_text()
+    )
     cache.admit_one_shot(key, outcomes, supported)
-    cache.write_progress(key, state="complete")
+    cache.write_progress(
+        key,
+        state="complete",
+        counters={
+            "total_opportunities": 3,
+            "completed_opportunities": 3,
+            "total_arms": 24,
+            "completed_arms": 24,
+        },
+    )
     loaded = cache.load_one_shot(key)
     assert loaded is not None
     pd.testing.assert_frame_equal(loaded[0], outcomes)
@@ -769,6 +737,15 @@ def test_atomic_day_cache_round_trip_and_progress_receipt(tmp_path: Path) -> Non
         (tmp_path / "cache" / "progress" / f"{key.cache_key_sha256}.json").read_text()
     )
     assert progress["state"] == "complete"
+    assert progress["queued_at_utc"] == running["queued_at_utc"]
+    assert progress["started_at_utc"] == running["started_at_utc"]
+    assert progress["completed_at_utc"] is not None
+    assert progress["counters"] == {
+        "completed_arms": 24,
+        "completed_opportunities": 3,
+        "total_arms": 24,
+        "total_opportunities": 3,
+    }
     assert progress["receipt_sha256"] == adapter_module._document_sha256(
         progress, "receipt_sha256"
     )

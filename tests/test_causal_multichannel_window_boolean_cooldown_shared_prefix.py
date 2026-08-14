@@ -54,6 +54,42 @@ def _executor(output_root: Path) -> PosixCooldownSharedPrefixExecutor:
     )
 
 
+def _target_contract(
+    opportunity: Mapping[str, object],
+    *,
+    opportunity_id: str = "target-opportunity",
+    expected_owner_action: str = "CONTROL_85N",
+    arm_ids: Sequence[str] = ("CONTROL_85N",),
+) -> dict[str, object]:
+    return {
+        "exposure_fill_ordinal": opportunity["exposure_fill_ordinal"],
+        "fill_visible_ts_ms": opportunity["fill_visible_ts_ms"],
+        "side": opportunity["side"],
+        "order_id": opportunity["order_id"],
+        "campaign_id": opportunity["campaign_id"],
+        "opportunity_id": opportunity_id,
+        "expected_owner_action": expected_owner_action,
+        "arm_ids": list(arm_ids),
+    }
+
+
+def _target_bound_opportunity(
+    side: str,
+    *,
+    ordinal: int = 17,
+    owner_action: str = "CONTROL_85N",
+    owner_policy_sha256: str = "a" * 64,
+) -> dict[str, object]:
+    opportunity = _opportunity(side, ordinal=ordinal)
+    opportunity.update(
+        {
+            "repeated_policy_action_id": owner_action,
+            "repeated_policy_policy_sha256": owner_policy_sha256,
+        }
+    )
+    return opportunity
+
+
 def _opportunity(
     side: str,
     *,
@@ -173,13 +209,31 @@ def _dispatch_synthetic_arms(
         if missing_trace_count_override is None
         else int(missing_trace_count_override)
     )
+    fork_trace: dict[str, object] = {
+        "action": selection.action,
+        "synthetic_engineering_test_only": True,
+        "assignment_to_washout_value_usdc": 123.45,
+    }
+    if selection.exact_owner_policy_sha256 is not None:
+        assert selection.exact_owner_action is not None
+        owner_duration_ms = float(
+            ARM_DURATION_MS[selection.exact_owner_action]
+            or opportunity["baseline_duration_ms"]
+        )
+        fork_trace.update(
+            {
+                "exact_owner_baseline_policy_enabled": True,
+                "exact_owner_action": selection.exact_owner_action,
+                "exact_owner_policy_sha256": selection.exact_owner_policy_sha256,
+                "exact_owner_baseline_duration_ms": owner_duration_ms,
+                "applied_duration_ms": float(
+                    selection.fixed_duration_ms or opportunity["baseline_duration_ms"]
+                ),
+            }
+        )
     executor.finalize_simulation_result(
         {
-            "_cooldown_duration_fork_trace": {
-                "action": selection.action,
-                "synthetic_engineering_test_only": True,
-                "assignment_to_washout_value_usdc": 123.45,
-            },
+            "_cooldown_duration_fork_trace": fork_trace,
             "exchange_book_queue_mode": "strict",
             "exchange_book_queue_scope": STRICT_QUEUE_SCOPE,
             "_exchange_book_queue_ambiguity_trace": (
@@ -353,6 +407,165 @@ def test_stale_staging_fails_closed_before_fork(
         executor.dispatch(opportunity)
     assert stale.is_dir()
     assert not (output_root / TARGET_DAY / identity_sha256).exists()
+
+
+def test_explicit_interrupted_recovery_quarantines_staging_then_recomputes(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "labels"
+    opportunity = _opportunity("BUY")
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=output_root,
+        target_day=TARGET_DAY,
+        source_contract_sha256="8" * 64,
+        execution_identity_hashes=_identity_hashes(),
+        max_parallel_arms=2,
+        require_strict_native=True,
+        recover_interrupted_staging=True,
+    )
+    identity_sha256, _ = executor._opportunity_identity(opportunity)
+    day_root = output_root / TARGET_DAY
+    stale = day_root / f".{identity_sha256}.staging.interrupted"
+    stale.mkdir(parents=True)
+    (stale / "partial.json").write_text("{}", encoding="ascii")
+
+    _dispatch_synthetic_arms(executor, opportunity)
+
+    admission = day_root / identity_sha256
+    assert (admission / "_SUCCESS").is_file()
+    assert not tuple(day_root.glob(f".{identity_sha256}.staging.*"))
+    recovery_receipts = tuple(
+        (output_root / "_interrupted" / TARGET_DAY / identity_sha256).glob(
+            "*/recovery.json"
+        )
+    )
+    assert len(recovery_receipts) == 1
+    recovery = json.loads(recovery_receipts[0].read_text(encoding="ascii"))
+    assert recovery["prior_staging_count"] == 1
+    assert recovery["economic_result_admitted"] is False
+
+
+def test_target_allowlist_skips_other_fills_and_runs_only_frozen_arms(
+    tmp_path: Path,
+) -> None:
+    output_root = tmp_path / "labels"
+    owner_policy_sha256 = "a" * 64
+    target = _target_bound_opportunity(
+        "SELL",
+        ordinal=72,
+        owner_action="FIXED_166S",
+        owner_policy_sha256=owner_policy_sha256,
+    )
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=output_root,
+        target_day=TARGET_DAY,
+        source_contract_sha256="8" * 64,
+        execution_identity_hashes=_identity_hashes(),
+        max_parallel_arms=2,
+        require_strict_native=True,
+        exact_owner_policy_sha256=owner_policy_sha256,
+        target_opportunities=(
+            _target_contract(
+                target,
+                expected_owner_action="FIXED_166S",
+                arm_ids=("FIXED_79S", "FIXED_166S"),
+            ),
+        ),
+    )
+
+    _dispatch_synthetic_arms(
+        executor,
+        _target_bound_opportunity(
+            "SELL",
+            ordinal=71,
+            owner_action="FIXED_166S",
+            owner_policy_sha256=owner_policy_sha256,
+        ),
+        drain=False,
+    )
+    _dispatch_synthetic_arms(executor, target)
+
+    audit = executor.audit()
+    assert audit.opportunities_skipped_outside_target_set == 1
+    assert audit.target_opportunity_count == 1
+    assert audit.target_opportunities_matched == 1
+    assert audit.arm_processes_completed == 2
+    admission = _one_admission(output_root)
+    manifest = json.loads((admission / "manifest.json").read_text(encoding="ascii"))
+    assert tuple(row["arm_id"] for row in manifest["arms"]) == (
+        "FIXED_79S",
+        "FIXED_166S",
+    )
+
+
+@pytest.mark.parametrize(
+    ("observed_action", "observed_policy", "message"),
+    (
+        ("FIXED_79S", "a" * 64, "exact-owner action drifted"),
+        ("FIXED_166S", "b" * 64, "exact-owner policy identity drifted"),
+    ),
+)
+def test_target_bound_execution_rejects_owner_identity_drift_before_fork(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    observed_action: str,
+    observed_policy: str,
+    message: str,
+) -> None:
+    expected_policy = "a" * 64
+    opportunity = _target_bound_opportunity(
+        "SELL",
+        ordinal=73,
+        owner_action=observed_action,
+        owner_policy_sha256=observed_policy,
+    )
+    target = dict(opportunity)
+    target["repeated_policy_action_id"] = "FIXED_166S"
+    target["repeated_policy_policy_sha256"] = expected_policy
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=tmp_path / "labels",
+        target_day=TARGET_DAY,
+        source_contract_sha256="8" * 64,
+        execution_identity_hashes=_identity_hashes(),
+        max_parallel_arms=2,
+        require_strict_native=True,
+        exact_owner_policy_sha256=expected_policy,
+        target_opportunities=(
+            _target_contract(
+                target,
+                expected_owner_action="FIXED_166S",
+                arm_ids=("FIXED_166S",),
+            ),
+        ),
+    )
+
+    def unexpected_fork() -> int:
+        raise AssertionError("owner identity drift must fail before fork")
+
+    monkeypatch.setattr(os, "fork", unexpected_fork)
+    with pytest.raises(SharedPrefixExecutionError, match=message):
+        executor.dispatch(opportunity)
+
+
+def test_target_bound_audit_rejects_missing_frozen_opportunity(tmp_path: Path) -> None:
+    owner_policy_sha256 = "a" * 64
+    target = _target_bound_opportunity(
+        "BUY",
+        ordinal=74,
+        owner_policy_sha256=owner_policy_sha256,
+    )
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=tmp_path / "labels",
+        target_day=TARGET_DAY,
+        source_contract_sha256="8" * 64,
+        execution_identity_hashes=_identity_hashes(),
+        require_strict_native=True,
+        exact_owner_policy_sha256=owner_policy_sha256,
+        target_opportunities=(_target_contract(target),),
+    )
+
+    with pytest.raises(SharedPrefixExecutionError, match="missed 1 frozen"):
+        executor.audit()
 
 
 def test_corrupted_manifest_fails_closed_on_resume(tmp_path: Path) -> None:

@@ -2878,6 +2878,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     cooldown_duration_shared_prefix_executor = params.get(
         "cooldown_duration_shared_prefix_executor"
     )
+    cooldown_duration_shared_prefix_exact_owner = bool(
+        getattr(
+            cooldown_duration_shared_prefix_executor,
+            "exact_owner_baseline_policy_enabled",
+            False,
+        )
+    )
     cooldown_duration_parent_stop_ts_ms = int(
         params.get("cooldown_duration_parent_stop_ts_ms", 0) or 0
     )
@@ -2905,6 +2912,29 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             raise ValueError(
                 "shared-prefix execution requires the atomic cooldown-v2 emitter"
             )
+        if cooldown_duration_shared_prefix_exact_owner:
+            expected_policy_sha256 = str(
+                getattr(
+                    cooldown_duration_shared_prefix_executor,
+                    "exact_owner_policy_sha256",
+                    "",
+                )
+                or ""
+            )
+            if (
+                cooldown_duration_policy_evaluator is None
+                or str(
+                    getattr(
+                        cooldown_duration_policy_evaluator,
+                        "policy_sha256",
+                        "",
+                    )
+                )
+                != expected_policy_sha256
+            ):
+                raise ValueError(
+                    "exact-owner shared-prefix execution lacks its bound policy"
+                )
     if cooldown_duration_parent_stop_ts_ms < 0:
         raise ValueError("cooldown_duration_parent_stop_ts_ms must be non-negative")
     if (
@@ -3021,7 +3051,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "shared-prefix executor cannot start from an explicit single-arm fork"
         )
     if cooldown_duration_policy_evaluator is not None and (
-        cooldown_duration_shared_prefix_executor is not None
+        (
+            cooldown_duration_shared_prefix_executor is not None
+            and not cooldown_duration_shared_prefix_exact_owner
+        )
         or (
             cooldown_duration_fork_enabled
             and not cooldown_duration_fork_baseline_policy_enabled
@@ -11263,6 +11296,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal cooldown_duration_fork_target_campaign_id
         nonlocal cooldown_duration_fork_expected_baseline_ms
         nonlocal cooldown_duration_fork_fixed_ms
+        nonlocal cooldown_duration_fork_baseline_policy_enabled
+        nonlocal cooldown_duration_fork_expected_owner_action
+        nonlocal cooldown_duration_fork_expected_owner_policy_sha256
         nonlocal cooldown_duration_shared_prefix_dispatch_enabled
         nonlocal cooldown_v2_snapshot_emitter
 
@@ -11425,6 +11461,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 {
                     "repeated_policy_action_id": str(raw_decision.action_id),
                     "repeated_policy_duration_ms": repeated_policy_applied_ms,
+                    "repeated_policy_policy_sha256": str(
+                        raw_decision.policy_sha256
+                    ),
+                    "repeated_policy_predicate_bundle_sha256": str(
+                        raw_decision.predicate_bundle_sha256
+                    ),
                     "repeated_policy_support_valid": bool(
                         raw_decision.support_valid
                     ),
@@ -11479,7 +11521,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     # the immutable opportunity contract.
                     exchange_book_queue_ambiguity_trace.clear()
                     cooldown_duration_shared_prefix_dispatch_enabled = False
-                    cooldown_v2_snapshot_emitter = None
                     cooldown_duration_fork_enabled = True
                     cooldown_duration_fork_action = str(arm_selection.action)
                     cooldown_duration_fork_target_ordinal = ordinal
@@ -11491,6 +11532,23 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     cooldown_duration_fork_fixed_ms = float(
                         arm_selection.fixed_duration_ms
                     )
+                    if arm_selection.exact_owner_policy_sha256 is not None:
+                        if (
+                            arm_selection.exact_owner_action is None
+                            or repeated_policy_applied_ms is None
+                        ):
+                            raise RuntimeError(
+                                "shared-prefix exact-owner arm lacks its target decision"
+                            )
+                        cooldown_duration_fork_baseline_policy_enabled = True
+                        cooldown_duration_fork_expected_owner_action = str(
+                            arm_selection.exact_owner_action
+                        )
+                        cooldown_duration_fork_expected_owner_policy_sha256 = str(
+                            arm_selection.exact_owner_policy_sha256
+                        )
+                    else:
+                        cooldown_v2_snapshot_emitter = None
         if trace_cooldown_duration_opportunities is not None:
             if len(trace_cooldown_duration_opportunities) >= cooldown_duration_trace_max:
                 raise RuntimeError(

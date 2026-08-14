@@ -23,11 +23,13 @@ import os
 import re
 import shutil
 import tempfile
+import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Literal
@@ -59,6 +61,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_runtime_policy as runtime_policy,
 )
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_shared_prefix as shared_prefix,
+)
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_nested_oof import (
     AndClause,
     BooleanCooldownPolicy,
@@ -75,6 +80,7 @@ SAME_MILLISECOND_AMBIGUITY_POLICY = "censor"
 DEFAULT_DAY_WORKERS = 6
 MIN_DAY_WORKERS = 1
 MAX_DAY_WORKERS = 8
+FORMAL_SHARED_PREFIX_ARM_WORKERS = 4
 REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-06-29",
     "2026-07-03",
@@ -82,8 +88,8 @@ REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-08-06",
 )
 
-DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v1"
-DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v1"
+DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
+DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_STAGE = "outer_train_one_shot"
 SEQUENTIAL_STAGES = frozenset({"inner_oof", "outer_oof"})
 
@@ -599,8 +605,10 @@ class DayReplayCache:
     def __init__(self, root: Path) -> None:
         self.root = Path(root).expanduser().resolve()
         self.entries = self.root / "entries"
+        self.shards = self.root / "opportunity_shards"
         self.progress = self.root / "progress"
         self.locks = self.root / "locks"
+        self.global_arm_pool = self.root / "shared_prefix_global_arm_pool"
 
     def _entry(self, key: DayReplayCacheKey) -> Path:
         return self.entries / key.cache_key_sha256
@@ -622,16 +630,42 @@ class DayReplayCache:
         *,
         state: Literal["queued", "running", "complete", "failed"],
         detail: str | None = None,
+        counters: Mapping[str, int] | None = None,
     ) -> None:
+        now = datetime.now(UTC).isoformat()
+        path = self.progress / f"{key.cache_key_sha256}.json"
+        prior: dict[str, Any] = {}
+        if path.is_file():
+            try:
+                prior = _read_json(path, label="day replay progress")
+            except OfflineReplayAdapterError:
+                prior = {}
+        normalized_counters: dict[str, int] = {}
+        for name, value in dict(counters or {}).items():
+            if isinstance(value, bool) or int(value) < 0:
+                raise OfflineReplayAdapterError("day replay progress counter is invalid")
+            normalized_counters[str(name)] = int(value)
         body: dict[str, Any] = {
             "schema_version": DAY_PROGRESS_SCHEMA,
             "cache_key_sha256": key.cache_key_sha256,
             "cache_key": key.payload(),
             "state": state,
             "detail": detail,
+            "counters": dict(sorted(normalized_counters.items())),
+            "queued_at_utc": prior.get("queued_at_utc", now),
+            "started_at_utc": (
+                prior.get("started_at_utc")
+                if state == "queued"
+                else (prior.get("started_at_utc") or now)
+            ),
+            "updated_at_utc": now,
+            "completed_at_utc": now if state in {"complete", "failed"} else None,
         }
         body["receipt_sha256"] = _document_sha256(body, "receipt_sha256")
-        _atomic_json(self.progress / f"{key.cache_key_sha256}.json", body)
+        _atomic_json(path, body)
+
+    def opportunity_root(self, key: DayReplayCacheKey) -> Path:
+        return self.shards / key.cache_key_sha256
 
     def _manifest(self, key: DayReplayCacheKey) -> dict[str, Any] | None:
         path = self._entry(key) / "manifest.json"
@@ -655,6 +689,7 @@ class DayReplayCache:
         *,
         kind: Literal["one_shot", "sequential"],
         frames: Mapping[str, pd.DataFrame],
+        evidence: Mapping[str, Any] | None = None,
     ) -> None:
         final = self._entry(key)
         with self.lock(key):
@@ -680,6 +715,7 @@ class DayReplayCache:
                     "cache_key_sha256": key.cache_key_sha256,
                     "cache_key": key.payload(),
                     "files": files,
+                    "evidence": dict(evidence or {}),
                     "complete": True,
                     "atomic_admission": True,
                 }
@@ -695,11 +731,14 @@ class DayReplayCache:
         key: DayReplayCacheKey,
         outcomes: pd.DataFrame,
         supported: pd.DataFrame,
+        *,
+        evidence: Mapping[str, Any] | None = None,
     ) -> None:
         self._admit_frames(
             key,
             kind="one_shot",
             frames={"outcomes": outcomes, "supported": supported},
+            evidence=evidence,
         )
 
     def admit_sequential(self, key: DayReplayCacheKey, rows: pd.DataFrame) -> None:
@@ -761,6 +800,7 @@ class _DayReplayJobResult:
     utc_day: str
     cache_key_sha256: str
     frames: Mapping[str, pd.DataFrame]
+    evidence: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1101,6 +1141,212 @@ def _exact_owner_runtime_params(
     return params
 
 
+def _shared_prefix_target_contracts(
+    rows: pd.DataFrame,
+    *,
+    arm_ids: Sequence[str] | None = None,
+    owner_action_only: bool = False,
+) -> tuple[dict[str, Any], ...]:
+    contracts: list[dict[str, Any]] = []
+    for opportunity_id, row in rows.iterrows():
+        side = _normalize_side(row["side"])
+        if owner_action_only and arm_ids is not None:
+            raise OfflineReplayAdapterError(
+                "owner-only shared-prefix targets cannot accept a fixed arm list"
+            )
+        vocabulary = (
+            (str(row["exact_owner_action"]),)
+            if owner_action_only
+            else tuple(
+                str(value)
+                for value in (
+                    duration_vocabulary(side) if arm_ids is None else arm_ids
+                )
+            )
+        )
+        contracts.append(
+            {
+                "opportunity_id": str(opportunity_id),
+                "exposure_fill_ordinal": int(row["exposure_fill_ordinal"]),
+                "fill_visible_ts_ms": int(row["fill_visible_ts_ms"]),
+                "side": side,
+                "order_id": int(row["order_id"]),
+                "campaign_id": int(row["campaign_id"]),
+                "expected_owner_action": str(row["exact_owner_action"]),
+                "arm_ids": vocabulary,
+            }
+        )
+    return tuple(contracts)
+
+
+def _validate_shared_prefix_duration_trace(
+    trace: Mapping[str, Any],
+    *,
+    opportunity: Mapping[str, Any],
+    action_id: str,
+) -> None:
+    expected_action = "CONTROL_85N" if action_id == "CONTROL_85N" else "FIXED_DURATION_MS"
+    expected = {
+        "schema_version": "multiscale_ema_boolean_cooldown_duration_fork_trace.v3",
+        "action": expected_action,
+        "side": str(opportunity["side"]),
+        "campaign_id": int(opportunity["campaign_id"]),
+        "target_exposure_fill_ordinal": int(opportunity["exposure_fill_ordinal"]),
+        "target_order_id": int(opportunity["order_id"]),
+        "assignment_ts_ms": int(opportunity["fill_visible_ts_ms"]),
+        "exact_owner_action": str(opportunity["exact_owner_action"]),
+        "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "exact_owner_baseline_policy_enabled": True,
+        "washout_protocol": "first_flat_exposure_quarantine_scheduler_drained_v2",
+        "control_path_exact_until_quarantine": True,
+    }
+    for field, value in expected.items():
+        if trace.get(field) != value:
+            raise OfflineReplayAdapterError(
+                f"shared-prefix duration trace drifted: {field}"
+            )
+    for field, tolerance in (
+        ("assignment_inventory_btc", 1e-12),
+        ("assignment_equity_usdc", 1e-12),
+        ("baseline_duration_ms", 1e-9),
+    ):
+        source = {
+            "assignment_inventory_btc": "inventory_after_fill_btc",
+            "assignment_equity_usdc": "assignment_equity_usdc",
+            "baseline_duration_ms": "baseline_duration_ms",
+        }[field]
+        if not math.isclose(
+            float(trace.get(field, math.nan)),
+            float(opportunity[source]),
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        ):
+            raise OfflineReplayAdapterError(
+                f"shared-prefix assignment state drifted: {field}"
+            )
+    expected_applied = (
+        float(opportunity["baseline_duration_ms"])
+        if action_id == "CONTROL_85N"
+        else float(shared_prefix.ARM_DURATION_MS[action_id])
+    )
+    if not math.isclose(
+        float(trace.get("applied_duration_ms", math.nan)),
+        expected_applied,
+        rel_tol=0.0,
+        abs_tol=1e-9,
+    ):
+        raise OfflineReplayAdapterError("shared-prefix applied duration drifted")
+    if int(trace.get("reducing_quote_change_count", -1)) != 0 or int(
+        trace.get("second_assignment_count", -1)
+    ) != 0:
+        raise OfflineReplayAdapterError("shared-prefix permission contract drifted")
+    right_censored = bool(trace.get("right_censored", False))
+    complete = bool(trace.get("arm_washout_complete", False))
+    value = trace.get("assignment_to_washout_value_usdc")
+    if right_censored:
+        if complete or value is not None:
+            raise OfflineReplayAdapterError("right-censored shared-prefix arm retained value")
+        return
+    if (
+        not complete
+        or str(trace.get("terminal_reason")) != "arm_economic_washout"
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+    ):
+        raise OfflineReplayAdapterError("shared-prefix arm lacks economic washout")
+    for field in (
+        "active_or_pending_order_count",
+        "pending_submit_count",
+        "pending_cancel_count",
+        "pending_ack_count",
+        "cursor_owner_count",
+        "hazard_owner_count",
+    ):
+        if int(trace.get(field, -1)) != 0:
+            raise OfflineReplayAdapterError(
+                f"shared-prefix washout retained {field}"
+            )
+    if (
+        bool(trace.get("campaign_active", True))
+        or abs(float(trace.get("terminal_inventory_btc", math.nan))) > 1e-10
+        or abs(float(trace.get("accounting_residual_usdc", math.nan))) > 1e-6
+    ):
+        raise OfflineReplayAdapterError("shared-prefix terminal state drifted")
+
+
+def _collect_shared_prefix_day_frames(
+    *,
+    rows: pd.DataFrame,
+    vocabulary: Sequence[str],
+    manifest_paths: Sequence[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
+    outcomes = pd.DataFrame(index=rows.index, columns=vocabulary, dtype=float)
+    supported = pd.DataFrame(False, index=rows.index, columns=vocabulary, dtype=bool)
+    admitted: list[dict[str, Any]] = []
+    observed_ids: set[str] = set()
+    for manifest_text in manifest_paths:
+        manifest_path = Path(manifest_text).resolve()
+        manifest = _read_json(manifest_path, label="shared-prefix opportunity manifest")
+        target = manifest.get("opportunity_contract", {}).get("target_binding")
+        if not isinstance(target, Mapping):
+            raise OfflineReplayAdapterError("shared-prefix target binding is missing")
+        opportunity_id = str(target.get("opportunity_id", ""))
+        if opportunity_id not in rows.index or opportunity_id in observed_ids:
+            raise OfflineReplayAdapterError("shared-prefix opportunity denominator drifted")
+        observed_ids.add(opportunity_id)
+        opportunity = rows.loc[opportunity_id].to_dict()
+        actual_arms = tuple(str(row["arm_id"]) for row in manifest["arms"])
+        if actual_arms != tuple(vocabulary):
+            raise OfflineReplayAdapterError("shared-prefix arm order drifted")
+        for arm in manifest["arms"]:
+            action_id = str(arm["arm_id"])
+            arm_path = manifest_path.parent / str(arm["path"])
+            payload = _read_json(arm_path, label="shared-prefix arm result")
+            trace = payload.get("fork_trace")
+            if not isinstance(trace, Mapping):
+                raise OfflineReplayAdapterError("shared-prefix arm trace is malformed")
+            _validate_shared_prefix_duration_trace(
+                trace,
+                opportunity=opportunity,
+                action_id=action_id,
+            )
+            eligible = (
+                payload.get("strict_execution_contract", {}).get(
+                    "economic_point_label_status"
+                )
+                == "eligible_modeled_queue_ambiguity_censored"
+                and bool(trace.get("arm_washout_complete", False))
+                and not bool(trace.get("right_censored", False))
+            )
+            if eligible:
+                outcomes.loc[opportunity_id, action_id] = float(
+                    trace["assignment_to_washout_value_usdc"]
+                )
+                supported.loc[opportunity_id, action_id] = True
+            else:
+                outcomes.loc[opportunity_id, action_id] = float("nan")
+        admitted.append(
+            {
+                "opportunity_id": opportunity_id,
+                "manifest_sha256": _file_sha256(manifest_path),
+            }
+        )
+    if observed_ids != set(str(value) for value in rows.index):
+        raise OfflineReplayAdapterError("shared-prefix output missed an opportunity")
+    evidence = {
+        "execution_semantics": "posix_fork_copy_on_write_at_fill_callback",
+        "opportunity_count": len(admitted),
+        "arm_count": len(admitted) * len(vocabulary),
+        "opportunity_manifest_set_sha256": _canonical_sha256(
+            sorted(admitted, key=lambda row: row["opportunity_id"])
+        ),
+        "modeled_queue_economics_authorized": True,
+        "exact_owner_baseline_policy_enabled": True,
+        "portable_restore_authority": False,
+    }
+    return outcomes, supported, evidence
+
+
 def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     request, replay = _canonical_day_projection(job)
     study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
@@ -1108,24 +1354,42 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     rows = job.payload["replay_inputs"]
     vocabulary = tuple(str(value) for value in job.payload["duration_vocabulary"])
     side = _normalize_side(_unique_column_value(rows, "side"))
-    _duration_binding, actions_by_side = _load_frozen_duration_action_contract()
-    actions = {action.policy_id: action for action in actions_by_side[side]}
-    if tuple(actions) != vocabulary:
+    if tuple(duration_vocabulary(side)) != vocabulary:
         raise OfflineReplayAdapterError("fixed duration action vocabulary drifted")
     identity_hashes = _day_identity_hashes(request)
-    window = SimpleNamespace(
-        trades=replay.trades,
-        var_ts_ms=replay.var_ts_ms,
-        var_ssq=replay.var_ssq,
+    cache = DayReplayCache(Path(job.payload["cache_root"]))
+    targets = _shared_prefix_target_contracts(rows, arm_ids=vocabulary)
+    completed = 0
+
+    def report_progress(_index: int, _manifest_path: Path, _resumed: bool) -> None:
+        nonlocal completed
+        completed += 1
+        cache.write_progress(
+            job.cache_key,
+            state="running",
+            counters={
+                "total_opportunities": len(targets),
+                "completed_opportunities": completed,
+                "total_arms": len(targets) * len(vocabulary),
+                "completed_arms": completed * len(vocabulary),
+            },
+        )
+
+    executor = shared_prefix.PosixCooldownSharedPrefixExecutor(
+        output_root=cache.opportunity_root(job.cache_key),
+        target_day=job.utc_day,
+        source_contract_sha256=job.cache_key.cache_key_sha256,
+        execution_identity_hashes=identity_hashes,
+        max_parallel_arms=FORMAL_SHARED_PREFIX_ARM_WORKERS,
+        require_strict_native=False,
+        modeled_queue_economics_authorized=True,
+        exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+        target_opportunities=targets,
+        global_pool_root=cache.global_arm_pool,
+        recover_interrupted_staging=True,
+        progress=report_progress,
     )
-    shared = {
-        "ml_data": replay.ml_data,
-        "bbo_data": replay.bbo_data,
-        "l2_data": replay.l2_data,
-        "var_ti": replay.var_ti,
-        "var_retsq": replay.var_retsq,
-    }
-    control_params = study._prepare_base_params(
+    params = study._prepare_base_params(
         _exact_owner_runtime_params(
             request,
             replay,
@@ -1134,64 +1398,70 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
         ),
         trace_opportunities=False,
     )
-    control_params["trace_fills_max"] = study.TRACE_LIMIT
-    control_result = backtest._simulate_tick_with_engine(
-        "python",
-        replay.trades,
-        replay.var_ts_ms,
-        replay.var_ssq,
-        control_params,
-        **shared,
+    params["cooldown_duration_shared_prefix_executor"] = executor
+    params["cooldown_duration_parent_stop_ts_ms"] = int(
+        (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
+        * 1_000
     )
-    control_fills = tuple(control_result.get("_fill_trace") or ())
-    outcomes = pd.DataFrame(index=rows.index, columns=vocabulary, dtype=float)
-    supported = pd.DataFrame(False, index=rows.index, columns=vocabulary, dtype=bool)
-    for opportunity_id, opportunity in rows.iterrows():
-        raw = opportunity.to_dict()
-        exact_owner_action = str(raw["exact_owner_action"])
-        for action_id in vocabulary:
-            require_control_parity = _requires_control_prefix_parity(
-                side, action_id, exact_owner_action
-            )
-            arm_base = _exact_owner_runtime_params(
-                request,
-                replay,
-                utc_day=job.utc_day,
-                identity_hashes=identity_hashes,
-            )
-            if require_control_parity:
-                arm_base["trace_fills_max"] = study.TRACE_LIMIT
-            trace, _elapsed = study._run_duration_arm(
-                raw,
-                actions[action_id],
-                window=window,
-                base=arm_base,
-                shared=shared,
-                engine="python",
-                authoritative_control_fills=(
-                    control_fills if require_control_parity else None
-                ),
-                require_control_prefix_parity=require_control_parity,
-                exact_owner_baseline_policy_enabled=True,
-                expected_exact_owner_action=exact_owner_action,
-                expected_exact_owner_policy_sha256=(
-                    offline.ACTIVE_OWNER_POLICY_SHA256
-                ),
-            )
-            complete = bool(trace.get("arm_washout_complete", False)) and not bool(
-                trace.get("right_censored", False)
-            )
-            if complete:
-                outcomes.loc[opportunity_id, action_id] = float(
-                    trace["assignment_to_washout_value_usdc"]
-                )
-                supported.loc[opportunity_id, action_id] = True
-            else:
-                outcomes.loc[opportunity_id, action_id] = float("nan")
+    params["exchange_book_queue_ambiguity_trace_max"] = 64
+    cache.write_progress(
+        job.cache_key,
+        state="running",
+        counters={
+            "total_opportunities": len(targets),
+            "completed_opportunities": 0,
+            "total_arms": len(targets) * len(vocabulary),
+            "completed_arms": 0,
+        },
+    )
+    started = time.perf_counter()
+    try:
+        result = backtest._simulate_tick_with_engine(
+            "python",
+            replay.trades,
+            replay.var_ts_ms,
+            replay.var_ssq,
+            params,
+            ml_data=replay.ml_data,
+            bbo_data=replay.bbo_data,
+            l2_data=replay.l2_data,
+            var_ti=replay.var_ti,
+            var_retsq=replay.var_retsq,
+        )
+    except BaseException:
+        executor.abort()
+        raise
+    audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
+    if (
+        int(audit.get("target_opportunity_count", -1)) != len(targets)
+        or int(audit.get("target_opportunities_matched", -1)) != len(targets)
+        or int(audit.get("opportunities_dispatched", 0))
+        + int(audit.get("opportunities_resumed", 0))
+        != len(targets)
+        or int(audit.get("arm_processes_completed", -1))
+        != len(targets) * len(vocabulary)
+        or audit.get("modeled_queue_economics_authorized") is not True
+        or audit.get("exact_owner_baseline_policy_enabled") is not True
+    ):
+        raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
+    outcomes, supported, evidence = _collect_shared_prefix_day_frames(
+        rows=rows,
+        vocabulary=vocabulary,
+        manifest_paths=tuple(audit["completed_manifest_paths"]),
+    )
+    evidence.update(
+        {
+            "day_wall_time_s": time.perf_counter() - started,
+            "resumed_opportunity_count": int(audit["opportunities_resumed"]),
+            "new_opportunity_count": int(audit["opportunities_dispatched"]),
+            "max_parallel_arms": int(audit["max_parallel_arms"]),
+        }
+    )
     return _DayReplayJobResult(
         utc_day=job.utc_day,
         cache_key_sha256=job.cache_key.cache_key_sha256,
         frames={"outcomes": outcomes, "supported": supported},
+        evidence=evidence,
     )
 
 
@@ -1210,98 +1480,154 @@ def _execute_exact_owner_one_day_mechanics(
     )
     study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
     backtest = importlib.import_module(FIXED_BACKTEST_MODULE)
-    _duration_binding, actions_by_side = _load_frozen_duration_action_contract()
+    _load_frozen_duration_action_contract()
     identity_hashes = _day_identity_hashes(request)
-    window = SimpleNamespace(
-        trades=replay.trades,
-        var_ts_ms=replay.var_ts_ms,
-        var_ssq=replay.var_ssq,
-    )
-    shared = {
-        "ml_data": replay.ml_data,
-        "bbo_data": replay.bbo_data,
-        "l2_data": replay.l2_data,
-        "var_ti": replay.var_ti,
-        "var_retsq": replay.var_retsq,
-    }
-    control_params = study._prepare_base_params(
-        _exact_owner_runtime_params(
-            request,
-            replay,
-            utc_day=utc_day,
-            identity_hashes=identity_hashes,
-        ),
-        trace_opportunities=False,
-    )
-    control_params["trace_fills_max"] = study.TRACE_LIMIT
-    control_result = backtest._simulate_tick_with_engine(
-        "python",
-        replay.trades,
-        replay.var_ts_ms,
-        replay.var_ssq,
-        control_params,
-        **shared,
-    )
-    control_fills = tuple(control_result.get("_fill_trace") or ())
     action_counts: dict[str, int] = {}
     side_counts: dict[str, int] = {}
     role_counts: dict[str, int] = {}
-    complete_count = 0
-    right_censored_count = 0
     for _opportunity_id, opportunity in rows.iterrows():
-        raw = opportunity.to_dict()
-        side = _normalize_side(raw["side"])
-        action_id = str(raw["exact_owner_action"])
-        actions = {
-            action.policy_id: action for action in actions_by_side[side]
-        }
-        if action_id not in actions:
-            raise OfflineReplayAdapterError(
-                "one-day mechanics owner action escaped the frozen vocabulary"
-            )
-        arm_base = _exact_owner_runtime_params(
-            request,
-            replay,
-            utc_day=utc_day,
-            identity_hashes=identity_hashes,
-        )
-        # The parity gate compares the fork's fill prefix with the authoritative
-        # control prefix. Both arms must therefore retain the same fill trace.
-        arm_base["trace_fills_max"] = study.TRACE_LIMIT
-        trace, _elapsed = study._run_duration_arm(
-            raw,
-            actions[action_id],
-            window=window,
-            base=arm_base,
-            shared=shared,
-            engine="python",
-            authoritative_control_fills=control_fills,
-            require_control_prefix_parity=True,
-            exact_owner_baseline_policy_enabled=True,
-            expected_exact_owner_action=action_id,
-            expected_exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
-        )
-        if (
-            trace.get("schema_version")
-            != "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
-            or trace.get("exact_owner_action") != action_id
-        ):
-            raise OfflineReplayAdapterError(
-                "one-day mechanics exact-owner trace identity drifted"
-            )
+        side = _normalize_side(opportunity["side"])
+        action_id = str(opportunity["exact_owner_action"])
         action_counts[action_id] = action_counts.get(action_id, 0) + 1
         side_counts[side] = side_counts.get(side, 0) + 1
-        role = str(raw["role_at_fill"])
+        role = str(opportunity["role_at_fill"])
         role_counts[role] = role_counts.get(role, 0) + 1
-        if bool(trace.get("arm_washout_complete", False)) and not bool(
-            trace.get("right_censored", False)
-        ):
-            complete_count += 1
-        else:
-            right_censored_count += 1
     row_count = int(len(rows))
     if sum(action_counts.values()) != row_count:
         raise OfflineReplayAdapterError("one-day mechanics opportunity census drifted")
+    targets = _shared_prefix_target_contracts(rows, owner_action_only=True)
+    complete_count = 0
+    right_censored_count = 0
+    with tempfile.TemporaryDirectory(
+        prefix="narrowgate-f05-exact-owner-cow-mechanics-"
+    ) as directory:
+        root = Path(directory)
+        executor = shared_prefix.PosixCooldownSharedPrefixExecutor(
+            output_root=root / "opportunities",
+            target_day=utc_day,
+            source_contract_sha256=_canonical_sha256(
+                {
+                    "identity": f"{IDENTITY}.exact_owner_one_day_mechanics.v2",
+                    "utc_day": utc_day,
+                    "row_ids": [str(value) for value in rows.index],
+                }
+            ),
+            execution_identity_hashes=identity_hashes,
+            max_parallel_arms=FORMAL_SHARED_PREFIX_ARM_WORKERS,
+            require_strict_native=False,
+            modeled_queue_economics_authorized=False,
+            exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+            target_opportunities=targets,
+            global_pool_root=root / "global_arm_pool",
+        )
+        params = study._prepare_base_params(
+            _exact_owner_runtime_params(
+                request,
+                replay,
+                utc_day=utc_day,
+                identity_hashes=identity_hashes,
+            ),
+            trace_opportunities=False,
+        )
+        params["cooldown_duration_shared_prefix_executor"] = executor
+        params["cooldown_duration_parent_stop_ts_ms"] = int(
+            (pd.Timestamp(utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
+            * 1_000
+        )
+        started = time.perf_counter()
+        try:
+            result = backtest._simulate_tick_with_engine(
+                "python",
+                replay.trades,
+                replay.var_ts_ms,
+                replay.var_ssq,
+                params,
+                ml_data=replay.ml_data,
+                bbo_data=replay.bbo_data,
+                l2_data=replay.l2_data,
+                var_ti=replay.var_ti,
+                var_retsq=replay.var_retsq,
+            )
+        except BaseException:
+            executor.abort()
+            raise
+        replay_wall_time_s = time.perf_counter() - started
+        audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
+        manifests = tuple(audit.get("completed_manifest_paths") or ())
+        if (
+            int(audit.get("target_opportunity_count", -1)) != row_count
+            or int(audit.get("target_opportunities_matched", -1)) != row_count
+            or int(audit.get("arm_processes_completed", -1)) != row_count
+            or len(manifests) != row_count
+            or audit.get("modeled_queue_economics_authorized") is not False
+            or audit.get("exact_owner_baseline_policy_enabled") is not True
+        ):
+            raise OfflineReplayAdapterError(
+                "one-day shared-prefix mechanics audit drifted"
+            )
+        observed_ids: set[str] = set()
+        for manifest_text in manifests:
+            manifest_path = Path(manifest_text)
+            manifest = _read_json(
+                manifest_path,
+                label="one-day shared-prefix mechanics manifest",
+            )
+            target = manifest.get("opportunity_contract", {}).get(
+                "target_binding"
+            )
+            if not isinstance(target, Mapping):
+                raise OfflineReplayAdapterError(
+                    "one-day mechanics target binding is missing"
+                )
+            opportunity_id = str(target["opportunity_id"])
+            if opportunity_id not in rows.index or opportunity_id in observed_ids:
+                raise OfflineReplayAdapterError(
+                    "one-day mechanics opportunity identity drifted"
+                )
+            observed_ids.add(opportunity_id)
+            expected_action = str(rows.loc[opportunity_id, "exact_owner_action"])
+            if tuple(str(arm["arm_id"]) for arm in manifest["arms"]) != (
+                expected_action,
+            ):
+                raise OfflineReplayAdapterError(
+                    "one-day mechanics owner arm drifted"
+                )
+            arm_path = manifest_path.parent / str(manifest["arms"][0]["path"])
+            payload = _read_json(
+                arm_path,
+                label="one-day shared-prefix mechanics arm",
+            )
+            trace = payload.get("fork_trace")
+            if not isinstance(trace, Mapping) or (
+                trace.get("exact_owner_action") != expected_action
+                or trace.get("exact_owner_baseline_policy_enabled") is not True
+                or not math.isclose(
+                    float(trace.get("applied_duration_ms", math.nan)),
+                    float(
+                        trace.get("exact_owner_baseline_duration_ms", math.nan)
+                    ),
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                )
+                or trace.get("assignment_to_washout_value_usdc") is not None
+                or payload.get("strict_execution_contract", {}).get(
+                    "economic_point_label_status"
+                )
+                != "unsupported_redacted"
+            ):
+                raise OfflineReplayAdapterError(
+                    "one-day mechanics exact-owner no-op parity drifted"
+                )
+            if bool(trace.get("arm_washout_complete", False)) and not bool(
+                trace.get("right_censored", False)
+            ):
+                complete_count += 1
+            else:
+                right_censored_count += 1
+        if observed_ids != set(str(value) for value in rows.index):
+            raise OfflineReplayAdapterError(
+                "one-day mechanics missed an admitted opportunity"
+            )
     return {
         "utc_day": utc_day,
         "opportunity_count": row_count,
@@ -1318,6 +1644,9 @@ def _execute_exact_owner_one_day_mechanics(
         "trace_schema_version": (
             "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
         ),
+        "execution_semantics": "posix_fork_copy_on_write_at_fill_callback",
+        "arm_worker_count": FORMAL_SHARED_PREFIX_ARM_WORKERS,
+        "replay_wall_time_s": replay_wall_time_s,
         "economic_values_computed_inside_replay": True,
         "economic_values_persisted": False,
         "economic_values_used_for_selection": False,
@@ -2544,7 +2873,7 @@ class _CanonicalOfflineReplayAdapter:
             )
         )
         result: dict[str, Any] = {
-            "schema_version": f"{IDENTITY}.exact_owner_one_day_mechanics.v1",
+            "schema_version": f"{IDENTITY}.exact_owner_one_day_mechanics.v2",
             "identity": self.identity,
             "status": "exact_owner_one_day_mechanics_complete",
             "adapter_artifact_sha256": self.artifact_sha256,
@@ -2839,6 +3168,7 @@ class _CanonicalOfflineReplayAdapter:
                     payload={
                         "fixed_bridge": options.binding["fixed_bridge"],
                         "portable_binding": options.binding,
+                        "cache_root": str(options.cache.root),
                         "replay_inputs": day_rows,
                         "duration_vocabulary": label.duration_vocabulary,
                     },
@@ -2849,7 +3179,7 @@ class _CanonicalOfflineReplayAdapter:
                 options.cache.write_progress(job.cache_key, state="running")
             try:
                 results = _run_day_jobs(jobs, workers=options.workers)
-            except Exception as exc:
+            except BaseException as exc:
                 for job in jobs:
                     options.cache.write_progress(
                         job.cache_key, state="failed", detail=type(exc).__name__
@@ -2871,8 +3201,26 @@ class _CanonicalOfflineReplayAdapter:
                     required_vocabulary=label.duration_vocabulary,
                     exact_vocabulary=True,
                 )
-                options.cache.admit_one_shot(job.cache_key, outcomes, supported)
-                options.cache.write_progress(job.cache_key, state="complete")
+                if not isinstance(result.evidence, Mapping):
+                    raise OfflineReplayAdapterError(
+                        "one-shot shared-prefix evidence is missing"
+                    )
+                options.cache.admit_one_shot(
+                    job.cache_key,
+                    outcomes,
+                    supported,
+                    evidence=result.evidence,
+                )
+                options.cache.write_progress(
+                    job.cache_key,
+                    state="complete",
+                    counters={
+                        "total_opportunities": len(outcomes),
+                        "completed_opportunities": len(outcomes),
+                        "total_arms": int(outcomes.size),
+                        "completed_arms": int(outcomes.size),
+                    },
+                )
                 collected_outcomes.append(outcomes)
                 collected_supported.append(supported)
         outcomes = pd.concat(collected_outcomes, axis=0).loc[list(label.row_ids)]

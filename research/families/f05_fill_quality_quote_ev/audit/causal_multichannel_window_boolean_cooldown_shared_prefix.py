@@ -36,13 +36,14 @@ from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_windo
 )
 
 IDENTITY = "causal_multichannel_window_boolean_cooldown_duration_v2"
-SCHEMA_VERSION = f"{IDENTITY}.posix_cow_shared_prefix.v5"
-ARM_RESULT_SCHEMA_VERSION = f"{IDENTITY}.strict_native_one_shot_arm.v6"
+SCHEMA_VERSION = f"{IDENTITY}.posix_cow_shared_prefix.v6"
+ARM_RESULT_SCHEMA_VERSION = f"{IDENTITY}.strict_native_one_shot_arm.v7"
 OPPORTUNITY_MANIFEST_SCHEMA_VERSION = (
-    f"{IDENTITY}.strict_native_one_shot_opportunity.v5"
+    f"{IDENTITY}.strict_native_one_shot_opportunity.v6"
 )
 SUPERVISOR_ERROR_SCHEMA_VERSION = f"{SCHEMA_VERSION}.supervisor_error.v1"
-MAX_GLOBAL_ARM_PROCESSES = 2
+DEFAULT_GLOBAL_ARM_PROCESSES = 2
+MAX_GLOBAL_ARM_PROCESSES = 8
 MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS = 4
 _POOL_POLL_INTERVAL_S = 0.01
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -153,6 +154,8 @@ class SharedPrefixArmSelection:
     strict_counter_baseline: tuple[tuple[str, int], ...]
     exchange_book_queue_missing_trace_cursor: int
     exchange_book_queue_missing_count_at_assignment: int
+    exact_owner_action: str | None = None
+    exact_owner_policy_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,6 +175,11 @@ class SharedPrefixExecutionAudit:
     peak_concurrent_arms: int
     max_inflight_opportunity_snapshots: int
     pending_supervisors: int
+    target_opportunity_count: int = 0
+    target_opportunities_matched: int = 0
+    opportunities_skipped_outside_target_set: int = 0
+    modeled_queue_economics_authorized: bool = False
+    exact_owner_baseline_policy_enabled: bool = False
     asynchronous_parent_replay: bool = True
     simulator_checkpoint_semantics: str = "posix_fork_copy_on_write_at_fill_callback"
     portable_restore_authority: bool = False
@@ -194,6 +202,40 @@ class _PendingSupervisor:
     destination: Path
     staging: Path
     arms: tuple[str, ...]
+    expected_owner_action: str | None
+
+
+_TARGET_KEY_FIELDS = (
+    "exposure_fill_ordinal",
+    "fill_visible_ts_ms",
+    "side",
+    "order_id",
+    "campaign_id",
+)
+
+
+def _target_key(payload: Mapping[str, Any]) -> tuple[int, int, str, int, int]:
+    try:
+        key = (
+            int(payload["exposure_fill_ordinal"]),
+            int(payload["fill_visible_ts_ms"]),
+            str(payload["side"]).upper(),
+            int(payload["order_id"]),
+            int(payload["campaign_id"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SharedPrefixExecutionError(
+            "shared-prefix target opportunity key is malformed"
+        ) from exc
+    if key[0] <= 0 or key[1] <= 0 or key[2] not in {"BUY", "SELL"}:
+        raise SharedPrefixExecutionError(
+            "shared-prefix target opportunity key is invalid"
+        )
+    if key[3] < 0 or key[4] <= 0:
+        raise SharedPrefixExecutionError(
+            "shared-prefix target order/campaign identity is invalid"
+        )
+    return key
 
 
 class PosixCooldownSharedPrefixExecutor:
@@ -206,23 +248,36 @@ class PosixCooldownSharedPrefixExecutor:
         target_day: str,
         source_contract_sha256: str,
         execution_identity_hashes: Mapping[str, str],
-        max_parallel_arms: int = 2,
+        max_parallel_arms: int = DEFAULT_GLOBAL_ARM_PROCESSES,
         max_opportunities: int | None = None,
         require_strict_native: bool = True,
+        modeled_queue_economics_authorized: bool = False,
+        exact_owner_policy_sha256: str | None = None,
+        target_opportunities: Sequence[Mapping[str, Any]] | None = None,
+        global_pool_root: Path | None = None,
+        recover_interrupted_staging: bool = False,
         progress: Callable[[int, Path, bool], None] | None = None,
     ) -> None:
         if not hasattr(os, "fork"):
             raise SharedPrefixExecutionError("POSIX fork is unavailable")
-        if int(max_parallel_arms) != MAX_GLOBAL_ARM_PROCESSES:
+        if not 1 <= int(max_parallel_arms) <= MAX_GLOBAL_ARM_PROCESSES:
             raise SharedPrefixExecutionError(
-                "v2 freezes max_parallel_arms=2 for bounded memory"
+                "max_parallel_arms escaped the bounded POSIX worker range"
             )
         if max_opportunities is not None and int(max_opportunities) <= 0:
             raise SharedPrefixExecutionError(
                 "max_opportunities must be positive when provided"
             )
+        if target_opportunities is not None and max_opportunities is not None:
+            raise SharedPrefixExecutionError(
+                "an explicit target set cannot share max_opportunities"
+            )
         if not str(target_day).strip():
             raise SharedPrefixExecutionError("target_day is empty")
+        if modeled_queue_economics_authorized and require_strict_native:
+            raise SharedPrefixExecutionError(
+                "modeled-queue economics cannot claim strict-native authority"
+            )
         required_hashes = {
             "baseline_identity_sha256",
             "config_sha256",
@@ -251,7 +306,25 @@ class PosixCooldownSharedPrefixExecutor:
             None if max_opportunities is None else int(max_opportunities)
         )
         self.require_strict_native = bool(require_strict_native)
+        self.modeled_queue_economics_authorized = bool(
+            modeled_queue_economics_authorized
+        )
+        self.exact_owner_policy_sha256 = (
+            None
+            if exact_owner_policy_sha256 is None
+            else _require_sha256(
+                exact_owner_policy_sha256,
+                "exact_owner_policy_sha256",
+            )
+        )
+        self.recover_interrupted_staging = bool(recover_interrupted_staging)
         self.progress = progress
+        self._target_opportunities = self._normalize_target_opportunities(
+            target_opportunities
+        )
+        self._target_opportunity_keys_seen: set[
+            tuple[int, int, str, int, int]
+        ] = set()
         self._role = "baseline_parent"
         self._selection: SharedPrefixArmSelection | None = None
         self._arm_output_path: Path | None = None
@@ -259,6 +332,7 @@ class PosixCooldownSharedPrefixExecutor:
         self._opportunities_resumed = 0
         self._opportunities_skipped_after_limit = 0
         self._opportunities_skipped_outside_target_day = 0
+        self._opportunities_skipped_outside_target_set = 0
         self._arm_processes_completed = 0
         self._supervisor_processes_completed = 0
         self._completed_manifests: dict[int, str] = {}
@@ -271,11 +345,67 @@ class PosixCooldownSharedPrefixExecutor:
             MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS
         )
         self._pool_run_id = uuid.uuid4().hex
-        self._pool_root = self.output_root / ".posix-cow-global-arm-pool"
+        self._pool_root = (
+            self.output_root / ".posix-cow-global-arm-pool"
+            if global_pool_root is None
+            else Path(global_pool_root).expanduser().resolve()
+        )
         self._pool_metrics_path = self._pool_root / f"run-{self._pool_run_id}.json"
         self._pool_metrics_lock_path = self._pool_root / (
             f"run-{self._pool_run_id}.lock"
         )
+
+    @property
+    def exact_owner_baseline_policy_enabled(self) -> bool:
+        return self.exact_owner_policy_sha256 is not None
+
+    @staticmethod
+    def _normalize_target_opportunities(
+        rows: Sequence[Mapping[str, Any]] | None,
+    ) -> dict[tuple[int, int, str, int, int], dict[str, Any]] | None:
+        if rows is None:
+            return None
+        normalized: dict[tuple[int, int, str, int, int], dict[str, Any]] = {}
+        required = {
+            *_TARGET_KEY_FIELDS,
+            "opportunity_id",
+            "expected_owner_action",
+            "arm_ids",
+        }
+        for index, row in enumerate(rows):
+            if not isinstance(row, Mapping) or set(row) != required:
+                raise SharedPrefixExecutionError(
+                    f"target_opportunities[{index}] schema drifted"
+                )
+            key = _target_key(row)
+            if key in normalized:
+                raise SharedPrefixExecutionError(
+                    "target_opportunities contains a duplicate event identity"
+                )
+            opportunity_id = str(row["opportunity_id"]).strip()
+            expected_owner_action = str(row["expected_owner_action"]).strip()
+            arm_ids = tuple(str(value) for value in row["arm_ids"])
+            allowed_arms = BUY_ARMS if key[2] == "BUY" else SELL_ARMS
+            if not opportunity_id or expected_owner_action not in allowed_arms:
+                raise SharedPrefixExecutionError(
+                    "target opportunity external/owner identity is invalid"
+                )
+            if (
+                not arm_ids
+                or len(set(arm_ids)) != len(arm_ids)
+                or any(value not in allowed_arms for value in arm_ids)
+            ):
+                raise SharedPrefixExecutionError(
+                    "target opportunity arm vocabulary is invalid"
+                )
+            normalized[key] = {
+                "opportunity_id": opportunity_id,
+                "expected_owner_action": expected_owner_action,
+                "arm_ids": arm_ids,
+            }
+        if not normalized:
+            raise SharedPrefixExecutionError("target_opportunities is empty")
+        return normalized
 
     @property
     def is_arm_child(self) -> bool:
@@ -285,13 +415,17 @@ class PosixCooldownSharedPrefixExecutor:
     def bounded_parent_stop_requested(self) -> bool:
         """Return true once a bounded parent has forked its frozen denominator."""
 
-        if self._role != "baseline_parent" or self.max_opportunities is None:
+        if self._role != "baseline_parent":
             return False
         started = (
             self._opportunities_dispatched
             + self._opportunities_resumed
             + len(self._pending_supervisors)
         )
+        if self._target_opportunities is not None:
+            return started >= len(self._target_opportunities)
+        if self.max_opportunities is None:
+            return False
         return started >= self.max_opportunities
 
     def _empty_pool_metrics(self) -> dict[str, Any]:
@@ -568,6 +702,8 @@ class PosixCooldownSharedPrefixExecutor:
     def _opportunity_identity(
         self,
         opportunity: Mapping[str, Any],
+        *,
+        target_binding: Mapping[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         required = {
             "exposure_fill_ordinal",
@@ -670,6 +806,35 @@ class PosixCooldownSharedPrefixExecutor:
         normalized_opportunity["strict_counter_baseline"] = (
             strict_counter_baseline
         )
+        normalized_target_binding: dict[str, Any] | None = None
+        if target_binding is not None:
+            expected_owner_action = str(
+                target_binding["expected_owner_action"]
+            )
+            observed_owner_action = str(
+                opportunity.get("repeated_policy_action_id", "")
+            )
+            observed_owner_policy = str(
+                opportunity.get("repeated_policy_policy_sha256", "")
+            )
+            if self.exact_owner_policy_sha256 is None:
+                raise SharedPrefixExecutionError(
+                    "target-bound execution lacks exact-owner policy identity"
+                )
+            if observed_owner_policy != self.exact_owner_policy_sha256:
+                raise SharedPrefixExecutionError(
+                    "shared-prefix exact-owner policy identity drifted"
+                )
+            if observed_owner_action != expected_owner_action:
+                raise SharedPrefixExecutionError(
+                    "shared-prefix exact-owner action drifted"
+                )
+            normalized_target_binding = {
+                "opportunity_id": str(target_binding["opportunity_id"]),
+                "expected_owner_action": expected_owner_action,
+                "exact_owner_policy_sha256": self.exact_owner_policy_sha256,
+                "arm_ids": list(target_binding["arm_ids"]),
+            }
         body = {
             "schema_version": SCHEMA_VERSION,
             "identity": IDENTITY,
@@ -677,6 +842,16 @@ class PosixCooldownSharedPrefixExecutor:
             "source_contract_sha256": self.source_contract_sha256,
             "execution_identity_hashes": dict(self.execution_identity_hashes),
             "opportunity": normalized_opportunity,
+            "target_binding": normalized_target_binding,
+            "economic_evidence_mode": (
+                "strict_native"
+                if self.require_strict_native
+                else (
+                    "modeled_queue_with_same_millisecond_ambiguity_censoring"
+                    if self.modeled_queue_economics_authorized
+                    else "engineering_test_without_economic_labels"
+                )
+            ),
             "checkpoint_semantics": "posix_fork_copy_on_write_at_fill_callback",
             "portable_restore_authority": False,
             "economic_outcomes_read_before_fork": False,
@@ -692,6 +867,7 @@ class PosixCooldownSharedPrefixExecutor:
         *,
         expected_arm_id: str,
         expected_identity_sha256: str,
+        expected_owner_action: str | None = None,
     ) -> None:
         if not isinstance(payload, dict):
             raise SharedPrefixExecutionError("arm result must be a JSON object")
@@ -736,6 +912,7 @@ class PosixCooldownSharedPrefixExecutor:
             "exchange_book_queue_mode",
             "exchange_book_queue_scope",
             "strict_native_required",
+            "economic_evidence_mode",
             "exchange_book_queue_missing_trace_cursor",
             "exchange_book_queue_missing_count_at_assignment",
             *STRICT_COUNTER_FIELDS,
@@ -805,6 +982,9 @@ class PosixCooldownSharedPrefixExecutor:
             "strict_native_required",
             "strict_native_label_eligible",
             "strict_native_label_unsupported_reasons",
+            "modeled_queue_label_eligible",
+            "modeled_queue_label_unsupported_reasons",
+            "economic_evidence_mode",
             "economic_point_label_status",
             *STRICT_COUNTER_FIELDS,
         }
@@ -860,6 +1040,7 @@ class PosixCooldownSharedPrefixExecutor:
             raise SharedPrefixExecutionError(
                 "arm missing-trace row count does not match treatment counter"
             )
+        for row in ambiguity_trace:
             for name in ("reason", "side", "state", "queue_seed_status"):
                 if not isinstance(row[name], str):
                     raise SharedPrefixExecutionError(
@@ -886,28 +1067,66 @@ class PosixCooldownSharedPrefixExecutor:
                     "arm strict source/queue hard-zero counters failed: "
                     f"{nonzero_hard}"
                 )
-            expected_unsupported = [
+            expected_strict_unsupported = [
                 name
                 for name in STRICT_LABEL_UNSUPPORTED_FIELDS
                 if int(execution[name]) != 0
             ]
+            expected_modeled_unsupported = ["strict_native_mode"]
+            expected_evidence_mode = "strict_native"
+            expected_point_label_status = (
+                "unsupported_redacted"
+                if expected_strict_unsupported
+                else "eligible"
+            )
+        elif self.modeled_queue_economics_authorized:
+            expected_strict_unsupported = ["modeled_queue_not_strict_native"]
+            expected_modeled_unsupported = []
+            expected_evidence_mode = (
+                "modeled_queue_with_same_millisecond_ambiguity_censoring"
+            )
+            expected_point_label_status = "eligible_modeled_queue_ambiguity_censored"
         else:
-            expected_unsupported = ["engineering_test_without_strict_native"]
+            expected_strict_unsupported = [
+                "engineering_test_without_strict_native"
+            ]
+            expected_modeled_unsupported = [
+                "engineering_test_without_economic_labels"
+            ]
+            expected_evidence_mode = "engineering_test_without_economic_labels"
+            expected_point_label_status = "unsupported_redacted"
         if execution["strict_native_label_unsupported_reasons"] != (
-            expected_unsupported
+            expected_strict_unsupported
         ):
             raise SharedPrefixExecutionError(
                 "arm strict-label unsupported reasons drifted"
             )
         if bool(execution["strict_native_label_eligible"]) == bool(
-            expected_unsupported
+            expected_strict_unsupported
         ):
             raise SharedPrefixExecutionError(
                 "arm strict-label eligibility is inconsistent"
             )
-        expected_point_label_status = (
-            "unsupported_redacted" if expected_unsupported else "eligible"
-        )
+        if execution["modeled_queue_label_unsupported_reasons"] != (
+            expected_modeled_unsupported
+        ):
+            raise SharedPrefixExecutionError(
+                "arm modeled-queue unsupported reasons drifted"
+            )
+        if bool(execution["modeled_queue_label_eligible"]) == bool(
+            expected_modeled_unsupported
+        ):
+            raise SharedPrefixExecutionError(
+                "arm modeled-queue eligibility is inconsistent"
+            )
+        if execution["economic_evidence_mode"] != expected_evidence_mode:
+            raise SharedPrefixExecutionError(
+                "arm economic evidence mode drifted"
+            )
+        if prefix["economic_evidence_mode"] != expected_evidence_mode:
+            raise SharedPrefixExecutionError(
+                "arm prefix economic evidence mode drifted"
+            )
         if execution["economic_point_label_status"] != expected_point_label_status:
             raise SharedPrefixExecutionError(
                 "arm economic point-label status is inconsistent"
@@ -915,10 +1134,37 @@ class PosixCooldownSharedPrefixExecutor:
         fork_value = payload["fork_trace"].get(
             "assignment_to_washout_value_usdc"
         )
-        if expected_unsupported and fork_value is not None:
+        if expected_point_label_status == "unsupported_redacted" and fork_value is not None:
             raise SharedPrefixExecutionError(
                 "unsupported arm retained an economic point label"
             )
+        if expected_point_label_status != "unsupported_redacted" and (
+            not isinstance(fork_value, (int, float))
+            or not math.isfinite(float(fork_value))
+        ) and not bool(payload["fork_trace"].get("right_censored", False)):
+            raise SharedPrefixExecutionError(
+                "eligible completed arm lacks an economic point label"
+            )
+        if expected_owner_action is not None:
+            trace = payload["fork_trace"]
+            if (
+                trace.get("exact_owner_baseline_policy_enabled") is not True
+                or trace.get("exact_owner_action") != expected_owner_action
+                or trace.get("exact_owner_policy_sha256")
+                != self.exact_owner_policy_sha256
+            ):
+                raise SharedPrefixExecutionError(
+                    "shared-prefix arm lost its exact-owner baseline identity"
+                )
+            if expected_arm_id == expected_owner_action and not math.isclose(
+                float(trace.get("applied_duration_ms", math.nan)),
+                float(trace.get("exact_owner_baseline_duration_ms", math.nan)),
+                rel_tol=0.0,
+                abs_tol=1e-9,
+            ):
+                raise SharedPrefixExecutionError(
+                    "exact-owner no-op arm changed the target duration"
+                )
         embedded_sha256 = _require_sha256(
             payload["canonical_result_sha256"],
             "canonical_result_sha256",
@@ -934,6 +1180,7 @@ class PosixCooldownSharedPrefixExecutor:
         *,
         expected_identity_sha256: str,
         expected_arms: Sequence[str],
+        expected_owner_action: str | None = None,
     ) -> dict[str, Any]:
         success = destination / "_SUCCESS"
         manifest_path = destination / "manifest.json"
@@ -954,7 +1201,8 @@ class PosixCooldownSharedPrefixExecutor:
             actual_arms
         ):
             raise SharedPrefixExecutionError(
-                "opportunity manifest does not contain exactly eight ordered arms"
+                "opportunity manifest does not contain exactly eight ordered arms "
+                "or the frozen target arm subset"
             )
         timing = manifest.get("execution_timing")
         required_timing = {
@@ -1048,6 +1296,7 @@ class PosixCooldownSharedPrefixExecutor:
                 payload,
                 expected_arm_id=str(row["arm_id"]),
                 expected_identity_sha256=expected_identity_sha256,
+                expected_owner_action=expected_owner_action,
             )
         success_payload = json.loads(success.read_text(encoding="ascii"))
         if success_payload.get("manifest_sha256") != hashlib.sha256(
@@ -1181,6 +1430,24 @@ class PosixCooldownSharedPrefixExecutor:
                                 "exchange_book_queue_missing_count_at_assignment"
                             ]
                         ),
+                        exact_owner_action=(
+                            None
+                            if opportunity_body.get("target_binding") is None
+                            else str(
+                                opportunity_body["target_binding"][
+                                    "expected_owner_action"
+                                ]
+                            )
+                        ),
+                        exact_owner_policy_sha256=(
+                            None
+                            if opportunity_body.get("target_binding") is None
+                            else str(
+                                opportunity_body["target_binding"][
+                                    "exact_owner_policy_sha256"
+                                ]
+                            )
+                        ),
                     )
                     self._arm_output_path = staging / f"arm-{arm_id}.json"
                     return self._selection
@@ -1218,6 +1485,15 @@ class PosixCooldownSharedPrefixExecutor:
                 payload,
                 expected_arm_id=str(arm_id),
                 expected_identity_sha256=opportunity_identity_sha256,
+                expected_owner_action=(
+                    None
+                    if opportunity_body.get("target_binding") is None
+                    else str(
+                        opportunity_body["target_binding"][
+                            "expected_owner_action"
+                        ]
+                    )
+                ),
             )
             rows.append(
                 {
@@ -1287,6 +1563,7 @@ class PosixCooldownSharedPrefixExecutor:
         *,
         expected_identity_sha256: str,
         expected_arms: Sequence[str],
+        expected_owner_action: str | None = None,
     ) -> None:
         read_fd, write_fd = os.pipe()
         validator_pid = os.fork()
@@ -1298,6 +1575,7 @@ class PosixCooldownSharedPrefixExecutor:
                     destination,
                     expected_identity_sha256=expected_identity_sha256,
                     expected_arms=expected_arms,
+                    expected_owner_action=expected_owner_action,
                 )
             except BaseException as exc:
                 message = str(exc).encode("ascii", errors="replace")[:4_096]
@@ -1322,6 +1600,7 @@ class PosixCooldownSharedPrefixExecutor:
             job.destination,
             expected_identity_sha256=job.opportunity_identity_sha256,
             expected_arms=job.arms,
+            expected_owner_action=job.expected_owner_action,
         )
         manifest_path = job.destination / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="ascii"))
@@ -1402,6 +1681,79 @@ class PosixCooldownSharedPrefixExecutor:
         while self._pending_supervisors:
             self._reap_one_supervisor(block=True)
 
+    @staticmethod
+    def _pid_is_alive(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _recover_interrupted_artifacts(
+        self,
+        *,
+        destination: Path,
+        identity_sha256: str,
+        lock_path: Path,
+    ) -> None:
+        stale_staging = tuple(
+            destination.parent.glob(f".{identity_sha256}.staging.*")
+        )
+        if not lock_path.exists() and not stale_staging:
+            return
+        if not self.recover_interrupted_staging:
+            if lock_path.exists():
+                raise SharedPrefixExecutionError(
+                    "shared-prefix opportunity lock exists; refusing concurrent execution"
+                )
+            raise SharedPrefixExecutionError(
+                "stale shared-prefix staging exists; refusing implicit recovery"
+            )
+        if lock_path.exists():
+            try:
+                lock = json.loads(lock_path.read_text(encoding="ascii"))
+                owner_pid = int(lock.get("owner_pid", -1))
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                owner_pid = -1
+            if self._pid_is_alive(owner_pid):
+                raise SharedPrefixExecutionError(
+                    "shared-prefix opportunity is owned by a live process"
+                )
+        quarantine = (
+            self.output_root
+            / "_interrupted"
+            / self.target_day
+            / identity_sha256
+            / uuid.uuid4().hex
+        )
+        quarantine.mkdir(parents=True, exist_ok=False)
+        if lock_path.exists():
+            os.replace(lock_path, quarantine / "lock.json")
+        for index, path in enumerate(stale_staging):
+            os.replace(path, quarantine / f"staging-{index}")
+        _write_atomic_json(
+            quarantine / "recovery.json",
+            {
+                "schema_version": f"{SCHEMA_VERSION}.interrupted_recovery.v1",
+                "opportunity_identity_sha256": identity_sha256,
+                "recovered_at_utc": datetime.now(UTC).isoformat(),
+                "prior_lock_present": (quarantine / "lock.json").exists(),
+                "prior_staging_count": len(stale_staging),
+                "economic_result_admitted": False,
+            },
+        )
+        _fsync_directory(destination.parent)
+
+    def abort(self) -> None:
+        """Terminate in-flight supervisors without touching admitted shards."""
+
+        if self._role == "baseline_parent":
+            self._abort_pending_supervisors()
+
     def dispatch(
         self,
         opportunity: Mapping[str, Any],
@@ -1425,6 +1777,19 @@ class PosixCooldownSharedPrefixExecutor:
         if fill_day != self.target_day:
             self._opportunities_skipped_outside_target_day += 1
             return None
+        target_key = _target_key(opportunity)
+        target_binding = (
+            None
+            if self._target_opportunities is None
+            else self._target_opportunities.get(target_key)
+        )
+        if self._target_opportunities is not None and target_binding is None:
+            self._opportunities_skipped_outside_target_set += 1
+            return None
+        if target_key in self._target_opportunity_keys_seen:
+            raise SharedPrefixExecutionError(
+                "shared-prefix target opportunity was observed twice"
+            )
         completed = (
             self._opportunities_dispatched
             + self._opportunities_resumed
@@ -1433,15 +1798,27 @@ class PosixCooldownSharedPrefixExecutor:
         if self.max_opportunities is not None and completed >= self.max_opportunities:
             self._opportunities_skipped_after_limit += 1
             return None
-        identity_sha256, body = self._opportunity_identity(opportunity)
+        identity_sha256, body = self._opportunity_identity(
+            opportunity,
+            target_binding=target_binding,
+        )
         side = str(opportunity["side"]).upper()
-        arms = BUY_ARMS if side == "BUY" else SELL_ARMS
+        arms = (
+            BUY_ARMS if side == "BUY" else SELL_ARMS
+        ) if target_binding is None else tuple(target_binding["arm_ids"])
+        expected_owner_action = (
+            None
+            if target_binding is None
+            else str(target_binding["expected_owner_action"])
+        )
+        self._target_opportunity_keys_seen.add(target_key)
         destination = self._destination(identity_sha256)
         if destination.exists():
             self._validate_completed_destination_isolated(
                 destination,
                 expected_identity_sha256=identity_sha256,
                 expected_arms=arms,
+                expected_owner_action=expected_owner_action,
             )
             self._opportunities_resumed += 1
             opportunity_index = completed + 1
@@ -1454,6 +1831,11 @@ class PosixCooldownSharedPrefixExecutor:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
         lock_path = destination.parent / f".{identity_sha256}.lock"
+        self._recover_interrupted_artifacts(
+            destination=destination,
+            identity_sha256=identity_sha256,
+            lock_path=lock_path,
+        )
         lock_fd: int | None = None
         handed_off = False
         try:
@@ -1472,6 +1854,7 @@ class PosixCooldownSharedPrefixExecutor:
                     "schema_version": SCHEMA_VERSION,
                     "opportunity_identity_sha256": identity_sha256,
                     "owner_pid": os.getpid(),
+                    "run_id": self._pool_run_id,
                 }
             )
             os.write(lock_fd, lock_payload)
@@ -1483,6 +1866,7 @@ class PosixCooldownSharedPrefixExecutor:
                     destination,
                     expected_identity_sha256=identity_sha256,
                     expected_arms=arms,
+                    expected_owner_action=expected_owner_action,
                 )
                 self._opportunities_resumed += 1
                 opportunity_index = completed + 1
@@ -1574,6 +1958,7 @@ class PosixCooldownSharedPrefixExecutor:
                 destination=destination,
                 staging=staging,
                 arms=tuple(arms),
+                expected_owner_action=expected_owner_action,
             )
             self._peak_concurrent_supervisors = max(
                 self._peak_concurrent_supervisors,
@@ -1665,6 +2050,15 @@ class PosixCooldownSharedPrefixExecutor:
                     missing_at_assignment
                 ),
                 "strict_native_required": self.require_strict_native,
+                "economic_evidence_mode": (
+                    "strict_native"
+                    if self.require_strict_native
+                    else (
+                        "modeled_queue_with_same_millisecond_ambiguity_censoring"
+                        if self.modeled_queue_economics_authorized
+                        else "engineering_test_without_economic_labels"
+                    )
+                ),
             }
             execution_contract = {
                 "exchange_book_queue_mode": str(
@@ -1683,30 +2077,61 @@ class PosixCooldownSharedPrefixExecutor:
                 ],
                 "strict_native_required": self.require_strict_native,
             }
-            unsupported_reasons = (
+            strict_unsupported_reasons = (
                 [
                     name
                     for name in STRICT_LABEL_UNSUPPORTED_FIELDS
                     if int(execution_contract[name]) != 0
                 ]
                 if self.require_strict_native
-                else ["engineering_test_without_strict_native"]
+                else (
+                    ["modeled_queue_not_strict_native"]
+                    if self.modeled_queue_economics_authorized
+                    else ["engineering_test_without_strict_native"]
+                )
+            )
+            modeled_unsupported_reasons = (
+                []
+                if self.modeled_queue_economics_authorized
+                else (
+                    ["strict_native_mode"]
+                    if self.require_strict_native
+                    else ["engineering_test_without_economic_labels"]
+                )
+            )
+            economic_evidence_mode = str(
+                prefix_execution_contract["economic_evidence_mode"]
+            )
+            point_label_eligible = bool(
+                (self.require_strict_native and not strict_unsupported_reasons)
+                or self.modeled_queue_economics_authorized
             )
             execution_contract.update(
                 {
-                    "strict_native_label_eligible": not unsupported_reasons,
+                    "strict_native_label_eligible": not strict_unsupported_reasons,
                     "strict_native_label_unsupported_reasons": (
-                        unsupported_reasons
+                        strict_unsupported_reasons
                     ),
+                    "modeled_queue_label_eligible": (
+                        self.modeled_queue_economics_authorized
+                    ),
+                    "modeled_queue_label_unsupported_reasons": (
+                        modeled_unsupported_reasons
+                    ),
+                    "economic_evidence_mode": economic_evidence_mode,
                     "economic_point_label_status": (
-                        "unsupported_redacted"
-                        if unsupported_reasons
-                        else "eligible"
+                        (
+                            "eligible"
+                            if self.require_strict_native
+                            else "eligible_modeled_queue_ambiguity_censored"
+                        )
+                        if point_label_eligible
+                        else "unsupported_redacted"
                     ),
                 }
             )
             stored_fork_trace = dict(fork_trace)
-            if unsupported_reasons:
+            if not point_label_eligible:
                 stored_fork_trace["assignment_to_washout_value_usdc"] = None
             payload = {
                 "schema_version": ARM_RESULT_SCHEMA_VERSION,
@@ -1776,6 +2201,23 @@ class PosixCooldownSharedPrefixExecutor:
                 self.max_inflight_opportunity_snapshots
             ),
             pending_supervisors=len(self._pending_supervisors),
+            target_opportunity_count=(
+                0
+                if self._target_opportunities is None
+                else len(self._target_opportunities)
+            ),
+            target_opportunities_matched=len(
+                self._target_opportunity_keys_seen
+            ),
+            opportunities_skipped_outside_target_set=int(
+                self._opportunities_skipped_outside_target_set
+            ),
+            modeled_queue_economics_authorized=(
+                self.modeled_queue_economics_authorized
+            ),
+            exact_owner_baseline_policy_enabled=(
+                self.exact_owner_baseline_policy_enabled
+            ),
         )
 
     def audit(self) -> SharedPrefixExecutionAudit:
@@ -1790,6 +2232,17 @@ class PosixCooldownSharedPrefixExecutor:
         if pool_metrics["active_supervisor_pids"] or pool_metrics["active_arm_pids"]:
             raise SharedPrefixExecutionError(
                 "global child pool was not empty after supervisor drain"
+            )
+        if self._target_opportunities is not None and (
+            self._target_opportunity_keys_seen
+            != set(self._target_opportunities)
+        ):
+            missing = len(
+                set(self._target_opportunities)
+                - self._target_opportunity_keys_seen
+            )
+            raise SharedPrefixExecutionError(
+                f"shared-prefix parent missed {missing} frozen target opportunities"
             )
         return self._audit_snapshot(pool_metrics)
 

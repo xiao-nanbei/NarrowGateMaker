@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -172,14 +174,21 @@ class _RepeatedPolicyEvaluator:
     policy_sha256 = "a" * 64
     predicate_bundle_sha256 = "b" * 64
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        action_id: str = "FIXED_1S",
+        duration_ms: float = 1_000.0,
+    ) -> None:
         self.snapshot_ids: list[str] = []
+        self.action_id = action_id
+        self.duration_ms = duration_ms
 
     def evaluate(self, snapshot, *, baseline_duration_ms: float) -> _Decision:
         self.snapshot_ids.append(str(snapshot.snapshot_id))
         return _Decision(
-            action_id="FIXED_1S",
-            duration_ms=1_000.0,
+            action_id=self.action_id,
+            duration_ms=self.duration_ms,
             fallback_reason="",
             matched_rule_index=0,
             policy_sha256="a" * 64,
@@ -426,6 +435,90 @@ def test_python_replay_executes_eight_arms_from_one_posix_prefix(
     admitted_files = {path.name for path in admissions[0].iterdir()}
     assert len([name for name in admitted_files if name.startswith("arm-")]) == 8
     assert {"manifest.json", "_SUCCESS"} <= admitted_files
+
+
+def test_shared_prefix_preserves_exact_owner_policy_and_modeled_queue_value(
+    tmp_path,
+) -> None:
+    evaluator = _RepeatedPolicyEvaluator(
+        action_id="FIXED_79S",
+        duration_ms=79_000.0,
+    )
+    baseline_params = _params(_emitter())
+    baseline_params["cooldown_duration_policy_evaluator"] = evaluator
+    baseline = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        baseline_params,
+    )
+    target = baseline["_cooldown_duration_opportunity_trace"][0]
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=tmp_path / "labels",
+        target_day="2023-11-14",
+        source_contract_sha256="2" * 64,
+        execution_identity_hashes={
+            "baseline_identity_sha256": "3" * 64,
+            "config_sha256": "4" * 64,
+            "code_sha256": "5" * 64,
+            "model_sha256": "6" * 64,
+            "p3_sha256": "7" * 64,
+            "feature_dag_sha256": "8" * 64,
+            "execution_abi_sha256": "9" * 64,
+        },
+        require_strict_native=False,
+        modeled_queue_economics_authorized=True,
+        exact_owner_policy_sha256="a" * 64,
+        target_opportunities=(
+            {
+                "opportunity_id": "synthetic-opportunity",
+                "exposure_fill_ordinal": int(target["exposure_fill_ordinal"]),
+                "fill_visible_ts_ms": int(target["fill_visible_ts_ms"]),
+                "side": str(target["side"]),
+                "order_id": int(target["order_id"]),
+                "campaign_id": int(target["campaign_id"]),
+                "expected_owner_action": "FIXED_79S",
+                "arm_ids": ("FIXED_79S",),
+            },
+        ),
+    )
+    params = _params(_emitter())
+    params["cooldown_duration_policy_evaluator"] = _RepeatedPolicyEvaluator(
+        action_id="FIXED_79S",
+        duration_ms=79_000.0,
+    )
+    params["cooldown_duration_shared_prefix_executor"] = executor
+
+    result = bt._simulate_tick_with_engine(
+        "python",
+        _trades(),
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        params,
+    )
+
+    audit = result["_cooldown_duration_shared_prefix_audit"]
+    assert audit["target_opportunity_count"] == 1
+    assert audit["target_opportunities_matched"] == 1
+    manifest_path = audit["completed_manifest_paths"][0]
+    manifest = json.loads(Path(manifest_path).read_text(encoding="ascii"))
+    arm_path = (
+        tmp_path
+        / "labels"
+        / "2023-11-14"
+        / manifest["opportunity_identity_sha256"]
+        / "arm-FIXED_79S.json"
+    )
+    payload = json.loads(arm_path.read_text(encoding="ascii"))
+    trace = payload["fork_trace"]
+    assert trace["exact_owner_baseline_policy_enabled"] is True
+    assert trace["exact_owner_action"] == "FIXED_79S"
+    assert trace["exact_owner_policy_sha256"] == "a" * 64
+    assert trace["applied_duration_ms"] == trace["exact_owner_baseline_duration_ms"]
+    assert payload["strict_execution_contract"]["economic_point_label_status"] == (
+        "eligible_modeled_queue_ambiguity_censored"
+    )
 
 
 def test_shared_prefix_parent_stops_at_boundary_but_fork_arms_continue(
