@@ -2902,6 +2902,41 @@ def _validate_sequential_rows(
         raise OfflineReplayAdapterError(str(exc)) from exc
 
 
+def _concat_sequential_day_results(frames: Sequence[pd.DataFrame]) -> pd.DataFrame:
+    if not frames:
+        raise OfflineReplayAdapterError("sequential replay returned no day frames")
+    count_columns = sorted(
+        {
+            column
+            for frame in frames
+            for column in frame.columns
+            if any(column.startswith(prefix) for prefix in nested.REQUIRED_COUNT_PREFIXES)
+        }
+    )
+    normalized: list[pd.DataFrame] = []
+    for frame in frames:
+        if not isinstance(frame, pd.DataFrame) or frame.empty:
+            raise OfflineReplayAdapterError("sequential replay day frame is empty")
+        day = frame.copy()
+        present = [column for column in count_columns if column in day]
+        for column in present:
+            values = pd.to_numeric(day[column], errors="coerce")
+            if (
+                values.isna().any()
+                or (values < 0).any()
+                or values.mod(1).ne(0).any()
+            ):
+                raise OfflineReplayAdapterError(
+                    f"sequential day count {column!r} is invalid"
+                )
+            day[column] = values.astype("int64")
+        for column in count_columns:
+            if column not in day:
+                day[column] = pd.Series(0, index=day.index, dtype="int64")
+        normalized.append(day)
+    return pd.concat(normalized, axis=0, ignore_index=True)
+
+
 def _cache_key(
     *,
     adapter_artifact_sha256: str,
@@ -3643,7 +3678,7 @@ class _CanonicalOfflineReplayAdapter:
                 options.cache.admit_sequential(job.cache_key, day_result)
                 options.cache.write_progress(job.cache_key, state="complete")
                 collected.append(day_result)
-        result_rows = pd.concat(collected, axis=0, ignore_index=True)
+        result_rows = _concat_sequential_day_results(collected)
         result_rows["sequential_batch_receipt_sha256"] = receipt["receipt_sha256"]
         result_rows["execution_manifest_sha256"] = (
             request.bindings.execution_manifest_sha256

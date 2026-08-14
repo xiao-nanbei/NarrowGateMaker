@@ -697,6 +697,60 @@ def test_sequential_result_rejects_forbidden_economic_shortcuts(
         adapter_module._validate_sequential_rows(request, result)
 
 
+def test_sequential_day_concat_fills_only_structurally_absent_count_categories() -> None:
+    left = pd.DataFrame(
+        {
+            "policy_assignment_count": (2,),
+            "action_count::CONTROL_85N": (2,),
+            "role_count::add": (2,),
+            "consecutive_units_count::1": (2,),
+            "fallback_count::none": (2,),
+        }
+    )
+    right = pd.DataFrame(
+        {
+            "policy_assignment_count": (3,),
+            "action_count::FIXED_166S": (3,),
+            "role_count::opener": (3,),
+            "consecutive_units_count::6": (3,),
+            "fallback_count::none": (3,),
+        }
+    )
+
+    combined = adapter_module._concat_sequential_day_results((left, right))
+
+    assert combined["consecutive_units_count::1"].tolist() == [2, 0]
+    assert combined["consecutive_units_count::6"].tolist() == [0, 3]
+    assert combined["action_count::CONTROL_85N"].tolist() == [2, 0]
+    assert combined["action_count::FIXED_166S"].tolist() == [0, 3]
+    assert all(
+        pd.api.types.is_integer_dtype(combined[column])
+        for column in combined
+        if any(
+            column.startswith(prefix)
+            for prefix in nested.REQUIRED_COUNT_PREFIXES
+        )
+    )
+
+
+@pytest.mark.parametrize("bad_value", (np.nan, -1, 1.5))
+def test_sequential_day_concat_rejects_malformed_existing_count(
+    bad_value: float,
+) -> None:
+    frame = pd.DataFrame(
+        {
+            "policy_assignment_count": (1,),
+            "action_count::CONTROL_85N": (1,),
+            "role_count::add": (1,),
+            "consecutive_units_count::6": (bad_value,),
+            "fallback_count::none": (1,),
+        }
+    )
+
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="day count"):
+        adapter_module._concat_sequential_day_results((frame,))
+
+
 def test_day_cache_key_isolated_by_fold_candidate_stage_and_day_input() -> None:
     base = _cache_key()
     variants = (
