@@ -620,6 +620,43 @@ def test_outer_test_rows_are_rejected_before_mechanics_fallback() -> None:
         )
 
 
+def test_outer_train_validation_accepts_only_a_purged_subset_of_nominal_days() -> None:
+    rows = _common_replay_inputs()
+
+    validated = adapter_module._validate_replay_input_frame(
+        rows,
+        bindings=_bindings(),
+        replay_input_sha256=adapter_module._frame_sha256(rows),
+        side="SELL",
+        days=(DAY, "2026-07-02"),
+        allow_purged_day_subset=True,
+    )
+
+    assert set(validated["utc_day"]) == {DAY}
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="day scope"):
+        adapter_module._validate_replay_input_frame(
+            rows,
+            bindings=_bindings(),
+            replay_input_sha256=adapter_module._frame_sha256(rows),
+            side="SELL",
+            days=(DAY, "2026-07-02"),
+        )
+
+
+def test_outer_train_purged_subset_cannot_escape_nominal_days() -> None:
+    rows = _common_replay_inputs(days=("2026-07-03",))
+
+    with pytest.raises(adapter_module.OfflineReplayAdapterError, match="day scope"):
+        adapter_module._validate_replay_input_frame(
+            rows,
+            bindings=_bindings(),
+            replay_input_sha256=adapter_module._frame_sha256(rows),
+            side="SELL",
+            days=(DAY, "2026-07-02"),
+            allow_purged_day_subset=True,
+        )
+
+
 def test_current_replay_schema_fails_closed_and_names_d_plus_one_fields() -> None:
     rows = _common_replay_inputs()
     rows["outer_fold_id"] = "outer1"

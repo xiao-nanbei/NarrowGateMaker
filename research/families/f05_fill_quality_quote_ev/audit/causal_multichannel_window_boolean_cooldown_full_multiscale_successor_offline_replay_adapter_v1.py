@@ -2557,6 +2557,7 @@ def _validate_replay_input_frame(
     replay_input_sha256: str,
     side: str,
     days: Sequence[str],
+    allow_purged_day_subset: bool = False,
 ) -> pd.DataFrame:
     if not isinstance(replay_inputs, pd.DataFrame) or replay_inputs.empty:
         raise OfflineReplayAdapterError("replay inputs must be a non-empty DataFrame")
@@ -2580,7 +2581,13 @@ def _validate_replay_input_frame(
         raise OfflineReplayAdapterError("replay input opportunity identity drifted")
     rows["utc_day"] = rows["utc_day"].map(_normalize_day)
     expected_days = tuple(_normalize_day(day) for day in days)
-    if not expected_days or set(rows["utc_day"]) != set(expected_days):
+    observed_days = set(rows["utc_day"])
+    expected_day_set = set(expected_days)
+    if (
+        not expected_days
+        or not observed_days <= expected_day_set
+        or (not allow_purged_day_subset and observed_days != expected_day_set)
+    ):
         raise OfflineReplayAdapterError("replay input day scope drifted")
     rows["side"] = rows["side"].map(_normalize_side)
     if set(rows["side"]) != {_normalize_side(side)}:
@@ -3405,6 +3412,7 @@ class _CanonicalOfflineReplayAdapter:
             replay_input_sha256=request.replay_input_sha256,
             side=side,
             days=label.train_days,
+            allow_purged_day_subset=True,
         )
         if tuple(str(value) for value in rows.index) != tuple(label.row_ids):
             raise OfflineReplayAdapterError("one-shot replay rows escaped the purged request")
