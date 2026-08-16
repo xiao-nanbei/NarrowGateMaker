@@ -54,6 +54,36 @@ def _executor(output_root: Path) -> PosixCooldownSharedPrefixExecutor:
     )
 
 
+def test_executor_accepts_a_single_bounded_inflight_supervisor(tmp_path: Path) -> None:
+    executor = PosixCooldownSharedPrefixExecutor(
+        output_root=tmp_path,
+        target_day=TARGET_DAY,
+        source_contract_sha256="8" * 64,
+        execution_identity_hashes=_identity_hashes(),
+        max_parallel_arms=9,
+        max_inflight_opportunity_snapshots=1,
+        require_strict_native=True,
+    )
+    assert executor.max_inflight_opportunity_snapshots == 1
+
+
+@pytest.mark.parametrize("value", [0, -1, True])
+def test_executor_rejects_invalid_inflight_supervisor_limits(
+    tmp_path: Path,
+    value: object,
+) -> None:
+    with pytest.raises(SharedPrefixExecutionError, match="bounded POSIX range"):
+        PosixCooldownSharedPrefixExecutor(
+            output_root=tmp_path,
+            target_day=TARGET_DAY,
+            source_contract_sha256="8" * 64,
+            execution_identity_hashes=_identity_hashes(),
+            max_parallel_arms=9,
+            max_inflight_opportunity_snapshots=value,  # type: ignore[arg-type]
+            require_strict_native=True,
+        )
+
+
 def _target_contract(
     opportunity: Mapping[str, object],
     *,

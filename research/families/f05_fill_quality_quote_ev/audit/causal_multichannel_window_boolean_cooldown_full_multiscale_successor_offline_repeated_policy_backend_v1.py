@@ -882,6 +882,10 @@ def _preflight_adapter(
             "continuous_comparator_bound": nested.CONTINUOUS_COMPARATOR,
             "global_worker_tokens": orchestrator.EXECUTOR_GLOBAL_WORKER_TOKENS,
             "mmap_acceleration_bound": True,
+            "one_shot_topology": dict(orchestrator.EXECUTOR_ONE_SHOT_TOPOLOGY),
+            "day_input_materialization_workers": (
+                orchestrator.EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS
+            ),
             "economic_outcomes_read": False,
         }
         for field, expected in expected_walk.items():
@@ -915,6 +919,18 @@ def _load_canonical_replay_adapter(
     if not isinstance(acceleration_type, type):
         raise OfflineRepeatedPolicyBackendError(
             "fixed replay adapter acceleration contract is unavailable"
+        )
+    topology_type = getattr(module, "OneShotProcessTopology", None)
+    if (
+        getattr(module, "EXECUTOR_ACCELERATION_IDENTITY", None)
+        != orchestrator.EXECUTOR_ACCELERATION_IDENTITY
+        or not isinstance(topology_type, type)
+        or topology_type().payload() != orchestrator.EXECUTOR_ONE_SHOT_TOPOLOGY
+        or getattr(module, "DAY_INPUT_MATERIALIZATION_WORKERS", None)
+        != orchestrator.EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS
+    ):
+        raise OfflineRepeatedPolicyBackendError(
+            "fixed replay adapter one-shot acceleration contract drifted"
         )
     mmap = executor.get("day_input_mmap")
     if not isinstance(mmap, Mapping):

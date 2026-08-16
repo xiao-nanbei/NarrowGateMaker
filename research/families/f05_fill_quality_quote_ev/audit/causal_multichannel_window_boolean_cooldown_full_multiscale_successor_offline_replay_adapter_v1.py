@@ -87,7 +87,14 @@ MAX_DAY_WORKERS = 8
 GLOBAL_SEQUENTIAL_WORKER_TOKENS = 10
 DEFAULT_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
 MAX_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
-FORMAL_SHARED_PREFIX_ARM_WORKERS = 8
+ONE_SHOT_DAY_PARENT_WORKERS = 1
+ONE_SHOT_SUPERVISOR_WORKERS = 2
+FORMAL_SHARED_PREFIX_ARM_WORKERS = 9
+DAY_INPUT_MATERIALIZATION_WORKERS = 2
+ONE_SHOT_TOTAL_WORKER_TOKENS = (
+    ONE_SHOT_DAY_PARENT_WORKERS
+    + FORMAL_SHARED_PREFIX_ARM_WORKERS
+)
 REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-06-29",
     "2026-07-03",
@@ -100,13 +107,14 @@ DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
 EXECUTOR_ACCELERATION_IDENTITY = (
-    "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_executor_acceleration_v1"
+    "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 )
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{EXECUTOR_ACCELERATION_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
 SEQUENTIAL_STAGES = frozenset({"inner_oof", "outer_oof"})
 _ONE_SHOT_FOLD_SCOPE_COLUMNS = frozenset({"fold_row_role", "outer_fold_id"})
 _GLOBAL_POLICY_DAY_WORKER_ENV = "NARROWGATE_F05_GLOBAL_POLICY_DAY_WORKER"
+_GLOBAL_ONE_SHOT_DAY_WORKER_ENV = "NARROWGATE_F05_GLOBAL_ONE_SHOT_DAY_WORKER"
 
 FIXED_ONE_SHOT_REPLAY_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
@@ -723,6 +731,77 @@ class B0ControlPath:
     campaigns: pd.DataFrame
     fills: pd.DataFrame
     decisions: pd.DataFrame
+
+
+@dataclass(frozen=True, slots=True)
+class OneShotProcessTopology:
+    """One global process budget for the POSIX shared-prefix one-shot stage."""
+
+    total_worker_tokens: int = ONE_SHOT_TOTAL_WORKER_TOKENS
+    day_parent_workers: int = ONE_SHOT_DAY_PARENT_WORKERS
+    supervisor_workers: int = ONE_SHOT_SUPERVISOR_WORKERS
+    arm_workers: int = FORMAL_SHARED_PREFIX_ARM_WORKERS
+
+    def __post_init__(self) -> None:
+        values = (
+            self.total_worker_tokens,
+            self.day_parent_workers,
+            self.supervisor_workers,
+            self.arm_workers,
+        )
+        if any(isinstance(value, bool) or int(value) <= 0 for value in values):
+            raise OfflineReplayAdapterError("one-shot process topology must be positive")
+        if int(self.total_worker_tokens) != GLOBAL_SEQUENTIAL_WORKER_TOKENS:
+            raise OfflineReplayAdapterError("one-shot topology escaped the ten-token contract")
+        if int(self.day_parent_workers) != ONE_SHOT_DAY_PARENT_WORKERS:
+            raise OfflineReplayAdapterError("one-shot day-parent topology drifted")
+        if int(self.supervisor_workers) != ONE_SHOT_SUPERVISOR_WORKERS:
+            raise OfflineReplayAdapterError("one-shot supervisor topology drifted")
+        if int(self.arm_workers) != FORMAL_SHARED_PREFIX_ARM_WORKERS:
+            raise OfflineReplayAdapterError("one-shot arm topology drifted")
+        if int(self.day_parent_workers) + int(self.arm_workers) != int(
+            self.total_worker_tokens
+        ):
+            raise OfflineReplayAdapterError("one-shot CPU topology oversubscribes tokens")
+
+    def payload(self) -> dict[str, int | bool]:
+        return {
+            "total_worker_tokens": int(self.total_worker_tokens),
+            "day_parent_workers": int(self.day_parent_workers),
+            "supervisor_workers": int(self.supervisor_workers),
+            "arm_workers": int(self.arm_workers),
+            "nested_process_pool": False,
+            "shared_prefix_posix_fork": True,
+            "supervisors_are_coordination_only": True,
+        }
+
+
+def _one_shot_topology_from_payload(value: Any) -> OneShotProcessTopology:
+    if not isinstance(value, Mapping):
+        raise OfflineReplayAdapterError("one-shot process topology is missing")
+    expected = {
+        "total_worker_tokens",
+        "day_parent_workers",
+        "supervisor_workers",
+        "arm_workers",
+        "nested_process_pool",
+        "shared_prefix_posix_fork",
+        "supervisors_are_coordination_only",
+    }
+    if set(value) != expected:
+        raise OfflineReplayAdapterError("one-shot process topology schema drifted")
+    if (
+        value["nested_process_pool"] is not False
+        or value["shared_prefix_posix_fork"] is not True
+        or value["supervisors_are_coordination_only"] is not True
+    ):
+        raise OfflineReplayAdapterError("one-shot process topology semantics drifted")
+    return OneShotProcessTopology(
+        total_worker_tokens=value["total_worker_tokens"],
+        day_parent_workers=value["day_parent_workers"],
+        supervisor_workers=value["supervisor_workers"],
+        arm_workers=value["arm_workers"],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2506,6 +2585,7 @@ def _validate_shared_prefix_day_audit(
     target_count: int,
     arms_per_target: int,
     modeled_queue_economics_authorized: bool,
+    topology: OneShotProcessTopology | None = None,
 ) -> None:
     dispatched = int(audit.get("opportunities_dispatched", -1))
     resumed = int(audit.get("opportunities_resumed", -1))
@@ -2523,10 +2603,21 @@ def _validate_shared_prefix_day_audit(
         or audit.get("exact_owner_baseline_policy_enabled") is not True
     ):
         raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
+    if topology is not None and (
+        int(audit.get("max_parallel_arms", -1)) != topology.arm_workers
+        or int(audit.get("max_inflight_opportunity_snapshots", -1))
+        != topology.supervisor_workers
+        or int(audit.get("peak_concurrent_arms", -1)) > topology.arm_workers
+        or int(audit.get("peak_concurrent_supervisors", -1))
+        > topology.supervisor_workers
+    ):
+        raise OfflineReplayAdapterError("shared-prefix process topology drifted")
 
 
 def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
-    request, replay = _canonical_day_projection(job)
+    topology = _one_shot_topology_from_payload(job.payload.get("one_shot_topology"))
+    if os.environ.get(_GLOBAL_ONE_SHOT_DAY_WORKER_ENV) != "1":
+        raise OfflineReplayAdapterError("one-shot day escaped its global worker pool")
     study = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)
     backtest = importlib.import_module(FIXED_BACKTEST_MODULE)
     rows = job.payload["replay_inputs"]
@@ -2534,7 +2625,6 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     side = _normalize_side(_unique_column_value(rows, "side"))
     if tuple(duration_vocabulary(side)) != vocabulary:
         raise OfflineReplayAdapterError("fixed duration action vocabulary drifted")
-    identity_hashes = _day_identity_hashes(request)
     cache = DayReplayCache(Path(job.payload["cache_root"]))
     targets = _shared_prefix_target_contracts(rows, arm_ids=vocabulary)
     completed = 0
@@ -2553,81 +2643,90 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
             },
         )
 
-    executor = shared_prefix.PosixCooldownSharedPrefixExecutor(
-        output_root=cache.opportunity_root(job.cache_key),
-        target_day=job.utc_day,
-        source_contract_sha256=job.cache_key.cache_key_sha256,
-        execution_identity_hashes=identity_hashes,
-        max_parallel_arms=FORMAL_SHARED_PREFIX_ARM_WORKERS,
-        require_strict_native=False,
-        modeled_queue_economics_authorized=True,
-        exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
-        target_opportunities=targets,
-        global_pool_root=cache.global_arm_pool,
-        recover_interrupted_staging=True,
-        progress=report_progress,
-    )
-    params = study._prepare_base_params(
-        _exact_owner_runtime_params(
-            request,
-            replay,
-            utc_day=job.utc_day,
-            identity_hashes=identity_hashes,
-        ),
-        trace_opportunities=False,
-    )
-    params["cooldown_duration_shared_prefix_executor"] = executor
-    params["cooldown_duration_parent_stop_ts_ms"] = int(
-        (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1_000
-    )
-    params["exchange_book_queue_ambiguity_trace_max"] = 64
-    cache.write_progress(
-        job.cache_key,
-        state="running",
-        counters={
-            "total_opportunities": len(targets),
-            "completed_opportunities": 0,
-            "total_arms": len(targets) * len(vocabulary),
-            "completed_arms": 0,
-        },
-    )
-    started = time.perf_counter()
-    try:
-        result = backtest._simulate_tick_with_engine(
-            "python",
-            replay.trades,
-            replay.var_ts_ms,
-            replay.var_ssq,
-            params,
-            ml_data=replay.ml_data,
-            bbo_data=replay.bbo_data,
-            l2_data=replay.l2_data,
-            var_ti=replay.var_ti,
-            var_retsq=replay.var_retsq,
+    with _canonical_day_projection_context(job) as (request, replay, mmap_evidence):
+        if mmap_evidence is None or mmap_evidence.get("read_only_mmap") is not True:
+            raise OfflineReplayAdapterError("formal one-shot day did not open read-only mmap")
+        identity_hashes = _day_identity_hashes(request)
+        executor = shared_prefix.PosixCooldownSharedPrefixExecutor(
+            output_root=cache.opportunity_root(job.cache_key),
+            target_day=job.utc_day,
+            source_contract_sha256=job.cache_key.cache_key_sha256,
+            execution_identity_hashes=identity_hashes,
+            max_parallel_arms=topology.arm_workers,
+            max_inflight_opportunity_snapshots=topology.supervisor_workers,
+            require_strict_native=False,
+            modeled_queue_economics_authorized=True,
+            exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+            target_opportunities=targets,
+            global_pool_root=cache.global_arm_pool,
+            recover_interrupted_staging=True,
+            progress=report_progress,
         )
-    except BaseException:
-        executor.abort()
-        raise
-    audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
-    _validate_shared_prefix_day_audit(
-        audit,
-        target_count=len(targets),
-        arms_per_target=len(vocabulary),
-        modeled_queue_economics_authorized=True,
-    )
-    outcomes, supported, evidence = _collect_shared_prefix_day_frames(
-        rows=rows,
-        vocabulary=vocabulary,
-        manifest_paths=tuple(audit["completed_manifest_paths"]),
-    )
-    evidence.update(
-        {
-            "day_wall_time_s": time.perf_counter() - started,
-            "resumed_opportunity_count": int(audit["opportunities_resumed"]),
-            "new_opportunity_count": int(audit["opportunities_dispatched"]),
-            "max_parallel_arms": int(audit["max_parallel_arms"]),
-        }
-    )
+        params = study._prepare_base_params(
+            _exact_owner_runtime_params(
+                request,
+                replay,
+                utc_day=job.utc_day,
+                identity_hashes=identity_hashes,
+            ),
+            trace_opportunities=False,
+        )
+        params["cooldown_duration_shared_prefix_executor"] = executor
+        params["cooldown_duration_parent_stop_ts_ms"] = int(
+            (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
+            * 1_000
+        )
+        params["exchange_book_queue_ambiguity_trace_max"] = 64
+        cache.write_progress(
+            job.cache_key,
+            state="running",
+            counters={
+                "total_opportunities": len(targets),
+                "completed_opportunities": 0,
+                "total_arms": len(targets) * len(vocabulary),
+                "completed_arms": 0,
+            },
+        )
+        started = time.perf_counter()
+        try:
+            result = backtest._simulate_tick_with_engine(
+                "python",
+                replay.trades,
+                replay.var_ts_ms,
+                replay.var_ssq,
+                params,
+                ml_data=replay.ml_data,
+                bbo_data=replay.bbo_data,
+                l2_data=replay.l2_data,
+                var_ti=replay.var_ti,
+                var_retsq=replay.var_retsq,
+            )
+        except BaseException:
+            executor.abort()
+            raise
+        audit = dict(result.get("_cooldown_duration_shared_prefix_audit") or {})
+        _validate_shared_prefix_day_audit(
+            audit,
+            target_count=len(targets),
+            arms_per_target=len(vocabulary),
+            modeled_queue_economics_authorized=True,
+            topology=topology,
+        )
+        outcomes, supported, evidence = _collect_shared_prefix_day_frames(
+            rows=rows,
+            vocabulary=vocabulary,
+            manifest_paths=tuple(audit["completed_manifest_paths"]),
+        )
+        evidence.update(
+            {
+                "day_wall_time_s": time.perf_counter() - started,
+                "resumed_opportunity_count": int(audit["opportunities_resumed"]),
+                "new_opportunity_count": int(audit["opportunities_dispatched"]),
+                "max_parallel_arms": int(audit["max_parallel_arms"]),
+                "one_shot_topology": topology.payload(),
+                "day_input_mmap": dict(mmap_evidence),
+            }
+        )
     return _DayReplayJobResult(
         utc_day=job.utc_day,
         cache_key_sha256=job.cache_key.cache_key_sha256,
@@ -3452,6 +3551,10 @@ def _mark_global_policy_day_worker() -> None:
     os.environ[_GLOBAL_POLICY_DAY_WORKER_ENV] = "1"
 
 
+def _mark_global_one_shot_day_worker() -> None:
+    os.environ[_GLOBAL_ONE_SHOT_DAY_WORKER_ENV] = "1"
+
+
 def _global_policy_day_execution_key(job: _DayReplayJob) -> tuple[str, ...]:
     return (
         job.utc_day,
@@ -3505,6 +3608,39 @@ def run_global_policy_day_jobs(
         raise OfflineReplayAdapterError("global policy-day worker result drifted")
     contract_order = sorted(execution_order, key=_global_policy_day_result_key)
     return tuple(result_by_key[job.cache_key.cache_key_sha256] for job in contract_order)
+
+
+def run_global_one_shot_day_jobs(
+    jobs: Sequence[_DayReplayJob],
+    *,
+    total_worker_tokens: int = ONE_SHOT_TOTAL_WORKER_TOKENS,
+) -> tuple[_DayReplayJobResult, ...]:
+    """Run one-shot days through one active parent and nine global arm slots."""
+
+    if os.environ.get(_GLOBAL_ONE_SHOT_DAY_WORKER_ENV) == "1":
+        raise OfflineReplayAdapterError("nested global one-shot pools are forbidden")
+    topology = OneShotProcessTopology(total_worker_tokens=total_worker_tokens)
+    ordered = tuple(sorted(jobs, key=_global_policy_day_execution_key))
+    if any(job.kind != "one_shot" for job in ordered):
+        raise OfflineReplayAdapterError("global one-shot scheduling accepts one-shot jobs only")
+    keys = tuple(job.cache_key.cache_key_sha256 for job in ordered)
+    if len(set(keys)) != len(keys):
+        raise OfflineReplayAdapterError("global one-shot cache keys are duplicated")
+    for job in ordered:
+        observed = _one_shot_topology_from_payload(job.payload.get("one_shot_topology"))
+        if observed != topology or "day_input_mmap_binding" not in job.payload:
+            raise OfflineReplayAdapterError("global one-shot job escaped frozen acceleration")
+    if not ordered:
+        return ()
+    with ProcessPoolExecutor(
+        max_workers=topology.day_parent_workers,
+        initializer=_mark_global_one_shot_day_worker,
+    ) as pool:
+        executed = tuple(pool.map(_execute_fixed_day_job, ordered, chunksize=1))
+    result_by_key = {result.cache_key_sha256: result for result in executed}
+    if set(result_by_key) != set(keys):
+        raise OfflineReplayAdapterError("global one-shot worker result drifted")
+    return tuple(result_by_key[key] for key in keys)
 
 
 def _run_global_b0_control_jobs(
@@ -4393,26 +4529,22 @@ def _build_bulk_b0_and_candidate_phases(
     )
 
 
-def _bind_bulk_day_input_mmaps(
-    prepared: Sequence[_PreparedSequentialReplay],
+def _bind_day_jobs_to_input_mmaps(
+    jobs: Sequence[_DayReplayJob],
     *,
+    cache: DayReplayCache,
     acceleration: SequentialReplayAccelerationOptions,
     total_worker_tokens: int,
-) -> tuple[_PreparedSequentialReplay, ...]:
+) -> tuple[_DayReplayJob, ...]:
     """Cold-build or warm-open one mmap bundle per immutable day input."""
 
-    if not prepared:
+    if not jobs:
         raise OfflineReplayAdapterError("day-input mmap batch is empty")
-    cache_roots = {str(item.options.cache.root) for item in prepared}
-    if len(cache_roots) != 1:
-        raise OfflineReplayAdapterError("day-input mmap batch must use one governed replay cache")
-    cache = prepared[0].options.cache
     representative_by_key: dict[str, _DayReplayJob] = {}
     contracts: dict[str, DayInputMmapBinding] = {}
-    for item in prepared:
-        for job in item.jobs:
-            materialization_key = _day_input_materialization_key(job, acceleration)
-            representative_by_key.setdefault(materialization_key, job)
+    for job in jobs:
+        materialization_key = _day_input_materialization_key(job, acceleration)
+        representative_by_key.setdefault(materialization_key, job)
     cold_representatives: dict[str, _DayReplayJob] = {}
     for materialization_key, representative in sorted(representative_by_key.items()):
         cached = cache.load_day_input_mmap_binding(
@@ -4453,7 +4585,7 @@ def _bind_bulk_day_input_mmaps(
 
     results = _run_global_day_input_materialization_jobs(
         materialization_jobs,
-        total_worker_tokens=total_worker_tokens,
+        total_worker_tokens=min(total_worker_tokens, DAY_INPUT_MATERIALIZATION_WORKERS),
     )
     for result in results:
         evidence = result.evidence
@@ -4468,27 +4600,52 @@ def _bind_bulk_day_input_mmaps(
         )
 
     expected_keys = {
-        _day_input_materialization_key(job, acceleration) for item in prepared for job in item.jobs
+        _day_input_materialization_key(job, acceleration) for job in jobs
     }
     if set(contracts) != expected_keys:
         raise OfflineReplayAdapterError("day-input mmap binding census drifted")
 
-    rebound: list[_PreparedSequentialReplay] = []
-    for item in prepared:
-        jobs = tuple(
-            replace(
-                job,
-                payload={
-                    **dict(job.payload),
-                    "day_input_mmap_binding": contracts[
-                        _day_input_materialization_key(job, acceleration)
-                    ].payload(),
-                },
-            )
-            for job in item.jobs
+    return tuple(
+        replace(
+            job,
+            payload={
+                **dict(job.payload),
+                "day_input_mmap_binding": contracts[
+                    _day_input_materialization_key(job, acceleration)
+                ].payload(),
+            },
         )
-        rebound.append(replace(item, jobs=jobs))
-    return tuple(rebound)
+        for job in jobs
+    )
+
+
+def _bind_bulk_day_input_mmaps(
+    prepared: Sequence[_PreparedSequentialReplay],
+    *,
+    acceleration: SequentialReplayAccelerationOptions,
+    total_worker_tokens: int,
+) -> tuple[_PreparedSequentialReplay, ...]:
+    """Bind every dependency-ready sequential job to a verified mmap bundle."""
+
+    if not prepared:
+        raise OfflineReplayAdapterError("day-input mmap batch is empty")
+    cache_roots = {str(item.options.cache.root) for item in prepared}
+    if len(cache_roots) != 1:
+        raise OfflineReplayAdapterError("day-input mmap batch must use one governed replay cache")
+    rebound_jobs = _bind_day_jobs_to_input_mmaps(
+        tuple(job for item in prepared for job in item.jobs),
+        cache=prepared[0].options.cache,
+        acceleration=acceleration,
+        total_worker_tokens=total_worker_tokens,
+    )
+    by_key = {job.cache_key.cache_key_sha256: job for job in rebound_jobs}
+    return tuple(
+        replace(
+            item,
+            jobs=tuple(by_key[job.cache_key.cache_key_sha256] for job in item.jobs),
+        )
+        for item in prepared
+    )
 
 
 def _mark_prepared_jobs(
@@ -4700,6 +4857,13 @@ class _CanonicalOfflineReplayAdapter:
             "continuous_comparator_bound": continuous.name,
             "global_worker_tokens": self._global_worker_tokens,
             "mmap_acceleration_bound": self._acceleration is not None,
+            "one_shot_topology": OneShotProcessTopology(
+                total_worker_tokens=self._global_worker_tokens
+            ).payload(),
+            "day_input_materialization_workers": min(
+                self._global_worker_tokens,
+                DAY_INPUT_MATERIALIZATION_WORKERS,
+            ),
             "economic_outcomes_read": False,
         }
 
@@ -5095,6 +5259,7 @@ class _CanonicalOfflineReplayAdapter:
         collected_supported: list[pd.DataFrame] = []
         jobs: list[_DayReplayJob] = []
         semantic_by_cache_key: dict[str, OneShotSemanticCacheKey] = {}
+        topology = OneShotProcessTopology(total_worker_tokens=self._global_worker_tokens)
         for day in sorted(set(rows["utc_day"])):
             day_rows = rows.loc[rows["utc_day"] == day].copy()
             key = _cache_key(
@@ -5170,14 +5335,30 @@ class _CanonicalOfflineReplayAdapter:
                         "cache_root": str(options.cache.root),
                         "replay_inputs": day_rows,
                         "duration_vocabulary": label.duration_vocabulary,
+                        "one_shot_topology": topology.payload(),
                     },
                 )
             )
         if jobs:
-            for job in jobs:
-                options.cache.write_progress(job.cache_key, state="running")
             try:
-                results = _run_day_jobs(jobs, workers=options.workers)
+                if self._acceleration is None:
+                    raise OfflineReplayAdapterError(
+                        "formal one-shot execution requires read-only mmap acceleration"
+                    )
+                jobs = list(
+                    _bind_day_jobs_to_input_mmaps(
+                        jobs,
+                        cache=options.cache,
+                        acceleration=self._acceleration,
+                        total_worker_tokens=self._global_worker_tokens,
+                    )
+                )
+                for job in jobs:
+                    options.cache.write_progress(job.cache_key, state="running")
+                results = run_global_one_shot_day_jobs(
+                    jobs,
+                    total_worker_tokens=self._global_worker_tokens,
+                )
             except BaseException as exc:
                 for job in jobs:
                     options.cache.write_progress(
@@ -5451,6 +5632,7 @@ __all__ = [
     "B0_CONTROL_CACHE_SCHEMA",
     "B0ControlCacheKey",
     "B0ControlPath",
+    "DAY_INPUT_MATERIALIZATION_WORKERS",
     "DAY_CACHE_SCHEMA",
     "DEFAULT_DAY_WORKERS",
     "DEFAULT_GLOBAL_POLICY_DAY_WORKERS",
@@ -5467,9 +5649,14 @@ __all__ = [
     "MIN_DAY_WORKERS",
     "OfflineReplayAdapterError",
     "OfflineReplayAdapterMechanicsMissing",
+    "OneShotProcessTopology",
+    "ONE_SHOT_DAY_PARENT_WORKERS",
+    "ONE_SHOT_SUPERVISOR_WORKERS",
+    "ONE_SHOT_TOTAL_WORKER_TOKENS",
     "REQUIRED_ADDITIONAL_CONTEXT_DAYS",
     "SequentialReplayAccelerationOptions",
     "SequentialPolicyDayBatchItem",
     "build_canonical_replay_adapter",
+    "run_global_one_shot_day_jobs",
     "run_global_policy_day_jobs",
 ]

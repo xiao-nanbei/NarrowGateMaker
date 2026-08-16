@@ -1,0 +1,73 @@
+{
+  "action_authorized": false,
+  "artifact_sha256": {
+    "day_input_cache": "a7c53e4aefa7dbab7b07bd1ac482b3c9f5559f1806594b86a524df19974e51c8",
+    "orchestrator": "891e09fef9633a0378458f316b8cc8676faf973a6d0d03ed50dd2ae1e5848f98",
+    "repeated_policy_backend": "a956226bfcc24111588e6e19c0b54e9e8b6444298e29f37e0525c1df78466d59",
+    "replay_adapter": "42bf38e2c763377b223344837ddb9ac82eba1479973d58d7ac4c1532f4248653",
+    "shared_prefix_executor": "8de7984af71b8385d28ae0bf90ddf27c8250ea8ac117c71a34e2cfe29c84c558"
+  },
+  "candidate_or_estimand_changed": false,
+  "cold_day_input_materialization": {
+    "maximum_concurrent_workers": 2,
+    "required_before_one_shot_dispatch": true
+  },
+  "economic_outcomes_read": false,
+  "formal_successor": "formal_v19",
+  "identity": "f05_full_multiscale_offline_replay_executor_acceleration_v2",
+  "immutable_day_input_cache": {
+    "candidate_or_strategy_outputs_allowed": false,
+    "content_addressed": true,
+    "governed_replay_dag_root_required": true,
+    "namespace": "f05_full_multiscale_offline_day_input_mmap_v2",
+    "open_mode": "read_only_mmap"
+  },
+  "live_authorized": false,
+  "live_runtime_changed": false,
+  "one_shot_scheduler": {
+    "arm_workers": 9,
+    "cpu_token_formula": "day_parent_workers + arm_workers",
+    "day_parent_workers": 1,
+    "global_cpu_tokens": 10,
+    "nested_process_pool": false,
+    "shared_prefix_posix_fork": true,
+    "supervisor_workers": 2,
+    "supervisors_are_coordination_only": true
+  },
+  "permissions": {
+    "action_authorized": false,
+    "live_authorized": false,
+    "sealed_holdout_read": false,
+    "validation_read": false
+  },
+  "predecessor": {
+    "formal_execution": "formal_v18",
+    "identity": "f05_full_multiscale_offline_replay_executor_acceleration_v1",
+    "interruption_reason": "owner_requested_one_shot_scheduler_and_mmap_correction",
+    "one_shot_arm_receipts_completed": 4072,
+    "one_shot_opportunity_receipts_completed": 509,
+    "result_admitted": false,
+    "strategy_dependent_cache_reuse_allowed": false
+  },
+  "required_gates": {
+    "all_fold_zero_economic_contract_walk": true,
+    "annotated_tag": true,
+    "clean_commit": true,
+    "fixed_one_day_exact_owner_mechanics": true,
+    "formal_execution_manifest_binding": true,
+    "manifest_and_cache_hash_validation": true
+  },
+  "schema_version": "f05_full_multiscale_offline_replay_executor_acceleration_v2.contract.v1",
+  "sealed_holdout_read": false,
+  "status": "implemented_local_zero_economic_preflight_pending",
+  "validation_read": false,
+  "verification": {
+    "cache_lru_targeted_tests_passed": 46,
+    "full_repository_tests_passed": 3211,
+    "full_repository_tests_skipped": 317,
+    "ruff_targeted_passed": true,
+    "scheduler_backend_targeted_tests_passed": 174,
+    "successor_tests_passed": 340,
+    "targeted_tests_total": 220
+  }
+}

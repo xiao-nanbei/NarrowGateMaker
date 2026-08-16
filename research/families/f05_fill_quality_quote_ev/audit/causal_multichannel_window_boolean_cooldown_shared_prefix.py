@@ -2,7 +2,7 @@
 
 The Python replay reaches one strategy-visible exposure fill exactly once and
 forks a bounded supervisor that retains that exact copy-on-write frame.  The
-baseline parent keeps replaying while supervisors share a global two-arm POSIX
+baseline parent keeps replaying while supervisors share one bounded POSIX arm
 token pool.  Every arm therefore inherits the same market, book, order,
 inventory, campaign, cooldown, and EMA state without replaying the prefix or
 serializing the monolithic simulator frame.
@@ -43,7 +43,7 @@ OPPORTUNITY_MANIFEST_SCHEMA_VERSION = (
 )
 SUPERVISOR_ERROR_SCHEMA_VERSION = f"{SCHEMA_VERSION}.supervisor_error.v1"
 DEFAULT_GLOBAL_ARM_PROCESSES = 2
-MAX_GLOBAL_ARM_PROCESSES = 8
+MAX_GLOBAL_ARM_PROCESSES = 10
 MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS = 4
 _POOL_POLL_INTERVAL_S = 0.01
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -249,6 +249,7 @@ class PosixCooldownSharedPrefixExecutor:
         source_contract_sha256: str,
         execution_identity_hashes: Mapping[str, str],
         max_parallel_arms: int = DEFAULT_GLOBAL_ARM_PROCESSES,
+        max_inflight_opportunity_snapshots: int = MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS,
         max_opportunities: int | None = None,
         require_strict_native: bool = True,
         modeled_queue_economics_authorized: bool = False,
@@ -263,6 +264,15 @@ class PosixCooldownSharedPrefixExecutor:
         if not 1 <= int(max_parallel_arms) <= MAX_GLOBAL_ARM_PROCESSES:
             raise SharedPrefixExecutionError(
                 "max_parallel_arms escaped the bounded POSIX worker range"
+            )
+        if (
+            isinstance(max_inflight_opportunity_snapshots, bool)
+            or not 1
+            <= int(max_inflight_opportunity_snapshots)
+            <= MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS
+        ):
+            raise SharedPrefixExecutionError(
+                "max_inflight_opportunity_snapshots escaped the bounded POSIX range"
             )
         if max_opportunities is not None and int(max_opportunities) <= 0:
             raise SharedPrefixExecutionError(
@@ -341,8 +351,8 @@ class PosixCooldownSharedPrefixExecutor:
         self._supervisor_wall_time_s_total = 0.0
         self._arm_wall_time_s_total = 0.0
         self._executor_started_ns = time.monotonic_ns()
-        self.max_inflight_opportunity_snapshots = (
-            MAX_INFLIGHT_OPPORTUNITY_SNAPSHOTS
+        self.max_inflight_opportunity_snapshots = int(
+            max_inflight_opportunity_snapshots
         )
         self._pool_run_id = uuid.uuid4().hex
         self._pool_root = (

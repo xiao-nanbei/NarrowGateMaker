@@ -250,6 +250,81 @@ def test_global_scheduler_rejects_nested_and_nonsequential_work(
         adapter.run_global_policy_day_jobs((one_shot,), total_worker_tokens=1)
 
 
+def test_one_shot_topology_spends_one_global_ten_cpu_budget() -> None:
+    topology = adapter.OneShotProcessTopology()
+
+    assert topology.payload() == {
+        "total_worker_tokens": 10,
+        "day_parent_workers": 1,
+        "supervisor_workers": 2,
+        "arm_workers": 9,
+        "nested_process_pool": False,
+        "shared_prefix_posix_fork": True,
+        "supervisors_are_coordination_only": True,
+    }
+    assert (
+        topology.day_parent_workers + topology.arm_workers
+        == topology.total_worker_tokens
+    )
+    with pytest.raises(adapter.OfflineReplayAdapterError, match="ten-token"):
+        adapter.OneShotProcessTopology(total_worker_tokens=9)
+
+
+def test_global_one_shot_scheduler_uses_one_day_parent_and_requires_mmap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    topology = adapter.OneShotProcessTopology()
+    jobs = tuple(
+        replace(
+            _day_job(day=day, stage=adapter.ONE_SHOT_STAGE),
+            kind="one_shot",
+            payload={
+                "one_shot_topology": topology.payload(),
+                "day_input_mmap_binding": {"bound": True},
+            },
+        )
+        for day in ("2026-07-02", "2026-07-01")
+    )
+    pool_workers: list[int] = []
+    execution_days: list[str] = []
+
+    class FakePool:
+        def __init__(self, *, max_workers: int, initializer: Any) -> None:
+            pool_workers.append(max_workers)
+            assert initializer is adapter._mark_global_one_shot_day_worker
+
+        def __enter__(self) -> FakePool:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def map(self, function: Any, values: Any, *, chunksize: int) -> tuple[Any, ...]:
+            assert chunksize == 1
+            return tuple(function(value) for value in values)
+
+    def execute(job: adapter._DayReplayJob) -> adapter._DayReplayJobResult:
+        execution_days.append(job.utc_day)
+        return adapter._DayReplayJobResult(
+            utc_day=job.utc_day,
+            cache_key_sha256=job.cache_key.cache_key_sha256,
+            frames={},
+        )
+
+    monkeypatch.setattr(adapter, "ProcessPoolExecutor", FakePool)
+    monkeypatch.setattr(adapter, "_execute_fixed_day_job", execute)
+
+    results = adapter.run_global_one_shot_day_jobs(jobs)
+
+    assert pool_workers == [1]
+    assert execution_days == ["2026-07-01", "2026-07-02"]
+    assert [result.utc_day for result in results] == execution_days
+
+    missing_mmap = replace(jobs[0], payload={"one_shot_topology": topology.payload()})
+    with pytest.raises(adapter.OfflineReplayAdapterError, match="frozen acceleration"):
+        adapter.run_global_one_shot_day_jobs((missing_mmap,))
+
+
 def test_b0_key_is_candidate_independent_but_side_fold_and_input_safe() -> None:
     base = _b0_key()
     side = replace(base, side="BUY")

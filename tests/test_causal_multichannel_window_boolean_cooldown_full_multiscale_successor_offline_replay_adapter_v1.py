@@ -1012,18 +1012,27 @@ def test_generate_one_shot_labels_reuses_identical_day_across_outer_folds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cache = adapter_module.DayReplayCache(tmp_path / "cache")
+    hot = tmp_path / "hot"
+    cold = tmp_path / "cold"
+    hot.mkdir()
+    cold.mkdir()
+    mmap_root = hot / "replay_dag" / "mmap"
+    monkeypatch.setenv("NARROWGATE_CACHE_HOT_ROOT", str(hot))
+    monkeypatch.setenv("NARROWGATE_CACHE_COLD_ROOT", str(cold))
+    monkeypatch.setenv("NARROWGATE_CACHE_LEDGER_PATH", str(tmp_path / "ledger.json"))
     calls = 0
 
-    def fake_run_day_jobs(
+    def fake_run_one_shot_jobs(
         jobs: list[adapter_module._DayReplayJob],
         *,
-        workers: int,
+        total_worker_tokens: int,
     ) -> list[adapter_module._DayReplayJobResult]:
         nonlocal calls
         calls += 1
-        assert workers == 1
+        assert total_worker_tokens == adapter_module.ONE_SHOT_TOTAL_WORKER_TOKENS
         results: list[adapter_module._DayReplayJobResult] = []
         for job in jobs:
+            assert job.payload["day_input_mmap_binding"] == {"bound": True}
             index = job.payload["replay_inputs"].index
             columns = tuple(job.payload["duration_vocabulary"])
             results.append(
@@ -1059,8 +1068,27 @@ def test_generate_one_shot_labels_reuses_identical_day_across_outer_folds(
             workers=1,
         ),
     )
-    monkeypatch.setattr(adapter_module, "_run_day_jobs", fake_run_day_jobs)
-    replay_adapter = adapter_module.build_canonical_replay_adapter()
+    monkeypatch.setattr(
+        adapter_module,
+        "_bind_day_jobs_to_input_mmaps",
+        lambda jobs, **_kwargs: tuple(
+            replace(
+                job,
+                payload={**dict(job.payload), "day_input_mmap_binding": {"bound": True}},
+            )
+            for job in jobs
+        ),
+    )
+    monkeypatch.setattr(
+        adapter_module,
+        "run_global_one_shot_day_jobs",
+        fake_run_one_shot_jobs,
+    )
+    replay_adapter = adapter_module.build_canonical_replay_adapter(
+        acceleration=adapter_module.SequentialReplayAccelerationOptions(
+            day_input_cache_root=mmap_root
+        )
+    )
 
     first_rows = _common_replay_inputs(("row-1",), side="SELL")
     first_rows["fold_row_role"] = "outer_train"

@@ -42,12 +42,22 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v1"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/"
-    "f05_full_multiscale_offline_day_input_mmap_v1"
+    "f05_full_multiscale_offline_day_input_mmap_v2"
 )
 EXECUTOR_GLOBAL_WORKER_TOKENS = 10
+EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS = 2
+EXECUTOR_ONE_SHOT_TOPOLOGY = {
+    "total_worker_tokens": 10,
+    "day_parent_workers": 1,
+    "supervisor_workers": 2,
+    "arm_workers": 9,
+    "nested_process_pool": False,
+    "shared_prefix_posix_fork": True,
+    "supervisors_are_coordination_only": True,
+}
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
@@ -80,6 +90,10 @@ def formal_executor_contract() -> dict[str, Any]:
         "authoritative_engine": "python",
         "global_worker_tokens": EXECUTOR_GLOBAL_WORKER_TOKENS,
         "nested_worker_pools_allowed": False,
+        "one_shot_process_topology": dict(EXECUTOR_ONE_SHOT_TOPOLOGY),
+        "day_input_materialization_workers": (
+            EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS
+        ),
         "day_input_mmap": {
             "enabled": True,
             "root": EXECUTOR_DAY_INPUT_CACHE_ROOT,

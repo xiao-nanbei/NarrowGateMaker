@@ -295,6 +295,10 @@ class _NeverCalledAdapter:
                 "continuous_comparator_bound": nested.CONTINUOUS_COMPARATOR,
                 "global_worker_tokens": orchestrator.EXECUTOR_GLOBAL_WORKER_TOKENS,
                 "mmap_acceleration_bound": True,
+                "one_shot_topology": dict(orchestrator.EXECUTOR_ONE_SHOT_TOPOLOGY),
+                "day_input_materialization_workers": (
+                    orchestrator.EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS
+                ),
                 "economic_outcomes_read": False,
             },
             "permissions": {
