@@ -87,9 +87,9 @@ MAX_DAY_WORKERS = 8
 GLOBAL_SEQUENTIAL_WORKER_TOKENS = 10
 DEFAULT_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
 MAX_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
-ONE_SHOT_DAY_PARENT_WORKERS = 1
+ONE_SHOT_DAY_PARENT_WORKERS = 2
 ONE_SHOT_SUPERVISOR_WORKERS = 2
-FORMAL_SHARED_PREFIX_ARM_WORKERS = 9
+FORMAL_SHARED_PREFIX_ARM_WORKERS = 8
 DAY_INPUT_MATERIALIZATION_WORKERS = 2
 ONE_SHOT_TOTAL_WORKER_TOKENS = (
     ONE_SHOT_DAY_PARENT_WORKERS
@@ -107,9 +107,10 @@ DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
 EXECUTOR_ACCELERATION_IDENTITY = (
-    "f05_full_multiscale_offline_replay_executor_acceleration_v2"
+    "f05_full_multiscale_offline_replay_executor_acceleration_v3"
 )
-DAY_INPUT_MMAP_BINDING_SCHEMA = f"{EXECUTOR_ACCELERATION_IDENTITY}.day_input_mmap.v1"
+DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
+DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
 SEQUENTIAL_STAGES = frozenset({"inner_oof", "outer_oof"})
 _ONE_SHOT_FOLD_SCOPE_COLUMNS = frozenset({"fold_row_role", "outer_fold_id"})
@@ -809,12 +810,12 @@ class SequentialReplayAccelerationOptions:
     """Explicit opt-in for bulk-only immutable day-input mmap acceleration."""
 
     day_input_cache_root: Path
-    identity: str = EXECUTOR_ACCELERATION_IDENTITY
+    identity: str = DAY_INPUT_CACHE_IDENTITY
     cache_module_identity: str = day_input_cache.CACHE_IDENTITY
     cache_module_artifact_sha256: str = ""
 
     def __post_init__(self) -> None:
-        if self.identity != EXECUTOR_ACCELERATION_IDENTITY:
+        if self.identity != DAY_INPUT_CACHE_IDENTITY:
             raise OfflineReplayAdapterError("executor acceleration identity drifted")
         if self.cache_module_identity != day_input_cache.CACHE_IDENTITY:
             raise OfflineReplayAdapterError("day-input cache module identity drifted")
@@ -1934,7 +1935,7 @@ def _day_input_materialization_key(
     )
     return _canonical_sha256(
         {
-            "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.materialization_key.v1",
+            "schema_version": f"{DAY_INPUT_CACHE_IDENTITY}.materialization_key.v1",
             "acceleration": acceleration.payload(),
             "adapter_artifact_sha256": job.cache_key.adapter_artifact_sha256,
             "source_manifest_sha256": job.cache_key.source_manifest_sha256,
@@ -1958,7 +1959,7 @@ def _day_input_source_receipts(request: Any) -> dict[str, str]:
     def digest(component: str, names: Sequence[str]) -> str:
         return _canonical_sha256(
             {
-                "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.source_receipt.v1",
+                "schema_version": f"{DAY_INPUT_CACHE_IDENTITY}.source_receipt.v1",
                 "component": component,
                 "receipts": {
                     name: _require_sha(
@@ -2021,7 +2022,7 @@ def _build_day_input_mmap_binding(
     if ml_main_array_count <= 0:
         raise OfflineReplayAdapterError("mmap ML overlay shape drifted")
     clock_payload = {
-        "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.clock.v1",
+        "schema_version": f"{DAY_INPUT_CACHE_IDENTITY}.clock.v1",
         "replay_event_clock": str(replay.params.get("replay_event_clock")),
         "trade_clock": "transact_time_ms",
         "book_clock": "ts_ms",
@@ -2029,7 +2030,7 @@ def _build_day_input_mmap_binding(
         "same_millisecond_ambiguity_policy": SAME_MILLISECOND_AMBIGUITY_POLICY,
     }
     engine_payload = {
-        "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.engine.v1",
+        "schema_version": f"{DAY_INPUT_CACHE_IDENTITY}.engine.v1",
         "replay_engine": REPLAY_ENGINE,
         "queue_identity": QUEUE_IDENTITY,
         "projection_module": FIXED_B0_PROJECTION_MODULE,
@@ -2040,9 +2041,9 @@ def _build_day_input_mmap_binding(
     identity, schema, arrays = day_input_cache.target_day_context_from_replay_inputs(
         replay,
         source_receipts=_day_input_source_receipts(request),
-        clock_identity=f"{EXECUTOR_ACCELERATION_IDENTITY}.exchange_time_merged",
+        clock_identity=f"{DAY_INPUT_CACHE_IDENTITY}.exchange_time_merged",
         clock_identity_sha256=_canonical_sha256(clock_payload),
-        engine_identity=f"{EXECUTOR_ACCELERATION_IDENTITY}.python_modeled_queue",
+        engine_identity=f"{DAY_INPUT_CACHE_IDENTITY}.python_modeled_queue",
         engine_identity_sha256=_canonical_sha256(engine_payload),
         ml_main_array_count=ml_main_array_count,
     )
@@ -3615,7 +3616,7 @@ def run_global_one_shot_day_jobs(
     *,
     total_worker_tokens: int = ONE_SHOT_TOTAL_WORKER_TOKENS,
 ) -> tuple[_DayReplayJobResult, ...]:
-    """Run one-shot days through one active parent and nine global arm slots."""
+    """Run two one-shot day parents against one shared eight-arm pool."""
 
     if os.environ.get(_GLOBAL_ONE_SHOT_DAY_WORKER_ENV) == "1":
         raise OfflineReplayAdapterError("nested global one-shot pools are forbidden")
@@ -5632,6 +5633,7 @@ __all__ = [
     "B0_CONTROL_CACHE_SCHEMA",
     "B0ControlCacheKey",
     "B0ControlPath",
+    "DAY_INPUT_CACHE_IDENTITY",
     "DAY_INPUT_MATERIALIZATION_WORKERS",
     "DAY_CACHE_SCHEMA",
     "DEFAULT_DAY_WORKERS",

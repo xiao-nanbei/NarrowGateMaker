@@ -255,22 +255,19 @@ def test_one_shot_topology_spends_one_global_ten_cpu_budget() -> None:
 
     assert topology.payload() == {
         "total_worker_tokens": 10,
-        "day_parent_workers": 1,
+        "day_parent_workers": 2,
         "supervisor_workers": 2,
-        "arm_workers": 9,
+        "arm_workers": 8,
         "nested_process_pool": False,
         "shared_prefix_posix_fork": True,
         "supervisors_are_coordination_only": True,
     }
-    assert (
-        topology.day_parent_workers + topology.arm_workers
-        == topology.total_worker_tokens
-    )
+    assert topology.day_parent_workers + topology.arm_workers == topology.total_worker_tokens
     with pytest.raises(adapter.OfflineReplayAdapterError, match="ten-token"):
         adapter.OneShotProcessTopology(total_worker_tokens=9)
 
 
-def test_global_one_shot_scheduler_uses_one_day_parent_and_requires_mmap(
+def test_global_one_shot_scheduler_uses_two_day_parents_and_requires_mmap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     topology = adapter.OneShotProcessTopology()
@@ -316,7 +313,7 @@ def test_global_one_shot_scheduler_uses_one_day_parent_and_requires_mmap(
 
     results = adapter.run_global_one_shot_day_jobs(jobs)
 
-    assert pool_workers == [1]
+    assert pool_workers == [2]
     assert execution_days == ["2026-07-01", "2026-07-02"]
     assert [result.utc_day for result in results] == execution_days
 

@@ -42,7 +42,10 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v3"
+EXECUTOR_DAY_INPUT_CACHE_IDENTITY = (
+    "f05_full_multiscale_offline_replay_executor_acceleration_v2"
+)
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/"
     "f05_full_multiscale_offline_day_input_mmap_v2"
@@ -51,9 +54,9 @@ EXECUTOR_GLOBAL_WORKER_TOKENS = 10
 EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS = 2
 EXECUTOR_ONE_SHOT_TOPOLOGY = {
     "total_worker_tokens": 10,
-    "day_parent_workers": 1,
+    "day_parent_workers": 2,
     "supervisor_workers": 2,
-    "arm_workers": 9,
+    "arm_workers": 8,
     "nested_process_pool": False,
     "shared_prefix_posix_fork": True,
     "supervisors_are_coordination_only": True,
@@ -96,6 +99,7 @@ def formal_executor_contract() -> dict[str, Any]:
         ),
         "day_input_mmap": {
             "enabled": True,
+            "identity": EXECUTOR_DAY_INPUT_CACHE_IDENTITY,
             "root": EXECUTOR_DAY_INPUT_CACHE_ROOT,
             "open_mode": "read_only",
             "content_addressed": True,

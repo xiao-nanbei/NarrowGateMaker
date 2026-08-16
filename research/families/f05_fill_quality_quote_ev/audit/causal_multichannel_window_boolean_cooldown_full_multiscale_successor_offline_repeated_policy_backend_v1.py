@@ -924,6 +924,8 @@ def _load_canonical_replay_adapter(
     if (
         getattr(module, "EXECUTOR_ACCELERATION_IDENTITY", None)
         != orchestrator.EXECUTOR_ACCELERATION_IDENTITY
+        or getattr(module, "DAY_INPUT_CACHE_IDENTITY", None)
+        != orchestrator.EXECUTOR_DAY_INPUT_CACHE_IDENTITY
         or not isinstance(topology_type, type)
         or topology_type().payload() != orchestrator.EXECUTOR_ONE_SHOT_TOPOLOGY
         or getattr(module, "DAY_INPUT_MATERIALIZATION_WORKERS", None)
