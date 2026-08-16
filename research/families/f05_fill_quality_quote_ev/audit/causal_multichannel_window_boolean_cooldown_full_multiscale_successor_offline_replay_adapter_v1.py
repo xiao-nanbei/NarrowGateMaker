@@ -877,6 +877,8 @@ def _day_input_mmap_binding_from_payload(value: Any) -> DayInputMmapBinding:
             continuation_day=str(identity_payload["continuation_day"]),
             market_id=str(identity_payload["market_id"]),
             source_receipts=dict(identity_payload["source_receipts"]),
+            bbo_source=str(identity_payload["bbo_source"]),
+            l2_source=str(identity_payload["l2_source"]),
             clock_identity=str(identity_payload["clock_identity"]),
             clock_identity_sha256=str(identity_payload["clock_identity_sha256"]),
             engine_identity=str(identity_payload["engine_identity"]),
