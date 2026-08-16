@@ -299,7 +299,7 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
     return "cpp_streaming_clock_config_invalid";
   }
   if (config.qualification_scope != "synthetic_mechanics_only" &&
-      config.qualification_scope != "full_replay") {
+      config.qualification_scope != "synthetic_full_replay_smoke") {
     return "cpp_qualification_scope_invalid";
   }
   if (!is_lower_sha256(config.policy.policy_sha256)) {
@@ -4140,7 +4140,7 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
 
 F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
     const F05CooldownFillInput &input) {
-  constexpr double inventory_tolerance = 1e-10;
+  constexpr double flat_tolerance = 1e-10;
   auto baseline = input.baseline_duration_ms;
   bool baseline_valid = baseline >= kF05BooleanCooldownControlUnitMs;
   if (!std::isfinite(input.consecutive_units_after) ||
@@ -4193,10 +4193,10 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
   const bool exposure_increasing =
       inventory_finite &&
       ((input.side == Side::Buy &&
-        input.inventory_before_fill_btc >= -inventory_tolerance &&
+        input.inventory_before_fill_btc >= 0.0 &&
         input.inventory_after_fill_btc > input.inventory_before_fill_btc) ||
        (input.side == Side::Sell &&
-        input.inventory_before_fill_btc <= inventory_tolerance &&
+        input.inventory_before_fill_btc <= 0.0 &&
         input.inventory_after_fill_btc < input.inventory_before_fill_btc));
   const bool reducing =
       inventory_finite && !exposure_increasing &&
@@ -4206,17 +4206,13 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
         input.inventory_after_fill_btc < input.inventory_before_fill_btc));
   const bool before_flat =
       inventory_finite &&
-      std::abs(input.inventory_before_fill_btc) <= inventory_tolerance;
+      std::abs(input.inventory_before_fill_btc) <= flat_tolerance;
   const auto expected_role = exposure_increasing
                                  ? (before_flat ? F05CooldownFillRole::Opener
                                                 : F05CooldownFillRole::Add)
                                  : F05CooldownFillRole::Reducing;
 
   clear_lineage(opposite_lineage);
-  if (inventory_finite &&
-      std::abs(input.inventory_after_fill_btc) <= inventory_tolerance) {
-    clear_lineage(same_lineage);
-  }
   if (reducing && input.role == F05CooldownFillRole::Reducing) {
     ++audit_.reducing_bypass_count;
     decision.support_valid = true;
@@ -4851,13 +4847,18 @@ TickReplayResult simulate_tick_arrays(
             );
         }
         if (!runtime.parity_qualified() ||
-            config.qualification_scope != "full_replay") {
+            config.qualification_scope != "synthetic_full_replay_smoke") {
             throw std::invalid_argument(
-                "F05 repeated cooldown requires a full-replay parity-qualified runtime"
+                "F05 repeated cooldown requires a synthetic-smoke-qualified runtime"
             );
         }
         if (std::abs(params.fill_cooldown_s - 85.0) > 1e-12 ||
-            params.adaptive_add_cooldown_enabled) {
+            params.adaptive_add_cooldown_enabled ||
+            params.fill_cooldown_apply_reducing ||
+            std::abs(params.fill_cooldown_reducing_s) > 1e-12 ||
+            params.fill_cooldown_consecutive_reset_policy !=
+                "opposite_fill_only" ||
+            params.fill_cooldown_reset_consec_on_expiry) {
             throw std::invalid_argument(
                 "F05 repeated cooldown requires the exact CONTROL_85N baseline"
             );

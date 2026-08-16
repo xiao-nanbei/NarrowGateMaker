@@ -110,7 +110,7 @@ def _full_replay_cpp_config():
     config = _cpp_config(
         warmup_s=0.2,
         max_feature_age_s=0.5,
-        qualification_scope="full_replay",
+        qualification_scope="synthetic_full_replay_smoke",
     )
     config.policy.rules = [
         _rule(
@@ -652,6 +652,34 @@ def test_cpp_repeated_fill_lineage_role_and_expiry_contract() -> None:
     assert not runtime.add_blocked(cpp.Side.Buy, buy.deadline_ts_ms)
 
 
+def test_cpp_reducing_fill_uses_exact_sign_and_preserves_same_side_deadline() -> None:
+    runtime = cpp.F05RepeatedBooleanCooldownRuntime(_cpp_config())
+    _warm(runtime)
+    opener = runtime.apply_fill(
+        _fill(
+            predicate_values=(
+                cpp.F05TriState.TRUE,
+                cpp.F05TriState.TRUE,
+                cpp.F05TriState.FALSE,
+            )
+        )
+    )
+    reducing = runtime.apply_fill(
+        _fill(
+            role=cpp.F05CooldownFillRole.REDUCING,
+            fill_ts_ms=400,
+            decision_ts_ns=400_000_000,
+            inventory_before=5e-11,
+            inventory_after=0.0,
+            consecutive_units=1.0,
+        )
+    )
+
+    assert reducing.coverage_reason_code == "reducing_fill_baseline_bypass"
+    assert runtime.lineage(cpp.Side.Sell).active
+    assert runtime.lineage(cpp.Side.Sell).deadline_ts_ms == opener.deadline_ts_ms
+
+
 def test_cpp_partial_fill_replaces_same_lineage_deadline() -> None:
     runtime = cpp.F05RepeatedBooleanCooldownRuntime(_cpp_config())
     _warm(runtime)
@@ -752,6 +780,12 @@ def test_invalid_and_mismatched_runtime_hashes_fail_closed() -> None:
     invalid_runtime = cpp.F05RepeatedBooleanCooldownRuntime(invalid)
     assert not invalid_runtime.parity_qualified
     assert invalid_runtime.binding_error == "policy_sha256_invalid"
+
+    self_attested_formal = cpp.F05RepeatedBooleanCooldownRuntime(
+        _cpp_config(qualification_scope="full_replay")
+    )
+    assert not self_attested_formal.parity_qualified
+    assert self_attested_formal.binding_error == "cpp_qualification_scope_invalid"
 
     runtime = cpp.F05RepeatedBooleanCooldownRuntime(_cpp_config())
     params = {

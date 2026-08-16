@@ -29488,10 +29488,10 @@ def _validate_f05_cpp_cooldown_runtime(
 
     qualification_scope = str(runtime_config.qualification_scope or "")
     if require_full_replay:
-        if qualification_scope != "full_replay":
+        if qualification_scope != "synthetic_full_replay_smoke":
             raise NotImplementedError(
                 "the bound C++ cooldown runtime is qualified only for synthetic "
-                "mechanics parity, not full replay"
+                "mechanics parity, not the synthetic full-replay smoke path"
             )
         if not bool(
             params.get(
@@ -29504,7 +29504,10 @@ def _validate_f05_cpp_cooldown_runtime(
                 "selection remains rejected until event-loop parity is explicitly "
                 "qualified"
             )
-    if qualification_scope not in {"synthetic_mechanics_only", "full_replay"}:
+    if qualification_scope not in {
+        "synthetic_mechanics_only",
+        "synthetic_full_replay_smoke",
+    }:
         raise RuntimeError("C++ cooldown qualification scope is invalid")
     return runtime
 
