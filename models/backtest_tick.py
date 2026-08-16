@@ -11443,7 +11443,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "baseline_duration_ms": baseline_ms,
                 "action_id": str(raw_decision.action_id),
                 "duration_ms": repeated_policy_applied_ms,
-                "fallback_reason": str(raw_decision.fallback_reason),
+                "fallback_reason": (
+                    None
+                    if raw_decision.fallback_reason is None
+                    or str(raw_decision.fallback_reason).strip() == ""
+                    else str(raw_decision.fallback_reason)
+                ),
                 "matched_rule_index": (
                     None
                     if raw_decision.matched_rule_index is None
@@ -31317,7 +31322,9 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                 "lineage_revision": int(row.lineage_revision),
                 "lineage_applied": bool(row.lineage_applied),
                 "coverage_reason_code": str(row.coverage_reason_code),
-                "fallback_reason": str(row.fallback_reason),
+                "fallback_reason": (
+                    None if not row.fallback_reason else str(row.fallback_reason)
+                ),
                 "matched_rule_index": (
                     None
                     if row.matched_rule_index is None

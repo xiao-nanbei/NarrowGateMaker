@@ -40,14 +40,17 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     multiscale_ema_boolean_cooldown_duration_policy_study as study,
 )
 
-IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
+IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
 SCHEMA_VERSION = f"{IDENTITY}.receipt.v1"
 QUALIFICATION_DAY_INDEX = 0
 WORKER_TOKENS = 10
 EXPECTED_PANEL_OPPORTUNITIES = 3_516
-BUILDER_PREFLIGHT_IDENTITY = "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v22"
+BUILDER_PREFLIGHT_IDENTITY = "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v23"
 BUILDER_PREFLIGHT_RECEIPT_NAME = "cpp_target_predicate_builder_walk_receipt.json"
 BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
+QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v23"
+QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
+QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
 
 
 class CppRealDayLockstepError(RuntimeError):
@@ -342,7 +345,7 @@ def preflight_all_panel_target_rows(
         "target_row_semantics": (
             "sparse_target_support_row_with_cpp_runtime_derived_compiled_owner_predicates"
         ),
-        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "cpp_startup_contract_validation": True,
@@ -521,6 +524,166 @@ def _run_cpp_arm(
     )
 
 
+def _digest_differences(
+    actual: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> list[str]:
+    return sorted(
+        name
+        for name in set(actual) | set(expected)
+        if actual.get(name) != expected.get(name)
+    )
+
+
+def _run_first_opportunity_all_arm_preflight(
+    *,
+    bundle: Any,
+    day: str,
+    rows: pd.DataFrame,
+    request: Any,
+    replay: Any,
+    identity_hashes: Mapping[str, str],
+    cpp: Any,
+    policy_path: Path,
+    predicate_path: Path,
+    shared_tape: Any,
+    builder_receipt: Mapping[str, Any],
+    invariance_receipt: Mapping[str, Any],
+    qualification_seed: Mapping[str, Any],
+    output_path: Path,
+    started: float,
+) -> Mapping[str, Any]:
+    receipt_path = output_path.parent / QUICK_PREFLIGHT_RECEIPT_NAME
+    if receipt_path.exists():
+        raise CppRealDayLockstepError("immutable quick lockstep receipt already exists")
+    quick_rows = rows.iloc[[0]].copy()
+    opportunity = quick_rows.iloc[0].to_dict()
+    quick_contract = {
+        **dict(qualification_seed),
+        "stage": "first_opportunity_all_side_specific_arms",
+        "opportunity_id": str(opportunity["opportunity_id"]),
+    }
+    quick_qualification_sha256 = _canonical_sha256(quick_contract)
+    quick_staging = output_path.parent / ".cpp-lockstep-v23-quick-staging"
+    quick_progress = output_path.parent / "cpp_first_opportunity_all_arm_progress.json"
+    python_digests = _run_python_authority(
+        day=day,
+        rows=quick_rows,
+        request=request,
+        replay=replay,
+        identity_hashes=identity_hashes,
+        staging_root=quick_staging,
+        progress_path=quick_progress,
+        started=started,
+    )
+    runtime_config = cpp_runtime.build_cpp_runtime_config(
+        cpp,
+        policy_path=policy_path,
+        predicate_bundle_path=predicate_path,
+        qualification_sha256=quick_qualification_sha256,
+    )
+    cpp_base = adapter._cpp_exact_owner_runtime_params(
+        replay,
+        identity_hashes=identity_hashes,
+        qualification_receipt_sha256=quick_qualification_sha256,
+    )
+    _, actions_by_side = adapter._load_frozen_duration_action_contract()
+    actions = actions_by_side[str(opportunity["side"]).upper()]
+    cpp_digests: dict[tuple[str, str], Mapping[str, Any]] = {}
+    mismatches: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(actions)) as pool:
+        futures = [
+            pool.submit(
+                _run_cpp_arm,
+                opportunity=opportunity,
+                action=action,
+                replay=replay,
+                base=cpp_base,
+                runtime_config=runtime_config,
+                qualification_sha256=quick_qualification_sha256,
+                shared_tape=shared_tape,
+                cpp=cpp,
+            )
+            for action in actions
+        ]
+        for future in as_completed(futures):
+            key, digest, _elapsed = future.result()
+            cpp_digests[key] = dict(digest)
+            expected = python_digests[key]
+            differences = _digest_differences(digest, expected)
+            if differences:
+                mismatches.append(
+                    {
+                        "opportunity_id": key[0],
+                        "action_id": key[1],
+                        "different_fields": differences,
+                    }
+                )
+    passed = not mismatches and len(cpp_digests) == len(actions) == 8
+    receipt: dict[str, Any] = {
+        "schema_version": f"{QUICK_PREFLIGHT_IDENTITY}.receipt.v1",
+        "identity": QUICK_PREFLIGHT_IDENTITY,
+        "status": (
+            QUICK_PREFLIGHT_STATUS
+            if passed
+            else "failed_closed_first_opportunity_all_arm_lockstep_mismatch"
+        ),
+        "execution_manifest_sha256": bundle.execution_manifest[
+            "canonical_execution_manifest_sha256"
+        ],
+        "source_manifest_sha256": bundle.source_manifest["canonical_manifest_sha256"],
+        "panel_manifest_sha256": bundle.panel_manifest[
+            "canonical_panel_manifest_sha256"
+        ],
+        "qualification_day": day,
+        "opportunity_count": 1,
+        "arm_count": len(actions),
+        "zero_mismatch_arm_count": len(actions) - len(mismatches),
+        "mismatch_count": len(mismatches),
+        "mismatches": sorted(
+            mismatches,
+            key=lambda row: (str(row["opportunity_id"]), str(row["action_id"])),
+        ),
+        "python_digest_set_sha256": _canonical_sha256(
+            {
+                f"{key[0]}::{key[1]}": value
+                for key, value in sorted(python_digests.items())
+            }
+        ),
+        "cpp_digest_set_sha256": _canonical_sha256(
+            {
+                f"{key[0]}::{key[1]}": value
+                for key, value in sorted(cpp_digests.items())
+            }
+        ),
+        "all_panel_builder_preflight_receipt_sha256": builder_receipt[
+            "canonical_receipt_sha256"
+        ],
+        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+            "canonical_receipt_sha256"
+        ],
+        "quick_qualification_sha256": quick_qualification_sha256,
+        "economic_values_computed_for_lockstep_only": True,
+        "economic_values_persisted": False,
+        "economic_values_exposed": False,
+        "economic_values_used_for_selection": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    receipt["canonical_receipt_sha256"] = _document_sha256(
+        receipt,
+        "canonical_receipt_sha256",
+    )
+    _atomic_json(receipt_path, receipt)
+    if not passed:
+        raise CppRealDayLockstepError(
+            "C++/Python first-opportunity all-arm lockstep failed"
+        )
+    return receipt
+
+
 def _run_lockstep_impl(
     manifest_path: Path,
     *,
@@ -532,8 +695,8 @@ def _run_lockstep_impl(
     bundle = orchestrator.load_formal_offline_bundle_for_cpp_qualification(manifest_path)
     stage["value"] = "verify_clean_bound_commit"
     _require_clean_bound_commit(bundle)
-    stage["value"] = "verify_v21_to_v22_invariance"
-    invariance_receipt = orchestrator._validate_v21_v22_invariance_receipt(
+    stage["value"] = "verify_v22_to_v23_invariance"
+    invariance_receipt = orchestrator._validate_v22_v23_invariance_receipt(
         manifest_path,
         bundle.execution_manifest,
         source=bundle.source_manifest,
@@ -581,7 +744,7 @@ def _run_lockstep_impl(
         continuation_day=replay.continuation_day,
         deep_validate=False,
     )
-    qualification_contract = {
+    qualification_seed = {
         "schema_version": f"{IDENTITY}.contract.v1",
         "execution_manifest_sha256": bundle.execution_manifest[
             "canonical_execution_manifest_sha256"
@@ -599,7 +762,7 @@ def _run_lockstep_impl(
         "worker_tokens": WORKER_TOKENS,
         "all_panel_builder_preflight_receipt_sha256": builder_receipt["canonical_receipt_sha256"],
         "all_panel_builder_preflight_opportunity_count": builder_receipt["opportunity_count"],
-        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "python_authority": "posix_cow_shared_prefix_at_fill_callback",
@@ -608,12 +771,36 @@ def _run_lockstep_impl(
         "validation_read": False,
         "sealed_holdout_read": False,
     }
-    qualification_sha256 = _canonical_sha256(qualification_contract)
     shared_tape = cpp_runtime.build_shared_observation_tape(
         cpp,
         tape.arrays,
         content_sha256=str(tape.receipt["array_sha256"]),
     )
+    stage["value"] = "first_opportunity_all_arm_preflight"
+    quick_receipt = _run_first_opportunity_all_arm_preflight(
+        bundle=bundle,
+        day=day,
+        rows=rows,
+        request=request,
+        replay=replay,
+        identity_hashes=identity_hashes,
+        cpp=cpp,
+        policy_path=policy_path,
+        predicate_path=predicate_path,
+        shared_tape=shared_tape,
+        builder_receipt=builder_receipt,
+        invariance_receipt=invariance_receipt,
+        qualification_seed=qualification_seed,
+        output_path=output_path,
+        started=started,
+    )
+    qualification_contract = {
+        **qualification_seed,
+        "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[
+            "canonical_receipt_sha256"
+        ],
+    }
+    qualification_sha256 = _canonical_sha256(qualification_contract)
     runtime_config = cpp_runtime.build_cpp_runtime_config(
         cpp,
         policy_path=policy_path,
@@ -638,7 +825,7 @@ def _run_lockstep_impl(
         identity_hashes=identity_hashes,
         qualification_receipt_sha256=qualification_sha256,
     )
-    staging_root = output_path.parent / ".cpp-lockstep-v22-staging"
+    staging_root = output_path.parent / ".cpp-lockstep-v23-staging"
     staging_root.mkdir(parents=True, exist_ok=True)
     progress_path = output_path.parent / "cpp_real_day_lockstep_progress.json"
     stage["value"] = "python_shared_prefix"
@@ -698,11 +885,7 @@ def _run_lockstep_impl(
                     {
                         "opportunity_id": key[0],
                         "action_id": key[1],
-                        "different_fields": sorted(
-                            name
-                            for name in set(digest) | set(expected)
-                            if digest.get(name) != expected.get(name)
-                        ),
+                        "different_fields": _digest_differences(digest, expected),
                     }
                 )
             completed += 1
@@ -799,8 +982,15 @@ def _write_unhandled_failure_receipt(
     progress_stage = str(progress.get("stage", ""))
     progress_completed = int(progress.get("completed", 0) or 0)
     progress_total = int(progress.get("total", 0) or 0)
-    python_path_started = stage in {"python_shared_prefix", "cpp_all_arm_lockstep"}
-    cpp_path_started = stage == "cpp_all_arm_lockstep"
+    python_path_started = stage in {
+        "first_opportunity_all_arm_preflight",
+        "python_shared_prefix",
+        "cpp_all_arm_lockstep",
+    }
+    cpp_path_started = stage in {
+        "first_opportunity_all_arm_preflight",
+        "cpp_all_arm_lockstep",
+    }
     completed_opportunities = progress_completed if progress_stage.startswith("python_") else 0
     total_opportunities = (
         progress_total

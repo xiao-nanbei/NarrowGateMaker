@@ -97,7 +97,7 @@ def test_all_panel_builder_walk_validates_every_opportunity(
     assert receipt["economic_values_persisted"] is False
     assert receipt["cpp_startup_validated_row_count"] == len(days)
     assert receipt["economic_evaluator_call_count"] == 0
-    assert receipt["formal_v21_to_v22_invariance_receipt_sha256"] == "e" * 64
+    assert receipt["formal_v22_to_v23_invariance_receipt_sha256"] == "e" * 64
     assert len(validated) == len(days)
     assert json.loads(receipt_path.read_text(encoding="ascii")) == receipt
 

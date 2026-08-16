@@ -8977,19 +8977,6 @@ TickReplayResult simulate_tick_arrays(
             }
         }
 
-        if (cooldown_duration_fork_assigned &&
-            cooldown_duration_fork_quarantine &&
-            std::abs(inventory) <= 1e-10 &&
-            cooldown_duration_active_campaign_id == 0 &&
-            bid_orders.empty() && ask_orders.empty()) {
-            cooldown_duration_fork_terminal = true;
-            cooldown_fork_trace.arm_washout_complete = true;
-            cooldown_fork_trace.terminal_ts_ms = ts;
-            cooldown_fork_trace.terminal_reason =
-                "arm_economic_washout";
-            break;
-        }
-
         const auto [pending_new_count, pending_cancel_count] =
             pending_order_counts(bid_orders, ask_orders);
         summary.max_pending_new_orders = std::max(summary.max_pending_new_orders, pending_new_count);
@@ -9040,6 +9027,19 @@ TickReplayResult simulate_tick_arrays(
             result.pnl_ts_ms.push_back(ts);
             result.pnl.push_back(current_pnl);
             result.inventory.push_back(inventory);
+        }
+
+        if (cooldown_duration_fork_assigned &&
+            cooldown_duration_fork_quarantine &&
+            std::abs(inventory) <= 1e-10 &&
+            cooldown_duration_active_campaign_id == 0 &&
+            bid_orders.empty() && ask_orders.empty()) {
+            cooldown_duration_fork_terminal = true;
+            cooldown_fork_trace.arm_washout_complete = true;
+            cooldown_fork_trace.terminal_ts_ms = ts;
+            cooldown_fork_trace.terminal_reason =
+                "arm_economic_washout";
+            break;
         }
     }
 

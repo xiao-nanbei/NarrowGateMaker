@@ -13,8 +13,8 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from strategy import boolean_cooldown_live as live_policy
 
-IDENTITY = "f05_exact_owner_cpp_runtime_v22"
-QUALIFICATION_SCOPE = "real_day_all_arm_full_replay_v22"
+IDENTITY = "f05_exact_owner_cpp_runtime_v23"
+QUALIFICATION_SCOPE = "real_day_all_arm_full_replay_v23"
 FEATURE_CLOCK_SEMANTICS = "historical_exchange_m2_v1"
 _DURATION_RE = re.compile(r"^FIXED_([1-9][0-9]*)S$")
 

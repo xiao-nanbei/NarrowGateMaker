@@ -1,0 +1,53 @@
+{
+  "action_authorized": false,
+  "all_panel_builder_gate": {
+    "economic_evaluator_calls": 0,
+    "identity": "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v23",
+    "opportunity_count": 3516,
+    "required_status": "passed_all_3516_zero_economic_builder_walk"
+  },
+  "candidate_ladder_changed": false,
+  "cpp_authority_scope": "outer_train_one_shot_labels_only",
+  "data_changed": false,
+  "engine_contract": {
+    "outer_test_sequential": "python",
+    "outer_train_one_shot": "cpp"
+  },
+  "estimand_changed": false,
+  "execution_identity": "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v3",
+  "first_opportunity_gate": {
+    "arm_count": 8,
+    "identity": "f05_cpp_first_opportunity_all_arm_lockstep_v23",
+    "opportunity_count": 1,
+    "required_status": "passed_first_opportunity_all_side_specific_arms_lockstep",
+    "zero_mismatches_required": true
+  },
+  "formal_successor": "formal_v23",
+  "full_day_gate": {
+    "all_opportunities_required": true,
+    "all_side_specific_duration_arms_required": true,
+    "identity": "f05_cpp_one_shot_real_day_all_arm_lockstep_v23",
+    "qualification_day_index": 0,
+    "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
+    "zero_mismatches_required": true
+  },
+  "invariance": {
+    "identity": "f05_formal_v22_to_v23_execution_only_invariance_v1",
+    "predecessor_annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-cpp-one-shot-v22-20260816",
+    "predecessor_execution_manifest_canonical_sha256": "f565b03632a4985edf92c5f4c7856eda6ac6c1a8dffae93a82ca8397b5331dee",
+    "predecessor_execution_manifest_file_sha256": "adf520f2c391791587ca4841e4dc4ddd4869946464a75afbf275c86465c224f7",
+    "predecessor_public_base_commit": "22323dd287ee95fa4b30508d988d8a29783f40f7"
+  },
+  "live_authorized": false,
+  "one_shot_effect_aggregation_used": false,
+  "parity_corrections": [
+    "canonical_null_fallback_reason",
+    "post_requote_washout_order"
+  ],
+  "repeated_sequential_policy_estimand": true,
+  "schema_version": "f05_full_multiscale_offline_formal_v23.execution_contract.v1",
+  "sealed_holdout_read": false,
+  "statistics_changed": false,
+  "status": "formal_v23_implemented_local_pre_admission",
+  "validation_read": false
+}

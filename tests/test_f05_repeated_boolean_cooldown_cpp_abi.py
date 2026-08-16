@@ -904,6 +904,8 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
             "campaign_id",
             "action_id",
             "duration_ms",
+            "fallback_reason",
+            "matched_rule_index",
             "policy_sha256",
             "predicate_bundle_sha256",
             "support_valid",
@@ -912,6 +914,7 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
 
     assert cpp_result["fills_total"] == python_result["fills_total"]
     assert cpp_result["fills_ask"] == python_result["fills_ask"]
+    assert cpp_result["n_requotes"] == python_result["n_requotes"]
     assert cpp_result["final_inventory"] == pytest.approx(
         python_result["final_inventory"],
         abs=1e-12,

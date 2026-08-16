@@ -279,7 +279,7 @@ def test_global_one_shot_scheduler_uses_one_cpp_pool_and_requires_mmap(
             payload={
                 "one_shot_topology": topology.payload(),
                 "day_input_mmap_binding": {"bound": True},
-                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v22"),
+                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v23"),
                 "cpp_qualification_receipt_sha256": _sha("a"),
             },
         )

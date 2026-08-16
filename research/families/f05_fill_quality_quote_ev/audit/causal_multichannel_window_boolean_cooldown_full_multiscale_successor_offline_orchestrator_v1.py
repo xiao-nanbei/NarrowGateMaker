@@ -42,7 +42,7 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v2"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v3"
 EXECUTOR_DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f05_full_multiscale_offline_day_input_mmap_v2"
@@ -59,27 +59,30 @@ EXECUTOR_ONE_SHOT_TOPOLOGY = {
     "global_cpp_arm_thread_pool": True,
     "shared_read_only_observation_tape": True,
 }
-CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
 CPP_QUALIFICATION_RECEIPT_NAME = "cpp_real_day_lockstep_receipt.json"
 CPP_BUILDER_PREFLIGHT_IDENTITY = (
-    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v22"
+    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v23"
 )
 CPP_BUILDER_PREFLIGHT_RECEIPT_NAME = "cpp_target_predicate_builder_walk_receipt.json"
 CPP_BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
 CPP_BUILDER_PREFLIGHT_OPPORTUNITIES = 3_516
-V21_V22_INVARIANCE_IDENTITY = "f05_formal_v21_to_v22_execution_only_invariance_v1"
-V21_V22_INVARIANCE_RECEIPT_NAME = "formal_v21_to_v22_invariance_receipt.json"
-V21_V22_INVARIANCE_STATUS = "passed_execution_only_research_contract_invariance"
-V21_EXECUTION_MANIFEST_CANONICAL_SHA256 = (
-    "dee196760c070c5c5d466f6283848b898ccb096ceefd6f8dccd9fd6d173f17d2"
+CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
+CPP_QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v23"
+CPP_QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
+CPP_QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
+V22_V23_INVARIANCE_IDENTITY = "f05_formal_v22_to_v23_execution_only_invariance_v1"
+V22_V23_INVARIANCE_RECEIPT_NAME = "formal_v22_to_v23_invariance_receipt.json"
+V22_V23_INVARIANCE_STATUS = "passed_execution_only_research_contract_invariance"
+V22_EXECUTION_MANIFEST_CANONICAL_SHA256 = (
+    "f565b03632a4985edf92c5f4c7856eda6ac6c1a8dffae93a82ca8397b5331dee"
 )
-V21_EXECUTION_MANIFEST_FILE_SHA256 = (
-    "8feade0863f90d7b8fa770f815a8bd6cdc000c76ecbccec5d489a850d6e3f482"
+V22_EXECUTION_MANIFEST_FILE_SHA256 = (
+    "adf520f2c391791587ca4841e4dc4ddd4869946464a75afbf275c86465c224f7"
 )
-V21_PUBLIC_BASE_COMMIT = "11d76d6bc98948af5a85e3f5230d69b21dfafb7a"
-V21_ANNOTATED_TAG = (
+V22_PUBLIC_BASE_COMMIT = "22323dd287ee95fa4b30508d988d8a29783f40f7"
+V22_ANNOTATED_TAG = (
     "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-"
-    "successor-offline/formal-cpp-one-shot-v21-r1-20260816"
+    "successor-offline/formal-cpp-one-shot-v22-20260816"
 )
 _RESEARCH_SEMANTIC_SOURCE_PATHS = (
     "models/audit/experiment_scorecard.py",
@@ -171,6 +174,7 @@ def formal_executor_contract() -> dict[str, Any]:
         "cpp_formal_engine_authorized": True,
         "cpp_authority_scope": "outer_train_one_shot_labels_only",
         "cpp_real_day_all_arm_lockstep_required": True,
+        "cpp_first_opportunity_all_arm_preflight_required": True,
         "all_panel_zero_economic_builder_walk_required": True,
         "all_fold_zero_economic_contract_walk_required": True,
     }
@@ -342,11 +346,11 @@ def _semantic_source_hashes(
         current_sha256 = _file_sha256(current_path)
         if predecessor_sha256 != current_sha256:
             raise OfflineOrchestratorError(
-                f"research-contract source changed since formal-v21: {relative_path}"
+                f"research-contract source changed since formal-v22: {relative_path}"
             )
         hashes[relative_path] = {
-            "formal_v21_sha256": predecessor_sha256,
-            "formal_v22_sha256": current_sha256,
+            "formal_v22_sha256": predecessor_sha256,
+            "formal_v23_sha256": current_sha256,
             "equal": True,
         }
     return hashes
@@ -369,44 +373,50 @@ def _execution_only_manifest_invariance(
         successor_normalized.pop(field, None)
     if predecessor_normalized != successor_normalized:
         raise OfflineOrchestratorError(
-            "formal-v22 changed a manifest field outside the execution-only allowance"
+            "formal-v23 changed a manifest field outside the execution-only allowance"
         )
 
     predecessor_executor = dict(predecessor.get("executor") or {})
     successor_executor = dict(successor.get("executor") or {})
     if predecessor_executor.pop("identity", None) != (
-        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1"
+        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v2"
     ):
-        raise OfflineOrchestratorError("formal-v21 executor identity drifted")
-    if successor_executor.pop("identity", None) != EXECUTOR_ACCELERATION_IDENTITY:
         raise OfflineOrchestratorError("formal-v22 executor identity drifted")
-    if successor_executor.pop("all_panel_zero_economic_builder_walk_required", None) is not True:
-        raise OfflineOrchestratorError("formal-v22 builder preflight gate is missing")
+    if successor_executor.pop("identity", None) != EXECUTOR_ACCELERATION_IDENTITY:
+        raise OfflineOrchestratorError("formal-v23 executor identity drifted")
+    if (
+        successor_executor.pop(
+            "cpp_first_opportunity_all_arm_preflight_required",
+            None,
+        )
+        is not True
+    ):
+        raise OfflineOrchestratorError("formal-v23 quick lockstep preflight gate is missing")
     if predecessor_executor != successor_executor:
-        raise OfflineOrchestratorError("formal-v22 changed the executor beyond its preflight gate")
+        raise OfflineOrchestratorError("formal-v23 changed the executor beyond its preflight gate")
 
     predecessor_qualification = dict(predecessor.get("cpp_one_shot_qualification") or {})
     successor_qualification = dict(successor.get("cpp_one_shot_qualification") or {})
     if predecessor_qualification.pop("identity", None) != (
-        "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+        "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
     ):
-        raise OfflineOrchestratorError("formal-v21 qualification identity drifted")
-    if successor_qualification.pop("identity", None) != CPP_QUALIFICATION_IDENTITY:
         raise OfflineOrchestratorError("formal-v22 qualification identity drifted")
+    if successor_qualification.pop("identity", None) != CPP_QUALIFICATION_IDENTITY:
+        raise OfflineOrchestratorError("formal-v23 qualification identity drifted")
     for field in (
-        "all_panel_zero_economic_builder_walk_required",
-        "builder_preflight_receipt_file",
-        "builder_preflight_opportunity_count",
         "invariance_receipt_file",
+        "first_opportunity_all_arm_preflight_required",
+        "first_opportunity_all_arm_preflight_receipt_file",
     ):
+        predecessor_qualification.pop(field, None)
         successor_qualification.pop(field, None)
     if predecessor_qualification != successor_qualification:
         raise OfflineOrchestratorError(
-            "formal-v22 changed C++ qualification beyond the frozen preflight additions"
+            "formal-v23 changed C++ qualification beyond the frozen parity additions"
         )
 
 
-def admit_v21_v22_invariance_receipt(
+def admit_v22_v23_invariance_receipt(
     predecessor_manifest_path: Path,
     successor_manifest_path: Path,
     output_path: Path,
@@ -417,22 +427,22 @@ def admit_v21_v22_invariance_receipt(
     predecessor_path = predecessor_manifest_path.expanduser().resolve()
     successor_path = successor_manifest_path.expanduser().resolve()
     destination = output_path.expanduser().resolve()
-    if destination != successor_path.parent / V21_V22_INVARIANCE_RECEIPT_NAME:
+    if destination != successor_path.parent / V22_V23_INVARIANCE_RECEIPT_NAME:
         raise OfflineOrchestratorError("invariance receipt path is not canonical")
     if destination.exists():
-        raise OfflineOrchestratorError("immutable v21-to-v22 invariance receipt already exists")
-    if _file_sha256(predecessor_path) != V21_EXECUTION_MANIFEST_FILE_SHA256:
-        raise OfflineOrchestratorError("formal-v21 execution manifest byte identity drifted")
-    predecessor = _load_json(predecessor_path, label="formal-v21 execution manifest")
+        raise OfflineOrchestratorError("immutable v22-to-v23 invariance receipt already exists")
+    if _file_sha256(predecessor_path) != V22_EXECUTION_MANIFEST_FILE_SHA256:
+        raise OfflineOrchestratorError("formal-v22 execution manifest byte identity drifted")
+    predecessor = _load_json(predecessor_path, label="formal-v22 execution manifest")
     if (
         predecessor.get("canonical_execution_manifest_sha256")
-        != V21_EXECUTION_MANIFEST_CANONICAL_SHA256
+        != V22_EXECUTION_MANIFEST_CANONICAL_SHA256
         or predecessor.get("canonical_execution_manifest_sha256")
         != _document_sha256(predecessor, "canonical_execution_manifest_sha256")
-        or predecessor.get("public_base_commit") != V21_PUBLIC_BASE_COMMIT
-        or predecessor.get("annotated_tag") != V21_ANNOTATED_TAG
+        or predecessor.get("public_base_commit") != V22_PUBLIC_BASE_COMMIT
+        or predecessor.get("annotated_tag") != V22_ANNOTATED_TAG
     ):
-        raise OfflineOrchestratorError("formal-v21 execution identity drifted")
+        raise OfflineOrchestratorError("formal-v22 execution identity drifted")
     bundle = _load_formal_offline_bundle(
         successor_path,
         verify_source_bytes=True,
@@ -449,21 +459,21 @@ def admit_v21_v22_invariance_receipt(
     )
     semantic_sources = _semantic_source_hashes(
         repository_root=root,
-        predecessor_commit=V21_PUBLIC_BASE_COMMIT,
+        predecessor_commit=V22_PUBLIC_BASE_COMMIT,
     )
     receipt: dict[str, Any] = {
-        "schema_version": f"{V21_V22_INVARIANCE_IDENTITY}.receipt.v1",
-        "identity": V21_V22_INVARIANCE_IDENTITY,
-        "status": V21_V22_INVARIANCE_STATUS,
-        "formal_v21": {
-            "canonical_execution_manifest_sha256": (
-                V21_EXECUTION_MANIFEST_CANONICAL_SHA256
-            ),
-            "manifest_file_sha256": V21_EXECUTION_MANIFEST_FILE_SHA256,
-            "public_base_commit": V21_PUBLIC_BASE_COMMIT,
-            "annotated_tag": V21_ANNOTATED_TAG,
-        },
+        "schema_version": f"{V22_V23_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": V22_V23_INVARIANCE_IDENTITY,
+        "status": V22_V23_INVARIANCE_STATUS,
         "formal_v22": {
+            "canonical_execution_manifest_sha256": (
+                V22_EXECUTION_MANIFEST_CANONICAL_SHA256
+            ),
+            "manifest_file_sha256": V22_EXECUTION_MANIFEST_FILE_SHA256,
+            "public_base_commit": V22_PUBLIC_BASE_COMMIT,
+            "annotated_tag": V22_ANNOTATED_TAG,
+        },
+        "formal_v23": {
             "canonical_execution_manifest_sha256": successor[
                 "canonical_execution_manifest_sha256"
             ],
@@ -495,7 +505,7 @@ def admit_v21_v22_invariance_receipt(
     return receipt
 
 
-def _validate_v21_v22_invariance_receipt(
+def _validate_v22_v23_invariance_receipt(
     manifest_path: Path,
     manifest: Mapping[str, Any],
     *,
@@ -505,11 +515,11 @@ def _validate_v21_v22_invariance_receipt(
     verify_runtime_artifacts: bool,
 ) -> Mapping[str, Any]:
     receipt = _load_json(
-        manifest_path.parent / V21_V22_INVARIANCE_RECEIPT_NAME,
-        label="formal-v21-to-v22 invariance receipt",
+        manifest_path.parent / V22_V23_INVARIANCE_RECEIPT_NAME,
+        label="formal-v22-to-v23 invariance receipt",
     )
-    formal_v21 = receipt.get("formal_v21")
     formal_v22 = receipt.get("formal_v22")
+    formal_v23 = receipt.get("formal_v23")
     expected_contract = _research_contract_snapshot(
         manifest=manifest,
         source=source,
@@ -529,21 +539,21 @@ def _validate_v21_v22_invariance_receipt(
         "live_authorized",
     )
     if (
-        receipt.get("identity") != V21_V22_INVARIANCE_IDENTITY
-        or receipt.get("status") != V21_V22_INVARIANCE_STATUS
-        or not isinstance(formal_v21, Mapping)
+        receipt.get("identity") != V22_V23_INVARIANCE_IDENTITY
+        or receipt.get("status") != V22_V23_INVARIANCE_STATUS
         or not isinstance(formal_v22, Mapping)
-        or formal_v21.get("canonical_execution_manifest_sha256")
-        != V21_EXECUTION_MANIFEST_CANONICAL_SHA256
-        or formal_v21.get("manifest_file_sha256")
-        != V21_EXECUTION_MANIFEST_FILE_SHA256
-        or formal_v21.get("public_base_commit") != V21_PUBLIC_BASE_COMMIT
-        or formal_v21.get("annotated_tag") != V21_ANNOTATED_TAG
+        or not isinstance(formal_v23, Mapping)
         or formal_v22.get("canonical_execution_manifest_sha256")
+        != V22_EXECUTION_MANIFEST_CANONICAL_SHA256
+        or formal_v22.get("manifest_file_sha256")
+        != V22_EXECUTION_MANIFEST_FILE_SHA256
+        or formal_v22.get("public_base_commit") != V22_PUBLIC_BASE_COMMIT
+        or formal_v22.get("annotated_tag") != V22_ANNOTATED_TAG
+        or formal_v23.get("canonical_execution_manifest_sha256")
         != manifest.get("canonical_execution_manifest_sha256")
-        or formal_v22.get("manifest_file_sha256") != _file_sha256(manifest_path)
-        or formal_v22.get("public_base_commit") != manifest.get("public_base_commit")
-        or formal_v22.get("annotated_tag") != manifest.get("annotated_tag")
+        or formal_v23.get("manifest_file_sha256") != _file_sha256(manifest_path)
+        or formal_v23.get("public_base_commit") != manifest.get("public_base_commit")
+        or formal_v23.get("annotated_tag") != manifest.get("annotated_tag")
         or receipt.get("research_contract") != expected_contract
         or receipt.get("research_contract_sha256") != _canonical_sha256(expected_contract)
         or int(receipt.get("semantic_source_count", 0))
@@ -552,15 +562,15 @@ def _validate_v21_v22_invariance_receipt(
         or receipt.get("canonical_receipt_sha256")
         != _document_sha256(receipt, "canonical_receipt_sha256")
     ):
-        raise OfflineOrchestratorError("formal-v21-to-v22 invariance receipt failed closed")
+        raise OfflineOrchestratorError("formal-v22-to-v23 invariance receipt failed closed")
     if verify_runtime_artifacts:
         expected_sources = _semantic_source_hashes(
             repository_root=repository_root,
-            predecessor_commit=V21_PUBLIC_BASE_COMMIT,
+            predecessor_commit=V22_PUBLIC_BASE_COMMIT,
         )
         if receipt.get("semantic_source_hashes") != expected_sources:
             raise OfflineOrchestratorError(
-                "formal-v21-to-v22 semantic source identity drifted"
+                "formal-v22-to-v23 semantic source identity drifted"
             )
     return receipt
 
@@ -839,7 +849,7 @@ def _cpp_qualification_contract() -> dict[str, Any]:
     return {
         "identity": CPP_QUALIFICATION_IDENTITY,
         "receipt_file": CPP_QUALIFICATION_RECEIPT_NAME,
-        "invariance_receipt_file": V21_V22_INVARIANCE_RECEIPT_NAME,
+        "invariance_receipt_file": V22_V23_INVARIANCE_RECEIPT_NAME,
         "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_day_index": 0,
         "all_opportunities_required": True,
@@ -848,6 +858,10 @@ def _cpp_qualification_contract() -> dict[str, Any]:
         "all_panel_zero_economic_builder_walk_required": True,
         "builder_preflight_receipt_file": CPP_BUILDER_PREFLIGHT_RECEIPT_NAME,
         "builder_preflight_opportunity_count": CPP_BUILDER_PREFLIGHT_OPPORTUNITIES,
+        "first_opportunity_all_arm_preflight_required": True,
+        "first_opportunity_all_arm_preflight_receipt_file": (
+            CPP_QUICK_PREFLIGHT_RECEIPT_NAME
+        ),
         "economic_values_persisted": False,
     }
 
@@ -900,8 +914,8 @@ def _validate_cpp_qualification_receipt(
     if contract != _cpp_qualification_contract():
         raise OfflineOrchestratorError("C++ one-shot qualification contract drifted")
     invariance_receipt = _load_json(
-        manifest_path.parent / V21_V22_INVARIANCE_RECEIPT_NAME,
-        label="formal-v21-to-v22 invariance receipt",
+        manifest_path.parent / V22_V23_INVARIANCE_RECEIPT_NAME,
+        label="formal-v22-to-v23 invariance receipt",
     )
     builder_path = manifest_path.parent / CPP_BUILDER_PREFLIGHT_RECEIPT_NAME
     builder_receipt = _load_json(
@@ -918,7 +932,7 @@ def _validate_cpp_qualification_receipt(
         or int(builder_receipt.get("cpp_startup_validated_row_count", 0))
         != CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         or int(builder_receipt.get("economic_evaluator_call_count", -1)) != 0
-        or builder_receipt.get("formal_v21_to_v22_invariance_receipt_sha256")
+        or builder_receipt.get("formal_v22_to_v23_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or builder_receipt.get("economic_values_read") is not False
         or builder_receipt.get("economic_values_persisted") is not False
@@ -930,6 +944,35 @@ def _validate_cpp_qualification_receipt(
         != _document_sha256(builder_receipt, "canonical_receipt_sha256")
     ):
         raise OfflineOrchestratorError("C++ all-panel builder preflight receipt failed closed")
+    quick_receipt = _load_json(
+        manifest_path.parent / CPP_QUICK_PREFLIGHT_RECEIPT_NAME,
+        label="C++ first-opportunity all-arm preflight receipt",
+    )
+    if (
+        quick_receipt.get("identity") != CPP_QUICK_PREFLIGHT_IDENTITY
+        or quick_receipt.get("status") != CPP_QUICK_PREFLIGHT_STATUS
+        or quick_receipt.get("execution_manifest_sha256")
+        != manifest.get("canonical_execution_manifest_sha256")
+        or int(quick_receipt.get("opportunity_count", 0)) != 1
+        or int(quick_receipt.get("arm_count", 0)) != 8
+        or int(quick_receipt.get("zero_mismatch_arm_count", 0)) != 8
+        or quick_receipt.get("all_panel_builder_preflight_receipt_sha256")
+        != builder_receipt.get("canonical_receipt_sha256")
+        or quick_receipt.get("formal_v22_to_v23_invariance_receipt_sha256")
+        != invariance_receipt.get("canonical_receipt_sha256")
+        or quick_receipt.get("economic_values_persisted") is not False
+        or quick_receipt.get("economic_values_exposed") is not False
+        or quick_receipt.get("economic_values_used_for_selection") is not False
+        or quick_receipt.get("validation_read") is not False
+        or quick_receipt.get("sealed_holdout_read") is not False
+        or quick_receipt.get("action_authorized") is not False
+        or quick_receipt.get("live_authorized") is not False
+        or quick_receipt.get("canonical_receipt_sha256")
+        != _document_sha256(quick_receipt, "canonical_receipt_sha256")
+    ):
+        raise OfflineOrchestratorError(
+            "C++ first-opportunity all-arm preflight receipt failed closed"
+        )
     receipt_path = manifest_path.parent / CPP_QUALIFICATION_RECEIPT_NAME
     receipt = _load_json(receipt_path, label="C++ one-shot lockstep receipt")
     qualification = receipt.get("qualification_contract")
@@ -944,8 +987,10 @@ def _validate_cpp_qualification_receipt(
         or int(receipt.get("arm_count", 0)) != int(receipt.get("opportunity_count", 0)) * 8
         or qualification.get("all_panel_builder_preflight_receipt_sha256")
         != builder_receipt.get("canonical_receipt_sha256")
-        or qualification.get("formal_v21_to_v22_invariance_receipt_sha256")
+        or qualification.get("formal_v22_to_v23_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
+        or qualification.get("first_opportunity_all_arm_preflight_receipt_sha256")
+        != quick_receipt.get("canonical_receipt_sha256")
         or int(qualification.get("all_panel_builder_preflight_opportunity_count", 0))
         != CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         or receipt.get("economic_values_persisted") is not False
@@ -1100,7 +1145,7 @@ def _load_formal_offline_bundle(
             tag=str(manifest.get("annotated_tag", "")),
         )
     if require_invariance:
-        _validate_v21_v22_invariance_receipt(
+        _validate_v22_v23_invariance_receipt(
             path,
             manifest,
             source=source,
@@ -1392,7 +1437,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     bind.add_argument("panel_manifest", type=Path)
     bind.add_argument("output_manifest", type=Path)
     bind.add_argument("--annotated-tag", required=True)
-    invariance = subparsers.add_parser("admit-v21-v22-invariance")
+    invariance = subparsers.add_parser("admit-v22-v23-invariance")
     invariance.add_argument("predecessor_manifest", type=Path)
     invariance.add_argument("successor_manifest", type=Path)
     invariance.add_argument("--output", type=Path, required=True)
@@ -1422,8 +1467,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "execution_manifest_sha256": result["canonical_execution_manifest_sha256"],
             "economic_outcomes_read": False,
         }
-    elif args.command == "admit-v21-v22-invariance":
-        receipt = admit_v21_v22_invariance_receipt(
+    elif args.command == "admit-v22-v23-invariance":
+        receipt = admit_v22_v23_invariance_receipt(
             args.predecessor_manifest,
             args.successor_manifest,
             args.output,
