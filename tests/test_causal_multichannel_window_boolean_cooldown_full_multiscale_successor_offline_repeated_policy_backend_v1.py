@@ -233,8 +233,8 @@ def _bundle_fixture(
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
     invariance_receipt: dict[str, object] = {
-        "identity": orchestrator.V22_V23_INVARIANCE_IDENTITY,
-        "status": orchestrator.V22_V23_INVARIANCE_STATUS,
+        "identity": orchestrator.V23_V24_INVARIANCE_IDENTITY,
+        "status": orchestrator.V23_V24_INVARIANCE_STATUS,
         "economic_outcomes_read": False,
         "action_authorized": False,
         "live_authorized": False,
@@ -244,12 +244,12 @@ def _bundle_fixture(
         "canonical_receipt_sha256",
     )
     _write_json(
-        execution_path.parent / orchestrator.V22_V23_INVARIANCE_RECEIPT_NAME,
+        execution_path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME,
         invariance_receipt,
     )
     builder_receipt: dict[str, object] = {
         "schema_version": (
-            "f05_cpp_one_shot_real_day_all_arm_lockstep_v23.builder_preflight.v1"
+            "f05_cpp_one_shot_real_day_all_arm_lockstep_v24.builder_preflight.v1"
         ),
         "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
         "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
@@ -261,7 +261,7 @@ def _bundle_fixture(
         "cpp_startup_validated_row_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_evaluator_call_count": 0,
@@ -292,7 +292,7 @@ def _bundle_fixture(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_values_persisted": False,
@@ -323,7 +323,7 @@ def _bundle_fixture(
         "all_panel_builder_preflight_opportunity_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[

@@ -1,0 +1,42 @@
+{
+  "action_authorized": false,
+  "builder_instantiates_formal_runtime_before_panel_rows": true,
+  "cpp_extension_build_inherited_from_post_v23_fix": true,
+  "economic_outcomes_read": false,
+  "formal_execution_manifest_bound": false,
+  "full_pytest": {
+    "passed": 3303,
+    "skipped": 316,
+    "warnings": 1
+  },
+  "identity": "f05_full_multiscale_offline_formal_v24_local_verification_v1",
+  "live_authorized": false,
+  "owner_continuation_authorized": true,
+  "private_evidence_audit": {
+    "catalog_entries": 7444,
+    "findings": 0,
+    "passed": true,
+    "private_files_seen": 504
+  },
+  "public_documentation_audit": {
+    "files_scanned": 757,
+    "findings": 0,
+    "passed": true,
+    "repository_links_checked": 596
+  },
+  "ruff_passed": true,
+  "sealed_holdout_read": false,
+  "source_sha256": {
+    "backtest_tick": "42cb34f50d197549d07e31cb9bec30fa6f9f2421b4ee33524bd7394b8cf02bb7",
+    "formal_lockstep_runner": "f50f945d6e1e74579c63cabfc4230dc3e9b0f393555c51cb748cbc50f099de5a",
+    "formal_orchestrator": "d3b771b80f031e87f895885641f242069789fecca3567c0d2121472704e7b8f4",
+    "offline_replay_adapter": "3fe25034aef8a0149f1e67c80ae5b7d236b04790c2e2e583cdb62ebb6cf353e1",
+    "tick_replay_cpp": "bd50deb7fdef5a5e685a26173c8e0ea2d480f5a5d773a637f380dd64c69103cd"
+  },
+  "status": "implemented_local_tests_and_governance_passed_pre_admission",
+  "targeted_formal_v24_tests": {
+    "passed": 92,
+    "skipped": 0
+  },
+  "validation_read": false
+}

@@ -109,7 +109,7 @@ DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
 DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v3"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4"
 DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
@@ -2825,7 +2825,7 @@ def _execute_one_shot_day(
     )
     if (
         job.payload.get("cpp_qualification_identity")
-        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
+        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
     ):
         raise OfflineReplayAdapterError("C++ one-shot qualification identity drifted")
     rows = job.payload.get("replay_inputs")
@@ -5630,7 +5630,7 @@ class _CanonicalOfflineReplayAdapter:
                         "duration_vocabulary": label.duration_vocabulary,
                         "one_shot_topology": topology.payload(),
                         "cpp_qualification_identity": (
-                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
+                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
                         ),
                         "cpp_qualification_receipt_sha256": (
                             self._cpp_qualification_receipt_sha256

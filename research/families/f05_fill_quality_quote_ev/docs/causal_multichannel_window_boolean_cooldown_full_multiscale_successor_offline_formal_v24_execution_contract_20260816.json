@@ -1,0 +1,52 @@
+{
+  "action_authorized": false,
+  "all_panel_builder_gate": {
+    "economic_evaluator_calls": 0,
+    "formal_runtime_instantiation_required_before_panel_rows": true,
+    "identity": "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v24",
+    "opportunity_count": 3516,
+    "required_status": "passed_all_3516_zero_economic_builder_walk"
+  },
+  "candidate_ladder_changed": false,
+  "cpp_authority_scope": "outer_train_one_shot_labels_only",
+  "data_changed": false,
+  "engine_contract": {
+    "outer_test_sequential": "python",
+    "outer_train_one_shot": "cpp",
+    "runtime_qualification_scope": "real_day_all_arm_full_replay_v23"
+  },
+  "estimand_changed": false,
+  "execution_identity": "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4",
+  "first_opportunity_gate": {
+    "arm_count": 8,
+    "identity": "f05_cpp_first_opportunity_all_arm_lockstep_v24",
+    "opportunity_count": 1,
+    "required_status": "passed_first_opportunity_all_side_specific_arms_lockstep",
+    "zero_mismatches_required": true
+  },
+  "formal_successor": "formal_v24",
+  "full_day_gate": {
+    "all_opportunities_required": true,
+    "all_side_specific_duration_arms_required": true,
+    "identity": "f05_cpp_one_shot_real_day_all_arm_lockstep_v24",
+    "qualification_day_index": 0,
+    "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
+    "zero_mismatches_required": true
+  },
+  "invariance": {
+    "identity": "f05_formal_v23_to_v24_execution_only_invariance_v1",
+    "predecessor_annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-cpp-one-shot-v23-20260816",
+    "predecessor_execution_manifest_canonical_sha256": "0f0a999f6862f9574975f51ae6fee332515aa06547c2b3766a31b4d5e9afa4d3",
+    "predecessor_execution_manifest_file_sha256": "2f28b011874c6bc892da07a98fb9b18f4d33ad001fc9ef27895b6d60174ae44b",
+    "predecessor_public_base_commit": "8a1d6e739f47e0b47d4470812e00314a66673fe7"
+  },
+  "live_authorized": false,
+  "one_shot_effect_aggregation_used": false,
+  "owner_continuation_authorized": true,
+  "repeated_sequential_policy_estimand": true,
+  "schema_version": "f05_full_multiscale_offline_formal_v24.execution_contract.v1",
+  "sealed_holdout_read": false,
+  "statistics_changed": false,
+  "status": "formal_v24_implemented_local_pre_admission",
+  "validation_read": false
+}

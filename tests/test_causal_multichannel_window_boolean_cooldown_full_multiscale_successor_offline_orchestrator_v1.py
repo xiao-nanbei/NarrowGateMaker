@@ -206,18 +206,18 @@ def _write_cpp_qualification_receipt(
         panel=panel,
     )
     invariance_receipt: dict[str, object] = {
-        "schema_version": f"{orchestrator.V22_V23_INVARIANCE_IDENTITY}.receipt.v1",
-        "identity": orchestrator.V22_V23_INVARIANCE_IDENTITY,
-        "status": orchestrator.V22_V23_INVARIANCE_STATUS,
-        "formal_v22": {
-            "canonical_execution_manifest_sha256": (
-                orchestrator.V22_EXECUTION_MANIFEST_CANONICAL_SHA256
-            ),
-            "manifest_file_sha256": orchestrator.V22_EXECUTION_MANIFEST_FILE_SHA256,
-            "public_base_commit": orchestrator.V22_PUBLIC_BASE_COMMIT,
-            "annotated_tag": orchestrator.V22_ANNOTATED_TAG,
-        },
+        "schema_version": f"{orchestrator.V23_V24_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": orchestrator.V23_V24_INVARIANCE_IDENTITY,
+        "status": orchestrator.V23_V24_INVARIANCE_STATUS,
         "formal_v23": {
+            "canonical_execution_manifest_sha256": (
+                orchestrator.V23_EXECUTION_MANIFEST_CANONICAL_SHA256
+            ),
+            "manifest_file_sha256": orchestrator.V23_EXECUTION_MANIFEST_FILE_SHA256,
+            "public_base_commit": orchestrator.V23_PUBLIC_BASE_COMMIT,
+            "annotated_tag": orchestrator.V23_ANNOTATED_TAG,
+        },
+        "formal_v24": {
             "canonical_execution_manifest_sha256": execution[
                 "canonical_execution_manifest_sha256"
             ],
@@ -246,11 +246,11 @@ def _write_cpp_qualification_receipt(
         "canonical_receipt_sha256",
     )
     _write_json(
-        execution_path.parent / orchestrator.V22_V23_INVARIANCE_RECEIPT_NAME,
+        execution_path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME,
         invariance_receipt,
     )
     builder_receipt: dict[str, object] = {
-        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v23.builder_preflight.v1"),
+        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v24.builder_preflight.v1"),
         "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
         "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
@@ -261,7 +261,7 @@ def _write_cpp_qualification_receipt(
         "cpp_startup_validated_row_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_evaluator_call_count": 0,
@@ -291,7 +291,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_values_persisted": False,
@@ -311,7 +311,7 @@ def _write_cpp_qualification_receipt(
         quick_receipt,
     )
     qualification = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v23.contract.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v24.contract.v1",
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
         "source_manifest_sha256": source["canonical_manifest_sha256"],
         "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
@@ -324,7 +324,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_opportunity_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[
@@ -333,7 +333,7 @@ def _write_cpp_qualification_receipt(
         "source_hashes": {"cpp_extension": "d" * 64},
     }
     receipt: dict[str, object] = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v23.receipt.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v24.receipt.v1",
         "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
         "status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_contract": qualification,
@@ -497,12 +497,12 @@ def test_formal_loader_rejects_quick_preflight_mismatch(
         )
 
 
-def test_formal_loader_requires_v22_to_v23_invariance_receipt(
+def test_formal_loader_requires_v23_to_v24_invariance_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V22_V23_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
     receipt_path.unlink()
 
     with pytest.raises(
@@ -521,7 +521,7 @@ def test_formal_loader_rejects_recomputed_invariance_contract_tamper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V22_V23_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["research_contract"]["candidate_ladder"].append("OUTCOME_INFORMED")
     receipt["research_contract_sha256"] = orchestrator._canonical_sha256(
@@ -550,25 +550,24 @@ def test_execution_only_invariance_rejects_research_contract_change(
 ) -> None:
     _path, successor, *_ = _bundle_fixture(tmp_path, monkeypatch)
     predecessor = json.loads(json.dumps(successor))
-    predecessor["public_base_commit"] = orchestrator.V22_PUBLIC_BASE_COMMIT
-    predecessor["annotated_tag"] = orchestrator.V22_ANNOTATED_TAG
+    predecessor["public_base_commit"] = orchestrator.V23_PUBLIC_BASE_COMMIT
+    predecessor["annotated_tag"] = orchestrator.V23_ANNOTATED_TAG
     predecessor["canonical_execution_manifest_sha256"] = (
-        orchestrator.V22_EXECUTION_MANIFEST_CANONICAL_SHA256
+        orchestrator.V23_EXECUTION_MANIFEST_CANONICAL_SHA256
     )
     predecessor["executor"]["identity"] = (
-        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v2"
+        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v3"
     )
     predecessor["executor"].pop(
-        "cpp_first_opportunity_all_arm_preflight_required",
+        "builder_instantiates_formal_cpp_runtime_required",
         None,
     )
     predecessor["cpp_one_shot_qualification"]["identity"] = (
-        "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
+        "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
     )
     for field in (
         "invariance_receipt_file",
-        "first_opportunity_all_arm_preflight_required",
-        "first_opportunity_all_arm_preflight_receipt_file",
+        "builder_formal_runtime_instantiation_required",
     ):
         predecessor["cpp_one_shot_qualification"].pop(field, None)
 

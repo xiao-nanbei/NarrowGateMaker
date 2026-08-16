@@ -40,15 +40,15 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     multiscale_ema_boolean_cooldown_duration_policy_study as study,
 )
 
-IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v23"
+IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
 SCHEMA_VERSION = f"{IDENTITY}.receipt.v1"
 QUALIFICATION_DAY_INDEX = 0
 WORKER_TOKENS = 10
 EXPECTED_PANEL_OPPORTUNITIES = 3_516
-BUILDER_PREFLIGHT_IDENTITY = "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v23"
+BUILDER_PREFLIGHT_IDENTITY = "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v24"
 BUILDER_PREFLIGHT_RECEIPT_NAME = "cpp_target_predicate_builder_walk_receipt.json"
 BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
-QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v23"
+QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v24"
 QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
 QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
 
@@ -351,7 +351,7 @@ def preflight_all_panel_target_rows(
         "target_row_semantics": (
             "sparse_target_support_row_with_cpp_runtime_derived_compiled_owner_predicates"
         ),
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "cpp_startup_contract_validation": True,
@@ -570,7 +570,7 @@ def _run_first_opportunity_all_arm_preflight(
         "opportunity_id": str(opportunity["opportunity_id"]),
     }
     quick_qualification_sha256 = _canonical_sha256(quick_contract)
-    quick_staging = output_path.parent / ".cpp-lockstep-v23-quick-staging"
+    quick_staging = output_path.parent / ".cpp-lockstep-v24-quick-staging"
     quick_progress = output_path.parent / "cpp_first_opportunity_all_arm_progress.json"
     python_digests = _run_python_authority(
         day=day,
@@ -665,7 +665,7 @@ def _run_first_opportunity_all_arm_preflight(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "quick_qualification_sha256": quick_qualification_sha256,
@@ -701,8 +701,8 @@ def _run_lockstep_impl(
     bundle = orchestrator.load_formal_offline_bundle_for_cpp_qualification(manifest_path)
     stage["value"] = "verify_clean_bound_commit"
     _require_clean_bound_commit(bundle)
-    stage["value"] = "verify_v22_to_v23_invariance"
-    invariance_receipt = orchestrator._validate_v22_v23_invariance_receipt(
+    stage["value"] = "verify_v23_to_v24_invariance"
+    invariance_receipt = orchestrator._validate_v23_v24_invariance_receipt(
         manifest_path,
         bundle.execution_manifest,
         source=bundle.source_manifest,
@@ -768,7 +768,7 @@ def _run_lockstep_impl(
         "worker_tokens": WORKER_TOKENS,
         "all_panel_builder_preflight_receipt_sha256": builder_receipt["canonical_receipt_sha256"],
         "all_panel_builder_preflight_opportunity_count": builder_receipt["opportunity_count"],
-        "formal_v22_to_v23_invariance_receipt_sha256": invariance_receipt[
+        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "python_authority": "posix_cow_shared_prefix_at_fill_callback",
@@ -831,7 +831,7 @@ def _run_lockstep_impl(
         identity_hashes=identity_hashes,
         qualification_receipt_sha256=qualification_sha256,
     )
-    staging_root = output_path.parent / ".cpp-lockstep-v23-staging"
+    staging_root = output_path.parent / ".cpp-lockstep-v24-staging"
     staging_root.mkdir(parents=True, exist_ok=True)
     progress_path = output_path.parent / "cpp_real_day_lockstep_progress.json"
     stage["value"] = "python_shared_prefix"
