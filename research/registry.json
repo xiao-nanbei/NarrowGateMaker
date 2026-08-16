@@ -1,6 +1,6 @@
 {
   "schema": "narrowgate.research_family_registry.v2",
-  "as_of": "2026-08-16",
+  "as_of": "2026-08-17",
   "compatibility_policy": {
     "canonical_storage": "research/families, research/shared, research/system_engineering, and research/governance",
     "legacy_paths": "removed; versioned layout manifests resolve historical paths",
@@ -17,8 +17,8 @@
       "map": "research/families/f04_external_market_alpha/docs/babel_external_market_research_map.md",
       "p1_identity": "first_add_external_incremental_value_m0_m1_v1",
       "p1_status": "blocked_on_30_distinct_valid_source_aware_receive_time_utc_days_and_all_row_denominators",
-      "p1_valid_full_windows": 23,
-      "p1_distinct_valid_utc_days": 22,
+      "p1_valid_full_windows": 28,
+      "p1_distinct_valid_utc_days": 27,
       "p1_required_distinct_valid_utc_days": 30,
       "p1_transport_source_amendment": "research/families/f04_external_market_alpha/docs/first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_v2_20260811.json",
       "p1_transport_source_amendment_sha256": "2047a0facf888c0c8af1e7bfe529a1c4f4d420525c861bf54f36f32cbefefe08",
@@ -28,7 +28,7 @@
       "p1_current_source_bound_ledger": "${NARROWGATE_DATA_ROOT}/receive_time_tape/capture_ledger.v2.jsonl",
       "p1_retired_vultr_capture_source_key": "vultr:nrt:<retired-intermediate-vultr-host>",
       "p1_current_capture_source_key": "aws:ap_northeast_1:<current-live-epoch>",
-      "p1_capture_automation_id": "collect-vultr-tokyo-bounded-market-tapes",
+      "p1_capture_automation_id": "validate-bounded-capture",
       "p1_current_exact_lifecycle_gate": "blocked_on_never_activated_gtx_minus_5022_exchange_exposure_successor_and_recollection",
       "p1_current_lifecycle_session_formal_valid": false,
       "p2_identity": "external_adverse_quote_edge_guard_mechanics_v1",
@@ -80,8 +80,8 @@
       "live_authority": false
     },
     "F09": {
-      "status": "current_global_ber_control_active_role_safe_candidate_closed",
-      "current_backtest_control": {
+      "status": "operational_v11_boolean_cooldown_active_role_safe_ber_candidate_closed",
+      "historical_experiment_control": {
         "identity": "current_live_held_global_ber_control",
         "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
         "sha256": "2788aeb90d0e869a8c4b647775c13670d89a18f424bf78bb1b6bc5fa82d3e720",
@@ -94,6 +94,18 @@
         "terminal_mtm_pnl_usdc": -165.56607903599894,
         "closed_campaign_value_usdc": -168.5309790359994,
         "fills_total": 20147
+      },
+      "operational_default_control": {
+        "identity": "btc_usdc_causal_v12_f05_boolean_cooldown_owner_risk_accepted_baseline_20260812",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json",
+        "pointer_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+        "pointer_sha256": "3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd",
+        "backtest_control_arm": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+        "predecessor_control_arm": "current_live_held_global_ber_control",
+        "owner_policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+        "research_hard_gate_passed": false,
+        "owner_risk_accepted": true,
+        "live_authorized": true
       },
       "latest_identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
       "latest_spec": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_spec_20260808.json",
@@ -266,8 +278,15 @@
     "unified_data_universe_and_split_contract": "research/shared/experiment_governance/docs/unified_data_universe_and_split_contract_v1_20260812.json",
     "unified_data_universe_and_split_contract_sha256": "752a141bc43997727743e05d935a93d8ed790934ed34df2854c2cdbf609618c8",
     "unified_data_universe_and_split_contract_markdown": "research/shared/experiment_governance/docs/unified_data_universe_and_split_contract_v1_20260812.md",
-    "unified_data_universe_and_split_contract_markdown_sha256": "10b94cfcd9a372a888736c388eb9f2711758f123aab1d69a6fdf47069dcc076d",
+    "unified_data_universe_and_split_contract_markdown_sha256": "caeb565e1c50f5e759c2df20c1f23cdb764d7dee24e6f0358e0b0d5396a3c536",
     "experiment_dataset_binding_validator": "models/audit/dataset_governance.py",
+    "experiment_dataset_binding_validator_sha256": "4e14e73af2d6a427605d5437f68f23f806560f15379255f510d63974aa93d4fd",
+    "execution_worker_and_progress_contract": "research/shared/experiment_governance/docs/execution_worker_and_progress_contract_v1_20260817.md",
+    "execution_worker_and_progress_contract_sha256": "fe8ef56b54fa2ee07afeeaf42d0fe1e92b3ccc0ff9100236c04eccdda87a1f98",
+    "host_worker_governor": "models/audit/execution_governance.py",
+    "host_worker_governor_sha256": "fb420a2a2e862527ee6d2c611987c45cd72d93a177a5fffa9d6dd57b7ff03d7e",
+    "host_worker_token_default_capacity": 10,
+    "execution_progress_schema": "narrowgate_execution_progress.v1",
     "observation_only_shadow_is_mandatory_promotion_stage": false,
     "archive_v1": "research/governance/archive/legacy_snapshot_v1.tar.gz",
     "archive_v2": "research/governance/archive/legacy_snapshot_v2.tar.gz"
@@ -459,7 +478,7 @@
       "directory": "research/families/f05_fill_quality_quote_ev",
       "package": "research.families.f05_fill_quality_quote_ev",
       "status": "buy_fill_selection_suspended_boolean_cooldown_owner_risk_accepted_active_live",
-      "current_backtest_control": {
+      "historical_experiment_control": {
         "identity": "current_live_held_global_ber_control",
         "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
         "sha256": "2788aeb90d0e869a8c4b647775c13670d89a18f424bf78bb1b6bc5fa82d3e720",
@@ -473,10 +492,22 @@
         "closed_campaign_value_usdc": -168.5309790359994,
         "fills_total": 20147
       },
+      "operational_default_control": {
+        "identity": "btc_usdc_causal_v12_f05_boolean_cooldown_owner_risk_accepted_baseline_20260812",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json",
+        "pointer_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+        "pointer_sha256": "3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd",
+        "backtest_control_arm": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+        "predecessor_control_arm": "current_live_held_global_ber_control",
+        "owner_policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+        "research_hard_gate_passed": false,
+        "owner_risk_accepted": true,
+        "live_authorized": true
+      },
       "buy_fill_selection_live_enabled": false,
       "buy_fill_selection_shadow_enabled": false,
       "research_code_retained": true,
-      "reenable_requirement": "new_full_path_comparison_on_current_live_held_ber_control",
+      "reenable_requirement": "new_full_path_comparison_against_exact_operational_v11_owner_policy",
       "latest_prediction_identity": "multiscale_ema_add_wait_incremental_value_source_aware_v1_2",
       "latest_prediction_status": "closed_development_no_side_specific_incremental_ema_value_evidence",
       "latest_prediction_report": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_development_20260809.md",
@@ -1558,8 +1589,8 @@
       "id": "F09",
       "directory": "research/families/f09_campaign_action_uplift",
       "package": "research.families.f09_campaign_action_uplift",
-      "status": "mechanism_research_active_current_global_ber_retained",
-      "current_backtest_control": {
+      "status": "mechanism_research_active_operational_v11_owner_policy_global_ber_predecessor_retained",
+      "historical_experiment_control": {
         "identity": "current_live_held_global_ber_control",
         "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
         "sha256": "2788aeb90d0e869a8c4b647775c13670d89a18f424bf78bb1b6bc5fa82d3e720",
@@ -1572,6 +1603,18 @@
         "terminal_mtm_pnl_usdc": -165.56607903599894,
         "closed_campaign_value_usdc": -168.5309790359994,
         "fills_total": 20147
+      },
+      "operational_default_control": {
+        "identity": "btc_usdc_causal_v12_f05_boolean_cooldown_owner_risk_accepted_baseline_20260812",
+        "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json",
+        "pointer_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+        "pointer_sha256": "3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd",
+        "backtest_control_arm": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+        "predecessor_control_arm": "current_live_held_global_ber_control",
+        "owner_policy_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+        "research_hard_gate_passed": false,
+        "owner_risk_accepted": true,
+        "live_authorized": true
       },
       "latest_identity": "ber_guard_role_safe_add_only_current_stack_owner_v1",
       "latest_spec": "research/families/f09_campaign_action_uplift/docs/ber_guard_role_safe_add_only_current_stack_owner_v1_spec_20260808.json",

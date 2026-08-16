@@ -24,6 +24,7 @@ from data_paths import external_cache_root
 SCHEMA_VERSION = "narrowgate.cache_tier_lru.ledger.v1"
 PLAN_SCHEMA_VERSION = "narrowgate.cache_tier_lru.plan.v1"
 RECEIPT_SCHEMA_VERSION = "narrowgate.cache_tier_lru.receipt.v1"
+ACTIVE_MANIFEST_SCHEMA_VERSION = "narrowgate.cache_tier_lru.active_manifest.v1"
 
 DEFAULT_HOT_ROOT = configured_cache_root()
 DEFAULT_COLD_ROOT = external_cache_root()
@@ -99,7 +100,7 @@ class CacheTierConfig:
     cold_ttl_days: int = DEFAULT_COLD_TTL_DAYS
     allowed_cache_roots: tuple[str, ...] = DEFAULT_ALLOWED_CACHE_ROOTS
     symlink_mode: Literal["relative", "absolute"] = "relative"
-    allow_unknown_migration: bool = True
+    allow_unknown_migration: bool = False
     lock_timeout_s: float = 5.0
 
     @property
@@ -117,6 +118,10 @@ class CacheTierConfig:
     @property
     def receipt_root(self) -> Path:
         return self.state_root / "receipts"
+
+    @property
+    def active_manifest_root(self) -> Path:
+        return self.state_root / "active_manifests"
 
     @property
     def cold_ttl_ns(self) -> int:
@@ -1462,6 +1467,222 @@ def _operation_record(record: CacheAccessRecord, config: CacheTierConfig) -> dic
     }
 
 
+def _active_manifest_sha256(payload: Mapping[str, object]) -> str:
+    body = {key: value for key, value in payload.items() if key != "manifest_sha256"}
+    return _sha256_bytes(_canonical_json(body))
+
+
+def _validate_active_run_id(value: str) -> str:
+    allowed = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
+    if not value or value.startswith(".") or any(character not in allowed for character in value):
+        raise CacheTierValidationError(f"unsafe active cache run id: {value!r}")
+    return value
+
+
+def _active_relative_path(
+    value: str | os.PathLike[str],
+    config: CacheTierConfig,
+) -> str:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return _validate_relative_path(path.as_posix(), config.allowed_cache_roots)
+    return _artifact_location(path, config=config, cache_root=None)[0]
+
+
+def write_active_cache_manifest(
+    config: CacheTierConfig,
+    *,
+    run_id: str,
+    protected_paths: Sequence[str | os.PathLike[str]],
+    ttl_s: float,
+    identity_sha256: str | None = None,
+    now_ns: int | None = None,
+) -> Path:
+    """Atomically publish cache roots that a running task must retain in place."""
+
+    config.validate(require_roots=False)
+    run_id = _validate_active_run_id(run_id)
+    if ttl_s <= 0:
+        raise CacheTierValidationError("active cache manifest TTL must be positive")
+    if identity_sha256 is not None and (
+        len(identity_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in identity_sha256)
+    ):
+        raise CacheTierValidationError("active cache identity must be a lowercase SHA256")
+    relative_paths = sorted(
+        {_active_relative_path(value, config) for value in protected_paths}
+    )
+    if not relative_paths:
+        raise CacheTierValidationError("active cache manifest protects no paths")
+    now_ns = time.time_ns() if now_ns is None else int(now_ns)
+    payload: dict[str, object] = {
+        "schema_version": ACTIVE_MANIFEST_SCHEMA_VERSION,
+        "run_id": run_id,
+        "identity_sha256": identity_sha256,
+        "heartbeat_ns": now_ns,
+        "expires_ns": now_ns + int(ttl_s * 1_000_000_000),
+        "protected_relative_paths": relative_paths,
+    }
+    payload["manifest_sha256"] = _active_manifest_sha256(payload)
+    path = config.active_manifest_root / f"{run_id}.json"
+    with _advisory_lock(config.lock_path, exclusive=True, timeout_s=config.lock_timeout_s):
+        _atomic_write_json(path, payload)
+    return path
+
+
+def refresh_active_cache_manifest(
+    config: CacheTierConfig,
+    path: Path,
+    *,
+    ttl_s: float,
+    now_ns: int | None = None,
+) -> Path:
+    """Refresh one valid active manifest without changing its protected path set."""
+
+    payload = _load_active_cache_manifest(path, config=config)
+    return write_active_cache_manifest(
+        config,
+        run_id=str(payload["run_id"]),
+        protected_paths=list(payload["protected_relative_paths"]),
+        ttl_s=ttl_s,
+        identity_sha256=(
+            str(payload["identity_sha256"])
+            if payload.get("identity_sha256") is not None
+            else None
+        ),
+        now_ns=now_ns,
+    )
+
+
+def remove_active_cache_manifest(config: CacheTierConfig, path: Path) -> None:
+    """Remove one active manifest after validating its bytes and governed location."""
+
+    resolved = path.expanduser().resolve()
+    root = config.active_manifest_root.expanduser().resolve()
+    if resolved.parent != root:
+        raise CacheTierValidationError("active cache manifest escaped its governed root")
+    _load_active_cache_manifest(resolved, config=config)
+    with _advisory_lock(config.lock_path, exclusive=True, timeout_s=config.lock_timeout_s):
+        resolved.unlink(missing_ok=False)
+        _fsync_directory(root)
+
+
+@contextlib.contextmanager
+def active_cache_manifest(
+    config: CacheTierConfig,
+    *,
+    run_id: str,
+    protected_paths: Sequence[str | os.PathLike[str]],
+    ttl_s: float,
+    identity_sha256: str | None = None,
+) -> Iterator[Path]:
+    """Protect cache paths for a scoped task and remove the marker on clean exit."""
+
+    path = write_active_cache_manifest(
+        config,
+        run_id=run_id,
+        protected_paths=protected_paths,
+        ttl_s=ttl_s,
+        identity_sha256=identity_sha256,
+    )
+    try:
+        yield path
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            remove_active_cache_manifest(config, path)
+
+
+def _load_active_cache_manifest(
+    path: Path,
+    *,
+    config: CacheTierConfig,
+) -> dict[str, object]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise CacheTierValidationError(f"invalid active cache manifest: {path}") from exc
+    if not isinstance(payload, dict):
+        raise CacheTierValidationError(f"active cache manifest must be an object: {path}")
+    if payload.get("schema_version") != ACTIVE_MANIFEST_SCHEMA_VERSION:
+        raise CacheTierValidationError("active cache manifest schema drifted")
+    run_id = _validate_active_run_id(str(payload.get("run_id", "")))
+    if path.name != f"{run_id}.json":
+        raise CacheTierValidationError("active cache manifest filename drifted")
+    if payload.get("manifest_sha256") != _active_manifest_sha256(payload):
+        raise CacheTierValidationError("active cache manifest SHA256 drifted")
+    heartbeat_ns = payload.get("heartbeat_ns")
+    expires_ns = payload.get("expires_ns")
+    if (
+        not isinstance(heartbeat_ns, int)
+        or not isinstance(expires_ns, int)
+        or heartbeat_ns < 0
+        or expires_ns <= heartbeat_ns
+    ):
+        raise CacheTierValidationError("active cache manifest clock is malformed")
+    paths = payload.get("protected_relative_paths")
+    if not isinstance(paths, list) or not paths:
+        raise CacheTierValidationError("active cache manifest protects no paths")
+    normalized = [
+        _validate_relative_path(str(value), config.allowed_cache_roots) for value in paths
+    ]
+    if normalized != sorted(set(normalized)):
+        raise CacheTierValidationError("active cache manifest paths are not canonical")
+    identity = payload.get("identity_sha256")
+    if identity is not None and (
+        not isinstance(identity, str)
+        or len(identity) != 64
+        or any(character not in "0123456789abcdef" for character in identity)
+    ):
+        raise CacheTierValidationError("active cache manifest identity is malformed")
+    return payload
+
+
+def active_cache_protection_snapshot(
+    config: CacheTierConfig,
+    *,
+    now_ns: int | None = None,
+) -> dict[str, object]:
+    """Return the active semantic protection set; malformed rows fail closed."""
+
+    now_ns = time.time_ns() if now_ns is None else int(now_ns)
+    root = config.active_manifest_root
+    if not root.exists():
+        return {"active_manifests": [], "protected_relative_paths": []}
+    if not root.is_dir():
+        raise CacheTierValidationError("active cache manifest root is not a directory")
+    active: list[dict[str, object]] = []
+    protected: set[str] = set()
+    for path in sorted(root.glob("*.json")):
+        payload = _load_active_cache_manifest(path, config=config)
+        if int(payload["expires_ns"]) <= now_ns:
+            continue
+        paths = [str(value) for value in payload["protected_relative_paths"]]
+        protected.update(paths)
+        active.append(
+            {
+                "run_id": str(payload["run_id"]),
+                "identity_sha256": payload.get("identity_sha256"),
+                "protected_relative_paths": paths,
+            }
+        )
+    return {
+        "active_manifests": active,
+        "protected_relative_paths": sorted(protected),
+    }
+
+
+def _overlaps_active_protection(
+    relative_path: str,
+    protected_relative_paths: Sequence[str],
+) -> bool:
+    artifact = PurePosixPath(relative_path)
+    for value in protected_relative_paths:
+        protected = PurePosixPath(value)
+        if artifact == protected or artifact in protected.parents or protected in artifact.parents:
+            return True
+    return False
+
+
 def build_cache_tier_plan(
     config: CacheTierConfig,
     *,
@@ -1476,6 +1697,10 @@ def build_cache_tier_plan(
     records = list_artifacts(config)
     _validate_no_overlapping_records(records)
     reference_audit = _reference_audit_metadata(config)
+    active_protection = active_cache_protection_snapshot(config, now_ns=now_ns)
+    protected_relative_paths = [
+        str(value) for value in active_protection["protected_relative_paths"]
+    ]
     hot_usage = shutil.disk_usage(config.hot_root)
     cold_usage = shutil.disk_usage(config.cold_root)
     actual_hot_free = int(hot_usage.free if hot_free_bytes is None else hot_free_bytes)
@@ -1487,17 +1712,27 @@ def build_cache_tier_plan(
     if include_migrations and actual_hot_free < config.hot_safety_reserve_bytes:
         bytes_to_reclaim = config.hot_target_free_bytes - actual_hot_free
         reclaimed = 0
-        migration_candidates = sorted(
-            (
-                record
-                for record in records
-                if record.tier == "hot"
-                and (
-                    record.reference_class != "unknown" or config.allow_unknown_migration
+        migration_candidates: list[CacheAccessRecord] = []
+        for record in records:
+            if record.tier != "hot":
+                continue
+            if _overlaps_active_protection(record.relative_path, protected_relative_paths):
+                migration_exclusions.append(
+                    {
+                        "relative_path": record.relative_path,
+                        "reason": "active_manifest_protection",
+                        "detail": "artifact overlaps a cache path protected by an active run",
+                    }
                 )
-                and Path(record.physical_path).exists()
-                and not Path(record.physical_path).is_symlink()
-            ),
+                continue
+            if record.reference_class == "unknown" and not config.allow_unknown_migration:
+                continue
+            if Path(record.physical_path).exists() and not Path(
+                record.physical_path
+            ).is_symlink():
+                migration_candidates.append(record)
+        migration_candidates = sorted(
+            migration_candidates,
             key=lambda record: (record.last_access_ns, record.access_count, record.relative_path),
         )
         for record in migration_candidates:
@@ -1546,11 +1781,10 @@ def build_cache_tier_plan(
     deletion_exclusions: list[dict[str, object]] = []
     if include_deletions:
         cutoff_ns = now_ns - config.cold_ttl_ns
-        deletion_candidates = sorted(
-            (
-                record
-                for record in records
-                if record.tier == "cold"
+        deletion_candidates: list[CacheAccessRecord] = []
+        for record in records:
+            if not (
+                record.tier == "cold"
                 and record.reference_class == "unreferenced"
                 and record.managed_by_lru
                 and record.cold_admitted_ns is not None
@@ -1564,7 +1798,20 @@ def build_cache_tier_plan(
                 and Path(record.hot_link_path).resolve(strict=False)
                 == Path(record.physical_path).resolve(strict=False)
                 and Path(record.physical_path).exists()
-            ),
+            ):
+                continue
+            if _overlaps_active_protection(record.relative_path, protected_relative_paths):
+                deletion_exclusions.append(
+                    {
+                        "relative_path": record.relative_path,
+                        "reason": "active_manifest_protection",
+                        "detail": "artifact overlaps a cache path protected by an active run",
+                    }
+                )
+                continue
+            deletion_candidates.append(record)
+        deletion_candidates = sorted(
+            deletion_candidates,
             key=lambda record: (record.last_access_ns, record.access_count, record.relative_path),
         )
         for record in deletion_candidates:
@@ -1594,6 +1841,7 @@ def build_cache_tier_plan(
         "symlink_mode": config.symlink_mode,
         "allow_unknown_migration": config.allow_unknown_migration,
         "reference_provenance": reference_audit,
+        "active_cache_protection": active_protection,
         "thresholds": {
             "hot_safety_reserve_bytes": config.hot_safety_reserve_bytes,
             "hot_target_free_bytes": config.hot_target_free_bytes,
@@ -1644,6 +1892,8 @@ def validate_plan(plan: Mapping[str, object], config: CacheTierConfig) -> None:
         raise CacheTierValidationError("plan unknown-migration permission drift")
     if plan.get("reference_provenance") != _reference_audit_metadata(config):
         raise CacheTierValidationError("plan reference-audit provenance drift")
+    if plan.get("active_cache_protection") != active_cache_protection_snapshot(config):
+        raise CacheTierValidationError("plan active-cache protection drift")
     planned_paths: list[PurePosixPath] = []
     for operation_name, key in (("migrate", "migrations"), ("delete", "deletions")):
         rows = plan.get(key)

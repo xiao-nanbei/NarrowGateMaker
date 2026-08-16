@@ -9,6 +9,7 @@ import pytest
 from models.audit.dataset_governance import (
     SCHEMA_VERSION,
     canonical_full_path_days,
+    load_dataset_binding,
     validate_dataset_binding,
 )
 
@@ -133,4 +134,56 @@ def test_oof_cannot_read_validation(tmp_path: Path) -> None:
     payload["oof"]["folds"][0]["test_days"] = [validation_day]
     payload["oof"]["test_day_count"] = 6
     with pytest.raises(ValueError, match="Development days only"):
+        validate_dataset_binding(payload)
+
+
+def test_universe_manifest_days_are_authoritative(tmp_path: Path) -> None:
+    payload = _binding(tmp_path, experiment_class="prediction")
+    payload["eligible_days"] = [*payload["eligible_days"], "2027-01-01"]
+    with pytest.raises(ValueError, match="absent from the universe manifest"):
+        validate_dataset_binding(payload)
+
+
+def test_hash_bound_loader_rejects_binding_drift(tmp_path: Path) -> None:
+    payload = _binding(tmp_path, experiment_class="prediction")
+    binding_path = tmp_path / "binding.json"
+    binding_path.write_text(json.dumps(payload), encoding="utf-8")
+    expected = _sha256(binding_path)
+    loaded, result = load_dataset_binding(
+        binding_path,
+        expected_file_sha256=expected,
+        expected_experiment_id="test_dataset_binding",
+    )
+    assert loaded["schema_version"] == SCHEMA_VERSION
+    assert result["valid"] is True
+    binding_path.write_text(json.dumps({**payload, "experiment_id": "drifted"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="file hash"):
+        load_dataset_binding(binding_path, expected_file_sha256=expected)
+
+
+def test_chronological_policy_learning_binds_outer_test_execution(
+    tmp_path: Path,
+) -> None:
+    payload = _binding(tmp_path, experiment_class="chronological_policy_learning")
+    test_days = sorted(
+        day for fold in payload["oof"]["folds"] for day in fold["test_days"]
+    )
+    payload["binding_timing"] = {
+        "created_before_economic_execution": True,
+        "post_execution_remediation": False,
+    }
+    payload["permissions"] = {
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    payload["execution_denominator"] = {
+        "role": "outer_oof_learning_algorithm",
+        "days": test_days,
+        "claims_current_50_day_baseline": False,
+        "future_canonical_50_day_confirmation_required": True,
+        "one_shot_effect_aggregation_used": False,
+    }
+    assert validate_dataset_binding(payload)["valid"] is True
+    payload["execution_denominator"]["days"] = test_days[:-1]
+    with pytest.raises(ValueError, match="outer OOF test days"):
         validate_dataset_binding(payload)

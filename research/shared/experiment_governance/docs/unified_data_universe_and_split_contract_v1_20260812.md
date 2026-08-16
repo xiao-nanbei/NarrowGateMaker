@@ -1,6 +1,6 @@
 # Unified Data Universe And Split Contract v1
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-17
 
 ## Decision
 
@@ -44,6 +44,8 @@ Every new experiment must emit a `narrowgate_experiment_dataset_binding.v1` mani
 - full-path execution denominator, if applicable.
 
 The report must state the number and exact dates for all of these. `OOF=40` or `OOF=50` without an emitted fold manifest is not an admissible statement.
+
+Execution-layer adoption is fail-closed for new identities: the F05 formal offline orchestrator emits and reloads its hash-bound chronological policy-learning binding before economics, and future executions of the F10 50-day runner emit and reload the canonical full-path binding before preparing or executing a day. F05 D+1 support consumes that same validated 50-day binding. Frozen historical runners such as the exact F09 BER Development reproduction remain historical identities rather than being rewritten to claim a binding that did not exist when they ran.
 
 ## Canonical 50-Day Rule
 

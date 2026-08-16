@@ -167,6 +167,14 @@ def _bundle_fixture(
     nested_folds = offline.derive_bound_nested_fold_manifest(source)
     source_path = tmp_path / "source.json"
     _write_json(source_path, source)
+    dataset_binding = orchestrator._build_dataset_binding(
+        source_path=source_path,
+        source=source,
+        nested_folds=nested_folds,
+        repository_root=tmp_path,
+    )
+    dataset_binding_path = tmp_path / orchestrator.DATASET_BINDING_NAME
+    _write_json(dataset_binding_path, dataset_binding)
     panel: dict[str, object] = {
         "schema_version": orchestrator.PANEL_SCHEMA_VERSION,
         "identity": offline.IDENTITY,
@@ -225,6 +233,10 @@ def _bundle_fixture(
         "panel_manifest": {
             "path": str(panel_path),
             "sha256": backend._file_sha256(panel_path),
+        },
+        "dataset_binding": {
+            "path": str(dataset_binding_path),
+            "sha256": backend._file_sha256(dataset_binding_path),
         },
     }
     execution["canonical_execution_manifest_sha256"] = backend._document_sha256(
@@ -362,6 +374,8 @@ def _bundle_fixture(
         source_manifest=source,
         panel_manifest_path=panel_path,
         panel_manifest=panel,
+        dataset_binding_path=dataset_binding_path,
+        dataset_binding=dataset_binding,
         panel_files=paths,
         repository_root=tmp_path,
     )
@@ -699,6 +713,14 @@ def test_formal_preflight_reports_missing_canonical_replay_fields_without_econom
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    data_root = tmp_path / "external-data"
+    hot_cache_root = tmp_path / "hot-cache"
+    cold_cache_root = data_root / "cache"
+    hot_cache_root.mkdir()
+    cold_cache_root.mkdir(parents=True)
+    monkeypatch.setenv("NARROWGATE_DATA_ROOT", str(data_root))
+    monkeypatch.setenv("NARROWGATE_CACHE_HOT_ROOT", str(hot_cache_root))
+    monkeypatch.setenv("NARROWGATE_CACHE_COLD_ROOT", str(cold_cache_root))
     bundle = _bundle_fixture(tmp_path)
     monkeypatch.setattr(
         orchestrator,

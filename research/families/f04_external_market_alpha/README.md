@@ -1,6 +1,6 @@
 # F04 External Market Alpha
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-17
 
 Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
 
@@ -15,6 +15,8 @@ The preregistered receive-time successor is [`first_add_external_incremental_val
 At the first 2026-08-11 AWS cutover, the canonical v1 ledger contained 22 valid full windows over 21 different UTC days. The admitted Vultr window then raised the source-aware total to 23 full windows over 22 distinct UTC days. No P1 outcome model may be fitted yet. The outcome-blind [`transport-source amendment`](docs/first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_20260811.md) keeps AWS rows as an immutable historical stratum and requires prospective Vultr rows to carry a separate host/runtime identity. They may contribute to a source-aware 30-day chronological panel but may never be silently relabelled or pooled in an AWS-only ledger. A passing side would still provide prediction evidence only; an F09 action requires a separate preregistration under the lineage outcome contract.
 
 The live host returned to AWS Tokyo at `2026-08-11T15:48:02Z`. The outcome-blind [v2 transport-source amendment](docs/first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_v2_20260811.md) adds `aws:ap_northeast_1:<current-live-epoch>` as a third, prospective host epoch while leaving original-AWS v1 and retired-Vultr rows immutable. The 30-day threshold and every parent prediction-only gate remain unchanged.
+
+The latest owner-side ledger snapshot contains 28 valid full windows over 27 distinct UTC days across the immutable source strata. This remains below the preregistered 30-distinct-day threshold, so M0/M1 training is still forbidden. Current collection uses the AWS source key and the `validate-bounded-capture` automation; the earlier Vultr automation name is historical only.
 
 Capture collection may continue, but M0/M1 remains additionally blocked on an exact-lifecycle successor. Both the retired Vultr session and the new AWS session reproduced the never-activated GTX `-5022` exchange-exposure encoding mismatch; those journal sessions are invalid evidence even though maker trading continued safely.
 

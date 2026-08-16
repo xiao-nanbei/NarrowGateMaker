@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -20,6 +21,69 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 def _binding(path: Path) -> dict[str, str]:
     return {"path": str(path), "sha256": orchestrator._file_sha256(path)}
+
+
+def test_formal_runner_holds_and_releases_host_worker_lease(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution_sha256 = "a" * 64
+    bundle = SimpleNamespace(
+        repository_root=tmp_path,
+        execution_manifest={
+            "canonical_execution_manifest_sha256": execution_sha256,
+        },
+    )
+    result = {
+        "schema_version": orchestrator.FORMAL_RESULT_SCHEMA,
+        "execution_manifest_sha256": execution_sha256,
+        "repeated_sequential_policy": True,
+        "one_shot_effect_aggregation_used": False,
+        "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+    }
+    backend = SimpleNamespace(
+        **{orchestrator.CANONICAL_BACKEND_FUNCTION: lambda _path: result}
+    )
+    monkeypatch.setattr(orchestrator, "load_formal_offline_bundle", lambda _path: bundle)
+    monkeypatch.setattr(orchestrator.importlib, "import_module", lambda _name: backend)
+    monkeypatch.setattr(
+        orchestrator.cache_tier_lru.CacheTierConfig,
+        "from_environment",
+        lambda: SimpleNamespace(),
+    )
+
+    @contextmanager
+    def inactive_cache_manifest(*_args: object, **_kwargs: object):
+        yield None
+
+    monkeypatch.setattr(
+        orchestrator.cache_tier_lru,
+        "active_cache_manifest",
+        inactive_cache_manifest,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "resolve_portable_path",
+        lambda value, **_kwargs: (
+            tmp_path / "governor"
+            if "execution_governor" in str(value)
+            else tmp_path / "cache"
+        ),
+    )
+
+    payload = orchestrator.run_formal_offline_economics(
+        tmp_path / "execution.json",
+        output_dir=tmp_path / "result",
+    )
+
+    governor = payload["host_worker_governor"]
+    assert governor["identity"] == orchestrator.execution_governance.WORKER_GOVERNOR_IDENTITY
+    assert governor["lease_state"] == "released"
+    assert governor["requested_tokens"] == orchestrator.EXECUTOR_GLOBAL_WORKER_TOKENS
+    lease_path = tmp_path / "governor" / "leases" / f"{governor['lease_id']}.json"
+    assert json.loads(lease_path.read_text(encoding="utf-8"))["state"] == "released"
 
 
 def _bundle_fixture(
@@ -144,6 +208,15 @@ def _bundle_fixture(
     panel_path = tmp_path / "panel.json"
     _write_json(panel_path, panel)
 
+    dataset_binding = orchestrator._build_dataset_binding(
+        source_path=source_path,
+        source=source,
+        nested_folds=nested_folds,
+        repository_root=tmp_path,
+    )
+    dataset_binding_path = tmp_path / orchestrator.DATASET_BINDING_NAME
+    _write_json(dataset_binding_path, dataset_binding)
+
     execution: dict[str, object] = {
         "schema_version": orchestrator.SCHEMA_VERSION,
         "identity": orchestrator.IDENTITY,
@@ -153,6 +226,7 @@ def _bundle_fixture(
         "annotated_tag": "research/f05/offline-v1",
         "source_manifest": _binding(source_path),
         "panel_manifest": _binding(panel_path),
+        "dataset_binding": _binding(dataset_binding_path),
         "fold_manifest_sha256": folds["fold_manifest_sha256"],
         "nested_fold_manifest": nested_folds,
         "nested_fold_manifest_sha256": nested_folds["nested_fold_manifest_sha256"],
@@ -908,6 +982,7 @@ def test_canonical_bind_derives_every_formal_field_from_admission(
     _execution_path, _execution, panel, source = _bundle_fixture(tmp_path, monkeypatch)
     panel_path = tmp_path / "panel.json"
     output = tmp_path / "formal.json"
+    (tmp_path / orchestrator.DATASET_BINDING_NAME).unlink()
     monkeypatch.setattr(orchestrator.mechanics, "validate_panel", lambda *_args, **_kwargs: panel)
 
     def fake_git(*args: str, root: Path) -> str:
