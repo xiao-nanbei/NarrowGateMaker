@@ -865,10 +865,43 @@ def _preflight_adapter(
         not isinstance(blockers, (list, tuple)) or len(blockers) != 0
     ):
         raise OfflineRepeatedPolicyBackendError("ready adapter preflight carries blockers")
+    walk = result.get("all_fold_zero_economic_contract_walk")
+    if status == MECHANICS_READY_STATUS:
+        if not isinstance(walk, Mapping):
+            raise OfflineRepeatedPolicyBackendError(
+                "ready adapter preflight lacks the all-fold zero-economic walk"
+            )
+        expected_walk = {
+            "status": "all_fold_zero_economic_contract_walk_complete",
+            "side_count": 2,
+            "outer_fold_count": 4,
+            "inner_fold_count": 12,
+            "side_outer_contract_count": 8,
+            "side_inner_contract_count": 24,
+            "candidate_ladder_count": len(nested.SUCCESSOR_CANDIDATE_LADDER),
+            "continuous_comparator_bound": nested.CONTINUOUS_COMPARATOR,
+            "global_worker_tokens": orchestrator.EXECUTOR_GLOBAL_WORKER_TOKENS,
+            "mmap_acceleration_bound": True,
+            "economic_outcomes_read": False,
+        }
+        for field, expected in expected_walk.items():
+            if walk.get(field) != expected:
+                raise OfflineRepeatedPolicyBackendError(
+                    f"all-fold zero-economic walk drifted at {field}"
+                )
+        if int(walk.get("fold_day_slots_checked", 0)) <= 0:
+            raise OfflineRepeatedPolicyBackendError(
+                "all-fold zero-economic walk did not inspect fold-day slots"
+            )
     return dict(result)
 
 
-def _load_canonical_replay_adapter() -> CanonicalReplayAdapter:
+def _load_canonical_replay_adapter(
+    bundle: orchestrator.FormalOfflineBundle,
+) -> CanonicalReplayAdapter:
+    executor = bundle.execution_manifest.get("executor")
+    if executor != orchestrator.formal_executor_contract():
+        raise OfflineRepeatedPolicyBackendError("formal executor contract drifted")
     try:
         module = importlib.import_module(CANONICAL_REPLAY_ADAPTER_MODULE)
     except ModuleNotFoundError as exc:
@@ -878,11 +911,34 @@ def _load_canonical_replay_adapter() -> CanonicalReplayAdapter:
     factory = getattr(module, CANONICAL_REPLAY_ADAPTER_FACTORY, None)
     if not callable(factory):
         raise OfflineRepeatedPolicyBackendError("fixed replay adapter factory is unavailable")
+    acceleration_type = getattr(module, "SequentialReplayAccelerationOptions", None)
+    if not isinstance(acceleration_type, type):
+        raise OfflineRepeatedPolicyBackendError(
+            "fixed replay adapter acceleration contract is unavailable"
+        )
+    mmap = executor.get("day_input_mmap")
+    if not isinstance(mmap, Mapping):
+        raise OfflineRepeatedPolicyBackendError("formal mmap executor contract is malformed")
+    try:
+        mmap_root = resolve_portable_path(
+            str(mmap.get("root")),
+            root=bundle.repository_root,
+        ).expanduser().resolve()
+        acceleration = acceleration_type(day_input_cache_root=mmap_root)
+    except (RuntimeError, TypeError, ValueError) as exc:
+        raise OfflineRepeatedPolicyBackendError(
+            "formal mmap executor contract cannot be resolved"
+        ) from exc
     module_path_value = getattr(module, "__file__", None)
     if not module_path_value:
         raise OfflineRepeatedPolicyBackendError("fixed replay adapter has no source artifact")
     module_path = Path(module_path_value).expanduser().resolve()
-    adapter = _validate_adapter_shape(factory())
+    adapter = _validate_adapter_shape(
+        factory(
+            acceleration=acceleration,
+            global_worker_tokens=int(executor["global_worker_tokens"]),
+        )
+    )
     if type(adapter).__module__ != CANONICAL_REPLAY_ADAPTER_MODULE:
         raise OfflineRepeatedPolicyBackendError("custom replay adapter implementation is forbidden")
     if adapter.artifact_sha256 != _file_sha256(module_path):
@@ -1362,7 +1418,7 @@ def run_canonical_offline_economics(
         raise TypeError("formal backend accepts only an execution-manifest Path")
     bundle = orchestrator.load_formal_offline_bundle(execution_manifest_path)
     try:
-        adapter = _load_canonical_replay_adapter()
+        adapter = _load_canonical_replay_adapter(bundle)
     except OfflineRepeatedPolicyBackendError as exc:
         raise OfflineRepeatedPolicyBackendIncomplete(
             _blocked_bundle_result(bundle, blocker=str(exc))
@@ -1429,7 +1485,7 @@ def run_exact_owner_one_day_mechanics(
     if not isinstance(execution_manifest_path, Path):
         raise TypeError("formal mechanics accepts only an execution-manifest Path")
     bundle = orchestrator.load_formal_offline_bundle(execution_manifest_path)
-    adapter = _load_canonical_replay_adapter()
+    adapter = _load_canonical_replay_adapter(bundle)
     schema_preflight = _preflight_bound_panel_schema(bundle, adapter)
     if schema_preflight["status"] != FORMAL_PANEL_SCHEMA_READY_STATUS:
         raise OfflineRepeatedPolicyBackendError(
@@ -1477,7 +1533,7 @@ def preflight_canonical_offline_economics(
         raise TypeError("formal preflight accepts only an execution-manifest Path")
     bundle = orchestrator.load_formal_offline_bundle(execution_manifest_path)
     try:
-        adapter = _load_canonical_replay_adapter()
+        adapter = _load_canonical_replay_adapter(bundle)
     except OfflineRepeatedPolicyBackendError as exc:
         return _blocked_bundle_result(bundle, blocker=str(exc))
     schema_preflight = _preflight_bound_panel_schema(bundle, adapter)

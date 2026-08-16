@@ -2,7 +2,7 @@
 
 Last materially modified: 2026-08-16
 
-Status: `python_accelerators_implemented_cpp_synthetic_smoke_only_no_formal_economic_authority`.
+Status: `python_formal_binding_implemented_preflight_pending_cpp_synthetic_smoke_only`.
 
 ## Question
 
@@ -10,7 +10,7 @@ Can the full-multiscale offline nested out-of-fold execution be made materially 
 
 ## Existing Formal-V17 Boundary
 
-Formal-v17 remains an immutable Python-authoritative execution under its own clean commit, annotated tag, execution manifest, and cache identity. Its running process must not be stopped, patched, rebound, or supplied with artifacts produced by this acceleration identity. This design does not create formal-v18, read an intermediate economic result, admit a candidate, or change action or live authority.
+Formal-v17 remains an immutable Python-authoritative execution under its own clean commit, annotated tag, execution manifest, and cache identity. The owner subsequently authorized an atomic efficiency switchover: v17 may be terminated only after the accelerated successor has passed its complete zero-economic preflight and is ready to launch. Such termination is an owner interruption, not a research failure; its partial strategy-dependent caches cannot authorize or seed the successor. No intermediate economic result may be read during the switch, and action and live authority remain false.
 
 ## Acceleration Identity
 
@@ -23,6 +23,12 @@ The scheduler operates on immutable `policy x side x fold x UTC day x stage` job
 Learning dependencies remain strict. An outer policy cannot be scheduled before all of its inner evidence is complete and the policy artifact is frozen. An outer fold cannot use an outer-test result to fit or rank any policy. Scheduling concurrency therefore applies only within a dependency-ready wave and never changes the chronological research graph.
 
 Every job keeps its current content-addressed cache key, lock, atomic staging directory, receipt, and corruption checks. A process interruption may resume only complete admitted jobs. Running, partial, failed, quarantined, or hash-drifted jobs are never treated as complete.
+
+## Formal Executor Binding
+
+A new formal execution manifest must carry the exact executor contract rather than inherit implementation defaults. It binds Python as the authoritative engine, a global budget of ten worker tokens, no nested worker pools, the governed read-only day-input mmap root, candidate-independent B0 cache semantics, C++ formal authority false, and a mandatory all-fold zero-economic contract walk. The backend constructs its adapter only from these manifest fields and rejects a missing or altered executor contract before loading economic outcomes.
+
+The zero-economic walk covers both sides, all four outer folds, all twelve inner folds, every train/test day slot, the complete candidate ladder, the continuous comparator, chronological separation, and side/day support. It validates source and execution interfaces but does not execute a strategy arm, persist value, inspect Validation, or inspect sealed holdout.
 
 ## Read-Only Day Input Cache
 

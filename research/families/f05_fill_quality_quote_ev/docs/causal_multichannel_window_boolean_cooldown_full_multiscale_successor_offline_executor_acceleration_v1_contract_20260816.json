@@ -82,6 +82,8 @@
   "live_runtime_changed": false,
   "maximum_global_worker_tokens": 10,
   "implementation": {
+    "all_fold_zero_economic_contract_walk": true,
+    "formal_execution_manifest_binding": true,
     "global_policy_day_pool": true,
     "immutable_day_input_mmap": true,
     "candidate_independent_b0_control_cache": true,
@@ -89,6 +91,13 @@
     "v17_uses_acceleration_identity": false
   },
   "nested_worker_pools_allowed": false,
+  "formal_executor": {
+    "authoritative_engine": "python",
+    "day_input_mmap_required": true,
+    "global_worker_tokens": 10,
+    "manifest_bound": true,
+    "v17_switch_semantics": "owner_interruption_only_after_successor_zero_economic_preflight"
+  },
   "scheduler_job_identity": [
     "stage",
     "side",

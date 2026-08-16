@@ -4611,6 +4611,98 @@ class _CanonicalOfflineReplayAdapter:
             },
         }
 
+    def _preflight_all_fold_zero_economic_contracts(
+        self,
+        mechanics: backend.OutcomeBlindMechanics,
+        rows: pd.DataFrame,
+        ladder: Sequence[nested.CandidateLadderEntry],
+        continuous: nested.ContinuousComparatorEntry,
+    ) -> Mapping[str, Any]:
+        """Walk every frozen fold and side without executing an economic arm."""
+
+        selected_days = set(mechanics.selected_days)
+        outer_folds = tuple(mechanics.fold_manifest.outer_folds)
+        if len(outer_folds) != 4:
+            raise OfflineReplayAdapterError(
+                "zero-economic contract walk requires four outer folds"
+            )
+        side_outer_contracts = 0
+        side_inner_contracts = 0
+        day_slots = 0
+        for side in ("BUY", "SELL"):
+            side_rows = rows.loc[rows["side"].map(_normalize_side) == side]
+            if side_rows.empty:
+                raise OfflineReplayAdapterError(
+                    f"zero-economic contract walk lacks {side} rows"
+                )
+            for outer in outer_folds:
+                if not isinstance(outer, Mapping):
+                    raise OfflineReplayAdapterError(
+                        "zero-economic outer-fold contract is malformed"
+                    )
+                train_days = tuple(str(day) for day in outer.get("train_days", ()))
+                test_days = tuple(str(day) for day in outer.get("test_days", ()))
+                if (
+                    not train_days
+                    or not test_days
+                    or set(train_days) & set(test_days)
+                    or not set(train_days + test_days) <= selected_days
+                    or max(train_days) >= min(test_days)
+                ):
+                    raise OfflineReplayAdapterError(
+                        "zero-economic outer-fold chronology drifted"
+                    )
+                for day in train_days + test_days:
+                    if side_rows.loc[side_rows["utc_day"] == day].empty:
+                        raise OfflineReplayAdapterError(
+                            f"zero-economic fold lacks {side} support on {day}"
+                        )
+                side_outer_contracts += 1
+                day_slots += len(train_days) + len(test_days)
+                inner_folds = tuple(outer.get("inner_folds", ()))
+                if len(inner_folds) != 3:
+                    raise OfflineReplayAdapterError(
+                        "zero-economic contract walk requires three inner folds"
+                    )
+                for inner in inner_folds:
+                    if not isinstance(inner, Mapping):
+                        raise OfflineReplayAdapterError(
+                            "zero-economic inner-fold contract is malformed"
+                        )
+                    inner_train = tuple(str(day) for day in inner.get("train_days", ()))
+                    inner_test = tuple(str(day) for day in inner.get("test_days", ()))
+                    if (
+                        not inner_train
+                        or not inner_test
+                        or set(inner_train) & set(inner_test)
+                        or not set(inner_train + inner_test) <= set(train_days)
+                        or max(inner_train) >= min(inner_test)
+                    ):
+                        raise OfflineReplayAdapterError(
+                            "zero-economic inner-fold chronology drifted"
+                        )
+                    for day in inner_train + inner_test:
+                        if side_rows.loc[side_rows["utc_day"] == day].empty:
+                            raise OfflineReplayAdapterError(
+                                f"zero-economic inner fold lacks {side} support on {day}"
+                            )
+                    side_inner_contracts += 1
+                    day_slots += len(inner_train) + len(inner_test)
+        return {
+            "status": "all_fold_zero_economic_contract_walk_complete",
+            "side_count": 2,
+            "outer_fold_count": 4,
+            "inner_fold_count": 12,
+            "side_outer_contract_count": side_outer_contracts,
+            "side_inner_contract_count": side_inner_contracts,
+            "fold_day_slots_checked": day_slots,
+            "candidate_ladder_count": len(ladder),
+            "continuous_comparator_bound": continuous.name,
+            "global_worker_tokens": self._global_worker_tokens,
+            "mmap_acceleration_bound": self._acceleration is not None,
+            "economic_outcomes_read": False,
+        }
+
     def preflight_formal_economics(
         self,
         mechanics: backend.OutcomeBlindMechanics,
@@ -4623,6 +4715,7 @@ class _CanonicalOfflineReplayAdapter:
         status = backend.MECHANICS_READY_STATUS
         missing: list[str] = []
         duration_action_contract: Mapping[str, Any] | None = None
+        all_fold_walk: Mapping[str, Any] | None = None
         try:
             duration_action_contract, _actions = _load_frozen_duration_action_contract()
         except OfflineReplayAdapterMechanicsMissing as exc:
@@ -4661,6 +4754,13 @@ class _CanonicalOfflineReplayAdapter:
                         utc_day=day,
                         replay_inputs=rows.loc[rows["utc_day"] == day],
                     )
+                ladder, continuous = self.build_search_contract(mechanics)
+                all_fold_walk = self._preflight_all_fold_zero_economic_contracts(
+                    mechanics,
+                    rows,
+                    ladder,
+                    continuous,
+                )
             except OfflineReplayAdapterMechanicsMissing as exc:
                 status = MECHANICS_MISSING_STATUS
                 missing = list(exc.missing)
@@ -4674,6 +4774,7 @@ class _CanonicalOfflineReplayAdapter:
             "missing_canonical_fields": missing,
             "fixed_canonical_api_bindings": _fixed_api_bindings(),
             "duration_action_contract": duration_action_contract,
+            "all_fold_zero_economic_contract_walk": all_fold_walk,
             "permissions": {
                 "economic_outcomes_read": False,
                 "validation_read": False,

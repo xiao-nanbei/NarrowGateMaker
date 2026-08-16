@@ -175,6 +175,7 @@ def _bundle_fixture(
             "outer_test_candidate_freeze_required": True,
             "action_alpha_v1_required": True,
         },
+        "executor": orchestrator.formal_executor_contract(),
         "permissions": {
             "validation_read": False,
             "sealed_holdout_read": False,
@@ -568,6 +569,7 @@ def test_canonical_bind_derives_every_formal_field_from_admission(
     ]
     assert result["backend"]["custom_evaluator_allowed"] is False
     assert result["execution_contract"]["one_shot_effect_aggregation_used"] is False
+    assert result["executor"] == orchestrator.formal_executor_contract()
     assert result["permissions"] == {
         "validation_read": False,
         "sealed_holdout_read": False,

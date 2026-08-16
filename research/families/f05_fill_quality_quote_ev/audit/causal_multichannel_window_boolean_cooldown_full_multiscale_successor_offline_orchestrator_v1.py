@@ -42,6 +42,12 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v1"
+EXECUTOR_DAY_INPUT_CACHE_ROOT = (
+    "${NARROWGATE_DATA_ROOT}/cache/replay_dag/"
+    "f05_full_multiscale_offline_day_input_mmap_v1"
+)
+EXECUTOR_GLOBAL_WORKER_TOKENS = 10
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
@@ -64,6 +70,30 @@ _FORBIDDEN_ECONOMIC_PANEL_FILES = frozenset(
 
 class OfflineOrchestratorError(RuntimeError):
     """Raised when formal economics can be bypassed or its identity drifts."""
+
+
+def formal_executor_contract() -> dict[str, Any]:
+    """Return the only executor contract accepted by a newly bound formal run."""
+
+    return {
+        "identity": EXECUTOR_ACCELERATION_IDENTITY,
+        "authoritative_engine": "python",
+        "global_worker_tokens": EXECUTOR_GLOBAL_WORKER_TOKENS,
+        "nested_worker_pools_allowed": False,
+        "day_input_mmap": {
+            "enabled": True,
+            "root": EXECUTOR_DAY_INPUT_CACHE_ROOT,
+            "open_mode": "read_only",
+            "content_addressed": True,
+        },
+        "b0_control_cache": {
+            "enabled": True,
+            "candidate_output_allowed": False,
+            "side_excludable": False,
+        },
+        "cpp_formal_engine_authorized": False,
+        "all_fold_zero_economic_contract_walk_required": True,
+    }
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -404,6 +434,8 @@ def _load_formal_offline_bundle(
         "action_alpha_v1_required": True,
     }:
         raise OfflineOrchestratorError("formal execution contract drifted")
+    if manifest.get("executor") != formal_executor_contract():
+        raise OfflineOrchestratorError("formal executor acceleration contract drifted")
     permissions = manifest.get("permissions")
     if permissions != {
         "validation_read": False,
@@ -624,6 +656,7 @@ def bind_formal_execution_manifest(
             "outer_test_candidate_freeze_required": True,
             "action_alpha_v1_required": True,
         },
+        "executor": formal_executor_contract(),
         "source_contract": {
             "panel_role": offline.PANEL_ROLE,
             "queue_identity": offline.QUEUE_IDENTITY,

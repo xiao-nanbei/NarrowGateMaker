@@ -211,6 +211,7 @@ def _bundle_fixture(
             "outer_test_candidate_freeze_required": True,
             "action_alpha_v1_required": True,
         },
+        "executor": orchestrator.formal_executor_contract(),
         "fold_manifest_sha256": folds["fold_manifest_sha256"],
         "nested_fold_manifest": nested_folds,
         "nested_fold_manifest_sha256": nested_folds[
@@ -282,6 +283,20 @@ class _NeverCalledAdapter:
             "identity": self.identity,
             "status": backend.MECHANICS_READY_STATUS,
             "adapter_artifact_sha256": self.artifact_sha256,
+            "all_fold_zero_economic_contract_walk": {
+                "status": "all_fold_zero_economic_contract_walk_complete",
+                "side_count": 2,
+                "outer_fold_count": 4,
+                "inner_fold_count": 12,
+                "side_outer_contract_count": 8,
+                "side_inner_contract_count": 24,
+                "fold_day_slots_checked": 1,
+                "candidate_ladder_count": len(nested.SUCCESSOR_CANDIDATE_LADDER),
+                "continuous_comparator_bound": nested.CONTINUOUS_COMPARATOR,
+                "global_worker_tokens": orchestrator.EXECUTOR_GLOBAL_WORKER_TOKENS,
+                "mmap_acceleration_bound": True,
+                "economic_outcomes_read": False,
+            },
             "permissions": {
                 "economic_outcomes_read": False,
                 "validation_read": False,
@@ -530,7 +545,7 @@ def test_missing_real_replay_adapter_returns_schema_bound_blocker(
 ) -> None:
     bundle = _bundle_fixture(tmp_path)
 
-    def _missing():
+    def _missing(_bundle):
         raise backend.OfflineRepeatedPolicyBackendError(
             "fixed historical replay adapter is not implemented"
         )
@@ -622,7 +637,11 @@ def test_backend_one_day_mechanics_keeps_identity_and_permissions(
         "load_formal_offline_bundle",
         lambda _path: bundle,
     )
-    monkeypatch.setattr(backend, "_load_canonical_replay_adapter", lambda: adapter)
+    monkeypatch.setattr(
+        backend,
+        "_load_canonical_replay_adapter",
+        lambda _bundle: adapter,
+    )
     monkeypatch.setattr(
         backend,
         "load_outcome_blind_mechanics",

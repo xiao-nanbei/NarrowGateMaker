@@ -20,6 +20,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_native_observation_batch_v1 as observation_batch,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_orchestrator_v1 as orchestrator,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
@@ -370,11 +373,31 @@ def _semantic_key(**updates: Any) -> adapter_module.OneShotSemanticCacheKey:
     return adapter_module.OneShotSemanticCacheKey(**values)
 
 
-def test_factory_identity_and_artifact_hash_match_backend_constant() -> None:
+def test_factory_identity_and_artifact_hash_match_backend_constant(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     adapter = adapter_module.build_canonical_replay_adapter()
     assert adapter.identity == backend.CANONICAL_REPLAY_ADAPTER_IDENTITY
     assert adapter.artifact_sha256 == _sha256_file(Path(adapter_module.__file__))
-    assert backend._load_canonical_replay_adapter().artifact_sha256 == (
+    hot = tmp_path / "hot"
+    cold = tmp_path / "cold"
+    hot.mkdir()
+    cold.mkdir()
+    mmap_root = hot / "replay_dag" / "mmap"
+    monkeypatch.setenv("NARROWGATE_CACHE_HOT_ROOT", str(hot))
+    monkeypatch.setenv("NARROWGATE_CACHE_COLD_ROOT", str(cold))
+    monkeypatch.setenv("NARROWGATE_CACHE_LEDGER_PATH", str(tmp_path / "ledger.json"))
+    monkeypatch.setattr(
+        backend,
+        "resolve_portable_path",
+        lambda *_args, **_kwargs: mmap_root,
+    )
+    bundle = SimpleNamespace(
+        execution_manifest={"executor": orchestrator.formal_executor_contract()},
+        repository_root=tmp_path,
+    )
+    assert backend._load_canonical_replay_adapter(bundle).artifact_sha256 == (
         adapter.artifact_sha256
     )
 
@@ -548,6 +571,24 @@ def test_formal_preflight_returns_backend_mechanics_ready_status(
         "_canonical_day_request",
         lambda **_kwargs: None,
     )
+    monkeypatch.setattr(
+        adapter_module._CanonicalOfflineReplayAdapter,
+        "_preflight_all_fold_zero_economic_contracts",
+        lambda self, _mechanics, _rows, ladder, continuous: {
+            "status": "all_fold_zero_economic_contract_walk_complete",
+            "side_count": 2,
+            "outer_fold_count": 4,
+            "inner_fold_count": 12,
+            "side_outer_contract_count": 8,
+            "side_inner_contract_count": 24,
+            "fold_day_slots_checked": 1,
+            "candidate_ladder_count": len(ladder),
+            "continuous_comparator_bound": continuous.name,
+            "global_worker_tokens": self._global_worker_tokens,
+            "mmap_acceleration_bound": self._acceleration is not None,
+            "economic_outcomes_read": False,
+        },
+    )
 
     result = adapter_module.build_canonical_replay_adapter().preflight_formal_economics(
         mechanics
@@ -559,14 +600,77 @@ def test_formal_preflight_returns_backend_mechanics_ready_status(
     assert set(result["permissions"].values()) == {False}
 
 
+def test_all_fold_zero_economic_walk_covers_every_side_and_nested_fold() -> None:
+    mechanics = _mechanics()
+    days = mechanics.selected_days
+    source_folds = offline._fold_manifest(days, selection_sha256="8" * 64)
+    nested_manifest = offline.derive_bound_nested_fold_manifest(
+        {
+            "selected_days": list(days),
+            "fold_manifest": source_folds,
+        }
+    )
+    mechanics = replace(
+        mechanics,
+        fold_manifest=successor.ProspectiveFoldManifest(
+            active_days=days,
+            outer_folds=tuple(nested_manifest["outer_folds"]),
+            manifest_sha256=nested_manifest["nested_fold_manifest_sha256"],
+        ),
+    )
+    rows = pd.DataFrame(
+        {
+            "utc_day": [day for day in days for _side in ("BUY", "SELL")],
+            "side": [side for _day in days for side in ("BUY", "SELL")],
+        }
+    )
+    adapter = adapter_module.build_canonical_replay_adapter(global_worker_tokens=10)
+    ladder, continuous = adapter.build_search_contract(mechanics)
+
+    walk = adapter._preflight_all_fold_zero_economic_contracts(
+        mechanics,
+        rows,
+        ladder,
+        continuous,
+    )
+
+    assert walk["status"] == "all_fold_zero_economic_contract_walk_complete"
+    assert walk["side_outer_contract_count"] == 8
+    assert walk["side_inner_contract_count"] == 24
+    assert walk["candidate_ladder_count"] == len(nested.SUCCESSOR_CANDIDATE_LADDER)
+    assert walk["economic_outcomes_read"] is False
+
+
 def test_factory_and_backend_reject_custom_adapter_injection(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with pytest.raises(TypeError):
         adapter_module.build_canonical_replay_adapter(object())  # type: ignore[call-arg]
-    monkeypatch.setattr(adapter_module, "build_canonical_replay_adapter", lambda: object())
+    monkeypatch.setattr(
+        adapter_module,
+        "build_canonical_replay_adapter",
+        lambda **_kwargs: object(),
+    )
+    hot = tmp_path / "hot"
+    cold = tmp_path / "cold"
+    hot.mkdir()
+    cold.mkdir()
+    mmap_root = hot / "replay_dag" / "mmap"
+    monkeypatch.setenv("NARROWGATE_CACHE_HOT_ROOT", str(hot))
+    monkeypatch.setenv("NARROWGATE_CACHE_COLD_ROOT", str(cold))
+    monkeypatch.setenv("NARROWGATE_CACHE_LEDGER_PATH", str(tmp_path / "ledger.json"))
+    monkeypatch.setattr(
+        backend,
+        "resolve_portable_path",
+        lambda *_args, **_kwargs: mmap_root,
+    )
+    bundle = SimpleNamespace(
+        execution_manifest={"executor": orchestrator.formal_executor_contract()},
+        repository_root=tmp_path,
+    )
     with pytest.raises(backend.OfflineRepeatedPolicyBackendError, match="identity drifted"):
-        backend._load_canonical_replay_adapter()
+        backend._load_canonical_replay_adapter(bundle)
 
 
 def test_search_contract_exposes_full_ladder_and_complete_feature_universes() -> None:
