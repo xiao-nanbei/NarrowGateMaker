@@ -224,6 +224,18 @@ def _full_replay_trades() -> pd.DataFrame:
     )
 
 
+def _full_replay_bbo(trades: pd.DataFrame) -> bt.HistoricalBBOData:
+    prices = trades["price"].to_numpy(dtype=np.float64, copy=True)
+    return bt.HistoricalBBOData(
+        ts_ms=trades["transact_time"].to_numpy(dtype=np.int64, copy=True),
+        best_bid=prices - 0.1,
+        best_ask=prices + 0.1,
+        bid_qty=np.ones(prices.size, dtype=np.float64),
+        ask_qty=np.ones(prices.size, dtype=np.float64),
+        source="synthetic_native_bbo",
+    )
+
+
 def _full_replay_emitter() -> CooldownV2ReplayEmitter:
     observations = (
         CausalWindowObservation(
@@ -816,6 +828,7 @@ def test_full_replay_selection_requires_separate_event_loop_qualification() -> N
 def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
     bt.configure_symbol("BTCUSDC")
     trades = _full_replay_trades()
+    bbo = _full_replay_bbo(trades)
     empty_i64 = np.empty(0, dtype=np.int64)
     empty_f64 = np.empty(0, dtype=np.float64)
 
@@ -825,6 +838,7 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         empty_i64,
         empty_f64,
         _full_replay_params(engine="python"),
+        bbo_data=bbo,
     )
     cpp_result = bt._simulate_tick_with_engine(
         "cpp",
@@ -832,6 +846,7 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         empty_i64,
         empty_f64,
         _full_replay_params(engine="cpp"),
+        bbo_data=bbo,
     )
 
     python_decisions = python_result["_cooldown_duration_policy_decisions"]
@@ -867,6 +882,8 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         for field in (
             "side",
             "fill_ts",
+            "quote_ts",
+            "price",
             "fill_qty",
             "inventory_before_fill",
             "inventory_after_fill",
@@ -874,6 +891,14 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
             assert cpp_fill[field] == pytest.approx(python_fill[field]), field
 
     assert {row["campaign_id"] for row in cpp_decisions} == {1}
+    assert cpp_result["cash_before_terminal"] == pytest.approx(
+        python_result["cash_before_terminal"],
+        abs=1e-12,
+    )
+    assert cpp_result["terminal_mtm_pnl"] == pytest.approx(
+        python_result["terminal_mtm_pnl"],
+        abs=1e-12,
+    )
     assert cpp_decisions[0]["role_at_fill"] == "opener"
     assert all(row["role_at_fill"] == "add" for row in cpp_decisions[1:])
     assert [row["lineage_revision"] for row in cpp_decisions] == list(
@@ -902,5 +927,6 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         empty_i64,
         empty_f64,
         control_params,
+        bbo_data=bbo,
     )
     assert cpp_result["fills_ask"] > control["fills_ask"]
