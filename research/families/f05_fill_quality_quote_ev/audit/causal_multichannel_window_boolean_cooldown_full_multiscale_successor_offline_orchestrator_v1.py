@@ -42,7 +42,7 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v3"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1"
 EXECUTOR_DAY_INPUT_CACHE_IDENTITY = (
     "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 )
@@ -54,13 +54,16 @@ EXECUTOR_GLOBAL_WORKER_TOKENS = 10
 EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS = 2
 EXECUTOR_ONE_SHOT_TOPOLOGY = {
     "total_worker_tokens": 10,
-    "day_parent_workers": 2,
-    "supervisor_workers": 2,
-    "arm_workers": 8,
+    "day_parent_workers": 0,
+    "supervisor_workers": 0,
+    "arm_workers": 10,
     "nested_process_pool": False,
-    "shared_prefix_posix_fork": True,
-    "supervisors_are_coordination_only": True,
+    "shared_prefix_posix_fork": False,
+    "global_cpp_arm_thread_pool": True,
+    "shared_read_only_observation_tape": True,
 }
+CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+CPP_QUALIFICATION_RECEIPT_NAME = "cpp_real_day_lockstep_receipt.json"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
@@ -90,7 +93,10 @@ def formal_executor_contract() -> dict[str, Any]:
 
     return {
         "identity": EXECUTOR_ACCELERATION_IDENTITY,
-        "authoritative_engine": "python",
+        "authoritative_engine_by_stage": {
+            "outer_train_one_shot": "cpp",
+            "outer_test_sequential": "python",
+        },
         "global_worker_tokens": EXECUTOR_GLOBAL_WORKER_TOKENS,
         "nested_worker_pools_allowed": False,
         "one_shot_process_topology": dict(EXECUTOR_ONE_SHOT_TOPOLOGY),
@@ -109,7 +115,9 @@ def formal_executor_contract() -> dict[str, Any]:
             "candidate_output_allowed": False,
             "side_excludable": False,
         },
-        "cpp_formal_engine_authorized": False,
+        "cpp_formal_engine_authorized": True,
+        "cpp_authority_scope": "outer_train_one_shot_labels_only",
+        "cpp_real_day_all_arm_lockstep_required": True,
         "all_fold_zero_economic_contract_walk_required": True,
     }
 
@@ -420,11 +428,120 @@ def _validate_panel_manifest(
     }
 
 
+def _cpp_qualification_contract() -> dict[str, Any]:
+    return {
+        "identity": CPP_QUALIFICATION_IDENTITY,
+        "receipt_file": CPP_QUALIFICATION_RECEIPT_NAME,
+        "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
+        "qualification_day_index": 0,
+        "all_opportunities_required": True,
+        "all_side_specific_duration_arms_required": True,
+        "zero_mismatches_required": True,
+        "economic_values_persisted": False,
+    }
+
+
+def _current_cpp_qualification_source_hashes() -> dict[str, str]:
+    """Rebind the exact source and extension bytes qualified by real-day parity."""
+
+    root = Path(__file__).resolve().parents[4]
+    audit_root = root / "research/families/f05_fill_quality_quote_ev/audit"
+    try:
+        cpp = importlib.import_module("narrowgate_cpp")
+    except ImportError as exc:
+        raise OfflineOrchestratorError(
+            "qualified C++ one-shot extension is unavailable"
+        ) from exc
+    extension_path_value = getattr(cpp, "__file__", None)
+    if not extension_path_value:
+        raise OfflineOrchestratorError(
+            "qualified C++ one-shot extension has no byte identity"
+        )
+    paths = {
+        "qualification_runner": audit_root
+        / "causal_multichannel_window_boolean_cooldown_cpp_real_day_lockstep_v21.py",
+        "observation_tape": audit_root
+        / "causal_multichannel_window_boolean_cooldown_cpp_observation_tape_v21.py",
+        "cpp_runtime": audit_root
+        / "causal_multichannel_window_boolean_cooldown_cpp_runtime_v21.py",
+        "replay_adapter": audit_root
+        / (
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+            "offline_replay_adapter_v1.py"
+        ),
+        "shared_prefix": audit_root
+        / "causal_multichannel_window_boolean_cooldown_shared_prefix.py",
+        "study": audit_root / "multiscale_ema_boolean_cooldown_duration_policy_study.py",
+        "backtest_tick": root / "models/backtest_tick.py",
+        "tick_replay_cpp": root / "cpp/narrowgate_cpp/tick_replay.cpp",
+        "tick_replay_hpp": root / "cpp/narrowgate_cpp/tick_replay.hpp",
+        "bindings_cpp": root / "cpp/narrowgate_cpp/bindings.cpp",
+        "cpp_extension": Path(str(extension_path_value)).resolve(),
+    }
+    if any(not path.is_file() for path in paths.values()):
+        raise OfflineOrchestratorError(
+            "qualified C++ one-shot source census is incomplete"
+        )
+    return {name: _file_sha256(path) for name, path in paths.items()}
+
+
+def _validate_cpp_qualification_receipt(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    verify_runtime_artifacts: bool = True,
+) -> Mapping[str, Any]:
+    contract = manifest.get("cpp_one_shot_qualification")
+    if contract != _cpp_qualification_contract():
+        raise OfflineOrchestratorError("C++ one-shot qualification contract drifted")
+    receipt_path = manifest_path.parent / CPP_QUALIFICATION_RECEIPT_NAME
+    receipt = _load_json(receipt_path, label="C++ one-shot lockstep receipt")
+    if (
+        receipt.get("identity") != CPP_QUALIFICATION_IDENTITY
+        or receipt.get("status") != contract["required_status"]
+        or receipt.get("cpp_one_shot_formal_authorized") is not True
+        or receipt.get("python_sequential_engine_remains_authoritative") is not True
+        or receipt.get("zero_mismatch_arm_count") != receipt.get("arm_count")
+        or int(receipt.get("opportunity_count", 0)) <= 0
+        or int(receipt.get("arm_count", 0)) != int(receipt.get("opportunity_count", 0)) * 8
+        or receipt.get("economic_values_persisted") is not False
+        or receipt.get("economic_values_used_for_selection") is not False
+        or receipt.get("validation_read") is not False
+        or receipt.get("sealed_holdout_read") is not False
+        or receipt.get("action_authorized") is not False
+        or receipt.get("live_authorized") is not False
+        or receipt.get("canonical_receipt_sha256")
+        != _document_sha256(receipt, "canonical_receipt_sha256")
+    ):
+        raise OfflineOrchestratorError("C++ one-shot lockstep receipt failed closed")
+    qualification = receipt.get("qualification_contract")
+    if not isinstance(qualification, Mapping) or (
+        qualification.get("execution_manifest_sha256")
+        != manifest.get("canonical_execution_manifest_sha256")
+        or qualification.get("public_base_commit") != manifest.get("public_base_commit")
+        or qualification.get("annotated_tag") != manifest.get("annotated_tag")
+        or qualification.get("opportunity_count") != receipt.get("opportunity_count")
+        or qualification.get("arm_count") != receipt.get("arm_count")
+    ):
+        raise OfflineOrchestratorError("C++ one-shot lockstep binding drifted")
+    if receipt.get("qualification_sha256") != _canonical_sha256(qualification):
+        raise OfflineOrchestratorError("C++ one-shot qualification SHA256 drifted")
+    if verify_runtime_artifacts:
+        qualified_sources = qualification.get("source_hashes")
+        current_sources = _current_cpp_qualification_source_hashes()
+        if not isinstance(qualified_sources, Mapping) or dict(qualified_sources) != current_sources:
+            raise OfflineOrchestratorError(
+                "C++ one-shot qualified source or extension bytes drifted"
+            )
+    return receipt
+
+
 def _load_formal_offline_bundle(
     execution_manifest_path: Path,
     *,
     verify_source_bytes: bool = True,
     require_clean_tag: bool = True,
+    require_cpp_qualification: bool = True,
 ) -> FormalOfflineBundle:
     """Internal loader with test-only verification controls."""
 
@@ -454,6 +571,8 @@ def _load_formal_offline_bundle(
         raise OfflineOrchestratorError("formal execution contract drifted")
     if manifest.get("executor") != formal_executor_contract():
         raise OfflineOrchestratorError("formal executor acceleration contract drifted")
+    if manifest.get("cpp_one_shot_qualification") != _cpp_qualification_contract():
+        raise OfflineOrchestratorError("formal C++ qualification contract drifted")
     permissions = manifest.get("permissions")
     if permissions != {
         "validation_read": False,
@@ -536,6 +655,12 @@ def _load_formal_offline_bundle(
             commit_sha=str(manifest.get("public_base_commit", "")),
             tag=str(manifest.get("annotated_tag", "")),
         )
+    if require_cpp_qualification:
+        _validate_cpp_qualification_receipt(
+            path,
+            manifest,
+            verify_runtime_artifacts=verify_source_bytes,
+        )
     return _new_formal_offline_bundle(
         execution_manifest_path=path,
         execution_manifest=manifest,
@@ -557,6 +682,20 @@ def load_formal_offline_bundle(
         execution_manifest_path,
         verify_source_bytes=True,
         require_clean_tag=True,
+        require_cpp_qualification=True,
+    )
+
+
+def load_formal_offline_bundle_for_cpp_qualification(
+    execution_manifest_path: Path,
+) -> FormalOfflineBundle:
+    """Load the frozen identity before its immutable lockstep receipt exists."""
+
+    return _load_formal_offline_bundle(
+        execution_manifest_path,
+        verify_source_bytes=True,
+        require_clean_tag=True,
+        require_cpp_qualification=False,
     )
 
 
@@ -675,6 +814,7 @@ def bind_formal_execution_manifest(
             "action_alpha_v1_required": True,
         },
         "executor": formal_executor_contract(),
+        "cpp_one_shot_qualification": _cpp_qualification_contract(),
         "source_contract": {
             "panel_role": offline.PANEL_ROLE,
             "queue_identity": offline.QUEUE_IDENTITY,
@@ -695,7 +835,7 @@ def bind_formal_execution_manifest(
     )
     _atomic_json(destination, manifest)
     try:
-        load_formal_offline_bundle(destination)
+        load_formal_offline_bundle_for_cpp_qualification(destination)
     except Exception:
         destination.unlink(missing_ok=True)
         raise

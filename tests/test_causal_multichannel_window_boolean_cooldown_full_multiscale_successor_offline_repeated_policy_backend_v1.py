@@ -212,6 +212,7 @@ def _bundle_fixture(
             "action_alpha_v1_required": True,
         },
         "executor": orchestrator.formal_executor_contract(),
+        "cpp_one_shot_qualification": orchestrator._cpp_qualification_contract(),
         "fold_manifest_sha256": folds["fold_manifest_sha256"],
         "nested_fold_manifest": nested_folds,
         "nested_fold_manifest_sha256": nested_folds[
@@ -231,6 +232,38 @@ def _bundle_fixture(
     )
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
+    qualification = {
+        "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
+        "public_base_commit": execution.get("public_base_commit"),
+        "annotated_tag": execution.get("annotated_tag"),
+        "opportunity_count": 2,
+        "arm_count": 16,
+        "source_hashes": orchestrator._current_cpp_qualification_source_hashes(),
+    }
+    receipt: dict[str, object] = {
+        "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
+        "status": "passed_real_day_all_opportunity_all_arm_lockstep",
+        "qualification_contract": qualification,
+        "qualification_sha256": backend._canonical_sha256(qualification),
+        "opportunity_count": 2,
+        "arm_count": 16,
+        "zero_mismatch_arm_count": 16,
+        "cpp_one_shot_formal_authorized": True,
+        "python_sequential_engine_remains_authoritative": True,
+        "economic_values_persisted": False,
+        "economic_values_used_for_selection": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    receipt["canonical_receipt_sha256"] = backend._document_sha256(
+        receipt, "canonical_receipt_sha256"
+    )
+    _write_json(
+        execution_path.parent / orchestrator.CPP_QUALIFICATION_RECEIPT_NAME,
+        receipt,
+    )
     return orchestrator._new_formal_offline_bundle(
         execution_manifest_path=execution_path,
         execution_manifest=execution,

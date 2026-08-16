@@ -118,6 +118,192 @@ def _canonical_sha256(payload: Any) -> str:
     return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
 
 
+_LOCKSTEP_SUMMARY_FIELDS = (
+    "fills_total",
+    "fills_bid",
+    "fills_ask",
+    "n_requotes",
+    "decision_cancel_first_count",
+    "cancel_order_latency_sample_count",
+    "queue_l2_cancel_ahead_event_count",
+    "final_inventory",
+    "cash_before_terminal",
+    "terminal_mtm_pnl",
+)
+_LOCKSTEP_FILL_FIELDS = (
+    "order_id",
+    "side",
+    "submit_ts",
+    "activate_ts",
+    "quote_ts",
+    "fill_ts",
+    "age_ms",
+    "price",
+    "quantity",
+    "fill_qty",
+    "fill_fee_rate",
+    "fill_fee_usdc",
+    "inventory_before_fill",
+    "inventory_after_fill",
+    "queue_init",
+    "queue_before",
+    "rem_before",
+)
+_LOCKSTEP_DECISION_FIELDS = (
+    "exposure_fill_ordinal",
+    "fill_visible_ts_ms",
+    "side",
+    "role_at_fill",
+    "campaign_id",
+    "action_id",
+    "duration_ms",
+    "fallback_reason",
+    "matched_rule_index",
+    "policy_sha256",
+    "predicate_bundle_sha256",
+    "support_valid",
+)
+_LOCKSTEP_FORK_FIELDS = (
+    "schema_version",
+    "action",
+    "side",
+    "campaign_id",
+    "target_exposure_fill_ordinal",
+    "target_order_id",
+    "assignment_ts_ms",
+    "assignment_inventory_btc",
+    "assignment_equity_usdc",
+    "baseline_duration_ms",
+    "applied_duration_ms",
+    "applied_deadline_ts_ms",
+    "exact_owner_baseline_policy_enabled",
+    "exact_owner_action",
+    "exact_owner_policy_sha256",
+    "exact_owner_baseline_duration_ms",
+    "quarantine_entered",
+    "quarantine_ts_ms",
+    "washout_protocol",
+    "control_path_exact_until_quarantine",
+    "exposure_permission_change_count",
+    "reducing_permission_control_checks",
+    "reducing_quote_change_count",
+    "second_assignment_count",
+    "arm_washout_complete",
+    "terminal_ts_ms",
+    "terminal_reason",
+    "right_censored",
+    "terminal_inventory_btc",
+    "terminal_mid_usdc_per_btc",
+    "assignment_to_washout_value_usdc",
+    "accounting_residual_usdc",
+    "censor_time_mid_mark_usdc",
+    "censor_time_executable_mark_usdc",
+    "censor_marks_are_terminal_bounds",
+    "post_assignment_buy_fill_count",
+    "post_assignment_sell_fill_count",
+    "inventory_time_btc_s",
+    "mae_usdc",
+    "max_abs_inventory_btc",
+    "active_or_pending_order_count",
+    "pending_submit_count",
+    "pending_cancel_count",
+    "pending_ack_count",
+    "campaign_active",
+    "cursor_owner_count",
+    "hazard_owner_count",
+)
+_LOCKSTEP_FORK_VALUE_FIELDS = frozenset(
+    {
+        "assignment_inventory_btc",
+        "assignment_equity_usdc",
+        "terminal_inventory_btc",
+        "terminal_mid_usdc_per_btc",
+        "assignment_to_washout_value_usdc",
+        "accounting_residual_usdc",
+        "censor_time_mid_mark_usdc",
+        "censor_time_executable_mark_usdc",
+        "post_assignment_buy_fill_count",
+        "post_assignment_sell_fill_count",
+        "inventory_time_btc_s",
+        "mae_usdc",
+        "max_abs_inventory_btc",
+    }
+)
+
+
+def _normalized_lockstep_value(value: Any) -> Any:
+    if hasattr(value, "item") and callable(value.item):
+        value = value.item()
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if math.isnan(value):
+            return "__nan__"
+        if value == math.inf:
+            return "__positive_infinity__"
+        if value == -math.inf:
+            return "__negative_infinity__"
+        return round(value, 12)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _normalized_lockstep_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [_normalized_lockstep_value(item) for item in value]
+    raise SharedPrefixExecutionError(
+        f"lockstep digest encountered unsupported type: {type(value).__name__}"
+    )
+
+
+def build_lockstep_digest(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Hash the path surfaces needed to qualify the C++ one-shot engine."""
+
+    fork_trace = result.get("_cooldown_duration_fork_trace")
+    fill_path = result.get("_fill_trace")
+    decisions = result.get("_cooldown_duration_policy_decisions")
+    if not isinstance(fork_trace, Mapping) or not isinstance(fill_path, list):
+        raise SharedPrefixExecutionError("lockstep result lacks a duration path")
+    if not isinstance(decisions, list):
+        raise SharedPrefixExecutionError("lockstep result lacks policy decisions")
+    summary = {name: result.get(name) for name in _LOCKSTEP_SUMMARY_FIELDS}
+    decision_projection = [
+        {name: row.get(name) for name in _LOCKSTEP_DECISION_FIELDS}
+        for row in decisions
+    ]
+    fork_projection = {
+        name: fork_trace.get(name) for name in _LOCKSTEP_FORK_FIELDS
+    }
+    fill_projection = [
+        {name: row.get(name) for name in _LOCKSTEP_FILL_FIELDS}
+        for row in fill_path
+    ]
+    payloads = {
+        "fork_trace": _normalized_lockstep_value(fork_projection),
+        "fill_path": _normalized_lockstep_value(fill_projection),
+        "policy_decisions": _normalized_lockstep_value(decision_projection),
+        "summary": _normalized_lockstep_value(summary),
+    }
+    return {
+        "schema_version": f"{SCHEMA_VERSION}.lockstep_digest.v1",
+        "fork_trace_sha256": _canonical_sha256(payloads["fork_trace"]),
+        "fill_path_sha256": _canonical_sha256(payloads["fill_path"]),
+        "fill_path_count": len(fill_path),
+        "policy_decisions_sha256": _canonical_sha256(payloads["policy_decisions"]),
+        "policy_decision_count": len(decisions),
+        "summary_sha256": _canonical_sha256(payloads["summary"]),
+    }
+
+
+def _redacted_lockstep_fork_trace(fork_trace: Mapping[str, Any]) -> dict[str, Any]:
+    """Retain qualification mechanics while withholding every path value."""
+
+    return {
+        name: None if name in _LOCKSTEP_FORK_VALUE_FIELDS else fork_trace.get(name)
+        for name in _LOCKSTEP_FORK_FIELDS
+    }
+
+
 def _require_sha256(value: Any, field: str) -> str:
     normalized = str(value).strip().lower()
     if not _SHA256_RE.fullmatch(normalized):
@@ -257,6 +443,7 @@ class PosixCooldownSharedPrefixExecutor:
         target_opportunities: Sequence[Mapping[str, Any]] | None = None,
         global_pool_root: Path | None = None,
         recover_interrupted_staging: bool = False,
+        parity_digest_capture: bool = False,
         progress: Callable[[int, Path, bool], None] | None = None,
     ) -> None:
         if not hasattr(os, "fork"):
@@ -328,6 +515,7 @@ class PosixCooldownSharedPrefixExecutor:
             )
         )
         self.recover_interrupted_staging = bool(recover_interrupted_staging)
+        self.parity_digest_capture = bool(parity_digest_capture)
         self.progress = progress
         self._target_opportunities = self._normalize_target_opportunities(
             target_opportunities
@@ -893,6 +1081,8 @@ class PosixCooldownSharedPrefixExecutor:
             "strict_execution_contract",
             "canonical_result_sha256",
         }
+        if self.parity_digest_capture:
+            required_fields.add("lockstep_digest")
         if set(payload) != required_fields:
             raise SharedPrefixExecutionError("arm result schema drifted")
         if payload["schema_version"] != ARM_RESULT_SCHEMA_VERSION:
@@ -2140,7 +2330,11 @@ class PosixCooldownSharedPrefixExecutor:
                     ),
                 }
             )
-            stored_fork_trace = dict(fork_trace)
+            stored_fork_trace = (
+                _redacted_lockstep_fork_trace(fork_trace)
+                if self.parity_digest_capture and not point_label_eligible
+                else dict(fork_trace)
+            )
             if not point_label_eligible:
                 stored_fork_trace["assignment_to_washout_value_usdc"] = None
             payload = {
@@ -2156,6 +2350,8 @@ class PosixCooldownSharedPrefixExecutor:
                 "prefix_execution_contract": prefix_execution_contract,
                 "strict_execution_contract": execution_contract,
             }
+            if self.parity_digest_capture:
+                payload["lockstep_digest"] = build_lockstep_digest(result)
             payload["canonical_result_sha256"] = _canonical_sha256(payload)
             _write_atomic_json(output_path, payload)
         except BaseException:
@@ -2271,4 +2467,5 @@ __all__ = [
     "SharedPrefixArmSelection",
     "SharedPrefixExecutionAudit",
     "SharedPrefixExecutionError",
+    "build_lockstep_digest",
 ]

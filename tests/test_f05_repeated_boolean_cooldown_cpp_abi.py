@@ -18,6 +18,9 @@ from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_windo
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_replay_emitter import (
     CooldownV2ReplayEmitter,
 )
+from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_shared_prefix import (
+    build_lockstep_digest,
+)
 from strategy.boolean_cooldown_live import (
     ReceiveTimeMidEmaWindows,
     RuntimeCooldownPolicyEvaluator,
@@ -125,6 +128,24 @@ def _full_replay_cpp_config():
     return config
 
 
+def _fixed_one_second_cpp_config():
+    config = _cpp_config(
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+        qualification_scope="synthetic_full_replay_smoke",
+    )
+    config.policy.predicate_columns = [CAMPAIGN_AGE]
+    config.policy.rules = [
+        _rule(
+            "FIXED_1S",
+            1_000,
+            _clause(_literal(0)),
+            _clause(_literal(0, negated=True)),
+        )
+    ]
+    return config
+
+
 def _python_evaluator() -> RuntimeCooldownPolicyEvaluator:
     return RuntimeCooldownPolicyEvaluator(
         rules=(
@@ -166,6 +187,7 @@ def _window(
     observation.mid_usdc_per_btc = mid
     observation.source_gap = source_gap
     observation.source_stale = source_stale
+    observation.channel_support_valid = not (source_gap or source_stale)
     return observation
 
 
@@ -182,6 +204,7 @@ def _full_replay_window_tape():
         observation.mid_usdc_per_btc = (
             100.0 if (index // 5) % 2 == 0 else 100.2
         )
+        observation.channel_support_valid = True
         observations.append(observation)
     return observations
 
@@ -964,3 +987,177 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         bbo_data=bbo,
     )
     assert cpp_result["fills_ask"] > control["fills_ask"]
+
+
+def test_cpp_one_shot_target_override_matches_python_owner_continuation() -> None:
+    bt.configure_symbol("BTCUSDC")
+    trades = _full_replay_trades()
+    bbo = _full_replay_bbo(trades)
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    census = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        _full_replay_params(engine="python"),
+        bbo_data=bbo,
+    )
+    target = census["_cooldown_duration_opportunity_trace"][0]
+
+    def params(engine: str) -> dict[str, object]:
+        values = _full_replay_params(engine=engine)
+        values["use_bar_pricing"] = False
+        if engine == "cpp":
+            target_row = cpp.F05CooldownPredicateRow()
+            target_row.exposure_fill_ordinal = int(
+                target["exposure_fill_ordinal"]
+            )
+            target_row.fill_ts_ms = int(target["fill_visible_ts_ms"])
+            target_row.side = cpp.Side.Sell
+            target_row.campaign_id = int(target["campaign_id"])
+            target_row.snapshot_id = "synthetic-one-shot-target"
+            target_row.predicate_values = [cpp.F05TriState.FALSE]
+            values["cooldown_duration_policy_cpp_runtime"] = (
+                cpp.F05RepeatedBooleanCooldownRuntime(
+                    _fixed_one_second_cpp_config()
+                )
+            )
+            values["_cooldown_duration_policy_cpp_predicate_rows"] = [
+                target_row
+            ]
+        values.update(
+            {
+                "cooldown_duration_fork_enabled": True,
+                "cooldown_duration_fork_action": "FIXED_DURATION_MS",
+                "cooldown_duration_fork_target_ordinal": int(
+                    target["exposure_fill_ordinal"]
+                ),
+                "cooldown_duration_fork_target_ts_ms": int(
+                    target["fill_visible_ts_ms"]
+                ),
+                "cooldown_duration_fork_target_side": str(target["side"]),
+                "cooldown_duration_fork_target_order_id": int(target["order_id"]),
+                "cooldown_duration_fork_target_campaign_id": int(
+                    target["campaign_id"]
+                ),
+                "cooldown_duration_fork_expected_baseline_ms": float(
+                    target["baseline_duration_ms"]
+                ),
+                "cooldown_duration_fork_fixed_ms": 2_500.0,
+                "cooldown_duration_fork_baseline_policy_enabled": True,
+                "cooldown_duration_fork_expected_owner_action": "FIXED_1S",
+                "cooldown_duration_fork_expected_owner_policy_sha256": (
+                    POLICY_SHA256
+                ),
+            }
+        )
+        return values
+
+    python_result = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        params("python"),
+        bbo_data=bbo,
+    )
+    cpp_result = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        empty_i64,
+        empty_f64,
+        params("cpp"),
+        bbo_data=bbo,
+    )
+
+    python_trace = python_result["_cooldown_duration_fork_trace"]
+    cpp_trace = cpp_result["_cooldown_duration_fork_trace"]
+    for field in (
+        "schema_version",
+        "action",
+        "side",
+        "campaign_id",
+        "target_exposure_fill_ordinal",
+        "target_order_id",
+        "assignment_ts_ms",
+        "baseline_duration_ms",
+        "applied_duration_ms",
+        "applied_deadline_ts_ms",
+        "exact_owner_baseline_policy_enabled",
+        "exact_owner_action",
+        "exact_owner_policy_sha256",
+        "exact_owner_baseline_duration_ms",
+        "arm_washout_complete",
+        "right_censored",
+        "terminal_reason",
+        "post_assignment_buy_fill_count",
+        "post_assignment_sell_fill_count",
+    ):
+        assert cpp_trace[field] == python_trace[field], field
+
+    assert len(cpp_result["_fill_trace"]) == len(python_result["_fill_trace"])
+    for cpp_fill, python_fill in zip(
+        cpp_result["_fill_trace"],
+        python_result["_fill_trace"],
+        strict=True,
+    ):
+        for field in (
+            "side",
+            "fill_ts",
+            "quote_ts",
+            "price",
+            "fill_qty",
+            "inventory_before_fill",
+            "inventory_after_fill",
+        ):
+            assert cpp_fill[field] == pytest.approx(python_fill[field]), field
+
+    for field in (
+        "assignment_to_washout_value_usdc",
+        "censor_time_mid_mark_usdc",
+        "censor_time_executable_mark_usdc",
+        "terminal_inventory_btc",
+        "terminal_mid_usdc_per_btc",
+        "inventory_time_btc_s",
+        "mae_usdc",
+        "max_abs_inventory_btc",
+        "accounting_residual_usdc",
+    ):
+        assert cpp_trace[field] == pytest.approx(python_trace[field]), field
+    assert cpp_result["cash_before_terminal"] == pytest.approx(
+        python_result["cash_before_terminal"],
+        abs=1e-12,
+    )
+    assert cpp_result["terminal_mtm_pnl"] == pytest.approx(
+        python_result["terminal_mtm_pnl"],
+        abs=1e-12,
+    )
+    assert build_lockstep_digest(cpp_result) == build_lockstep_digest(python_result)
+
+
+def test_cpp_shared_observation_tape_is_immutable_and_reusable() -> None:
+    count = 3
+    tape = cpp.build_f05_cooldown_window_tape(
+        np.arange(count, dtype=np.int64) * 100_000_000,
+        np.arange(1, count + 1, dtype=np.int64) * 100_000_000,
+        np.arange(1, count + 1, dtype=np.int64) * 100_000_000,
+        np.arange(1, count + 1, dtype=np.int64),
+        np.arange(1, count + 1, dtype=np.int64),
+        np.full(count, 100.0, dtype=np.float64),
+        np.zeros(count, dtype=np.uint8),
+        np.zeros(count, dtype=np.uint8),
+        np.ones(count, dtype=np.uint8),
+        np.ones(count, dtype=np.uint8),
+        "4" * 64,
+    )
+
+    assert tape.size == count
+    assert tape.content_sha256 == "4" * 64
+    params_a = cpp.TickReplayParams()
+    params_b = cpp.TickReplayParams()
+    params_a.f05_cooldown_window_tape_shared = tape
+    params_b.f05_cooldown_window_tape_shared = tape
+    assert params_a.f05_cooldown_window_tape_shared is tape
+    assert params_b.f05_cooldown_window_tape_shared is tape

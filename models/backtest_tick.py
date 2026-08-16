@@ -29416,6 +29416,8 @@ def _validate_f05_cpp_cooldown_runtime(
             for name in (
                 "cooldown_duration_policy_cpp_runtime",
                 "_cooldown_duration_policy_cpp_window_tape",
+                "_cooldown_duration_policy_cpp_window_arrays",
+                "_cooldown_duration_policy_cpp_window_tape_handle",
                 "_cooldown_duration_policy_cpp_predicate_rows",
             )
         ) or bool(
@@ -29488,7 +29490,10 @@ def _validate_f05_cpp_cooldown_runtime(
 
     qualification_scope = str(runtime_config.qualification_scope or "")
     if require_full_replay:
-        if qualification_scope != "synthetic_full_replay_smoke":
+        if qualification_scope not in {
+            "synthetic_full_replay_smoke",
+            "real_day_all_arm_full_replay_v21",
+        }:
             raise NotImplementedError(
                 "the bound C++ cooldown runtime is qualified only for synthetic "
                 "mechanics parity, not the synthetic full-replay smoke path"
@@ -29507,6 +29512,7 @@ def _validate_f05_cpp_cooldown_runtime(
     if qualification_scope not in {
         "synthetic_mechanics_only",
         "synthetic_full_replay_smoke",
+        "real_day_all_arm_full_replay_v21",
     }:
         raise RuntimeError("C++ cooldown qualification scope is invalid")
     return runtime
@@ -30072,15 +30078,44 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params.quote = _copy_quote_config_to_cpp(quote_core_cfg, cpp.QuoteCoreConfig())
     cpp_params.order_size = order_size
     if cpp_cooldown_runtime is not None:
-        window_tape = list(
-            params.get("_cooldown_duration_policy_cpp_window_tape", ()) or ()
+        shared_window_tape = params.get(
+            "_cooldown_duration_policy_cpp_window_tape_handle"
+        )
+        raw_window_arrays = params.get(
+            "_cooldown_duration_policy_cpp_window_arrays"
+        )
+        if shared_window_tape is not None and raw_window_arrays is not None:
+            raise RuntimeError(
+                "full-replay C++ cooldown cannot bind both shared and raw window tapes"
+            )
+        if shared_window_tape is not None and not isinstance(
+            shared_window_tape, cpp.F05CooldownWindowTape
+        ):
+            raise RuntimeError(
+                "full-replay C++ cooldown shared window tape type drifted"
+            )
+        if raw_window_arrays is not None and not isinstance(
+            raw_window_arrays, Mapping
+        ):
+            raise RuntimeError(
+                "full-replay C++ cooldown window arrays must be a mapping"
+            )
+        window_tape = (
+            []
+            if raw_window_arrays is not None or shared_window_tape is not None
+            else list(
+                params.get("_cooldown_duration_policy_cpp_window_tape", ()) or ()
+            )
         )
         predicate_rows = list(
             params.get("_cooldown_duration_policy_cpp_predicate_rows", ()) or ()
         )
-        if not window_tape or any(
-            not isinstance(row, cpp.F05CooldownWindowObservation)
-            for row in window_tape
+        if raw_window_arrays is None and shared_window_tape is None and (
+            not window_tape
+            or any(
+                not isinstance(row, cpp.F05CooldownWindowObservation)
+                for row in window_tape
+            )
         ):
             raise RuntimeError(
                 "full-replay C++ cooldown requires a non-empty bound causal window tape"
@@ -30093,7 +30128,56 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                 "full-replay C++ cooldown predicate tape contains an invalid row"
             )
         cpp_params.f05_repeated_cooldown_runtime = cpp_cooldown_runtime
-        cpp_params.f05_cooldown_window_tape = window_tape
+        if shared_window_tape is not None:
+            if int(shared_window_tape.size) <= 0:
+                raise RuntimeError(
+                    "full-replay C++ cooldown shared window tape is empty"
+                )
+            cpp_params.f05_cooldown_window_tape_shared = shared_window_tape
+        elif raw_window_arrays is None:
+            cpp_params.f05_cooldown_window_tape = window_tape
+        else:
+            required_window_arrays = (
+                "left_ts_ns",
+                "right_ts_ns",
+                "feature_ready_ts_ns",
+                "market_generation",
+                "depth_generation",
+                "mid_usdc_per_btc",
+                "source_gap",
+                "source_stale",
+                "warmup_admitted",
+                "channel_support_valid",
+            )
+            if set(raw_window_arrays) != set(required_window_arrays):
+                raise RuntimeError(
+                    "full-replay C++ cooldown window array schema drifted"
+                )
+            count = cpp_params.set_f05_cooldown_window_arrays(
+                *(
+                    np.ascontiguousarray(
+                        raw_window_arrays[name],
+                        dtype=(
+                            np.float64
+                            if name == "mid_usdc_per_btc"
+                            else np.uint8
+                            if name
+                            in {
+                                "source_gap",
+                                "source_stale",
+                                "warmup_admitted",
+                                "channel_support_valid",
+                            }
+                            else np.int64
+                        ),
+                    )
+                    for name in required_window_arrays
+                )
+            )
+            if int(count) <= 0:
+                raise RuntimeError(
+                    "full-replay C++ cooldown window array tape is empty"
+                )
         cpp_params.f05_cooldown_predicate_rows = predicate_rows
     cpp_params.max_inventory = float(params.get("max_inventory", 0.01))
     cpp_params.eta = float(params.get("eta", 0.0))
@@ -30654,6 +30738,18 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         cpp_params.cooldown_duration_fork_fixed_ms = float(
             params.get("cooldown_duration_fork_fixed_ms", 0.0) or 0.0
         )
+        cpp_params.cooldown_duration_fork_baseline_policy_enabled = bool(
+            params.get("cooldown_duration_fork_baseline_policy_enabled", False)
+        )
+        cpp_params.cooldown_duration_fork_expected_owner_action = str(
+            params.get("cooldown_duration_fork_expected_owner_action", "") or ""
+        )
+        cpp_params.cooldown_duration_fork_expected_owner_policy_sha256 = str(
+            params.get(
+                "cooldown_duration_fork_expected_owner_policy_sha256", ""
+            )
+            or ""
+        )
     cpp_params.trace_window_ms = max(1000, int(float(params.get("trace_fills_window_s", 10.0) or 10.0) * 1000.0))
     cpp_params.collect_curves = bool(params.get("collect_curves", True))
     var_ssq_arr = _as_f64_array(var_ssq)
@@ -31140,6 +31236,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "baseline_duration_ms",
         "applied_duration_ms",
         "applied_deadline_ts_ms",
+        "exact_owner_baseline_policy_enabled",
+        "exact_owner_action",
+        "exact_owner_policy_sha256",
+        "exact_owner_baseline_duration_ms",
         "quarantine_entered",
         "quarantine_ts_ms",
         "washout_protocol",

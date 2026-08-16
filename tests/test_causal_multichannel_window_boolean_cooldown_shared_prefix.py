@@ -17,6 +17,7 @@ from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_windo
     STRICT_COUNTER_FIELDS,
     PosixCooldownSharedPrefixExecutor,
     SharedPrefixExecutionError,
+    _redacted_lockstep_fork_trace,
 )
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_strict_checkpoint import (
     ARM_DURATION_MS,
@@ -52,6 +53,35 @@ def _executor(output_root: Path) -> PosixCooldownSharedPrefixExecutor:
         max_parallel_arms=2,
         require_strict_native=True,
     )
+
+
+def test_lockstep_storage_redacts_path_values_but_keeps_mechanics() -> None:
+    trace = _redacted_lockstep_fork_trace(
+        {
+            "action": "FIXED_DURATION_MS",
+            "applied_duration_ms": 166_000.0,
+            "exact_owner_action": "FIXED_1748S",
+            "terminal_reason": "arm_economic_washout",
+            "assignment_equity_usdc": 101.25,
+            "assignment_to_washout_value_usdc": -0.75,
+            "inventory_time_btc_s": 3.5,
+            "mae_usdc": 0.2,
+            "terminal_inventory_btc": 0.0,
+        }
+    )
+
+    assert trace["action"] == "FIXED_DURATION_MS"
+    assert trace["applied_duration_ms"] == 166_000.0
+    assert trace["exact_owner_action"] == "FIXED_1748S"
+    assert trace["terminal_reason"] == "arm_economic_washout"
+    for field in (
+        "assignment_equity_usdc",
+        "assignment_to_washout_value_usdc",
+        "inventory_time_btc_s",
+        "mae_usdc",
+        "terminal_inventory_btc",
+    ):
+        assert trace[field] is None
 
 
 def test_executor_accepts_a_single_bounded_inflight_supervisor(tmp_path: Path) -> None:

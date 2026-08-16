@@ -61,6 +61,7 @@ struct F05RepeatedBooleanCooldownConfig {
   bool parity_qualified = false;
   std::string parity_qualification_sha256;
   std::string qualification_scope = "synthetic_mechanics_only";
+  std::string feature_clock_semantics = "receive_time_selected_mid_v1";
   double warmup_s = 2048.0;
   double max_feature_age_s = 5.0;
   F05BooleanPolicy policy;
@@ -75,6 +76,13 @@ struct F05CooldownWindowObservation {
   std::optional<double> mid_usdc_per_btc;
   bool source_gap = false;
   bool source_stale = false;
+  bool warmup_admitted = false;
+  bool channel_support_valid = false;
+};
+
+struct F05CooldownWindowTape {
+  std::vector<F05CooldownWindowObservation> observations;
+  std::string content_sha256;
 };
 
 struct F05CooldownFillInput {
@@ -173,6 +181,7 @@ struct F05RepeatedBooleanCooldownCheckpoint {
   std::string abi_version;
   std::string parity_qualification_sha256;
   std::string qualification_scope;
+  std::string feature_clock_semantics;
   std::string policy_sha256;
   std::string predicate_bundle_sha256;
   double warmup_s = 0.0;
@@ -185,6 +194,7 @@ struct F05RepeatedBooleanCooldownCheckpoint {
   std::optional<std::int64_t> last_depth_generation;
   bool ema_initialized = false;
   bool current_window_observed = false;
+  bool current_channel_support_valid = false;
   std::optional<std::int64_t> last_observed_ts_ns;
   std::array<double, 3> ema{0.0, 0.0, 0.0};
   F05CooldownPairState short_pair;
@@ -204,6 +214,13 @@ public:
   void update_window(const F05CooldownWindowObservation &observation);
   [[nodiscard]] F05CooldownDecision
   apply_fill(const F05CooldownFillInput &input);
+  void override_active_lineage_duration(
+      Side side,
+      std::int64_t fill_ts_ms,
+      std::int64_t campaign_id,
+      std::int64_t duration_ms,
+      std::string action_id,
+      std::string coverage_reason_code);
   void advance_time(std::int64_t now_ms);
   [[nodiscard]] bool add_blocked(Side side, std::int64_t now_ms) const;
   [[nodiscard]] F05CooldownLineageState lineage(Side side) const;
@@ -225,6 +242,7 @@ private:
   std::optional<std::int64_t> last_depth_generation_;
   bool ema_initialized_ = false;
   bool current_window_observed_ = false;
+  bool current_channel_support_valid_ = false;
   std::optional<std::int64_t> last_observed_ts_ns_;
   std::array<double, 3> ema_{0.0, 0.0, 0.0};
   F05CooldownPairState short_pair_;
@@ -645,9 +663,13 @@ struct TickReplayParams {
     std::int64_t cooldown_duration_fork_target_campaign_id = 0;
     double cooldown_duration_fork_expected_baseline_ms = 0.0;
     double cooldown_duration_fork_fixed_ms = 0.0;
+    bool cooldown_duration_fork_baseline_policy_enabled = false;
+    std::string cooldown_duration_fork_expected_owner_action;
+    std::string cooldown_duration_fork_expected_owner_policy_sha256;
     std::shared_ptr<F05RepeatedBooleanCooldownRuntime>
         f05_repeated_cooldown_runtime;
     std::vector<F05CooldownWindowObservation> f05_cooldown_window_tape;
+    std::shared_ptr<F05CooldownWindowTape> f05_cooldown_window_tape_shared;
     std::vector<F05CooldownPredicateRow> f05_cooldown_predicate_rows;
     std::int64_t trace_window_ms = 10'000;
     // 大 sweep 通常只需要 summary；关闭曲线可以避免 PnL/inventory path 占用内存和 Python 转换时间。
@@ -881,6 +903,10 @@ struct CooldownDurationForkTrace {
     double baseline_duration_ms = 0.0;
     double applied_duration_ms = 0.0;
     std::int64_t applied_deadline_ts_ms = 0;
+    bool exact_owner_baseline_policy_enabled = false;
+    std::string exact_owner_action;
+    std::string exact_owner_policy_sha256;
+    double exact_owner_baseline_duration_ms = 0.0;
     bool quarantine_entered = false;
     std::int64_t quarantine_ts_ms = 0;
     std::string washout_protocol =

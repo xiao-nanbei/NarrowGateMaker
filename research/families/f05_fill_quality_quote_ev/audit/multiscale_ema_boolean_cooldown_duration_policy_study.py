@@ -1337,7 +1337,8 @@ def _run_duration_arm(
     exact_owner_baseline_policy_enabled: bool = False,
     expected_exact_owner_action: str | None = None,
     expected_exact_owner_policy_sha256: str | None = None,
-) -> tuple[dict[str, Any], float]:
+    return_result: bool = False,
+) -> tuple[dict[str, Any], float] | tuple[dict[str, Any], float, dict[str, Any]]:
     if engine not in {"cpp", "python"}:
         raise StudyError(f"unsupported duration fork replay engine: {engine}")
     if not isinstance(require_control_prefix_parity, bool):
@@ -1345,8 +1346,6 @@ def _run_duration_arm(
     if not isinstance(exact_owner_baseline_policy_enabled, bool):
         raise StudyError("exact-owner baseline policy requirement must be Boolean")
     if exact_owner_baseline_policy_enabled:
-        if engine != "python":
-            raise StudyError("exact-owner baseline duration forks require Python replay")
         if (
             base.get("cooldown_v2_snapshot_emitter") is None
             or base.get("cooldown_duration_policy_evaluator") is None
@@ -1358,6 +1357,21 @@ def _run_duration_arm(
             r"[0-9a-f]{64}", str(expected_exact_owner_policy_sha256 or "")
         ) is None:
             raise StudyError("exact-owner duration fork lacks its policy SHA256")
+        if engine == "cpp" and (
+            base.get("cooldown_duration_policy_cpp_runtime") is None
+            or not bool(
+                base.get("cooldown_duration_policy_cpp_parity_qualified", False)
+            )
+            or not bool(
+                base.get(
+                    "cooldown_duration_policy_cpp_event_loop_parity_qualified",
+                    False,
+                )
+            )
+        ):
+            raise StudyError(
+                "exact-owner C++ duration fork lacks a parity-qualified runtime"
+            )
     params = _prepare_base_params(base, trace_opportunities=False)
     params.update(
         {
@@ -1563,6 +1577,8 @@ def _run_duration_arm(
     else:
         trace["control_prefix_parity_match"] = None
         trace["control_prefix_fill_count"] = None
+    if return_result:
+        return trace, float(elapsed), dict(result)
     return trace, float(elapsed)
 
 

@@ -176,6 +176,7 @@ def _bundle_fixture(
             "action_alpha_v1_required": True,
         },
         "executor": orchestrator.formal_executor_contract(),
+        "cpp_one_shot_qualification": orchestrator._cpp_qualification_contract(),
         "permissions": {
             "validation_read": False,
             "sealed_holdout_read": False,
@@ -188,7 +189,53 @@ def _bundle_fixture(
     )
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
+    _write_cpp_qualification_receipt(execution_path, execution, source, panel)
     return execution_path, execution, panel, source
+
+
+def _write_cpp_qualification_receipt(
+    execution_path: Path,
+    execution: dict[str, object],
+    source: dict[str, object],
+    panel: dict[str, object],
+) -> None:
+    qualification = {
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v21.contract.v1",
+        "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
+        "source_manifest_sha256": source["canonical_manifest_sha256"],
+        "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
+        "public_base_commit": execution["public_base_commit"],
+        "annotated_tag": execution["annotated_tag"],
+        "qualification_day": "2026-07-01",
+        "opportunity_count": 2,
+        "arm_count": 16,
+        "source_hashes": {"cpp_extension": "d" * 64},
+    }
+    receipt: dict[str, object] = {
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v21.receipt.v1",
+        "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
+        "status": "passed_real_day_all_opportunity_all_arm_lockstep",
+        "qualification_contract": qualification,
+        "qualification_sha256": orchestrator._canonical_sha256(qualification),
+        "opportunity_count": 2,
+        "arm_count": 16,
+        "zero_mismatch_arm_count": 16,
+        "cpp_one_shot_formal_authorized": True,
+        "python_sequential_engine_remains_authoritative": True,
+        "economic_values_persisted": False,
+        "economic_values_used_for_selection": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        receipt, "canonical_receipt_sha256"
+    )
+    _write_json(
+        execution_path.parent / orchestrator.CPP_QUALIFICATION_RECEIPT_NAME,
+        receipt,
+    )
 
 
 def _rewrite_execution(path: Path, payload: dict[str, object]) -> None:
@@ -247,6 +294,72 @@ def test_only_hash_bound_manifest_enters_formal_loader(
         ]
     )
     assert mechanics.command == "diagnose-one-day"
+
+
+def test_formal_loader_requires_immutable_cpp_lockstep_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _execution, _panel, _source = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.CPP_QUALIFICATION_RECEIPT_NAME
+    receipt_path.unlink()
+
+    with pytest.raises(orchestrator.OfflineOrchestratorError, match="cannot load"):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
+def test_cpp_lockstep_receipt_rejects_nonzero_mismatch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, _execution, _panel, _source = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.CPP_QUALIFICATION_RECEIPT_NAME
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["zero_mismatch_arm_count"] = 15
+    receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        receipt, "canonical_receipt_sha256"
+    )
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(orchestrator.OfflineOrchestratorError, match="failed closed"):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
+def test_cpp_lockstep_receipt_rebinds_loaded_extension_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, execution, _panel, _source = _bundle_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        orchestrator,
+        "_current_cpp_qualification_source_hashes",
+        lambda: {"cpp_extension": "d" * 64},
+    )
+    orchestrator._validate_cpp_qualification_receipt(
+        path,
+        execution,
+        verify_runtime_artifacts=True,
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_current_cpp_qualification_source_hashes",
+        lambda: {"cpp_extension": "e" * 64},
+    )
+    with pytest.raises(orchestrator.OfflineOrchestratorError, match="extension bytes"):
+        orchestrator._validate_cpp_qualification_receipt(
+            path,
+            execution,
+            verify_runtime_artifacts=True,
+        )
 
 
 def test_legacy_unbound_mechanics_panel_cannot_enter_formal_loader(
@@ -542,10 +655,18 @@ def test_canonical_bind_derives_every_formal_field_from_admission(
         raise AssertionError(args)
 
     monkeypatch.setattr(orchestrator, "_git", fake_git)
+    qualification_loads: list[Path] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "load_formal_offline_bundle_for_cpp_qualification",
+        lambda path, **_kwargs: qualification_loads.append(path),
+    )
     monkeypatch.setattr(
         orchestrator,
         "load_formal_offline_bundle",
-        lambda path, **_kwargs: path,
+        lambda *_args, **_kwargs: pytest.fail(
+            "bind cannot require a receipt that does not exist yet"
+        ),
     )
     result = orchestrator.bind_formal_execution_manifest(
         panel_path,
@@ -576,6 +697,7 @@ def test_canonical_bind_derives_every_formal_field_from_admission(
         "action_authorized": False,
         "live_authorized": False,
     }
+    assert qualification_loads == [output]
     assert json.loads(output.read_text(encoding="utf-8")) == result
 
 

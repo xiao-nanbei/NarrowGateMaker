@@ -907,6 +907,11 @@ def _load_canonical_replay_adapter(
     if executor != orchestrator.formal_executor_contract():
         raise OfflineRepeatedPolicyBackendError("formal executor contract drifted")
     try:
+        cpp_qualification = orchestrator._validate_cpp_qualification_receipt(
+            bundle.execution_manifest_path,
+            bundle.execution_manifest,
+            verify_runtime_artifacts=True,
+        )
         module = importlib.import_module(CANONICAL_REPLAY_ADAPTER_MODULE)
     except ModuleNotFoundError as exc:
         raise OfflineRepeatedPolicyBackendError(
@@ -955,6 +960,9 @@ def _load_canonical_replay_adapter(
         factory(
             acceleration=acceleration,
             global_worker_tokens=int(executor["global_worker_tokens"]),
+            cpp_qualification_receipt_sha256=str(
+                cpp_qualification["canonical_receipt_sha256"]
+            ),
         )
     )
     if type(adapter).__module__ != CANONICAL_REPLAY_ADAPTER_MODULE:

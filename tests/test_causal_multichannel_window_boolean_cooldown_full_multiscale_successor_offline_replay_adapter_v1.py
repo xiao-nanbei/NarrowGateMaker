@@ -393,8 +393,14 @@ def test_factory_identity_and_artifact_hash_match_backend_constant(
         "resolve_portable_path",
         lambda *_args, **_kwargs: mmap_root,
     )
+    monkeypatch.setattr(
+        orchestrator,
+        "_validate_cpp_qualification_receipt",
+        lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_A},
+    )
     bundle = SimpleNamespace(
         execution_manifest={"executor": orchestrator.formal_executor_contract()},
+        execution_manifest_path=tmp_path / "execution.json",
         repository_root=tmp_path,
     )
     assert backend._load_canonical_replay_adapter(bundle).artifact_sha256 == (
@@ -665,8 +671,14 @@ def test_factory_and_backend_reject_custom_adapter_injection(
         "resolve_portable_path",
         lambda *_args, **_kwargs: mmap_root,
     )
+    monkeypatch.setattr(
+        orchestrator,
+        "_validate_cpp_qualification_receipt",
+        lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_A},
+    )
     bundle = SimpleNamespace(
         execution_manifest={"executor": orchestrator.formal_executor_contract()},
+        execution_manifest_path=tmp_path / "execution.json",
         repository_root=tmp_path,
     )
     with pytest.raises(backend.OfflineRepeatedPolicyBackendError, match="identity drifted"):
@@ -1087,7 +1099,8 @@ def test_generate_one_shot_labels_reuses_identical_day_across_outer_folds(
     replay_adapter = adapter_module.build_canonical_replay_adapter(
         acceleration=adapter_module.SequentialReplayAccelerationOptions(
             day_input_cache_root=mmap_root
-        )
+        ),
+        cpp_qualification_receipt_sha256=SHA_A,
     )
 
     first_rows = _common_replay_inputs(("row-1",), side="SELL")

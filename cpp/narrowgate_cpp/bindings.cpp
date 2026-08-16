@@ -2112,6 +2112,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "qualification_scope",
             &F05RepeatedBooleanCooldownConfig::qualification_scope)
+        .def_readwrite(
+            "feature_clock_semantics",
+            &F05RepeatedBooleanCooldownConfig::feature_clock_semantics)
         .def_readwrite("warmup_s", &F05RepeatedBooleanCooldownConfig::warmup_s)
         .def_readwrite(
             "max_feature_age_s",
@@ -2140,7 +2143,25 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite("source_gap", &F05CooldownWindowObservation::source_gap)
         .def_readwrite(
             "source_stale",
-            &F05CooldownWindowObservation::source_stale);
+            &F05CooldownWindowObservation::source_stale)
+        .def_readwrite(
+            "warmup_admitted",
+            &F05CooldownWindowObservation::warmup_admitted)
+        .def_readwrite(
+            "channel_support_valid",
+            &F05CooldownWindowObservation::channel_support_valid);
+    py::class_<F05CooldownWindowTape, std::shared_ptr<F05CooldownWindowTape>>(
+        m,
+        "F05CooldownWindowTape")
+        .def(py::init<>())
+        .def_readwrite(
+            "content_sha256",
+            &F05CooldownWindowTape::content_sha256)
+        .def_property_readonly(
+            "size",
+            [](const F05CooldownWindowTape& self) {
+              return self.observations.size();
+            });
     py::class_<F05CooldownFillInput>(m, "F05CooldownFillInput")
         .def(py::init<>())
         .def_readwrite("snapshot_id", &F05CooldownFillInput::snapshot_id)
@@ -2305,6 +2326,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "qualification_scope",
             &F05RepeatedBooleanCooldownCheckpoint::qualification_scope)
         .def_readwrite(
+            "feature_clock_semantics",
+            &F05RepeatedBooleanCooldownCheckpoint::feature_clock_semantics)
+        .def_readwrite(
             "policy_sha256",
             &F05RepeatedBooleanCooldownCheckpoint::policy_sha256)
         .def_readwrite(
@@ -2339,6 +2363,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "current_window_observed",
             &F05RepeatedBooleanCooldownCheckpoint::current_window_observed)
         .def_readwrite(
+            "current_channel_support_valid",
+            &F05RepeatedBooleanCooldownCheckpoint::current_channel_support_valid)
+        .def_readwrite(
             "last_observed_ts_ns",
             &F05RepeatedBooleanCooldownCheckpoint::last_observed_ts_ns)
         .def_readwrite("ema", &F05RepeatedBooleanCooldownCheckpoint::ema)
@@ -2367,6 +2394,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def(py::init<F05RepeatedBooleanCooldownConfig>())
         .def("update_window", &F05RepeatedBooleanCooldownRuntime::update_window)
         .def("apply_fill", &F05RepeatedBooleanCooldownRuntime::apply_fill)
+        .def(
+            "override_active_lineage_duration",
+            &F05RepeatedBooleanCooldownRuntime::override_active_lineage_duration)
         .def("advance_time", &F05RepeatedBooleanCooldownRuntime::advance_time)
         .def("add_blocked", &F05RepeatedBooleanCooldownRuntime::add_blocked)
         .def("lineage", &F05RepeatedBooleanCooldownRuntime::lineage)
@@ -2618,16 +2648,177 @@ void bind_tick_replay(py::module_& m) {
             "cooldown_duration_fork_fixed_ms",
             &TickReplayParams::cooldown_duration_fork_fixed_ms)
         .def_readwrite(
+            "cooldown_duration_fork_baseline_policy_enabled",
+            &TickReplayParams::cooldown_duration_fork_baseline_policy_enabled)
+        .def_readwrite(
+            "cooldown_duration_fork_expected_owner_action",
+            &TickReplayParams::cooldown_duration_fork_expected_owner_action)
+        .def_readwrite(
+            "cooldown_duration_fork_expected_owner_policy_sha256",
+            &TickReplayParams::cooldown_duration_fork_expected_owner_policy_sha256)
+        .def_readwrite(
             "f05_repeated_cooldown_runtime",
             &TickReplayParams::f05_repeated_cooldown_runtime)
         .def_readwrite(
             "f05_cooldown_window_tape",
             &TickReplayParams::f05_cooldown_window_tape)
         .def_readwrite(
+            "f05_cooldown_window_tape_shared",
+            &TickReplayParams::f05_cooldown_window_tape_shared)
+        .def(
+            "set_f05_cooldown_window_arrays",
+            [](TickReplayParams &self,
+               py::array_t<std::int64_t,
+                           py::array::c_style | py::array::forcecast> left,
+               py::array_t<std::int64_t,
+                           py::array::c_style | py::array::forcecast> right,
+               py::array_t<std::int64_t,
+                           py::array::c_style | py::array::forcecast> ready,
+               py::array_t<std::int64_t,
+                           py::array::c_style | py::array::forcecast> market,
+               py::array_t<std::int64_t,
+                           py::array::c_style | py::array::forcecast> depth,
+               py::array_t<double,
+                           py::array::c_style | py::array::forcecast> mid,
+               py::array_t<std::uint8_t,
+                           py::array::c_style | py::array::forcecast> source_gap,
+               py::array_t<std::uint8_t,
+                           py::array::c_style | py::array::forcecast> source_stale,
+               py::array_t<std::uint8_t,
+                           py::array::c_style | py::array::forcecast> warmup,
+               py::array_t<std::uint8_t,
+                           py::array::c_style | py::array::forcecast>
+                   channel_support) {
+              const auto count = left.size();
+              if (left.ndim() != 1 || right.ndim() != 1 || ready.ndim() != 1 ||
+                  market.ndim() != 1 || depth.ndim() != 1 || mid.ndim() != 1 ||
+                  source_gap.ndim() != 1 || source_stale.ndim() != 1 ||
+                  warmup.ndim() != 1 || channel_support.ndim() != 1 ||
+                  right.size() != count || ready.size() != count ||
+                  market.size() != count || depth.size() != count ||
+                  mid.size() != count || source_gap.size() != count ||
+                  source_stale.size() != count || warmup.size() != count ||
+                  channel_support.size() != count) {
+                throw std::invalid_argument(
+                    "F05 cooldown window array shape drifted");
+              }
+              const auto left_view = left.unchecked<1>();
+              const auto right_view = right.unchecked<1>();
+              const auto ready_view = ready.unchecked<1>();
+              const auto market_view = market.unchecked<1>();
+              const auto depth_view = depth.unchecked<1>();
+              const auto mid_view = mid.unchecked<1>();
+              const auto gap_view = source_gap.unchecked<1>();
+              const auto stale_view = source_stale.unchecked<1>();
+              const auto warmup_view = warmup.unchecked<1>();
+              const auto support_view = channel_support.unchecked<1>();
+              std::vector<F05CooldownWindowObservation> tape;
+              tape.reserve(static_cast<std::size_t>(count));
+              py::gil_scoped_release release;
+              for (py::ssize_t index = 0; index < count; ++index) {
+                F05CooldownWindowObservation observation;
+                observation.left_ts_ns = left_view(index);
+                observation.right_ts_ns = right_view(index);
+                observation.feature_ready_ts_ns = ready_view(index);
+                observation.market_generation = market_view(index);
+                observation.depth_generation = depth_view(index);
+                if (std::isfinite(mid_view(index))) {
+                  observation.mid_usdc_per_btc = mid_view(index);
+                }
+                observation.source_gap = gap_view(index) != 0;
+                observation.source_stale = stale_view(index) != 0;
+                observation.warmup_admitted = warmup_view(index) != 0;
+                observation.channel_support_valid = support_view(index) != 0;
+                tape.push_back(std::move(observation));
+              }
+              self.f05_cooldown_window_tape = std::move(tape);
+              return count;
+            },
+            py::arg("left_ts_ns"), py::arg("right_ts_ns"),
+            py::arg("feature_ready_ts_ns"), py::arg("market_generation"),
+            py::arg("depth_generation"), py::arg("mid_usdc_per_btc"),
+            py::arg("source_gap"), py::arg("source_stale"),
+            py::arg("warmup_admitted"), py::arg("channel_support_valid"))
+        .def_readwrite(
             "f05_cooldown_predicate_rows",
             &TickReplayParams::f05_cooldown_predicate_rows)
         .def_readwrite("trace_window_ms", &TickReplayParams::trace_window_ms)
         .def_readwrite("collect_curves", &TickReplayParams::collect_curves);
+
+    m.def(
+        "build_f05_cooldown_window_tape",
+        [](py::array_t<std::int64_t,
+                       py::array::c_style | py::array::forcecast> left,
+           py::array_t<std::int64_t,
+                       py::array::c_style | py::array::forcecast> right,
+           py::array_t<std::int64_t,
+                       py::array::c_style | py::array::forcecast> ready,
+           py::array_t<std::int64_t,
+                       py::array::c_style | py::array::forcecast> market,
+           py::array_t<std::int64_t,
+                       py::array::c_style | py::array::forcecast> depth,
+           py::array_t<double,
+                       py::array::c_style | py::array::forcecast> mid,
+           py::array_t<std::uint8_t,
+                       py::array::c_style | py::array::forcecast> source_gap,
+           py::array_t<std::uint8_t,
+                       py::array::c_style | py::array::forcecast> source_stale,
+           py::array_t<std::uint8_t,
+                       py::array::c_style | py::array::forcecast> warmup,
+           py::array_t<std::uint8_t,
+                       py::array::c_style | py::array::forcecast> channel_support,
+           const std::string& content_sha256) {
+          const auto count = left.size();
+          if (left.ndim() != 1 || right.ndim() != 1 || ready.ndim() != 1 ||
+              market.ndim() != 1 || depth.ndim() != 1 || mid.ndim() != 1 ||
+              source_gap.ndim() != 1 || source_stale.ndim() != 1 ||
+              warmup.ndim() != 1 || channel_support.ndim() != 1 ||
+              right.size() != count || ready.size() != count ||
+              market.size() != count || depth.size() != count ||
+              mid.size() != count || source_gap.size() != count ||
+              source_stale.size() != count || warmup.size() != count ||
+              channel_support.size() != count || content_sha256.size() != 64) {
+            throw std::invalid_argument(
+                "F05 shared cooldown window tape contract drifted");
+          }
+          const auto left_view = left.unchecked<1>();
+          const auto right_view = right.unchecked<1>();
+          const auto ready_view = ready.unchecked<1>();
+          const auto market_view = market.unchecked<1>();
+          const auto depth_view = depth.unchecked<1>();
+          const auto mid_view = mid.unchecked<1>();
+          const auto gap_view = source_gap.unchecked<1>();
+          const auto stale_view = source_stale.unchecked<1>();
+          const auto warmup_view = warmup.unchecked<1>();
+          const auto support_view = channel_support.unchecked<1>();
+          auto tape = std::make_shared<F05CooldownWindowTape>();
+          tape->content_sha256 = content_sha256;
+          tape->observations.reserve(static_cast<std::size_t>(count));
+          py::gil_scoped_release release;
+          for (py::ssize_t index = 0; index < count; ++index) {
+            F05CooldownWindowObservation observation;
+            observation.left_ts_ns = left_view(index);
+            observation.right_ts_ns = right_view(index);
+            observation.feature_ready_ts_ns = ready_view(index);
+            observation.market_generation = market_view(index);
+            observation.depth_generation = depth_view(index);
+            if (std::isfinite(mid_view(index))) {
+              observation.mid_usdc_per_btc = mid_view(index);
+            }
+            observation.source_gap = gap_view(index) != 0;
+            observation.source_stale = stale_view(index) != 0;
+            observation.warmup_admitted = warmup_view(index) != 0;
+            observation.channel_support_valid = support_view(index) != 0;
+            tape->observations.push_back(std::move(observation));
+          }
+          return tape;
+        },
+        py::arg("left_ts_ns"), py::arg("right_ts_ns"),
+        py::arg("feature_ready_ts_ns"), py::arg("market_generation"),
+        py::arg("depth_generation"), py::arg("mid_usdc_per_btc"),
+        py::arg("source_gap"), py::arg("source_stale"),
+        py::arg("warmup_admitted"), py::arg("channel_support_valid"),
+        py::arg("content_sha256"));
 
     py::class_<TickReplaySummary>(m, "TickReplaySummary")
         .def(py::init<>())
@@ -3228,6 +3419,18 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite(
             "applied_deadline_ts_ms",
             &CooldownDurationForkTrace::applied_deadline_ts_ms)
+        .def_readwrite(
+            "exact_owner_baseline_policy_enabled",
+            &CooldownDurationForkTrace::exact_owner_baseline_policy_enabled)
+        .def_readwrite(
+            "exact_owner_action",
+            &CooldownDurationForkTrace::exact_owner_action)
+        .def_readwrite(
+            "exact_owner_policy_sha256",
+            &CooldownDurationForkTrace::exact_owner_policy_sha256)
+        .def_readwrite(
+            "exact_owner_baseline_duration_ms",
+            &CooldownDurationForkTrace::exact_owner_baseline_duration_ms)
         .def_readwrite(
             "quarantine_entered",
             &CooldownDurationForkTrace::quarantine_entered)

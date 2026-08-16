@@ -27,7 +27,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -38,6 +38,12 @@ from typing import Any, Literal
 import pandas as pd
 
 from data_paths import resolve_portable_path
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_cpp_observation_tape_v21 as cpp_observation_tape,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_cpp_runtime_v21 as cpp_runtime_v21,
+)
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_features as feature_schema,
 )
@@ -87,9 +93,9 @@ MAX_DAY_WORKERS = 8
 GLOBAL_SEQUENTIAL_WORKER_TOKENS = 10
 DEFAULT_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
 MAX_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
-ONE_SHOT_DAY_PARENT_WORKERS = 2
-ONE_SHOT_SUPERVISOR_WORKERS = 2
-FORMAL_SHARED_PREFIX_ARM_WORKERS = 8
+ONE_SHOT_DAY_PARENT_WORKERS = 0
+ONE_SHOT_SUPERVISOR_WORKERS = 0
+FORMAL_SHARED_PREFIX_ARM_WORKERS = 10
 DAY_INPUT_MATERIALIZATION_WORKERS = 2
 ONE_SHOT_TOTAL_WORKER_TOKENS = (
     ONE_SHOT_DAY_PARENT_WORKERS
@@ -107,7 +113,7 @@ DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
 EXECUTOR_ACCELERATION_IDENTITY = (
-    "f05_full_multiscale_offline_replay_executor_acceleration_v3"
+    "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1"
 )
 DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
@@ -736,7 +742,7 @@ class B0ControlPath:
 
 @dataclass(frozen=True, slots=True)
 class OneShotProcessTopology:
-    """One global process budget for the POSIX shared-prefix one-shot stage."""
+    """One ten-thread C++ arm budget with no nested process pool."""
 
     total_worker_tokens: int = ONE_SHOT_TOTAL_WORKER_TOKENS
     day_parent_workers: int = ONE_SHOT_DAY_PARENT_WORKERS
@@ -750,8 +756,8 @@ class OneShotProcessTopology:
             self.supervisor_workers,
             self.arm_workers,
         )
-        if any(isinstance(value, bool) or int(value) <= 0 for value in values):
-            raise OfflineReplayAdapterError("one-shot process topology must be positive")
+        if any(isinstance(value, bool) for value in values):
+            raise OfflineReplayAdapterError("one-shot process topology must be integral")
         if int(self.total_worker_tokens) != GLOBAL_SEQUENTIAL_WORKER_TOKENS:
             raise OfflineReplayAdapterError("one-shot topology escaped the ten-token contract")
         if int(self.day_parent_workers) != ONE_SHOT_DAY_PARENT_WORKERS:
@@ -760,9 +766,9 @@ class OneShotProcessTopology:
             raise OfflineReplayAdapterError("one-shot supervisor topology drifted")
         if int(self.arm_workers) != FORMAL_SHARED_PREFIX_ARM_WORKERS:
             raise OfflineReplayAdapterError("one-shot arm topology drifted")
-        if int(self.day_parent_workers) + int(self.arm_workers) != int(
-            self.total_worker_tokens
-        ):
+        if int(self.day_parent_workers) != 0 or int(self.supervisor_workers) != 0:
+            raise OfflineReplayAdapterError("C++ one-shot topology cannot retain Python parents")
+        if int(self.arm_workers) != int(self.total_worker_tokens):
             raise OfflineReplayAdapterError("one-shot CPU topology oversubscribes tokens")
 
     def payload(self) -> dict[str, int | bool]:
@@ -772,8 +778,9 @@ class OneShotProcessTopology:
             "supervisor_workers": int(self.supervisor_workers),
             "arm_workers": int(self.arm_workers),
             "nested_process_pool": False,
-            "shared_prefix_posix_fork": True,
-            "supervisors_are_coordination_only": True,
+            "shared_prefix_posix_fork": False,
+            "global_cpp_arm_thread_pool": True,
+            "shared_read_only_observation_tape": True,
         }
 
 
@@ -787,14 +794,16 @@ def _one_shot_topology_from_payload(value: Any) -> OneShotProcessTopology:
         "arm_workers",
         "nested_process_pool",
         "shared_prefix_posix_fork",
-        "supervisors_are_coordination_only",
+        "global_cpp_arm_thread_pool",
+        "shared_read_only_observation_tape",
     }
     if set(value) != expected:
         raise OfflineReplayAdapterError("one-shot process topology schema drifted")
     if (
         value["nested_process_pool"] is not False
-        or value["shared_prefix_posix_fork"] is not True
-        or value["supervisors_are_coordination_only"] is not True
+        or value["shared_prefix_posix_fork"] is not False
+        or value["global_cpp_arm_thread_pool"] is not True
+        or value["shared_read_only_observation_tape"] is not True
     ):
         raise OfflineReplayAdapterError("one-shot process topology semantics drifted")
     return OneShotProcessTopology(
@@ -2384,6 +2393,32 @@ def _exact_owner_runtime_params(
     return params
 
 
+def _cpp_exact_owner_runtime_params(
+    replay: Any,
+    *,
+    identity_hashes: Mapping[str, str],
+    qualification_receipt_sha256: str,
+) -> dict[str, Any]:
+    """Bind Python authority without materializing its unused observation objects."""
+
+    receipt_sha256 = _require_sha(
+        qualification_receipt_sha256,
+        label="C++ one-shot qualification receipt SHA256",
+    )
+    params = dict(replay.params)
+    params["cooldown_v2_snapshot_emitter"] = SimpleNamespace(
+        identity="f05_cpp_formal_owner_snapshot_binding_v21",
+        execution_role="non_executed_python_authority_binding",
+        qualification_receipt_sha256=receipt_sha256,
+        identity_hashes_sha256=_canonical_sha256(dict(sorted(identity_hashes.items()))),
+    )
+    params["cooldown_duration_policy_evaluator"] = _build_exact_owner_artifact_evaluator(
+        expected_identity_hashes=identity_hashes
+    )
+    params["_cooldown_duration_policy_cpp_binding_only"] = True
+    return params
+
+
 def _shared_prefix_target_contracts(
     rows: pd.DataFrame,
     *,
@@ -2615,7 +2650,7 @@ def _validate_shared_prefix_day_audit(
         raise OfflineReplayAdapterError("shared-prefix process topology drifted")
 
 
-def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
+def _execute_one_shot_day_python_legacy(job: _DayReplayJob) -> _DayReplayJobResult:
     topology = _one_shot_topology_from_payload(job.payload.get("one_shot_topology"))
     if os.environ.get(_GLOBAL_ONE_SHOT_DAY_WORKER_ENV) != "1":
         raise OfflineReplayAdapterError("one-shot day escaped its global worker pool")
@@ -2728,6 +2763,217 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 "day_input_mmap": dict(mmap_evidence),
             }
         )
+    return _DayReplayJobResult(
+        utc_day=job.utc_day,
+        cache_key_sha256=job.cache_key.cache_key_sha256,
+        frames={"outcomes": outcomes, "supported": supported},
+        evidence=evidence,
+    )
+
+
+def _execute_one_shot_day(
+    job: _DayReplayJob,
+    *,
+    arm_pool: ThreadPoolExecutor | None = None,
+) -> _DayReplayJobResult:
+    """Run all one-shot arms in C++ against one immutable day projection."""
+
+    topology = _one_shot_topology_from_payload(job.payload.get("one_shot_topology"))
+    qualification_receipt_sha256 = _require_sha(
+        job.payload.get("cpp_qualification_receipt_sha256"),
+        label="C++ one-shot qualification receipt SHA256",
+    )
+    if (
+        job.payload.get("cpp_qualification_identity")
+        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+    ):
+        raise OfflineReplayAdapterError("C++ one-shot qualification identity drifted")
+    rows = job.payload.get("replay_inputs")
+    if not isinstance(rows, pd.DataFrame) or rows.empty:
+        raise OfflineReplayAdapterError("C++ one-shot day rows are malformed")
+    vocabulary = tuple(str(value) for value in job.payload["duration_vocabulary"])
+    side = _normalize_side(_unique_column_value(rows, "side"))
+    if tuple(duration_vocabulary(side)) != vocabulary:
+        raise OfflineReplayAdapterError("fixed duration action vocabulary drifted")
+    action_contract, actions_by_side = _load_frozen_duration_action_contract()
+    actions = actions_by_side[side]
+    if tuple(action.policy_id for action in actions) != vocabulary:
+        raise OfflineReplayAdapterError("C++ one-shot action object order drifted")
+
+    cache = DayReplayCache(Path(job.payload["cache_root"]))
+    outcomes = pd.DataFrame(index=rows.index.copy(), columns=vocabulary, dtype=float)
+    supported = pd.DataFrame(False, index=rows.index.copy(), columns=vocabulary, dtype=bool)
+    total_arms = len(rows) * len(actions)
+    cache.write_progress(
+        job.cache_key,
+        state="running",
+        counters={
+            "total_opportunities": len(rows),
+            "completed_opportunities": 0,
+            "total_arms": total_arms,
+            "completed_arms": 0,
+        },
+    )
+
+    with _canonical_day_projection_context(job) as (request, replay, mmap_evidence):
+        if mmap_evidence is None or mmap_evidence.get("read_only_mmap") is not True:
+            raise OfflineReplayAdapterError("formal C++ one-shot lacks read-only mmap")
+        identity_hashes = _day_identity_hashes(request)
+        try:
+            import narrowgate_cpp as cpp
+        except ImportError as exc:
+            raise OfflineReplayAdapterError("formal C++ one-shot extension is unavailable") from exc
+        tape = cpp_observation_tape.load_cpp_observation_tape(
+            request.native_observation_root,
+            target_day=job.utc_day,
+            continuation_day=replay.continuation_day,
+            deep_validate=False,
+        )
+        shared_tape = cpp_runtime_v21.build_shared_observation_tape(
+            cpp,
+            tape.arrays,
+            content_sha256=str(tape.receipt["array_sha256"]),
+        )
+        policy_path = resolve_portable_path(FIXED_OWNER_POLICY_PATH).resolve()
+        predicate_path = resolve_portable_path(FIXED_OWNER_PREDICATE_BUNDLE_PATH).resolve()
+        runtime_config = cpp_runtime_v21.build_cpp_runtime_config(
+            cpp,
+            policy_path=policy_path,
+            predicate_bundle_path=predicate_path,
+            qualification_sha256=qualification_receipt_sha256,
+        )
+        base = _cpp_exact_owner_runtime_params(
+            replay,
+            identity_hashes=identity_hashes,
+            qualification_receipt_sha256=qualification_receipt_sha256,
+        )
+        shared = {
+            "ml_data": replay.ml_data,
+            "bbo_data": replay.bbo_data,
+            "l2_data": replay.l2_data,
+            "var_ti": replay.var_ti,
+            "var_retsq": replay.var_retsq,
+        }
+        tasks = tuple(
+            (str(opportunity_id), row.to_dict(), action)
+            for opportunity_id, row in rows.sort_index().iterrows()
+            for action in actions
+        )
+
+        def execute_arm(
+            opportunity_id: str,
+            opportunity: Mapping[str, Any],
+            action: Any,
+        ) -> tuple[str, str, bool, float | None, float]:
+            arm_base = dict(base)
+            arm_base.update(
+                {
+                    "cooldown_duration_policy_cpp_runtime": (
+                        cpp.F05RepeatedBooleanCooldownRuntime(runtime_config)
+                    ),
+                    "cooldown_duration_policy_cpp_parity_qualified": True,
+                    "cooldown_duration_policy_cpp_event_loop_parity_qualified": True,
+                    "cooldown_duration_policy_cpp_parity_receipt_sha256": (
+                        qualification_receipt_sha256
+                    ),
+                    "_cooldown_duration_policy_cpp_window_tape_handle": shared_tape,
+                    "_cooldown_duration_policy_cpp_predicate_rows": [
+                        cpp_runtime_v21.build_target_predicate_row(cpp, opportunity)
+                    ],
+                }
+            )
+            trace, elapsed = importlib.import_module(
+                FIXED_ONE_SHOT_REPLAY_MODULE
+            )._run_duration_arm(
+                opportunity,
+                action,
+                window=replay,
+                base=arm_base,
+                shared=shared,
+                engine="cpp",
+                require_control_prefix_parity=False,
+                exact_owner_baseline_policy_enabled=True,
+                expected_exact_owner_action=str(opportunity["exact_owner_action"]),
+                expected_exact_owner_policy_sha256=offline.ACTIVE_OWNER_POLICY_SHA256,
+            )
+            _validate_shared_prefix_duration_trace(
+                trace,
+                opportunity=opportunity,
+                action_id=str(action.policy_id),
+            )
+            eligible = bool(trace["arm_washout_complete"]) and not bool(
+                trace["right_censored"]
+            )
+            value = (
+                float(trace["assignment_to_washout_value_usdc"])
+                if eligible
+                else None
+            )
+            return opportunity_id, str(action.policy_id), eligible, value, float(elapsed)
+
+        started = time.perf_counter()
+        completed = 0
+        arm_wall_time_s = 0.0
+        owned_pool = arm_pool is None
+        pool = arm_pool or ThreadPoolExecutor(max_workers=topology.arm_workers)
+        try:
+            futures = [pool.submit(execute_arm, *task) for task in tasks]
+            for future in as_completed(futures):
+                opportunity_id, action_id, eligible, value, elapsed = future.result()
+                arm_wall_time_s += elapsed
+                supported.loc[opportunity_id, action_id] = eligible
+                outcomes.loc[opportunity_id, action_id] = (
+                    value if eligible else float("nan")
+                )
+                completed += 1
+                if completed == total_arms or completed % len(actions) == 0:
+                    cache.write_progress(
+                        job.cache_key,
+                        state="running",
+                        counters={
+                            "total_opportunities": len(rows),
+                            "completed_opportunities": completed // len(actions),
+                            "total_arms": total_arms,
+                            "completed_arms": completed,
+                        },
+                    )
+        finally:
+            if owned_pool:
+                pool.shutdown(wait=True, cancel_futures=True)
+        if completed != total_arms or outcomes.index.tolist() != rows.index.tolist():
+            raise OfflineReplayAdapterError("C++ one-shot arm denominator drifted")
+        evidence = {
+            "execution_semantics": (
+                "cpp_full_day_direct_replay_shared_observation_tape_v21"
+            ),
+            "formal_engine": "cpp",
+            "qualification_identity": job.payload["cpp_qualification_identity"],
+            "qualification_receipt_sha256": qualification_receipt_sha256,
+            "qualification_scope": cpp_runtime_v21.QUALIFICATION_SCOPE,
+            "opportunity_count": len(rows),
+            "arm_count": total_arms,
+            "modeled_queue_economics_authorized": True,
+            "exact_owner_baseline_policy_enabled": True,
+            "python_sequential_engine_remains_authoritative": True,
+            "cpp_worker_tokens": topology.arm_workers,
+            "nested_process_pool": False,
+            "shared_read_only_observation_tape": True,
+            "observation_tape_receipt": dict(tape.receipt),
+            "day_input_mmap": dict(mmap_evidence),
+            "duration_action_contract_sha256": _canonical_sha256(action_contract),
+            "owner_policy_sha256": _file_sha256(policy_path),
+            "owner_predicate_bundle_sha256": _file_sha256(predicate_path),
+            "cpp_extension_sha256": _file_sha256(Path(cpp.__file__).resolve()),
+            "cpp_runtime_module_sha256": _file_sha256(
+                Path(cpp_runtime_v21.__file__).resolve()
+            ),
+            "day_wall_time_s": time.perf_counter() - started,
+            "arm_wall_time_s_total": arm_wall_time_s,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        }
     return _DayReplayJobResult(
         utc_day=job.utc_day,
         cache_key_sha256=job.cache_key.cache_key_sha256,
@@ -3616,7 +3862,7 @@ def run_global_one_shot_day_jobs(
     *,
     total_worker_tokens: int = ONE_SHOT_TOTAL_WORKER_TOKENS,
 ) -> tuple[_DayReplayJobResult, ...]:
-    """Run two one-shot day parents against one shared eight-arm pool."""
+    """Run every day through one persistent, non-nestable C++ arm pool."""
 
     if os.environ.get(_GLOBAL_ONE_SHOT_DAY_WORKER_ENV) == "1":
         raise OfflineReplayAdapterError("nested global one-shot pools are forbidden")
@@ -3633,11 +3879,10 @@ def run_global_one_shot_day_jobs(
             raise OfflineReplayAdapterError("global one-shot job escaped frozen acceleration")
     if not ordered:
         return ()
-    with ProcessPoolExecutor(
-        max_workers=topology.day_parent_workers,
-        initializer=_mark_global_one_shot_day_worker,
-    ) as pool:
-        executed = tuple(pool.map(_execute_fixed_day_job, ordered, chunksize=1))
+    with ThreadPoolExecutor(max_workers=topology.arm_workers) as pool:
+        executed = tuple(
+            _execute_one_shot_day(job, arm_pool=pool) for job in ordered
+        )
     result_by_key = {result.cache_key_sha256: result for result in executed}
     if set(result_by_key) != set(keys):
         raise OfflineReplayAdapterError("global one-shot worker result drifted")
@@ -4714,6 +4959,7 @@ class _CanonicalOfflineReplayAdapter:
         *,
         acceleration: SequentialReplayAccelerationOptions | None = None,
         global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+        cpp_qualification_receipt_sha256: str | None = None,
     ) -> None:
         if acceleration is not None and not isinstance(
             acceleration, SequentialReplayAccelerationOptions
@@ -4721,6 +4967,14 @@ class _CanonicalOfflineReplayAdapter:
             raise OfflineReplayAdapterError("executor acceleration options type drifted")
         self._acceleration = acceleration
         self._global_worker_tokens = _validated_global_worker_count(global_worker_tokens)
+        self._cpp_qualification_receipt_sha256 = (
+            None
+            if cpp_qualification_receipt_sha256 is None
+            else _require_sha(
+                cpp_qualification_receipt_sha256,
+                label="C++ one-shot qualification receipt SHA256",
+            )
+        )
 
     @property
     def artifact_sha256(self) -> str:
@@ -5261,6 +5515,10 @@ class _CanonicalOfflineReplayAdapter:
         jobs: list[_DayReplayJob] = []
         semantic_by_cache_key: dict[str, OneShotSemanticCacheKey] = {}
         topology = OneShotProcessTopology(total_worker_tokens=self._global_worker_tokens)
+        if self._cpp_qualification_receipt_sha256 is None:
+            raise OfflineReplayAdapterError(
+                "formal C++ one-shot execution lacks its lockstep receipt"
+            )
         for day in sorted(set(rows["utc_day"])):
             day_rows = rows.loc[rows["utc_day"] == day].copy()
             key = _cache_key(
@@ -5337,6 +5595,12 @@ class _CanonicalOfflineReplayAdapter:
                         "replay_inputs": day_rows,
                         "duration_vocabulary": label.duration_vocabulary,
                         "one_shot_topology": topology.payload(),
+                        "cpp_qualification_identity": (
+                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+                        ),
+                        "cpp_qualification_receipt_sha256": (
+                            self._cpp_qualification_receipt_sha256
+                        ),
                     },
                 )
             )
@@ -5620,12 +5884,14 @@ def build_canonical_replay_adapter(
     *,
     acceleration: SequentialReplayAccelerationOptions | None = None,
     global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+    cpp_qualification_receipt_sha256: str | None = None,
 ) -> backend.CanonicalReplayAdapter:
     """Build the sole fixed adapter; no caller-supplied evaluator is accepted."""
 
     return _CanonicalOfflineReplayAdapter(
         acceleration=acceleration,
         global_worker_tokens=global_worker_tokens,
+        cpp_qualification_receipt_sha256=cpp_qualification_receipt_sha256,
     )
 
 
