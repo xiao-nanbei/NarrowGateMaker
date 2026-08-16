@@ -4,6 +4,8 @@ import dataclasses
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -25,6 +27,13 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 
 def _sha(value: str) -> str:
     return hashlib.sha256(value.encode("ascii")).hexdigest()
+
+
+@pytest.fixture(autouse=True)
+def clear_verified_descriptor_cache() -> None:
+    cache_mod._clear_verified_descriptor_cache_for_tests()
+    yield
+    cache_mod._clear_verified_descriptor_cache_for_tests()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -60,6 +69,23 @@ def governed_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         str(hot / ".cache_tier_lru" / "access_ledger.sqlite3"),
     )
     root = cold / "replay_dag" / cache_mod.CACHE_IDENTITY
+    root.parent.mkdir()
+    return root
+
+
+@pytest.fixture
+def governed_hot_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    hot = tmp_path / "hot"
+    cold = tmp_path / "cold"
+    hot.mkdir()
+    cold.mkdir()
+    monkeypatch.setenv("NARROWGATE_CACHE_HOT_ROOT", str(hot))
+    monkeypatch.setenv("NARROWGATE_CACHE_COLD_ROOT", str(cold))
+    monkeypatch.setenv(
+        "NARROWGATE_CACHE_LEDGER_PATH",
+        str(hot / ".cache_tier_lru" / "access_ledger.sqlite3"),
+    )
+    root = hot / "replay_dag" / cache_mod.CACHE_IDENTITY
     root.parent.mkdir()
     return root
 
@@ -144,6 +170,23 @@ def _context() -> tuple[
     )
 
 
+def _array_path(
+    root: Path,
+    binding: cache_mod.DayInputCacheBinding,
+    *,
+    component: str,
+    name: str,
+) -> Path:
+    entry = root / "entries" / binding.cache_identity_sha256
+    manifest = json.loads((entry / "manifest.json").read_text(encoding="ascii"))
+    row = next(
+        item
+        for item in manifest["arrays"]
+        if item["component"] == component and item["name"] == name
+    )
+    return entry / row["file"]
+
+
 def test_atomic_admission_opens_read_only_mmaps_and_rebuilds_replay_inputs(
     governed_root: Path,
 ) -> None:
@@ -161,6 +204,8 @@ def test_atomic_admission_opens_read_only_mmaps_and_rebuilds_replay_inputs(
     manifest = json.loads(manifest_before)
     assert manifest["estimated_size_bytes"] == binding.estimated_size_bytes
     assert manifest["request"]["continuation_day"] == "2026-08-09"
+    assert manifest["request"]["bbo_source"] == "fixture_D_minus_1_D_D_plus_1"
+    assert manifest["request"]["l2_source"] == "fixture_D_minus_1_D_D_plus_1"
     assert manifest["economic_outcomes_read"] is False
 
     with cache_mod.open_replay_day_inputs(
@@ -184,8 +229,12 @@ def test_atomic_admission_opens_read_only_mmaps_and_rebuilds_replay_inputs(
         assert rebuilt.bbo_data.ts_ms.flags.writeable is False
         assert rebuilt.l2_data.bid_px.flags.writeable is False
         assert rebuilt.ml_data[0].flags.writeable is False
+        assert isinstance(rebuilt.ml_data[-1], dict)
+        assert all(array.flags.writeable is False for array in rebuilt.ml_data[-1].values())
         assert rebuilt.utc_day == "2026-08-08"
         assert rebuilt.continuation_day == "2026-08-09"
+        assert rebuilt.bbo_data.source == "fixture_D_minus_1_D_D_plus_1"
+        assert rebuilt.l2_data.source == "fixture_D_minus_1_D_D_plus_1"
         assert rebuilt.market_window_identity_sha256 == _sha("market")
         assert authoritative.replay_input_receipt_sha256 == _sha("replay")
 
@@ -273,6 +322,99 @@ def test_content_corruption_and_source_receipt_drift_fail_closed(governed_root: 
         )
 
 
+def test_open_validates_and_maps_the_same_descriptor_across_path_replacement(
+    governed_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, schema, inputs = _context()
+    binding = cache_mod.admit_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        inputs=inputs,
+    )
+    target = _array_path(governed_root, binding, component="l2", name="bid_px")
+    target_inode = target.stat().st_ino
+    cache_mod._clear_verified_descriptor_cache_for_tests()
+    original_hash = cache_mod._open_fd_sha256
+    swapped = False
+
+    def hash_then_replace(descriptor: int) -> str:
+        nonlocal swapped
+        digest = original_hash(descriptor)
+        if os.fstat(descriptor).st_ino == target_inode and not swapped:
+            changed = np.load(target, allow_pickle=False)
+            changed[0, 0] += 7.0
+            replacement = target.parent / "replacement.npy"
+            np.save(replacement, changed, allow_pickle=False)
+            os.replace(replacement, target)
+            swapped = True
+        return digest
+
+    monkeypatch.setattr(cache_mod, "_open_fd_sha256", hash_then_replace)
+    with pytest.raises(
+        cache_mod.OfflineDayInputCacheError, match="changed while it was being hashed"
+    ):
+        cache_mod.open_replay_day_inputs(
+            governed_root,
+            identity=identity,
+            schema=schema,
+            expected=binding,
+            record_lru_access=False,
+        )
+    assert swapped is True
+    with pytest.raises(cache_mod.OfflineDayInputCacheError, match="file hash drifted"):
+        cache_mod.open_replay_day_inputs(
+            governed_root,
+            identity=identity,
+            schema=schema,
+            expected=binding,
+            record_lru_access=False,
+        )
+
+
+def test_second_unchanged_open_reuses_verified_descriptor_cache(
+    governed_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, schema, inputs = _context()
+    binding = cache_mod.admit_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        inputs=inputs,
+    )
+    cache_mod._clear_verified_descriptor_cache_for_tests()
+    original_hash = cache_mod._open_fd_sha256
+    hashed_bytes = 0
+
+    def counted_hash(descriptor: int) -> str:
+        nonlocal hashed_bytes
+        hashed_bytes += int(os.fstat(descriptor).st_size)
+        return original_hash(descriptor)
+
+    monkeypatch.setattr(cache_mod, "_open_fd_sha256", counted_hash)
+    with cache_mod.open_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        expected=binding,
+        record_lru_access=False,
+    ):
+        pass
+    first_open_bytes = hashed_bytes
+    assert first_open_bytes > 0
+    with cache_mod.open_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        expected=binding,
+        record_lru_access=False,
+    ):
+        pass
+    assert hashed_bytes == first_open_bytes
+
+
 def test_concurrent_build_uses_one_writer(
     governed_root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -304,6 +446,184 @@ def test_concurrent_build_uses_one_writer(
     assert len(list((governed_root / "entries").iterdir())) == 1
     assert len(list((governed_root / "admissions").iterdir())) == 1
     assert not list(governed_root.rglob("*.partial"))
+
+
+def test_subprocess_crash_after_entry_publish_recovers_without_rewrite(
+    governed_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    script = """
+import os
+import runpy
+from pathlib import Path
+
+namespace = runpy.run_path(os.environ["NARROWGATE_CACHE_TEST_FILE"])
+cache_mod = namespace["cache_mod"]
+identity, schema, inputs = namespace["_context"]()
+
+def crash_before_admission(self, **kwargs):
+    os._exit(73)
+
+cache_mod.ReplayDayInputCache._publish_admission = crash_before_admission
+cache_mod.admit_replay_day_inputs(
+    Path(os.environ["NARROWGATE_CACHE_TEST_ROOT"]),
+    identity=identity,
+    schema=schema,
+    inputs=inputs,
+)
+"""
+    environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["NARROWGATE_CACHE_TEST_FILE"] = str(Path(__file__).resolve())
+    environment["NARROWGATE_CACHE_TEST_ROOT"] = str(governed_root)
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=Path(__file__).resolve().parents[1],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 73, completed.stderr
+
+    identity, schema, inputs = _context()
+    assert not (governed_root / "admissions").exists()
+    writes = 0
+    original_write = cache_mod.ReplayDayInputCache._write_entry
+
+    def counted_write(self: cache_mod.ReplayDayInputCache, **kwargs: Any) -> tuple[Path, str]:
+        nonlocal writes
+        writes += 1
+        return original_write(self, **kwargs)
+
+    monkeypatch.setattr(cache_mod.ReplayDayInputCache, "_write_entry", counted_write)
+    binding = cache_mod.admit_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        inputs=inputs,
+    )
+    assert writes == 0
+    assert not (governed_root / "orphan_quarantine").exists()
+    with cache_mod.open_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        expected=binding,
+    ):
+        pass
+
+
+def test_invalid_orphan_is_quarantined_before_rebuild(
+    governed_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity, schema, inputs = _context()
+    original_publish = cache_mod.ReplayDayInputCache._publish_admission
+
+    def fail_publish(self: cache_mod.ReplayDayInputCache, **kwargs: Any) -> Any:
+        raise OSError("synthetic admission failure")
+
+    monkeypatch.setattr(cache_mod.ReplayDayInputCache, "_publish_admission", fail_publish)
+    with pytest.raises(OSError, match="synthetic admission failure"):
+        cache_mod.admit_replay_day_inputs(
+            governed_root,
+            identity=identity,
+            schema=schema,
+            inputs=inputs,
+        )
+    orphan = next((governed_root / "entries").iterdir())
+    manifest = json.loads((orphan / "manifest.json").read_text(encoding="ascii"))
+    target_row = next(row for row in manifest["arrays"] if row["component"] == "trades")
+    target = orphan / target_row["file"]
+    with target.open("r+b") as handle:
+        handle.seek(-1, os.SEEK_END)
+        original = handle.read(1)
+        handle.seek(-1, os.SEEK_END)
+        handle.write(bytes([original[0] ^ 1]))
+    target_row["file_sha256"] = cache_mod._file_sha256(target)
+    manifest["manifest_document_sha256"] = cache_mod._document_sha256(
+        manifest, "manifest_document_sha256"
+    )
+    manifest_path = orphan / "manifest.json"
+    manifest_path.write_bytes(cache_mod._canonical_bytes(manifest))
+    (orphan / "_SUCCESS").write_text(
+        f"{cache_mod._file_sha256(manifest_path)}\n",
+        encoding="ascii",
+    )
+
+    monkeypatch.setattr(cache_mod.ReplayDayInputCache, "_publish_admission", original_publish)
+    binding = cache_mod.admit_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        inputs=inputs,
+    )
+    quarantined = list((governed_root / "orphan_quarantine").iterdir())
+    assert len(quarantined) == 1
+    assert quarantined[0].name.startswith(f"{binding.cache_identity_sha256}.orphan.")
+    with cache_mod.open_replay_day_inputs(
+        governed_root,
+        identity=identity,
+        schema=schema,
+        expected=binding,
+    ):
+        pass
+
+
+def test_lru_hot_migration_reopens_only_exact_governed_cold_target(
+    governed_hot_root: Path,
+) -> None:
+    identity, schema, inputs = _context()
+    binding = cache_mod.admit_replay_day_inputs(
+        governed_hot_root,
+        identity=identity,
+        schema=schema,
+        inputs=inputs,
+    )
+    config = dataclasses.replace(
+        cache_tier_lru.CacheTierConfig.from_environment(),
+        hot_safety_reserve_bytes=1,
+        hot_target_free_bytes=1,
+    )
+    plan = cache_tier_lru.build_cache_tier_plan(
+        config,
+        include_deletions=False,
+        hot_free_bytes=0,
+        cold_free_bytes=10_000_000,
+    )
+    receipt = cache_tier_lru.apply_cache_tier_plan(
+        plan,
+        config=config,
+        operation="migrate",
+        owner_token=cache_tier_lru.owner_token_for_plan(plan, "migrate"),
+        execute=True,
+    )
+    assert receipt["status"] == "complete"
+    entry = governed_hot_root / "entries" / binding.cache_identity_sha256
+    assert entry.is_symlink()
+    with cache_mod.open_replay_day_inputs(
+        governed_hot_root,
+        identity=identity,
+        schema=schema,
+        expected=binding,
+    ) as opened:
+        assert float(opened.component("l2")["bid_px"][0, 0]) == 99.8
+
+    entry.unlink()
+    redirected = config.cold_root / "replay_dag" / "wrong_cache_entry"
+    redirected.mkdir(parents=True)
+    os.symlink(redirected, entry)
+    with pytest.raises(
+        cache_mod.OfflineDayInputCacheError,
+        match="governed cold replay_dag entry",
+    ):
+        cache_mod.open_replay_day_inputs(
+            governed_hot_root,
+            identity=identity,
+            schema=schema,
+            expected=binding,
+        )
 
 
 def test_same_immutable_request_rejects_different_content(governed_root: Path) -> None:

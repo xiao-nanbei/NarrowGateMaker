@@ -10,11 +10,15 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
+import stat
 import tempfile
+import threading
 import uuid
+from collections import OrderedDict
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -25,13 +29,14 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+from numpy.lib import format as np_format
 
 from models import cache_tier_lru
 from models.tick_data_types import HistoricalBBOData, HistoricalL2Data
 
 CACHE_IDENTITY = "causal_multichannel_window_boolean_cooldown_offline_day_input_cache_v1"
-CACHE_SCHEMA_VERSION = f"{CACHE_IDENTITY}.cache.v1"
-ADMISSION_SCHEMA_VERSION = f"{CACHE_IDENTITY}.admission.v1"
+CACHE_SCHEMA_VERSION = f"{CACHE_IDENTITY}.cache.v2"
+ADMISSION_SCHEMA_VERSION = f"{CACHE_IDENTITY}.admission.v2"
 SOURCE_COMPONENTS = ("trades", "bbo", "l2", "ml_overlay")
 COMPONENTS = (*SOURCE_COMPONENTS, "derived")
 TRADES_COLUMNS = (
@@ -48,6 +53,9 @@ DERIVED_COLUMNS = ("var_ts_ms", "var_ssq", "var_ti", "var_retsq")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UTC_DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ARRAY_CHUNK_BYTES = 8 * 1024 * 1024
+_VERIFIED_DESCRIPTOR_CACHE_MAX = 4096
+_VERIFIED_DESCRIPTOR_CACHE: OrderedDict[tuple[Any, ...], None] = OrderedDict()
+_VERIFIED_DESCRIPTOR_CACHE_LOCK = threading.Lock()
 
 
 class OfflineDayInputCacheError(RuntimeError):
@@ -108,6 +116,65 @@ def _file_sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _file_stat_identity(value: os.stat_result) -> tuple[int, ...]:
+    return (
+        int(value.st_dev),
+        int(value.st_ino),
+        int(value.st_mode),
+        int(value.st_nlink),
+        int(value.st_size),
+        int(value.st_mtime_ns),
+        int(value.st_ctime_ns),
+    )
+
+
+def _open_fd_sha256(descriptor: int) -> str:
+    digest = hashlib.sha256()
+    offset = 0
+    while True:
+        chunk = os.pread(descriptor, 1024 * 1024, offset)
+        if not chunk:
+            return digest.hexdigest()
+        digest.update(chunk)
+        offset += len(chunk)
+
+
+def _verify_open_descriptor(
+    descriptor: int,
+    *,
+    expected_sha256: str,
+    label: str,
+) -> tuple[int, ...]:
+    expected = _require_sha256(expected_sha256, label=f"{label} file_sha256")
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode):
+        raise OfflineDayInputCacheError(f"{label} is not a regular file")
+    identity = _file_stat_identity(before)
+    cache_key = (*identity, expected)
+    with _VERIFIED_DESCRIPTOR_CACHE_LOCK:
+        cached = cache_key in _VERIFIED_DESCRIPTOR_CACHE
+        if cached:
+            _VERIFIED_DESCRIPTOR_CACHE.move_to_end(cache_key)
+    if not cached:
+        observed = _open_fd_sha256(descriptor)
+        after_hash = os.fstat(descriptor)
+        if _file_stat_identity(after_hash) != identity:
+            raise OfflineDayInputCacheError(f"{label} changed while it was being hashed")
+        if observed != expected:
+            raise OfflineDayInputCacheError("day input cache array file hash drifted")
+        with _VERIFIED_DESCRIPTOR_CACHE_LOCK:
+            _VERIFIED_DESCRIPTOR_CACHE[cache_key] = None
+            _VERIFIED_DESCRIPTOR_CACHE.move_to_end(cache_key)
+            while len(_VERIFIED_DESCRIPTOR_CACHE) > _VERIFIED_DESCRIPTOR_CACHE_MAX:
+                _VERIFIED_DESCRIPTOR_CACHE.popitem(last=False)
+    return identity
+
+
+def _clear_verified_descriptor_cache_for_tests() -> None:
+    with _VERIFIED_DESCRIPTOR_CACHE_LOCK:
+        _VERIFIED_DESCRIPTOR_CACHE.clear()
 
 
 def _require_sha256(value: str, *, label: str) -> str:
@@ -190,6 +257,8 @@ class DayInputCacheIdentity:
     utc_day: str
     continuation_day: str
     market_id: str
+    bbo_source: str
+    l2_source: str
     source_receipts: tuple[tuple[str, str], ...]
     clock_identity: str
     clock_identity_sha256: str
@@ -209,6 +278,16 @@ class DayInputCacheIdentity:
         if self.continuation_day != expected_continuation:
             raise OfflineDayInputCacheError("continuation_day must be the natural D+1 UTC day")
         object.__setattr__(self, "market_id", _require_label(self.market_id, label="market_id"))
+        object.__setattr__(
+            self,
+            "bbo_source",
+            _require_label(self.bbo_source, label="bbo_source"),
+        )
+        object.__setattr__(
+            self,
+            "l2_source",
+            _require_label(self.l2_source, label="l2_source"),
+        )
         object.__setattr__(
             self,
             "clock_identity",
@@ -267,6 +346,8 @@ class DayInputCacheIdentity:
         utc_day: str,
         continuation_day: str,
         market_id: str,
+        bbo_source: str,
+        l2_source: str,
         source_receipts: Mapping[str, str],
         clock_identity: str,
         clock_identity_sha256: str,
@@ -283,6 +364,8 @@ class DayInputCacheIdentity:
             utc_day=utc_day,
             continuation_day=continuation_day,
             market_id=market_id,
+            bbo_source=bbo_source,
+            l2_source=l2_source,
             source_receipts=tuple(source_receipts.items()),
             clock_identity=clock_identity,
             clock_identity_sha256=clock_identity_sha256,
@@ -301,6 +384,8 @@ class DayInputCacheIdentity:
             "utc_day": self.utc_day,
             "continuation_day": self.continuation_day,
             "market_id": self.market_id,
+            "bbo_source": self.bbo_source,
+            "l2_source": self.l2_source,
             "source_receipts": dict(self.source_receipts),
             "clock_identity": self.clock_identity,
             "clock_identity_sha256": self.clock_identity_sha256,
@@ -468,7 +553,7 @@ class ReadOnlyReplayDayInputs:
             overlay[f"main_{index:03d}"] for index in range(self.schema.ml_main_array_count)
         )
         features = {key: overlay[f"feature::{key}"] for key in self.schema.ml_feature_keys}
-        return (*main, MappingProxyType(features))
+        return (*main, features)
 
     def to_replay_inputs(self, replay_inputs_type: type[Any]) -> Any:
         """Rebuild the existing adapter's private ``_ReplayInputs`` type."""
@@ -491,7 +576,7 @@ class ReadOnlyReplayDayInputs:
                 best_ask=bbo["best_ask"],
                 bid_qty=bbo["bid_qty"],
                 ask_qty=bbo["ask_qty"],
-                source="f05_offline_day_input_cache_v1",
+                source=self.identity.bbo_source,
             ),
             "l2_data": HistoricalL2Data(
                 ts_ms=l2["ts_ms"],
@@ -499,7 +584,7 @@ class ReadOnlyReplayDayInputs:
                 bid_qty=l2["bid_qty"],
                 ask_px=l2["ask_px"],
                 ask_qty=l2["ask_qty"],
-                source="f05_offline_day_input_cache_v1",
+                source=self.identity.l2_source,
             ),
             "ml_data": self.ml_overlay_tuple(),
             "params": self.params,
@@ -626,6 +711,8 @@ def target_day_context_from_replay_inputs(
         utc_day=replay.utc_day,
         continuation_day=replay.continuation_day,
         market_id=market_id,
+        bbo_source=str(replay.bbo_data.source),
+        l2_source=str(replay.l2_data.source),
         source_receipts=source_receipts,
         clock_identity=clock_identity,
         clock_identity_sha256=clock_identity_sha256,
@@ -652,17 +739,78 @@ def _normalize_array(array: Any, *, label: str) -> np.ndarray:
     return normalized
 
 
-def _open_read_only_memmap(path: Path, *, label: str) -> np.memmap:
+def _open_read_only_memmap(
+    path: Path,
+    *,
+    label: str,
+    expected_file_sha256: str | None = None,
+) -> np.memmap:
+    descriptor = -1
+    handle: Any = None
+    array: np.memmap | None = None
     try:
-        array = np.load(path, mmap_mode="r", allow_pickle=False)
-    except (OSError, ValueError) as exc:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise OfflineDayInputCacheError(f"{label} is not a regular file")
+        descriptor_identity = _file_stat_identity(before)
+        if expected_file_sha256 is not None:
+            descriptor_identity = _verify_open_descriptor(
+                descriptor,
+                expected_sha256=expected_file_sha256,
+                label=label,
+            )
+
+        handle = os.fdopen(descriptor, "rb", closefd=True)
+        descriptor = -1
+        version = np_format.read_magic(handle)
+        if version == (1, 0):
+            shape, fortran_order, dtype = np_format.read_array_header_1_0(handle)
+        elif version == (2, 0):
+            shape, fortran_order, dtype = np_format.read_array_header_2_0(handle)
+        else:
+            raise OfflineDayInputCacheError(f"{label} uses an unsupported NPY version")
+        dtype = np.dtype(dtype)
+        if dtype.hasobject or dtype.fields is not None or dtype.kind not in "biuf":
+            raise OfflineDayInputCacheError(f"{label} has an unsupported dtype")
+        offset = int(handle.tell())
+        element_count = math.prod(int(dimension) for dimension in shape) if shape else 1
+        expected_size = offset + element_count * int(dtype.itemsize)
+        if expected_size != int(os.fstat(handle.fileno()).st_size):
+            raise OfflineDayInputCacheError(f"{label} NPY size does not match its header")
+        array = np.memmap(
+            handle,
+            dtype=dtype,
+            mode="r",
+            offset=offset,
+            shape=shape,
+            order="F" if fortran_order else "C",
+        )
+        if _file_stat_identity(os.fstat(handle.fileno())) != descriptor_identity:
+            raise OfflineDayInputCacheError(f"{label} changed while it was being mapped")
+        if array.flags.writeable:
+            raise OfflineDayInputCacheError(f"{label} did not open read-only")
+        handle.close()
+        handle = None
+        return array
+    except OfflineDayInputCacheError:
+        if array is not None:
+            mmap = getattr(array, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
+        raise
+    except (EOFError, OSError, TypeError, ValueError) as exc:
+        if array is not None:
+            mmap = getattr(array, "_mmap", None)
+            if mmap is not None:
+                mmap.close()
         raise OfflineDayInputCacheError(f"cannot open {label} as a NumPy mmap") from exc
-    if not isinstance(array, np.memmap) or array.flags.writeable:
-        mmap = getattr(array, "_mmap", None)
-        if mmap is not None:
-            mmap.close()
-        raise OfflineDayInputCacheError(f"{label} did not open read-only")
-    return array
+    finally:
+        if handle is not None:
+            handle.close()
+        if descriptor >= 0:
+            os.close(descriptor)
 
 
 def _require_aligned_1d(component: Mapping[str, np.ndarray], *, label: str) -> int:
@@ -797,19 +945,18 @@ class ReplayDayInputCache:
             self.cache_tier_config.validate(require_roots=True)
         except cache_tier_lru.CacheTierError as exc:
             raise OfflineDayInputCacheError("cache-tier governance is unavailable") from exc
-        governed = False
-        for tier_root in (
-            self.cache_tier_config.hot_root.resolve(),
-            self.cache_tier_config.cold_root.resolve(),
-        ):
+        self.hot_root = self.cache_tier_config.hot_root.resolve()
+        self.cold_root = self.cache_tier_config.cold_root.resolve()
+        self.root_tier: str | None = None
+        for tier, tier_root in (("hot", self.hot_root), ("cold", self.cold_root)):
             try:
                 relative = self.root.relative_to(tier_root)
             except ValueError:
                 continue
             if relative.parts and relative.parts[0] == "replay_dag":
-                governed = True
+                self.root_tier = tier
                 break
-        if not governed:
+        if self.root_tier is None:
             raise OfflineDayInputCacheError(
                 "day input cache root must remain under a governed replay_dag root"
             )
@@ -822,6 +969,50 @@ class ReplayDayInputCache:
 
     def _entry_path(self, cache_identity_sha256: str) -> Path:
         return self.entries / cache_identity_sha256
+
+    def _resolve_entry_path(self, cache_identity_sha256: str) -> Path:
+        logical = self._entry_path(cache_identity_sha256)
+        if logical.is_symlink():
+            if self.root_tier != "hot":
+                raise OfflineDayInputCacheError(
+                    "day input cache entry symlink is not a governed hot-tier migration"
+                )
+            relative = logical.relative_to(self.hot_root)
+            expected = self.cold_root / relative
+            try:
+                target = logical.resolve(strict=True)
+            except (OSError, RuntimeError) as exc:
+                raise OfflineDayInputCacheError(
+                    "day input cache entry is missing or redirected"
+                ) from exc
+            if (
+                not relative.parts
+                or relative.parts[0] != "replay_dag"
+                or target != expected
+                or expected.is_symlink()
+                or not expected.is_dir()
+            ):
+                raise OfflineDayInputCacheError(
+                    "day input cache hot link does not target its governed cold replay_dag entry"
+                )
+            return target
+        if not logical.is_dir():
+            raise OfflineDayInputCacheError("day input cache entry is missing or redirected")
+        try:
+            resolved = logical.resolve(strict=True)
+        except (OSError, RuntimeError) as exc:
+            raise OfflineDayInputCacheError(
+                "day input cache entry is missing or redirected"
+            ) from exc
+        if resolved != logical:
+            raise OfflineDayInputCacheError("day input cache entry is redirected")
+        tier_root = self.hot_root if self.root_tier == "hot" else self.cold_root
+        relative = resolved.relative_to(tier_root)
+        if not relative.parts or relative.parts[0] != "replay_dag":
+            raise OfflineDayInputCacheError(
+                "day input cache entry escaped its governed replay_dag root"
+            )
+        return resolved
 
     def _write_entry(
         self,
@@ -860,7 +1051,12 @@ class ReplayDayInputCache:
                         np.save(handle, array, allow_pickle=False)
                         handle.flush()
                         os.fsync(handle.fileno())
-                    stored = _open_read_only_memmap(path, label=f"serialized {component}.{name}")
+                    file_sha256 = _file_sha256(path)
+                    stored = _open_read_only_memmap(
+                        path,
+                        label=f"serialized {component}.{name}",
+                        expected_file_sha256=file_sha256,
+                    )
                     try:
                         descriptor = descriptor_by_name[(component, name)]
                         if (
@@ -878,7 +1074,7 @@ class ReplayDayInputCache:
                         {
                             **descriptor,
                             "file": f"arrays/{filename}",
-                            "file_sha256": _file_sha256(path),
+                            "file_sha256": file_sha256,
                         }
                     )
                     index += 1
@@ -989,6 +1185,67 @@ class ReplayDayInputCache:
         _atomic_json(self._admission_path(identity), payload)
         return DayInputCacheBinding(**payload["binding"])
 
+    def _quarantine_orphan(self, cache_identity_sha256: str) -> Path:
+        source = self._entry_path(cache_identity_sha256)
+        quarantine_root = self.root / "orphan_quarantine"
+        quarantine_root.mkdir(parents=True, exist_ok=True)
+        destination = quarantine_root / (f"{cache_identity_sha256}.orphan.{uuid.uuid4().hex}")
+        os.replace(source, destination)
+        _fsync_directory(source.parent)
+        _fsync_directory(quarantine_root)
+        return destination
+
+    def _recover_or_quarantine_orphan(
+        self,
+        *,
+        identity: DayInputCacheIdentity,
+        schema: ReplayDayInputSchema,
+        cache_identity_sha256: str,
+        array_layout_sha256: str,
+        content_sha256: str,
+        estimated_size_bytes: int,
+    ) -> DayInputCacheBinding | None:
+        logical = self._entry_path(cache_identity_sha256)
+        if not os.path.lexists(logical):
+            return None
+        try:
+            entry = self._resolve_entry_path(cache_identity_sha256)
+            manifest_sha256 = _file_sha256(entry / "manifest.json")
+            provisional = DayInputCacheBinding(
+                request_identity_sha256=identity.request_identity_sha256,
+                cache_identity_sha256=cache_identity_sha256,
+                schema_sha256=schema.schema_sha256,
+                array_layout_sha256=array_layout_sha256,
+                content_sha256=content_sha256,
+                manifest_sha256=manifest_sha256,
+                admission_receipt_sha256="0" * 64,
+                estimated_size_bytes=estimated_size_bytes,
+            )
+            self._validate_entry(
+                identity,
+                schema=schema,
+                expected=provisional,
+                open_arrays=False,
+                verify_array_content=True,
+            )
+        except Exception:
+            try:
+                self._quarantine_orphan(cache_identity_sha256)
+            except Exception as quarantine_exc:
+                raise OfflineDayInputCacheError(
+                    "cannot quarantine invalid orphan day input cache entry"
+                ) from quarantine_exc
+            return None
+        return self._publish_admission(
+            identity=identity,
+            cache_identity_sha256=cache_identity_sha256,
+            schema_sha256=schema.schema_sha256,
+            array_layout_sha256=array_layout_sha256,
+            content_sha256=content_sha256,
+            manifest_sha256=manifest_sha256,
+            estimated_size_bytes=estimated_size_bytes,
+        )
+
     def admit(
         self,
         *,
@@ -1033,8 +1290,30 @@ class ReplayDayInputCache:
                     raise OfflineDayInputCacheError(
                         "immutable day input request resolved to different content"
                     )
-                self._validate_entry(identity, schema=schema, expected=binding, open_arrays=False)
+                self._validate_entry(
+                    identity,
+                    schema=schema,
+                    expected=binding,
+                    open_arrays=False,
+                    verify_array_content=False,
+                )
                 return binding
+            recovered = self._recover_or_quarantine_orphan(
+                identity=identity,
+                schema=schema,
+                cache_identity_sha256=cache_identity_sha256,
+                array_layout_sha256=array_layout_sha256,
+                content_sha256=content_sha256,
+                estimated_size_bytes=estimated_size_bytes,
+            )
+            if recovered is not None:
+                cache_tier_lru.register_cache_write(
+                    self._entry_path(recovered.cache_identity_sha256),
+                    identity_sha256=recovered.cache_identity_sha256,
+                    reference_class="unknown",
+                    strict=False,
+                )
+                return recovered
             _, manifest_sha256 = self._write_entry(
                 identity=identity,
                 schema=schema,
@@ -1059,7 +1338,6 @@ class ReplayDayInputCache:
                 self._entry_path(binding.cache_identity_sha256),
                 identity_sha256=binding.cache_identity_sha256,
                 reference_class="unknown",
-                size_bytes=binding.estimated_size_bytes,
                 strict=False,
             )
             return binding
@@ -1148,10 +1426,9 @@ class ReplayDayInputCache:
         schema: ReplayDayInputSchema | None,
         expected: DayInputCacheBinding,
         open_arrays: bool,
+        verify_array_content: bool,
     ) -> tuple[dict[str, Any], dict[str, dict[str, np.memmap]]]:
-        entry = self._entry_path(expected.cache_identity_sha256)
-        if entry.is_symlink() or not entry.is_dir():
-            raise OfflineDayInputCacheError("day input cache entry is missing or redirected")
+        entry = self._resolve_entry_path(expected.cache_identity_sha256)
         manifest = self._validate_manifest(entry, identity=identity, schema=schema)
         manifest_sha256 = _file_sha256(entry / "manifest.json")
         observed_binding = {
@@ -1200,11 +1477,22 @@ class ReplayDayInputCache:
                     raise OfflineDayInputCacheError(
                         "day input cache array is missing or redirected"
                     )
-                if _file_sha256(path) != _require_sha256(
+                try:
+                    resolved_path = path.resolve(strict=True)
+                except OSError as exc:
+                    raise OfflineDayInputCacheError(
+                        "day input cache array is missing or redirected"
+                    ) from exc
+                if resolved_path != path:
+                    raise OfflineDayInputCacheError("day input cache array path escapes its entry")
+                expected_file_sha256 = _require_sha256(
                     row.get("file_sha256", ""), label=f"{component}.{name} file_sha256"
-                ):
-                    raise OfflineDayInputCacheError("day input cache array file hash drifted")
-                array = _open_read_only_memmap(path, label=f"cached {component}.{name}")
+                )
+                array = _open_read_only_memmap(
+                    path,
+                    label=f"cached {component}.{name}",
+                    expected_file_sha256=expected_file_sha256,
+                )
                 keep_open = False
                 try:
                     descriptor = {
@@ -1223,8 +1511,14 @@ class ReplayDayInputCache:
                         for field in ("dtype", "shape", "nbytes")
                     ):
                         raise OfflineDayInputCacheError("day input cache array layout drifted")
+                    if (
+                        verify_array_content
+                        and _array_content_sha256(array) != descriptor["array_content_sha256"]
+                    ):
+                        raise OfflineDayInputCacheError("day input cache array content drifted")
                     # Admission proved that this exact NPY byte hash decodes to
-                    # the bound array hash, so an open needs one full pass.
+                    # the bound array hash. The opened descriptor, not a later
+                    # pathname lookup, is the object validated above.
                     layout_rows.append(
                         {
                             key: descriptor[key]
@@ -1284,6 +1578,7 @@ class ReplayDayInputCache:
             schema=schema,
             expected=binding,
             open_arrays=True,
+            verify_array_content=False,
         )
         try:
             if record_lru_access:
