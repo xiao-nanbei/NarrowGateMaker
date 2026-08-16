@@ -29399,6 +29399,116 @@ def _load_cpp_tick_replay():
     return narrowgate_cpp
 
 
+_F05_REPEATED_BOOLEAN_COOLDOWN_CPP_ABI = (
+    "f05_repeated_boolean_cooldown_streaming.v1"
+)
+
+
+def _validate_f05_cpp_cooldown_runtime(
+    params: dict[str, Any],
+    *,
+    require_full_replay: bool,
+) -> Any | None:
+    evaluator = params.get("cooldown_duration_policy_evaluator")
+    if evaluator is None:
+        if any(
+            params.get(name) is not None
+            for name in (
+                "cooldown_duration_policy_cpp_runtime",
+                "_cooldown_duration_policy_cpp_window_tape",
+                "_cooldown_duration_policy_cpp_predicate_rows",
+            )
+        ) or bool(
+            params.get("cooldown_duration_policy_cpp_parity_qualified", False)
+        ):
+            raise RuntimeError(
+                "C++ cooldown runtime was supplied without the Python-authoritative "
+                "policy evaluator"
+            )
+        return None
+    if not bool(
+        params.get("cooldown_duration_policy_cpp_parity_qualified", False)
+    ):
+        raise NotImplementedError(
+            "repeated multichannel Boolean cooldown remains Python-authoritative; "
+            "C++ requires an explicit parity-qualified flag and bound runtime"
+        )
+
+    cpp = _load_cpp_tick_replay()
+    actual_abi = str(
+        getattr(cpp, "F05_REPEATED_BOOLEAN_COOLDOWN_ABI_VERSION", "") or ""
+    )
+    if actual_abi != _F05_REPEATED_BOOLEAN_COOLDOWN_CPP_ABI:
+        raise RuntimeError(
+            "repeated cooldown C++ ABI drifted: "
+            f"expected {_F05_REPEATED_BOOLEAN_COOLDOWN_CPP_ABI}, got {actual_abi!r}"
+        )
+
+    runtime = params.get("cooldown_duration_policy_cpp_runtime")
+    if runtime is None or not isinstance(
+        runtime,
+        cpp.F05RepeatedBooleanCooldownRuntime,
+    ):
+        raise RuntimeError(
+            "explicit C++ cooldown qualification lacks its bound streaming runtime"
+        )
+    if not bool(runtime.parity_qualified):
+        binding_error = str(runtime.binding_error or "cpp_parity_not_qualified")
+        raise RuntimeError(
+            "bound C++ cooldown runtime is not parity-qualified: " + binding_error
+        )
+
+    runtime_config = runtime.config
+    receipt_sha256 = str(
+        params.get("cooldown_duration_policy_cpp_parity_receipt_sha256", "")
+        or ""
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256):
+        raise RuntimeError(
+            "explicit C++ cooldown qualification lacks a parity receipt SHA256"
+        )
+    if receipt_sha256 != str(runtime_config.parity_qualification_sha256):
+        raise RuntimeError("C++ cooldown parity receipt identity drifted")
+
+    expected_policy_sha256 = str(
+        getattr(evaluator, "policy_sha256", "") or ""
+    )
+    expected_predicate_sha256 = str(
+        getattr(evaluator, "predicate_bundle_sha256", "") or ""
+    )
+    if (
+        str(runtime_config.policy.policy_sha256) != expected_policy_sha256
+        or str(runtime_config.policy.predicate_bundle_sha256)
+        != expected_predicate_sha256
+    ):
+        raise RuntimeError(
+            "C++ cooldown runtime is not bound to the Python-authoritative "
+            "policy and predicate identities"
+        )
+
+    qualification_scope = str(runtime_config.qualification_scope or "")
+    if require_full_replay:
+        if qualification_scope != "full_replay":
+            raise NotImplementedError(
+                "the bound C++ cooldown runtime is qualified only for synthetic "
+                "mechanics parity, not full replay"
+            )
+        if not bool(
+            params.get(
+                "cooldown_duration_policy_cpp_event_loop_parity_qualified",
+                False,
+            )
+        ):
+            raise NotImplementedError(
+                "the C++ cooldown streaming ABI is qualified, but full-replay "
+                "selection remains rejected until event-loop parity is explicitly "
+                "qualified"
+            )
+    if qualification_scope not in {"synthetic_mechanics_only", "full_replay"}:
+        raise RuntimeError("C++ cooldown qualification scope is invalid")
+    return runtime
+
+
 def _copy_quote_config_to_cpp(py_cfg: Any, cpp_cfg: Any) -> Any:
     for name in _CPP_CFG_FIELDS:
         if hasattr(py_cfg, name) and hasattr(cpp_cfg, name):
@@ -29907,6 +30017,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         )
     latency_jitter_ms = max(0, int(params.get("latency_jitter_ms", 0.0) or 0.0))
     cpp = _load_cpp_tick_replay()
+    cpp_cooldown_runtime = _validate_f05_cpp_cooldown_runtime(
+        params,
+        require_full_replay=True,
+    )
 
     trade_ts = _as_i64_array(trades_df["transact_time"].to_numpy(dtype=np.int64, copy=False))
     trade_price = _as_f64_array(trades_df["price"].to_numpy(dtype=np.float64, copy=False))
@@ -29954,6 +30068,30 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params = cpp.TickReplayParams()
     cpp_params.quote = _copy_quote_config_to_cpp(quote_core_cfg, cpp.QuoteCoreConfig())
     cpp_params.order_size = order_size
+    if cpp_cooldown_runtime is not None:
+        window_tape = list(
+            params.get("_cooldown_duration_policy_cpp_window_tape", ()) or ()
+        )
+        predicate_rows = list(
+            params.get("_cooldown_duration_policy_cpp_predicate_rows", ()) or ()
+        )
+        if not window_tape or any(
+            not isinstance(row, cpp.F05CooldownWindowObservation)
+            for row in window_tape
+        ):
+            raise RuntimeError(
+                "full-replay C++ cooldown requires a non-empty bound causal window tape"
+            )
+        if any(
+            not isinstance(row, cpp.F05CooldownPredicateRow)
+            for row in predicate_rows
+        ):
+            raise RuntimeError(
+                "full-replay C++ cooldown predicate tape contains an invalid row"
+            )
+        cpp_params.f05_repeated_cooldown_runtime = cpp_cooldown_runtime
+        cpp_params.f05_cooldown_window_tape = window_tape
+        cpp_params.f05_cooldown_predicate_rows = predicate_rows
     cpp_params.max_inventory = float(params.get("max_inventory", 0.01))
     cpp_params.eta = float(params.get("eta", 0.0))
     cpp_params.symmetric_size = bool(params.get("symmetric_size", False))
@@ -31047,6 +31185,73 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         and bool(getattr(cooldown_duration_fork_obj, "enabled", False))
         else {}
     )
+    f05_repeated_cooldown_decisions = []
+    for row in getattr(cpp_result, "f05_repeated_cooldown_decisions", []):
+        side = "BUY" if row.side == cpp.Side.Buy else "SELL"
+        role = {
+            cpp.F05CooldownFillRole.OPENER: "opener",
+            cpp.F05CooldownFillRole.ADD: "add",
+            cpp.F05CooldownFillRole.REDUCING: "reducing",
+        }[row.role]
+        f05_repeated_cooldown_decisions.append(
+            {
+                "schema_version": (
+                    "causal_multichannel_window_boolean_cooldown_"
+                    "repeated_policy_decision.v1"
+                ),
+                "exposure_fill_ordinal": int(row.exposure_fill_ordinal),
+                "fill_visible_ts_ms": int(row.fill_ts_ms),
+                "side": side,
+                "role_at_fill": role,
+                "campaign_id": int(row.campaign_id),
+                "consecutive_units_after": float(row.consecutive_units_after),
+                "baseline_duration_ms": float(row.baseline_duration_ms),
+                "action_id": str(row.action_id),
+                "duration_ms": float(row.duration_ms),
+                "deadline_ts_ms": int(row.deadline_ts_ms),
+                "lineage_revision": int(row.lineage_revision),
+                "lineage_applied": bool(row.lineage_applied),
+                "coverage_reason_code": str(row.coverage_reason_code),
+                "fallback_reason": str(row.fallback_reason),
+                "matched_rule_index": (
+                    None
+                    if row.matched_rule_index is None
+                    else int(row.matched_rule_index)
+                ),
+                "policy_sha256": str(row.policy_sha256),
+                "predicate_bundle_sha256": str(
+                    row.predicate_bundle_sha256
+                ),
+                "snapshot_id": str(row.snapshot_id),
+                "support_valid": bool(row.support_valid),
+                "feature_ready_ts_ns": int(row.feature_ready_ts_ns),
+                "feature_age_ms": float(row.feature_age_ms),
+            }
+        )
+    f05_repeated_cooldown_checkpoint = getattr(
+        cpp_result,
+        "f05_repeated_cooldown_checkpoint",
+        None,
+    )
+    f05_repeated_cooldown_audit = {}
+    if f05_repeated_cooldown_checkpoint is not None:
+        audit = f05_repeated_cooldown_checkpoint.audit
+        f05_repeated_cooldown_audit = {
+            name: int(getattr(audit, name))
+            for name in (
+                "window_count",
+                "gap_window_count",
+                "feature_state_reset_count",
+                "evaluation_count",
+                "supported_count",
+                "fallback_count",
+                "nonbaseline_count",
+                "buy_control_count",
+                "reducing_bypass_count",
+                "lineage_count",
+                "lineage_clear_count",
+            )
+        }
     paired_fixed_spread_fields = [
         "side",
         "distance_ticks",
@@ -32021,6 +32226,18 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         ),
         "_cooldown_duration_fill_path": cooldown_duration_fill_path,
         "_cooldown_duration_fork_trace": cooldown_duration_fork_trace,
+        "_cooldown_duration_policy_decisions": [
+            row
+            for row in f05_repeated_cooldown_decisions
+            if row["exposure_fill_ordinal"] > 0
+        ],
+        "_cooldown_duration_policy_audit": f05_repeated_cooldown_audit,
+        "_f05_repeated_cooldown_decisions": (
+            f05_repeated_cooldown_decisions
+        ),
+        "_f05_repeated_cooldown_checkpoint": (
+            f05_repeated_cooldown_checkpoint
+        ),
     }
     if conditional_p3_reproduction_identity is not None:
         result.update(
@@ -32117,10 +32334,9 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                                ranked_toxicity_guard_binding=None):
     if engine == "cpp":
         if params.get("cooldown_duration_policy_evaluator") is not None:
-            raise NotImplementedError(
-                "repeated multichannel Boolean cooldown policy is "
-                "Python-authoritative until its streaming state and rule ABI "
-                "reach C++ parity"
+            _validate_f05_cpp_cooldown_runtime(
+                params,
+                require_full_replay=True,
             )
         if ranked_toxicity_guard_binding is not None:
             raise NotImplementedError(

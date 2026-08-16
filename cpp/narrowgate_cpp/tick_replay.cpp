@@ -2,14 +2,20 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
+#include <charconv>
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
+#include <iomanip>
 #include <limits>
 #include <memory_resource>
 #include <random>
+#include <set>
+#include <sstream>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace narrowgate_cpp {
@@ -25,6 +31,335 @@ constexpr std::string_view kLossCooldownSemantics =
     "round_trip_realized_pnl_policy_clock_v1";
 constexpr std::string_view kSyncAdjustSemantics =
     "system_event_after_market_same_ms_v1";
+constexpr std::string_view kF05ShortCrossPredicate =
+    "predicate::ema_pair_h4s_h16s:cross_age_le_slow";
+constexpr std::string_view kF05LongCrossPredicate =
+    "predicate::ema_pair_h16s_h256s:cross_age_le_fast";
+constexpr std::string_view kF05CampaignAgePredicate =
+    "predicate::m0::campaign_age_gt_control_duration";
+constexpr std::array<double, 3> kF05SelectedHalfLivesS{4.0, 16.0, 256.0};
+constexpr double kF05CrossAgeThresholdS = 16.0;
+
+bool is_lower_sha256(std::string_view value) {
+  return value.size() == 64 &&
+         std::all_of(value.begin(), value.end(), [](char ch) {
+           return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f');
+         });
+}
+
+std::uint32_t f05_sha_rotr(std::uint32_t value, std::uint32_t count) {
+  return (value >> count) | (value << (32U - count));
+}
+
+std::string f05_sha256(std::string_view input) {
+  static constexpr std::array<std::uint32_t, 64> k{
+      0x428a2f98U, 0x71374491U, 0xb5c0fbcfU, 0xe9b5dba5U, 0x3956c25bU,
+      0x59f111f1U, 0x923f82a4U, 0xab1c5ed5U, 0xd807aa98U, 0x12835b01U,
+      0x243185beU, 0x550c7dc3U, 0x72be5d74U, 0x80deb1feU, 0x9bdc06a7U,
+      0xc19bf174U, 0xe49b69c1U, 0xefbe4786U, 0x0fc19dc6U, 0x240ca1ccU,
+      0x2de92c6fU, 0x4a7484aaU, 0x5cb0a9dcU, 0x76f988daU, 0x983e5152U,
+      0xa831c66dU, 0xb00327c8U, 0xbf597fc7U, 0xc6e00bf3U, 0xd5a79147U,
+      0x06ca6351U, 0x14292967U, 0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU,
+      0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U,
+      0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U,
+      0xd6990624U, 0xf40e3585U, 0x106aa070U, 0x19a4c116U, 0x1e376c08U,
+      0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU,
+      0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U,
+      0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U,
+  };
+  std::vector<std::uint8_t> bytes(input.begin(), input.end());
+  const auto bit_length = static_cast<std::uint64_t>(bytes.size()) * 8U;
+  bytes.push_back(0x80U);
+  while (bytes.size() % 64 != 56) {
+    bytes.push_back(0U);
+  }
+  for (int shift = 56; shift >= 0; shift -= 8) {
+    bytes.push_back(static_cast<std::uint8_t>(bit_length >> shift));
+  }
+  std::array<std::uint32_t, 8> hash{
+      0x6a09e667U, 0xbb67ae85U, 0x3c6ef372U, 0xa54ff53aU,
+      0x510e527fU, 0x9b05688cU, 0x1f83d9abU, 0x5be0cd19U,
+  };
+  for (std::size_t offset = 0; offset < bytes.size(); offset += 64) {
+    std::array<std::uint32_t, 64> words{};
+    for (std::size_t index = 0; index < 16; ++index) {
+      const auto base = offset + index * 4;
+      words[index] = (static_cast<std::uint32_t>(bytes[base]) << 24U) |
+                     (static_cast<std::uint32_t>(bytes[base + 1]) << 16U) |
+                     (static_cast<std::uint32_t>(bytes[base + 2]) << 8U) |
+                     static_cast<std::uint32_t>(bytes[base + 3]);
+    }
+    for (std::size_t index = 16; index < words.size(); ++index) {
+      const auto s0 = f05_sha_rotr(words[index - 15], 7U) ^
+                      f05_sha_rotr(words[index - 15], 18U) ^
+                      (words[index - 15] >> 3U);
+      const auto s1 = f05_sha_rotr(words[index - 2], 17U) ^
+                      f05_sha_rotr(words[index - 2], 19U) ^
+                      (words[index - 2] >> 10U);
+      words[index] = words[index - 16] + s0 + words[index - 7] + s1;
+    }
+    auto a = hash[0];
+    auto b = hash[1];
+    auto c = hash[2];
+    auto d = hash[3];
+    auto e = hash[4];
+    auto f = hash[5];
+    auto g = hash[6];
+    auto h = hash[7];
+    for (std::size_t index = 0; index < words.size(); ++index) {
+      const auto s1 =
+          f05_sha_rotr(e, 6U) ^ f05_sha_rotr(e, 11U) ^ f05_sha_rotr(e, 25U);
+      const auto choice = (e & f) ^ ((~e) & g);
+      const auto temp1 = h + s1 + choice + k[index] + words[index];
+      const auto s0 =
+          f05_sha_rotr(a, 2U) ^ f05_sha_rotr(a, 13U) ^ f05_sha_rotr(a, 22U);
+      const auto majority = (a & b) ^ (a & c) ^ (b & c);
+      const auto temp2 = s0 + majority;
+      h = g;
+      g = f;
+      f = e;
+      e = d + temp1;
+      d = c;
+      c = b;
+      b = a;
+      a = temp1 + temp2;
+    }
+    hash[0] += a;
+    hash[1] += b;
+    hash[2] += c;
+    hash[3] += d;
+    hash[4] += e;
+    hash[5] += f;
+    hash[6] += g;
+    hash[7] += h;
+  }
+  std::ostringstream output;
+  output << std::hex << std::setfill('0');
+  for (const auto word : hash) {
+    output << std::setw(8) << word;
+  }
+  return output.str();
+}
+
+std::string f05_optional_i64(const std::optional<std::int64_t> &value) {
+  return value.has_value() ? std::to_string(*value) : "-";
+}
+
+std::string f05_double_bits(double value) {
+  std::ostringstream output;
+  output << std::hex << std::setfill('0') << std::setw(16)
+         << std::bit_cast<std::uint64_t>(value);
+  return output.str();
+}
+
+void append_f05_pair(std::ostringstream &output, std::string_view prefix,
+                     const F05CooldownPairState &pair) {
+  output << prefix << ".effective_sign=" << pair.effective_sign << '\n'
+         << prefix << ".arrangement_start="
+         << f05_optional_i64(pair.arrangement_start_ts_ns) << '\n'
+         << prefix << ".last_cross=" << f05_optional_i64(pair.last_cross_ts_ns)
+         << '\n'
+         << prefix << ".last_cross_direction=" << pair.last_cross_direction
+         << '\n';
+}
+
+void append_f05_lineage(std::ostringstream &output, std::string_view prefix,
+                        const F05CooldownLineageState &lineage) {
+  output << prefix << ".active=" << static_cast<int>(lineage.active) << '\n'
+         << prefix << ".side=" << side_name(lineage.side) << '\n'
+         << prefix << ".revision=" << lineage.revision << '\n'
+         << prefix << ".campaign_id=" << lineage.campaign_id << '\n'
+         << prefix << ".fill_ts_ms=" << lineage.fill_ts_ms << '\n'
+         << prefix << ".deadline_ts_ms=" << lineage.deadline_ts_ms << '\n'
+         << prefix << ".consecutive_units_bits="
+         << f05_double_bits(lineage.consecutive_units_after) << '\n'
+         << prefix << ".duration_ms=" << lineage.duration_ms << '\n'
+         << prefix << ".action_id=" << lineage.action_id << '\n'
+         << prefix << ".coverage_reason=" << lineage.coverage_reason_code
+         << '\n';
+}
+
+std::string
+f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
+  std::ostringstream output;
+  output << "abi=" << checkpoint.abi_version << '\n'
+         << "qualification_sha256=" << checkpoint.parity_qualification_sha256
+         << '\n'
+         << "qualification_scope=" << checkpoint.qualification_scope << '\n'
+         << "policy_sha256=" << checkpoint.policy_sha256 << '\n'
+         << "predicate_bundle_sha256=" << checkpoint.predicate_bundle_sha256
+         << '\n'
+         << "warmup_s_bits=" << f05_double_bits(checkpoint.warmup_s) << '\n'
+         << "max_feature_age_s_bits="
+         << f05_double_bits(checkpoint.max_feature_age_s) << '\n'
+         << "warmup_admitted=" << static_cast<int>(checkpoint.warmup_admitted)
+         << '\n'
+         << "warmup_start_right="
+         << f05_optional_i64(checkpoint.warmup_start_right_ts_ns) << '\n'
+         << "last_right=" << f05_optional_i64(checkpoint.last_right_ts_ns)
+         << '\n'
+         << "last_feature_ready="
+         << f05_optional_i64(checkpoint.last_feature_ready_ts_ns) << '\n'
+         << "last_market_generation="
+         << f05_optional_i64(checkpoint.last_market_generation) << '\n'
+         << "last_depth_generation="
+         << f05_optional_i64(checkpoint.last_depth_generation) << '\n'
+         << "ema_initialized=" << static_cast<int>(checkpoint.ema_initialized)
+         << '\n'
+         << "current_window_observed="
+         << static_cast<int>(checkpoint.current_window_observed) << '\n'
+         << "last_observed=" << f05_optional_i64(checkpoint.last_observed_ts_ns)
+         << '\n';
+  for (std::size_t index = 0; index < checkpoint.ema.size(); ++index) {
+    output << "ema" << index << "=" << f05_double_bits(checkpoint.ema[index])
+           << '\n';
+  }
+  append_f05_pair(output, "short_pair", checkpoint.short_pair);
+  append_f05_pair(output, "long_pair", checkpoint.long_pair);
+  append_f05_lineage(output, "buy_lineage", checkpoint.buy_lineage);
+  append_f05_lineage(output, "sell_lineage", checkpoint.sell_lineage);
+  const auto &audit = checkpoint.audit;
+  output << "audit.window_count=" << audit.window_count << '\n'
+         << "audit.gap_window_count=" << audit.gap_window_count << '\n'
+         << "audit.feature_state_reset_count="
+         << audit.feature_state_reset_count << '\n'
+         << "audit.evaluation_count=" << audit.evaluation_count << '\n'
+         << "audit.supported_count=" << audit.supported_count << '\n'
+         << "audit.fallback_count=" << audit.fallback_count << '\n'
+         << "audit.nonbaseline_count=" << audit.nonbaseline_count << '\n'
+         << "audit.buy_control_count=" << audit.buy_control_count << '\n'
+         << "audit.reducing_bypass_count=" << audit.reducing_bypass_count
+         << '\n'
+         << "audit.lineage_count=" << audit.lineage_count << '\n'
+         << "audit.lineage_clear_count=" << audit.lineage_clear_count << '\n';
+  return output.str();
+}
+
+F05TriState f05_tri_not(F05TriState value) {
+  if (value == F05TriState::Unobserved) {
+    return value;
+  }
+  return value == F05TriState::True ? F05TriState::False : F05TriState::True;
+}
+
+F05TriState f05_clause_state(const F05BooleanClause &clause,
+                             const std::vector<F05TriState> &predicates) {
+  bool unobserved = false;
+  for (const auto &literal : clause.literals) {
+    auto state = predicates.at(literal.predicate_index);
+    if (literal.negated) {
+      state = f05_tri_not(state);
+    }
+    if (state == F05TriState::False) {
+      return F05TriState::False;
+    }
+    unobserved = unobserved || state == F05TriState::Unobserved;
+  }
+  return unobserved ? F05TriState::Unobserved : F05TriState::True;
+}
+
+F05TriState f05_rule_state(const F05BooleanRule &rule,
+                           const std::vector<F05TriState> &predicates) {
+  bool unobserved = false;
+  for (const auto &clause : rule.clauses) {
+    const auto state = f05_clause_state(clause, predicates);
+    if (state == F05TriState::True) {
+      return F05TriState::True;
+    }
+    unobserved = unobserved || state == F05TriState::Unobserved;
+  }
+  return unobserved ? F05TriState::Unobserved : F05TriState::False;
+}
+
+void update_f05_pair(F05CooldownPairState &pair, double fast, double slow,
+                     std::int64_t timestamp_ns) {
+  const auto distance = fast - slow;
+  const int sign = distance > 0.0 ? 1 : distance < 0.0 ? -1 : 0;
+  if (sign == 0) {
+    return;
+  }
+  if (pair.effective_sign == 0) {
+    pair.effective_sign = sign;
+    pair.arrangement_start_ts_ns = timestamp_ns;
+    return;
+  }
+  if (sign != pair.effective_sign) {
+    pair.effective_sign = sign;
+    pair.arrangement_start_ts_ns = timestamp_ns;
+    pair.last_cross_ts_ns = timestamp_ns;
+    pair.last_cross_direction = sign;
+  }
+}
+
+std::string
+validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
+  if (!std::isfinite(config.warmup_s) || config.warmup_s <= 0.0 ||
+      !std::isfinite(config.max_feature_age_s) ||
+      config.max_feature_age_s <= 0.0) {
+    return "cpp_streaming_clock_config_invalid";
+  }
+  if (config.qualification_scope != "synthetic_mechanics_only" &&
+      config.qualification_scope != "full_replay") {
+    return "cpp_qualification_scope_invalid";
+  }
+  if (!is_lower_sha256(config.policy.policy_sha256)) {
+    return "policy_sha256_invalid";
+  }
+  if (!is_lower_sha256(config.policy.predicate_bundle_sha256)) {
+    return "predicate_bundle_sha256_invalid";
+  }
+  if (config.parity_qualified &&
+      !is_lower_sha256(config.parity_qualification_sha256)) {
+    return "parity_qualification_sha256_invalid";
+  }
+  if (config.policy.default_action != kF05BooleanCooldownControlAction) {
+    return "policy_default_action_invalid";
+  }
+  if (config.policy.predicate_columns.empty() || config.policy.rules.empty()) {
+    return "policy_structure_empty";
+  }
+  std::set<std::string> names;
+  for (const auto &name : config.policy.predicate_columns) {
+    if (name.empty() || !names.insert(name).second) {
+      return "policy_predicate_columns_invalid";
+    }
+  }
+  for (const auto &rule : config.policy.rules) {
+    if (rule.action_id.empty() || rule.duration_ms <= 0 ||
+        rule.clauses.empty()) {
+      return "policy_rule_invalid";
+    }
+    constexpr std::string_view prefix = "FIXED_";
+    constexpr std::string_view suffix = "S";
+    const std::string_view action = rule.action_id;
+    if (!action.starts_with(prefix) || !action.ends_with(suffix)) {
+      return "policy_action_identity_invalid";
+    }
+    const auto seconds_text = action.substr(
+        prefix.size(), action.size() - prefix.size() - suffix.size());
+    std::int64_t seconds = 0;
+    const auto [end, error] =
+        std::from_chars(seconds_text.data(),
+                        seconds_text.data() + seconds_text.size(), seconds);
+    if (error != std::errc{} ||
+        end != seconds_text.data() + seconds_text.size() || seconds <= 0 ||
+        seconds > std::numeric_limits<std::int64_t>::max() / 1'000 ||
+        rule.duration_ms != seconds * 1'000) {
+      return "policy_action_duration_drifted";
+    }
+    for (const auto &clause : rule.clauses) {
+      if (clause.literals.empty()) {
+        return "policy_clause_invalid";
+      }
+      for (const auto &literal : clause.literals) {
+        if (literal.predicate_index >= config.policy.predicate_columns.size()) {
+          return "policy_literal_index_invalid";
+        }
+      }
+    }
+  }
+  return {};
+}
 
 enum class BerInventoryRole : std::uint8_t {
     Opener = 0,
@@ -3693,6 +4028,474 @@ bool process_ioc_close_orders(
 
 }  // namespace
 
+F05RepeatedBooleanCooldownRuntime::F05RepeatedBooleanCooldownRuntime(
+    F05RepeatedBooleanCooldownConfig config)
+    : config_(std::move(config)) {
+  buy_lineage_.side = Side::Buy;
+  sell_lineage_.side = Side::Sell;
+  binding_error_ = validate_f05_policy(config_);
+}
+
+void F05RepeatedBooleanCooldownRuntime::update_window(
+    const F05CooldownWindowObservation &observation) {
+  if (observation.right_ts_ns - observation.left_ts_ns !=
+      kF05BooleanCooldownWindowWidthNs) {
+    throw std::invalid_argument("f05_window_width_drifted");
+  }
+  if (observation.left_ts_ns % kF05BooleanCooldownWindowWidthNs != 0 ||
+      observation.right_ts_ns % kF05BooleanCooldownWindowWidthNs != 0) {
+    throw std::invalid_argument("f05_window_grid_alignment_invalid");
+  }
+  if (observation.feature_ready_ts_ns < observation.right_ts_ns) {
+    throw std::invalid_argument("f05_feature_ready_before_window_end");
+  }
+  if (last_right_ts_ns_.has_value()) {
+    if (observation.right_ts_ns <= *last_right_ts_ns_) {
+      throw std::invalid_argument("f05_window_clock_not_increasing");
+    }
+    if (observation.left_ts_ns != *last_right_ts_ns_) {
+      throw std::invalid_argument("f05_missing_window_not_explicit");
+    }
+    if (observation.feature_ready_ts_ns < *last_feature_ready_ts_ns_) {
+      throw std::invalid_argument("f05_feature_ready_clock_regressed");
+    }
+    if (observation.market_generation <= *last_market_generation_) {
+      throw std::invalid_argument("f05_market_generation_not_increasing");
+    }
+    if (observation.depth_generation < *last_depth_generation_) {
+      throw std::invalid_argument("f05_depth_generation_regressed");
+    }
+  }
+
+  const bool invalid_window =
+      observation.source_gap || observation.source_stale;
+  const auto reset_feature_state = [&]() {
+    warmup_admitted_ = false;
+    warmup_start_right_ts_ns_.reset();
+    ema_initialized_ = false;
+    last_observed_ts_ns_.reset();
+    ema_ = {0.0, 0.0, 0.0};
+    short_pair_ = {};
+    long_pair_ = {};
+    ++audit_.feature_state_reset_count;
+  };
+  const auto gap_since_observed_s =
+      last_observed_ts_ns_.has_value()
+          ? static_cast<double>(observation.right_ts_ns -
+                                *last_observed_ts_ns_) /
+                1'000'000'000.0
+          : 0.0;
+  if (observation.source_stale ||
+      (observation.source_gap && last_observed_ts_ns_.has_value() &&
+       gap_since_observed_s > config_.max_feature_age_s)) {
+    reset_feature_state();
+  }
+  const bool observed =
+      !invalid_window && observation.mid_usdc_per_btc.has_value();
+  current_window_observed_ = observed;
+  ++audit_.window_count;
+  if (invalid_window) {
+    ++audit_.gap_window_count;
+  }
+  if (observed) {
+    const auto value = *observation.mid_usdc_per_btc;
+    if (!std::isfinite(value) || value <= 0.0) {
+      throw std::invalid_argument("f05_observed_mid_invalid");
+    }
+    if (!warmup_start_right_ts_ns_.has_value()) {
+      warmup_start_right_ts_ns_ = observation.right_ts_ns;
+    }
+    if (!ema_initialized_) {
+      ema_ = {value, value, value};
+      ema_initialized_ = true;
+    } else {
+      if (!last_observed_ts_ns_.has_value() ||
+          observation.right_ts_ns <= *last_observed_ts_ns_) {
+        throw std::invalid_argument("f05_ema_clock_not_increasing");
+      }
+      const auto delta_s =
+          static_cast<double>(observation.right_ts_ns - *last_observed_ts_ns_) /
+          1'000'000'000.0;
+      const auto previous = ema_;
+      for (std::size_t index = 0; index < ema_.size(); ++index) {
+        const auto decay =
+            std::exp(-std::log(2.0) * delta_s / kF05SelectedHalfLivesS[index]);
+        ema_[index] = decay * previous[index] + (1.0 - decay) * value;
+      }
+      update_f05_pair(short_pair_, ema_[0], ema_[1], observation.right_ts_ns);
+      update_f05_pair(long_pair_, ema_[1], ema_[2], observation.right_ts_ns);
+    }
+    last_observed_ts_ns_ = observation.right_ts_ns;
+    const auto warmup_elapsed_s =
+        static_cast<double>(observation.right_ts_ns -
+                            *warmup_start_right_ts_ns_) /
+        1'000'000'000.0;
+    warmup_admitted_ = warmup_elapsed_s >= config_.warmup_s;
+  }
+  last_right_ts_ns_ = observation.right_ts_ns;
+  last_feature_ready_ts_ns_ = observation.feature_ready_ts_ns;
+  last_market_generation_ = observation.market_generation;
+  last_depth_generation_ = observation.depth_generation;
+}
+
+F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
+    const F05CooldownFillInput &input) {
+  constexpr double inventory_tolerance = 1e-10;
+  auto baseline = input.baseline_duration_ms;
+  bool baseline_valid = baseline >= kF05BooleanCooldownControlUnitMs;
+  if (!std::isfinite(input.consecutive_units_after) ||
+      input.consecutive_units_after <= 0.0) {
+    baseline_valid = false;
+  } else {
+    const auto expected = static_cast<std::int64_t>(
+        std::llround(static_cast<double>(kF05BooleanCooldownControlUnitMs) *
+                     std::max(1.0, input.consecutive_units_after)));
+    baseline_valid = baseline_valid && baseline == expected;
+  }
+  if (!baseline_valid) {
+    baseline = kF05BooleanCooldownControlUnitMs;
+  }
+
+  F05CooldownDecision decision;
+  decision.snapshot_id = input.snapshot_id.empty() ? "cpp-runtime-predicate-row"
+                                                   : input.snapshot_id;
+  decision.side = input.side;
+  decision.role = input.role;
+  decision.fill_ts_ms = input.fill_ts_ms;
+  decision.campaign_id = input.campaign_id;
+  decision.consecutive_units_after = input.consecutive_units_after;
+  decision.baseline_duration_ms = baseline;
+  decision.duration_ms = baseline;
+  decision.action_id = std::string(kF05BooleanCooldownControlAction);
+  decision.policy_sha256 = config_.policy.policy_sha256;
+  decision.predicate_bundle_sha256 = config_.policy.predicate_bundle_sha256;
+  decision.feature_ready_ts_ns = last_feature_ready_ts_ns_.value_or(0);
+  decision.feature_age_ms =
+      last_feature_ready_ts_ns_.has_value()
+          ? static_cast<double>(input.decision_ts_ns -
+                                *last_feature_ready_ts_ns_) /
+                1'000'000.0
+          : std::numeric_limits<double>::infinity();
+
+  const auto clear_lineage = [&](F05CooldownLineageState &lineage) {
+    if (lineage.active) {
+      lineage.active = false;
+      ++audit_.lineage_clear_count;
+    }
+  };
+  auto &same_lineage = input.side == Side::Buy ? buy_lineage_ : sell_lineage_;
+  auto &opposite_lineage =
+      input.side == Side::Buy ? sell_lineage_ : buy_lineage_;
+
+  const bool inventory_finite =
+      std::isfinite(input.inventory_before_fill_btc) &&
+      std::isfinite(input.inventory_after_fill_btc);
+  const bool exposure_increasing =
+      inventory_finite &&
+      ((input.side == Side::Buy &&
+        input.inventory_before_fill_btc >= -inventory_tolerance &&
+        input.inventory_after_fill_btc > input.inventory_before_fill_btc) ||
+       (input.side == Side::Sell &&
+        input.inventory_before_fill_btc <= inventory_tolerance &&
+        input.inventory_after_fill_btc < input.inventory_before_fill_btc));
+  const bool reducing =
+      inventory_finite && !exposure_increasing &&
+      ((input.side == Side::Buy &&
+        input.inventory_after_fill_btc > input.inventory_before_fill_btc) ||
+       (input.side == Side::Sell &&
+        input.inventory_after_fill_btc < input.inventory_before_fill_btc));
+  const bool before_flat =
+      inventory_finite &&
+      std::abs(input.inventory_before_fill_btc) <= inventory_tolerance;
+  const auto expected_role = exposure_increasing
+                                 ? (before_flat ? F05CooldownFillRole::Opener
+                                                : F05CooldownFillRole::Add)
+                                 : F05CooldownFillRole::Reducing;
+
+  clear_lineage(opposite_lineage);
+  if (inventory_finite &&
+      std::abs(input.inventory_after_fill_btc) <= inventory_tolerance) {
+    clear_lineage(same_lineage);
+  }
+  if (reducing && input.role == F05CooldownFillRole::Reducing) {
+    ++audit_.reducing_bypass_count;
+    decision.support_valid = true;
+    decision.coverage_reason_code = "reducing_fill_baseline_bypass";
+    return decision;
+  }
+
+  ++audit_.evaluation_count;
+  auto fallback = [&](std::string reason, bool support_valid) {
+    decision.coverage_reason_code = reason;
+    decision.fallback_reason = std::move(reason);
+    decision.support_valid = support_valid;
+  };
+
+  if (!exposure_increasing || input.role != expected_role) {
+    fallback("fill_role_or_inventory_transition_invalid", false);
+  } else if (!baseline_valid) {
+    fallback("baseline_duration_ms_invalid", false);
+  } else if (input.fill_ts_ms <= 0 || input.decision_ts_ns <= 0 ||
+             input.campaign_id <= 0 || !std::isfinite(input.campaign_age_s) ||
+             input.campaign_age_s < 0.0) {
+    fallback("campaign_or_decision_context_invalid", false);
+  } else if (input.side == Side::Buy) {
+    ++audit_.buy_control_count;
+    fallback("buy_control_by_contract", true);
+  } else if (!parity_qualified()) {
+    fallback(binding_error_.empty()
+                 ? "cpp_parity_not_qualified"
+                 : "cpp_policy_binding_invalid:" + binding_error_,
+             false);
+  } else if (!input.policy_input_valid) {
+    fallback(input.snapshot_fallback_reason.empty()
+                 ? "snapshot_policy_input_invalid"
+                 : "snapshot_invalid:" + input.snapshot_fallback_reason,
+             false);
+  } else if (!input.support_valid || !input.channel_support_valid) {
+    fallback("snapshot_m2_support_invalid", false);
+  } else if (!last_feature_ready_ts_ns_.has_value()) {
+    fallback("no_completed_causal_window", false);
+  } else if (input.decision_ts_ns < *last_feature_ready_ts_ns_) {
+    fallback("feature_ready_state_crossed_decision_cutoff", false);
+  } else if (!warmup_admitted_) {
+    fallback("ema_warmup_incomplete", false);
+  } else if (decision.feature_age_ms > config_.max_feature_age_s * 1'000.0) {
+    fallback("feature_state_stale", false);
+  } else if (!current_window_observed_) {
+    fallback("latest_completed_mid_window_unobserved", false);
+  } else {
+    std::vector<F05TriState> predicates;
+    if (!input.predicate_values.empty()) {
+      if (input.predicate_values.size() !=
+          config_.policy.predicate_columns.size()) {
+        fallback("runtime_predicate_columns_drifted", false);
+      } else {
+        predicates = input.predicate_values;
+      }
+    } else {
+      predicates.assign(config_.policy.predicate_columns.size(),
+                        F05TriState::Unobserved);
+      const auto set_predicate = [&](std::string_view name, F05TriState state) {
+        const auto found =
+            std::find(config_.policy.predicate_columns.begin(),
+                      config_.policy.predicate_columns.end(), name);
+        if (found != config_.policy.predicate_columns.end()) {
+          predicates[static_cast<std::size_t>(std::distance(
+              config_.policy.predicate_columns.begin(), found))] = state;
+        }
+      };
+      const auto cross_state = [&](const F05CooldownPairState &pair) {
+        if (!pair.last_cross_ts_ns.has_value()) {
+          return F05TriState::Unobserved;
+        }
+        const auto age_s =
+            static_cast<double>(input.decision_ts_ns - *pair.last_cross_ts_ns) /
+            1'000'000'000.0;
+        if (!std::isfinite(age_s) || age_s < 0.0) {
+          return F05TriState::Unobserved;
+        }
+        return age_s <= kF05CrossAgeThresholdS ? F05TriState::True
+                                               : F05TriState::False;
+      };
+      set_predicate(kF05ShortCrossPredicate, cross_state(short_pair_));
+      set_predicate(kF05LongCrossPredicate, cross_state(long_pair_));
+      set_predicate(kF05CampaignAgePredicate,
+                    input.campaign_age_s * 1'000.0 >
+                            static_cast<double>(baseline)
+                        ? F05TriState::True
+                        : F05TriState::False);
+    }
+
+    if (decision.coverage_reason_code.empty()) {
+      bool resolved = false;
+      for (std::size_t index = 0; index < config_.policy.rules.size();
+           ++index) {
+        const auto state =
+            f05_rule_state(config_.policy.rules[index], predicates);
+        if (state == F05TriState::Unobserved) {
+          fallback("rule_unobserved:" + std::to_string(index), false);
+          resolved = true;
+          break;
+        }
+        if (state == F05TriState::True) {
+          const auto &rule = config_.policy.rules[index];
+          decision.action_id = rule.action_id;
+          decision.duration_ms = rule.duration_ms;
+          decision.matched_rule_index = index;
+          decision.support_valid = true;
+          decision.coverage_reason_code = "policy_rule_matched";
+          resolved = true;
+          break;
+        }
+      }
+      if (!resolved) {
+        fallback("no_rule_matched", true);
+      }
+    }
+  }
+
+  if (decision.support_valid) {
+    ++audit_.supported_count;
+  }
+  if (!decision.fallback_reason.empty()) {
+    ++audit_.fallback_count;
+  }
+  if (decision.action_id != kF05BooleanCooldownControlAction) {
+    ++audit_.nonbaseline_count;
+  }
+
+  if (exposure_increasing && input.fill_ts_ms > 0) {
+    if (decision.duration_ms <= 0 ||
+        input.fill_ts_ms >
+            std::numeric_limits<std::int64_t>::max() - decision.duration_ms) {
+      decision.action_id = std::string(kF05BooleanCooldownControlAction);
+      decision.duration_ms = baseline;
+      decision.matched_rule_index.reset();
+      decision.support_valid = false;
+      decision.coverage_reason_code = "duration_deadline_invalid";
+      decision.fallback_reason = "duration_deadline_invalid";
+    }
+    same_lineage.active = true;
+    same_lineage.side = input.side;
+    ++same_lineage.revision;
+    same_lineage.campaign_id = input.campaign_id;
+    same_lineage.fill_ts_ms = input.fill_ts_ms;
+    same_lineage.deadline_ts_ms = input.fill_ts_ms + decision.duration_ms;
+    same_lineage.consecutive_units_after = input.consecutive_units_after;
+    same_lineage.duration_ms = decision.duration_ms;
+    same_lineage.action_id = decision.action_id;
+    same_lineage.coverage_reason_code = decision.coverage_reason_code;
+    decision.deadline_ts_ms = same_lineage.deadline_ts_ms;
+    decision.lineage_revision = same_lineage.revision;
+    decision.lineage_applied = true;
+    ++audit_.lineage_count;
+  }
+  return decision;
+}
+
+void F05RepeatedBooleanCooldownRuntime::advance_time(std::int64_t now_ms) {
+  if (now_ms < 0) {
+    throw std::invalid_argument("f05_runtime_clock_invalid");
+  }
+  for (auto *lineage : {&buy_lineage_, &sell_lineage_}) {
+    if (lineage->active && now_ms >= lineage->deadline_ts_ms) {
+      lineage->active = false;
+      ++audit_.lineage_clear_count;
+    }
+  }
+}
+
+bool F05RepeatedBooleanCooldownRuntime::add_blocked(Side side,
+                                                    std::int64_t now_ms) const {
+  const auto &value = side == Side::Buy ? buy_lineage_ : sell_lineage_;
+  return value.active && now_ms < value.deadline_ts_ms;
+}
+
+F05CooldownLineageState
+F05RepeatedBooleanCooldownRuntime::lineage(Side side) const {
+  return side == Side::Buy ? buy_lineage_ : sell_lineage_;
+}
+
+F05CooldownRuntimeAudit
+F05RepeatedBooleanCooldownRuntime::audit() const noexcept {
+  return audit_;
+}
+
+F05RepeatedBooleanCooldownCheckpoint
+F05RepeatedBooleanCooldownRuntime::checkpoint() const {
+  F05RepeatedBooleanCooldownCheckpoint output;
+  output.abi_version = std::string(kF05RepeatedBooleanCooldownAbi);
+  output.parity_qualification_sha256 = config_.parity_qualification_sha256;
+  output.qualification_scope = config_.qualification_scope;
+  output.policy_sha256 = config_.policy.policy_sha256;
+  output.predicate_bundle_sha256 = config_.policy.predicate_bundle_sha256;
+  output.warmup_s = config_.warmup_s;
+  output.max_feature_age_s = config_.max_feature_age_s;
+  output.warmup_admitted = warmup_admitted_;
+  output.warmup_start_right_ts_ns = warmup_start_right_ts_ns_;
+  output.last_right_ts_ns = last_right_ts_ns_;
+  output.last_feature_ready_ts_ns = last_feature_ready_ts_ns_;
+  output.last_market_generation = last_market_generation_;
+  output.last_depth_generation = last_depth_generation_;
+  output.ema_initialized = ema_initialized_;
+  output.current_window_observed = current_window_observed_;
+  output.last_observed_ts_ns = last_observed_ts_ns_;
+  output.ema = ema_;
+  output.short_pair = short_pair_;
+  output.long_pair = long_pair_;
+  output.buy_lineage = buy_lineage_;
+  output.sell_lineage = sell_lineage_;
+  output.audit = audit_;
+  output.canonical_payload = f05_checkpoint_payload(output);
+  output.checkpoint_sha256 = f05_sha256(output.canonical_payload);
+  return output;
+}
+
+void F05RepeatedBooleanCooldownRuntime::restore(
+    const F05RepeatedBooleanCooldownCheckpoint &value) {
+  if (value.abi_version != kF05RepeatedBooleanCooldownAbi ||
+      value.parity_qualification_sha256 !=
+          config_.parity_qualification_sha256 ||
+      value.qualification_scope != config_.qualification_scope ||
+      value.policy_sha256 != config_.policy.policy_sha256 ||
+      value.predicate_bundle_sha256 != config_.policy.predicate_bundle_sha256 ||
+      f05_double_bits(value.warmup_s) != f05_double_bits(config_.warmup_s) ||
+      f05_double_bits(value.max_feature_age_s) !=
+          f05_double_bits(config_.max_feature_age_s)) {
+    throw std::invalid_argument("f05_checkpoint_identity_drifted");
+  }
+  const auto canonical = f05_checkpoint_payload(value);
+  if (value.canonical_payload != canonical ||
+      value.checkpoint_sha256 != f05_sha256(canonical)) {
+    throw std::invalid_argument("f05_checkpoint_hash_drifted");
+  }
+  if (!std::all_of(value.ema.begin(), value.ema.end(),
+                   [](double item) { return std::isfinite(item); }) ||
+      value.buy_lineage.side != Side::Buy ||
+      value.sell_lineage.side != Side::Sell) {
+    throw std::invalid_argument("f05_checkpoint_state_invalid");
+  }
+  for (const auto *pair : {&value.short_pair, &value.long_pair}) {
+    if (pair->effective_sign < -1 || pair->effective_sign > 1 ||
+        pair->last_cross_direction < -1 || pair->last_cross_direction > 1 ||
+        (pair->last_cross_ts_ns.has_value() &&
+         pair->last_cross_direction == 0)) {
+      throw std::invalid_argument("f05_checkpoint_pair_state_invalid");
+    }
+  }
+  warmup_admitted_ = value.warmup_admitted;
+  warmup_start_right_ts_ns_ = value.warmup_start_right_ts_ns;
+  last_right_ts_ns_ = value.last_right_ts_ns;
+  last_feature_ready_ts_ns_ = value.last_feature_ready_ts_ns;
+  last_market_generation_ = value.last_market_generation;
+  last_depth_generation_ = value.last_depth_generation;
+  ema_initialized_ = value.ema_initialized;
+  current_window_observed_ = value.current_window_observed;
+  last_observed_ts_ns_ = value.last_observed_ts_ns;
+  ema_ = value.ema;
+  short_pair_ = value.short_pair;
+  long_pair_ = value.long_pair;
+  buy_lineage_ = value.buy_lineage;
+  sell_lineage_ = value.sell_lineage;
+  audit_ = value.audit;
+}
+
+bool F05RepeatedBooleanCooldownRuntime::parity_qualified() const noexcept {
+  return config_.parity_qualified && binding_error_.empty() &&
+         is_lower_sha256(config_.parity_qualification_sha256);
+}
+
+const std::string &
+F05RepeatedBooleanCooldownRuntime::binding_error() const noexcept {
+  return binding_error_;
+}
+
+const F05RepeatedBooleanCooldownConfig &
+F05RepeatedBooleanCooldownRuntime::config() const noexcept {
+  return config_;
+}
+
 std::int64_t sample_keyed_latency_ms(
     std::int64_t base_ms,
     std::int64_t jitter_ms,
@@ -4038,6 +4841,73 @@ TickReplayResult simulate_tick_arrays(
             );
         }
     }
+    if (params.f05_repeated_cooldown_runtime) {
+        const auto& runtime = *params.f05_repeated_cooldown_runtime;
+        const auto& config = runtime.config();
+        if (params.cooldown_duration_fork_enabled) {
+            throw std::invalid_argument(
+                "F05 repeated cooldown cannot share a replay with a one-shot "
+                "cooldown fork"
+            );
+        }
+        if (!runtime.parity_qualified() ||
+            config.qualification_scope != "full_replay") {
+            throw std::invalid_argument(
+                "F05 repeated cooldown requires a full-replay parity-qualified runtime"
+            );
+        }
+        if (std::abs(params.fill_cooldown_s - 85.0) > 1e-12 ||
+            params.adaptive_add_cooldown_enabled) {
+            throw std::invalid_argument(
+                "F05 repeated cooldown requires the exact CONTROL_85N baseline"
+            );
+        }
+        if (params.buy_soft_widen_release_probe_enabled ||
+            params.conditional_p3_reach_gate_enabled ||
+            params.conditional_p3_reach_budget_policy_enabled ||
+            params.buy_fill_selection_live_enabled) {
+            throw std::invalid_argument(
+                "F05 repeated cooldown cannot share a replay with another research action"
+            );
+        }
+        if (params.f05_cooldown_window_tape.empty()) {
+            throw std::invalid_argument(
+                "F05 repeated cooldown full replay requires a causal window tape"
+            );
+        }
+        if (params.f05_cooldown_predicate_rows.empty()) {
+            const std::set<std::string_view> compiled_predicates{
+                kF05ShortCrossPredicate,
+                kF05LongCrossPredicate,
+                kF05CampaignAgePredicate,
+            };
+            for (const auto& column : config.policy.predicate_columns) {
+                if (!compiled_predicates.contains(column)) {
+                    throw std::invalid_argument(
+                        "F05 full replay requires exact predicate rows for noncompiled columns"
+                    );
+                }
+            }
+        } else {
+            std::int64_t expected_ordinal = 1;
+            for (const auto& row : params.f05_cooldown_predicate_rows) {
+                if (row.exposure_fill_ordinal != expected_ordinal ||
+                    row.fill_ts_ms <= 0 || row.campaign_id <= 0 ||
+                    row.predicate_values.size() !=
+                        config.policy.predicate_columns.size()) {
+                    throw std::invalid_argument(
+                        "F05 full replay predicate-row identity is incomplete"
+                    );
+                }
+                ++expected_ordinal;
+            }
+        }
+    } else if (!params.f05_cooldown_window_tape.empty() ||
+               !params.f05_cooldown_predicate_rows.empty()) {
+        throw std::invalid_argument(
+            "F05 cooldown tapes were supplied without a bound runtime"
+        );
+    }
     if (params.conditional_p3_reach_gate_enabled &&
         params.conditional_p3_reach_budget_policy_enabled) {
         throw std::invalid_argument(
@@ -4212,6 +5082,17 @@ TickReplayResult simulate_tick_arrays(
     }
 
     TickReplayResult result;
+    std::optional<F05RepeatedBooleanCooldownRuntime> f05_cooldown_runtime;
+    if (params.f05_repeated_cooldown_runtime) {
+        f05_cooldown_runtime.emplace(*params.f05_repeated_cooldown_runtime);
+        result.f05_repeated_cooldown_decisions.reserve(
+            params.f05_cooldown_predicate_rows.empty()
+                ? std::min<std::size_t>(input.trade_ts_ms.size(), 1'024)
+                : params.f05_cooldown_predicate_rows.size()
+        );
+    }
+    std::size_t f05_cooldown_window_cursor = 0;
+    std::size_t f05_cooldown_predicate_cursor = 0;
     if (params.trace_quotes_max > 0) {
         result.quote_trace.reserve(std::min<std::size_t>(
             static_cast<std::size_t>(params.trace_quotes_max), input.trade_ts_ms.size() * 2));
@@ -4639,7 +5520,8 @@ TickReplayResult simulate_tick_arrays(
         params.cooldown_duration_fork_target_order_id;
     const bool cooldown_duration_abi_enabled =
         params.trace_cooldown_duration_opportunities_max > 0 ||
-        params.cooldown_duration_fork_enabled;
+        params.cooldown_duration_fork_enabled ||
+        f05_cooldown_runtime.has_value();
     std::int64_t cooldown_duration_exposure_fill_ordinal = 0;
     std::int64_t cooldown_duration_campaign_count =
         std::abs(inventory) > 1e-10 ? 1 : 0;
@@ -4693,6 +5575,29 @@ TickReplayResult simulate_tick_arrays(
     for (std::size_t i = 0; i < input.trade_ts_ms.size(); ++i) {
         last_processed_event_idx = i;
         const std::int64_t ts = input.trade_ts_ms.data()[i];
+        if (f05_cooldown_runtime.has_value()) {
+            if (ts <= 0 ||
+                ts > std::numeric_limits<std::int64_t>::max() / 1'000'000) {
+                throw std::runtime_error(
+                    "F05 repeated cooldown replay event clock is invalid"
+                );
+            }
+            const auto event_ts_ns = ts * 1'000'000;
+            f05_cooldown_runtime->advance_time(ts);
+            while (
+                f05_cooldown_window_cursor <
+                    params.f05_cooldown_window_tape.size() &&
+                params
+                        .f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                        .feature_ready_ts_ns <= event_ts_ns
+            ) {
+                f05_cooldown_runtime->update_window(
+                    params.f05_cooldown_window_tape[
+                        f05_cooldown_window_cursor]
+                );
+                ++f05_cooldown_window_cursor;
+            }
+        }
         update_p3_reach_budget_lifecycle(ts);
         const double price = input.trade_price.data()[i];
         const double qty = std::max(0.0, input.trade_qty.data()[i]);
@@ -4908,6 +5813,7 @@ TickReplayResult simulate_tick_arrays(
         double duration_shadow_sell_cooldown_ms = last_sell_fill_cooldown_ms;
         bool cooldown_duration_fixed_target_assigned_this_event = false;
         Side cooldown_duration_fixed_target_side = Side::Buy;
+        bool f05_cooldown_runtime_observed_fill_this_event = false;
 
         const auto cooldown_duration_fill_observer = [&] (
             Side fill_side,
@@ -4977,6 +5883,7 @@ TickReplayResult simulate_tick_arrays(
                 );
 
             bool target_fill = false;
+            std::int64_t exposure_fill_ordinal = 0;
             if (exposure_increasing) {
                 if (!std::isfinite(baseline_duration_ms) ||
                     baseline_duration_ms <= 0.0) {
@@ -4985,8 +5892,8 @@ TickReplayResult simulate_tick_arrays(
                     );
                 }
                 ++cooldown_duration_exposure_fill_ordinal;
-                const std::int64_t ordinal =
-                    cooldown_duration_exposure_fill_ordinal;
+                exposure_fill_ordinal = cooldown_duration_exposure_fill_ordinal;
+                const std::int64_t ordinal = exposure_fill_ordinal;
                 const std::int64_t order_id = order.trace
                     ? order.trace->order_id
                     : -1;
@@ -5133,6 +6040,103 @@ TickReplayResult simulate_tick_arrays(
                         cooldown_duration_fixed_target_side = fill_side;
                     }
                 }
+            }
+
+            if (f05_cooldown_runtime.has_value()) {
+                const auto expected_control_duration_ms =
+                    static_cast<std::int64_t>(std::llround(
+                        static_cast<double>(kF05BooleanCooldownControlUnitMs) *
+                        std::max(1.0, consecutive_units_after)
+                    ));
+                if (exposure_increasing &&
+                    std::abs(
+                        baseline_duration_ms -
+                        static_cast<double>(expected_control_duration_ms)
+                    ) > 1e-9) {
+                    throw std::runtime_error(
+                        "F05 repeated cooldown CONTROL_85N duration drifted"
+                    );
+                }
+
+                F05CooldownFillInput runtime_input;
+                runtime_input.snapshot_id =
+                    "f05-cpp-full-replay:" +
+                    std::to_string(exposure_fill_ordinal) + ":" +
+                    std::to_string(fill_ts_ms) + ":" +
+                    (is_buy ? "BUY:" : "SELL:") +
+                    std::to_string(campaign_id);
+                runtime_input.side = fill_side;
+                runtime_input.role = exposure_increasing
+                    ? (before_flat ? F05CooldownFillRole::Opener
+                                   : F05CooldownFillRole::Add)
+                    : F05CooldownFillRole::Reducing;
+                runtime_input.fill_ts_ms = fill_ts_ms;
+                runtime_input.decision_ts_ns = fill_ts_ms * 1'000'000;
+                runtime_input.campaign_id = std::max<std::int64_t>(1, campaign_id);
+                runtime_input.campaign_age_s = before_flat
+                    ? 0.0
+                    : campaign_age_s(
+                          fill_ts_ms,
+                          pos_open_ts,
+                          inventory_before_fill,
+                          lot_size
+                      );
+                runtime_input.inventory_before_fill_btc = inventory_before_fill;
+                runtime_input.inventory_after_fill_btc = inventory_after_fill;
+                runtime_input.consecutive_units_after = consecutive_units_after;
+                runtime_input.baseline_duration_ms =
+                    expected_control_duration_ms;
+
+                if (exposure_increasing &&
+                    !params.f05_cooldown_predicate_rows.empty()) {
+                    if (f05_cooldown_predicate_cursor >=
+                        params.f05_cooldown_predicate_rows.size()) {
+                        throw std::runtime_error(
+                            "F05 repeated cooldown predicate tape was exhausted"
+                        );
+                    }
+                    const auto& row = params.f05_cooldown_predicate_rows[
+                        f05_cooldown_predicate_cursor];
+                    if (row.exposure_fill_ordinal != exposure_fill_ordinal ||
+                        row.fill_ts_ms != fill_ts_ms || row.side != fill_side ||
+                        row.campaign_id != campaign_id) {
+                        throw std::runtime_error(
+                            "F05 repeated cooldown predicate-row identity drifted"
+                        );
+                    }
+                    runtime_input.snapshot_id = row.snapshot_id.empty()
+                        ? runtime_input.snapshot_id
+                        : row.snapshot_id;
+                    runtime_input.policy_input_valid = row.policy_input_valid;
+                    runtime_input.support_valid = row.support_valid;
+                    runtime_input.channel_support_valid =
+                        row.channel_support_valid;
+                    runtime_input.snapshot_fallback_reason =
+                        row.snapshot_fallback_reason;
+                    runtime_input.predicate_values = row.predicate_values;
+                    ++f05_cooldown_predicate_cursor;
+                }
+
+                auto runtime_decision =
+                    f05_cooldown_runtime->apply_fill(runtime_input);
+                f05_cooldown_runtime_observed_fill_this_event = true;
+                runtime_decision.exposure_fill_ordinal =
+                    exposure_fill_ordinal;
+                if (exposure_increasing) {
+                    if (!runtime_decision.lineage_applied ||
+                        runtime_decision.duration_ms <= 0 ||
+                        runtime_decision.deadline_ts_ms !=
+                            fill_ts_ms + runtime_decision.duration_ms) {
+                        throw std::runtime_error(
+                            "F05 repeated cooldown deadline application failed"
+                        );
+                    }
+                    applied_duration_ms =
+                        static_cast<double>(runtime_decision.duration_ms);
+                }
+                result.f05_repeated_cooldown_decisions.push_back(
+                    std::move(runtime_decision)
+                );
             }
 
             if (cooldown_duration_fork_assigned && !target_fill) {
@@ -5360,6 +6364,26 @@ TickReplayResult simulate_tick_arrays(
                     last_sell_fill_ts = duration_shadow_sell_fill_ts;
                     last_sell_fill_cooldown_ms =
                         duration_shadow_sell_cooldown_ms;
+                }
+            }
+            if (f05_cooldown_runtime_observed_fill_this_event) {
+                const auto buy_lineage =
+                    f05_cooldown_runtime->lineage(Side::Buy);
+                const auto sell_lineage =
+                    f05_cooldown_runtime->lineage(Side::Sell);
+                if (buy_lineage.active) {
+                    last_buy_fill_ts = buy_lineage.fill_ts_ms;
+                    last_buy_fill_cooldown_ms =
+                        static_cast<double>(buy_lineage.duration_ms);
+                } else {
+                    last_buy_fill_cooldown_ms = 0.0;
+                }
+                if (sell_lineage.active) {
+                    last_sell_fill_ts = sell_lineage.fill_ts_ms;
+                    last_sell_fill_cooldown_ms =
+                        static_cast<double>(sell_lineage.duration_ms);
+                } else {
+                    last_sell_fill_cooldown_ms = 0.0;
                 }
             }
             if (last_buy_fill_cooldown_ms > 0.0 && summary.fills_bid > bid_fills_before_trade) {
@@ -8151,6 +9175,26 @@ TickReplayResult simulate_tick_arrays(
     summary.consecutive_loss_cooldown_until_ms =
         loss_cooldown.cooldown_until_ms;
     summary.sync_adjust_degrade_until_ms = sync_adjust_degrade_until_ms;
+    if (f05_cooldown_runtime.has_value()) {
+        if (f05_cooldown_predicate_cursor !=
+            params.f05_cooldown_predicate_rows.size()) {
+            throw std::runtime_error(
+                "F05 repeated cooldown predicate tape retained unmatched rows"
+            );
+        }
+        const auto end_ts_ns = end_ts * 1'000'000;
+        if (f05_cooldown_window_cursor <
+                params.f05_cooldown_window_tape.size() &&
+            params.f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                    .feature_ready_ts_ns <= end_ts_ns) {
+            throw std::runtime_error(
+                "F05 repeated cooldown causal window tape was not fully consumed"
+            );
+        }
+        f05_cooldown_runtime->advance_time(end_ts);
+        result.f05_repeated_cooldown_checkpoint =
+            f05_cooldown_runtime->checkpoint();
+    }
     return result;
 }
 

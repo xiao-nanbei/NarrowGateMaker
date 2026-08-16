@@ -3,6 +3,8 @@
 #include "common.hpp"
 #include "quote_core.hpp"
 
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <memory_resource>
 #include <optional>
@@ -12,6 +14,225 @@
 #include <vector>
 
 namespace narrowgate_cpp {
+
+inline constexpr std::string_view kF05RepeatedBooleanCooldownAbi =
+    "f05_repeated_boolean_cooldown_streaming.v1";
+inline constexpr std::string_view kF05BooleanCooldownControlAction =
+    "CONTROL_85N";
+inline constexpr std::int64_t kF05BooleanCooldownWindowWidthNs = 100'000'000;
+inline constexpr std::int64_t kF05BooleanCooldownControlUnitMs = 85'000;
+
+enum class F05TriState : std::int8_t {
+  Unobserved = -1,
+  False = 0,
+  True = 1,
+};
+
+enum class F05CooldownFillRole : std::uint8_t {
+  Opener = 0,
+  Add = 1,
+  Reducing = 2,
+};
+
+struct F05BooleanLiteral {
+  std::size_t predicate_index = 0;
+  bool negated = false;
+};
+
+struct F05BooleanClause {
+  std::vector<F05BooleanLiteral> literals;
+};
+
+struct F05BooleanRule {
+  std::string action_id;
+  std::int64_t duration_ms = 0;
+  std::vector<F05BooleanClause> clauses;
+};
+
+struct F05BooleanPolicy {
+  std::string policy_sha256;
+  std::string predicate_bundle_sha256;
+  std::vector<std::string> predicate_columns;
+  std::vector<F05BooleanRule> rules;
+  std::string default_action = std::string(kF05BooleanCooldownControlAction);
+};
+
+struct F05RepeatedBooleanCooldownConfig {
+  bool parity_qualified = false;
+  std::string parity_qualification_sha256;
+  std::string qualification_scope = "synthetic_mechanics_only";
+  double warmup_s = 2048.0;
+  double max_feature_age_s = 5.0;
+  F05BooleanPolicy policy;
+};
+
+struct F05CooldownWindowObservation {
+  std::int64_t left_ts_ns = 0;
+  std::int64_t right_ts_ns = 0;
+  std::int64_t feature_ready_ts_ns = 0;
+  std::int64_t market_generation = 0;
+  std::int64_t depth_generation = 0;
+  std::optional<double> mid_usdc_per_btc;
+  bool source_gap = false;
+  bool source_stale = false;
+};
+
+struct F05CooldownFillInput {
+  std::string snapshot_id;
+  Side side = Side::Buy;
+  F05CooldownFillRole role = F05CooldownFillRole::Opener;
+  std::int64_t fill_ts_ms = 0;
+  std::int64_t decision_ts_ns = 0;
+  std::int64_t campaign_id = 0;
+  double campaign_age_s = 0.0;
+  double inventory_before_fill_btc = 0.0;
+  double inventory_after_fill_btc = 0.0;
+  double consecutive_units_after = 1.0;
+  std::int64_t baseline_duration_ms = kF05BooleanCooldownControlUnitMs;
+  bool policy_input_valid = true;
+  bool support_valid = true;
+  bool channel_support_valid = true;
+  std::string snapshot_fallback_reason;
+  // Empty means materialize the selected owner mid-EMA predicates. A full
+  // vector is an exact, ordered multichannel predicate ABI for later parity.
+  std::vector<F05TriState> predicate_values;
+};
+
+struct F05CooldownPredicateRow {
+  std::int64_t exposure_fill_ordinal = 0;
+  std::int64_t fill_ts_ms = 0;
+  Side side = Side::Buy;
+  std::int64_t campaign_id = 0;
+  std::string snapshot_id;
+  bool policy_input_valid = true;
+  bool support_valid = true;
+  bool channel_support_valid = true;
+  std::string snapshot_fallback_reason;
+  std::vector<F05TriState> predicate_values;
+};
+
+struct F05CooldownDecision {
+  std::string snapshot_id;
+  Side side = Side::Buy;
+  F05CooldownFillRole role = F05CooldownFillRole::Opener;
+  std::int64_t exposure_fill_ordinal = 0;
+  std::int64_t fill_ts_ms = 0;
+  std::int64_t campaign_id = 0;
+  double consecutive_units_after = 0.0;
+  std::string action_id = std::string(kF05BooleanCooldownControlAction);
+  std::int64_t baseline_duration_ms = kF05BooleanCooldownControlUnitMs;
+  std::int64_t duration_ms = kF05BooleanCooldownControlUnitMs;
+  std::int64_t deadline_ts_ms = 0;
+  std::int64_t lineage_revision = 0;
+  std::optional<std::size_t> matched_rule_index;
+  bool support_valid = false;
+  bool lineage_applied = false;
+  std::string coverage_reason_code;
+  std::string fallback_reason;
+  std::string policy_sha256;
+  std::string predicate_bundle_sha256;
+  std::int64_t feature_ready_ts_ns = 0;
+  double feature_age_ms = 0.0;
+};
+
+struct F05CooldownPairState {
+  int effective_sign = 0;
+  std::optional<std::int64_t> arrangement_start_ts_ns;
+  std::optional<std::int64_t> last_cross_ts_ns;
+  int last_cross_direction = 0;
+};
+
+struct F05CooldownLineageState {
+  bool active = false;
+  Side side = Side::Buy;
+  std::int64_t revision = 0;
+  std::int64_t campaign_id = 0;
+  std::int64_t fill_ts_ms = 0;
+  std::int64_t deadline_ts_ms = 0;
+  double consecutive_units_after = 0.0;
+  std::int64_t duration_ms = 0;
+  std::string action_id;
+  std::string coverage_reason_code;
+};
+
+struct F05CooldownRuntimeAudit {
+  std::int64_t window_count = 0;
+  std::int64_t gap_window_count = 0;
+  std::int64_t feature_state_reset_count = 0;
+  std::int64_t evaluation_count = 0;
+  std::int64_t supported_count = 0;
+  std::int64_t fallback_count = 0;
+  std::int64_t nonbaseline_count = 0;
+  std::int64_t buy_control_count = 0;
+  std::int64_t reducing_bypass_count = 0;
+  std::int64_t lineage_count = 0;
+  std::int64_t lineage_clear_count = 0;
+};
+
+struct F05RepeatedBooleanCooldownCheckpoint {
+  std::string abi_version;
+  std::string parity_qualification_sha256;
+  std::string qualification_scope;
+  std::string policy_sha256;
+  std::string predicate_bundle_sha256;
+  double warmup_s = 0.0;
+  double max_feature_age_s = 0.0;
+  bool warmup_admitted = false;
+  std::optional<std::int64_t> warmup_start_right_ts_ns;
+  std::optional<std::int64_t> last_right_ts_ns;
+  std::optional<std::int64_t> last_feature_ready_ts_ns;
+  std::optional<std::int64_t> last_market_generation;
+  std::optional<std::int64_t> last_depth_generation;
+  bool ema_initialized = false;
+  bool current_window_observed = false;
+  std::optional<std::int64_t> last_observed_ts_ns;
+  std::array<double, 3> ema{0.0, 0.0, 0.0};
+  F05CooldownPairState short_pair;
+  F05CooldownPairState long_pair;
+  F05CooldownLineageState buy_lineage;
+  F05CooldownLineageState sell_lineage{false, Side::Sell};
+  F05CooldownRuntimeAudit audit;
+  std::string canonical_payload;
+  std::string checkpoint_sha256;
+};
+
+class F05RepeatedBooleanCooldownRuntime {
+public:
+  explicit F05RepeatedBooleanCooldownRuntime(
+      F05RepeatedBooleanCooldownConfig config);
+
+  void update_window(const F05CooldownWindowObservation &observation);
+  [[nodiscard]] F05CooldownDecision
+  apply_fill(const F05CooldownFillInput &input);
+  void advance_time(std::int64_t now_ms);
+  [[nodiscard]] bool add_blocked(Side side, std::int64_t now_ms) const;
+  [[nodiscard]] F05CooldownLineageState lineage(Side side) const;
+  [[nodiscard]] F05CooldownRuntimeAudit audit() const noexcept;
+  [[nodiscard]] F05RepeatedBooleanCooldownCheckpoint checkpoint() const;
+  void restore(const F05RepeatedBooleanCooldownCheckpoint &checkpoint);
+  [[nodiscard]] bool parity_qualified() const noexcept;
+  [[nodiscard]] const std::string &binding_error() const noexcept;
+  [[nodiscard]] const F05RepeatedBooleanCooldownConfig &config() const noexcept;
+
+private:
+  F05RepeatedBooleanCooldownConfig config_;
+  std::string binding_error_;
+  bool warmup_admitted_ = false;
+  std::optional<std::int64_t> warmup_start_right_ts_ns_;
+  std::optional<std::int64_t> last_right_ts_ns_;
+  std::optional<std::int64_t> last_feature_ready_ts_ns_;
+  std::optional<std::int64_t> last_market_generation_;
+  std::optional<std::int64_t> last_depth_generation_;
+  bool ema_initialized_ = false;
+  bool current_window_observed_ = false;
+  std::optional<std::int64_t> last_observed_ts_ns_;
+  std::array<double, 3> ema_{0.0, 0.0, 0.0};
+  F05CooldownPairState short_pair_;
+  F05CooldownPairState long_pair_;
+  F05CooldownLineageState buy_lineage_;
+  F05CooldownLineageState sell_lineage_{false, Side::Sell};
+  F05CooldownRuntimeAudit audit_;
+};
 
 enum class OrderState : std::uint8_t {
     PendingNew = 0,
@@ -424,6 +645,10 @@ struct TickReplayParams {
     std::int64_t cooldown_duration_fork_target_campaign_id = 0;
     double cooldown_duration_fork_expected_baseline_ms = 0.0;
     double cooldown_duration_fork_fixed_ms = 0.0;
+    std::shared_ptr<F05RepeatedBooleanCooldownRuntime>
+        f05_repeated_cooldown_runtime;
+    std::vector<F05CooldownWindowObservation> f05_cooldown_window_tape;
+    std::vector<F05CooldownPredicateRow> f05_cooldown_predicate_rows;
     std::int64_t trace_window_ms = 10'000;
     // 大 sweep 通常只需要 summary；关闭曲线可以避免 PnL/inventory path 占用内存和 Python 转换时间。
     bool collect_curves = true;
@@ -1054,6 +1279,9 @@ struct TickReplayResult {
         cooldown_duration_opportunity_trace;
     std::vector<CooldownDurationFillPathRow> cooldown_duration_fill_path;
     CooldownDurationForkTrace cooldown_duration_fork_trace;
+    std::vector<F05CooldownDecision> f05_repeated_cooldown_decisions;
+    std::optional<F05RepeatedBooleanCooldownCheckpoint>
+        f05_repeated_cooldown_checkpoint;
     std::vector<PairedFixedSpreadProbeRow> paired_fixed_spread_rows;
     std::vector<PairedFixedSpreadViolationRow> paired_fixed_spread_violations;
 };

@@ -2063,7 +2063,330 @@ void bind_quote_core(py::module_& m) {
     );
 }
 
+void bind_f05_repeated_boolean_cooldown(py::module_& m) {
+    m.attr("F05_REPEATED_BOOLEAN_COOLDOWN_ABI_VERSION") =
+        std::string(kF05RepeatedBooleanCooldownAbi);
+
+    py::enum_<F05TriState>(m, "F05TriState")
+        .value("UNOBSERVED", F05TriState::Unobserved)
+        .value("FALSE", F05TriState::False)
+        .value("TRUE", F05TriState::True);
+    py::enum_<F05CooldownFillRole>(m, "F05CooldownFillRole")
+        .value("OPENER", F05CooldownFillRole::Opener)
+        .value("ADD", F05CooldownFillRole::Add)
+        .value("REDUCING", F05CooldownFillRole::Reducing);
+
+    py::class_<F05BooleanLiteral>(m, "F05BooleanLiteral")
+        .def(py::init<>())
+        .def_readwrite("predicate_index", &F05BooleanLiteral::predicate_index)
+        .def_readwrite("negated", &F05BooleanLiteral::negated);
+    py::class_<F05BooleanClause>(m, "F05BooleanClause")
+        .def(py::init<>())
+        .def_readwrite("literals", &F05BooleanClause::literals);
+    py::class_<F05BooleanRule>(m, "F05BooleanRule")
+        .def(py::init<>())
+        .def_readwrite("action_id", &F05BooleanRule::action_id)
+        .def_readwrite("duration_ms", &F05BooleanRule::duration_ms)
+        .def_readwrite("clauses", &F05BooleanRule::clauses);
+    py::class_<F05BooleanPolicy>(m, "F05BooleanPolicy")
+        .def(py::init<>())
+        .def_readwrite("policy_sha256", &F05BooleanPolicy::policy_sha256)
+        .def_readwrite(
+            "predicate_bundle_sha256",
+            &F05BooleanPolicy::predicate_bundle_sha256)
+        .def_readwrite(
+            "predicate_columns",
+            &F05BooleanPolicy::predicate_columns)
+        .def_readwrite("rules", &F05BooleanPolicy::rules)
+        .def_readwrite("default_action", &F05BooleanPolicy::default_action);
+    py::class_<F05RepeatedBooleanCooldownConfig>(
+        m,
+        "F05RepeatedBooleanCooldownConfig")
+        .def(py::init<>())
+        .def_readwrite(
+            "parity_qualified",
+            &F05RepeatedBooleanCooldownConfig::parity_qualified)
+        .def_readwrite(
+            "parity_qualification_sha256",
+            &F05RepeatedBooleanCooldownConfig::parity_qualification_sha256)
+        .def_readwrite(
+            "qualification_scope",
+            &F05RepeatedBooleanCooldownConfig::qualification_scope)
+        .def_readwrite("warmup_s", &F05RepeatedBooleanCooldownConfig::warmup_s)
+        .def_readwrite(
+            "max_feature_age_s",
+            &F05RepeatedBooleanCooldownConfig::max_feature_age_s)
+        .def_readwrite("policy", &F05RepeatedBooleanCooldownConfig::policy);
+    py::class_<F05CooldownWindowObservation>(
+        m,
+        "F05CooldownWindowObservation")
+        .def(py::init<>())
+        .def_readwrite("left_ts_ns", &F05CooldownWindowObservation::left_ts_ns)
+        .def_readwrite(
+            "right_ts_ns",
+            &F05CooldownWindowObservation::right_ts_ns)
+        .def_readwrite(
+            "feature_ready_ts_ns",
+            &F05CooldownWindowObservation::feature_ready_ts_ns)
+        .def_readwrite(
+            "market_generation",
+            &F05CooldownWindowObservation::market_generation)
+        .def_readwrite(
+            "depth_generation",
+            &F05CooldownWindowObservation::depth_generation)
+        .def_readwrite(
+            "mid_usdc_per_btc",
+            &F05CooldownWindowObservation::mid_usdc_per_btc)
+        .def_readwrite("source_gap", &F05CooldownWindowObservation::source_gap)
+        .def_readwrite(
+            "source_stale",
+            &F05CooldownWindowObservation::source_stale);
+    py::class_<F05CooldownFillInput>(m, "F05CooldownFillInput")
+        .def(py::init<>())
+        .def_readwrite("snapshot_id", &F05CooldownFillInput::snapshot_id)
+        .def_readwrite("side", &F05CooldownFillInput::side)
+        .def_readwrite("role", &F05CooldownFillInput::role)
+        .def_readwrite("fill_ts_ms", &F05CooldownFillInput::fill_ts_ms)
+        .def_readwrite("decision_ts_ns", &F05CooldownFillInput::decision_ts_ns)
+        .def_readwrite("campaign_id", &F05CooldownFillInput::campaign_id)
+        .def_readwrite("campaign_age_s", &F05CooldownFillInput::campaign_age_s)
+        .def_readwrite(
+            "inventory_before_fill_btc",
+            &F05CooldownFillInput::inventory_before_fill_btc)
+        .def_readwrite(
+            "inventory_after_fill_btc",
+            &F05CooldownFillInput::inventory_after_fill_btc)
+        .def_readwrite(
+            "consecutive_units_after",
+            &F05CooldownFillInput::consecutive_units_after)
+        .def_readwrite(
+            "baseline_duration_ms",
+            &F05CooldownFillInput::baseline_duration_ms)
+        .def_readwrite(
+            "policy_input_valid",
+            &F05CooldownFillInput::policy_input_valid)
+        .def_readwrite("support_valid", &F05CooldownFillInput::support_valid)
+        .def_readwrite(
+            "channel_support_valid",
+            &F05CooldownFillInput::channel_support_valid)
+        .def_readwrite(
+            "snapshot_fallback_reason",
+            &F05CooldownFillInput::snapshot_fallback_reason)
+        .def_readwrite(
+            "predicate_values",
+            &F05CooldownFillInput::predicate_values);
+    py::class_<F05CooldownPredicateRow>(m, "F05CooldownPredicateRow")
+        .def(py::init<>())
+        .def_readwrite(
+            "exposure_fill_ordinal",
+            &F05CooldownPredicateRow::exposure_fill_ordinal)
+        .def_readwrite("fill_ts_ms", &F05CooldownPredicateRow::fill_ts_ms)
+        .def_readwrite("side", &F05CooldownPredicateRow::side)
+        .def_readwrite("campaign_id", &F05CooldownPredicateRow::campaign_id)
+        .def_readwrite("snapshot_id", &F05CooldownPredicateRow::snapshot_id)
+        .def_readwrite(
+            "policy_input_valid",
+            &F05CooldownPredicateRow::policy_input_valid)
+        .def_readwrite("support_valid", &F05CooldownPredicateRow::support_valid)
+        .def_readwrite(
+            "channel_support_valid",
+            &F05CooldownPredicateRow::channel_support_valid)
+        .def_readwrite(
+            "snapshot_fallback_reason",
+            &F05CooldownPredicateRow::snapshot_fallback_reason)
+        .def_readwrite(
+            "predicate_values",
+            &F05CooldownPredicateRow::predicate_values);
+    py::class_<F05CooldownDecision>(m, "F05CooldownDecision")
+        .def(py::init<>())
+        .def_readwrite("snapshot_id", &F05CooldownDecision::snapshot_id)
+        .def_readwrite("side", &F05CooldownDecision::side)
+        .def_readwrite("role", &F05CooldownDecision::role)
+        .def_readwrite(
+            "exposure_fill_ordinal",
+            &F05CooldownDecision::exposure_fill_ordinal)
+        .def_readwrite("fill_ts_ms", &F05CooldownDecision::fill_ts_ms)
+        .def_readwrite("campaign_id", &F05CooldownDecision::campaign_id)
+        .def_readwrite(
+            "consecutive_units_after",
+            &F05CooldownDecision::consecutive_units_after)
+        .def_readwrite("action_id", &F05CooldownDecision::action_id)
+        .def_readwrite(
+            "baseline_duration_ms",
+            &F05CooldownDecision::baseline_duration_ms)
+        .def_readwrite("duration_ms", &F05CooldownDecision::duration_ms)
+        .def_readwrite("deadline_ts_ms", &F05CooldownDecision::deadline_ts_ms)
+        .def_readwrite(
+            "lineage_revision",
+            &F05CooldownDecision::lineage_revision)
+        .def_readwrite(
+            "matched_rule_index",
+            &F05CooldownDecision::matched_rule_index)
+        .def_readwrite("support_valid", &F05CooldownDecision::support_valid)
+        .def_readwrite("lineage_applied", &F05CooldownDecision::lineage_applied)
+        .def_readwrite(
+            "coverage_reason_code",
+            &F05CooldownDecision::coverage_reason_code)
+        .def_readwrite("fallback_reason", &F05CooldownDecision::fallback_reason)
+        .def_readwrite("policy_sha256", &F05CooldownDecision::policy_sha256)
+        .def_readwrite(
+            "predicate_bundle_sha256",
+            &F05CooldownDecision::predicate_bundle_sha256)
+        .def_readwrite(
+            "feature_ready_ts_ns",
+            &F05CooldownDecision::feature_ready_ts_ns)
+        .def_readwrite("feature_age_ms", &F05CooldownDecision::feature_age_ms);
+    py::class_<F05CooldownPairState>(m, "F05CooldownPairState")
+        .def(py::init<>())
+        .def_readwrite("effective_sign", &F05CooldownPairState::effective_sign)
+        .def_readwrite(
+            "arrangement_start_ts_ns",
+            &F05CooldownPairState::arrangement_start_ts_ns)
+        .def_readwrite(
+            "last_cross_ts_ns",
+            &F05CooldownPairState::last_cross_ts_ns)
+        .def_readwrite(
+            "last_cross_direction",
+            &F05CooldownPairState::last_cross_direction);
+    py::class_<F05CooldownLineageState>(m, "F05CooldownLineageState")
+        .def(py::init<>())
+        .def_readwrite("active", &F05CooldownLineageState::active)
+        .def_readwrite("side", &F05CooldownLineageState::side)
+        .def_readwrite("revision", &F05CooldownLineageState::revision)
+        .def_readwrite("campaign_id", &F05CooldownLineageState::campaign_id)
+        .def_readwrite("fill_ts_ms", &F05CooldownLineageState::fill_ts_ms)
+        .def_readwrite("deadline_ts_ms", &F05CooldownLineageState::deadline_ts_ms)
+        .def_readwrite(
+            "consecutive_units_after",
+            &F05CooldownLineageState::consecutive_units_after)
+        .def_readwrite("duration_ms", &F05CooldownLineageState::duration_ms)
+        .def_readwrite("action_id", &F05CooldownLineageState::action_id)
+        .def_readwrite(
+            "coverage_reason_code",
+            &F05CooldownLineageState::coverage_reason_code);
+    py::class_<F05CooldownRuntimeAudit>(m, "F05CooldownRuntimeAudit")
+        .def(py::init<>())
+        .def_readwrite("window_count", &F05CooldownRuntimeAudit::window_count)
+        .def_readwrite(
+            "gap_window_count",
+            &F05CooldownRuntimeAudit::gap_window_count)
+        .def_readwrite(
+            "feature_state_reset_count",
+            &F05CooldownRuntimeAudit::feature_state_reset_count)
+        .def_readwrite(
+            "evaluation_count",
+            &F05CooldownRuntimeAudit::evaluation_count)
+        .def_readwrite(
+            "supported_count",
+            &F05CooldownRuntimeAudit::supported_count)
+        .def_readwrite("fallback_count", &F05CooldownRuntimeAudit::fallback_count)
+        .def_readwrite(
+            "nonbaseline_count",
+            &F05CooldownRuntimeAudit::nonbaseline_count)
+        .def_readwrite(
+            "buy_control_count",
+            &F05CooldownRuntimeAudit::buy_control_count)
+        .def_readwrite(
+            "reducing_bypass_count",
+            &F05CooldownRuntimeAudit::reducing_bypass_count)
+        .def_readwrite("lineage_count", &F05CooldownRuntimeAudit::lineage_count)
+        .def_readwrite(
+            "lineage_clear_count",
+            &F05CooldownRuntimeAudit::lineage_clear_count);
+    py::class_<F05RepeatedBooleanCooldownCheckpoint>(
+        m,
+        "F05RepeatedBooleanCooldownCheckpoint")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &F05RepeatedBooleanCooldownCheckpoint::abi_version)
+        .def_readwrite(
+            "parity_qualification_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::parity_qualification_sha256)
+        .def_readwrite(
+            "qualification_scope",
+            &F05RepeatedBooleanCooldownCheckpoint::qualification_scope)
+        .def_readwrite(
+            "policy_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::policy_sha256)
+        .def_readwrite(
+            "predicate_bundle_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::predicate_bundle_sha256)
+        .def_readwrite("warmup_s", &F05RepeatedBooleanCooldownCheckpoint::warmup_s)
+        .def_readwrite(
+            "max_feature_age_s",
+            &F05RepeatedBooleanCooldownCheckpoint::max_feature_age_s)
+        .def_readwrite(
+            "warmup_admitted",
+            &F05RepeatedBooleanCooldownCheckpoint::warmup_admitted)
+        .def_readwrite(
+            "warmup_start_right_ts_ns",
+            &F05RepeatedBooleanCooldownCheckpoint::warmup_start_right_ts_ns)
+        .def_readwrite(
+            "last_right_ts_ns",
+            &F05RepeatedBooleanCooldownCheckpoint::last_right_ts_ns)
+        .def_readwrite(
+            "last_feature_ready_ts_ns",
+            &F05RepeatedBooleanCooldownCheckpoint::last_feature_ready_ts_ns)
+        .def_readwrite(
+            "last_market_generation",
+            &F05RepeatedBooleanCooldownCheckpoint::last_market_generation)
+        .def_readwrite(
+            "last_depth_generation",
+            &F05RepeatedBooleanCooldownCheckpoint::last_depth_generation)
+        .def_readwrite(
+            "ema_initialized",
+            &F05RepeatedBooleanCooldownCheckpoint::ema_initialized)
+        .def_readwrite(
+            "current_window_observed",
+            &F05RepeatedBooleanCooldownCheckpoint::current_window_observed)
+        .def_readwrite(
+            "last_observed_ts_ns",
+            &F05RepeatedBooleanCooldownCheckpoint::last_observed_ts_ns)
+        .def_readwrite("ema", &F05RepeatedBooleanCooldownCheckpoint::ema)
+        .def_readwrite(
+            "short_pair",
+            &F05RepeatedBooleanCooldownCheckpoint::short_pair)
+        .def_readwrite("long_pair", &F05RepeatedBooleanCooldownCheckpoint::long_pair)
+        .def_readwrite(
+            "buy_lineage",
+            &F05RepeatedBooleanCooldownCheckpoint::buy_lineage)
+        .def_readwrite(
+            "sell_lineage",
+            &F05RepeatedBooleanCooldownCheckpoint::sell_lineage)
+        .def_readwrite("audit", &F05RepeatedBooleanCooldownCheckpoint::audit)
+        .def_readwrite(
+            "canonical_payload",
+            &F05RepeatedBooleanCooldownCheckpoint::canonical_payload)
+        .def_readwrite(
+            "checkpoint_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::checkpoint_sha256);
+    py::class_<
+        F05RepeatedBooleanCooldownRuntime,
+        std::shared_ptr<F05RepeatedBooleanCooldownRuntime>>(
+        m,
+        "F05RepeatedBooleanCooldownRuntime")
+        .def(py::init<F05RepeatedBooleanCooldownConfig>())
+        .def("update_window", &F05RepeatedBooleanCooldownRuntime::update_window)
+        .def("apply_fill", &F05RepeatedBooleanCooldownRuntime::apply_fill)
+        .def("advance_time", &F05RepeatedBooleanCooldownRuntime::advance_time)
+        .def("add_blocked", &F05RepeatedBooleanCooldownRuntime::add_blocked)
+        .def("lineage", &F05RepeatedBooleanCooldownRuntime::lineage)
+        .def("audit", &F05RepeatedBooleanCooldownRuntime::audit)
+        .def("checkpoint", &F05RepeatedBooleanCooldownRuntime::checkpoint)
+        .def("restore", &F05RepeatedBooleanCooldownRuntime::restore)
+        .def_property_readonly(
+            "parity_qualified",
+            &F05RepeatedBooleanCooldownRuntime::parity_qualified)
+        .def_property_readonly(
+            "binding_error",
+            &F05RepeatedBooleanCooldownRuntime::binding_error)
+        .def_property_readonly(
+            "config",
+            &F05RepeatedBooleanCooldownRuntime::config,
+            py::return_value_policy::reference_internal);
+}
+
 void bind_tick_replay(py::module_& m) {
+    bind_f05_repeated_boolean_cooldown(m);
     py::class_<TickReplayParams>(m, "TickReplayParams")
         .def(py::init<>())
         .def_readwrite("quote", &TickReplayParams::quote)
@@ -2294,6 +2617,15 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite(
             "cooldown_duration_fork_fixed_ms",
             &TickReplayParams::cooldown_duration_fork_fixed_ms)
+        .def_readwrite(
+            "f05_repeated_cooldown_runtime",
+            &TickReplayParams::f05_repeated_cooldown_runtime)
+        .def_readwrite(
+            "f05_cooldown_window_tape",
+            &TickReplayParams::f05_cooldown_window_tape)
+        .def_readwrite(
+            "f05_cooldown_predicate_rows",
+            &TickReplayParams::f05_cooldown_predicate_rows)
         .def_readwrite("trace_window_ms", &TickReplayParams::trace_window_ms)
         .def_readwrite("collect_curves", &TickReplayParams::collect_curves);
 
@@ -3041,6 +3373,12 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite(
             "cooldown_duration_fork_trace",
             &TickReplayResult::cooldown_duration_fork_trace)
+        .def_readwrite(
+            "f05_repeated_cooldown_decisions",
+            &TickReplayResult::f05_repeated_cooldown_decisions)
+        .def_readwrite(
+            "f05_repeated_cooldown_checkpoint",
+            &TickReplayResult::f05_repeated_cooldown_checkpoint)
         .def_readwrite(
             "paired_fixed_spread_rows",
             &TickReplayResult::paired_fixed_spread_rows)
