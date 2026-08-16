@@ -25,6 +25,7 @@
   "day_input_cache_identity": "f05_full_multiscale_offline_replay_executor_acceleration_v2",
   "estimand_changed": false,
   "execution_identity": "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1",
+  "historical_mechanics_bridge_rebound_by_exact_api_identity": true,
   "formal_successor": "formal_v21",
   "identity": "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1",
   "live_authorized": false,

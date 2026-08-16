@@ -373,6 +373,56 @@ def _validate_fixed_bridge(value: Any, *, context: str) -> Mapping[str, Any]:
     return expected
 
 
+def _rebind_historical_fixed_bridge(value: Any, *, context: str) -> Mapping[str, Any]:
+    """Rebind source SHAs while preserving the frozen canonical API graph."""
+
+    if not isinstance(value, Mapping):
+        raise OfflineReplayAdapterMechanicsMissing(
+            tuple(_FIXED_CANONICAL_API_SYMBOLS), context=context
+        )
+    observed = dict(value)
+    expected = _expected_fixed_bridge()
+    observed_api = observed.get("canonical_api_bindings")
+    expected_api = expected["canonical_api_bindings"]
+    if not isinstance(observed_api, Mapping):
+        raise OfflineReplayAdapterMechanicsMissing(
+            tuple(_FIXED_CANONICAL_API_SYMBOLS), context=context
+        )
+    missing = tuple(sorted(set(expected_api) - set(observed_api)))
+    if missing:
+        raise OfflineReplayAdapterMechanicsMissing(missing, context=context)
+    if set(observed_api) != set(expected_api):
+        raise OfflineReplayAdapterError(
+            "historical portable canonical replay API role census drifted"
+        )
+    observed_without_api = {
+        name: item for name, item in observed.items() if name != "canonical_api_bindings"
+    }
+    expected_without_api = {
+        name: item for name, item in expected.items() if name != "canonical_api_bindings"
+    }
+    if observed_without_api != expected_without_api:
+        raise OfflineReplayAdapterError(
+            "historical portable canonical replay contract drifted"
+        )
+    for role, current in expected_api.items():
+        historical = observed_api[role]
+        if not isinstance(historical, Mapping):
+            raise OfflineReplayAdapterError(
+                "historical portable canonical replay API binding is malformed"
+            )
+        if (
+            set(historical) != {"module", "symbol", "module_sha256"}
+            or historical.get("module") != current["module"]
+            or historical.get("symbol") != current["symbol"]
+            or _SHA_RE.fullmatch(str(historical.get("module_sha256", ""))) is None
+        ):
+            raise OfflineReplayAdapterError(
+                "historical portable canonical replay module or symbol drifted"
+            )
+    return expected
+
+
 def _frame_sha256(frame: pd.DataFrame | pd.Series) -> str:
     value = frame.to_frame() if isinstance(frame, pd.Series) else frame
     header = {
@@ -4244,24 +4294,29 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
             ("valid_portable_replay_binding",), context="portable execution binding"
         )
     binding = _read_json(binding_path, label="portable replay binding")
-    expected_fixed_bridge = _validate_fixed_bridge(
-        binding.get("fixed_bridge"), context="portable execution binding"
+    expected_fixed_bridge = _rebind_historical_fixed_bridge(
+        binding.get("fixed_bridge"), context="portable execution binding rebind"
     )
+    execution_binding = dict(binding)
+    execution_binding["fixed_bridge"] = dict(expected_fixed_bridge)
     if (
-        binding.get("schema_version") != f"{IDENTITY}.portable_replay_binding.v1"
-        or binding.get("identity")
+        execution_binding.get("schema_version") != f"{IDENTITY}.portable_replay_binding.v1"
+        or execution_binding.get("identity")
         != "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
         "offline_sequential_replay_input_v2"
-        or not str(binding.get("panel_identity", "")).endswith(".offline_sequential_panel_v2")
-        or binding.get("selected_day_count") != offline.REQUIRED_DAYS
-        or len(binding.get("selected_days", ())) != offline.REQUIRED_DAYS
-        or dict(binding.get("fixed_bridge", {})) != dict(expected_fixed_bridge)
-        or binding.get("target_day_end_terminalized") is not False
-        or binding.get("d_plus_1_new_target_assignments_allowed") is not False
-        or binding.get("assignment_to_common_washout_required") is not True
+        or not str(execution_binding.get("panel_identity", "")).endswith(
+            ".offline_sequential_panel_v2"
+        )
+        or execution_binding.get("selected_day_count") != offline.REQUIRED_DAYS
+        or len(execution_binding.get("selected_days", ())) != offline.REQUIRED_DAYS
+        or dict(execution_binding.get("fixed_bridge", {}))
+        != dict(expected_fixed_bridge)
+        or execution_binding.get("target_day_end_terminalized") is not False
+        or execution_binding.get("d_plus_1_new_target_assignments_allowed") is not False
+        or execution_binding.get("assignment_to_common_washout_required") is not True
     ):
         raise OfflineReplayAdapterError("portable replay binding contract drifted")
-    _validate_observation_batch_binding(binding)
+    _validate_observation_batch_binding(execution_binding)
     cache_root = resolve_portable_path(
         str(_unique_column_value(rows, "portable_day_cache_root"))
     ).resolve()
@@ -4277,7 +4332,11 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
         ) from exc
     if workers != DEFAULT_DAY_WORKERS:
         raise OfflineReplayAdapterError("formal day replay worker identity drifted")
-    return _ExecutionOptions(binding=binding, cache=DayReplayCache(cache_root), workers=workers)
+    return _ExecutionOptions(
+        binding=execution_binding,
+        cache=DayReplayCache(cache_root),
+        workers=workers,
+    )
 
 
 def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:

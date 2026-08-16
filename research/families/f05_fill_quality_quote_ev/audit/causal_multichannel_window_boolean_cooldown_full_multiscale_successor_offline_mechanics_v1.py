@@ -957,17 +957,20 @@ def _validate_sequential_panel_builder(
                 private_config=Path(owner_artifacts["private_config"]),
             ),
         )
-        current_binding = builder._ensure_portable_replay_binding(
-            inputs,
-            output_root=builder_root,
+        replay_adapter = importlib.import_module(
+            "research.families.f05_fill_quality_quote_ev.audit."
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_"
+            "successor_offline_replay_adapter_v1"
+        )
+        replay_adapter._rebind_historical_fixed_bridge(
+            binding.get("fixed_bridge"),
+            context="sequential mechanics historical execution bridge",
         )
         validated = builder.validate_panel(builder_root, inputs=inputs)
     except Exception as exc:
         raise OfflineMechanicsError(
             "sequential panel builder failed full source/day/byte validation"
         ) from exc
-    if current_binding.get("path") != binding_path:
-        raise OfflineMechanicsError("sequential replay binding path drifted")
     if validated.get("selected_days") != list(selected_days):
         raise OfflineMechanicsError("sequential panel selected-day order drifted")
     for role in PANEL_FILE_ROLES:

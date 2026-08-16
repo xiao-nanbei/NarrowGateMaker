@@ -1657,7 +1657,7 @@ def test_portable_binding_missing_fixed_api_role_fails_closed(tmp_path: Path) ->
     assert captured.value.missing == ("canonical_snapshot_emitter_factory_binding",)
 
 
-def test_portable_binding_rejects_symbol_or_source_hash_substitution(
+def test_portable_binding_rejects_symbol_substitution(
     tmp_path: Path,
 ) -> None:
     observation_path, observation_payload = _write_observation_manifest(tmp_path)
@@ -1671,9 +1671,38 @@ def test_portable_binding_rejects_symbol_or_source_hash_substitution(
     rows.loc[0, "portable_replay_binding_sha256"] = _sha256_file(path)
     with pytest.raises(
         adapter_module.OfflineReplayAdapterError,
-        match="module, symbol, or source SHA",
+        match="module or symbol",
     ):
         adapter_module._resolve_execution_options(rows)
+
+
+def test_portable_binding_rebinds_historical_source_sha_only(
+    tmp_path: Path,
+) -> None:
+    observation_path, observation_payload = _write_observation_manifest(tmp_path)
+    rows = _portable_binding_rows(tmp_path, observation_path, observation_payload)
+    path = Path(str(rows.loc[0, "portable_replay_binding_path"]))
+    payload = json.loads(path.read_text(encoding="ascii"))
+    role = "canonical_one_shot_duration_arm_binding"
+    current_sha = payload["fixed_bridge"]["canonical_api_bindings"][role][
+        "module_sha256"
+    ]
+    historical_sha = "0" * 64
+    assert historical_sha != current_sha
+    payload["fixed_bridge"]["canonical_api_bindings"][role][
+        "module_sha256"
+    ] = historical_sha
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="ascii")
+    rows.loc[0, "portable_replay_binding_sha256"] = _sha256_file(path)
+
+    options = adapter_module._resolve_execution_options(rows)
+
+    assert (
+        options.binding["fixed_bridge"]["canonical_api_bindings"][role][
+            "module_sha256"
+        ]
+        == current_sha
+    )
 
 
 def test_day_job_rejects_caller_executor_injection_before_projection() -> None:

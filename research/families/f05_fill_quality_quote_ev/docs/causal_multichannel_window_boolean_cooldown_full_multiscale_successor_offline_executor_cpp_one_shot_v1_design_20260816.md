@@ -8,6 +8,8 @@ Status: `formal_v21_pre_economic_cpp_lockstep_identity_frozen`.
 
 Formal-v21 is an execution-only successor to the stopped formal-v20 run. It preserves the same admitted 30 Development days, 3,516 mechanics opportunities, exact owner B0, eight side-specific duration arms, four-by-three chronological folds, candidate ladder, estimand, statistics, and permissions. It does not read Validation or sealed holdout, modify EC2, create a live observer, or change the active owner policy.
 
+The admitted mechanics panel retains the source SHA of the one-shot runner that created it. Formal-v21 treats that SHA as historical mechanics provenance and rebinds only the source SHA to the clean tagged executor when the canonical module, symbol, role census, queue identity, and clock semantics are unchanged. Any API or semantic drift remains fail-closed; the mechanics rows and opportunity denominator are not rewritten.
+
 ## Engine Boundary
 
 The C++ engine is authorized only for outer-train one-shot duration labels. Outer-test and other sequential repeated-policy economics remain Python-authoritative. A one-shot arm remains an independent complete event path; v21 does not claim a single-pass multi-arm economic kernel. All arm paths share one immutable C++ observation tape and the admitted read-only day-input mmap, while each arm owns an independent cooldown state machine.
