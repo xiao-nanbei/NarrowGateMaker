@@ -750,8 +750,46 @@ class EvaluationRequest:
     stage: Literal["inner_oof", "outer_oof"]
     panel_role: str = PANEL_ROLE
 
+    @property
+    def request_sha256(self) -> str:
+        side = _normalize_side(self.side)
+        days = tuple(_normalize_day(day) for day in self.days)
+        fold_id = str(self.fold_id).strip()
+        panel_role = str(self.panel_role).strip()
+        return _canonical_sha256(
+            {
+                "schema_version": f"{IDENTITY}.evaluation_request.v1",
+                "candidate_name": self.candidate.ladder_name,
+                "candidate_policy_sha256": self.candidate.policy_sha256,
+                "candidate_executed_policy_sha256": (
+                    self.candidate.expected_executed_policy_sha256
+                ),
+                "candidate_training_row_sha256": self.candidate.training_row_sha256,
+                "side": side,
+                "days": list(days),
+                "fold_id": fold_id,
+                "stage": self.stage,
+                "panel_role": panel_role,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SequentialEvaluationResult:
+    """One batch result bound to exactly one ``EvaluationRequest`` identity."""
+
+    request_sha256: str
+    rows: pd.DataFrame
+
 
 SequentialPolicyEvaluator = Callable[[EvaluationRequest], pd.DataFrame]
+
+
+class BatchSequentialPolicyEvaluator(Protocol):
+    def evaluate_many(
+        self,
+        requests: Sequence[EvaluationRequest],
+    ) -> Sequence[SequentialEvaluationResult]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -1679,6 +1717,28 @@ def _validate_evaluation(
     return rows
 
 
+def _build_evaluation_request(
+    candidate: FittedCandidate,
+    *,
+    side: str,
+    days: Sequence[str],
+    fold_id: str,
+    stage: Literal["inner_oof", "outer_oof"],
+    panel_role: str = PANEL_ROLE,
+) -> EvaluationRequest:
+    normalized_days = tuple(_normalize_day(day) for day in days)
+    if candidate.training_days and max(candidate.training_days) >= min(normalized_days):
+        raise NestedOofExecutionError("candidate training is not strictly before evaluation")
+    return EvaluationRequest(
+        candidate=candidate,
+        side=side,
+        days=normalized_days,
+        fold_id=fold_id,
+        stage=stage,
+        panel_role=panel_role,
+    )
+
+
 def _evaluate(
     evaluator: SequentialPolicyEvaluator,
     candidate: FittedCandidate,
@@ -1689,18 +1749,214 @@ def _evaluate(
     stage: Literal["inner_oof", "outer_oof"],
     panel_role: str = PANEL_ROLE,
 ) -> pd.DataFrame:
-    normalized_days = tuple(_normalize_day(day) for day in days)
-    if candidate.training_days and max(candidate.training_days) >= min(normalized_days):
-        raise NestedOofExecutionError("candidate training is not strictly before evaluation")
-    request = EvaluationRequest(
-        candidate=candidate,
+    request = _build_evaluation_request(
+        candidate,
         side=side,
-        days=normalized_days,
+        days=days,
         fold_id=fold_id,
         stage=stage,
         panel_role=panel_role,
     )
     return _validate_evaluation(evaluator(request), request)
+
+
+def _evaluation_request_slot(request: EvaluationRequest) -> tuple[Any, ...]:
+    return (
+        request.stage,
+        _normalize_side(request.side),
+        str(request.fold_id).strip(),
+        request.candidate.ladder_name,
+        tuple(_normalize_day(day) for day in request.days),
+        str(request.panel_role).strip(),
+    )
+
+
+def _validate_evaluation_request_batch(
+    requests: Sequence[EvaluationRequest],
+) -> tuple[EvaluationRequest, ...]:
+    normalized = tuple(requests)
+    if not normalized:
+        raise NestedOofExecutionError("evaluation request batch is empty")
+    if not all(isinstance(request, EvaluationRequest) for request in normalized):
+        raise NestedOofExecutionError("evaluation request batch contains a custom request")
+    for request in normalized:
+        side = _normalize_side(request.side)
+        days = tuple(_normalize_day(day) for day in request.days)
+        if side != request.candidate.side:
+            raise NestedOofExecutionError("evaluation request candidate side drifted")
+        if not days or len(days) != len(set(days)) or days != tuple(sorted(days)):
+            raise NestedOofExecutionError(
+                "evaluation request days are empty, duplicated, or non-chronological"
+            )
+        if not str(request.fold_id).strip() or request.stage not in {
+            "inner_oof",
+            "outer_oof",
+        }:
+            raise NestedOofExecutionError("evaluation request fold or stage is invalid")
+        if not str(request.panel_role).strip():
+            raise NestedOofExecutionError("evaluation request panel role is empty")
+    request_sha256s = [request.request_sha256 for request in normalized]
+    if len(request_sha256s) != len(set(request_sha256s)):
+        raise NestedOofExecutionError("evaluation request batch contains a duplicate request")
+    slots = [_evaluation_request_slot(request) for request in normalized]
+    if len(slots) != len(set(slots)):
+        raise NestedOofExecutionError("evaluation request batch contains a duplicate request slot")
+    return normalized
+
+
+def _evaluate_many(
+    evaluator: SequentialPolicyEvaluator,
+    candidates: Sequence[tuple[str, FittedCandidate]],
+    *,
+    side: str,
+    days: Sequence[str],
+    fold_id: str,
+    stage: Literal["inner_oof", "outer_oof"],
+    panel_role: str = PANEL_ROLE,
+) -> tuple[tuple[str, pd.DataFrame], ...]:
+    named_candidates = tuple(candidates)
+    if not named_candidates:
+        raise NestedOofExecutionError("candidate evaluation batch is empty")
+    for name, candidate in named_candidates:
+        if name != candidate.ladder_name:
+            raise NestedOofExecutionError("candidate evaluation name drifted")
+    requests = _validate_evaluation_request_batch(
+        tuple(
+            _build_evaluation_request(
+                candidate,
+                side=side,
+                days=days,
+                fold_id=fold_id,
+                stage=stage,
+                panel_role=panel_role,
+            )
+            for _name, candidate in named_candidates
+        )
+    )
+    evaluate_many = getattr(evaluator, "evaluate_many", None)
+    if not callable(evaluate_many):
+        return tuple(
+            (
+                name,
+                _validate_evaluation(evaluator(request), request),
+            )
+            for (name, _candidate), request in zip(
+                named_candidates, requests, strict=True
+            )
+        )
+
+    raw_results = evaluate_many(requests)
+    if isinstance(raw_results, (str, bytes)) or not isinstance(raw_results, Sequence):
+        raise NestedOofExecutionError("batch evaluator returned a custom result collection")
+    results = tuple(raw_results)
+    if not all(isinstance(result, SequentialEvaluationResult) for result in results):
+        raise NestedOofExecutionError("batch evaluator returned a custom result")
+    result_sha256s = [result.request_sha256 for result in results]
+    if len(result_sha256s) != len(set(result_sha256s)):
+        raise NestedOofExecutionError("batch evaluator returned a duplicate request")
+    expected = {request.request_sha256: request for request in requests}
+    unexpected = sorted(set(result_sha256s) - set(expected))
+    missing = sorted(set(expected) - set(result_sha256s))
+    if unexpected or missing:
+        raise NestedOofExecutionError(
+            "batch evaluator request census drifted: "
+            f"missing={missing}, unexpected={unexpected}"
+        )
+    by_request = {result.request_sha256: result.rows for result in results}
+    return tuple(
+        (
+            name,
+            _validate_evaluation(by_request[request.request_sha256], request),
+        )
+        for (name, _candidate), request in zip(named_candidates, requests, strict=True)
+    )
+
+
+def _outer_evaluation_waves(
+    frozen: Mapping[str, FittedCandidate],
+) -> tuple[tuple[tuple[str, FittedCandidate], ...], ...]:
+    ordered = tuple(frozen.items())
+    if not ordered:
+        raise NestedOofExecutionError("outer evaluation has no frozen candidate")
+    for name, candidate in ordered:
+        if name != candidate.ladder_name:
+            raise NestedOofExecutionError("frozen outer candidate name drifted")
+
+    dependencies: dict[str, frozenset[str]] = {}
+    for name, _candidate in ordered:
+        prefix = "ACTION_MATCHED_CONTROLS::"
+        dependencies[name] = (
+            frozenset({name.removeprefix(prefix)})
+            if name.startswith(prefix)
+            else frozenset()
+        )
+    names = {name for name, _candidate in ordered}
+    unknown_dependencies = sorted(
+        dependency
+        for required in dependencies.values()
+        for dependency in required
+        if dependency not in names
+    )
+    if unknown_dependencies:
+        raise NestedOofExecutionError(
+            f"outer evaluation dependency is not frozen: {unknown_dependencies}"
+        )
+
+    completed: set[str] = set()
+    pending = list(ordered)
+    waves: list[tuple[tuple[str, FittedCandidate], ...]] = []
+    while pending:
+        ready = tuple(
+            (name, candidate)
+            for name, candidate in pending
+            if dependencies[name] <= completed
+        )
+        if not ready:
+            raise NestedOofExecutionError("outer evaluation dependency graph is cyclic")
+        waves.append(ready)
+        ready_names = {name for name, _candidate in ready}
+        completed.update(ready_names)
+        pending = [item for item in pending if item[0] not in ready_names]
+    return tuple(waves)
+
+
+def _evaluate_outer_candidates(
+    evaluator: SequentialPolicyEvaluator,
+    frozen: Mapping[str, FittedCandidate],
+    *,
+    side: str,
+    days: Sequence[str],
+    fold_id: str,
+    panel_role: str,
+) -> dict[str, pd.DataFrame]:
+    if callable(getattr(evaluator, "evaluate_many", None)):
+        evaluation_waves = _outer_evaluation_waves(frozen)
+    else:
+        # Preserve the pre-batch call sequence for single-request evaluators.
+        evaluation_waves = (tuple(frozen.items()),)
+    outer_results: dict[str, pd.DataFrame] = {}
+    for wave in evaluation_waves:
+        for name, evaluated in _evaluate_many(
+            evaluator,
+            wave,
+            side=side,
+            days=days,
+            fold_id=fold_id,
+            stage="outer_oof",
+            panel_role=panel_role,
+        ):
+            if name in outer_results:
+                raise NestedOofExecutionError(
+                    f"outer candidate {name!r} was evaluated more than once"
+                )
+            outer_results[name] = evaluated
+    if tuple(outer_results) != tuple(
+        name for wave in evaluation_waves for name, _candidate in wave
+    ):
+        raise NestedOofExecutionError("outer batch result order drifted")
+    if set(outer_results) != set(frozen):
+        raise NestedOofExecutionError("outer batch candidate census drifted")
+    return {name: outer_results[name] for name in frozen}
 
 
 def _identified_equal_day_mean(rows: pd.DataFrame) -> float:
@@ -2464,18 +2720,17 @@ def run_nested_chronological_oof(
                 "candidate_replaced_by_baseline_before_outer_oof": False,
             }
 
-            outer_results: dict[str, pd.DataFrame] = {}
+            outer_results = _evaluate_outer_candidates(
+                evaluator,
+                frozen,
+                side=side,
+                days=outer["test_days"],
+                fold_id=outer_id,
+                panel_role=config.panel_role,
+            )
+
             for name, candidate in frozen.items():
-                evaluated = _evaluate(
-                    evaluator,
-                    candidate,
-                    side=side,
-                    days=outer["test_days"],
-                    fold_id=outer_id,
-                    stage="outer_oof",
-                    panel_role=config.panel_role,
-                )
-                outer_results[name] = evaluated
+                evaluated = outer_results[name]
                 oof_parts.append(evaluated)
                 policies_for_stability.setdefault((side, name), []).append(
                     {
@@ -2784,6 +3039,7 @@ __all__ = [
     "OOF_EVIDENCE_SCOPE",
     "PANEL_ROLE",
     "RISK_METRIC_COLUMNS",
+    "BatchSequentialPolicyEvaluator",
     "CandidateLadderEntry",
     "ContinuousComparatorEntry",
     "EvaluationRequest",
@@ -2796,6 +3052,7 @@ __all__ = [
     "NestedOofExecutionError",
     "NestedOofExecutionResult",
     "NestedOofPanel",
+    "SequentialEvaluationResult",
     "SequentialPolicyEvaluator",
     "bind_fold_scoped_one_shot_labels",
     "run_nested_chronological_oof",

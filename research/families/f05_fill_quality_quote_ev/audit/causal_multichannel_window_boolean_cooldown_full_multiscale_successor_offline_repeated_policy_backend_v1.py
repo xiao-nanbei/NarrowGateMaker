@@ -350,6 +350,24 @@ class CanonicalSequentialReplayResult:
     receipt: Mapping[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class CanonicalSequentialReplayBatchRequest:
+    """One independently bound request submitted to the adapter's global pool."""
+
+    request_sha256: str
+    replay_request: CanonicalSequentialReplayRequest
+    replay_inputs: pd.DataFrame
+    expected_receipt: Mapping[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalSequentialReplayBatchResult:
+    """One adapter result identified independently of completion order."""
+
+    request_sha256: str
+    result: CanonicalSequentialReplayResult
+
+
 class CanonicalReplayAdapter(Protocol):
     identity: str
     artifact_sha256: str
@@ -388,6 +406,13 @@ class CanonicalReplayAdapter(Protocol):
         request: CanonicalSequentialReplayRequest,
         replay_inputs: pd.DataFrame,
     ) -> CanonicalSequentialReplayResult: ...
+
+
+class CanonicalBatchReplayAdapter(Protocol):
+    def evaluate_repeated_policies(
+        self,
+        requests: Sequence[CanonicalSequentialReplayBatchRequest],
+    ) -> Sequence[CanonicalSequentialReplayBatchResult]: ...
 
 
 def _build_fold_manifest(
@@ -1048,7 +1073,10 @@ class CanonicalSequentialEvaluator:
         self.adapter = _validate_adapter_shape(adapter)
         self.receipts: list[Mapping[str, Any]] = []
 
-    def __call__(self, request: nested.EvaluationRequest) -> pd.DataFrame:
+    def _prepare_request(
+        self,
+        request: nested.EvaluationRequest,
+    ) -> CanonicalSequentialReplayBatchRequest:
         if not isinstance(request, nested.EvaluationRequest):
             raise OfflineRepeatedPolicyBackendError("sequential evaluator received a custom request")
         side = _normalize_side(request.side)
@@ -1066,14 +1094,34 @@ class CanonicalSequentialEvaluator:
             replay_input_sha256=_frame_sha256(replay_inputs),
             bindings=self.mechanics.bindings,
         )
-        result = self.adapter.evaluate_repeated_policy(adapter_request, replay_inputs)
-        if not isinstance(result, CanonicalSequentialReplayResult):
-            raise OfflineRepeatedPolicyBackendError("sequential replay returned a custom payload")
         expected_receipt = build_sequential_replay_receipt(
             adapter_request,
             adapter_identity=self.adapter.identity,
             adapter_artifact_sha256=self.adapter.artifact_sha256,
         )
+        return CanonicalSequentialReplayBatchRequest(
+            request_sha256=request.request_sha256,
+            replay_request=adapter_request,
+            replay_inputs=replay_inputs,
+            expected_receipt=expected_receipt,
+        )
+
+    def _validate_result(
+        self,
+        request: CanonicalSequentialReplayBatchRequest,
+        result: CanonicalSequentialReplayResult,
+    ) -> pd.DataFrame:
+        if not isinstance(result, CanonicalSequentialReplayResult):
+            raise OfflineRepeatedPolicyBackendError("sequential replay returned a custom payload")
+        expected_receipt = build_sequential_replay_receipt(
+            request.replay_request,
+            adapter_identity=self.adapter.identity,
+            adapter_artifact_sha256=self.adapter.artifact_sha256,
+        )
+        if dict(request.expected_receipt) != expected_receipt:
+            raise OfflineRepeatedPolicyBackendError(
+                "sequential replay bound receipt drifted"
+            )
         if dict(result.receipt) != expected_receipt:
             raise OfflineRepeatedPolicyBackendError("sequential replay receipt drifted")
         if not isinstance(result.rows, pd.DataFrame):
@@ -1090,11 +1138,85 @@ class CanonicalSequentialEvaluator:
                 raise OfflineRepeatedPolicyBackendError(
                     f"sequential replay row binding drifted: {column}"
                 )
-        validated = nested._validate_evaluation(result.rows, request)
+        validated = nested._validate_evaluation(
+            result.rows,
+            request.replay_request.evaluation_request,
+        )
         if validated["one_shot_effect_aggregation_used"].astype(bool).any():
             raise OfflineRepeatedPolicyBackendError("one-shot aggregation is forbidden")
-        self.receipts.append(expected_receipt)
         return validated
+
+    def __call__(self, request: nested.EvaluationRequest) -> pd.DataFrame:
+        prepared = self._prepare_request(request)
+        result = self.adapter.evaluate_repeated_policy(
+            prepared.replay_request,
+            prepared.replay_inputs,
+        )
+        validated = self._validate_result(prepared, result)
+        self.receipts.append(dict(prepared.expected_receipt))
+        return validated
+
+    def __getattr__(self, name: str) -> Any:
+        if name == "evaluate_many" and callable(
+            getattr(self.adapter, "evaluate_repeated_policies", None)
+        ):
+            return self._evaluate_many
+        raise AttributeError(name)
+
+    def _evaluate_many(
+        self,
+        requests: Sequence[nested.EvaluationRequest],
+    ) -> tuple[nested.SequentialEvaluationResult, ...]:
+        normalized = nested._validate_evaluation_request_batch(requests)
+        prepared = tuple(self._prepare_request(request) for request in normalized)
+        evaluate_repeated_policies = getattr(
+            self.adapter, "evaluate_repeated_policies", None
+        )
+        if not callable(evaluate_repeated_policies):  # pragma: no cover - capability guard.
+            raise OfflineRepeatedPolicyBackendError(
+                "canonical replay adapter lacks batch evaluation capability"
+            )
+        raw_results = evaluate_repeated_policies(prepared)
+        if isinstance(raw_results, (str, bytes)) or not isinstance(
+            raw_results, Sequence
+        ):
+            raise OfflineRepeatedPolicyBackendError(
+                "sequential batch replay returned a custom result collection"
+            )
+        results = tuple(raw_results)
+        if not all(
+            isinstance(result, CanonicalSequentialReplayBatchResult)
+            for result in results
+        ):
+            raise OfflineRepeatedPolicyBackendError(
+                "sequential batch replay returned a custom result"
+            )
+        result_sha256s = [result.request_sha256 for result in results]
+        if len(result_sha256s) != len(set(result_sha256s)):
+            raise OfflineRepeatedPolicyBackendError(
+                "sequential batch replay returned a duplicate request"
+            )
+        expected = {request.request_sha256: request for request in prepared}
+        unexpected = sorted(set(result_sha256s) - set(expected))
+        missing = sorted(set(expected) - set(result_sha256s))
+        if unexpected or missing:
+            raise OfflineRepeatedPolicyBackendError(
+                "sequential batch replay request census drifted: "
+                f"missing={missing}, unexpected={unexpected}"
+            )
+        by_request = {result.request_sha256: result.result for result in results}
+        validated = tuple(
+            self._validate_result(request, by_request[request.request_sha256])
+            for request in prepared
+        )
+        self.receipts.extend(dict(request.expected_receipt) for request in prepared)
+        return tuple(
+            nested.SequentialEvaluationResult(
+                request_sha256=request.request_sha256,
+                rows=rows,
+            )
+            for request, rows in zip(prepared, validated, strict=True)
+        )
 
 
 def _blocked_bundle_result(
@@ -1419,10 +1541,13 @@ __all__ = [
     "BLOCKED_STATUS",
     "CANONICAL_FIELDS_BLOCKED_STATUS",
     "CANONICAL_REPLAY_ADAPTER_IDENTITY",
+    "CanonicalBatchReplayAdapter",
     "CanonicalFoldScopedLabelProvider",
     "CanonicalOneShotReplayResult",
     "CanonicalOuterTrainReplayRequest",
     "CanonicalSequentialEvaluator",
+    "CanonicalSequentialReplayBatchRequest",
+    "CanonicalSequentialReplayBatchResult",
     "CanonicalSequentialReplayRequest",
     "CanonicalSequentialReplayResult",
     "FormalExecutionBindings",
