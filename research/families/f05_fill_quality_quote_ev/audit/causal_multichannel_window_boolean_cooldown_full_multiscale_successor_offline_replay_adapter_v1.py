@@ -26,7 +26,7 @@ import shutil
 import tempfile
 import time
 import uuid
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
@@ -60,6 +60,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1 as successor,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_offline_day_input_cache_v1 as day_input_cache,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_runtime_policy as runtime_policy,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
@@ -81,6 +84,9 @@ SAME_MILLISECOND_AMBIGUITY_POLICY = "censor"
 DEFAULT_DAY_WORKERS = 6
 MIN_DAY_WORKERS = 1
 MAX_DAY_WORKERS = 8
+GLOBAL_SEQUENTIAL_WORKER_TOKENS = 10
+DEFAULT_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
+MAX_GLOBAL_POLICY_DAY_WORKERS = GLOBAL_SEQUENTIAL_WORKER_TOKENS
 FORMAL_SHARED_PREFIX_ARM_WORKERS = 8
 REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-06-29",
@@ -92,9 +98,15 @@ REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
 DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
 DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
+B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
+EXECUTOR_ACCELERATION_IDENTITY = (
+    "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_executor_acceleration_v1"
+)
+DAY_INPUT_MMAP_BINDING_SCHEMA = f"{EXECUTOR_ACCELERATION_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
 SEQUENTIAL_STAGES = frozenset({"inner_oof", "outer_oof"})
 _ONE_SHOT_FOLD_SCOPE_COLUMNS = frozenset({"fold_row_role", "outer_fold_id"})
+_GLOBAL_POLICY_DAY_WORKER_ENV = "NARROWGATE_F05_GLOBAL_POLICY_DAY_WORKER"
 
 FIXED_ONE_SHOT_REPLAY_MODULE = (
     "research.families.f05_fill_quality_quote_ev.audit."
@@ -129,8 +141,7 @@ FIXED_OBSERVATION_CACHE_MODULE = (
     "causal_multichannel_window_boolean_cooldown_native_observation_cache"
 )
 FIXED_OWNER_PREDICATE_BUNDLE_PATH = (
-    "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/"
-    "predicate_bundle.json"
+    "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/predicate_bundle.json"
 )
 FIXED_OWNER_POLICY_PATH = (
     "${NARROWGATE_ROOT}/models/private/f05_boolean_cooldown_owner_v1/policy.json"
@@ -222,13 +233,10 @@ _FORBIDDEN_INJECTION_PARTS = (
 _M2_INCREMENTAL_CHANNELS = frozenset(
     spec.name
     for spec in feature_schema.CHANNELS_BY_BLOCK["M2"]
-    if spec.name
-    not in {item.name for item in feature_schema.CHANNELS_BY_BLOCK["M1"]}
+    if spec.name not in {item.name for item in feature_schema.CHANNELS_BY_BLOCK["M1"]}
 )
 _NON_MID_CHANNELS = frozenset(
-    spec.name
-    for spec in feature_schema.CHANNELS_BY_BLOCK["M2"]
-    if spec.name != "mid_usdc_per_btc"
+    spec.name for spec in feature_schema.CHANNELS_BY_BLOCK["M2"] if spec.name != "mid_usdc_per_btc"
 )
 _E2_SEMANTIC_TOKENS: Mapping[str, tuple[str, ...]] = {
     "direction": (
@@ -373,9 +381,7 @@ def _require_sha(value: Any, *, label: str) -> str:
     return digest
 
 
-def _load_frozen_duration_action_contract() -> tuple[
-    Mapping[str, Any], dict[str, tuple[Any, ...]]
-]:
+def _load_frozen_duration_action_contract() -> tuple[Mapping[str, Any], dict[str, tuple[Any, ...]]]:
     """Load only the frozen outcome-blind duration action vocabulary.
 
     The historical study's full loader also opens its old baseline pointer and
@@ -409,8 +415,7 @@ def _load_frozen_duration_action_contract() -> tuple[
         )
         if (
             contract.get("identity") != study.IDENTITY
-            or contract.get("schema_version")
-            != f"{study.IDENTITY}.outcome_blind_inputs.v1"
+            or contract.get("schema_version") != f"{study.IDENTITY}.outcome_blind_inputs.v1"
         ):
             raise ValueError("outcome-blind duration identity drifted")
         permissions = contract.get("permissions")
@@ -499,9 +504,7 @@ def _normalize_side(value: Any) -> str:
     return side
 
 
-def _requires_control_prefix_parity(
-    side: Any, policy_id: Any, exact_owner_action: Any
-) -> bool:
+def _requires_control_prefix_parity(side: Any, policy_id: Any, exact_owner_action: Any) -> bool:
     normalized_side = _normalize_side(side)
     normalized_policy = str(policy_id).strip()
     normalized_owner = str(exact_owner_action).strip()
@@ -523,6 +526,43 @@ def _validated_worker_count(value: Any = DEFAULT_DAY_WORKERS) -> int:
             f"day replay workers must be in [{MIN_DAY_WORKERS}, {MAX_DAY_WORKERS}]"
         )
     return workers
+
+
+def _validated_global_worker_count(
+    value: Any = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+) -> int:
+    if isinstance(value, bool):
+        raise OfflineReplayAdapterError("global worker token count cannot be Boolean")
+    try:
+        workers = int(value)
+    except (TypeError, ValueError) as exc:
+        raise OfflineReplayAdapterError("global worker token count is not an integer") from exc
+    if workers < 1 or workers > MAX_GLOBAL_POLICY_DAY_WORKERS:
+        raise OfflineReplayAdapterError(
+            f"global worker tokens must be in [1, {MAX_GLOBAL_POLICY_DAY_WORKERS}]"
+        )
+    return workers
+
+
+def _json_safe_cache_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {
+            str(key): _json_safe_cache_value(item)
+            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_cache_value(item) for item in value]
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    scalar = getattr(value, "item", None)
+    if callable(scalar):
+        normalized = scalar()
+        if normalized is value:
+            raise OfflineReplayAdapterError("B0 cache value could not be normalized")
+        return _json_safe_cache_value(normalized)
+    raise OfflineReplayAdapterError(f"B0 cache value has unsupported type: {type(value).__name__}")
 
 
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -597,9 +637,285 @@ class DayReplayCacheKey:
 
     @property
     def cache_key_sha256(self) -> str:
-        return _canonical_sha256(
-            {"schema_version": DAY_CACHE_SCHEMA, **self.payload()}
+        return _canonical_sha256({"schema_version": DAY_CACHE_SCHEMA, **self.payload()})
+
+
+@dataclass(frozen=True, slots=True)
+class B0ControlCacheKey:
+    """Candidate-independent identity for one exact-owner full-day control path."""
+
+    adapter_artifact_sha256: str
+    source_manifest_sha256: str
+    panel_manifest_sha256: str
+    fold_manifest_sha256: str
+    execution_manifest_sha256: str
+    exact_owner_policy_sha256: str
+    exact_owner_predicate_bundle_sha256: str
+    exact_owner_private_config_sha256: str
+    fixed_bridge_sha256: str
+    replay_engine: str
+    queue_identity: str
+    same_millisecond_ambiguity_policy: str
+    side: str
+    stage: str
+    fold_id: str
+    utc_day: str
+    day_input_sha256: str
+    canonical_day_input_binding_sha256: str
+    market_window_identity_sha256: str
+    model_overlay_identity_sha256: str
+    latency_identity_sha256: str
+    queue_random_identity_sha256: str
+    replay_input_receipt_sha256: str
+    target_day_semantics_sha256: str
+
+    def __post_init__(self) -> None:
+        for name in (
+            "adapter_artifact_sha256",
+            "source_manifest_sha256",
+            "panel_manifest_sha256",
+            "fold_manifest_sha256",
+            "execution_manifest_sha256",
+            "exact_owner_policy_sha256",
+            "exact_owner_predicate_bundle_sha256",
+            "exact_owner_private_config_sha256",
+            "fixed_bridge_sha256",
+            "day_input_sha256",
+            "canonical_day_input_binding_sha256",
+            "market_window_identity_sha256",
+            "model_overlay_identity_sha256",
+            "latency_identity_sha256",
+            "queue_random_identity_sha256",
+            "replay_input_receipt_sha256",
+            "target_day_semantics_sha256",
+        ):
+            _require_sha(getattr(self, name), label=name)
+        if self.exact_owner_policy_sha256 != offline.ACTIVE_OWNER_POLICY_SHA256:
+            raise OfflineReplayAdapterError("B0 control owner policy SHA256 drifted")
+        if self.exact_owner_predicate_bundle_sha256 != offline.ACTIVE_PREDICATE_BUNDLE_SHA256:
+            raise OfflineReplayAdapterError("B0 control predicate bundle SHA256 drifted")
+        if self.exact_owner_private_config_sha256 != offline.ACTIVE_PRIVATE_CONFIG_SHA256:
+            raise OfflineReplayAdapterError("B0 control private config SHA256 drifted")
+        if self.replay_engine != REPLAY_ENGINE:
+            raise OfflineReplayAdapterError("B0 control replay engine drifted")
+        if self.queue_identity != QUEUE_IDENTITY:
+            raise OfflineReplayAdapterError("B0 control queue identity drifted")
+        if self.same_millisecond_ambiguity_policy != SAME_MILLISECOND_AMBIGUITY_POLICY:
+            raise OfflineReplayAdapterError("B0 control same-millisecond semantics drifted")
+        object.__setattr__(self, "side", _normalize_side(self.side))
+        object.__setattr__(self, "utc_day", _normalize_day(self.utc_day))
+        if self.stage not in SEQUENTIAL_STAGES or not str(self.fold_id).strip():
+            raise OfflineReplayAdapterError("B0 control fold scope drifted")
+
+    def payload(self) -> dict[str, str]:
+        return asdict(self)
+
+    @property
+    def cache_key_sha256(self) -> str:
+        return _canonical_sha256({"schema_version": B0_CONTROL_CACHE_SCHEMA, **self.payload()})
+
+
+@dataclass(frozen=True, slots=True)
+class B0ControlPath:
+    """Exact B0 arm output admitted independently of any candidate policy."""
+
+    summary: Mapping[str, Any]
+    campaigns: pd.DataFrame
+    fills: pd.DataFrame
+    decisions: pd.DataFrame
+
+
+@dataclass(frozen=True, slots=True)
+class SequentialReplayAccelerationOptions:
+    """Explicit opt-in for bulk-only immutable day-input mmap acceleration."""
+
+    day_input_cache_root: Path
+    identity: str = EXECUTOR_ACCELERATION_IDENTITY
+    cache_module_identity: str = day_input_cache.CACHE_IDENTITY
+    cache_module_artifact_sha256: str = ""
+
+    def __post_init__(self) -> None:
+        if self.identity != EXECUTOR_ACCELERATION_IDENTITY:
+            raise OfflineReplayAdapterError("executor acceleration identity drifted")
+        if self.cache_module_identity != day_input_cache.CACHE_IDENTITY:
+            raise OfflineReplayAdapterError("day-input cache module identity drifted")
+        observed_module_sha = _file_sha256(Path(day_input_cache.__file__).resolve())
+        supplied_module_sha = self.cache_module_artifact_sha256 or observed_module_sha
+        if (
+            _require_sha(
+                supplied_module_sha,
+                label="day-input cache module artifact SHA256",
+            )
+            != observed_module_sha
+        ):
+            raise OfflineReplayAdapterError("day-input cache module artifact drifted")
+        object.__setattr__(self, "cache_module_artifact_sha256", observed_module_sha)
+        root = Path(self.day_input_cache_root).expanduser().resolve()
+        day_input_cache.ReplayDayInputCache(root)
+        object.__setattr__(self, "day_input_cache_root", root)
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "identity": self.identity,
+            "cache_module_identity": self.cache_module_identity,
+            "cache_module_artifact_sha256": self.cache_module_artifact_sha256,
+            "day_input_cache_root": str(self.day_input_cache_root),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DayInputMmapBinding:
+    """Verified mmap bundle bound to one candidate-independent target day."""
+
+    acceleration_identity: str
+    cache_module_identity: str
+    cache_module_artifact_sha256: str
+    day_input_cache_root: str
+    materialization_key_sha256: str
+    canonical_input_binding_sha256: str
+    identity: day_input_cache.DayInputCacheIdentity
+    schema: day_input_cache.ReplayDayInputSchema
+    binding: day_input_cache.DayInputCacheBinding
+
+    def __post_init__(self) -> None:
+        options = SequentialReplayAccelerationOptions(
+            day_input_cache_root=Path(self.day_input_cache_root),
+            identity=self.acceleration_identity,
+            cache_module_identity=self.cache_module_identity,
+            cache_module_artifact_sha256=self.cache_module_artifact_sha256,
         )
+        object.__setattr__(self, "day_input_cache_root", str(options.day_input_cache_root))
+        _require_sha(self.materialization_key_sha256, label="mmap materialization key SHA256")
+        _require_sha(
+            self.canonical_input_binding_sha256,
+            label="mmap canonical input binding SHA256",
+        )
+        if not isinstance(self.identity, day_input_cache.DayInputCacheIdentity):
+            raise OfflineReplayAdapterError("mmap day-input identity type drifted")
+        if not isinstance(self.schema, day_input_cache.ReplayDayInputSchema):
+            raise OfflineReplayAdapterError("mmap day-input schema type drifted")
+        if not isinstance(self.binding, day_input_cache.DayInputCacheBinding):
+            raise OfflineReplayAdapterError("mmap day-input binding type drifted")
+        if self.identity.request_identity_sha256 != self.binding.request_identity_sha256:
+            raise OfflineReplayAdapterError("mmap request identity drifted")
+        if self.schema.schema_sha256 != self.binding.schema_sha256:
+            raise OfflineReplayAdapterError("mmap schema identity drifted")
+
+    def payload(self) -> dict[str, Any]:
+        body: dict[str, Any] = {
+            "schema_version": DAY_INPUT_MMAP_BINDING_SCHEMA,
+            "acceleration_identity": self.acceleration_identity,
+            "cache_module_identity": self.cache_module_identity,
+            "cache_module_artifact_sha256": self.cache_module_artifact_sha256,
+            "day_input_cache_root": self.day_input_cache_root,
+            "materialization_key_sha256": self.materialization_key_sha256,
+            "canonical_input_binding_sha256": self.canonical_input_binding_sha256,
+            "identity": self.identity.payload(),
+            "schema": self.schema.payload(),
+            "binding": self.binding.payload(),
+        }
+        body["receipt_sha256"] = _document_sha256(body, "receipt_sha256")
+        return body
+
+    @property
+    def receipt_sha256(self) -> str:
+        return str(self.payload()["receipt_sha256"])
+
+
+def _acceleration_options_from_payload(value: Any) -> SequentialReplayAccelerationOptions:
+    if not isinstance(value, Mapping):
+        raise OfflineReplayAdapterError("executor acceleration payload is malformed")
+    expected = {
+        "identity",
+        "cache_module_identity",
+        "cache_module_artifact_sha256",
+        "day_input_cache_root",
+    }
+    if set(value) != expected:
+        raise OfflineReplayAdapterError("executor acceleration payload schema drifted")
+    return SequentialReplayAccelerationOptions(
+        day_input_cache_root=Path(str(value["day_input_cache_root"])),
+        identity=str(value["identity"]),
+        cache_module_identity=str(value["cache_module_identity"]),
+        cache_module_artifact_sha256=str(value["cache_module_artifact_sha256"]),
+    )
+
+
+def _day_input_mmap_binding_from_payload(value: Any) -> DayInputMmapBinding:
+    if not isinstance(value, Mapping):
+        raise OfflineReplayAdapterError("day-input mmap binding is malformed")
+    expected = {
+        "schema_version",
+        "acceleration_identity",
+        "cache_module_identity",
+        "cache_module_artifact_sha256",
+        "day_input_cache_root",
+        "materialization_key_sha256",
+        "canonical_input_binding_sha256",
+        "identity",
+        "schema",
+        "binding",
+        "receipt_sha256",
+    }
+    payload = dict(value)
+    if (
+        set(payload) != expected
+        or payload.get("schema_version") != DAY_INPUT_MMAP_BINDING_SCHEMA
+        or payload.get("receipt_sha256") != _document_sha256(payload, "receipt_sha256")
+    ):
+        raise OfflineReplayAdapterError("day-input mmap binding receipt drifted")
+    identity_payload = payload["identity"]
+    schema_payload = payload["schema"]
+    binding_payload = payload["binding"]
+    if not all(
+        isinstance(item, Mapping) for item in (identity_payload, schema_payload, binding_payload)
+    ):
+        raise OfflineReplayAdapterError("day-input mmap nested binding is malformed")
+    try:
+        identity = day_input_cache.DayInputCacheIdentity.create(
+            utc_day=str(identity_payload["utc_day"]),
+            continuation_day=str(identity_payload["continuation_day"]),
+            market_id=str(identity_payload["market_id"]),
+            source_receipts=dict(identity_payload["source_receipts"]),
+            clock_identity=str(identity_payload["clock_identity"]),
+            clock_identity_sha256=str(identity_payload["clock_identity_sha256"]),
+            engine_identity=str(identity_payload["engine_identity"]),
+            engine_identity_sha256=str(identity_payload["engine_identity_sha256"]),
+            market_window_identity_sha256=str(identity_payload["market_window_identity_sha256"]),
+            model_overlay_identity_sha256=str(identity_payload["model_overlay_identity_sha256"]),
+            latency_identity_sha256=str(identity_payload["latency_identity_sha256"]),
+            queue_random_identity_sha256=str(identity_payload["queue_random_identity_sha256"]),
+            replay_input_receipt_sha256=str(identity_payload["replay_input_receipt_sha256"]),
+            params_identity_sha256=str(identity_payload["params_identity_sha256"]),
+        )
+        schema = day_input_cache.ReplayDayInputSchema(
+            ml_main_array_count=int(schema_payload["ml_main_array_count"]),
+            ml_feature_keys=tuple(schema_payload["ml_feature_keys"]),
+            trades_columns=tuple(schema_payload["trades_columns"]),
+            bbo_columns=tuple(schema_payload["bbo_columns"]),
+            l2_columns=tuple(schema_payload["l2_columns"]),
+            derived_columns=tuple(schema_payload["derived_columns"]),
+        )
+        binding = day_input_cache.DayInputCacheBinding(**dict(binding_payload))
+    except (KeyError, TypeError, ValueError, day_input_cache.OfflineDayInputCacheError) as exc:
+        raise OfflineReplayAdapterError("day-input mmap nested binding drifted") from exc
+    if (
+        identity.payload() != dict(identity_payload)
+        or schema.payload() != dict(schema_payload)
+        or binding.payload() != dict(binding_payload)
+    ):
+        raise OfflineReplayAdapterError("day-input mmap nested binding schema drifted")
+    return DayInputMmapBinding(
+        acceleration_identity=str(payload["acceleration_identity"]),
+        cache_module_identity=str(payload["cache_module_identity"]),
+        cache_module_artifact_sha256=str(payload["cache_module_artifact_sha256"]),
+        day_input_cache_root=str(payload["day_input_cache_root"]),
+        materialization_key_sha256=str(payload["materialization_key_sha256"]),
+        canonical_input_binding_sha256=str(payload["canonical_input_binding_sha256"]),
+        identity=identity,
+        schema=schema,
+        binding=binding,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,12 +982,19 @@ class DayReplayCache:
         self.global_arm_pool = self.root / "shared_prefix_global_arm_pool"
         self.semantic_one_shot = self.root / "semantic_one_shot"
         self.semantic_locks = self.root / "semantic_locks"
+        self.b0_control_entries = self.root / "b0_control_entries"
+        self.b0_control_locks = self.root / "b0_control_locks"
+        self.day_input_mmap_bindings = self.root / "day_input_mmap_bindings"
+        self.day_input_mmap_locks = self.root / "day_input_mmap_locks"
 
     def _entry(self, key: DayReplayCacheKey) -> Path:
         return self.entries / key.cache_key_sha256
 
     def _semantic_entry(self, key: OneShotSemanticCacheKey) -> Path:
         return self.semantic_one_shot / f"{key.semantic_key_sha256}.json"
+
+    def _b0_control_entry(self, key: B0ControlCacheKey) -> Path:
+        return self.b0_control_entries / key.cache_key_sha256
 
     @contextmanager
     def lock(self, key: DayReplayCacheKey) -> Iterator[None]:
@@ -688,6 +1011,32 @@ class DayReplayCache:
     def semantic_lock(self, key: OneShotSemanticCacheKey) -> Iterator[None]:
         self.semantic_locks.mkdir(parents=True, exist_ok=True)
         path = self.semantic_locks / f"{key.semantic_key_sha256}.lock"
+        with path.open("a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def b0_control_lock(self, key: B0ControlCacheKey) -> Iterator[None]:
+        self.b0_control_locks.mkdir(parents=True, exist_ok=True)
+        path = self.b0_control_locks / f"{key.cache_key_sha256}.lock"
+        with path.open("a+b") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @contextmanager
+    def day_input_mmap_lock(self, materialization_key_sha256: str) -> Iterator[None]:
+        key = _require_sha(
+            materialization_key_sha256,
+            label="mmap materialization key SHA256",
+        )
+        self.day_input_mmap_locks.mkdir(parents=True, exist_ok=True)
+        path = self.day_input_mmap_locks / f"{key}.lock"
         with path.open("a+b") as handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
@@ -748,8 +1097,7 @@ class DayReplayCache:
             or payload.get("cache_key_sha256") != key.cache_key_sha256
             or payload.get("cache_key") != key.payload()
             or payload.get("complete") is not True
-            or payload.get("receipt_sha256")
-            != _document_sha256(payload, "receipt_sha256")
+            or payload.get("receipt_sha256") != _document_sha256(payload, "receipt_sha256")
         ):
             raise OfflineReplayAdapterError("day replay cache manifest drifted")
         return payload
@@ -812,8 +1160,19 @@ class DayReplayCache:
             evidence=evidence,
         )
 
-    def admit_sequential(self, key: DayReplayCacheKey, rows: pd.DataFrame) -> None:
-        self._admit_frames(key, kind="sequential", frames={"rows": rows})
+    def admit_sequential(
+        self,
+        key: DayReplayCacheKey,
+        rows: pd.DataFrame,
+        *,
+        evidence: Mapping[str, Any] | None = None,
+    ) -> None:
+        self._admit_frames(
+            key,
+            kind="sequential",
+            frames={"rows": rows},
+            evidence=evidence,
+        )
 
     def _load_frames(
         self,
@@ -825,9 +1184,7 @@ class DayReplayCache:
         manifest = self._manifest(key)
         if manifest is None:
             return None
-        if manifest.get("kind") != expected_kind or set(manifest.get("files", {})) != set(
-            names
-        ):
+        if manifest.get("kind") != expected_kind or set(manifest.get("files", {})) != set(names):
             raise OfflineReplayAdapterError("day replay cache payload kind drifted")
         loaded: list[pd.DataFrame] = []
         for name in names:
@@ -843,19 +1200,13 @@ class DayReplayCache:
             loaded.append(frame)
         return tuple(loaded)
 
-    def load_one_shot(
-        self, key: DayReplayCacheKey
-    ) -> tuple[pd.DataFrame, pd.DataFrame] | None:
-        loaded = self._load_frames(
-            key, expected_kind="one_shot", names=("outcomes", "supported")
-        )
+    def load_one_shot(self, key: DayReplayCacheKey) -> tuple[pd.DataFrame, pd.DataFrame] | None:
+        loaded = self._load_frames(key, expected_kind="one_shot", names=("outcomes", "supported"))
         if loaded is None:
             return None
         return loaded[0], loaded[1]
 
-    def _semantic_manifest(
-        self, key: OneShotSemanticCacheKey
-    ) -> dict[str, Any] | None:
+    def _semantic_manifest(self, key: OneShotSemanticCacheKey) -> dict[str, Any] | None:
         path = self._semantic_entry(key)
         if not path.is_file():
             return None
@@ -865,8 +1216,7 @@ class DayReplayCache:
             or payload.get("semantic_key_sha256") != key.semantic_key_sha256
             or payload.get("semantic_key") != key.payload()
             or payload.get("complete") is not True
-            or payload.get("receipt_sha256")
-            != _document_sha256(payload, "receipt_sha256")
+            or payload.get("receipt_sha256") != _document_sha256(payload, "receipt_sha256")
         ):
             raise OfflineReplayAdapterError("one-shot semantic cache manifest drifted")
         source_payload = payload.get("source_cache_key")
@@ -875,9 +1225,7 @@ class DayReplayCache:
         try:
             source_key = DayReplayCacheKey(**dict(source_payload))
         except (TypeError, OfflineReplayAdapterError) as exc:
-            raise OfflineReplayAdapterError(
-                "semantic cache source key is malformed"
-            ) from exc
+            raise OfflineReplayAdapterError("semantic cache source key is malformed") from exc
         if payload.get("source_cache_key_sha256") != source_key.cache_key_sha256:
             raise OfflineReplayAdapterError("semantic cache source key hash drifted")
         self._validate_semantic_source_key(source_key, key)
@@ -885,8 +1233,7 @@ class DayReplayCache:
         if (
             source_manifest is None
             or source_manifest.get("kind") != "one_shot"
-            or source_manifest.get("receipt_sha256")
-            != payload.get("source_cache_receipt_sha256")
+            or source_manifest.get("receipt_sha256") != payload.get("source_cache_receipt_sha256")
         ):
             raise OfflineReplayAdapterError("semantic cache source receipt drifted")
         expected_frames = payload.get("source_frame_sha256")
@@ -920,9 +1267,7 @@ class DayReplayCache:
             "utc_day",
         ):
             if getattr(source_key, name) != getattr(semantic_key, name):
-                raise OfflineReplayAdapterError(
-                    f"semantic cache source {name} drifted"
-                )
+                raise OfflineReplayAdapterError(f"semantic cache source {name} drifted")
 
     def register_one_shot_semantic(
         self,
@@ -944,17 +1289,13 @@ class DayReplayCache:
             or source_evidence.get("semantic_day_input_sha256")
             != semantic_key.semantic_day_input_sha256
         ):
-            raise OfflineReplayAdapterError(
-                "one-shot source does not bind its semantic day input"
-            )
+            raise OfflineReplayAdapterError("one-shot source does not bind its semantic day input")
         with self.semantic_lock(semantic_key):
             existing = self._semantic_manifest(semantic_key)
             if existing is not None:
                 loaded = self.load_semantic_one_shot(semantic_key)
                 if loaded is None:
-                    raise OfflineReplayAdapterError(
-                        "registered semantic cache could not be loaded"
-                    )
+                    raise OfflineReplayAdapterError("registered semantic cache could not be loaded")
                 for observed, expected in zip(source_frames, loaded[:2], strict=True):
                     if _frame_sha256(observed) != _frame_sha256(expected):
                         raise OfflineReplayAdapterError(
@@ -962,8 +1303,7 @@ class DayReplayCache:
                         )
                 return
             frame_sha256 = {
-                name: binding["frame_sha256"]
-                for name, binding in source_manifest["files"].items()
+                name: binding["frame_sha256"] for name, binding in source_manifest["files"].items()
             }
             body: dict[str, Any] = {
                 "schema_version": ONE_SHOT_SEMANTIC_CACHE_SCHEMA,
@@ -1006,10 +1346,319 @@ class DayReplayCache:
         loaded = self._load_frames(key, expected_kind="sequential", names=("rows",))
         return None if loaded is None else loaded[0]
 
+    def _b0_control_manifest(self, key: B0ControlCacheKey) -> dict[str, Any] | None:
+        path = self._b0_control_entry(key) / "manifest.json"
+        if not path.is_file():
+            return None
+        payload = _read_json(path, label="B0 control cache manifest")
+        if (
+            payload.get("schema_version") != B0_CONTROL_CACHE_SCHEMA
+            or payload.get("kind") != "exact_b0_control_full_day_path"
+            or payload.get("cache_key_sha256") != key.cache_key_sha256
+            or payload.get("cache_key") != key.payload()
+            or payload.get("candidate_policy_bound") is not False
+            or payload.get("complete") is not True
+            or payload.get("atomic_admission") is not True
+            or payload.get("receipt_sha256") != _document_sha256(payload, "receipt_sha256")
+        ):
+            raise OfflineReplayAdapterError("B0 control cache manifest drifted")
+        return payload
+
+    @staticmethod
+    def _validate_b0_control_path(key: B0ControlCacheKey, path: B0ControlPath) -> B0ControlPath:
+        if not isinstance(path, B0ControlPath):
+            raise OfflineReplayAdapterError("B0 control cache payload type drifted")
+        if not isinstance(path.summary, Mapping):
+            raise OfflineReplayAdapterError("B0 control summary is malformed")
+        for name, frame in (
+            ("campaigns", path.campaigns),
+            ("fills", path.fills),
+            ("decisions", path.decisions),
+        ):
+            if not isinstance(frame, pd.DataFrame):
+                raise OfflineReplayAdapterError(f"B0 control {name} frame is malformed")
+        summary = path.summary
+        if (
+            summary.get("engine") != REPLAY_ENGINE
+            or summary.get("python_authoritative") is not True
+            or summary.get("repeated_policy_enabled") is not True
+        ):
+            raise OfflineReplayAdapterError("B0 control execution identity drifted")
+        audit = summary.get("cooldown_duration_policy_audit")
+        if (
+            not isinstance(audit, Mapping)
+            or audit.get("policy_sha256") != key.exact_owner_policy_sha256
+            or audit.get("predicate_bundle_sha256") != key.exact_owner_predicate_bundle_sha256
+        ):
+            raise OfflineReplayAdapterError("B0 control policy audit drifted")
+        if not path.decisions.empty:
+            if (
+                "policy_sha256" not in path.decisions.columns
+                or not path.decisions["policy_sha256"]
+                .astype(str)
+                .eq(key.exact_owner_policy_sha256)
+                .all()
+            ):
+                raise OfflineReplayAdapterError("B0 control decision policy drifted")
+        return path
+
+    def _load_b0_control_unlocked(
+        self, key: B0ControlCacheKey
+    ) -> tuple[B0ControlPath, Mapping[str, Any]] | None:
+        manifest = self._b0_control_manifest(key)
+        if manifest is None:
+            return None
+        root = self._b0_control_entry(key)
+        summary_binding = manifest.get("summary")
+        frame_bindings = manifest.get("frames")
+        if not isinstance(summary_binding, Mapping) or not isinstance(frame_bindings, Mapping):
+            raise OfflineReplayAdapterError("B0 control cache file binding is malformed")
+        summary_path = root / str(summary_binding.get("file", ""))
+        if not summary_path.is_file() or _file_sha256(summary_path) != summary_binding.get(
+            "sha256"
+        ):
+            raise OfflineReplayAdapterError("B0 control summary file hash drifted")
+        summary_payload = _read_json(summary_path, label="B0 control summary")
+        summary = summary_payload.get("summary")
+        if not isinstance(summary, Mapping) or _canonical_sha256(summary) != summary_binding.get(
+            "canonical_sha256"
+        ):
+            raise OfflineReplayAdapterError("B0 control summary identity drifted")
+        frames: dict[str, pd.DataFrame] = {}
+        if set(frame_bindings) != {"campaigns", "fills", "decisions"}:
+            raise OfflineReplayAdapterError("B0 control frame vocabulary drifted")
+        for name in ("campaigns", "fills", "decisions"):
+            binding = frame_bindings[name]
+            if not isinstance(binding, Mapping):
+                raise OfflineReplayAdapterError("B0 control frame binding is malformed")
+            frame_path = root / str(binding.get("file", ""))
+            if not frame_path.is_file() or _file_sha256(frame_path) != binding.get("sha256"):
+                raise OfflineReplayAdapterError(f"B0 control {name} file hash drifted")
+            frame = pd.read_parquet(frame_path)
+            if len(frame) != int(binding.get("rows", -1)) or _frame_sha256(frame) != binding.get(
+                "frame_sha256"
+            ):
+                raise OfflineReplayAdapterError(f"B0 control {name} frame identity drifted")
+            frames[name] = frame
+        control = self._validate_b0_control_path(
+            key,
+            B0ControlPath(
+                summary=dict(summary),
+                campaigns=frames["campaigns"],
+                fills=frames["fills"],
+                decisions=frames["decisions"],
+            ),
+        )
+        evidence = {
+            "cache_key_sha256": key.cache_key_sha256,
+            "cache_receipt_sha256": manifest["receipt_sha256"],
+            "candidate_policy_bound": False,
+        }
+        return control, evidence
+
+    def _admit_b0_control_unlocked(self, key: B0ControlCacheKey, control: B0ControlPath) -> None:
+        control = self._validate_b0_control_path(key, control)
+        final = self._b0_control_entry(key)
+        if self._b0_control_manifest(key) is not None:
+            raise OfflineReplayAdapterError("B0 control cache appeared during admission")
+        final.parent.mkdir(parents=True, exist_ok=True)
+        staging = final.parent / f".{key.cache_key_sha256}.{uuid.uuid4().hex}.partial"
+        staging.mkdir(parents=True, exist_ok=False)
+        try:
+            safe_summary = _json_safe_cache_value(control.summary)
+            if not isinstance(safe_summary, Mapping):
+                raise OfflineReplayAdapterError("B0 control summary normalization failed")
+            summary_path = staging / "summary.json"
+            _atomic_json(summary_path, {"summary": safe_summary})
+            frame_bindings: dict[str, Any] = {}
+            for name, frame in (
+                ("campaigns", control.campaigns),
+                ("fills", control.fills),
+                ("decisions", control.decisions),
+            ):
+                path = staging / f"{name}.parquet"
+                frame.to_parquet(path, index=True)
+                with path.open("rb") as handle:
+                    os.fsync(handle.fileno())
+                frame_bindings[name] = {
+                    "file": path.name,
+                    "sha256": _file_sha256(path),
+                    "rows": int(len(frame)),
+                    "frame_sha256": _frame_sha256(frame),
+                }
+            body: dict[str, Any] = {
+                "schema_version": B0_CONTROL_CACHE_SCHEMA,
+                "kind": "exact_b0_control_full_day_path",
+                "cache_key_sha256": key.cache_key_sha256,
+                "cache_key": key.payload(),
+                "summary": {
+                    "file": summary_path.name,
+                    "sha256": _file_sha256(summary_path),
+                    "canonical_sha256": _canonical_sha256(safe_summary),
+                },
+                "frames": frame_bindings,
+                "candidate_policy_bound": False,
+                "complete": True,
+                "atomic_admission": True,
+            }
+            body["receipt_sha256"] = _document_sha256(body, "receipt_sha256")
+            _atomic_json(staging / "manifest.json", body)
+            os.replace(staging, final)
+        finally:
+            if staging.exists():
+                shutil.rmtree(staging)
+
+    def load_b0_control(
+        self, key: B0ControlCacheKey
+    ) -> tuple[B0ControlPath, Mapping[str, Any]] | None:
+        return self._load_b0_control_unlocked(key)
+
+    def load_or_compute_b0_control(
+        self,
+        key: B0ControlCacheKey,
+        compute: Callable[[], B0ControlPath],
+    ) -> tuple[B0ControlPath, Mapping[str, Any]]:
+        """Serialize B0 computation per exact key and admit exactly one writer."""
+
+        if not callable(compute):
+            raise OfflineReplayAdapterError("B0 control computation is not callable")
+        with self.b0_control_lock(key):
+            cached = self._load_b0_control_unlocked(key)
+            if cached is not None:
+                control, evidence = cached
+                return control, {**dict(evidence), "reused": True}
+            computed = self._validate_b0_control_path(key, compute())
+            self._admit_b0_control_unlocked(key, computed)
+            admitted = self._load_b0_control_unlocked(key)
+            if admitted is None:
+                raise OfflineReplayAdapterError("B0 control admission disappeared")
+            control, evidence = admitted
+            return control, {**dict(evidence), "reused": False}
+
+    def load_day_input_mmap_binding(
+        self,
+        materialization_key_sha256: str,
+        *,
+        acceleration: SequentialReplayAccelerationOptions,
+        verify_bundle: bool = True,
+    ) -> DayInputMmapBinding | None:
+        key = _require_sha(
+            materialization_key_sha256,
+            label="mmap materialization key SHA256",
+        )
+        path = self.day_input_mmap_bindings / f"{key}.json"
+        if not path.is_file():
+            return None
+        contract = _day_input_mmap_binding_from_payload(
+            _read_json(path, label="day-input mmap adapter binding")
+        )
+        if (
+            contract.materialization_key_sha256 != key
+            or contract.acceleration_identity != acceleration.identity
+            or contract.cache_module_identity != acceleration.cache_module_identity
+            or contract.cache_module_artifact_sha256 != acceleration.cache_module_artifact_sha256
+            or Path(contract.day_input_cache_root).resolve() != acceleration.day_input_cache_root
+        ):
+            raise OfflineReplayAdapterError("day-input mmap acceleration binding drifted")
+        if verify_bundle:
+            try:
+                with day_input_cache.open_replay_day_inputs(
+                    acceleration.day_input_cache_root,
+                    identity=contract.identity,
+                    schema=contract.schema,
+                    expected=contract.binding,
+                ):
+                    pass
+            except day_input_cache.OfflineDayInputCacheError as exc:
+                raise OfflineReplayAdapterError(
+                    "day-input mmap bundle failed verification"
+                ) from exc
+        return contract
+
+    def admit_day_input_mmap_binding(
+        self,
+        contract: DayInputMmapBinding,
+        *,
+        acceleration: SequentialReplayAccelerationOptions,
+    ) -> DayInputMmapBinding:
+        if (
+            contract.acceleration_identity != acceleration.identity
+            or contract.cache_module_identity != acceleration.cache_module_identity
+            or contract.cache_module_artifact_sha256 != acceleration.cache_module_artifact_sha256
+            or Path(contract.day_input_cache_root).resolve() != acceleration.day_input_cache_root
+        ):
+            raise OfflineReplayAdapterError("day-input mmap admission identity drifted")
+        key = contract.materialization_key_sha256
+        with self.day_input_mmap_lock(key):
+            existing = self.load_day_input_mmap_binding(
+                key,
+                acceleration=acceleration,
+                verify_bundle=True,
+            )
+            if existing is not None:
+                if existing.payload() != contract.payload():
+                    raise OfflineReplayAdapterError("day-input mmap immutable binding disagrees")
+                return existing
+            try:
+                with day_input_cache.open_replay_day_inputs(
+                    acceleration.day_input_cache_root,
+                    identity=contract.identity,
+                    schema=contract.schema,
+                    expected=contract.binding,
+                ):
+                    pass
+            except day_input_cache.OfflineDayInputCacheError as exc:
+                raise OfflineReplayAdapterError(
+                    "day-input mmap admission lacks a valid bundle"
+                ) from exc
+            _atomic_json(
+                self.day_input_mmap_bindings / f"{key}.json",
+                contract.payload(),
+            )
+            admitted = self.load_day_input_mmap_binding(
+                key,
+                acceleration=acceleration,
+                verify_bundle=True,
+            )
+            if admitted is None:
+                raise OfflineReplayAdapterError("day-input mmap binding disappeared")
+            return admitted
+
+
+def _run_candidate_with_b0_control_cache(
+    *,
+    cache: DayReplayCache,
+    b0_key: B0ControlCacheKey,
+    compute_control: Callable[[], B0ControlPath],
+    compute_candidate: Callable[[], Any],
+    control_pre_materialized: bool = False,
+    candidate_is_exact_b0: bool = False,
+) -> tuple[B0ControlPath, Any, Mapping[str, Any]]:
+    """Reuse exact B0; non-B0 candidate callbacks are always executed."""
+
+    if control_pre_materialized:
+        cached = cache.load_b0_control(b0_key)
+        if cached is None:
+            raise OfflineReplayAdapterError("pre-materialized B0 control cache is missing")
+        control, evidence = cached
+        evidence = {**dict(evidence), "reused": True, "pre_materialized": True}
+    else:
+        control, evidence = cache.load_or_compute_b0_control(b0_key, compute_control)
+    if candidate_is_exact_b0:
+        candidate = (
+            dict(control.summary),
+            control.campaigns.copy(deep=True),
+            control.fills.copy(deep=True),
+            control.decisions.copy(deep=True),
+        )
+    else:
+        candidate = compute_candidate()
+    return control, candidate, evidence
+
 
 @dataclass(frozen=True, slots=True)
 class _DayReplayJob:
-    kind: Literal["one_shot", "sequential"]
+    kind: Literal["one_shot", "sequential", "b0_control", "day_input_materialize"]
     utc_day: str
     cache_key: DayReplayCacheKey
     payload: Mapping[str, Any]
@@ -1028,6 +1677,23 @@ class _ExecutionOptions:
     binding: Mapping[str, Any]
     cache: DayReplayCache
     workers: int
+
+
+@dataclass(frozen=True, slots=True)
+class SequentialPolicyDayBatchItem:
+    """One frozen policy request submitted to the global policy-by-day pool."""
+
+    request: backend.CanonicalSequentialReplayRequest
+    replay_inputs: pd.DataFrame
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedSequentialReplay:
+    request: backend.CanonicalSequentialReplayRequest
+    options: _ExecutionOptions
+    receipt: Mapping[str, Any]
+    cached_frames: tuple[pd.DataFrame, ...]
+    jobs: tuple[_DayReplayJob, ...]
 
 
 def _bound_path(value: Any, expected_sha: Any, *, label: str) -> Path:
@@ -1085,14 +1751,11 @@ def _canonical_day_request(
     if (
         payload["panel_role"] != offline.PANEL_ROLE
         or payload["queue_identity"] != QUEUE_IDENTITY
-        or payload["same_millisecond_ambiguity_policy"]
-        != SAME_MILLISECOND_AMBIGUITY_POLICY
+        or payload["same_millisecond_ambiguity_policy"] != SAME_MILLISECOND_AMBIGUITY_POLICY
     ):
         raise OfflineReplayAdapterError("canonical day projection identity drifted")
     paths = {
-        name: _bound_path(
-            payload[f"{name}_path"], payload[f"{name}_sha256"], label=name
-        )
+        name: _bound_path(payload[f"{name}_path"], payload[f"{name}_sha256"], label=name)
         for name in (
             "bbo",
             "l2",
@@ -1110,9 +1773,7 @@ def _canonical_day_request(
         utc_day=utc_day,
         panel_role=payload["panel_role"],
         queue_identity=payload["queue_identity"],
-        same_millisecond_ambiguity_policy=payload[
-            "same_millisecond_ambiguity_policy"
-        ],
+        same_millisecond_ambiguity_policy=payload["same_millisecond_ambiguity_policy"],
         bbo_path=paths["bbo"],
         l2_path=paths["l2"],
         features_path=paths["features"],
@@ -1149,11 +1810,14 @@ def _canonical_day_projection_from_rows(
 ) -> tuple[Any, Any]:
     if not isinstance(rows, pd.DataFrame) or not isinstance(binding, Mapping):
         raise OfflineReplayAdapterError("fixed day projection payload is malformed")
-    request = _canonical_day_request(
-        binding=binding, utc_day=utc_day, replay_inputs=rows
-    )
+    request = _canonical_day_request(binding=binding, utc_day=utc_day, replay_inputs=rows)
     projection_module = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
     replay = projection_module._materialize_replay_inputs(request)
+    _validate_projected_replay(rows=rows, request=request, replay=replay)
+    return request, replay
+
+
+def _validate_projected_replay(*, rows: pd.DataFrame, request: Any, replay: Any) -> None:
     expected = {
         "market_window_identity_sha256": replay.market_window_identity_sha256,
         "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
@@ -1166,14 +1830,252 @@ def _canonical_day_projection_from_rows(
             raise OfflineReplayAdapterError(f"canonical projection drifted: {column}")
     if replay.continuation_day != str(_unique_column_value(rows, "d_plus_1_utc_day")):
         raise OfflineReplayAdapterError("canonical projection lost D+1 continuation")
-    return request, replay
+    if replay.utc_day != request.utc_day:
+        raise OfflineReplayAdapterError("canonical projection target day drifted")
+
+
+def _day_input_materialization_key(
+    job: _DayReplayJob,
+    acceleration: SequentialReplayAccelerationOptions,
+) -> str:
+    binding = job.payload.get("portable_binding")
+    projections = binding.get("day_projections") if isinstance(binding, Mapping) else None
+    raw = projections.get(job.utc_day) if isinstance(projections, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raise OfflineReplayAdapterError("mmap canonical day projection is missing")
+    projection = dict(raw)
+    receipt = projection.pop("projection_receipt_sha256", None)
+    if receipt != _canonical_sha256(projection):
+        raise OfflineReplayAdapterError("mmap canonical day projection receipt drifted")
+    canonical_input = _require_sha(
+        projection.get("input_binding_sha256"),
+        label="mmap canonical input binding SHA256",
+    )
+    return _canonical_sha256(
+        {
+            "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.materialization_key.v1",
+            "acceleration": acceleration.payload(),
+            "adapter_artifact_sha256": job.cache_key.adapter_artifact_sha256,
+            "source_manifest_sha256": job.cache_key.source_manifest_sha256,
+            "panel_manifest_sha256": job.cache_key.panel_manifest_sha256,
+            "execution_manifest_sha256": job.cache_key.execution_manifest_sha256,
+            "utc_day": job.utc_day,
+            "canonical_projection_receipt_sha256": receipt,
+            "canonical_input_binding_sha256": canonical_input,
+            "replay_engine": REPLAY_ENGINE,
+            "queue_identity": QUEUE_IDENTITY,
+            "same_millisecond_ambiguity_policy": SAME_MILLISECOND_AMBIGUITY_POLICY,
+        }
+    )
+
+
+def _day_input_source_receipts(request: Any) -> dict[str, str]:
+    receipts = request.source_receipts
+    if not isinstance(receipts, Mapping):
+        raise OfflineReplayAdapterError("mmap source receipts are malformed")
+
+    def digest(component: str, names: Sequence[str]) -> str:
+        return _canonical_sha256(
+            {
+                "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.source_receipt.v1",
+                "component": component,
+                "receipts": {
+                    name: _require_sha(
+                        receipts.get(name),
+                        label=f"mmap {component} source receipt {name}",
+                    )
+                    for name in names
+                },
+            }
+        )
+
+    return {
+        "trades": digest(
+            "trades",
+            (
+                "source_manifest_canonical_sha256",
+                "target_day_receipt_sha256",
+                "context_source_receipts_sha256",
+                "continuation_source_day_receipt_sha256",
+            ),
+        ),
+        "bbo": digest(
+            "bbo",
+            (
+                "context_book_receipts_sha256",
+                "bbo_sha256",
+                "continuation_bbo_sha256",
+            ),
+        ),
+        "l2": digest(
+            "l2",
+            (
+                "context_book_receipts_sha256",
+                "l2_sha256",
+                "continuation_l2_sha256",
+            ),
+        ),
+        "ml_overlay": digest(
+            "ml_overlay",
+            (
+                "context_feature_receipts_sha256",
+                "features_daily_manifest_sha256",
+                "features_day_file_sha256",
+                "continuation_features_day_file_sha256",
+                "feature_dag_sha256",
+            ),
+        ),
+    }
+
+
+def _build_day_input_mmap_binding(
+    *,
+    job: _DayReplayJob,
+    request: Any,
+    replay: Any,
+    acceleration: SequentialReplayAccelerationOptions,
+) -> DayInputMmapBinding:
+    materialization_key = _day_input_materialization_key(job, acceleration)
+    ml_main_array_count = len(replay.ml_data) - 1
+    if ml_main_array_count <= 0:
+        raise OfflineReplayAdapterError("mmap ML overlay shape drifted")
+    clock_payload = {
+        "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.clock.v1",
+        "replay_event_clock": str(replay.params.get("replay_event_clock")),
+        "trade_clock": "transact_time_ms",
+        "book_clock": "ts_ms",
+        "feature_ready_clock": "ml_overlay_main_000_ms",
+        "same_millisecond_ambiguity_policy": SAME_MILLISECOND_AMBIGUITY_POLICY,
+    }
+    engine_payload = {
+        "schema_version": f"{EXECUTOR_ACCELERATION_IDENTITY}.engine.v1",
+        "replay_engine": REPLAY_ENGINE,
+        "queue_identity": QUEUE_IDENTITY,
+        "projection_module": FIXED_B0_PROJECTION_MODULE,
+        "projection_artifact_sha256": _fixed_api_bindings()["canonical_day_projection_binding"][
+            "module_sha256"
+        ],
+    }
+    identity, schema, arrays = day_input_cache.target_day_context_from_replay_inputs(
+        replay,
+        source_receipts=_day_input_source_receipts(request),
+        clock_identity=f"{EXECUTOR_ACCELERATION_IDENTITY}.exchange_time_merged",
+        clock_identity_sha256=_canonical_sha256(clock_payload),
+        engine_identity=f"{EXECUTOR_ACCELERATION_IDENTITY}.python_modeled_queue",
+        engine_identity_sha256=_canonical_sha256(engine_payload),
+        ml_main_array_count=ml_main_array_count,
+    )
+    try:
+        binding = day_input_cache.admit_replay_day_inputs(
+            acceleration.day_input_cache_root,
+            identity=identity,
+            schema=schema,
+            inputs=arrays,
+        )
+    except day_input_cache.OfflineDayInputCacheError as exc:
+        raise OfflineReplayAdapterError("day-input mmap materialization failed") from exc
+    return DayInputMmapBinding(
+        acceleration_identity=acceleration.identity,
+        cache_module_identity=acceleration.cache_module_identity,
+        cache_module_artifact_sha256=acceleration.cache_module_artifact_sha256,
+        day_input_cache_root=str(acceleration.day_input_cache_root),
+        materialization_key_sha256=materialization_key,
+        canonical_input_binding_sha256=str(request.input_binding_sha256),
+        identity=identity,
+        schema=schema,
+        binding=binding,
+    )
+
+
+def _execute_day_input_materialization(job: _DayReplayJob) -> _DayReplayJobResult:
+    """Cold-materialize one candidate-independent day bundle without economics."""
+
+    acceleration = _acceleration_options_from_payload(job.payload.get("day_input_acceleration"))
+    expected_key = _require_sha(
+        job.payload.get("day_input_materialization_key_sha256"),
+        label="expected mmap materialization key SHA256",
+    )
+    observed_key = _day_input_materialization_key(job, acceleration)
+    if observed_key != expected_key:
+        raise OfflineReplayAdapterError("day-input mmap materialization key drifted")
+    request, replay = _canonical_day_projection(job)
+    contract = _build_day_input_mmap_binding(
+        job=job,
+        request=request,
+        replay=replay,
+        acceleration=acceleration,
+    )
+    if contract.materialization_key_sha256 != expected_key:
+        raise OfflineReplayAdapterError("day-input mmap materialization result drifted")
+    return _DayReplayJobResult(
+        utc_day=job.utc_day,
+        cache_key_sha256=expected_key,
+        frames={},
+        evidence={"day_input_mmap_binding": contract.payload()},
+    )
+
+
+@contextmanager
+def _canonical_day_projection_context(
+    job: _DayReplayJob,
+) -> Iterator[tuple[Any, Any, Mapping[str, Any] | None]]:
+    raw_contract = job.payload.get("day_input_mmap_binding")
+    if raw_contract is None:
+        request, replay = _canonical_day_projection(job)
+        yield request, replay, None
+        return
+    contract = _day_input_mmap_binding_from_payload(raw_contract)
+    acceleration = SequentialReplayAccelerationOptions(
+        day_input_cache_root=Path(contract.day_input_cache_root),
+        identity=contract.acceleration_identity,
+        cache_module_identity=contract.cache_module_identity,
+        cache_module_artifact_sha256=contract.cache_module_artifact_sha256,
+    )
+    expected_materialization_key = _day_input_materialization_key(job, acceleration)
+    if contract.materialization_key_sha256 != expected_materialization_key:
+        raise OfflineReplayAdapterError("day-input mmap job binding drifted")
+    rows = job.payload.get("replay_inputs")
+    binding = job.payload.get("portable_binding")
+    if not isinstance(rows, pd.DataFrame) or not isinstance(binding, Mapping):
+        raise OfflineReplayAdapterError("mmap fixed day projection payload is malformed")
+    request = _canonical_day_request(
+        binding=binding,
+        utc_day=job.utc_day,
+        replay_inputs=rows,
+    )
+    if str(request.input_binding_sha256) != contract.canonical_input_binding_sha256:
+        raise OfflineReplayAdapterError("day-input mmap canonical input drifted")
+    projection_module = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
+    try:
+        with day_input_cache.open_replay_day_inputs(
+            acceleration.day_input_cache_root,
+            identity=contract.identity,
+            schema=contract.schema,
+            expected=contract.binding,
+        ) as opened:
+            replay = opened.to_replay_inputs(projection_module._ReplayInputs)
+            _validate_projected_replay(rows=rows, request=request, replay=replay)
+            yield (
+                request,
+                replay,
+                {
+                    "acceleration_identity": acceleration.identity,
+                    "cache_module_identity": acceleration.cache_module_identity,
+                    "cache_module_artifact_sha256": acceleration.cache_module_artifact_sha256,
+                    "materialization_key_sha256": contract.materialization_key_sha256,
+                    "binding_receipt_sha256": contract.receipt_sha256,
+                    "cache_identity_sha256": contract.binding.cache_identity_sha256,
+                    "admission_receipt_sha256": contract.binding.admission_receipt_sha256,
+                    "read_only_mmap": True,
+                },
+            )
+    except day_input_cache.OfflineDayInputCacheError as exc:
+        raise OfflineReplayAdapterError("day-input mmap worker open failed") from exc
 
 
 def _day_identity_hashes(request: Any) -> dict[str, str]:
     projection = importlib.import_module(FIXED_B0_PROJECTION_MODULE)
-    return dict(
-        projection.CanonicalB0MechanicsAdapter().identity_hashes(request)
-    )
+    return dict(projection.CanonicalB0MechanicsAdapter().identity_hashes(request))
 
 
 def _build_day_snapshot_emitter(
@@ -1186,9 +2088,7 @@ def _build_day_snapshot_emitter(
     panel_builder = importlib.import_module(FIXED_PANEL_BUILDER_MODULE)
     cache_module = importlib.import_module(FIXED_OBSERVATION_CACHE_MODULE)
     emitter_module = importlib.import_module(FIXED_SNAPSHOT_EMITTER_MODULE)
-    cutoff_ns = (
-        int(pd.Timestamp(utc_day, tz="UTC").timestamp()) + 86_400
-    ) * 1_000_000_000
+    cutoff_ns = (int(pd.Timestamp(utc_day, tz="UTC").timestamp()) + 86_400) * 1_000_000_000
     target = cache_module.open_admitted_observation_cache(
         request.native_observation_root, utc_day, deep=False
     )
@@ -1206,9 +2106,7 @@ def _build_day_snapshot_emitter(
         feature_block="M2",
         observations=observations,
         warmup_cutoff_ts_ns=cutoff_ns - 86_400 * 1_000_000_000,
-        warmup_identity=str(
-            request.source_receipts["native_source_binding_sha256"]
-        ),
+        warmup_identity=str(request.source_receipts["native_source_binding_sha256"]),
         identity_hashes=identity_hashes,
         source_cursor_prefixes={
             "market": f"offline-sequential-market:{utc_day}",
@@ -1251,9 +2149,7 @@ class _ExactOwnerArtifactEvaluator:
             expected_predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
         )
         self.policy_sha256 = str(self._delegate.policy_sha256)
-        self.predicate_bundle_sha256 = str(
-            self._delegate.predicate_bundle_sha256
-        )
+        self.predicate_bundle_sha256 = str(self._delegate.predicate_bundle_sha256)
         if not self.binding_valid:
             raise OfflineReplayAdapterMechanicsMissing(
                 ("exact_owner_artifact_evaluator",),
@@ -1265,8 +2161,7 @@ class _ExactOwnerArtifactEvaluator:
         return bool(
             self._delegate.binding_valid
             and self.policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256
-            and self.predicate_bundle_sha256
-            == offline.ACTIVE_PREDICATE_BUNDLE_SHA256
+            and self.predicate_bundle_sha256 == offline.ACTIVE_PREDICATE_BUNDLE_SHA256
         )
 
     @property
@@ -1294,8 +2189,7 @@ class _ExactOwnerArtifactEvaluator:
         decision = self._delegate.evaluate(snapshot, baseline_duration_ms)
         if (
             str(decision.policy_sha256) != offline.ACTIVE_OWNER_POLICY_SHA256
-            or str(decision.predicate_bundle_sha256)
-            != offline.ACTIVE_PREDICATE_BUNDLE_SHA256
+            or str(decision.predicate_bundle_sha256) != offline.ACTIVE_PREDICATE_BUNDLE_SHA256
         ):
             raise OfflineReplayAdapterError("exact owner decision identity drifted")
         return decision
@@ -1334,9 +2228,58 @@ class _ExactOwnerArtifactEvaluator:
 def _build_exact_owner_artifact_evaluator(
     *, expected_identity_hashes: Mapping[str, str]
 ) -> _ExactOwnerArtifactEvaluator:
-    return _ExactOwnerArtifactEvaluator(
-        expected_identity_hashes=expected_identity_hashes
-    )
+    return _ExactOwnerArtifactEvaluator(expected_identity_hashes=expected_identity_hashes)
+
+
+class _TargetDayOnlyEvaluator:
+    def __init__(
+        self,
+        delegate: Any,
+        fallback: Any,
+        *,
+        predicate_bundle_sha256: str,
+        cutoff_ns: int,
+    ) -> None:
+        self._delegate = delegate
+        self._fallback = fallback
+        self._cutoff_ns = int(cutoff_ns)
+        self.policy_identity = str(delegate.policy_identity)
+        self.policy_sha256 = str(delegate.policy_sha256)
+        self.predicate_bundle_sha256 = _require_sha(
+            predicate_bundle_sha256,
+            label="target-day evaluator predicate bundle SHA256",
+        )
+        self.baseline_action_by_snapshot: dict[str, str] = {}
+        self.d_plus_1_fallbacks = 0
+
+    @property
+    def binding_valid(self) -> bool:
+        return bool(self._delegate.binding_valid and self._fallback.binding_valid)
+
+    @property
+    def binding_error(self) -> str | None:
+        return None if self.binding_valid else "candidate_or_b0_binding_invalid"
+
+    def evaluate(self, snapshot: Any, baseline_duration_ms: Any) -> Any:
+        baseline = self._fallback.evaluate(snapshot, baseline_duration_ms)
+        snapshot_id = str(snapshot.snapshot_id)
+        self.baseline_action_by_snapshot[snapshot_id] = str(baseline.action_id)
+        assignment_ns = int(snapshot.m0_context.to_dict()["assignment_ts_ns"])
+        if assignment_ns >= self._cutoff_ns:
+            self.d_plus_1_fallbacks += 1
+            return replace(
+                baseline,
+                policy_sha256=self.policy_sha256,
+                predicate_bundle_sha256=self.predicate_bundle_sha256,
+            )
+        return self._delegate.evaluate(snapshot, baseline_duration_ms)
+
+    def audit(self) -> dict[str, Any]:
+        return {
+            **dict(self._delegate.audit()),
+            "d_plus_1_new_target_assignments_allowed": False,
+            "d_plus_1_exact_b0_fallback_count": self.d_plus_1_fallbacks,
+        }
 
 
 def _exact_owner_runtime_params(
@@ -1353,10 +2296,8 @@ def _exact_owner_runtime_params(
         utc_day=utc_day,
         identity_hashes=identity_hashes,
     )
-    params["cooldown_duration_policy_evaluator"] = (
-        _build_exact_owner_artifact_evaluator(
-            expected_identity_hashes=identity_hashes
-        )
+    params["cooldown_duration_policy_evaluator"] = _build_exact_owner_artifact_evaluator(
+        expected_identity_hashes=identity_hashes
     )
     return params
 
@@ -1378,10 +2319,7 @@ def _shared_prefix_target_contracts(
             (str(row["exact_owner_action"]),)
             if owner_action_only
             else tuple(
-                str(value)
-                for value in (
-                    duration_vocabulary(side) if arm_ids is None else arm_ids
-                )
+                str(value) for value in (duration_vocabulary(side) if arm_ids is None else arm_ids)
             )
         )
         contracts.append(
@@ -1422,9 +2360,7 @@ def _validate_shared_prefix_duration_trace(
     }
     for field, value in expected.items():
         if trace.get(field) != value:
-            raise OfflineReplayAdapterError(
-                f"shared-prefix duration trace drifted: {field}"
-            )
+            raise OfflineReplayAdapterError(f"shared-prefix duration trace drifted: {field}")
     for field, tolerance in (
         ("assignment_inventory_btc", 1e-12),
         ("assignment_equity_usdc", 1e-12),
@@ -1441,9 +2377,7 @@ def _validate_shared_prefix_duration_trace(
             rel_tol=0.0,
             abs_tol=tolerance,
         ):
-            raise OfflineReplayAdapterError(
-                f"shared-prefix assignment state drifted: {field}"
-            )
+            raise OfflineReplayAdapterError(f"shared-prefix assignment state drifted: {field}")
     expected_applied = (
         float(opportunity["baseline_duration_ms"])
         if action_id == "CONTROL_85N"
@@ -1456,9 +2390,10 @@ def _validate_shared_prefix_duration_trace(
         abs_tol=1e-9,
     ):
         raise OfflineReplayAdapterError("shared-prefix applied duration drifted")
-    if int(trace.get("reducing_quote_change_count", -1)) != 0 or int(
-        trace.get("second_assignment_count", -1)
-    ) != 0:
+    if (
+        int(trace.get("reducing_quote_change_count", -1)) != 0
+        or int(trace.get("second_assignment_count", -1)) != 0
+    ):
         raise OfflineReplayAdapterError("shared-prefix permission contract drifted")
     right_censored = bool(trace.get("right_censored", False))
     complete = bool(trace.get("arm_washout_complete", False))
@@ -1483,9 +2418,7 @@ def _validate_shared_prefix_duration_trace(
         "hazard_owner_count",
     ):
         if int(trace.get(field, -1)) != 0:
-            raise OfflineReplayAdapterError(
-                f"shared-prefix washout retained {field}"
-            )
+            raise OfflineReplayAdapterError(f"shared-prefix washout retained {field}")
     if (
         bool(trace.get("campaign_active", True))
         or abs(float(trace.get("terminal_inventory_btc", math.nan))) > 1e-10
@@ -1531,9 +2464,7 @@ def _collect_shared_prefix_day_frames(
                 action_id=action_id,
             )
             eligible = (
-                payload.get("strict_execution_contract", {}).get(
-                    "economic_point_label_status"
-                )
+                payload.get("strict_execution_contract", {}).get("economic_point_label_status")
                 == "eligible_modeled_queue_ambiguity_censored"
                 and bool(trace.get("arm_washout_complete", False))
                 and not bool(trace.get("right_censored", False))
@@ -1586,8 +2517,7 @@ def _validate_shared_prefix_day_audit(
         or dispatched + resumed != target_count
         or int(audit.get("arm_processes_completed", -1)) != expected_new_arms
         or len(manifest_paths) != target_count
-        or audit.get("modeled_queue_economics_authorized")
-        is not modeled_queue_economics_authorized
+        or audit.get("modeled_queue_economics_authorized") is not modeled_queue_economics_authorized
         or audit.get("exact_owner_baseline_policy_enabled") is not True
     ):
         raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
@@ -1646,8 +2576,7 @@ def _execute_one_shot_day(job: _DayReplayJob) -> _DayReplayJobResult:
     )
     params["cooldown_duration_shared_prefix_executor"] = executor
     params["cooldown_duration_parent_stop_ts_ms"] = int(
-        (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
-        * 1_000
+        (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1_000
     )
     params["exchange_book_queue_ambiguity_trace_max"] = 64
     cache.write_progress(
@@ -1771,8 +2700,7 @@ def _execute_exact_owner_one_day_mechanics(
         )
         params["cooldown_duration_shared_prefix_executor"] = executor
         params["cooldown_duration_parent_stop_ts_ms"] = int(
-            (pd.Timestamp(utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
-            * 1_000
+            (pd.Timestamp(utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1_000
         )
         started = time.perf_counter()
         try:
@@ -1807,26 +2735,16 @@ def _execute_exact_owner_one_day_mechanics(
                 manifest_path,
                 label="one-day shared-prefix mechanics manifest",
             )
-            target = manifest.get("opportunity_contract", {}).get(
-                "target_binding"
-            )
+            target = manifest.get("opportunity_contract", {}).get("target_binding")
             if not isinstance(target, Mapping):
-                raise OfflineReplayAdapterError(
-                    "one-day mechanics target binding is missing"
-                )
+                raise OfflineReplayAdapterError("one-day mechanics target binding is missing")
             opportunity_id = str(target["opportunity_id"])
             if opportunity_id not in rows.index or opportunity_id in observed_ids:
-                raise OfflineReplayAdapterError(
-                    "one-day mechanics opportunity identity drifted"
-                )
+                raise OfflineReplayAdapterError("one-day mechanics opportunity identity drifted")
             observed_ids.add(opportunity_id)
             expected_action = str(rows.loc[opportunity_id, "exact_owner_action"])
-            if tuple(str(arm["arm_id"]) for arm in manifest["arms"]) != (
-                expected_action,
-            ):
-                raise OfflineReplayAdapterError(
-                    "one-day mechanics owner arm drifted"
-                )
+            if tuple(str(arm["arm_id"]) for arm in manifest["arms"]) != (expected_action,):
+                raise OfflineReplayAdapterError("one-day mechanics owner arm drifted")
             arm_path = manifest_path.parent / str(manifest["arms"][0]["path"])
             payload = _read_json(
                 arm_path,
@@ -1838,16 +2756,12 @@ def _execute_exact_owner_one_day_mechanics(
                 or trace.get("exact_owner_baseline_policy_enabled") is not True
                 or not math.isclose(
                     float(trace.get("applied_duration_ms", math.nan)),
-                    float(
-                        trace.get("exact_owner_baseline_duration_ms", math.nan)
-                    ),
+                    float(trace.get("exact_owner_baseline_duration_ms", math.nan)),
                     rel_tol=0.0,
                     abs_tol=1e-9,
                 )
                 or trace.get("assignment_to_washout_value_usdc") is not None
-                or payload.get("strict_execution_contract", {}).get(
-                    "economic_point_label_status"
-                )
+                or payload.get("strict_execution_contract", {}).get("economic_point_label_status")
                 != "unsupported_redacted"
             ):
                 raise OfflineReplayAdapterError(
@@ -1860,9 +2774,7 @@ def _execute_exact_owner_one_day_mechanics(
             else:
                 right_censored_count += 1
         if observed_ids != set(str(value) for value in rows.index):
-            raise OfflineReplayAdapterError(
-                "one-day mechanics missed an admitted opportunity"
-            )
+            raise OfflineReplayAdapterError("one-day mechanics missed an admitted opportunity")
     return {
         "utc_day": utc_day,
         "opportunity_count": row_count,
@@ -1876,9 +2788,7 @@ def _execute_exact_owner_one_day_mechanics(
         "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
         "latency_identity_sha256": replay.latency_identity_sha256,
         "queue_random_identity_sha256": replay.queue_random_identity_sha256,
-        "trace_schema_version": (
-            "multiscale_ema_boolean_cooldown_duration_fork_trace.v3"
-        ),
+        "trace_schema_version": ("multiscale_ema_boolean_cooldown_duration_fork_trace.v3"),
         "execution_semantics": "posix_fork_copy_on_write_at_fill_callback",
         "arm_worker_count": FORMAL_SHARED_PREFIX_ARM_WORKERS,
         "replay_wall_time_s": replay_wall_time_s,
@@ -1888,15 +2798,124 @@ def _execute_exact_owner_one_day_mechanics(
     }
 
 
+def _execute_b0_control_day(job: _DayReplayJob) -> _DayReplayJobResult:
+    if job.kind != "b0_control":
+        raise OfflineReplayAdapterError("B0 materialization job kind drifted")
+    with _canonical_day_projection_context(job) as (
+        request,
+        replay,
+        mmap_evidence,
+    ):
+        return _execute_b0_control_day_projected(
+            job,
+            request=request,
+            replay=replay,
+            mmap_evidence=mmap_evidence,
+        )
+
+
+def _execute_b0_control_day_projected(
+    job: _DayReplayJob,
+    *,
+    request: Any,
+    replay: Any,
+    mmap_evidence: Mapping[str, Any] | None,
+) -> _DayReplayJobResult:
+    owner = importlib.import_module(FIXED_OWNER_FULL_PATH_MODULE)
+    identity_hashes = _day_identity_hashes(request)
+    cutoff_ns = (int(pd.Timestamp(job.utc_day, tz="UTC").timestamp()) + 86_400) * 1_000_000_000
+
+    def emitter_factory() -> Any:
+        return _build_day_snapshot_emitter(
+            request,
+            replay,
+            utc_day=job.utc_day,
+            identity_hashes=identity_hashes,
+        )
+
+    guarded_control = _TargetDayOnlyEvaluator(
+        _build_exact_owner_artifact_evaluator(expected_identity_hashes=identity_hashes),
+        _build_exact_owner_artifact_evaluator(expected_identity_hashes=identity_hashes),
+        predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+        cutoff_ns=cutoff_ns,
+    )
+    window = SimpleNamespace(
+        trades=replay.trades,
+        var_ts_ms=replay.var_ts_ms,
+        var_ssq=replay.var_ssq,
+        bbo_data=replay.bbo_data,
+        l2_data=replay.l2_data,
+        var_ti=replay.var_ti,
+        var_retsq=replay.var_retsq,
+    )
+    cache_root = job.payload.get("cache_root")
+    if not isinstance(cache_root, str) or not cache_root.strip():
+        raise OfflineReplayAdapterError("B0 materialization cache root is missing")
+    cache = DayReplayCache(Path(cache_root))
+    b0_key = _b0_control_cache_key(job=job, request=request, replay=replay)
+    expected_key = job.payload.get("b0_control_cache_key")
+    if not isinstance(expected_key, Mapping) or dict(expected_key) != b0_key.payload():
+        raise OfflineReplayAdapterError("B0 materialization key drifted")
+    with tempfile.TemporaryDirectory(prefix="f05-offline-b0-control-") as temporary:
+        root = Path(temporary)
+
+        def compute_control() -> B0ControlPath:
+            summary, campaigns, fills, decisions = owner._simulate_python_arm(
+                day=job.utc_day,
+                arm=owner.CANDIDATE_ARM,
+                window=window,
+                ml_data=replay.ml_data,
+                base=replay.params,
+                progress_path=root / "control-progress.json",
+                progress_interval_events=owner.DEFAULT_PROGRESS_INTERVAL_EVENTS,
+                emitter=emitter_factory(),
+                evaluator=guarded_control,
+            )
+            return B0ControlPath(
+                summary=summary,
+                campaigns=campaigns,
+                fills=fills,
+                decisions=decisions,
+            )
+
+        _, b0_cache_evidence = cache.load_or_compute_b0_control(b0_key, compute_control)
+    evidence: dict[str, Any] = {"b0_control_cache": dict(b0_cache_evidence)}
+    if mmap_evidence is not None:
+        evidence["day_input_mmap"] = dict(mmap_evidence)
+    return _DayReplayJobResult(
+        utc_day=job.utc_day,
+        cache_key_sha256=b0_key.cache_key_sha256,
+        frames={},
+        evidence=evidence,
+    )
+
+
 def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
-    request, replay = _canonical_day_projection(job)
+    with _canonical_day_projection_context(job) as (
+        request,
+        replay,
+        mmap_evidence,
+    ):
+        return _execute_sequential_day_projected(
+            job,
+            request=request,
+            replay=replay,
+            mmap_evidence=mmap_evidence,
+        )
+
+
+def _execute_sequential_day_projected(
+    job: _DayReplayJob,
+    *,
+    request: Any,
+    replay: Any,
+    mmap_evidence: Mapping[str, Any] | None,
+) -> _DayReplayJobResult:
     repeated = importlib.import_module(FIXED_REPEATED_POLICY_BRIDGE_MODULE)
     owner = importlib.import_module(FIXED_OWNER_FULL_PATH_MODULE)
     fitted = job.payload["candidate"]
     target_side = _normalize_side(job.payload["target_side"])
-    cutoff_ns = (
-        int(pd.Timestamp(job.utc_day, tz="UTC").timestamp()) + 86_400
-    ) * 1_000_000_000
+    cutoff_ns = (int(pd.Timestamp(job.utc_day, tz="UTC").timestamp()) + 86_400) * 1_000_000_000
     identity_hashes = _day_identity_hashes(request)
 
     def emitter_factory() -> Any:
@@ -1907,9 +2926,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             identity_hashes=identity_hashes,
         )
 
-    exact_owner = _build_exact_owner_artifact_evaluator(
-        expected_identity_hashes=identity_hashes
-    )
+    exact_owner = _build_exact_owner_artifact_evaluator(expected_identity_hashes=identity_hashes)
     if fitted.expected_executed_policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256:
         candidate_delegate = _build_exact_owner_artifact_evaluator(
             expected_identity_hashes=identity_hashes
@@ -1928,14 +2945,10 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             )
         fold_policy_identity = _fold_policy_identity(fitted)
         artifact = repeated.ArtifactIdentityBinding(
-            executed_artifact_scope=(
-                repeated.ExecutedArtifactScope.LEARNING_ALGORITHM_FOLD_POLICY
-            ),
+            executed_artifact_scope=(repeated.ExecutedArtifactScope.LEARNING_ALGORITHM_FOLD_POLICY),
             executed_policy_identity=fold_policy_identity,
             executed_policy_sha256=fitted.expected_executed_policy_sha256,
-            executed_predicate_bundle_sha256=_canonical_sha256(
-                fitted.policy_payload
-            ),
+            executed_predicate_bundle_sha256=_canonical_sha256(fitted.policy_payload),
             learning_algorithm_identity=fold_policy_identity,
             learning_algorithm_artifact_sha256=fitted.policy_sha256,
         )
@@ -1959,9 +2972,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 def __init__(self) -> None:
                     self.policy_identity = artifact.executed_policy_identity
                     self.policy_sha256 = artifact.executed_policy_sha256
-                    self.predicate_bundle_sha256 = (
-                        artifact.executed_predicate_bundle_sha256
-                    )
+                    self.predicate_bundle_sha256 = artifact.executed_predicate_bundle_sha256
                     self._evaluations = 0
 
                 @property
@@ -1997,9 +3008,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                         raise OfflineReplayAdapterError("candidate target side drifted")
                     try:
                         baseline_value = float(baseline_duration_ms)
-                        frozen_baseline_value = float(
-                            feature.get("baseline_duration_ms")
-                        )
+                        frozen_baseline_value = float(feature.get("baseline_duration_ms"))
                     except (TypeError, ValueError) as exc:
                         raise OfflineReplayAdapterError(
                             "candidate baseline duration is not numeric"
@@ -2059,9 +3068,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                         "predicate_bundle_sha256": self.predicate_bundle_sha256,
                         "evaluations": self._evaluations,
                         "artifact_aware_predicate_view": predicate_view.IDENTITY,
-                        "frozen_2025_predicate_bundle_sha256": (
-                            frozen_predicates.file_sha256
-                        ),
+                        "frozen_2025_predicate_bundle_sha256": (frozen_predicates.file_sha256),
                         "delegate": target_evaluator.audit(),
                         "research_only": True,
                     }
@@ -2075,6 +3082,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 artifact_binding=artifact,
             )
         else:
+
             class _FixedDecisionPolicyEvaluator:
                 def __init__(self, policy: Any) -> None:
                     self._policy = policy
@@ -2083,9 +3091,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                     )
                     self.policy_identity = artifact.executed_policy_identity
                     self.policy_sha256 = artifact.executed_policy_sha256
-                    self.predicate_bundle_sha256 = (
-                        artifact.executed_predicate_bundle_sha256
-                    )
+                    self.predicate_bundle_sha256 = artifact.executed_predicate_bundle_sha256
                     self._evaluations = 0
 
                 @property
@@ -2124,9 +3130,7 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                     baseline_ms = int(float(baseline_duration_ms))
                     return successor.CooldownDurationDecision(
                         action_id=chosen,
-                        duration_ms=successor._duration_for_action(
-                            chosen, baseline_ms
-                        ),
+                        duration_ms=successor._duration_for_action(chosen, baseline_ms),
                         fallback_reason=None,
                         matched_rule_index=None,
                         policy_sha256=self.policy_sha256,
@@ -2148,58 +3152,17 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             candidate_delegate = _FixedDecisionPolicyEvaluator(fitted.policy)
         candidate_predicate_sha = artifact.executed_predicate_bundle_sha256
 
-    class _TargetDayOnlyEvaluator:
-        def __init__(self, delegate: Any, fallback: Any) -> None:
-            self._delegate = delegate
-            self._fallback = fallback
-            self.policy_identity = str(delegate.policy_identity)
-            self.policy_sha256 = str(delegate.policy_sha256)
-            self.predicate_bundle_sha256 = str(candidate_predicate_sha)
-            self.baseline_action_by_snapshot: dict[str, str] = {}
-            self.d_plus_1_fallbacks = 0
-
-        @property
-        def binding_valid(self) -> bool:
-            return bool(self._delegate.binding_valid and self._fallback.binding_valid)
-
-        @property
-        def binding_error(self) -> str | None:
-            return None if self.binding_valid else "candidate_or_b0_binding_invalid"
-
-        def evaluate(self, snapshot: Any, baseline_duration_ms: Any) -> Any:
-            baseline = self._fallback.evaluate(snapshot, baseline_duration_ms)
-            snapshot_id = str(snapshot.snapshot_id)
-            self.baseline_action_by_snapshot[snapshot_id] = str(baseline.action_id)
-            assignment_ns = int(
-                snapshot.m0_context.to_dict()["assignment_ts_ns"]
-            )
-            if assignment_ns >= cutoff_ns:
-                self.d_plus_1_fallbacks += 1
-                return replace(
-                    baseline,
-                    policy_sha256=self.policy_sha256,
-                    predicate_bundle_sha256=self.predicate_bundle_sha256,
-                )
-            return self._delegate.evaluate(snapshot, baseline_duration_ms)
-
-        def audit(self) -> dict[str, Any]:
-            return {
-                **dict(self._delegate.audit()),
-                "d_plus_1_new_target_assignments_allowed": False,
-                "d_plus_1_exact_b0_fallback_count": self.d_plus_1_fallbacks,
-            }
-
     guarded_candidate = _TargetDayOnlyEvaluator(
         candidate_delegate,
-        _build_exact_owner_artifact_evaluator(
-            expected_identity_hashes=identity_hashes
-        ),
+        _build_exact_owner_artifact_evaluator(expected_identity_hashes=identity_hashes),
+        predicate_bundle_sha256=candidate_predicate_sha,
+        cutoff_ns=cutoff_ns,
     )
     guarded_control = _TargetDayOnlyEvaluator(
         exact_owner,
-        _build_exact_owner_artifact_evaluator(
-            expected_identity_hashes=identity_hashes
-        ),
+        _build_exact_owner_artifact_evaluator(expected_identity_hashes=identity_hashes),
+        predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+        cutoff_ns=cutoff_ns,
     )
     window = SimpleNamespace(
         trades=replay.trades,
@@ -2210,10 +3173,16 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
         var_ti=replay.var_ti,
         var_retsq=replay.var_retsq,
     )
+    cache_root = job.payload.get("cache_root")
+    if not isinstance(cache_root, str) or not cache_root.strip():
+        raise OfflineReplayAdapterError("sequential B0 cache root is missing")
+    cache = DayReplayCache(Path(cache_root))
+    b0_key = _b0_control_cache_key(job=job, request=request, replay=replay)
     with tempfile.TemporaryDirectory(prefix="f05-offline-sequential-") as temporary:
         root = Path(temporary)
-        control_summary, control_campaigns, control_fills, control_decisions = (
-            owner._simulate_python_arm(
+
+        def compute_b0_control() -> B0ControlPath:
+            summary, campaigns, fills, decisions = owner._simulate_python_arm(
                 day=job.utc_day,
                 arm=owner.CANDIDATE_ARM,
                 window=window,
@@ -2224,9 +3193,15 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 emitter=emitter_factory(),
                 evaluator=guarded_control,
             )
-        )
-        candidate_summary, candidate_campaigns, candidate_fills, candidate_decisions = (
-            owner._simulate_python_arm(
+            return B0ControlPath(
+                summary=summary,
+                campaigns=campaigns,
+                fills=fills,
+                decisions=decisions,
+            )
+
+        def compute_candidate() -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+            return owner._simulate_python_arm(
                 day=job.utc_day,
                 arm=owner.CANDIDATE_ARM,
                 window=window,
@@ -2237,6 +3212,23 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
                 emitter=emitter_factory(),
                 evaluator=guarded_candidate,
             )
+
+        control_path, candidate_path, b0_cache_evidence = _run_candidate_with_b0_control_cache(
+            cache=cache,
+            b0_key=b0_key,
+            compute_control=compute_b0_control,
+            compute_candidate=compute_candidate,
+            control_pre_materialized=bool(job.payload.get("b0_control_pre_materialized", False)),
+            candidate_is_exact_b0=(
+                str(fitted.ladder_name) == "B0_CURRENT_EXACT"
+                and fitted.expected_executed_policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256
+            ),
+        )
+        control_summary = control_path.summary
+        control_campaigns = control_path.campaigns
+        control_fills = control_path.fills
+        candidate_summary, candidate_campaigns, candidate_fills, candidate_decisions = (
+            candidate_path
         )
 
     identified = not (
@@ -2248,26 +3240,30 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
         return float(summary[name]) if identified else float("nan")
 
     def campaign_rate(frame: pd.DataFrame, predicate: pd.Series) -> float:
-        return float(predicate.mean()) if identified and not frame.empty else (
-            0.0 if identified else float("nan")
+        return (
+            float(predicate.mean())
+            if identified and not frame.empty
+            else (0.0 if identified else float("nan"))
         )
 
     policy_count = int(len(candidate_decisions))
-    nonbaseline = sum(
-        str(row["action_id"])
-        != guarded_candidate.baseline_action_by_snapshot.get(str(row["snapshot_id"]))
-        for row in candidate_decisions.to_dict("records")
-    )
+    if (
+        str(fitted.ladder_name) == "B0_CURRENT_EXACT"
+        and fitted.expected_executed_policy_sha256 == offline.ACTIVE_OWNER_POLICY_SHA256
+    ):
+        nonbaseline = 0
+    else:
+        nonbaseline = sum(
+            str(row["action_id"])
+            != guarded_candidate.baseline_action_by_snapshot.get(str(row["snapshot_id"]))
+            for row in candidate_decisions.to_dict("records")
+        )
     result: dict[str, Any] = {
         "utc_day": job.utc_day,
         "side": target_side,
         "panel_role": offline.PANEL_ROLE,
-        "candidate_terminal_value_usdc": value(
-            candidate_summary, "terminal_mtm_pnl_usdc"
-        ),
-        "exact_owner_terminal_value_usdc": value(
-            control_summary, "terminal_mtm_pnl_usdc"
-        ),
+        "candidate_terminal_value_usdc": value(candidate_summary, "terminal_mtm_pnl_usdc"),
+        "exact_owner_terminal_value_usdc": value(control_summary, "terminal_mtm_pnl_usdc"),
         "point_identified": identified,
         "policy_assignment_count": policy_count,
         "nonbaseline_action_count": int(nonbaseline),
@@ -2279,14 +3275,15 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
         "exact_current_owner_row_wise_baseline": True,
         "candidate_executed_policy_sha256": fitted.expected_executed_policy_sha256,
         "exact_owner_executed_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "exact_owner_control_cache_key_sha256": b0_key.cache_key_sha256,
+        "exact_owner_control_cache_receipt_sha256": b0_cache_evidence["cache_receipt_sha256"],
+        "exact_owner_control_cache_reused": bool(b0_cache_evidence["reused"]),
         "candidate_target_side": target_side,
         "same_market_source": True,
         "common_random_source": True,
         "arm_local_state": True,
         "common_row_count": max(1, min(len(control_fills), len(candidate_fills))),
-        "common_campaign_count": max(
-            1, min(len(control_campaigns), len(candidate_campaigns))
-        ),
+        "common_campaign_count": max(1, min(len(control_campaigns), len(candidate_campaigns))),
         "candidate_closed_campaign_value_usdc": value(
             candidate_summary, "closed_campaign_value_usdc"
         ),
@@ -2295,24 +3292,12 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
         ),
         "candidate_campaign_q10_usdc": value(candidate_summary, "campaign_q10_usdc"),
         "exact_owner_campaign_q10_usdc": value(control_summary, "campaign_q10_usdc"),
-        "candidate_campaign_cvar10_usdc": value(
-            candidate_summary, "campaign_cvar10_usdc"
-        ),
-        "exact_owner_campaign_cvar10_usdc": value(
-            control_summary, "campaign_cvar10_usdc"
-        ),
-        "candidate_inventory_time_btc_s": value(
-            candidate_summary, "abs_inventory_time_btc_s"
-        ),
-        "exact_owner_inventory_time_btc_s": value(
-            control_summary, "abs_inventory_time_btc_s"
-        ),
-        "candidate_max_abs_inventory_btc": value(
-            candidate_summary, "max_inventory_btc"
-        ),
-        "exact_owner_max_abs_inventory_btc": value(
-            control_summary, "max_inventory_btc"
-        ),
+        "candidate_campaign_cvar10_usdc": value(candidate_summary, "campaign_cvar10_usdc"),
+        "exact_owner_campaign_cvar10_usdc": value(control_summary, "campaign_cvar10_usdc"),
+        "candidate_inventory_time_btc_s": value(candidate_summary, "abs_inventory_time_btc_s"),
+        "exact_owner_inventory_time_btc_s": value(control_summary, "abs_inventory_time_btc_s"),
+        "candidate_max_abs_inventory_btc": value(candidate_summary, "max_inventory_btc"),
+        "exact_owner_max_abs_inventory_btc": value(control_summary, "max_inventory_btc"),
         "candidate_fill_count": int(candidate_summary["fills_total"]),
         "exact_owner_fill_count": int(control_summary["fills_total"]),
         "candidate_negative_terminal_rate": campaign_rate(
@@ -2327,12 +3312,8 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
         "exact_owner_campaign_mae_usdc": abs(value(control_summary, "campaign_mae_usdc")),
         "candidate_repair_event_rate": value(candidate_summary, "repair_event_rate"),
         "exact_owner_repair_event_rate": value(control_summary, "repair_event_rate"),
-        "candidate_mean_repair_time_s": value(
-            candidate_summary, "mean_closed_repair_time_s"
-        ),
-        "exact_owner_mean_repair_time_s": value(
-            control_summary, "mean_closed_repair_time_s"
-        ),
+        "candidate_mean_repair_time_s": value(candidate_summary, "mean_closed_repair_time_s"),
+        "exact_owner_mean_repair_time_s": value(control_summary, "mean_closed_repair_time_s"),
         "candidate_censoring_rate": campaign_rate(
             candidate_campaigns,
             ~candidate_campaigns.get("closed", pd.Series(dtype=bool)).astype(bool),
@@ -2342,17 +3323,14 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             ~control_campaigns.get("closed", pd.Series(dtype=bool)).astype(bool),
         ),
     }
-    result["paired_replay_receipt_sha256"] = _canonical_sha256(
-        {
-            "identity": f"{IDENTITY}.paired_sequential_day.v1",
-            "utc_day": job.utc_day,
-            "target_side": target_side,
-            "candidate_policy_sha256": fitted.expected_executed_policy_sha256,
-            "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
-            "market_window_identity_sha256": replay.market_window_identity_sha256,
-            "model_overlay_identity_sha256": replay.model_overlay_identity_sha256,
-            "d_plus_1_new_target_assignments_allowed": False,
-        }
+    result["paired_replay_receipt_sha256"] = _paired_replay_receipt_sha256(
+        utc_day=job.utc_day,
+        target_side=target_side,
+        candidate_policy_sha256=fitted.expected_executed_policy_sha256,
+        market_window_identity_sha256=replay.market_window_identity_sha256,
+        model_overlay_identity_sha256=replay.model_overlay_identity_sha256,
+        b0_control_cache_key_sha256=b0_key.cache_key_sha256,
+        b0_control_cache_receipt_sha256=str(b0_cache_evidence["cache_receipt_sha256"]),
     )
     records = candidate_decisions.to_dict("records")
     group_values = {
@@ -2370,11 +3348,54 @@ def _execute_sequential_day(job: _DayReplayJob) -> _DayReplayJobResult:
             continue
         for label in sorted(set(labels)):
             result[f"{prefix}{label}"] = labels.count(label)
+    evidence = {"b0_control_cache": dict(b0_cache_evidence)}
+    if mmap_evidence is not None:
+        evidence["day_input_mmap"] = dict(mmap_evidence)
     return _DayReplayJobResult(
         utc_day=job.utc_day,
         cache_key_sha256=job.cache_key.cache_key_sha256,
         frames={"rows": pd.DataFrame((result,))},
+        evidence=evidence,
     )
+
+
+def _paired_replay_receipt_sha256(
+    *,
+    utc_day: str,
+    target_side: str,
+    candidate_policy_sha256: str,
+    market_window_identity_sha256: str,
+    model_overlay_identity_sha256: str,
+    b0_control_cache_key_sha256: str,
+    b0_control_cache_receipt_sha256: str,
+) -> str:
+    payload = {
+        "identity": f"{IDENTITY}.paired_sequential_day.v2",
+        "utc_day": _normalize_day(utc_day),
+        "target_side": _normalize_side(target_side),
+        "candidate_policy_sha256": _require_sha(
+            candidate_policy_sha256, label="paired candidate policy SHA256"
+        ),
+        "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+        "market_window_identity_sha256": _require_sha(
+            market_window_identity_sha256,
+            label="paired market window SHA256",
+        ),
+        "model_overlay_identity_sha256": _require_sha(
+            model_overlay_identity_sha256,
+            label="paired model overlay SHA256",
+        ),
+        "exact_owner_control_cache_key_sha256": _require_sha(
+            b0_control_cache_key_sha256,
+            label="paired B0 cache key SHA256",
+        ),
+        "exact_owner_control_cache_receipt_sha256": _require_sha(
+            b0_control_cache_receipt_sha256,
+            label="paired B0 cache receipt SHA256",
+        ),
+        "d_plus_1_new_target_assignments_allowed": False,
+    }
+    return _canonical_sha256(payload)
 
 
 def _fold_policy_identity(fitted: nested.FittedCandidate) -> str:
@@ -2398,11 +3419,13 @@ def _execute_fixed_day_job(job: _DayReplayJob) -> _DayReplayJobResult:
         raise OfflineReplayAdapterError(
             f"arbitrary replay/evaluator injection is forbidden: {list(forbidden)}"
         )
-    _validate_fixed_bridge(
-        job.payload.get("fixed_bridge"), context=f"{job.kind}:{job.utc_day}"
-    )
+    _validate_fixed_bridge(job.payload.get("fixed_bridge"), context=f"{job.kind}:{job.utc_day}")
+    if job.kind == "day_input_materialize":
+        return _execute_day_input_materialization(job)
     if job.kind == "one_shot":
         return _execute_one_shot_day(job)
+    if job.kind == "b0_control":
+        return _execute_b0_control_day(job)
     if job.kind == "sequential":
         return _execute_sequential_day(job)
     raise OfflineReplayAdapterError("fixed day replay kind drifted")
@@ -2421,6 +3444,143 @@ def _run_day_jobs(
         return tuple(_execute_fixed_day_job(job) for job in ordered)
     with ProcessPoolExecutor(max_workers=count) as pool:
         return tuple(pool.map(_execute_fixed_day_job, ordered, chunksize=1))
+
+
+def _mark_global_policy_day_worker() -> None:
+    os.environ[_GLOBAL_POLICY_DAY_WORKER_ENV] = "1"
+
+
+def _global_policy_day_execution_key(job: _DayReplayJob) -> tuple[str, ...]:
+    return (
+        job.utc_day,
+        job.cache_key.stage,
+        job.cache_key.side,
+        job.cache_key.fold_id,
+        job.cache_key.candidate_policy_sha256,
+        job.cache_key.cache_key_sha256,
+    )
+
+
+def _global_policy_day_result_key(job: _DayReplayJob) -> tuple[str, ...]:
+    return (
+        job.cache_key.stage,
+        job.cache_key.side,
+        job.cache_key.fold_id,
+        job.cache_key.candidate_policy_sha256,
+        job.utc_day,
+        job.cache_key.cache_key_sha256,
+    )
+
+
+def run_global_policy_day_jobs(
+    jobs: Sequence[_DayReplayJob],
+    *,
+    total_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+) -> tuple[_DayReplayJobResult, ...]:
+    """Run all frozen policy-by-day jobs in one non-nestable bounded pool."""
+
+    if os.environ.get(_GLOBAL_POLICY_DAY_WORKER_ENV) == "1":
+        raise OfflineReplayAdapterError("nested global policy-day pools are forbidden")
+    workers = _validated_global_worker_count(total_worker_tokens)
+    execution_order = tuple(sorted(jobs, key=_global_policy_day_execution_key))
+    if any(job.kind != "sequential" for job in execution_order):
+        raise OfflineReplayAdapterError("global policy-day scheduling accepts sequential jobs only")
+    keys = tuple(job.cache_key.cache_key_sha256 for job in execution_order)
+    if len(set(keys)) != len(keys):
+        raise OfflineReplayAdapterError("global policy-day cache keys are duplicated")
+    if not execution_order:
+        return ()
+    if workers == 1:
+        executed = tuple(_execute_fixed_day_job(job) for job in execution_order)
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_mark_global_policy_day_worker,
+        ) as pool:
+            executed = tuple(pool.map(_execute_fixed_day_job, execution_order, chunksize=1))
+    result_by_key = {result.cache_key_sha256: result for result in executed}
+    if set(result_by_key) != set(keys):
+        raise OfflineReplayAdapterError("global policy-day worker result drifted")
+    contract_order = sorted(execution_order, key=_global_policy_day_result_key)
+    return tuple(result_by_key[job.cache_key.cache_key_sha256] for job in contract_order)
+
+
+def _run_global_b0_control_jobs(
+    jobs: Sequence[_DayReplayJob],
+    *,
+    total_worker_tokens: int,
+) -> tuple[_DayReplayJobResult, ...]:
+    if os.environ.get(_GLOBAL_POLICY_DAY_WORKER_ENV) == "1":
+        raise OfflineReplayAdapterError("nested global B0 pools are forbidden")
+    workers = _validated_global_worker_count(total_worker_tokens)
+    ordered = tuple(sorted(jobs, key=_global_policy_day_execution_key))
+    if any(job.kind != "b0_control" for job in ordered):
+        raise OfflineReplayAdapterError("B0 materialization pool received a candidate job")
+    expected_keys = tuple(
+        _prospective_b0_control_cache_key(job).cache_key_sha256 for job in ordered
+    )
+    if len(set(expected_keys)) != len(expected_keys):
+        raise OfflineReplayAdapterError("B0 materialization keys are duplicated")
+    if not ordered:
+        return ()
+    if workers == 1:
+        executed = tuple(_execute_fixed_day_job(job) for job in ordered)
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_mark_global_policy_day_worker,
+        ) as pool:
+            executed = tuple(pool.map(_execute_fixed_day_job, ordered, chunksize=1))
+    result_by_key = {result.cache_key_sha256: result for result in executed}
+    if set(result_by_key) != set(expected_keys):
+        raise OfflineReplayAdapterError("B0 materialization result identity drifted")
+    return tuple(result_by_key[key] for key in sorted(expected_keys))
+
+
+def _run_global_day_input_materialization_jobs(
+    jobs: Sequence[_DayReplayJob],
+    *,
+    total_worker_tokens: int,
+) -> tuple[_DayReplayJobResult, ...]:
+    """Materialize each immutable target-day input once before B0/candidates."""
+
+    if os.environ.get(_GLOBAL_POLICY_DAY_WORKER_ENV) == "1":
+        raise OfflineReplayAdapterError("nested global day-input pools are forbidden")
+    workers = _validated_global_worker_count(total_worker_tokens)
+    ordered = tuple(
+        sorted(
+            jobs,
+            key=lambda job: (
+                job.utc_day,
+                str(job.payload.get("day_input_materialization_key_sha256", "")),
+            ),
+        )
+    )
+    if any(job.kind != "day_input_materialize" for job in ordered):
+        raise OfflineReplayAdapterError("day-input materialization pool received replay work")
+    expected_keys = tuple(
+        _require_sha(
+            job.payload.get("day_input_materialization_key_sha256"),
+            label="expected mmap materialization key SHA256",
+        )
+        for job in ordered
+    )
+    if len(set(expected_keys)) != len(expected_keys):
+        raise OfflineReplayAdapterError("day-input materialization keys are duplicated")
+    if not ordered:
+        return ()
+    if workers == 1:
+        executed = tuple(_execute_fixed_day_job(job) for job in ordered)
+    else:
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            initializer=_mark_global_policy_day_worker,
+        ) as pool:
+            executed = tuple(pool.map(_execute_fixed_day_job, ordered, chunksize=1))
+    result_by_key = {result.cache_key_sha256: result for result in executed}
+    if set(result_by_key) != set(expected_keys):
+        raise OfflineReplayAdapterError("day-input materialization result identity drifted")
+    return tuple(result_by_key[key] for key in sorted(expected_keys))
 
 
 def _clause(*literals: TriLiteral) -> AndClause:
@@ -2473,9 +3633,7 @@ def _contains_pair(name: str, prefix: str) -> bool:
 
 def _is_mid_ema_predicate(name: str) -> bool:
     lowered = str(name).lower()
-    return "::mid_usdc_per_btc__h" in lowered or lowered.startswith(
-        "predicate::ema_pair_"
-    )
+    return "::mid_usdc_per_btc__h" in lowered or lowered.startswith("predicate::ema_pair_")
 
 
 def _is_non_mid_market_predicate(name: str) -> bool:
@@ -2494,7 +3652,9 @@ def _is_true_m2_predicate(name: str) -> bool:
     )
 
 
-def _profile(name: str, *, feature_count: int, higher_order: bool) -> successor.SuccessorSearchProfile:
+def _profile(
+    name: str, *, feature_count: int, higher_order: bool
+) -> successor.SuccessorSearchProfile:
     return successor.SuccessorSearchProfile(
         name=name,
         feature_budget=max(1024, int(feature_count)),
@@ -2522,9 +3682,7 @@ def _validate_e2_semantics(names: Sequence[str]) -> None:
             if not present:
                 missing.append(f"{prefix}:{semantic}")
     if missing:
-        raise OfflineReplayAdapterMechanicsMissing(
-            missing, context="E2 per-pair semantic universe"
-        )
+        raise OfflineReplayAdapterMechanicsMissing(missing, context="E2 per-pair semantic universe")
 
 
 def _require_exact_b0_bindings(bindings: backend.FormalExecutionBindings) -> None:
@@ -2616,7 +3774,12 @@ def _validate_replay_input_frame(
         "exact_owner_predicate_bundle_sha256",
         "exact_owner_private_config_sha256",
     ):
-        if not rows[column].astype(str).map(lambda value: _SHA_RE.fullmatch(value) is not None).all():
+        if (
+            not rows[column]
+            .astype(str)
+            .map(lambda value: _SHA_RE.fullmatch(value) is not None)
+            .all()
+        ):
             raise OfflineReplayAdapterError(f"invalid replay input SHA256: {column}")
     return rows
 
@@ -2655,7 +3818,12 @@ def _validate_d_plus_one_contract(rows: pd.DataFrame) -> None:
         "d_plus_1_native_observation_sha256",
         "d_plus_1_context_receipt_sha256",
     ):
-        if not rows[column].astype(str).map(lambda value: _SHA_RE.fullmatch(value) is not None).all():
+        if (
+            not rows[column]
+            .astype(str)
+            .map(lambda value: _SHA_RE.fullmatch(value) is not None)
+            .all()
+        ):
             raise OfflineReplayAdapterError(f"D+1 context SHA256 is invalid: {column}")
     if rows["d_plus_1_new_target_assignments_allowed"].astype(bool).any():
         raise OfflineReplayAdapterError("D+1 context cannot create target assignments")
@@ -2700,9 +3868,7 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
         or binding.get("identity")
         != "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
         "offline_sequential_replay_input_v2"
-        or not str(binding.get("panel_identity", "")).endswith(
-            ".offline_sequential_panel_v2"
-        )
+        or not str(binding.get("panel_identity", "")).endswith(".offline_sequential_panel_v2")
         or binding.get("selected_day_count") != offline.REQUIRED_DAYS
         or len(binding.get("selected_days", ())) != offline.REQUIRED_DAYS
         or dict(binding.get("fixed_bridge", {})) != dict(expected_fixed_bridge)
@@ -2759,9 +3925,7 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
     ):
         raise OfflineReplayAdapterError("native observation batch identity drifted")
     selected = tuple(_normalize_day(value) for value in payload.get("selected_target_days", ()))
-    context = tuple(
-        _normalize_day(value) for value in payload.get("observation_context_days", ())
-    )
+    context = tuple(_normalize_day(value) for value in payload.get("observation_context_days", ()))
     continuation = tuple(
         _normalize_day(value) for value in payload.get("continuation_only_days", ())
     )
@@ -2781,9 +3945,7 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
             ("34_distinct_observation_context_days",),
             context="30-target/34-context observation contract",
         )
-    missing_continuation = sorted(
-        set(REQUIRED_ADDITIONAL_CONTEXT_DAYS) - set(continuation)
-    )
+    missing_continuation = sorted(set(REQUIRED_ADDITIONAL_CONTEXT_DAYS) - set(continuation))
     if missing_continuation:
         raise OfflineReplayAdapterMechanicsMissing(
             tuple(f"D+1:{day}" for day in missing_continuation),
@@ -2799,9 +3961,7 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
     if not isinstance(permissions, Mapping) or any(
         value is not False for value in permissions.values()
     ):
-        raise OfflineReplayAdapterError(
-            "native observation batch permissions must remain false"
-        )
+        raise OfflineReplayAdapterError("native observation batch permissions must remain false")
     explicit_economic_contract = "continuation_days_create_economic_test_rows" in payload
     if (
         explicit_economic_contract
@@ -2817,9 +3977,7 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
             context="30-target/34-context observation contract",
         )
     by_day = {
-        _normalize_day(row.get("utc_day")): row
-        for row in day_rows
-        if isinstance(row, Mapping)
+        _normalize_day(row.get("utc_day")): row for row in day_rows if isinstance(row, Mapping)
     }
     if set(by_day) != set(context):
         raise OfflineReplayAdapterError("observation day receipt census drifted")
@@ -2847,12 +4005,9 @@ def _validate_observation_batch_binding(binding: Mapping[str, Any]) -> None:
             raise OfflineReplayAdapterError(
                 f"continuation-only day has a partial explicit semantics contract: {day}"
             )
-        if (
-            row_has_economic_contract
-            and (
-                row.get("economic_test_row_eligible") is not False
-                or row.get("washout_continuation_eligible") is not True
-            )
+        if row_has_economic_contract and (
+            row.get("economic_test_row_eligible") is not False
+            or row.get("washout_continuation_eligible") is not True
         ):
             raise OfflineReplayAdapterError(
                 f"continuation-only day is assignment/economic eligible: {day}"
@@ -2891,17 +4046,20 @@ def _validate_sequential_rows(
 ) -> pd.DataFrame:
     if not isinstance(rows, pd.DataFrame):
         raise OfflineReplayAdapterError("sequential replay rows are not a DataFrame")
-    if "one_shot_effect_aggregation_used" in rows and rows[
-        "one_shot_effect_aggregation_used"
-    ].astype(bool).any():
+    if (
+        "one_shot_effect_aggregation_used" in rows
+        and rows["one_shot_effect_aggregation_used"].astype(bool).any()
+    ):
         raise OfflineReplayAdapterError("one-shot aggregation is forbidden")
-    if "repeated_sequential_policy" in rows and not rows[
-        "repeated_sequential_policy"
-    ].astype(bool).all():
+    if (
+        "repeated_sequential_policy" in rows
+        and not rows["repeated_sequential_policy"].astype(bool).all()
+    ):
         raise OfflineReplayAdapterError("non-sequential policy economics are forbidden")
-    if "exact_current_owner_row_wise_baseline" in rows and not rows[
-        "exact_current_owner_row_wise_baseline"
-    ].astype(bool).all():
+    if (
+        "exact_current_owner_row_wise_baseline" in rows
+        and not rows["exact_current_owner_row_wise_baseline"].astype(bool).all()
+    ):
         raise OfflineReplayAdapterError("exact B0 row-wise baseline drifted")
     try:
         return nested._validate_evaluation(rows, request.evaluation_request)
@@ -2928,14 +4086,8 @@ def _concat_sequential_day_results(frames: Sequence[pd.DataFrame]) -> pd.DataFra
         present = [column for column in count_columns if column in day]
         for column in present:
             values = pd.to_numeric(day[column], errors="coerce")
-            if (
-                values.isna().any()
-                or (values < 0).any()
-                or values.mod(1).ne(0).any()
-            ):
-                raise OfflineReplayAdapterError(
-                    f"sequential day count {column!r} is invalid"
-                )
+            if values.isna().any() or (values < 0).any() or values.mod(1).ne(0).any():
+                raise OfflineReplayAdapterError(f"sequential day count {column!r} is invalid")
             day[column] = values.astype("int64")
         for column in count_columns:
             if column not in day:
@@ -2971,6 +4123,135 @@ def _cache_key(
     )
 
 
+def _prospective_b0_control_cache_key(job: _DayReplayJob) -> B0ControlCacheKey:
+    if job.kind not in {"sequential", "b0_control"}:
+        raise OfflineReplayAdapterError("B0 control cache requires a sequential job")
+    rows = job.payload.get("replay_inputs")
+    if not isinstance(rows, pd.DataFrame):
+        raise OfflineReplayAdapterError("B0 control cache input frame is malformed")
+    observed_day_input = _frame_sha256(rows)
+    if observed_day_input != job.cache_key.day_input_sha256:
+        raise OfflineReplayAdapterError("B0 control day input SHA256 drifted")
+    if job.cache_key.exact_owner_policy_sha256 != offline.ACTIVE_OWNER_POLICY_SHA256:
+        raise OfflineReplayAdapterError("B0 control exact-owner binding drifted")
+    fixed_bridge = _validate_fixed_bridge(
+        job.payload.get("fixed_bridge"), context=f"B0 control:{job.utc_day}"
+    )
+    binding = job.payload.get("portable_binding")
+    projections = binding.get("day_projections") if isinstance(binding, Mapping) else None
+    raw_projection = projections.get(job.utc_day) if isinstance(projections, Mapping) else None
+    if not isinstance(raw_projection, Mapping):
+        raise OfflineReplayAdapterError("B0 control day projection is missing")
+    projection_payload = dict(raw_projection)
+    projection_receipt = projection_payload.pop("projection_receipt_sha256", None)
+    if projection_receipt != _canonical_sha256(projection_payload):
+        raise OfflineReplayAdapterError("B0 control day projection receipt drifted")
+    input_binding_sha256 = _require_sha(
+        projection_payload.get("input_binding_sha256"),
+        label="B0 canonical day input binding SHA256",
+    )
+    market_window_sha = _require_sha(
+        _unique_column_value(rows, "market_window_identity_sha256"),
+        label="B0 market window identity SHA256",
+    )
+    model_overlay_sha = _require_sha(
+        _unique_column_value(rows, "model_overlay_identity_sha256"),
+        label="B0 model overlay identity SHA256",
+    )
+    latency_sha = _require_sha(
+        _unique_column_value(rows, "latency_identity_sha256"),
+        label="B0 latency identity SHA256",
+    )
+    queue_random_sha = _require_sha(
+        _unique_column_value(rows, "queue_random_identity_sha256"),
+        label="B0 queue-random identity SHA256",
+    )
+    replay_receipt_sha = _require_sha(
+        _unique_column_value(rows, "replay_input_receipt_sha256"),
+        label="B0 replay-input receipt SHA256",
+    )
+    target_semantics = {
+        "identity": f"{IDENTITY}.b0_target_day_semantics.v1",
+        "utc_day": job.utc_day,
+        "side": job.cache_key.side,
+        "stage": job.cache_key.stage,
+        "fold_id": job.cache_key.fold_id,
+        "target_day_cutoff_ts_ns": int(
+            (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).value
+        ),
+        "d_plus_1_utc_day": str(_unique_column_value(rows, "d_plus_1_utc_day")),
+        "d_plus_1_context_receipt_sha256": str(
+            _unique_column_value(rows, "d_plus_1_context_receipt_sha256")
+        ),
+        "d_plus_1_new_target_assignments_allowed": bool(
+            _unique_column_value(rows, "d_plus_1_new_target_assignments_allowed")
+        ),
+        "target_day_end_terminalized": bool(
+            _unique_column_value(rows, "target_day_end_terminalized")
+        ),
+        "assignment_to_common_washout_required": bool(
+            _unique_column_value(rows, "assignment_to_common_washout_required")
+        ),
+        "canonical_day_input_binding_sha256": input_binding_sha256,
+        "replay_input_receipt_sha256": replay_receipt_sha,
+        "day_input_sha256": observed_day_input,
+        "control_arm_semantics": "exact_current_owner_policy_repeated_full_day",
+    }
+    if (
+        target_semantics["d_plus_1_new_target_assignments_allowed"] is not False
+        or target_semantics["target_day_end_terminalized"] is not False
+        or target_semantics["assignment_to_common_washout_required"] is not True
+    ):
+        raise OfflineReplayAdapterError("B0 control target-day semantics drifted")
+    return B0ControlCacheKey(
+        adapter_artifact_sha256=job.cache_key.adapter_artifact_sha256,
+        source_manifest_sha256=job.cache_key.source_manifest_sha256,
+        panel_manifest_sha256=job.cache_key.panel_manifest_sha256,
+        fold_manifest_sha256=job.cache_key.fold_manifest_sha256,
+        execution_manifest_sha256=job.cache_key.execution_manifest_sha256,
+        exact_owner_policy_sha256=job.cache_key.exact_owner_policy_sha256,
+        exact_owner_predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+        exact_owner_private_config_sha256=offline.ACTIVE_PRIVATE_CONFIG_SHA256,
+        fixed_bridge_sha256=_canonical_sha256(dict(fixed_bridge)),
+        replay_engine=REPLAY_ENGINE,
+        queue_identity=QUEUE_IDENTITY,
+        same_millisecond_ambiguity_policy=SAME_MILLISECOND_AMBIGUITY_POLICY,
+        side=job.cache_key.side,
+        stage=job.cache_key.stage,
+        fold_id=job.cache_key.fold_id,
+        utc_day=job.utc_day,
+        day_input_sha256=observed_day_input,
+        canonical_day_input_binding_sha256=input_binding_sha256,
+        market_window_identity_sha256=market_window_sha,
+        model_overlay_identity_sha256=model_overlay_sha,
+        latency_identity_sha256=latency_sha,
+        queue_random_identity_sha256=queue_random_sha,
+        replay_input_receipt_sha256=replay_receipt_sha,
+        target_day_semantics_sha256=_canonical_sha256(target_semantics),
+    )
+
+
+def _b0_control_cache_key(
+    *,
+    job: _DayReplayJob,
+    request: Any,
+    replay: Any,
+) -> B0ControlCacheKey:
+    key = _prospective_b0_control_cache_key(job)
+    observed = {
+        "canonical_day_input_binding_sha256": str(request.input_binding_sha256),
+        "market_window_identity_sha256": str(replay.market_window_identity_sha256),
+        "model_overlay_identity_sha256": str(replay.model_overlay_identity_sha256),
+        "latency_identity_sha256": str(replay.latency_identity_sha256),
+        "queue_random_identity_sha256": str(replay.queue_random_identity_sha256),
+        "replay_input_receipt_sha256": str(replay.replay_input_receipt_sha256),
+    }
+    for name, value in observed.items():
+        if getattr(key, name) != value:
+            raise OfflineReplayAdapterError(f"B0 projected {name} drifted")
+    return key
+
+
 def _one_shot_semantic_cache_key(
     *,
     adapter_artifact_sha256: str,
@@ -2994,10 +4275,292 @@ def _one_shot_semantic_cache_key(
     )
 
 
+def _prepare_sequential_replay(
+    *,
+    adapter_artifact_sha256: str,
+    request: backend.CanonicalSequentialReplayRequest,
+    replay_inputs: pd.DataFrame,
+) -> _PreparedSequentialReplay:
+    if not isinstance(request, backend.CanonicalSequentialReplayRequest):
+        raise OfflineReplayAdapterError("custom sequential replay request is forbidden")
+    evaluation = request.evaluation_request
+    if not isinstance(evaluation, nested.EvaluationRequest):
+        raise OfflineReplayAdapterError("custom evaluation request is forbidden")
+    if evaluation.stage not in SEQUENTIAL_STAGES:
+        raise OfflineReplayAdapterError("sequential replay stage is not inner/outer OOF")
+    side = _normalize_side(evaluation.side)
+    rows = _validate_replay_input_frame(
+        replay_inputs,
+        bindings=request.bindings,
+        replay_input_sha256=request.replay_input_sha256,
+        side=side,
+        days=evaluation.days,
+    )
+    if (
+        evaluation.candidate.expected_executed_policy_sha256 != (offline.ACTIVE_OWNER_POLICY_SHA256)
+        and evaluation.candidate.policy is None
+    ):
+        raise OfflineReplayAdapterError("candidate policy artifact is missing")
+    _require_executable_replay_inputs(
+        rows, context="paired sequential day replay", label_scope=False
+    )
+    _validate_d_plus_one_contract(rows)
+    options = _resolve_execution_options(rows)
+    receipt = backend.build_sequential_replay_receipt(
+        request,
+        adapter_identity=IDENTITY,
+        adapter_artifact_sha256=adapter_artifact_sha256,
+    )
+    cached_frames: list[pd.DataFrame] = []
+    jobs: list[_DayReplayJob] = []
+    for day in sorted(set(rows["utc_day"])):
+        day_rows = rows.loc[rows["utc_day"] == day].copy()
+        key = _cache_key(
+            adapter_artifact_sha256=adapter_artifact_sha256,
+            bindings=request.bindings,
+            candidate_policy_sha256=(evaluation.candidate.expected_executed_policy_sha256),
+            side=side,
+            stage=evaluation.stage,
+            fold_id=evaluation.fold_id,
+            utc_day=day,
+            day_rows=day_rows,
+        )
+        cached = options.cache.load_sequential(key)
+        if cached is not None:
+            cached_frames.append(cached)
+            continue
+        options.cache.write_progress(key, state="queued")
+        jobs.append(
+            _DayReplayJob(
+                kind="sequential",
+                utc_day=day,
+                cache_key=key,
+                payload={
+                    "fixed_bridge": options.binding["fixed_bridge"],
+                    "portable_binding": options.binding,
+                    "cache_root": str(options.cache.root),
+                    "replay_inputs": day_rows,
+                    "candidate": evaluation.candidate,
+                    "target_side": side,
+                },
+            )
+        )
+    return _PreparedSequentialReplay(
+        request=request,
+        options=options,
+        receipt=receipt,
+        cached_frames=tuple(cached_frames),
+        jobs=tuple(jobs),
+    )
+
+
+def _build_bulk_b0_and_candidate_phases(
+    prepared: Sequence[_PreparedSequentialReplay],
+) -> tuple[tuple[_DayReplayJob, ...], tuple[_DayReplayJob, ...]]:
+    cache_roots = {str(item.options.cache.root) for item in prepared}
+    if len(cache_roots) != 1:
+        raise OfflineReplayAdapterError("global policy-day batch must use one governed cache root")
+    representative_by_b0: dict[str, tuple[B0ControlCacheKey, _DayReplayJob]] = {}
+    candidate_jobs: list[_DayReplayJob] = []
+    for item in prepared:
+        for job in item.jobs:
+            key = _prospective_b0_control_cache_key(job)
+            existing = item.options.cache.load_b0_control(key)
+            if existing is None:
+                representative_by_b0.setdefault(key.cache_key_sha256, (key, job))
+            candidate_jobs.append(
+                replace(
+                    job,
+                    payload={
+                        **dict(job.payload),
+                        "b0_control_pre_materialized": True,
+                    },
+                )
+            )
+    b0_jobs: list[_DayReplayJob] = []
+    for key_sha in sorted(representative_by_b0):
+        key, representative = representative_by_b0[key_sha]
+        payload = dict(representative.payload)
+        payload.pop("candidate", None)
+        payload.pop("target_side", None)
+        payload["b0_control_cache_key"] = key.payload()
+        b0_jobs.append(replace(representative, kind="b0_control", payload=payload))
+    return (
+        tuple(sorted(b0_jobs, key=_global_policy_day_execution_key)),
+        tuple(sorted(candidate_jobs, key=_global_policy_day_execution_key)),
+    )
+
+
+def _bind_bulk_day_input_mmaps(
+    prepared: Sequence[_PreparedSequentialReplay],
+    *,
+    acceleration: SequentialReplayAccelerationOptions,
+    total_worker_tokens: int,
+) -> tuple[_PreparedSequentialReplay, ...]:
+    """Cold-build or warm-open one mmap bundle per immutable day input."""
+
+    if not prepared:
+        raise OfflineReplayAdapterError("day-input mmap batch is empty")
+    cache_roots = {str(item.options.cache.root) for item in prepared}
+    if len(cache_roots) != 1:
+        raise OfflineReplayAdapterError("day-input mmap batch must use one governed replay cache")
+    cache = prepared[0].options.cache
+    representative_by_key: dict[str, _DayReplayJob] = {}
+    contracts: dict[str, DayInputMmapBinding] = {}
+    for item in prepared:
+        for job in item.jobs:
+            materialization_key = _day_input_materialization_key(job, acceleration)
+            representative_by_key.setdefault(materialization_key, job)
+    cold_representatives: dict[str, _DayReplayJob] = {}
+    for materialization_key, representative in sorted(representative_by_key.items()):
+        cached = cache.load_day_input_mmap_binding(
+            materialization_key,
+            acceleration=acceleration,
+            verify_bundle=True,
+        )
+        if cached is None:
+            cold_representatives[materialization_key] = representative
+        else:
+            contracts[materialization_key] = cached
+
+    materialization_jobs: list[_DayReplayJob] = []
+    for materialization_key in sorted(cold_representatives):
+        representative = cold_representatives[materialization_key]
+        payload = dict(representative.payload)
+        for field in (
+            "candidate",
+            "target_side",
+            "b0_control_pre_materialized",
+            "b0_control_cache_key",
+            "day_input_mmap_binding",
+        ):
+            payload.pop(field, None)
+        payload.update(
+            {
+                "day_input_acceleration": acceleration.payload(),
+                "day_input_materialization_key_sha256": materialization_key,
+            }
+        )
+        materialization_jobs.append(
+            replace(
+                representative,
+                kind="day_input_materialize",
+                payload=payload,
+            )
+        )
+
+    results = _run_global_day_input_materialization_jobs(
+        materialization_jobs,
+        total_worker_tokens=total_worker_tokens,
+    )
+    for result in results:
+        evidence = result.evidence
+        if not isinstance(evidence, Mapping) or set(evidence) != {"day_input_mmap_binding"}:
+            raise OfflineReplayAdapterError("day-input materialization evidence drifted")
+        contract = _day_input_mmap_binding_from_payload(evidence["day_input_mmap_binding"])
+        if contract.materialization_key_sha256 != result.cache_key_sha256:
+            raise OfflineReplayAdapterError("day-input materialization receipt drifted")
+        contracts[result.cache_key_sha256] = cache.admit_day_input_mmap_binding(
+            contract,
+            acceleration=acceleration,
+        )
+
+    expected_keys = {
+        _day_input_materialization_key(job, acceleration) for item in prepared for job in item.jobs
+    }
+    if set(contracts) != expected_keys:
+        raise OfflineReplayAdapterError("day-input mmap binding census drifted")
+
+    rebound: list[_PreparedSequentialReplay] = []
+    for item in prepared:
+        jobs = tuple(
+            replace(
+                job,
+                payload={
+                    **dict(job.payload),
+                    "day_input_mmap_binding": contracts[
+                        _day_input_materialization_key(job, acceleration)
+                    ].payload(),
+                },
+            )
+            for job in item.jobs
+        )
+        rebound.append(replace(item, jobs=jobs))
+    return tuple(rebound)
+
+
+def _mark_prepared_jobs(
+    prepared: Sequence[_PreparedSequentialReplay],
+    *,
+    state: Literal["running", "failed"],
+    detail: str | None = None,
+) -> None:
+    for item in prepared:
+        for job in item.jobs:
+            item.options.cache.write_progress(job.cache_key, state=state, detail=detail)
+
+
+def _admit_prepared_sequential_results(
+    prepared: _PreparedSequentialReplay,
+    results_by_key: Mapping[str, _DayReplayJobResult],
+) -> tuple[pd.DataFrame, ...]:
+    collected = list(prepared.cached_frames)
+    expected_keys = {job.cache_key.cache_key_sha256 for job in prepared.jobs}
+    observed_keys = set(results_by_key)
+    if observed_keys != expected_keys:
+        raise OfflineReplayAdapterError("global policy-day result identity drifted")
+    for job in sorted(prepared.jobs, key=_global_policy_day_result_key):
+        result = results_by_key[job.cache_key.cache_key_sha256]
+        if result.cache_key_sha256 != job.cache_key.cache_key_sha256:
+            raise OfflineReplayAdapterError("sequential day cache identity drifted")
+        if set(result.frames) != {"rows"}:
+            raise OfflineReplayAdapterError("sequential day replay payload drifted")
+        day_result = result.frames["rows"].copy()
+        prepared.options.cache.admit_sequential(
+            job.cache_key,
+            day_result,
+            evidence=result.evidence,
+        )
+        prepared.options.cache.write_progress(job.cache_key, state="complete")
+        collected.append(day_result)
+    return tuple(collected)
+
+
+def _finalize_prepared_sequential_replay(
+    prepared: _PreparedSequentialReplay,
+    frames: Sequence[pd.DataFrame],
+) -> backend.CanonicalSequentialReplayResult:
+    request = prepared.request
+    result_rows = _concat_sequential_day_results(frames)
+    result_rows["sequential_batch_receipt_sha256"] = prepared.receipt["receipt_sha256"]
+    result_rows["execution_manifest_sha256"] = request.bindings.execution_manifest_sha256
+    result_rows["source_manifest_sha256"] = request.bindings.source_manifest_sha256
+    result_rows["panel_manifest_sha256"] = request.bindings.panel_manifest_sha256
+    result_rows["fold_manifest_sha256"] = request.bindings.fold_manifest_sha256
+    validated = _validate_sequential_rows(request, result_rows)
+    return backend.CanonicalSequentialReplayResult(
+        rows=validated,
+        receipt=prepared.receipt,
+    )
+
+
 class _CanonicalOfflineReplayAdapter:
     """Fixed implementation of ``backend.CanonicalReplayAdapter``."""
 
     identity = IDENTITY
+
+    def __init__(
+        self,
+        *,
+        acceleration: SequentialReplayAccelerationOptions | None = None,
+        global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+    ) -> None:
+        if acceleration is not None and not isinstance(
+            acceleration, SequentialReplayAccelerationOptions
+        ):
+            raise OfflineReplayAdapterError("executor acceleration options type drifted")
+        self._acceleration = acceleration
+        self._global_worker_tokens = _validated_global_worker_count(global_worker_tokens)
 
     @property
     def artifact_sha256(self) -> str:
@@ -3032,9 +4595,7 @@ class _CanonicalOfflineReplayAdapter:
         return {
             "identity": self.identity,
             "status": (
-                MECHANICS_MISSING_STATUS
-                if fields
-                else backend.FORMAL_PANEL_SCHEMA_READY_STATUS
+                MECHANICS_MISSING_STATUS if fields else backend.FORMAL_PANEL_SCHEMA_READY_STATUS
             ),
             "adapter_artifact_sha256": self.artifact_sha256,
             "missing_canonical_fields": fields,
@@ -3073,9 +4634,7 @@ class _CanonicalOfflineReplayAdapter:
         else:
             try:
                 validated_sides: list[pd.DataFrame] = []
-                for side in sorted(
-                    set(mechanics.replay_inputs["side"].map(_normalize_side))
-                ):
+                for side in sorted(set(mechanics.replay_inputs["side"].map(_normalize_side))):
                     side_rows = mechanics.replay_inputs.loc[
                         mechanics.replay_inputs["side"].map(_normalize_side) == side
                     ].copy()
@@ -3088,9 +4647,7 @@ class _CanonicalOfflineReplayAdapter:
                             days=tuple(sorted(set(side_rows["utc_day"]))),
                         )
                     )
-                rows = pd.concat(validated_sides, axis=0).loc[
-                    mechanics.replay_inputs.index
-                ]
+                rows = pd.concat(validated_sides, axis=0).loc[mechanics.replay_inputs.index]
                 _require_executable_replay_inputs(
                     rows, context="formal replay preflight", label_scope=False
                 )
@@ -3131,16 +4688,12 @@ class _CanonicalOfflineReplayAdapter:
         """Exercise the first admitted UTC day without retaining economic values."""
 
         if not isinstance(mechanics, backend.OutcomeBlindMechanics):
-            raise OfflineReplayAdapterError(
-                "one-day mechanics requires OutcomeBlindMechanics"
-            )
+            raise OfflineReplayAdapterError("one-day mechanics requires OutcomeBlindMechanics")
         _require_exact_b0_bindings(mechanics.bindings)
         if not mechanics.selected_days:
             raise OfflineReplayAdapterError("one-day mechanics lacks admitted days")
         utc_day = mechanics.selected_days[0]
-        rows = mechanics.replay_inputs.loc[
-            mechanics.replay_inputs["utc_day"] == utc_day
-        ].copy()
+        rows = mechanics.replay_inputs.loc[mechanics.replay_inputs["utc_day"] == utc_day].copy()
         if rows.empty or set(rows["side"].map(_normalize_side)) != {"BUY", "SELL"}:
             raise OfflineReplayAdapterError(
                 "one-day mechanics must cover both sides on the first admitted day"
@@ -3177,9 +4730,7 @@ class _CanonicalOfflineReplayAdapter:
             "identity": self.identity,
             "status": "exact_owner_one_day_mechanics_complete",
             "adapter_artifact_sha256": self.artifact_sha256,
-            "execution_manifest_sha256": (
-                mechanics.bindings.execution_manifest_sha256
-            ),
+            "execution_manifest_sha256": (mechanics.bindings.execution_manifest_sha256),
             "source_manifest_sha256": mechanics.bindings.source_manifest_sha256,
             "panel_manifest_sha256": mechanics.bindings.panel_manifest_sha256,
             "fold_manifest_sha256": mechanics.bindings.fold_manifest_sha256,
@@ -3239,8 +4790,7 @@ class _CanonicalOfflineReplayAdapter:
             name
             for name in names
             if _is_mid_ema_predicate(name)
-            and name
-            not in {successor.CURRENT_SHORT_CROSS, successor.CURRENT_LONG_CROSS}
+            and name not in {successor.CURRENT_SHORT_CROSS, successor.CURRENT_LONG_CROSS}
             and any(_contains_pair(name, prefix) for prefix in prefixes)
         )
         _validate_e2_semantics(e2)
@@ -3416,9 +4966,7 @@ class _CanonicalOfflineReplayAdapter:
         )
         if tuple(str(value) for value in rows.index) != tuple(label.row_ids):
             raise OfflineReplayAdapterError("one-shot replay rows escaped the purged request")
-        missing_scope = sorted(
-            {"fold_row_role", "outer_fold_id"}.difference(rows.columns)
-        )
+        missing_scope = sorted({"fold_row_role", "outer_fold_id"}.difference(rows.columns))
         if missing_scope:
             raise OfflineReplayAdapterError(
                 "formal label replay scope is missing provider-owned fields: "
@@ -3550,9 +5098,7 @@ class _CanonicalOfflineReplayAdapter:
                     exact_vocabulary=True,
                 )
                 if not isinstance(result.evidence, Mapping):
-                    raise OfflineReplayAdapterError(
-                        "one-shot shared-prefix evidence is missing"
-                    )
+                    raise OfflineReplayAdapterError("one-shot shared-prefix evidence is missing")
                 options.cache.admit_one_shot(
                     job.cache_key,
                     outcomes,
@@ -3602,119 +5148,225 @@ class _CanonicalOfflineReplayAdapter:
         request: backend.CanonicalSequentialReplayRequest,
         replay_inputs: pd.DataFrame,
     ) -> backend.CanonicalSequentialReplayResult:
-        if not isinstance(request, backend.CanonicalSequentialReplayRequest):
-            raise OfflineReplayAdapterError("custom sequential replay request is forbidden")
-        evaluation = request.evaluation_request
-        if not isinstance(evaluation, nested.EvaluationRequest):
-            raise OfflineReplayAdapterError("custom evaluation request is forbidden")
-        if evaluation.stage not in SEQUENTIAL_STAGES:
-            raise OfflineReplayAdapterError("sequential replay stage is not inner/outer OOF")
-        side = _normalize_side(evaluation.side)
-        rows = _validate_replay_input_frame(
-            replay_inputs,
-            bindings=request.bindings,
-            replay_input_sha256=request.replay_input_sha256,
-            side=side,
-            days=evaluation.days,
-        )
-        if evaluation.candidate.expected_executed_policy_sha256 != (
-            offline.ACTIVE_OWNER_POLICY_SHA256
-        ) and evaluation.candidate.policy is None:
-            raise OfflineReplayAdapterError("candidate policy artifact is missing")
-        _require_executable_replay_inputs(
-            rows, context="paired sequential day replay", label_scope=False
-        )
-        _validate_d_plus_one_contract(rows)
-        options = _resolve_execution_options(rows)
-        receipt = backend.build_sequential_replay_receipt(
-            request,
-            adapter_identity=self.identity,
+        prepared = _prepare_sequential_replay(
             adapter_artifact_sha256=self.artifact_sha256,
+            request=request,
+            replay_inputs=replay_inputs,
         )
-        collected: list[pd.DataFrame] = []
-        jobs: list[_DayReplayJob] = []
-        for day in sorted(set(rows["utc_day"])):
-            day_rows = rows.loc[rows["utc_day"] == day].copy()
-            key = _cache_key(
-                adapter_artifact_sha256=self.artifact_sha256,
-                bindings=request.bindings,
-                candidate_policy_sha256=(
-                    evaluation.candidate.expected_executed_policy_sha256
-                ),
-                side=side,
-                stage=evaluation.stage,
-                fold_id=evaluation.fold_id,
-                utc_day=day,
-                day_rows=day_rows,
-            )
-            cached = options.cache.load_sequential(key)
-            if cached is not None:
-                collected.append(cached)
-                continue
-            options.cache.write_progress(key, state="queued")
-            jobs.append(
-                _DayReplayJob(
-                    kind="sequential",
-                    utc_day=day,
-                    cache_key=key,
-                    payload={
-                        "fixed_bridge": options.binding["fixed_bridge"],
-                        "portable_binding": options.binding,
-                        "replay_inputs": day_rows,
-                        "candidate": evaluation.candidate,
-                        "target_side": side,
-                    },
+        if prepared.jobs:
+            _mark_prepared_jobs((prepared,), state="running")
+            try:
+                results = _run_day_jobs(
+                    prepared.jobs,
+                    workers=prepared.options.workers,
+                )
+            except Exception as exc:
+                _mark_prepared_jobs(
+                    (prepared,),
+                    state="failed",
+                    detail=type(exc).__name__,
+                )
+                raise
+            results_by_key = {result.cache_key_sha256: result for result in results}
+        else:
+            results_by_key = {}
+        frames = _admit_prepared_sequential_results(prepared, results_by_key)
+        return _finalize_prepared_sequential_replay(prepared, frames)
+
+    def evaluate_many(
+        self,
+        items: Sequence[SequentialPolicyDayBatchItem],
+        *,
+        total_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+    ) -> tuple[backend.CanonicalSequentialReplayResult, ...]:
+        """Evaluate many frozen policies through one global policy-by-day pool."""
+
+        if not items:
+            raise OfflineReplayAdapterError("global policy-day batch is empty")
+        prepared: list[_PreparedSequentialReplay] = []
+        for item in items:
+            if not isinstance(item, SequentialPolicyDayBatchItem):
+                raise OfflineReplayAdapterError("global policy-day batch item type drifted")
+            prepared.append(
+                _prepare_sequential_replay(
+                    adapter_artifact_sha256=self.artifact_sha256,
+                    request=item.request,
+                    replay_inputs=item.replay_inputs,
                 )
             )
+        receipt_ids = [str(item.receipt.get("receipt_sha256", "")) for item in prepared]
+        if len(set(receipt_ids)) != len(receipt_ids):
+            raise OfflineReplayAdapterError("global policy-day batch contains duplicate requests")
+        jobs = tuple(job for item in prepared for job in item.jobs)
         if jobs:
-            for job in jobs:
-                options.cache.write_progress(job.cache_key, state="running")
             try:
-                results = _run_day_jobs(jobs, workers=options.workers)
-            except Exception as exc:
-                for job in jobs:
-                    options.cache.write_progress(
-                        job.cache_key, state="failed", detail=type(exc).__name__
+                if self._acceleration is not None:
+                    prepared = list(
+                        _bind_bulk_day_input_mmaps(
+                            prepared,
+                            acceleration=self._acceleration,
+                            total_worker_tokens=total_worker_tokens,
+                        )
                     )
+                b0_jobs, candidate_jobs = _build_bulk_b0_and_candidate_phases(prepared)
+                _run_global_b0_control_jobs(
+                    b0_jobs,
+                    total_worker_tokens=total_worker_tokens,
+                )
+                cache = prepared[0].options.cache
+                for candidate_job in candidate_jobs:
+                    b0_key = _prospective_b0_control_cache_key(candidate_job)
+                    if cache.load_b0_control(b0_key) is None:
+                        raise OfflineReplayAdapterError(
+                            "bulk B0 materialization did not admit every control"
+                        )
+                _mark_prepared_jobs(prepared, state="running")
+                results = run_global_policy_day_jobs(
+                    candidate_jobs,
+                    total_worker_tokens=total_worker_tokens,
+                )
+            except Exception as exc:
+                _mark_prepared_jobs(
+                    prepared,
+                    state="failed",
+                    detail=type(exc).__name__,
+                )
                 raise
-            by_key = {job.cache_key.cache_key_sha256: job for job in jobs}
-            for result in results:
-                job = by_key[result.cache_key_sha256]
-                if set(result.frames) != {"rows"}:
-                    raise OfflineReplayAdapterError("sequential day replay payload drifted")
-                day_result = result.frames["rows"].copy()
-                options.cache.admit_sequential(job.cache_key, day_result)
-                options.cache.write_progress(job.cache_key, state="complete")
-                collected.append(day_result)
-        result_rows = _concat_sequential_day_results(collected)
-        result_rows["sequential_batch_receipt_sha256"] = receipt["receipt_sha256"]
-        result_rows["execution_manifest_sha256"] = (
-            request.bindings.execution_manifest_sha256
+            all_results = {result.cache_key_sha256: result for result in results}
+            if len(all_results) != len(results):
+                raise OfflineReplayAdapterError(
+                    "global policy-day results contain duplicate cache keys"
+                )
+        else:
+            _validated_global_worker_count(total_worker_tokens)
+            all_results = {}
+        output: list[backend.CanonicalSequentialReplayResult] = []
+        for item in prepared:
+            item_keys = {job.cache_key.cache_key_sha256 for job in item.jobs}
+            frames = _admit_prepared_sequential_results(
+                item,
+                {key: all_results[key] for key in item_keys},
+            )
+            output.append(_finalize_prepared_sequential_replay(item, frames))
+        return tuple(output)
+
+    def evaluate_repeated_policies(
+        self,
+        items: Sequence[backend.CanonicalSequentialReplayBatchRequest],
+    ) -> tuple[backend.CanonicalSequentialReplayBatchResult, ...]:
+        """Backend batch ABI bound to request identities and expected receipts."""
+
+        if isinstance(items, (str, bytes)) or not isinstance(items, Sequence) or not items:
+            raise OfflineReplayAdapterError("canonical sequential batch is empty or malformed")
+        normalized = tuple(items)
+        request_sha256s: list[str] = []
+        compat_items: list[SequentialPolicyDayBatchItem] = []
+        expected_receipts: list[Mapping[str, Any]] = []
+        for item in normalized:
+            if not isinstance(item, backend.CanonicalSequentialReplayBatchRequest):
+                raise OfflineReplayAdapterError("canonical sequential batch item type drifted")
+            request_sha = _require_sha(
+                item.request_sha256,
+                label="canonical sequential batch request SHA256",
+            )
+            evaluation = item.replay_request.evaluation_request
+            if (
+                not isinstance(evaluation, nested.EvaluationRequest)
+                or request_sha != evaluation.request_sha256
+            ):
+                raise OfflineReplayAdapterError("canonical sequential request identity drifted")
+            expected = backend.build_sequential_replay_receipt(
+                item.replay_request,
+                adapter_identity=self.identity,
+                adapter_artifact_sha256=self.artifact_sha256,
+            )
+            if dict(item.expected_receipt) != expected:
+                raise OfflineReplayAdapterError("canonical sequential expected receipt drifted")
+            request_sha256s.append(request_sha)
+            expected_receipts.append(expected)
+            compat_items.append(
+                SequentialPolicyDayBatchItem(
+                    request=item.replay_request,
+                    replay_inputs=item.replay_inputs,
+                )
+            )
+        if len(set(request_sha256s)) != len(request_sha256s):
+            raise OfflineReplayAdapterError("canonical sequential batch requests are duplicated")
+        results = self.evaluate_many(
+            tuple(compat_items),
+            total_worker_tokens=self._global_worker_tokens,
         )
-        result_rows["source_manifest_sha256"] = request.bindings.source_manifest_sha256
-        result_rows["panel_manifest_sha256"] = request.bindings.panel_manifest_sha256
-        result_rows["fold_manifest_sha256"] = request.bindings.fold_manifest_sha256
-        validated = _validate_sequential_rows(request, result_rows)
-        return backend.CanonicalSequentialReplayResult(rows=validated, receipt=receipt)
+        if len(results) != len(normalized):
+            raise OfflineReplayAdapterError("canonical sequential batch result census drifted")
+        output: list[backend.CanonicalSequentialReplayBatchResult] = []
+        for request_sha, expected, result in zip(
+            request_sha256s,
+            expected_receipts,
+            results,
+            strict=True,
+        ):
+            if not isinstance(result, backend.CanonicalSequentialReplayResult) or dict(
+                result.receipt
+            ) != dict(expected):
+                raise OfflineReplayAdapterError("canonical sequential batch result receipt drifted")
+            output.append(
+                backend.CanonicalSequentialReplayBatchResult(
+                    request_sha256=request_sha,
+                    result=result,
+                )
+            )
+        return tuple(output)
+
+    def evaluate_repeated_policy_batch(
+        self,
+        items: Sequence[SequentialPolicyDayBatchItem],
+        *,
+        total_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+    ) -> tuple[backend.CanonicalSequentialReplayResult, ...]:
+        """Compatibility alias for backend callers migrating to ``evaluate_many``."""
+
+        return self.evaluate_many(
+            items,
+            total_worker_tokens=total_worker_tokens,
+        )
 
 
-def build_canonical_replay_adapter() -> backend.CanonicalReplayAdapter:
+def build_canonical_replay_adapter(
+    *,
+    acceleration: SequentialReplayAccelerationOptions | None = None,
+    global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
+) -> backend.CanonicalReplayAdapter:
     """Build the sole fixed adapter; no caller-supplied evaluator is accepted."""
 
-    return _CanonicalOfflineReplayAdapter()
+    return _CanonicalOfflineReplayAdapter(
+        acceleration=acceleration,
+        global_worker_tokens=global_worker_tokens,
+    )
 
 
 __all__ = [
+    "B0_CONTROL_CACHE_SCHEMA",
+    "B0ControlCacheKey",
+    "B0ControlPath",
     "DAY_CACHE_SCHEMA",
     "DEFAULT_DAY_WORKERS",
+    "DEFAULT_GLOBAL_POLICY_DAY_WORKERS",
+    "DAY_INPUT_MMAP_BINDING_SCHEMA",
     "DayReplayCache",
     "DayReplayCacheKey",
+    "DayInputMmapBinding",
+    "EXECUTOR_ACCELERATION_IDENTITY",
     "IDENTITY",
+    "GLOBAL_SEQUENTIAL_WORKER_TOKENS",
     "MAX_DAY_WORKERS",
+    "MAX_GLOBAL_POLICY_DAY_WORKERS",
     "MECHANICS_MISSING_STATUS",
     "MIN_DAY_WORKERS",
     "OfflineReplayAdapterError",
     "OfflineReplayAdapterMechanicsMissing",
     "REQUIRED_ADDITIONAL_CONTEXT_DAYS",
+    "SequentialReplayAccelerationOptions",
+    "SequentialPolicyDayBatchItem",
     "build_canonical_replay_adapter",
+    "run_global_policy_day_jobs",
 ]
