@@ -823,6 +823,28 @@ def test_invalid_and_mismatched_runtime_hashes_fail_closed() -> None:
         )
 
 
+def test_real_day_v23_runtime_scope_is_accepted_by_cpp_and_dispatch_gate() -> None:
+    config = _cpp_config(qualification_scope="real_day_all_arm_full_replay_v23")
+    config.feature_clock_semantics = "historical_exchange_m2_v1"
+    runtime = cpp.F05RepeatedBooleanCooldownRuntime(config)
+    assert runtime.parity_qualified
+    assert runtime.binding_error == ""
+    evaluator = SimpleNamespace(
+        policy_sha256=POLICY_SHA256,
+        predicate_bundle_sha256=PREDICATE_SHA256,
+    )
+    params = {
+        "cooldown_duration_policy_evaluator": evaluator,
+        "cooldown_duration_policy_cpp_runtime": runtime,
+        "cooldown_duration_policy_cpp_parity_qualified": True,
+        "cooldown_duration_policy_cpp_event_loop_parity_qualified": True,
+        "cooldown_duration_policy_cpp_parity_receipt_sha256": (
+            QUALIFICATION_SHA256
+        ),
+    }
+    assert _validate_f05_cpp_cooldown_runtime(params, require_full_replay=True) is runtime
+
+
 def test_python_cpp_dispatch_gate_requires_explicit_bound_qualification() -> None:
     runtime = cpp.F05RepeatedBooleanCooldownRuntime(_cpp_config())
     evaluator = SimpleNamespace(

@@ -81,7 +81,13 @@ def test_all_panel_builder_walk_validates_every_opportunity(
     )
 
     receipt_path = tmp_path / lockstep.BUILDER_PREFLIGHT_RECEIPT_NAME
-    fake_cpp = SimpleNamespace(validate_f05_cooldown_predicate_rows=lambda _config, _rows: None)
+    fake_cpp = SimpleNamespace(
+        F05RepeatedBooleanCooldownRuntime=lambda _config: SimpleNamespace(
+            parity_qualified=True,
+            binding_error="",
+        ),
+        validate_f05_cooldown_predicate_rows=lambda _config, _rows: None,
+    )
     receipt = lockstep.preflight_all_panel_target_rows(
         bundle,
         cpp=fake_cpp,
@@ -100,6 +106,43 @@ def test_all_panel_builder_walk_validates_every_opportunity(
     assert receipt["formal_v22_to_v23_invariance_receipt_sha256"] == "e" * 64
     assert len(validated) == len(days)
     assert json.loads(receipt_path.read_text(encoding="ascii")) == receipt
+
+
+def test_all_panel_builder_walk_rejects_unqualified_runtime_before_rows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    days = tuple(f"2026-07-{day:02d}" for day in range(1, 31))
+    bundle = _bundle(days)
+    monkeypatch.setattr(
+        lockstep.cpp_runtime,
+        "build_cpp_runtime_config",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        lockstep,
+        "_read_qualification_rows",
+        lambda *_args, **_kwargs: pytest.fail("panel rows must not be read"),
+    )
+    fake_cpp = SimpleNamespace(
+        F05RepeatedBooleanCooldownRuntime=lambda _config: SimpleNamespace(
+            parity_qualified=False,
+            binding_error="cpp_qualification_scope_invalid",
+        )
+    )
+
+    with pytest.raises(
+        lockstep.CppRealDayLockstepError,
+        match="runtime identity is not parity-qualified",
+    ):
+        lockstep.preflight_all_panel_target_rows(
+            bundle,
+            cpp=fake_cpp,
+            policy_path=tmp_path / "policy.json",
+            predicate_path=tmp_path / "predicates.json",
+            invariance_receipt={"canonical_receipt_sha256": "e" * 64},
+            receipt_path=tmp_path / lockstep.BUILDER_PREFLIGHT_RECEIPT_NAME,
+        )
 
 
 def test_unhandled_lockstep_exception_is_admitted_fail_closed(

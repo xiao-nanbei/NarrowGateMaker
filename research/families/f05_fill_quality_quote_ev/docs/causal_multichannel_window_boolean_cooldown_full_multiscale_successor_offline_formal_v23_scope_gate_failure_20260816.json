@@ -1,0 +1,47 @@
+{
+  "action_authorized": false,
+  "annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-cpp-one-shot-v23-20260816",
+  "artifacts": {
+    "builder_receipt": {
+      "artifact_id": "f05-full-multiscale-offline-formal-v23-builder-receipt",
+      "canonical_receipt_sha256": "14d974205ad1071379a43ea1e019714ca0666ae233982cb44c480cf118b2c2ec",
+      "file_sha256": "c8296af1113e19b7c9033fd16a6a8e9f6f32a3a9caf906fb9c9b7df8c1405779"
+    },
+    "execution_manifest": {
+      "artifact_id": "f05-full-multiscale-offline-formal-v23-execution-manifest",
+      "canonical_manifest_sha256": "0f0a999f6862f9574975f51ae6fee332515aa06547c2b3766a31b4d5e9afa4d3",
+      "file_sha256": "2f28b011874c6bc892da07a98fb9b18f4d33ad001fc9ef27895b6d60174ae44b"
+    },
+    "invariance_receipt": {
+      "artifact_id": "f05-full-multiscale-offline-formal-v23-invariance-receipt",
+      "canonical_receipt_sha256": "a1abd491904e442f8cef26a16b93e7a6c524f6597a94aaf10631744c478e951d",
+      "file_sha256": "d56738d83d3b1466ce1cf35e03610d7747be5067bacb5e55a8a85efc356bb279"
+    },
+    "lockstep_failure_receipt": {
+      "artifact_id": "f05-full-multiscale-offline-formal-v23-lockstep-failure-receipt",
+      "canonical_receipt_sha256": "e3760f0dcabcddd7789d3848bb037954d0ee3492d3b3908f681c3260dd7d681e",
+      "file_sha256": "df8abbe399ba0ef6dc32923210a49be52b875f9f4633027c444ac6c26d59637c"
+    },
+    "progress_receipt": {
+      "artifact_id": "f05-full-multiscale-offline-formal-v23-lockstep-progress",
+      "file_sha256": "457a3802d0ccf1999a12d34986e7fade775c5358bb1393bed5df4f67159aee49"
+    }
+  },
+  "builder_opportunities": 3516,
+  "candidate_ladder_changed": false,
+  "cpp_completed_arms": 0,
+  "data_changed": false,
+  "economic_values_exposed": false,
+  "economic_values_persisted": false,
+  "economic_values_used_for_selection": false,
+  "estimand_changed": false,
+  "failing_phase": "first_opportunity_all_arm_preflight",
+  "identity": "f05_full_multiscale_offline_formal_v23_scope_gate_failure_v1",
+  "live_authorized": false,
+  "public_base_commit": "8a1d6e739f47e0b47d4470812e00314a66673fe7",
+  "schema_version": "f05_full_multiscale_offline_formal_v23_scope_gate_failure.public_receipt.v1",
+  "sealed_holdout_read": false,
+  "statistics_changed": false,
+  "status": "failed_closed_first_opportunity_cpp_runtime_scope_invalid",
+  "validation_read": false
+}

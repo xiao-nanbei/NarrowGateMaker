@@ -305,7 +305,8 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
   if (config.qualification_scope != "synthetic_mechanics_only" &&
       config.qualification_scope != "synthetic_full_replay_smoke" &&
       config.qualification_scope != "real_day_all_arm_full_replay_v21" &&
-      config.qualification_scope != "real_day_all_arm_full_replay_v22") {
+      config.qualification_scope != "real_day_all_arm_full_replay_v22" &&
+      config.qualification_scope != "real_day_all_arm_full_replay_v23") {
     return "cpp_qualification_scope_invalid";
   }
   if (config.feature_clock_semantics != "receive_time_selected_mid_v1" &&
@@ -313,7 +314,8 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
     return "cpp_feature_clock_semantics_invalid";
   }
   if ((config.qualification_scope == "real_day_all_arm_full_replay_v21" ||
-       config.qualification_scope == "real_day_all_arm_full_replay_v22") &&
+       config.qualification_scope == "real_day_all_arm_full_replay_v22" ||
+       config.qualification_scope == "real_day_all_arm_full_replay_v23") &&
       config.feature_clock_semantics != "historical_exchange_m2_v1") {
     return "cpp_real_day_feature_clock_semantics_invalid";
   }
@@ -4960,7 +4962,9 @@ TickReplayResult simulate_tick_arrays(
              config.qualification_scope !=
                  "real_day_all_arm_full_replay_v21" &&
              config.qualification_scope !=
-                 "real_day_all_arm_full_replay_v22")) {
+                 "real_day_all_arm_full_replay_v22" &&
+             config.qualification_scope !=
+                 "real_day_all_arm_full_replay_v23")) {
             throw std::invalid_argument(
                 "F05 repeated cooldown requires a full-replay-qualified runtime"
             );

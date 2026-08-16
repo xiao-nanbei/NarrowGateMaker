@@ -1,0 +1,37 @@
+{
+  "action_authorized": false,
+  "cpp_extension_build_passed": true,
+  "cpp_extension_sha256": "b4f6a1e89021f2f8971663262c1eb92c686a2d25206beb4495bfc48b601f1634",
+  "economic_outcomes_read": false,
+  "formal_successor_authorized": false,
+  "full_pytest": {
+    "passed": 3303,
+    "skipped": 316,
+    "warnings": 1
+  },
+  "identity": "f05_full_multiscale_offline_post_v23_scope_fix_local_verification_v1",
+  "live_authorized": false,
+  "private_evidence_audit": {
+    "findings": 0,
+    "passed": true,
+    "private_files_seen": 504
+  },
+  "public_documentation_audit": {
+    "files_scanned": 754,
+    "findings": 0,
+    "passed": true,
+    "repository_links_checked": 595
+  },
+  "sealed_holdout_read": false,
+  "source_sha256": {
+    "backtest_tick": "42cb34f50d197549d07e31cb9bec30fa6f9f2421b4ee33524bd7394b8cf02bb7",
+    "lockstep_runner": "1a22d5e13bb190559989b16a31d435db5ca26476551d4132c9c3fcbd0832c58a",
+    "tick_replay_cpp": "bd50deb7fdef5a5e685a26173c8e0ea2d480f5a5d773a637f380dd64c69103cd"
+  },
+  "status": "implemented_local_tests_passed_explicit_successor_authorization_required",
+  "targeted_scope_and_builder_tests": {
+    "passed": 91,
+    "skipped": 0
+  },
+  "validation_read": false
+}

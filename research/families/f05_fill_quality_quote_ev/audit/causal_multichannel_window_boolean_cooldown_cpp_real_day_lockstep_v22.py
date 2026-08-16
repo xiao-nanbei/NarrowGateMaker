@@ -259,6 +259,12 @@ def preflight_all_panel_target_rows(
         predicate_bundle_path=predicate_path,
         qualification_sha256=bundle.execution_manifest["canonical_execution_manifest_sha256"],
     )
+    startup_runtime = cpp.F05RepeatedBooleanCooldownRuntime(runtime_config)
+    if not bool(startup_runtime.parity_qualified):
+        raise CppRealDayLockstepError(
+            "builder preflight C++ runtime identity is not parity-qualified: "
+            + str(startup_runtime.binding_error or "cpp_parity_not_qualified")
+        )
     policy = runtime_config.policy
     expected_predicate_count = len(policy.predicate_columns)
     selected_days = tuple(str(value) for value in bundle.source_manifest["selected_days"])
