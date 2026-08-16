@@ -11,6 +11,9 @@ import pytest
 
 from models import backtest_tick as bt
 from models.backtest_tick import _validate_f05_cpp_cooldown_runtime
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_cpp_runtime_v22 as cpp_runtime_v22,
+)
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_features import (
     BASE_WINDOW_WIDTH_NS,
     CausalWindowObservation,
@@ -201,9 +204,7 @@ def _full_replay_window_tape():
         observation.feature_ready_ts_ns = right_ts_ns
         observation.market_generation = index + 1
         observation.depth_generation = index + 1
-        observation.mid_usdc_per_btc = (
-            100.0 if (index // 5) % 2 == 0 else 100.2
-        )
+        observation.mid_usdc_per_btc = 100.0 if (index // 5) % 2 == 0 else 100.2
         observation.channel_support_valid = True
         observations.append(observation)
     return observations
@@ -381,21 +382,13 @@ def _full_replay_params(*, engine: str) -> dict[str, object]:
         params.update(
             {
                 "cooldown_duration_policy_cpp_runtime": (
-                    cpp.F05RepeatedBooleanCooldownRuntime(
-                        _full_replay_cpp_config()
-                    )
+                    cpp.F05RepeatedBooleanCooldownRuntime(_full_replay_cpp_config())
                 ),
                 "cooldown_duration_policy_cpp_parity_qualified": True,
                 "cooldown_duration_policy_cpp_event_loop_parity_qualified": True,
-                "cooldown_duration_policy_cpp_parity_receipt_sha256": (
-                    QUALIFICATION_SHA256
-                ),
-                "_cooldown_duration_policy_cpp_window_tape": (
-                    _full_replay_window_tape()
-                ),
-                "_cooldown_duration_policy_cpp_predicate_rows": (
-                    _full_replay_predicate_rows()
-                ),
+                "cooldown_duration_policy_cpp_parity_receipt_sha256": (QUALIFICATION_SHA256),
+                "_cooldown_duration_policy_cpp_window_tape": (_full_replay_window_tape()),
+                "_cooldown_duration_policy_cpp_predicate_rows": (_full_replay_predicate_rows()),
             }
         )
     return params
@@ -818,9 +811,7 @@ def test_invalid_and_mismatched_runtime_hashes_fail_closed() -> None:
         ),
         "cooldown_duration_policy_cpp_runtime": runtime,
         "cooldown_duration_policy_cpp_parity_qualified": True,
-        "cooldown_duration_policy_cpp_parity_receipt_sha256": (
-            QUALIFICATION_SHA256
-        ),
+        "cooldown_duration_policy_cpp_parity_receipt_sha256": (QUALIFICATION_SHA256),
     }
     with pytest.raises(RuntimeError, match="policy and predicate identities"):
         _validate_f05_cpp_cooldown_runtime(params, require_full_replay=False)
@@ -865,9 +856,7 @@ def test_full_replay_selection_requires_separate_event_loop_qualification() -> N
         ),
         "cooldown_duration_policy_cpp_runtime": runtime,
         "cooldown_duration_policy_cpp_parity_qualified": True,
-        "cooldown_duration_policy_cpp_parity_receipt_sha256": (
-            QUALIFICATION_SHA256
-        ),
+        "cooldown_duration_policy_cpp_parity_receipt_sha256": (QUALIFICATION_SHA256),
     }
     with pytest.raises(
         NotImplementedError,
@@ -876,10 +865,7 @@ def test_full_replay_selection_requires_separate_event_loop_qualification() -> N
         _validate_f05_cpp_cooldown_runtime(params, require_full_replay=True)
 
     params["cooldown_duration_policy_cpp_event_loop_parity_qualified"] = True
-    assert (
-        _validate_f05_cpp_cooldown_runtime(params, require_full_replay=True)
-        is runtime
-    )
+    assert _validate_f05_cpp_cooldown_runtime(params, require_full_replay=True) is runtime
 
 
 def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
@@ -970,9 +956,7 @@ def test_cpp_full_replay_hook_matches_python_repeated_policy_path() -> None:
         hashlib.sha256(checkpoint.canonical_payload.encode("utf-8")).hexdigest()
         == checkpoint.checkpoint_sha256
     )
-    restored = cpp.F05RepeatedBooleanCooldownRuntime(
-        _full_replay_cpp_config()
-    )
+    restored = cpp.F05RepeatedBooleanCooldownRuntime(_full_replay_cpp_config())
     restored.restore(checkpoint)
     assert restored.checkpoint().checkpoint_sha256 == checkpoint.checkpoint_sha256
 
@@ -1011,46 +995,32 @@ def test_cpp_one_shot_target_override_matches_python_owner_continuation() -> Non
         values["use_bar_pricing"] = False
         if engine == "cpp":
             target_row = cpp.F05CooldownPredicateRow()
-            target_row.exposure_fill_ordinal = int(
-                target["exposure_fill_ordinal"]
-            )
+            target_row.exposure_fill_ordinal = int(target["exposure_fill_ordinal"])
             target_row.fill_ts_ms = int(target["fill_visible_ts_ms"])
             target_row.side = cpp.Side.Sell
             target_row.campaign_id = int(target["campaign_id"])
             target_row.snapshot_id = "synthetic-one-shot-target"
             target_row.predicate_values = [cpp.F05TriState.FALSE]
-            values["cooldown_duration_policy_cpp_runtime"] = (
-                cpp.F05RepeatedBooleanCooldownRuntime(
-                    _fixed_one_second_cpp_config()
-                )
+            values["cooldown_duration_policy_cpp_runtime"] = cpp.F05RepeatedBooleanCooldownRuntime(
+                _fixed_one_second_cpp_config()
             )
-            values["_cooldown_duration_policy_cpp_predicate_rows"] = [
-                target_row
-            ]
+            values["_cooldown_duration_policy_cpp_predicate_rows"] = [target_row]
         values.update(
             {
                 "cooldown_duration_fork_enabled": True,
                 "cooldown_duration_fork_action": "FIXED_DURATION_MS",
-                "cooldown_duration_fork_target_ordinal": int(
-                    target["exposure_fill_ordinal"]
-                ),
-                "cooldown_duration_fork_target_ts_ms": int(
-                    target["fill_visible_ts_ms"]
-                ),
+                "cooldown_duration_fork_target_ordinal": int(target["exposure_fill_ordinal"]),
+                "cooldown_duration_fork_target_ts_ms": int(target["fill_visible_ts_ms"]),
                 "cooldown_duration_fork_target_side": str(target["side"]),
                 "cooldown_duration_fork_target_order_id": int(target["order_id"]),
-                "cooldown_duration_fork_target_campaign_id": int(
-                    target["campaign_id"]
-                ),
+                "cooldown_duration_fork_target_campaign_id": int(target["campaign_id"]),
                 "cooldown_duration_fork_expected_baseline_ms": float(
                     target["baseline_duration_ms"]
                 ),
                 "cooldown_duration_fork_fixed_ms": 2_500.0,
                 "cooldown_duration_fork_baseline_policy_enabled": True,
                 "cooldown_duration_fork_expected_owner_action": "FIXED_1S",
-                "cooldown_duration_fork_expected_owner_policy_sha256": (
-                    POLICY_SHA256
-                ),
+                "cooldown_duration_fork_expected_owner_policy_sha256": (POLICY_SHA256),
             }
         )
         return values
@@ -1135,6 +1105,204 @@ def test_cpp_one_shot_target_override_matches_python_owner_continuation() -> Non
         abs=1e-12,
     )
     assert build_lockstep_digest(cpp_result) == build_lockstep_digest(python_result)
+
+
+def test_cpp_real_builder_accepts_sparse_support_row_with_runtime_predicates() -> None:
+    bt.configure_symbol("BTCUSDC")
+    trades = _full_replay_trades()
+    bbo = _full_replay_bbo(trades)
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+    census = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        _full_replay_params(engine="python"),
+        bbo_data=bbo,
+    )
+    target = census["_cooldown_duration_opportunity_trace"][1]
+    opportunity = {
+        **target,
+        "opportunity_id": "synthetic-real-builder-second-fill",
+        "feature::support_valid": True,
+        "feature::channel_support_valid": True,
+        "owner_fallback_reason": "",
+    }
+    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
+    cpp_runtime_v22.validate_target_predicate_row(
+        cpp,
+        row,
+        opportunity,
+        expected_predicate_count=1,
+    )
+    assert row.exposure_fill_ordinal == 2
+    assert list(row.predicate_values) == []
+
+    params = _full_replay_params(engine="cpp")
+    params["cooldown_duration_policy_cpp_runtime"] = cpp.F05RepeatedBooleanCooldownRuntime(
+        _fixed_one_second_cpp_config()
+    )
+    params["_cooldown_duration_policy_cpp_predicate_rows"] = [row]
+    result = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        empty_i64,
+        empty_f64,
+        params,
+        bbo_data=bbo,
+    )
+    assert len(result["_cooldown_duration_policy_decisions"]) >= 2
+    assert (
+        result["_cooldown_duration_policy_decisions"][1]["snapshot_id"]
+        == (opportunity["opportunity_id"])
+    )
+
+
+def test_cpp_real_builder_rejects_identity_and_width_drift() -> None:
+    opportunity = {
+        "opportunity_id": "synthetic-builder",
+        "exposure_fill_ordinal": 3,
+        "fill_visible_ts_ms": BASE_MS + 1_000,
+        "side": "SELL",
+        "campaign_id": 1,
+        "feature::support_valid": True,
+        "feature::channel_support_valid": True,
+        "owner_fallback_reason": "",
+    }
+    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
+    row.exposure_fill_ordinal = 2
+    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="identity drifted"):
+        cpp_runtime_v22.validate_target_predicate_row(
+            cpp,
+            row,
+            opportunity,
+            expected_predicate_count=len(PREDICATE_COLUMNS),
+        )
+    row.exposure_fill_ordinal = 3
+    row.predicate_values = [cpp.F05TriState.TRUE]
+    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="width drifted"):
+        cpp_runtime_v22.validate_target_predicate_row(
+            cpp,
+            row,
+            opportunity,
+            expected_predicate_count=len(PREDICATE_COLUMNS),
+        )
+
+
+def test_cpp_full_replay_rejects_unordered_or_wrong_width_sparse_rows() -> None:
+    bt.configure_symbol("BTCUSDC")
+    trades = _full_replay_trades()
+    bbo = _full_replay_bbo(trades)
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+    rows = _full_replay_predicate_rows()
+
+    unordered = _full_replay_params(engine="cpp")
+    unordered["_cooldown_duration_policy_cpp_predicate_rows"] = [rows[1], rows[0]]
+    with pytest.raises(ValueError, match="predicate-row identity is incomplete"):
+        bt._simulate_tick_with_engine(
+            "cpp",
+            trades,
+            empty_i64,
+            empty_f64,
+            unordered,
+            bbo_data=bbo,
+        )
+
+    wrong_width = _full_replay_params(engine="cpp")
+    rows[1].predicate_values = [cpp.F05TriState.TRUE]
+    wrong_width["_cooldown_duration_policy_cpp_predicate_rows"] = [rows[1]]
+    with pytest.raises(ValueError, match="predicate-row identity is incomplete"):
+        bt._simulate_tick_with_engine(
+            "cpp",
+            trades,
+            empty_i64,
+            empty_f64,
+            wrong_width,
+            bbo_data=bbo,
+        )
+
+
+def _run_cpp_full_replay_with_predicate_rows(
+    rows,
+    *,
+    config=None,
+):
+    bt.configure_symbol("BTCUSDC")
+    trades = _full_replay_trades()
+    params = _full_replay_params(engine="cpp")
+    if config is not None:
+        params["cooldown_duration_policy_cpp_runtime"] = (
+            cpp.F05RepeatedBooleanCooldownRuntime(config)
+        )
+    params["_cooldown_duration_policy_cpp_predicate_rows"] = rows
+    return bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        params,
+        bbo_data=_full_replay_bbo(trades),
+    )
+
+
+def test_cpp_empty_predicate_values_require_compiled_policy_columns() -> None:
+    compiled_row = _full_replay_predicate_rows()[0]
+    compiled_row.predicate_values = []
+    result = _run_cpp_full_replay_with_predicate_rows([compiled_row])
+    assert result["_cooldown_duration_policy_decisions"]
+
+    noncompiled_config = _full_replay_cpp_config()
+    noncompiled_config.policy.predicate_columns = [
+        *PREDICATE_COLUMNS,
+        "predicate::synthetic::python_only",
+    ]
+    noncompiled_row = _full_replay_predicate_rows()[0]
+    noncompiled_row.predicate_values = []
+    with pytest.raises(
+        ValueError,
+        match="predicate-row identity is incomplete",
+    ):
+        _run_cpp_full_replay_with_predicate_rows(
+            [noncompiled_row],
+            config=noncompiled_config,
+        )
+
+
+@pytest.mark.parametrize("ordinal_case", ["zero", "duplicate", "decreasing"])
+def test_cpp_predicate_row_ordinals_must_be_strictly_increasing(
+    ordinal_case: str,
+) -> None:
+    rows = _full_replay_predicate_rows()
+    if ordinal_case == "zero":
+        rows = [rows[0]]
+        rows[0].exposure_fill_ordinal = 0
+    elif ordinal_case == "duplicate":
+        rows = rows[:2]
+        rows[1].exposure_fill_ordinal = rows[0].exposure_fill_ordinal
+    else:
+        rows = [rows[1], rows[0]]
+
+    with pytest.raises(
+        ValueError,
+        match="predicate-row identity is incomplete",
+    ):
+        _run_cpp_full_replay_with_predicate_rows(rows)
+
+
+@pytest.mark.parametrize("predicate_width", [1, 2, 4])
+def test_cpp_nonempty_predicate_width_must_equal_policy_width(
+    predicate_width: int,
+) -> None:
+    row = _full_replay_predicate_rows()[0]
+    row.predicate_values = [cpp.F05TriState.TRUE] * predicate_width
+
+    with pytest.raises(
+        ValueError,
+        match="predicate-row identity is incomplete",
+    ):
+        _run_cpp_full_replay_with_predicate_rows([row])
 
 
 def test_cpp_shared_observation_tape_is_immutable_and_reusable() -> None:

@@ -490,14 +490,16 @@ def test_malformed_submit_response_remains_pending_and_owned(
     assert snapshot["exchange_exposure_complete"] is False
 
 
-def test_structured_gtx_minus_5022_close_is_exact_zero_exposure() -> None:
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_structured_gtx_minus_5022_close_is_exact_zero_exposure(side: Side) -> None:
     engine = _bare_engine(
         _StructuredRejectRest(-5022, "Post Only order will be rejected")
     )
+    price = 99.9 if side == Side.BUY else 100.1
 
-    engine._place_close_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine._place_close_order("BTCUSDC", side, price, 0.001)
 
-    assert engine._bid_cid is None
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) is None
     rejected = next(iter(engine.orders._history.values()))
     snapshot = rejected.lifecycle.snapshot()
     assert rejected.state == OrderState.REJECTED
@@ -538,9 +540,19 @@ def test_emergency_close_timeout_retains_reducing_ownership() -> None:
     assert engine.orders.lifecycle_snapshot(cid)["exchange_exposure_complete"] is False
 
 
-def test_rest_minus_2013_cannot_release_unknown_submit_ownership() -> None:
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_rest_minus_2013_cannot_release_unknown_submit_ownership(
+    route: str,
+    side: Side,
+) -> None:
     engine = _bare_engine(_SubmitTimeoutRest())
-    cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
     assert cid is not None
     engine.rest = _QueryRest(
         error=_ExchangeError(-2013, "Order does not exist")
@@ -549,7 +561,7 @@ def test_rest_minus_2013_cannot_release_unknown_submit_ownership() -> None:
     resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
 
     assert resolution == "exchange_not_found_ack_still_unknown"
-    assert engine._ask_cid == cid
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
     assert engine.orders.get_order(cid).state == OrderState.PENDING_NEW
     snapshot = engine.orders.lifecycle_snapshot(cid)
     assert snapshot["phase"] == "SUBMITTED"
@@ -557,19 +569,29 @@ def test_rest_minus_2013_cannot_release_unknown_submit_ownership() -> None:
     assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
 
 
-def test_rest_minus_2013_cannot_release_pending_cancel_ownership() -> None:
-    engine = _bare_engine(
-        _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
-    )
-    cid = engine.orders.create_order("BTCUSDC", Side.SELL, 100.1, 0.001)
-    engine.orders.confirm_new(cid, 71)
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_rest_minus_2013_cannot_release_pending_cancel_ownership(
+    route: str,
+    side: Side,
+) -> None:
+    engine = _bare_engine(_Rest())
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
+    assert cid is not None
     engine.orders.mark_pending_cancel(cid)
-    engine._ask_cid = cid
+    engine.rest = _QueryRest(
+        error=_ExchangeError(-2013, "Order does not exist")
+    )
 
     resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
 
     assert resolution == "exchange_not_found_terminal_still_unknown"
-    assert engine._ask_cid == cid
+    assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
     assert engine.orders.get_order(cid).state == OrderState.PENDING_CANCEL
 
 
@@ -853,32 +875,44 @@ def test_latched_conflict_between_reservation_and_rest_aborts_submit(
         ("FILLED", "0.001", OrderState.FILLED),
     ],
 )
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
 def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
+    route: str,
+    side: Side,
     status: str,
     executed_qty: str,
     expected_state: OrderState,
 ) -> None:
     engine = _bare_engine(_SubmitTimeoutRest())
-    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
     assert cid is not None
+    submitted = engine.orders.get_order(cid)
+    assert submitted is not None
     engine.rest = _QueryRest(
         response={
             "symbol": "BTCUSDC",
             "clientOrderId": cid,
-            "side": "BUY",
+            "side": side.value,
             "status": status,
             "orderId": 77,
-            "price": "99.9",
+            "price": str(price),
             "origQty": "0.001",
             "executedQty": executed_qty,
-            "avgPrice": "99.8" if executed_qty != "0" else "0",
+            "avgPrice": str(price) if executed_qty != "0" else "0",
             "updateTime": 1_900_000_000_000,
         }
     )
 
-    resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
+    resolution = engine.reconcile_pending_new_order(submitted)
 
     order = engine.orders.get_order(cid)
+    assert order is not None
     snapshot = order.lifecycle.snapshot()
     assert resolution == f"exchange_status_{status.lower()}_reconciled"
     assert order.state == expected_state
@@ -891,6 +925,62 @@ def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
     assert snapshot["exchange_exposure_valid"] is False
     assert snapshot["visible_exposure_complete"] is False
     assert snapshot["exchange_exposure_complete"] is False
+
+
+@pytest.mark.parametrize(
+    ("status", "executed_qty", "expected_state"),
+    [
+        ("NEW", "0", OrderState.OPEN),
+        ("PARTIALLY_FILLED", "0.0004", OrderState.PENDING_CANCEL),
+        ("FILLED", "0.001", OrderState.FILLED),
+    ],
+)
+@pytest.mark.parametrize("route", ["opening", "reducing"])
+@pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+def test_pending_cancel_reconcile_keeps_known_activation_but_not_rest_event_clock(
+    route: str,
+    side: Side,
+    status: str,
+    executed_qty: str,
+    expected_state: OrderState,
+) -> None:
+    engine = _bare_engine(_Rest())
+    price = 99.9 if side == Side.BUY else 100.1
+    if route == "reducing":
+        engine._place_close_order("BTCUSDC", side, price, 0.001)
+        cid = engine._bid_cid if side == Side.BUY else engine._ask_cid
+    else:
+        cid = engine._place_order("BTCUSDC", side, price, 0.001)
+    assert cid is not None
+    engine.orders.mark_pending_cancel(cid)
+    pending = engine.orders.get_order(cid)
+    assert pending is not None
+    activation_ts_ns = pending.lifecycle.activation_ts_ns
+    assert activation_ts_ns > 0
+    engine.rest = _RawQueryRest(
+        _query_response_for_order(
+            pending,
+            status=status,
+            executedQty=executed_qty,
+            avgPrice=str(price) if executed_qty != "0" else "0",
+            updateTime=1_900_000_000_000,
+        )
+    )
+
+    resolution = engine.reconcile_pending_cancel_order(pending)
+
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    snapshot = order.lifecycle.snapshot()
+    assert resolution == f"exchange_status_{status.lower()}_reconciled"
+    assert order.state == expected_state
+    assert order.filled_qty == pytest.approx(float(executed_qty))
+    assert snapshot["activation_ts_ns"] == activation_ts_ns
+    assert snapshot["activation_exchange_ts_ns"] == 0
+    assert snapshot["first_fill_exchange_ts_ns"] == 0
+    assert snapshot["terminal_exchange_ts_ns"] == 0
+    if expected_state in {OrderState.OPEN, OrderState.PENDING_CANCEL}:
+        assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
 
 
 @pytest.mark.parametrize("side", [Side.BUY, Side.SELL])

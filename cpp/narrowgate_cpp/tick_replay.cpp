@@ -304,14 +304,16 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
   }
   if (config.qualification_scope != "synthetic_mechanics_only" &&
       config.qualification_scope != "synthetic_full_replay_smoke" &&
-      config.qualification_scope != "real_day_all_arm_full_replay_v21") {
+      config.qualification_scope != "real_day_all_arm_full_replay_v21" &&
+      config.qualification_scope != "real_day_all_arm_full_replay_v22") {
     return "cpp_qualification_scope_invalid";
   }
   if (config.feature_clock_semantics != "receive_time_selected_mid_v1" &&
       config.feature_clock_semantics != "historical_exchange_m2_v1") {
     return "cpp_feature_clock_semantics_invalid";
   }
-  if (config.qualification_scope == "real_day_all_arm_full_replay_v21" &&
+  if ((config.qualification_scope == "real_day_all_arm_full_replay_v21" ||
+       config.qualification_scope == "real_day_all_arm_full_replay_v22") &&
       config.feature_clock_semantics != "historical_exchange_m2_v1") {
     return "cpp_real_day_feature_clock_semantics_invalid";
   }
@@ -4041,6 +4043,40 @@ bool process_ioc_close_orders(
 
 }  // namespace
 
+void validate_f05_cooldown_predicate_rows(
+    const F05RepeatedBooleanCooldownConfig &config,
+    const std::vector<F05CooldownPredicateRow> &rows) {
+  const std::set<std::string_view> compiled_predicates{
+      kF05ShortCrossPredicate,
+      kF05LongCrossPredicate,
+      kF05CampaignAgePredicate,
+  };
+  const bool all_predicates_compiled = std::all_of(
+      config.policy.predicate_columns.begin(),
+      config.policy.predicate_columns.end(),
+      [&](const auto &column) { return compiled_predicates.contains(column); });
+  if (rows.empty()) {
+    if (!all_predicates_compiled) {
+      throw std::invalid_argument(
+          "F05 full replay requires exact predicate rows for noncompiled columns");
+    }
+    return;
+  }
+  std::int64_t previous_ordinal = 0;
+  for (const auto &row : rows) {
+    const bool predicate_width_valid =
+        (row.predicate_values.empty() && all_predicates_compiled) ||
+        row.predicate_values.size() == config.policy.predicate_columns.size();
+    if (row.exposure_fill_ordinal <= previous_ordinal || row.fill_ts_ms <= 0 ||
+        row.campaign_id <= 0 || row.snapshot_id.empty() ||
+        !predicate_width_valid) {
+      throw std::invalid_argument(
+          "F05 full replay predicate-row identity is incomplete");
+    }
+    previous_ordinal = row.exposure_fill_ordinal;
+  }
+}
+
 F05RepeatedBooleanCooldownRuntime::F05RepeatedBooleanCooldownRuntime(
     F05RepeatedBooleanCooldownConfig config)
     : config_(std::move(config)) {
@@ -4922,7 +4958,9 @@ TickReplayResult simulate_tick_arrays(
         if (!runtime.parity_qualified() ||
             (config.qualification_scope != "synthetic_full_replay_smoke" &&
              config.qualification_scope !=
-                 "real_day_all_arm_full_replay_v21")) {
+                 "real_day_all_arm_full_replay_v21" &&
+             config.qualification_scope !=
+                 "real_day_all_arm_full_replay_v22")) {
             throw std::invalid_argument(
                 "F05 repeated cooldown requires a full-replay-qualified runtime"
             );
@@ -4951,33 +4989,9 @@ TickReplayResult simulate_tick_arrays(
                 "F05 repeated cooldown full replay requires a causal window tape"
             );
         }
-        if (params.f05_cooldown_predicate_rows.empty()) {
-            const std::set<std::string_view> compiled_predicates{
-                kF05ShortCrossPredicate,
-                kF05LongCrossPredicate,
-                kF05CampaignAgePredicate,
-            };
-            for (const auto& column : config.policy.predicate_columns) {
-                if (!compiled_predicates.contains(column)) {
-                    throw std::invalid_argument(
-                        "F05 full replay requires exact predicate rows for noncompiled columns"
-                    );
-                }
-            }
-        } else {
-            std::int64_t expected_ordinal = 1;
-            for (const auto& row : params.f05_cooldown_predicate_rows) {
-                if (row.exposure_fill_ordinal != expected_ordinal ||
-                    row.fill_ts_ms <= 0 || row.campaign_id <= 0 ||
-                    row.predicate_values.size() !=
-                        config.policy.predicate_columns.size()) {
-                    throw std::invalid_argument(
-                        "F05 full replay predicate-row identity is incomplete"
-                    );
-                }
-                ++expected_ordinal;
-            }
-        }
+        validate_f05_cooldown_predicate_rows(
+            config,
+            params.f05_cooldown_predicate_rows);
     } else if (!f05_cooldown_window_tape.empty() ||
                !params.f05_cooldown_predicate_rows.empty()) {
         throw std::invalid_argument(

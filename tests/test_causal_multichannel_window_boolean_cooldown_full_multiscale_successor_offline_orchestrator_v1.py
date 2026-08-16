@@ -57,7 +57,11 @@ def _bundle_fixture(
     for role in orchestrator._PANEL_FILES:
         path = tmp_path / f"{role}.bin"
         path.write_bytes(role.encode("ascii"))
-        panel_files[role] = _binding(path)
+        panel_files[role] = {
+            **_binding(path),
+            "rows": orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES,
+            "row_key_sha256": "f" * 64,
+        }
     sequential_files = {}
     for role in ("manifest", "merged_panel_manifest", "portable_replay_binding"):
         path = tmp_path / f"sequential-{role}.json"
@@ -75,8 +79,7 @@ def _bundle_fixture(
         owner_files[role] = {"path": str(path), "sha256": digest}
     real_file_sha256 = orchestrator._file_sha256
     owner_path_hashes = {
-        Path(binding["path"]).resolve(): binding["sha256"]
-        for binding in owner_files.values()
+        Path(binding["path"]).resolve(): binding["sha256"] for binding in owner_files.values()
     }
     monkeypatch.setattr(
         orchestrator,
@@ -152,9 +155,7 @@ def _bundle_fixture(
         "panel_manifest": _binding(panel_path),
         "fold_manifest_sha256": folds["fold_manifest_sha256"],
         "nested_fold_manifest": nested_folds,
-        "nested_fold_manifest_sha256": nested_folds[
-            "nested_fold_manifest_sha256"
-        ],
+        "nested_fold_manifest_sha256": nested_folds["nested_fold_manifest_sha256"],
         "source_contract": {
             "panel_role": offline.PANEL_ROLE,
             "queue_identity": offline.QUEUE_IDENTITY,
@@ -199,8 +200,88 @@ def _write_cpp_qualification_receipt(
     source: dict[str, object],
     panel: dict[str, object],
 ) -> None:
+    research_contract = orchestrator._research_contract_snapshot(
+        manifest=execution,
+        source=source,
+        panel=panel,
+    )
+    invariance_receipt: dict[str, object] = {
+        "schema_version": f"{orchestrator.V21_V22_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": orchestrator.V21_V22_INVARIANCE_IDENTITY,
+        "status": orchestrator.V21_V22_INVARIANCE_STATUS,
+        "formal_v21": {
+            "canonical_execution_manifest_sha256": (
+                orchestrator.V21_EXECUTION_MANIFEST_CANONICAL_SHA256
+            ),
+            "manifest_file_sha256": orchestrator.V21_EXECUTION_MANIFEST_FILE_SHA256,
+            "public_base_commit": orchestrator.V21_PUBLIC_BASE_COMMIT,
+            "annotated_tag": orchestrator.V21_ANNOTATED_TAG,
+        },
+        "formal_v22": {
+            "canonical_execution_manifest_sha256": execution[
+                "canonical_execution_manifest_sha256"
+            ],
+            "manifest_file_sha256": orchestrator._file_sha256(execution_path),
+            "public_base_commit": execution["public_base_commit"],
+            "annotated_tag": execution["annotated_tag"],
+        },
+        "research_contract": research_contract,
+        "research_contract_sha256": orchestrator._canonical_sha256(research_contract),
+        "semantic_source_hashes": {},
+        "semantic_source_count": len(orchestrator._RESEARCH_SEMANTIC_SOURCE_PATHS),
+        "data_changed": False,
+        "candidate_ladder_changed": False,
+        "duration_vocabulary_changed": False,
+        "estimand_changed": False,
+        "statistics_changed": False,
+        "economic_outcomes_read": False,
+        "economic_values_persisted": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    invariance_receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        invariance_receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(
+        execution_path.parent / orchestrator.V21_V22_INVARIANCE_RECEIPT_NAME,
+        invariance_receipt,
+    )
+    builder_receipt: dict[str, object] = {
+        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v22.builder_preflight.v1"),
+        "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
+        "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
+        "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
+        "source_manifest_sha256": source["canonical_manifest_sha256"],
+        "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
+        "opportunity_count": orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES,
+        "cpp_startup_contract_validation": True,
+        "cpp_startup_validated_row_count": (
+            orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
+        ),
+        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+            "canonical_receipt_sha256"
+        ],
+        "economic_evaluator_call_count": 0,
+        "economic_values_read": False,
+        "economic_values_persisted": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    builder_receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        builder_receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(
+        execution_path.parent / orchestrator.CPP_BUILDER_PREFLIGHT_RECEIPT_NAME,
+        builder_receipt,
+    )
     qualification = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v21.contract.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v22.contract.v1",
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
         "source_manifest_sha256": source["canonical_manifest_sha256"],
         "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
@@ -209,10 +290,17 @@ def _write_cpp_qualification_receipt(
         "qualification_day": "2026-07-01",
         "opportunity_count": 2,
         "arm_count": 16,
+        "all_panel_builder_preflight_receipt_sha256": builder_receipt["canonical_receipt_sha256"],
+        "all_panel_builder_preflight_opportunity_count": (
+            orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
+        ),
+        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+            "canonical_receipt_sha256"
+        ],
         "source_hashes": {"cpp_extension": "d" * 64},
     }
     receipt: dict[str, object] = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v21.receipt.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v22.receipt.v1",
         "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
         "status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_contract": qualification,
@@ -282,9 +370,7 @@ def test_only_hash_bound_manifest_enters_formal_loader(
             ["bind", str(path), str(tmp_path / "out.json"), "--days", "2026-07-01"]
         )
     with pytest.raises(SystemExit):
-        orchestrator.parse_args(
-            ["bind", str(path), str(tmp_path / "out.json"), "--fold", "custom"]
-        )
+        orchestrator.parse_args(["bind", str(path), str(tmp_path / "out.json"), "--fold", "custom"])
     mechanics = orchestrator.parse_args(
         [
             "diagnose-one-day",
@@ -310,6 +396,111 @@ def test_formal_loader_requires_immutable_cpp_lockstep_receipt(
             verify_source_bytes=False,
             require_clean_tag=False,
         )
+
+
+def test_formal_loader_requires_all_panel_builder_preflight_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.CPP_BUILDER_PREFLIGHT_RECEIPT_NAME
+    receipt_path.unlink()
+
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="builder preflight receipt",
+    ):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+            require_cpp_qualification=True,
+        )
+
+
+def test_formal_loader_requires_v21_to_v22_invariance_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.V21_V22_INVARIANCE_RECEIPT_NAME
+    receipt_path.unlink()
+
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="invariance receipt",
+    ):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
+def test_formal_loader_rejects_recomputed_invariance_contract_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.V21_V22_INVARIANCE_RECEIPT_NAME
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["research_contract"]["candidate_ladder"].append("OUTCOME_INFORMED")
+    receipt["research_contract_sha256"] = orchestrator._canonical_sha256(
+        receipt["research_contract"]
+    )
+    receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="invariance receipt failed closed",
+    ):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
+def test_execution_only_invariance_rejects_research_contract_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _path, successor, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    predecessor = json.loads(json.dumps(successor))
+    predecessor["public_base_commit"] = orchestrator.V21_PUBLIC_BASE_COMMIT
+    predecessor["annotated_tag"] = orchestrator.V21_ANNOTATED_TAG
+    predecessor["canonical_execution_manifest_sha256"] = (
+        orchestrator.V21_EXECUTION_MANIFEST_CANONICAL_SHA256
+    )
+    predecessor["executor"]["identity"] = (
+        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1"
+    )
+    predecessor["executor"].pop(
+        "all_panel_zero_economic_builder_walk_required",
+        None,
+    )
+    predecessor["cpp_one_shot_qualification"]["identity"] = (
+        "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+    )
+    for field in (
+        "all_panel_zero_economic_builder_walk_required",
+        "builder_preflight_receipt_file",
+        "builder_preflight_opportunity_count",
+        "invariance_receipt_file",
+    ):
+        predecessor["cpp_one_shot_qualification"].pop(field, None)
+
+    orchestrator._execution_only_manifest_invariance(predecessor, successor)
+    successor["execution_contract"]["control"] = "CONTROL_85N"
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="outside the execution-only allowance",
+    ):
+        orchestrator._execution_only_manifest_invariance(predecessor, successor)
 
 
 def test_cpp_lockstep_receipt_rejects_nonzero_mismatch(
@@ -456,9 +647,7 @@ def test_nested_four_by_three_fold_tampering_fails_closed(
             nested_folds,
             "nested_fold_manifest_sha256",
         )
-        execution["nested_fold_manifest_sha256"] = nested_folds[
-            "nested_fold_manifest_sha256"
-        ]
+        execution["nested_fold_manifest_sha256"] = nested_folds["nested_fold_manifest_sha256"]
     else:
         execution["nested_fold_manifest_sha256"] = "0" * 64
     _rewrite_execution(path, execution)
@@ -623,7 +812,9 @@ def test_dirty_worktree_is_rejected(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     monkeypatch.setattr(
         orchestrator,
         "_git",
-        lambda *args, **_kwargs: " M strategy/file.py" if args[:2] == ("status", "--porcelain") else "",
+        lambda *args, **_kwargs: (
+            " M strategy/file.py" if args[:2] == ("status", "--porcelain") else ""
+        ),
     )
     with pytest.raises(orchestrator.OfflineOrchestratorError, match="clean worktree"):
         orchestrator._validate_clean_annotated_tag(
@@ -679,15 +870,11 @@ def test_canonical_bind_derives_every_formal_field_from_admission(
         tmp_path / "source.json"
     )
     assert result["panel_manifest"]["sha256"] == orchestrator._file_sha256(panel_path)
-    assert result["fold_manifest_sha256"] == source["fold_manifest"][
-        "fold_manifest_sha256"
-    ]
+    assert result["fold_manifest_sha256"] == source["fold_manifest"]["fold_manifest_sha256"]
     nested_folds = result["nested_fold_manifest"]
     assert len(nested_folds["outer_folds"]) == 4
     assert all(len(row["inner_folds"]) == 3 for row in nested_folds["outer_folds"])
-    assert result["nested_fold_manifest_sha256"] == nested_folds[
-        "nested_fold_manifest_sha256"
-    ]
+    assert result["nested_fold_manifest_sha256"] == nested_folds["nested_fold_manifest_sha256"]
     assert result["backend"]["custom_evaluator_allowed"] is False
     assert result["execution_contract"]["one_shot_effect_aggregation_used"] is False
     assert result["executor"] == orchestrator.formal_executor_contract()
@@ -739,9 +926,7 @@ def test_cli_preflight_reports_backend_blocker_instead_of_ready(
         "blocker": "canonical_backtest_tick_arm_executor_binding",
     }
     fake_backend = SimpleNamespace(
-        preflight_canonical_offline_economics=lambda path: (
-            blocked if path == manifest else None
-        )
+        preflight_canonical_offline_economics=lambda path: blocked if path == manifest else None
     )
     monkeypatch.setattr(orchestrator.importlib, "import_module", lambda _name: fake_backend)
 
@@ -766,14 +951,10 @@ def test_cli_preflight_can_atomically_write_a_canonical_receipt(
         "economic_outcomes_read": False,
         "missing_canonical_fields": ["campaign_id"],
     }
-    fake_backend = SimpleNamespace(
-        preflight_canonical_offline_economics=lambda _path: blocked
-    )
+    fake_backend = SimpleNamespace(preflight_canonical_offline_economics=lambda _path: blocked)
     monkeypatch.setattr(orchestrator.importlib, "import_module", lambda _name: fake_backend)
 
-    assert orchestrator.main(
-        ["preflight", str(manifest), "--output", str(output)]
-    ) == 0
+    assert orchestrator.main(["preflight", str(manifest), "--output", str(output)]) == 0
 
     emitted = json.loads(capsys.readouterr().out)
     persisted = json.loads(output.read_text(encoding="utf-8"))

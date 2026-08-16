@@ -1,0 +1,52 @@
+{
+  "action_authorized": false,
+  "companion_runtime_symbol_findings": 0,
+  "cpp_extension_sha256": "a93abbb02ac14894de05a638986194227f818fa187241ca028174ba27f5302c9",
+  "economic_outcomes_read": false,
+  "economic_values_persisted": false,
+  "formal_v21_to_v22_semantic_source_count": 9,
+  "formal_v21_to_v22_semantic_sources_equal": true,
+  "git_diff_check_passed": true,
+  "identity": "f05_full_multiscale_offline_formal_v22_local_verification_v1",
+  "live_authorized": false,
+  "private_audit": {
+    "catalog_entries": 7444,
+    "findings": 0,
+    "owner_roots_expected": 20,
+    "passed": true,
+    "private_files_seen": 504,
+    "public_projection_entries": 243
+  },
+  "public_audit": {
+    "files_scanned": 746,
+    "findings": 0,
+    "passed": true,
+    "projection_entries_verified": 243,
+    "repository_links_checked": 594,
+    "source_files_scanned": 1054
+  },
+  "pytest": {
+    "command": ".venv/bin/python -m pytest -q",
+    "duration_s": 169.8,
+    "failed": 0,
+    "passed": 3299,
+    "skipped": 316,
+    "warnings": 1
+  },
+  "ruff_passed": true,
+  "schema_version": "f05_full_multiscale_offline_formal_v22.local_verification.v1",
+  "sealed_holdout_read": false,
+  "source_sha256": {
+    "bindings_cpp": "9b8a77d795406943a6678514a6d57e0f6fa7cfeb4cae468805bdf00d0dbb9c04",
+    "cpp_runtime_v22": "d396240391b12c8f165de643769062538af3da3d4e0a44f0596e43c4d84e9df8",
+    "lockstep_v22": "f89f5df3113806c7fccaf247860cdaa368970818f87e9eb3d1af5a0ac9ac2fb5",
+    "models_backtest_tick": "86a6676961907a43b8ff07968387b0cbeb4755cd9e5ef35f510b2b56aef086a6",
+    "offline_orchestrator": "a8228b432eb01ac1842fc78ac288440a01b8f340c34049090ba6d39b3d03ce10",
+    "offline_replay_adapter": "8f140e8c635787106c7bb07a07f55840a840e8178d2088800d82a1fed4699742",
+    "tick_replay_cpp": "2f33e37279f0cb0c162378363e868b03ab0194ecfb288a77e5f23c725fc9da1d",
+    "tick_replay_hpp": "9e034a42b9298a3685f55d23f0b04f5d964431bb73e745855372a6541e4f66fc"
+  },
+  "status": "formal_v22_implemented_local_pre_admission_tests_passed",
+  "validation_read": false,
+  "worktree_clean_at_verification": false
+}

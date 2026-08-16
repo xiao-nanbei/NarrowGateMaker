@@ -13,8 +13,8 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from strategy import boolean_cooldown_live as live_policy
 
-IDENTITY = "f05_exact_owner_cpp_runtime_v21"
-QUALIFICATION_SCOPE = "real_day_all_arm_full_replay_v21"
+IDENTITY = "f05_exact_owner_cpp_runtime_v22"
+QUALIFICATION_SCOPE = "real_day_all_arm_full_replay_v22"
 FEATURE_CLOCK_SEMANTICS = "historical_exchange_m2_v1"
 _DURATION_RE = re.compile(r"^FIXED_([1-9][0-9]*)S$")
 
@@ -43,9 +43,7 @@ def compile_owner_policy(
         predicate_bundle_sha256=offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
     )
     if not evaluator.binding_valid:
-        raise CppOwnerRuntimeError(
-            f"exact owner policy binding failed: {evaluator.binding_error}"
-        )
+        raise CppOwnerRuntimeError(f"exact owner policy binding failed: {evaluator.binding_error}")
     payload = json.loads(policy_path.read_text(encoding="utf-8"))
     raw_policy = payload.get("policy")
     if not isinstance(raw_policy, Mapping):
@@ -195,12 +193,48 @@ def build_target_predicate_row(cpp: Any, opportunity: Mapping[str, Any]) -> Any:
     row.snapshot_id = str(opportunity["opportunity_id"])
     row.policy_input_valid = bool(opportunity.get("feature::support_valid", False))
     row.support_valid = bool(opportunity.get("feature::support_valid", False))
-    row.channel_support_valid = bool(
-        opportunity.get("feature::channel_support_valid", False)
-    )
+    row.channel_support_valid = bool(opportunity.get("feature::channel_support_valid", False))
     row.snapshot_fallback_reason = str(opportunity.get("owner_fallback_reason") or "")
     row.predicate_values = []
     return row
+
+
+def validate_target_predicate_row(
+    cpp: Any,
+    row: Any,
+    opportunity: Mapping[str, Any],
+    *,
+    expected_predicate_count: int,
+) -> None:
+    if not isinstance(expected_predicate_count, int) or expected_predicate_count <= 0:
+        raise CppOwnerRuntimeError("C++ predicate count is invalid")
+    expected_side = cpp.Side.Buy if str(opportunity["side"]).upper() == "BUY" else cpp.Side.Sell
+    identity = {
+        "exposure_fill_ordinal": (
+            int(row.exposure_fill_ordinal),
+            int(opportunity["exposure_fill_ordinal"]),
+        ),
+        "fill_ts_ms": (int(row.fill_ts_ms), int(opportunity["fill_visible_ts_ms"])),
+        "campaign_id": (int(row.campaign_id), int(opportunity["campaign_id"])),
+        "snapshot_id": (str(row.snapshot_id), str(opportunity["opportunity_id"])),
+    }
+    drifted = [name for name, (actual, expected) in identity.items() if actual != expected]
+    if drifted or row.side != expected_side:
+        raise CppOwnerRuntimeError(
+            "C++ target predicate-row identity drifted: " + ",".join(drifted or ["side"])
+        )
+    if int(row.exposure_fill_ordinal) <= 0 or int(row.fill_ts_ms) <= 0:
+        raise CppOwnerRuntimeError("C++ target predicate-row identity is incomplete")
+    values = list(row.predicate_values)
+    if values and len(values) != expected_predicate_count:
+        raise CppOwnerRuntimeError("C++ target predicate-row width drifted")
+    allowed = {
+        cpp.F05TriState.UNOBSERVED,
+        cpp.F05TriState.FALSE,
+        cpp.F05TriState.TRUE,
+    }
+    if any(value not in allowed for value in values):
+        raise CppOwnerRuntimeError("C++ target predicate-row contains an invalid state")
 
 
 __all__ = [
@@ -213,4 +247,5 @@ __all__ = [
     "build_shared_observation_tape",
     "build_target_predicate_row",
     "compile_owner_policy",
+    "validate_target_predicate_row",
 ]

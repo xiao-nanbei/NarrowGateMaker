@@ -1,0 +1,43 @@
+{
+  "action_authorized": false,
+  "annotated_tag": "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-successor-offline/formal-cpp-one-shot-v21-r1-20260816",
+  "annotated_tag_object": "54879d6a6f348020a7d7b48896957020369fa1d7",
+  "candidate_frozen": false,
+  "cpp_completed_arm_count": 0,
+  "economic_outcomes_read": false,
+  "economic_values_persisted": false,
+  "execution_manifest": {
+    "artifact_id": "f05-full-multiscale-offline-formal-v21-execution-manifest",
+    "availability": "private evidence store; not distributed with the public repository",
+    "canonical_sha256": "dee196760c070c5c5d466f6283848b898ccb096ceefd6f8dccd9fd6d173f17d2",
+    "file_sha256_recomputed": "8feade0863f90d7b8fa770f815a8bd6cdc000c76ecbccec5d489a850d6e3f482"
+  },
+  "failure": {
+    "class": "cpp_target_predicate_row_contract_mismatch",
+    "detected_before_first_cpp_arm_completed": true,
+    "frozen_cpp_contract": "dense ordered full-replay predicate rows beginning at exposure-fill ordinal one and carrying the complete policy predicate width",
+    "requested_builder_contract": "target-only sparse predicate row keyed by the actual opportunity exposure-fill ordinal, with runtime-compiled policy predicates permitted to omit a dense predicate vector",
+    "stage": "real_day_all_opportunity_all_arm_cpp_lockstep_qualification",
+    "should_have_been_caught_by_all_panel_zero_economic_builder_walk": true,
+    "zero_economic_builder_walk_gap": "the walk validated the declared panel, folds, candidate ladder, executor topology, and builder bindings but did not instantiate each admitted opportunity's actual target predicate row through the frozen C++ full-replay intake contract"
+  },
+  "formal_result_admitted": false,
+  "live_authorized": false,
+  "nested_oof_report_admitted": false,
+  "no_automatic_replacement_execution_identity": true,
+  "owner_policy_unchanged": true,
+  "progress": {
+    "artifact_id": "f05-full-multiscale-offline-formal-v21-cpp-lockstep-progress",
+    "availability": "private evidence store; not distributed with the public repository",
+    "file_sha256": "ba186883bcd7ccb8f982ad79a337d62abacda8de13cd911f64152f281db3f691",
+    "python_shared_prefix_completed": 81,
+    "python_shared_prefix_expected": 81,
+    "stage": "python_shared_prefix"
+  },
+  "public_base_commit": "11d76d6bc98948af5a85e3f5230d69b21dfafb7a",
+  "schema_version": "f05_full_multiscale_offline_formal_v21_pre_economic_predicate_row_contract_failure.public_receipt.v1",
+  "scorecard_admitted": false,
+  "sealed_holdout_read": false,
+  "status": "failed_closed_pre_economic_predicate_row_contract",
+  "validation_read": false
+}

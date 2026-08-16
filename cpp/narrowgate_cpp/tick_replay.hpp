@@ -119,6 +119,10 @@ struct F05CooldownPredicateRow {
   std::vector<F05TriState> predicate_values;
 };
 
+void validate_f05_cooldown_predicate_rows(
+    const F05RepeatedBooleanCooldownConfig &config,
+    const std::vector<F05CooldownPredicateRow> &rows);
+
 struct F05CooldownDecision {
   std::string snapshot_id;
   Side side = Side::Buy;

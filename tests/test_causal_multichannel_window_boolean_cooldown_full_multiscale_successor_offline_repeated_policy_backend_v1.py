@@ -232,12 +232,69 @@ def _bundle_fixture(
     )
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
+    invariance_receipt: dict[str, object] = {
+        "identity": orchestrator.V21_V22_INVARIANCE_IDENTITY,
+        "status": orchestrator.V21_V22_INVARIANCE_STATUS,
+        "economic_outcomes_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    invariance_receipt["canonical_receipt_sha256"] = backend._document_sha256(
+        invariance_receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(
+        execution_path.parent / orchestrator.V21_V22_INVARIANCE_RECEIPT_NAME,
+        invariance_receipt,
+    )
+    builder_receipt: dict[str, object] = {
+        "schema_version": (
+            "f05_cpp_one_shot_real_day_all_arm_lockstep_v22.builder_preflight.v1"
+        ),
+        "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
+        "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
+        "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
+        "source_manifest_sha256": source["canonical_manifest_sha256"],
+        "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
+        "opportunity_count": orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES,
+        "cpp_startup_contract_validation": True,
+        "cpp_startup_validated_row_count": (
+            orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
+        ),
+        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+            "canonical_receipt_sha256"
+        ],
+        "economic_evaluator_call_count": 0,
+        "economic_values_read": False,
+        "economic_values_persisted": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    builder_receipt["canonical_receipt_sha256"] = backend._document_sha256(
+        builder_receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(
+        execution_path.parent / orchestrator.CPP_BUILDER_PREFLIGHT_RECEIPT_NAME,
+        builder_receipt,
+    )
     qualification = {
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
         "public_base_commit": execution.get("public_base_commit"),
         "annotated_tag": execution.get("annotated_tag"),
         "opportunity_count": 2,
         "arm_count": 16,
+        "all_panel_builder_preflight_receipt_sha256": builder_receipt[
+            "canonical_receipt_sha256"
+        ],
+        "all_panel_builder_preflight_opportunity_count": (
+            orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
+        ),
+        "formal_v21_to_v22_invariance_receipt_sha256": invariance_receipt[
+            "canonical_receipt_sha256"
+        ],
         "source_hashes": orchestrator._current_cpp_qualification_source_hashes(),
     }
     receipt: dict[str, object] = {

@@ -42,7 +42,7 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_cpp_observation_tape_v21 as cpp_observation_tape,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_cpp_runtime_v21 as cpp_runtime_v21,
+    causal_multichannel_window_boolean_cooldown_cpp_runtime_v22 as cpp_runtime_v22,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_features as feature_schema,
@@ -97,10 +97,7 @@ ONE_SHOT_DAY_PARENT_WORKERS = 0
 ONE_SHOT_SUPERVISOR_WORKERS = 0
 FORMAL_SHARED_PREFIX_ARM_WORKERS = 10
 DAY_INPUT_MATERIALIZATION_WORKERS = 2
-ONE_SHOT_TOTAL_WORKER_TOKENS = (
-    ONE_SHOT_DAY_PARENT_WORKERS
-    + FORMAL_SHARED_PREFIX_ARM_WORKERS
-)
+ONE_SHOT_TOTAL_WORKER_TOKENS = ONE_SHOT_DAY_PARENT_WORKERS + FORMAL_SHARED_PREFIX_ARM_WORKERS
 REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
     "2026-06-29",
     "2026-07-03",
@@ -112,9 +109,7 @@ DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
 DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
-EXECUTOR_ACCELERATION_IDENTITY = (
-    "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v1"
-)
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v2"
 DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
@@ -402,9 +397,7 @@ def _rebind_historical_fixed_bridge(value: Any, *, context: str) -> Mapping[str,
         name: item for name, item in expected.items() if name != "canonical_api_bindings"
     }
     if observed_without_api != expected_without_api:
-        raise OfflineReplayAdapterError(
-            "historical portable canonical replay contract drifted"
-        )
+        raise OfflineReplayAdapterError("historical portable canonical replay contract drifted")
     for role, current in expected_api.items():
         historical = observed_api[role]
         if not isinstance(historical, Mapping):
@@ -2691,11 +2684,9 @@ def _validate_shared_prefix_day_audit(
         raise OfflineReplayAdapterError("shared-prefix day execution audit drifted")
     if topology is not None and (
         int(audit.get("max_parallel_arms", -1)) != topology.arm_workers
-        or int(audit.get("max_inflight_opportunity_snapshots", -1))
-        != topology.supervisor_workers
+        or int(audit.get("max_inflight_opportunity_snapshots", -1)) != topology.supervisor_workers
         or int(audit.get("peak_concurrent_arms", -1)) > topology.arm_workers
-        or int(audit.get("peak_concurrent_supervisors", -1))
-        > topology.supervisor_workers
+        or int(audit.get("peak_concurrent_supervisors", -1)) > topology.supervisor_workers
     ):
         raise OfflineReplayAdapterError("shared-prefix process topology drifted")
 
@@ -2759,8 +2750,7 @@ def _execute_one_shot_day_python_legacy(job: _DayReplayJob) -> _DayReplayJobResu
         )
         params["cooldown_duration_shared_prefix_executor"] = executor
         params["cooldown_duration_parent_stop_ts_ms"] = int(
-            (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp()
-            * 1_000
+            (pd.Timestamp(job.utc_day, tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1_000
         )
         params["exchange_book_queue_ambiguity_trace_max"] = 64
         cache.write_progress(
@@ -2835,7 +2825,7 @@ def _execute_one_shot_day(
     )
     if (
         job.payload.get("cpp_qualification_identity")
-        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
     ):
         raise OfflineReplayAdapterError("C++ one-shot qualification identity drifted")
     rows = job.payload.get("replay_inputs")
@@ -2879,14 +2869,14 @@ def _execute_one_shot_day(
             continuation_day=replay.continuation_day,
             deep_validate=False,
         )
-        shared_tape = cpp_runtime_v21.build_shared_observation_tape(
+        shared_tape = cpp_runtime_v22.build_shared_observation_tape(
             cpp,
             tape.arrays,
             content_sha256=str(tape.receipt["array_sha256"]),
         )
         policy_path = resolve_portable_path(FIXED_OWNER_POLICY_PATH).resolve()
         predicate_path = resolve_portable_path(FIXED_OWNER_PREDICATE_BUNDLE_PATH).resolve()
-        runtime_config = cpp_runtime_v21.build_cpp_runtime_config(
+        runtime_config = cpp_runtime_v22.build_cpp_runtime_config(
             cpp,
             policy_path=policy_path,
             predicate_bundle_path=predicate_path,
@@ -2915,6 +2905,16 @@ def _execute_one_shot_day(
             opportunity: Mapping[str, Any],
             action: Any,
         ) -> tuple[str, str, bool, float | None, float]:
+            predicate_row = cpp_runtime_v22.build_target_predicate_row(
+                cpp,
+                opportunity,
+            )
+            cpp_runtime_v22.validate_target_predicate_row(
+                cpp,
+                predicate_row,
+                opportunity,
+                expected_predicate_count=len(runtime_config.policy.predicate_columns),
+            )
             arm_base = dict(base)
             arm_base.update(
                 {
@@ -2927,9 +2927,7 @@ def _execute_one_shot_day(
                         qualification_receipt_sha256
                     ),
                     "_cooldown_duration_policy_cpp_window_tape_handle": shared_tape,
-                    "_cooldown_duration_policy_cpp_predicate_rows": [
-                        cpp_runtime_v21.build_target_predicate_row(cpp, opportunity)
-                    ],
+                    "_cooldown_duration_policy_cpp_predicate_rows": [predicate_row],
                 }
             )
             trace, elapsed = importlib.import_module(
@@ -2951,14 +2949,8 @@ def _execute_one_shot_day(
                 opportunity=opportunity,
                 action_id=str(action.policy_id),
             )
-            eligible = bool(trace["arm_washout_complete"]) and not bool(
-                trace["right_censored"]
-            )
-            value = (
-                float(trace["assignment_to_washout_value_usdc"])
-                if eligible
-                else None
-            )
+            eligible = bool(trace["arm_washout_complete"]) and not bool(trace["right_censored"])
+            value = float(trace["assignment_to_washout_value_usdc"]) if eligible else None
             return opportunity_id, str(action.policy_id), eligible, value, float(elapsed)
 
         started = time.perf_counter()
@@ -2972,9 +2964,7 @@ def _execute_one_shot_day(
                 opportunity_id, action_id, eligible, value, elapsed = future.result()
                 arm_wall_time_s += elapsed
                 supported.loc[opportunity_id, action_id] = eligible
-                outcomes.loc[opportunity_id, action_id] = (
-                    value if eligible else float("nan")
-                )
+                outcomes.loc[opportunity_id, action_id] = value if eligible else float("nan")
                 completed += 1
                 if completed == total_arms or completed % len(actions) == 0:
                     cache.write_progress(
@@ -2993,13 +2983,11 @@ def _execute_one_shot_day(
         if completed != total_arms or outcomes.index.tolist() != rows.index.tolist():
             raise OfflineReplayAdapterError("C++ one-shot arm denominator drifted")
         evidence = {
-            "execution_semantics": (
-                "cpp_full_day_direct_replay_shared_observation_tape_v21"
-            ),
+            "execution_semantics": ("cpp_full_day_direct_replay_shared_observation_tape_v22"),
             "formal_engine": "cpp",
             "qualification_identity": job.payload["cpp_qualification_identity"],
             "qualification_receipt_sha256": qualification_receipt_sha256,
-            "qualification_scope": cpp_runtime_v21.QUALIFICATION_SCOPE,
+            "qualification_scope": cpp_runtime_v22.QUALIFICATION_SCOPE,
             "opportunity_count": len(rows),
             "arm_count": total_arms,
             "modeled_queue_economics_authorized": True,
@@ -3014,9 +3002,7 @@ def _execute_one_shot_day(
             "owner_policy_sha256": _file_sha256(policy_path),
             "owner_predicate_bundle_sha256": _file_sha256(predicate_path),
             "cpp_extension_sha256": _file_sha256(Path(cpp.__file__).resolve()),
-            "cpp_runtime_module_sha256": _file_sha256(
-                Path(cpp_runtime_v21.__file__).resolve()
-            ),
+            "cpp_runtime_module_sha256": _file_sha256(Path(cpp_runtime_v22.__file__).resolve()),
             "day_wall_time_s": time.perf_counter() - started,
             "arm_wall_time_s_total": arm_wall_time_s,
             "validation_read": False,
@@ -3930,9 +3916,7 @@ def run_global_one_shot_day_jobs(
     if not ordered:
         return ()
     with ThreadPoolExecutor(max_workers=topology.arm_workers) as pool:
-        executed = tuple(
-            _execute_one_shot_day(job, arm_pool=pool) for job in ordered
-        )
+        executed = tuple(_execute_one_shot_day(job, arm_pool=pool) for job in ordered)
     result_by_key = {result.cache_key_sha256: result for result in executed}
     if set(result_by_key) != set(keys):
         raise OfflineReplayAdapterError("global one-shot worker result drifted")
@@ -4309,8 +4293,7 @@ def _resolve_execution_options(rows: pd.DataFrame) -> _ExecutionOptions:
         )
         or execution_binding.get("selected_day_count") != offline.REQUIRED_DAYS
         or len(execution_binding.get("selected_days", ())) != offline.REQUIRED_DAYS
-        or dict(execution_binding.get("fixed_bridge", {}))
-        != dict(expected_fixed_bridge)
+        or dict(execution_binding.get("fixed_bridge", {})) != dict(expected_fixed_bridge)
         or execution_binding.get("target_day_end_terminalized") is not False
         or execution_binding.get("d_plus_1_new_target_assignments_allowed") is not False
         or execution_binding.get("assignment_to_common_washout_required") is not True
@@ -4904,9 +4887,7 @@ def _bind_day_jobs_to_input_mmaps(
             acceleration=acceleration,
         )
 
-    expected_keys = {
-        _day_input_materialization_key(job, acceleration) for job in jobs
-    }
+    expected_keys = {_day_input_materialization_key(job, acceleration) for job in jobs}
     if set(contracts) != expected_keys:
         raise OfflineReplayAdapterError("day-input mmap binding census drifted")
 
@@ -5094,18 +5075,14 @@ class _CanonicalOfflineReplayAdapter:
         selected_days = set(mechanics.selected_days)
         outer_folds = tuple(mechanics.fold_manifest.outer_folds)
         if len(outer_folds) != 4:
-            raise OfflineReplayAdapterError(
-                "zero-economic contract walk requires four outer folds"
-            )
+            raise OfflineReplayAdapterError("zero-economic contract walk requires four outer folds")
         side_outer_contracts = 0
         side_inner_contracts = 0
         day_slots = 0
         for side in ("BUY", "SELL"):
             side_rows = rows.loc[rows["side"].map(_normalize_side) == side]
             if side_rows.empty:
-                raise OfflineReplayAdapterError(
-                    f"zero-economic contract walk lacks {side} rows"
-                )
+                raise OfflineReplayAdapterError(f"zero-economic contract walk lacks {side} rows")
             for outer in outer_folds:
                 if not isinstance(outer, Mapping):
                     raise OfflineReplayAdapterError(
@@ -5120,9 +5097,7 @@ class _CanonicalOfflineReplayAdapter:
                     or not set(train_days + test_days) <= selected_days
                     or max(train_days) >= min(test_days)
                 ):
-                    raise OfflineReplayAdapterError(
-                        "zero-economic outer-fold chronology drifted"
-                    )
+                    raise OfflineReplayAdapterError("zero-economic outer-fold chronology drifted")
                 for day in train_days + test_days:
                     if side_rows.loc[side_rows["utc_day"] == day].empty:
                         raise OfflineReplayAdapterError(
@@ -5655,7 +5630,7 @@ class _CanonicalOfflineReplayAdapter:
                         "duration_vocabulary": label.duration_vocabulary,
                         "one_shot_topology": topology.payload(),
                         "cpp_qualification_identity": (
-                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v21"
+                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v22"
                         ),
                         "cpp_qualification_receipt_sha256": (
                             self._cpp_qualification_receipt_sha256

@@ -2218,6 +2218,11 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "predicate_values",
             &F05CooldownPredicateRow::predicate_values);
+    m.def(
+        "validate_f05_cooldown_predicate_rows",
+        &validate_f05_cooldown_predicate_rows,
+        py::arg("config"),
+        py::arg("rows"));
     py::class_<F05CooldownDecision>(m, "F05CooldownDecision")
         .def(py::init<>())
         .def_readwrite("snapshot_id", &F05CooldownDecision::snapshot_id)

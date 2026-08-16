@@ -29493,6 +29493,7 @@ def _validate_f05_cpp_cooldown_runtime(
         if qualification_scope not in {
             "synthetic_full_replay_smoke",
             "real_day_all_arm_full_replay_v21",
+            "real_day_all_arm_full_replay_v22",
         }:
             raise NotImplementedError(
                 "the bound C++ cooldown runtime is qualified only for synthetic "
@@ -29513,6 +29514,7 @@ def _validate_f05_cpp_cooldown_runtime(
         "synthetic_mechanics_only",
         "synthetic_full_replay_smoke",
         "real_day_all_arm_full_replay_v21",
+        "real_day_all_arm_full_replay_v22",
     }:
         raise RuntimeError("C++ cooldown qualification scope is invalid")
     return runtime
