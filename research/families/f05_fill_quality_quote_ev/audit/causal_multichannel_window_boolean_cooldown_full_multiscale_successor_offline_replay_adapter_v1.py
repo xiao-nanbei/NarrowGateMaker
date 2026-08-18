@@ -27,7 +27,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
@@ -107,9 +107,10 @@ REQUIRED_ADDITIONAL_CONTEXT_DAYS = (
 
 DAY_CACHE_SCHEMA = f"{IDENTITY}.day_cache.v2"
 DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
+COMPLETED_SIDE_RESUME_SCHEMA = f"{IDENTITY}.completed_side_resume.v1"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v5"
 DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
@@ -696,6 +697,152 @@ class DayReplayCacheKey:
     @property
     def cache_key_sha256(self) -> str:
         return _canonical_sha256({"schema_version": DAY_CACHE_SCHEMA, **self.payload()})
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedSideResumeContract:
+    """Hash-verified reuse of a side completed by a failed predecessor run."""
+
+    predecessor_execution_manifest_sha256: str
+    predecessor_adapter_artifact_sha256: str
+    predecessor_cache_root: str
+    census_receipt_file: str
+    inherited_sides: tuple[str, ...]
+    excluded_sides: tuple[str, ...]
+    required_stage_counts: tuple[tuple[str, int], ...]
+    required_complete_cache_units: int
+
+    def __post_init__(self) -> None:
+        _require_sha(
+            self.predecessor_execution_manifest_sha256,
+            label="resume predecessor execution manifest SHA256",
+        )
+        _require_sha(
+            self.predecessor_adapter_artifact_sha256,
+            label="resume predecessor adapter artifact SHA256",
+        )
+        inherited = tuple(sorted({_normalize_side(side) for side in self.inherited_sides}))
+        excluded = tuple(sorted({_normalize_side(side) for side in self.excluded_sides}))
+        if not inherited or set(inherited) & set(excluded):
+            raise OfflineReplayAdapterError("completed-side resume side contract drifted")
+        if set((*inherited, *excluded)) != {"BUY", "SELL"}:
+            raise OfflineReplayAdapterError("completed-side resume must classify both sides")
+        counts = tuple(sorted((str(stage), int(count)) for stage, count in self.required_stage_counts))
+        if (
+            {stage for stage, _count in counts} != {ONE_SHOT_STAGE, *SEQUENTIAL_STAGES}
+            or any(count <= 0 for _stage, count in counts)
+            or sum(count for _stage, count in counts) != int(self.required_complete_cache_units)
+        ):
+            raise OfflineReplayAdapterError("completed-side resume cache census drifted")
+        if (
+            not self.predecessor_cache_root.startswith("${NARROWGATE_DATA_ROOT}/")
+            or Path(self.census_receipt_file).name != self.census_receipt_file
+            or not self.census_receipt_file.endswith(".json")
+        ):
+            raise OfflineReplayAdapterError("completed-side resume locator drifted")
+        object.__setattr__(self, "inherited_sides", inherited)
+        object.__setattr__(self, "excluded_sides", excluded)
+        object.__setattr__(self, "required_stage_counts", counts)
+        object.__setattr__(
+            self,
+            "required_complete_cache_units",
+            int(self.required_complete_cache_units),
+        )
+
+    @classmethod
+    def from_payload(cls, value: Mapping[str, Any]) -> CompletedSideResumeContract:
+        if not isinstance(value, Mapping):
+            raise OfflineReplayAdapterError("completed-side resume contract is missing")
+        expected = {
+            "schema_version",
+            "mode",
+            "predecessor_execution_manifest_sha256",
+            "predecessor_adapter_artifact_sha256",
+            "predecessor_cache_root",
+            "census_receipt_file",
+            "inherited_sides",
+            "excluded_sides",
+            "required_stage_counts",
+            "required_complete_cache_units",
+            "predecessor_failed_entries_reusable",
+            "recompute_inherited_side_allowed",
+        }
+        if set(value) != expected:
+            raise OfflineReplayAdapterError("completed-side resume schema drifted")
+        counts = value.get("required_stage_counts")
+        if (
+            value.get("schema_version") != COMPLETED_SIDE_RESUME_SCHEMA
+            or value.get("mode") != "hash_verified_completed_side_only"
+            or value.get("predecessor_failed_entries_reusable") is not False
+            or value.get("recompute_inherited_side_allowed") is not False
+            or not isinstance(counts, Mapping)
+        ):
+            raise OfflineReplayAdapterError("completed-side resume semantics drifted")
+        return cls(
+            predecessor_execution_manifest_sha256=str(
+                value["predecessor_execution_manifest_sha256"]
+            ),
+            predecessor_adapter_artifact_sha256=str(
+                value["predecessor_adapter_artifact_sha256"]
+            ),
+            predecessor_cache_root=str(value["predecessor_cache_root"]),
+            census_receipt_file=str(value["census_receipt_file"]),
+            inherited_sides=tuple(str(side) for side in value["inherited_sides"]),
+            excluded_sides=tuple(str(side) for side in value["excluded_sides"]),
+            required_stage_counts=tuple(
+                (str(stage), int(count)) for stage, count in counts.items()
+            ),
+            required_complete_cache_units=int(value["required_complete_cache_units"]),
+        )
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": COMPLETED_SIDE_RESUME_SCHEMA,
+            "mode": "hash_verified_completed_side_only",
+            "predecessor_execution_manifest_sha256": (
+                self.predecessor_execution_manifest_sha256
+            ),
+            "predecessor_adapter_artifact_sha256": (
+                self.predecessor_adapter_artifact_sha256
+            ),
+            "predecessor_cache_root": self.predecessor_cache_root,
+            "census_receipt_file": self.census_receipt_file,
+            "inherited_sides": list(self.inherited_sides),
+            "excluded_sides": list(self.excluded_sides),
+            "required_stage_counts": dict(self.required_stage_counts),
+            "required_complete_cache_units": self.required_complete_cache_units,
+            "predecessor_failed_entries_reusable": False,
+            "recompute_inherited_side_allowed": False,
+        }
+
+    def validate_cache_root(self, root: Path) -> None:
+        try:
+            expected = resolve_portable_path(self.predecessor_cache_root).resolve()
+        except (RuntimeError, ValueError) as exc:
+            raise OfflineReplayAdapterError(
+                "completed-side predecessor cache root cannot be resolved"
+            ) from exc
+        if root.resolve() != expected:
+            raise OfflineReplayAdapterError("completed-side predecessor cache root drifted")
+
+    def predecessor_key(self, key: DayReplayCacheKey) -> DayReplayCacheKey | None:
+        if key.side in self.excluded_sides:
+            return None
+        if key.side not in self.inherited_sides:
+            raise OfflineReplayAdapterError("completed-side resume encountered unknown side")
+        if key.stage not in dict(self.required_stage_counts):
+            raise OfflineReplayAdapterError("completed-side resume encountered unknown stage")
+        if (
+            key.execution_manifest_sha256
+            == self.predecessor_execution_manifest_sha256
+            or key.adapter_artifact_sha256 == self.predecessor_adapter_artifact_sha256
+        ):
+            raise OfflineReplayAdapterError("completed-side resume did not enter a successor identity")
+        return replace(
+            key,
+            adapter_artifact_sha256=self.predecessor_adapter_artifact_sha256,
+            execution_manifest_sha256=self.predecessor_execution_manifest_sha256,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1479,6 +1626,114 @@ class DayReplayCache:
     def load_sequential(self, key: DayReplayCacheKey) -> pd.DataFrame | None:
         loaded = self._load_frames(key, expected_kind="sequential", names=("rows",))
         return None if loaded is None else loaded[0]
+
+    def _inherit_completed_side_frames(
+        self,
+        *,
+        target_key: DayReplayCacheKey,
+        source_key: DayReplayCacheKey,
+        kind: Literal["one_shot", "sequential"],
+        names: Sequence[str],
+        census_receipt_sha256: str,
+    ) -> tuple[pd.DataFrame, ...]:
+        census_sha = _require_sha(
+            census_receipt_sha256,
+            label="completed-side cache census receipt SHA256",
+        )
+        expected_source = replace(
+            target_key,
+            adapter_artifact_sha256=source_key.adapter_artifact_sha256,
+            execution_manifest_sha256=source_key.execution_manifest_sha256,
+        )
+        if source_key != expected_source:
+            raise OfflineReplayAdapterError(
+                "completed-side resume changed fields beyond adapter and execution identity"
+            )
+        source_manifest = self._manifest(source_key)
+        source_frames = self._load_frames(
+            source_key,
+            expected_kind=kind,
+            names=names,
+        )
+        if source_manifest is None or source_frames is None:
+            raise OfflineReplayAdapterError(
+                "completed-side predecessor cache is missing or incomplete"
+            )
+        resume_evidence = {
+            "schema_version": COMPLETED_SIDE_RESUME_SCHEMA,
+            "mode": "hash_verified_completed_side_only",
+            "source_cache_key_sha256": source_key.cache_key_sha256,
+            "source_cache_receipt_sha256": source_manifest["receipt_sha256"],
+            "predecessor_execution_manifest_sha256": (
+                source_key.execution_manifest_sha256
+            ),
+            "predecessor_adapter_artifact_sha256": source_key.adapter_artifact_sha256,
+            "target_cache_key_sha256": target_key.cache_key_sha256,
+            "cache_census_receipt_sha256": census_sha,
+            "side": target_key.side,
+            "stage": target_key.stage,
+            "failed_or_running_predecessor_entry_reused": False,
+        }
+        target_manifest = self._manifest(target_key)
+        if target_manifest is None:
+            self._admit_frames(
+                target_key,
+                kind=kind,
+                frames=dict(zip(names, source_frames, strict=True)),
+                evidence={"completed_side_resume": resume_evidence},
+            )
+            target_manifest = self._manifest(target_key)
+        target_evidence = None if target_manifest is None else target_manifest.get("evidence")
+        if (
+            not isinstance(target_evidence, Mapping)
+            or target_evidence.get("completed_side_resume") != resume_evidence
+        ):
+            raise OfflineReplayAdapterError("completed-side successor cache evidence drifted")
+        target_frames = self._load_frames(
+            target_key,
+            expected_kind=kind,
+            names=names,
+        )
+        if target_frames is None:
+            raise OfflineReplayAdapterError("completed-side successor cache disappeared")
+        for source, target in zip(source_frames, target_frames, strict=True):
+            if _frame_sha256(source) != _frame_sha256(target):
+                raise OfflineReplayAdapterError(
+                    "completed-side predecessor and successor frames diverged"
+                )
+        return target_frames
+
+    def inherit_completed_one_shot(
+        self,
+        *,
+        target_key: DayReplayCacheKey,
+        source_key: DayReplayCacheKey,
+        census_receipt_sha256: str,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        frames = self._inherit_completed_side_frames(
+            target_key=target_key,
+            source_key=source_key,
+            kind="one_shot",
+            names=("outcomes", "supported"),
+            census_receipt_sha256=census_receipt_sha256,
+        )
+        return frames[0], frames[1]
+
+    def inherit_completed_sequential(
+        self,
+        *,
+        target_key: DayReplayCacheKey,
+        source_key: DayReplayCacheKey,
+        census_receipt_sha256: str,
+    ) -> pd.DataFrame:
+        frames = self._inherit_completed_side_frames(
+            target_key=target_key,
+            source_key=source_key,
+            kind="sequential",
+            names=("rows",),
+            census_receipt_sha256=census_receipt_sha256,
+        )
+        return frames[0]
 
     def _b0_control_manifest(self, key: B0ControlCacheKey) -> dict[str, Any] | None:
         path = self._b0_control_entry(key) / "manifest.json"
@@ -2825,7 +3080,7 @@ def _execute_one_shot_day(
     )
     if (
         job.payload.get("cpp_qualification_identity")
-        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
+        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
     ):
         raise OfflineReplayAdapterError("C++ one-shot qualification identity drifted")
     rows = job.payload.get("replay_inputs")
@@ -2960,8 +3215,10 @@ def _execute_one_shot_day(
         pool = arm_pool or ThreadPoolExecutor(max_workers=topology.arm_workers)
         try:
             futures = [pool.submit(execute_arm, *task) for task in tasks]
-            for future in as_completed(futures):
-                opportunity_id, action_id, eligible, value, elapsed = future.result()
+
+            def consume(result: tuple[str, str, bool, float | None, float]) -> None:
+                nonlocal completed, arm_wall_time_s
+                opportunity_id, action_id, eligible, value, elapsed = result
                 arm_wall_time_s += elapsed
                 supported.loc[opportunity_id, action_id] = eligible
                 outcomes.loc[opportunity_id, action_id] = value if eligible else float("nan")
@@ -2977,6 +3234,8 @@ def _execute_one_shot_day(
                             "completed_arms": completed,
                         },
                     )
+
+            _consume_arm_futures_before_mmap_close(futures, consume=consume)
         finally:
             if owned_pool:
                 pool.shutdown(wait=True, cancel_futures=True)
@@ -3016,6 +3275,23 @@ def _execute_one_shot_day(
         frames={"outcomes": outcomes, "supported": supported},
         evidence=evidence,
     )
+
+
+def _consume_arm_futures_before_mmap_close(
+    futures: Sequence[Any],
+    *,
+    consume: Callable[[Any], None],
+) -> None:
+    """Keep the day mmap alive until every sibling future has stopped."""
+
+    try:
+        for future in as_completed(futures):
+            consume(future.result())
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        wait(futures)
+        raise
 
 
 def _execute_exact_owner_one_day_mechanics(
@@ -4706,6 +4982,9 @@ def _prepare_sequential_replay(
     adapter_artifact_sha256: str,
     request: backend.CanonicalSequentialReplayRequest,
     replay_inputs: pd.DataFrame,
+    completed_side_resume: CompletedSideResumeContract | None = None,
+    completed_side_resume_receipt_sha256: str | None = None,
+    inherited_cache_keys: set[tuple[str, str]] | None = None,
 ) -> _PreparedSequentialReplay:
     if not isinstance(request, backend.CanonicalSequentialReplayRequest):
         raise OfflineReplayAdapterError("custom sequential replay request is forbidden")
@@ -4732,6 +5011,8 @@ def _prepare_sequential_replay(
     )
     _validate_d_plus_one_contract(rows)
     options = _resolve_execution_options(rows)
+    if completed_side_resume is not None:
+        completed_side_resume.validate_cache_root(options.cache.root)
     receipt = backend.build_sequential_replay_receipt(
         request,
         adapter_identity=IDENTITY,
@@ -4751,7 +5032,28 @@ def _prepare_sequential_replay(
             utc_day=day,
             day_rows=day_rows,
         )
-        cached = options.cache.load_sequential(key)
+        source_key = (
+            None
+            if completed_side_resume is None
+            else completed_side_resume.predecessor_key(key)
+        )
+        if source_key is None:
+            cached = options.cache.load_sequential(key)
+        else:
+            cached = options.cache.inherit_completed_sequential(
+                target_key=key,
+                source_key=source_key,
+                census_receipt_sha256=str(completed_side_resume_receipt_sha256),
+            )
+            if inherited_cache_keys is None:
+                raise OfflineReplayAdapterError("completed-side resume census is unavailable")
+            inherited_cache_keys.add((key.stage, key.cache_key_sha256))
+            options.cache.write_progress(
+                key,
+                state="complete",
+                detail="hash_verified_completed_side_resume",
+                counters={"total_days": 1, "completed_days": 1},
+            )
         if cached is not None:
             cached_frames.append(cached)
             continue
@@ -5000,6 +5302,8 @@ class _CanonicalOfflineReplayAdapter:
         acceleration: SequentialReplayAccelerationOptions | None = None,
         global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
         cpp_qualification_receipt_sha256: str | None = None,
+        completed_side_resume: Mapping[str, Any] | None = None,
+        completed_side_resume_receipt_sha256: str | None = None,
     ) -> None:
         if acceleration is not None and not isinstance(
             acceleration, SequentialReplayAccelerationOptions
@@ -5015,10 +5319,57 @@ class _CanonicalOfflineReplayAdapter:
                 label="C++ one-shot qualification receipt SHA256",
             )
         )
+        self._completed_side_resume = (
+            None
+            if completed_side_resume is None
+            else CompletedSideResumeContract.from_payload(completed_side_resume)
+        )
+        if self._completed_side_resume is None:
+            if completed_side_resume_receipt_sha256 is not None:
+                raise OfflineReplayAdapterError(
+                    "completed-side census receipt supplied without a resume contract"
+                )
+            self._completed_side_resume_receipt_sha256 = None
+        else:
+            self._completed_side_resume_receipt_sha256 = _require_sha(
+                completed_side_resume_receipt_sha256,
+                label="completed-side cache census receipt SHA256",
+            )
+        self._inherited_cache_keys: set[tuple[str, str]] = set()
 
     @property
     def artifact_sha256(self) -> str:
         return _file_sha256(Path(__file__).resolve())
+
+    def completed_side_resume_summary(
+        self,
+        *,
+        require_complete: bool,
+    ) -> Mapping[str, Any] | None:
+        contract = self._completed_side_resume
+        if contract is None:
+            return None
+        observed = {
+            stage: sum(1 for seen_stage, _key in self._inherited_cache_keys if seen_stage == stage)
+            for stage, _expected in contract.required_stage_counts
+        }
+        expected = dict(contract.required_stage_counts)
+        total = len(self._inherited_cache_keys)
+        complete = observed == expected and total == contract.required_complete_cache_units
+        if require_complete and not complete:
+            raise OfflineReplayAdapterError(
+                "completed-side resume did not consume the frozen predecessor census"
+            )
+        return {
+            **contract.payload(),
+            "cache_census_receipt_sha256": (
+                self._completed_side_resume_receipt_sha256
+            ),
+            "observed_stage_counts": observed,
+            "observed_complete_cache_units": total,
+            "census_complete": complete,
+            "economic_values_exposed_during_resume": False,
+        }
 
     def preflight_formal_panel_schema(
         self,
@@ -5274,6 +5625,8 @@ class _CanonicalOfflineReplayAdapter:
         )
         _validate_d_plus_one_contract(rows)
         options = _resolve_execution_options(rows)
+        if self._completed_side_resume is not None:
+            self._completed_side_resume.validate_cache_root(options.cache.root)
         diagnostic = dict(
             _execute_exact_owner_one_day_mechanics(
                 utc_day=utc_day,
@@ -5537,6 +5890,8 @@ class _CanonicalOfflineReplayAdapter:
         )
         _validate_d_plus_one_contract(rows)
         options = _resolve_execution_options(rows)
+        if self._completed_side_resume is not None:
+            self._completed_side_resume.validate_cache_root(options.cache.root)
         candidate_bundle_sha = _canonical_sha256(
             {
                 "identity": f"{IDENTITY}.one_shot_duration_bundle.v1",
@@ -5573,7 +5928,33 @@ class _CanonicalOfflineReplayAdapter:
                 utc_day=day,
                 day_rows=day_rows,
             )
-            cached = options.cache.load_one_shot(key)
+            source_key = (
+                None
+                if self._completed_side_resume is None
+                else self._completed_side_resume.predecessor_key(key)
+            )
+            if source_key is None:
+                cached = options.cache.load_one_shot(key)
+            else:
+                cached = options.cache.inherit_completed_one_shot(
+                    target_key=key,
+                    source_key=source_key,
+                    census_receipt_sha256=str(
+                        self._completed_side_resume_receipt_sha256
+                    ),
+                )
+                self._inherited_cache_keys.add((key.stage, key.cache_key_sha256))
+                options.cache.write_progress(
+                    key,
+                    state="complete",
+                    detail="hash_verified_completed_side_resume",
+                    counters={
+                        "total_opportunities": len(cached[0]),
+                        "completed_opportunities": len(cached[0]),
+                        "total_arms": int(cached[0].size),
+                        "completed_arms": int(cached[0].size),
+                    },
+                )
             if cached is not None:
                 options.cache.register_one_shot_semantic(key, semantic_key)
                 collected_outcomes.append(cached[0])
@@ -5630,7 +6011,7 @@ class _CanonicalOfflineReplayAdapter:
                         "duration_vocabulary": label.duration_vocabulary,
                         "one_shot_topology": topology.payload(),
                         "cpp_qualification_identity": (
-                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
+                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
                         ),
                         "cpp_qualification_receipt_sha256": (
                             self._cpp_qualification_receipt_sha256
@@ -5735,6 +6116,11 @@ class _CanonicalOfflineReplayAdapter:
             adapter_artifact_sha256=self.artifact_sha256,
             request=request,
             replay_inputs=replay_inputs,
+            completed_side_resume=self._completed_side_resume,
+            completed_side_resume_receipt_sha256=(
+                self._completed_side_resume_receipt_sha256
+            ),
+            inherited_cache_keys=self._inherited_cache_keys,
         )
         if prepared.jobs:
             _mark_prepared_jobs((prepared,), state="running")
@@ -5775,6 +6161,11 @@ class _CanonicalOfflineReplayAdapter:
                     adapter_artifact_sha256=self.artifact_sha256,
                     request=item.request,
                     replay_inputs=item.replay_inputs,
+                    completed_side_resume=self._completed_side_resume,
+                    completed_side_resume_receipt_sha256=(
+                        self._completed_side_resume_receipt_sha256
+                    ),
+                    inherited_cache_keys=self._inherited_cache_keys,
                 )
             )
         receipt_ids = [str(item.receipt.get("receipt_sha256", "")) for item in prepared]
@@ -5919,6 +6310,8 @@ def build_canonical_replay_adapter(
     acceleration: SequentialReplayAccelerationOptions | None = None,
     global_worker_tokens: int = DEFAULT_GLOBAL_POLICY_DAY_WORKERS,
     cpp_qualification_receipt_sha256: str | None = None,
+    completed_side_resume: Mapping[str, Any] | None = None,
+    completed_side_resume_receipt_sha256: str | None = None,
 ) -> backend.CanonicalReplayAdapter:
     """Build the sole fixed adapter; no caller-supplied evaluator is accepted."""
 
@@ -5926,6 +6319,10 @@ def build_canonical_replay_adapter(
         acceleration=acceleration,
         global_worker_tokens=global_worker_tokens,
         cpp_qualification_receipt_sha256=cpp_qualification_receipt_sha256,
+        completed_side_resume=completed_side_resume,
+        completed_side_resume_receipt_sha256=(
+            completed_side_resume_receipt_sha256
+        ),
     )
 
 
@@ -5933,6 +6330,8 @@ __all__ = [
     "B0_CONTROL_CACHE_SCHEMA",
     "B0ControlCacheKey",
     "B0ControlPath",
+    "COMPLETED_SIDE_RESUME_SCHEMA",
+    "CompletedSideResumeContract",
     "DAY_INPUT_CACHE_IDENTITY",
     "DAY_INPUT_MATERIALIZATION_WORKERS",
     "DAY_CACHE_SCHEMA",

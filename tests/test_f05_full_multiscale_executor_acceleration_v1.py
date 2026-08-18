@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -279,7 +281,7 @@ def test_global_one_shot_scheduler_uses_one_cpp_pool_and_requires_mmap(
             payload={
                 "one_shot_topology": topology.payload(),
                 "day_input_mmap_binding": {"bound": True},
-                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v24"),
+                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v25"),
                 "cpp_qualification_receipt_sha256": _sha("a"),
             },
         )
@@ -323,6 +325,179 @@ def test_global_one_shot_scheduler_uses_one_cpp_pool_and_requires_mmap(
     missing_mmap = replace(jobs[0], payload={"one_shot_topology": topology.payload()})
     with pytest.raises(adapter.OfflineReplayAdapterError, match="frozen acceleration"):
         adapter.run_global_one_shot_day_jobs((missing_mmap,))
+
+
+def test_one_shot_arm_failure_drains_running_sibling_before_mmap_close() -> None:
+    both_started = threading.Barrier(2)
+    release_sibling = threading.Event()
+    sibling_finished = threading.Event()
+    mapping_open = True
+
+    def fail_first() -> int:
+        both_started.wait(timeout=2.0)
+        raise RuntimeError("injected arm failure")
+
+    def read_mmap_sibling() -> int:
+        both_started.wait(timeout=2.0)
+        assert release_sibling.wait(timeout=2.0)
+        assert mapping_open
+        sibling_finished.set()
+        return 2
+
+    timer = threading.Timer(0.1, release_sibling.set)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = (pool.submit(fail_first), pool.submit(read_mmap_sibling))
+            timer.start()
+            with pytest.raises(RuntimeError, match="injected arm failure"):
+                adapter._consume_arm_futures_before_mmap_close(
+                    futures,
+                    consume=lambda _result: None,
+                )
+            assert sibling_finished.is_set()
+            mapping_open = False
+    finally:
+        release_sibling.set()
+        timer.join(timeout=2.0)
+
+
+def test_one_shot_arm_success_consumes_every_result() -> None:
+    observed: list[int] = []
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = (pool.submit(lambda: 1), pool.submit(lambda: 2))
+        adapter._consume_arm_futures_before_mmap_close(futures, consume=observed.append)
+
+    assert sorted(observed) == [1, 2]
+
+
+def test_one_shot_consumer_failure_drains_running_sibling_before_mmap_close() -> None:
+    sibling_started = threading.Event()
+    release_sibling = threading.Event()
+    sibling_finished = threading.Event()
+    mapping_open = True
+
+    def complete_first() -> int:
+        assert sibling_started.wait(timeout=2.0)
+        return 1
+
+    def read_mmap_sibling() -> int:
+        sibling_started.set()
+        assert release_sibling.wait(timeout=2.0)
+        assert mapping_open
+        sibling_finished.set()
+        return 2
+
+    timer = threading.Timer(0.1, release_sibling.set)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = (pool.submit(complete_first), pool.submit(read_mmap_sibling))
+            timer.start()
+
+            def reject_result(_result: int) -> None:
+                raise RuntimeError("injected result-consumer failure")
+
+            with pytest.raises(RuntimeError, match="result-consumer failure"):
+                adapter._consume_arm_futures_before_mmap_close(
+                    futures,
+                    consume=reject_result,
+                )
+            assert sibling_finished.is_set()
+            mapping_open = False
+    finally:
+        release_sibling.set()
+        timer.join(timeout=2.0)
+
+
+def _resume_contract_payload() -> dict[str, Any]:
+    return {
+        "schema_version": adapter.COMPLETED_SIDE_RESUME_SCHEMA,
+        "mode": "hash_verified_completed_side_only",
+        "predecessor_execution_manifest_sha256": _sha("8"),
+        "predecessor_adapter_artifact_sha256": _sha("9"),
+        "predecessor_cache_root": "${NARROWGATE_DATA_ROOT}/cache/replay_dag/test-cache",
+        "census_receipt_file": "completed_buy_cache_census.json",
+        "inherited_sides": ["BUY"],
+        "excluded_sides": ["SELL"],
+        "required_stage_counts": {
+            adapter.ONE_SHOT_STAGE: 1,
+            "inner_oof": 1,
+            "outer_oof": 1,
+        },
+        "required_complete_cache_units": 3,
+        "predecessor_failed_entries_reusable": False,
+        "recompute_inherited_side_allowed": False,
+    }
+
+
+def test_completed_buy_cache_inheritance_rebinds_only_execution_identities(
+    tmp_path: Path,
+) -> None:
+    cache = adapter.DayReplayCache(tmp_path / "cache")
+    contract = adapter.CompletedSideResumeContract.from_payload(
+        _resume_contract_payload()
+    )
+    target = _day_key(side="BUY", stage="outer_oof")
+    source = contract.predecessor_key(target)
+    assert source is not None
+    rows = pd.DataFrame({"utc_day": (DAY,), "value": (1.0,)})
+    cache.admit_sequential(source, rows)
+
+    inherited = cache.inherit_completed_sequential(
+        target_key=target,
+        source_key=source,
+        census_receipt_sha256=_sha("6"),
+    )
+
+    pd.testing.assert_frame_equal(inherited, rows)
+    source_payload = source.payload()
+    target_payload = target.payload()
+    changed = {
+        name
+        for name in target_payload
+        if target_payload[name] != source_payload[name]
+    }
+    assert changed == {"adapter_artifact_sha256", "execution_manifest_sha256"}
+
+
+def test_completed_buy_cache_inheritance_fails_when_source_is_missing(
+    tmp_path: Path,
+) -> None:
+    cache = adapter.DayReplayCache(tmp_path / "cache")
+    contract = adapter.CompletedSideResumeContract.from_payload(
+        _resume_contract_payload()
+    )
+    target = _day_key(side="BUY", stage="inner_oof")
+    source = contract.predecessor_key(target)
+    assert source is not None
+
+    with pytest.raises(adapter.OfflineReplayAdapterError, match="missing or incomplete"):
+        cache.inherit_completed_sequential(
+            target_key=target,
+            source_key=source,
+            census_receipt_sha256=_sha("6"),
+        )
+
+
+def test_completed_side_resume_never_inherits_sell_or_drifted_buy(
+    tmp_path: Path,
+) -> None:
+    contract = adapter.CompletedSideResumeContract.from_payload(
+        _resume_contract_payload()
+    )
+    assert contract.predecessor_key(_day_key(side="SELL")) is None
+
+    cache = adapter.DayReplayCache(tmp_path / "cache")
+    target = _day_key(side="BUY")
+    source = contract.predecessor_key(target)
+    assert source is not None
+    drifted = replace(source, candidate_policy_sha256=_sha("7"))
+    cache.admit_sequential(drifted, pd.DataFrame({"utc_day": (DAY,)}))
+    with pytest.raises(adapter.OfflineReplayAdapterError, match="beyond adapter"):
+        cache.inherit_completed_sequential(
+            target_key=target,
+            source_key=drifted,
+            census_receipt_sha256=_sha("6"),
+        )
 
 
 def test_b0_key_is_candidate_independent_but_side_fold_and_input_safe() -> None:
@@ -985,7 +1160,13 @@ def test_actual_backend_to_adapter_bulk_abi_uses_global_path(
         adapter_artifact_sha256: str,
         request: backend.CanonicalSequentialReplayRequest,
         replay_inputs: pd.DataFrame,
+        completed_side_resume: adapter.CompletedSideResumeContract | None = None,
+        completed_side_resume_receipt_sha256: str | None = None,
+        inherited_cache_keys: set[tuple[str, str]] | None = None,
     ) -> adapter._PreparedSequentialReplay:
+        assert completed_side_resume is None
+        assert completed_side_resume_receipt_sha256 is None
+        assert inherited_cache_keys == set()
         assert backend._frame_sha256(replay_inputs) == request.replay_input_sha256
         prepare_calls.append(request.evaluation_request.request_sha256)
         receipt = backend.build_sequential_replay_receipt(

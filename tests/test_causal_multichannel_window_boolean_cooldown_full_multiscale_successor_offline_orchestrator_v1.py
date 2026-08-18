@@ -191,6 +191,15 @@ def _bundle_fixture(
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
     _write_cpp_qualification_receipt(execution_path, execution, source, panel)
+    census_path = (
+        execution_path.parent / orchestrator.COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME
+    )
+    census = json.loads(census_path.read_text(encoding="utf-8"))
+    monkeypatch.setattr(
+        orchestrator,
+        "_completed_buy_cache_census",
+        lambda _bundle: census,
+    )
     return execution_path, execution, panel, source
 
 
@@ -206,18 +215,18 @@ def _write_cpp_qualification_receipt(
         panel=panel,
     )
     invariance_receipt: dict[str, object] = {
-        "schema_version": f"{orchestrator.V23_V24_INVARIANCE_IDENTITY}.receipt.v1",
-        "identity": orchestrator.V23_V24_INVARIANCE_IDENTITY,
-        "status": orchestrator.V23_V24_INVARIANCE_STATUS,
-        "formal_v23": {
-            "canonical_execution_manifest_sha256": (
-                orchestrator.V23_EXECUTION_MANIFEST_CANONICAL_SHA256
-            ),
-            "manifest_file_sha256": orchestrator.V23_EXECUTION_MANIFEST_FILE_SHA256,
-            "public_base_commit": orchestrator.V23_PUBLIC_BASE_COMMIT,
-            "annotated_tag": orchestrator.V23_ANNOTATED_TAG,
-        },
+        "schema_version": f"{orchestrator.V24_V25_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": orchestrator.V24_V25_INVARIANCE_IDENTITY,
+        "status": orchestrator.V24_V25_INVARIANCE_STATUS,
         "formal_v24": {
+            "canonical_execution_manifest_sha256": (
+                orchestrator.V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+            ),
+            "manifest_file_sha256": orchestrator.V24_EXECUTION_MANIFEST_FILE_SHA256,
+            "public_base_commit": orchestrator.V24_PUBLIC_BASE_COMMIT,
+            "annotated_tag": orchestrator.V24_ANNOTATED_TAG,
+        },
+        "formal_v25": {
             "canonical_execution_manifest_sha256": execution[
                 "canonical_execution_manifest_sha256"
             ],
@@ -228,7 +237,15 @@ def _write_cpp_qualification_receipt(
         "research_contract": research_contract,
         "research_contract_sha256": orchestrator._canonical_sha256(research_contract),
         "semantic_source_hashes": {},
-        "semantic_source_count": len(orchestrator._RESEARCH_SEMANTIC_SOURCE_PATHS),
+        "semantic_source_count": len(
+            orchestrator._V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS
+        ),
+        "execution_only_source_hashes": {},
+        "execution_only_source_count": len(
+            orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS
+        ),
+        "completed_side_resume": orchestrator.completed_side_resume_contract(),
+        "mmap_lifetime_repair_only": True,
         "data_changed": False,
         "candidate_ladder_changed": False,
         "duration_vocabulary_changed": False,
@@ -246,11 +263,30 @@ def _write_cpp_qualification_receipt(
         "canonical_receipt_sha256",
     )
     _write_json(
-        execution_path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME,
+        execution_path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME,
         invariance_receipt,
     )
+    census_receipt: dict[str, object] = {
+        "successor_execution_manifest_sha256": execution[
+            "canonical_execution_manifest_sha256"
+        ],
+        "completed_side_resume": orchestrator.completed_side_resume_contract(),
+        "economic_values_read": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    census_receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        census_receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(
+        execution_path.parent / orchestrator.COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME,
+        census_receipt,
+    )
     builder_receipt: dict[str, object] = {
-        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v24.builder_preflight.v1"),
+        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v25.builder_preflight.v1"),
         "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
         "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
@@ -261,7 +297,7 @@ def _write_cpp_qualification_receipt(
         "cpp_startup_validated_row_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_evaluator_call_count": 0,
@@ -291,7 +327,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_values_persisted": False,
@@ -311,7 +347,7 @@ def _write_cpp_qualification_receipt(
         quick_receipt,
     )
     qualification = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v24.contract.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v25.contract.v1",
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
         "source_manifest_sha256": source["canonical_manifest_sha256"],
         "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
@@ -324,7 +360,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_opportunity_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v23_to_v24_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[
@@ -333,7 +369,7 @@ def _write_cpp_qualification_receipt(
         "source_hashes": {"cpp_extension": "d" * 64},
     }
     receipt: dict[str, object] = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v24.receipt.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v25.receipt.v1",
         "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
         "status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_contract": qualification,
@@ -497,12 +533,12 @@ def test_formal_loader_rejects_quick_preflight_mismatch(
         )
 
 
-def test_formal_loader_requires_v23_to_v24_invariance_receipt(
+def test_formal_loader_requires_v24_to_v25_invariance_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME
     receipt_path.unlink()
 
     with pytest.raises(
@@ -516,12 +552,56 @@ def test_formal_loader_requires_v23_to_v24_invariance_receipt(
         )
 
 
+def test_formal_loader_requires_completed_buy_cache_census_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME
+    receipt_path.unlink()
+
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="completed BUY cache census",
+    ):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
+def test_formal_loader_rejects_completed_buy_cache_census_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    receipt_path = path.parent / orchestrator.COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["completed_side_resume"]["required_complete_cache_units"] = 576
+    receipt["canonical_receipt_sha256"] = orchestrator._document_sha256(
+        receipt,
+        "canonical_receipt_sha256",
+    )
+    _write_json(receipt_path, receipt)
+
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="census receipt failed closed",
+    ):
+        orchestrator._load_formal_offline_bundle(
+            path,
+            verify_source_bytes=False,
+            require_clean_tag=False,
+        )
+
+
 def test_formal_loader_rejects_recomputed_invariance_contract_tamper(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["research_contract"]["candidate_ladder"].append("OUTCOME_INFORMED")
     receipt["research_contract_sha256"] = orchestrator._canonical_sha256(
@@ -578,6 +658,54 @@ def test_execution_only_invariance_rejects_research_contract_change(
         match="outside the execution-only allowance",
     ):
         orchestrator._execution_only_manifest_invariance(predecessor, successor)
+
+
+def test_v24_v25_invariance_separates_research_and_execution_sources() -> None:
+    backend_path = (
+        "research/families/f05_fill_quality_quote_ev/audit/"
+        "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+        "offline_repeated_policy_backend_v1.py"
+    )
+    assert backend_path in orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS
+    assert backend_path not in orchestrator._V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS
+    assert len(orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS) == 4
+
+
+def test_v24_v25_execution_only_invariance_rejects_research_contract_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _path, successor, *_ = _bundle_fixture(tmp_path, monkeypatch)
+    predecessor = json.loads(json.dumps(successor))
+    predecessor["public_base_commit"] = orchestrator.V24_PUBLIC_BASE_COMMIT
+    predecessor["annotated_tag"] = orchestrator.V24_ANNOTATED_TAG
+    predecessor["canonical_execution_manifest_sha256"] = (
+        orchestrator.V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+    )
+    predecessor["executor"]["identity"] = (
+        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4"
+    )
+    predecessor["executor"].pop("completed_side_resume")
+    predecessor["cpp_one_shot_qualification"]["identity"] = (
+        "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
+    )
+    predecessor["cpp_one_shot_qualification"]["invariance_receipt_file"] = (
+        orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
+    )
+
+    orchestrator._execution_only_manifest_invariance_v24_v25(
+        predecessor,
+        successor,
+    )
+    successor["execution_contract"]["control"] = "CONTROL_85N"
+    with pytest.raises(
+        orchestrator.OfflineOrchestratorError,
+        match="outside the execution-only allowance",
+    ):
+        orchestrator._execution_only_manifest_invariance_v24_v25(
+            predecessor,
+            successor,
+        )
 
 
 def test_cpp_lockstep_receipt_rejects_nonzero_mismatch(

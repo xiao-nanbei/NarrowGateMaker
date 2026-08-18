@@ -398,6 +398,11 @@ def test_factory_identity_and_artifact_hash_match_backend_constant(
         "_validate_cpp_qualification_receipt",
         lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_A},
     )
+    monkeypatch.setattr(
+        orchestrator,
+        "_validate_completed_buy_cache_census_receipt",
+        lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_B},
+    )
     bundle = SimpleNamespace(
         execution_manifest={"executor": orchestrator.formal_executor_contract()},
         execution_manifest_path=tmp_path / "execution.json",
@@ -675,6 +680,11 @@ def test_factory_and_backend_reject_custom_adapter_injection(
         orchestrator,
         "_validate_cpp_qualification_receipt",
         lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_A},
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_validate_completed_buy_cache_census_receipt",
+        lambda *_args, **_kwargs: {"canonical_receipt_sha256": SHA_B},
     )
     bundle = SimpleNamespace(
         execution_manifest={"executor": orchestrator.formal_executor_contract()},

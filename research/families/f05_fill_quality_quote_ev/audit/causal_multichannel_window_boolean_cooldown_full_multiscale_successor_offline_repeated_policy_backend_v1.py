@@ -407,6 +407,12 @@ class CanonicalReplayAdapter(Protocol):
         replay_inputs: pd.DataFrame,
     ) -> CanonicalSequentialReplayResult: ...
 
+    def completed_side_resume_summary(
+        self,
+        *,
+        require_complete: bool,
+    ) -> Mapping[str, Any] | None: ...
+
 
 class CanonicalBatchReplayAdapter(Protocol):
     def evaluate_repeated_policies(
@@ -912,6 +918,12 @@ def _load_canonical_replay_adapter(
             bundle.execution_manifest,
             verify_runtime_artifacts=True,
         )
+        completed_side_census = (
+            orchestrator._validate_completed_buy_cache_census_receipt(
+                bundle,
+                verify_cache_artifacts=False,
+            )
+        )
         module = importlib.import_module(CANONICAL_REPLAY_ADAPTER_MODULE)
     except ModuleNotFoundError as exc:
         raise OfflineRepeatedPolicyBackendError(
@@ -962,6 +974,10 @@ def _load_canonical_replay_adapter(
             global_worker_tokens=int(executor["global_worker_tokens"]),
             cpp_qualification_receipt_sha256=str(
                 cpp_qualification["canonical_receipt_sha256"]
+            ),
+            completed_side_resume=executor.get("completed_side_resume"),
+            completed_side_resume_receipt_sha256=str(
+                completed_side_census["canonical_receipt_sha256"]
             ),
         )
     )
@@ -1399,6 +1415,7 @@ def _completed_result(
     label_receipts: Sequence[Mapping[str, Any]],
     sequential_receipts: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
+    completed_side_resume = adapter.completed_side_resume_summary(require_complete=True)
     return {
         "schema_version": FORMAL_RESULT_SCHEMA,
         "identity": IDENTITY,
@@ -1418,6 +1435,7 @@ def _completed_result(
         ),
         "canonical_replay_adapter_identity": adapter.identity,
         "canonical_replay_adapter_sha256": adapter.artifact_sha256,
+        "completed_side_resume": completed_side_resume,
         "label_replay_receipts": list(label_receipts),
         "sequential_replay_receipts": list(sequential_receipts),
         "nested_oof_report": result.report(),

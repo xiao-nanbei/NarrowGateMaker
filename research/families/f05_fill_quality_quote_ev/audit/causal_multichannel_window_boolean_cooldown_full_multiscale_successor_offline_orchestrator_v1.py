@@ -42,7 +42,7 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v5"
 EXECUTOR_DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f05_full_multiscale_offline_day_input_mmap_v2"
@@ -61,13 +61,13 @@ EXECUTOR_ONE_SHOT_TOPOLOGY = {
 }
 CPP_QUALIFICATION_RECEIPT_NAME = "cpp_real_day_lockstep_receipt.json"
 CPP_BUILDER_PREFLIGHT_IDENTITY = (
-    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v24"
+    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v25"
 )
 CPP_BUILDER_PREFLIGHT_RECEIPT_NAME = "cpp_target_predicate_builder_walk_receipt.json"
 CPP_BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
 CPP_BUILDER_PREFLIGHT_OPPORTUNITIES = 3_516
-CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
-CPP_QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v24"
+CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
+CPP_QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v25"
 CPP_QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
 CPP_QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
 V23_V24_INVARIANCE_IDENTITY = "f05_formal_v23_to_v24_execution_only_invariance_v1"
@@ -83,6 +83,30 @@ V23_PUBLIC_BASE_COMMIT = "8a1d6e739f47e0b47d4470812e00314a66673fe7"
 V23_ANNOTATED_TAG = (
     "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-"
     "successor-offline/formal-cpp-one-shot-v23-20260816"
+)
+V24_V25_INVARIANCE_IDENTITY = "f05_formal_v24_to_v25_execution_only_invariance_v1"
+V24_V25_INVARIANCE_RECEIPT_NAME = "formal_v24_to_v25_invariance_receipt.json"
+V24_V25_INVARIANCE_STATUS = "passed_execution_only_research_contract_invariance"
+V24_EXECUTION_MANIFEST_CANONICAL_SHA256 = (
+    "2021a70f2f15f4fff82240cdc494556413da0fc24d369be00fd60628bcf3395a"
+)
+V24_EXECUTION_MANIFEST_FILE_SHA256 = (
+    "0c3beda45316a2211d2bc56c563b7dedef2b3133f03290a529060e034c0d18c4"
+)
+V24_PUBLIC_BASE_COMMIT = "8b863a49987b97c88ae8d70ec6605f081c988575"
+V24_ANNOTATED_TAG = (
+    "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-"
+    "successor-offline/formal-cpp-one-shot-v24-20260816"
+)
+V24_REPLAY_ADAPTER_ARTIFACT_SHA256 = (
+    "3fe25034aef8a0149f1e67c80ae5b7d236b04790c2e2e583cdb62ebb6cf353e1"
+)
+COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME = (
+    "formal_v24_completed_buy_cache_census_receipt.json"
+)
+PREDECESSOR_DAY_CACHE_ROOT = (
+    "${NARROWGATE_DATA_ROOT}/cache/replay_dag/"
+    "f05_full_multiscale_successor_offline_sequential_replay_cache_v2"
 )
 _RESEARCH_SEMANTIC_SOURCE_PATHS = (
     "models/audit/experiment_scorecard.py",
@@ -122,6 +146,32 @@ _RESEARCH_SEMANTIC_SOURCE_PATHS = (
         "offline_v1_execution_contract_20260813.json"
     ),
 )
+_V24_V25_EXECUTION_ONLY_SOURCE_PATHS = (
+    (
+        "research/families/f05_fill_quality_quote_ev/audit/"
+        "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+        "offline_repeated_policy_backend_v1.py"
+    ),
+    (
+        "research/families/f05_fill_quality_quote_ev/audit/"
+        "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+        "offline_replay_adapter_v1.py"
+    ),
+    (
+        "research/families/f05_fill_quality_quote_ev/audit/"
+        "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
+        "offline_orchestrator_v1.py"
+    ),
+    (
+        "research/families/f05_fill_quality_quote_ev/audit/"
+        "causal_multichannel_window_boolean_cooldown_cpp_real_day_lockstep_v22.py"
+    ),
+)
+_V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS = tuple(
+    path
+    for path in _RESEARCH_SEMANTIC_SOURCE_PATHS
+    if path not in _V24_V25_EXECUTION_ONLY_SOURCE_PATHS
+)
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
@@ -144,6 +194,33 @@ _FORBIDDEN_ECONOMIC_PANEL_FILES = frozenset(
 
 class OfflineOrchestratorError(RuntimeError):
     """Raised when formal economics can be bypassed or its identity drifts."""
+
+
+def completed_side_resume_contract() -> dict[str, Any]:
+    """Bind completed BUY units while excluding every unfinished SELL unit."""
+
+    return {
+        "schema_version": (
+            f"{offline.IDENTITY}.offline_replay_adapter_v1.completed_side_resume.v1"
+        ),
+        "mode": "hash_verified_completed_side_only",
+        "predecessor_execution_manifest_sha256": (
+            V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+        ),
+        "predecessor_adapter_artifact_sha256": V24_REPLAY_ADAPTER_ARTIFACT_SHA256,
+        "predecessor_cache_root": PREDECESSOR_DAY_CACHE_ROOT,
+        "census_receipt_file": COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME,
+        "inherited_sides": ["BUY"],
+        "excluded_sides": ["SELL"],
+        "required_stage_counts": {
+            "outer_train_one_shot": 67,
+            "inner_oof": 250,
+            "outer_oof": 260,
+        },
+        "required_complete_cache_units": 577,
+        "predecessor_failed_entries_reusable": False,
+        "recompute_inherited_side_allowed": False,
+    }
 
 
 def formal_executor_contract() -> dict[str, Any]:
@@ -171,6 +248,7 @@ def formal_executor_contract() -> dict[str, Any]:
             "candidate_output_allowed": False,
             "side_excludable": False,
         },
+        "completed_side_resume": completed_side_resume_contract(),
         "cpp_formal_engine_authorized": True,
         "cpp_authority_scope": "outer_train_one_shot_labels_only",
         "cpp_real_day_all_arm_lockstep_required": True,
@@ -453,6 +531,7 @@ def admit_v23_v24_invariance_receipt(
         require_clean_tag=True,
         require_cpp_qualification=False,
         require_invariance=False,
+        require_completed_side_census=False,
     )
     successor = bundle.execution_manifest
     _execution_only_manifest_invariance(predecessor, successor)
@@ -576,6 +655,477 @@ def _validate_v23_v24_invariance_receipt(
             raise OfflineOrchestratorError(
                 "formal-v23-to-v24 semantic source identity drifted"
             )
+    return receipt
+
+
+def _v24_v25_semantic_source_hashes(
+    *,
+    repository_root: Path,
+) -> dict[str, dict[str, Any]]:
+    hashes: dict[str, dict[str, Any]] = {}
+    for relative_path in _V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS:
+        current_path = repository_root / relative_path
+        if not current_path.is_file():
+            raise OfflineOrchestratorError(
+                f"research-contract source is missing: {relative_path}"
+            )
+        predecessor_sha256 = _bytes_sha256(
+            _git_file_bytes(
+                repository_root=repository_root,
+                commit=V24_PUBLIC_BASE_COMMIT,
+                path=relative_path,
+            )
+        )
+        current_sha256 = _file_sha256(current_path)
+        if predecessor_sha256 != current_sha256:
+            raise OfflineOrchestratorError(
+                f"research-contract source changed since formal-v24: {relative_path}"
+            )
+        hashes[relative_path] = {
+            "formal_v24_sha256": predecessor_sha256,
+            "formal_v25_sha256": current_sha256,
+            "equal": True,
+        }
+    return hashes
+
+
+def _v24_v25_execution_source_hashes(
+    *,
+    repository_root: Path,
+) -> dict[str, dict[str, Any]]:
+    hashes: dict[str, dict[str, Any]] = {}
+    for relative_path in _V24_V25_EXECUTION_ONLY_SOURCE_PATHS:
+        current_path = repository_root / relative_path
+        if not current_path.is_file():
+            raise OfflineOrchestratorError(
+                f"execution-only successor source is missing: {relative_path}"
+            )
+        predecessor_sha256 = _bytes_sha256(
+            _git_file_bytes(
+                repository_root=repository_root,
+                commit=V24_PUBLIC_BASE_COMMIT,
+                path=relative_path,
+            )
+        )
+        current_sha256 = _file_sha256(current_path)
+        if predecessor_sha256 == current_sha256:
+            raise OfflineOrchestratorError(
+                f"execution-only successor source did not change: {relative_path}"
+            )
+        hashes[relative_path] = {
+            "formal_v24_sha256": predecessor_sha256,
+            "formal_v25_sha256": current_sha256,
+            "equal": False,
+            "change_class": "mmap_lifetime_repair_or_completed_side_resume_only",
+        }
+    return hashes
+
+
+def _execution_only_manifest_invariance_v24_v25(
+    predecessor: Mapping[str, Any],
+    successor: Mapping[str, Any],
+) -> None:
+    predecessor_normalized = dict(predecessor)
+    successor_normalized = dict(successor)
+    for field in (
+        "public_base_commit",
+        "annotated_tag",
+        "executor",
+        "cpp_one_shot_qualification",
+        "canonical_execution_manifest_sha256",
+    ):
+        predecessor_normalized.pop(field, None)
+        successor_normalized.pop(field, None)
+    if predecessor_normalized != successor_normalized:
+        raise OfflineOrchestratorError(
+            "formal-v25 changed a manifest field outside the execution-only allowance"
+        )
+
+    predecessor_executor = dict(predecessor.get("executor") or {})
+    successor_executor = dict(successor.get("executor") or {})
+    if predecessor_executor.pop("identity", None) != (
+        "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v4"
+    ):
+        raise OfflineOrchestratorError("formal-v24 executor identity drifted")
+    if successor_executor.pop("identity", None) != EXECUTOR_ACCELERATION_IDENTITY:
+        raise OfflineOrchestratorError("formal-v25 executor identity drifted")
+    if successor_executor.pop("completed_side_resume", None) != (
+        completed_side_resume_contract()
+    ):
+        raise OfflineOrchestratorError("formal-v25 completed-side resume contract drifted")
+    if predecessor_executor != successor_executor:
+        raise OfflineOrchestratorError(
+            "formal-v25 changed the executor beyond mmap lifetime repair and resume"
+        )
+
+    predecessor_qualification = dict(predecessor.get("cpp_one_shot_qualification") or {})
+    successor_qualification = dict(successor.get("cpp_one_shot_qualification") or {})
+    if predecessor_qualification.pop("identity", None) != (
+        "f05_cpp_one_shot_real_day_all_arm_lockstep_v24"
+    ):
+        raise OfflineOrchestratorError("formal-v24 qualification identity drifted")
+    if successor_qualification.pop("identity", None) != CPP_QUALIFICATION_IDENTITY:
+        raise OfflineOrchestratorError("formal-v25 qualification identity drifted")
+    predecessor_qualification.pop("invariance_receipt_file", None)
+    successor_qualification.pop("invariance_receipt_file", None)
+    if predecessor_qualification != successor_qualification:
+        raise OfflineOrchestratorError(
+            "formal-v25 changed C++ qualification beyond receipt rebinding"
+        )
+
+
+def admit_v24_v25_invariance_receipt(
+    predecessor_manifest_path: Path,
+    successor_manifest_path: Path,
+    output_path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> Mapping[str, Any]:
+    root = (repository_root or Path(__file__).resolve().parents[4]).expanduser().resolve()
+    predecessor_path = predecessor_manifest_path.expanduser().resolve()
+    successor_path = successor_manifest_path.expanduser().resolve()
+    destination = output_path.expanduser().resolve()
+    if destination != successor_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME:
+        raise OfflineOrchestratorError("v24-to-v25 invariance receipt path is not canonical")
+    if destination.exists():
+        raise OfflineOrchestratorError("immutable v24-to-v25 invariance receipt already exists")
+    if _file_sha256(predecessor_path) != V24_EXECUTION_MANIFEST_FILE_SHA256:
+        raise OfflineOrchestratorError("formal-v24 execution manifest byte identity drifted")
+    predecessor = _load_json(predecessor_path, label="formal-v24 execution manifest")
+    if (
+        predecessor.get("canonical_execution_manifest_sha256")
+        != V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+        or predecessor.get("canonical_execution_manifest_sha256")
+        != _document_sha256(predecessor, "canonical_execution_manifest_sha256")
+        or predecessor.get("public_base_commit") != V24_PUBLIC_BASE_COMMIT
+        or predecessor.get("annotated_tag") != V24_ANNOTATED_TAG
+    ):
+        raise OfflineOrchestratorError("formal-v24 execution identity drifted")
+    bundle = _load_formal_offline_bundle(
+        successor_path,
+        verify_source_bytes=True,
+        require_clean_tag=True,
+        require_cpp_qualification=False,
+        require_invariance=False,
+        require_completed_side_census=False,
+    )
+    successor = bundle.execution_manifest
+    _execution_only_manifest_invariance_v24_v25(predecessor, successor)
+    research_contract = _research_contract_snapshot(
+        manifest=successor,
+        source=bundle.source_manifest,
+        panel=bundle.panel_manifest,
+    )
+    semantic_sources = _v24_v25_semantic_source_hashes(repository_root=root)
+    execution_sources = _v24_v25_execution_source_hashes(repository_root=root)
+    receipt: dict[str, Any] = {
+        "schema_version": f"{V24_V25_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": V24_V25_INVARIANCE_IDENTITY,
+        "status": V24_V25_INVARIANCE_STATUS,
+        "formal_v24": {
+            "canonical_execution_manifest_sha256": (
+                V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+            ),
+            "manifest_file_sha256": V24_EXECUTION_MANIFEST_FILE_SHA256,
+            "public_base_commit": V24_PUBLIC_BASE_COMMIT,
+            "annotated_tag": V24_ANNOTATED_TAG,
+        },
+        "formal_v25": {
+            "canonical_execution_manifest_sha256": successor[
+                "canonical_execution_manifest_sha256"
+            ],
+            "manifest_file_sha256": _file_sha256(successor_path),
+            "public_base_commit": successor["public_base_commit"],
+            "annotated_tag": successor["annotated_tag"],
+        },
+        "research_contract": research_contract,
+        "research_contract_sha256": _canonical_sha256(research_contract),
+        "semantic_source_hashes": semantic_sources,
+        "semantic_source_count": len(semantic_sources),
+        "execution_only_source_hashes": execution_sources,
+        "execution_only_source_count": len(execution_sources),
+        "completed_side_resume": completed_side_resume_contract(),
+        "mmap_lifetime_repair_only": True,
+        "data_changed": False,
+        "candidate_ladder_changed": False,
+        "duration_vocabulary_changed": False,
+        "estimand_changed": False,
+        "statistics_changed": False,
+        "economic_outcomes_read": False,
+        "economic_values_persisted": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    receipt["canonical_receipt_sha256"] = _document_sha256(
+        receipt,
+        "canonical_receipt_sha256",
+    )
+    _atomic_json(destination, receipt)
+    return receipt
+
+
+def _validate_v24_v25_invariance_receipt(
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    *,
+    source: Mapping[str, Any],
+    panel: Mapping[str, Any],
+    repository_root: Path,
+    verify_runtime_artifacts: bool,
+) -> Mapping[str, Any]:
+    receipt = _load_json(
+        manifest_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME,
+        label="formal-v24-to-v25 invariance receipt",
+    )
+    formal_v24 = receipt.get("formal_v24")
+    formal_v25 = receipt.get("formal_v25")
+    expected_contract = _research_contract_snapshot(
+        manifest=manifest,
+        source=source,
+        panel=panel,
+    )
+    false_fields = (
+        "data_changed",
+        "candidate_ladder_changed",
+        "duration_vocabulary_changed",
+        "estimand_changed",
+        "statistics_changed",
+        "economic_outcomes_read",
+        "economic_values_persisted",
+        "validation_read",
+        "sealed_holdout_read",
+        "action_authorized",
+        "live_authorized",
+    )
+    if (
+        receipt.get("identity") != V24_V25_INVARIANCE_IDENTITY
+        or receipt.get("status") != V24_V25_INVARIANCE_STATUS
+        or receipt.get("mmap_lifetime_repair_only") is not True
+        or receipt.get("completed_side_resume") != completed_side_resume_contract()
+        or not isinstance(formal_v24, Mapping)
+        or not isinstance(formal_v25, Mapping)
+        or formal_v24.get("canonical_execution_manifest_sha256")
+        != V24_EXECUTION_MANIFEST_CANONICAL_SHA256
+        or formal_v24.get("manifest_file_sha256")
+        != V24_EXECUTION_MANIFEST_FILE_SHA256
+        or formal_v24.get("public_base_commit") != V24_PUBLIC_BASE_COMMIT
+        or formal_v24.get("annotated_tag") != V24_ANNOTATED_TAG
+        or formal_v25.get("canonical_execution_manifest_sha256")
+        != manifest.get("canonical_execution_manifest_sha256")
+        or formal_v25.get("manifest_file_sha256") != _file_sha256(manifest_path)
+        or formal_v25.get("public_base_commit") != manifest.get("public_base_commit")
+        or formal_v25.get("annotated_tag") != manifest.get("annotated_tag")
+        or receipt.get("research_contract") != expected_contract
+        or receipt.get("research_contract_sha256") != _canonical_sha256(expected_contract)
+        or int(receipt.get("semantic_source_count", 0))
+        != len(_V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS)
+        or int(receipt.get("execution_only_source_count", 0))
+        != len(_V24_V25_EXECUTION_ONLY_SOURCE_PATHS)
+        or any(receipt.get(field) is not False for field in false_fields)
+        or receipt.get("canonical_receipt_sha256")
+        != _document_sha256(receipt, "canonical_receipt_sha256")
+    ):
+        raise OfflineOrchestratorError("formal-v24-to-v25 invariance receipt failed closed")
+    if verify_runtime_artifacts:
+        expected_sources = _v24_v25_semantic_source_hashes(
+            repository_root=repository_root
+        )
+        if receipt.get("semantic_source_hashes") != expected_sources:
+            raise OfflineOrchestratorError(
+                "formal-v24-to-v25 semantic source identity drifted"
+            )
+        expected_execution_sources = _v24_v25_execution_source_hashes(
+            repository_root=repository_root
+        )
+        if receipt.get("execution_only_source_hashes") != expected_execution_sources:
+            raise OfflineOrchestratorError(
+                "formal-v24-to-v25 execution source identity drifted"
+            )
+    return receipt
+
+
+def _completed_buy_cache_census(
+    bundle: FormalOfflineBundle,
+) -> dict[str, Any]:
+    try:
+        cache_root = resolve_portable_path(
+            PREDECESSOR_DAY_CACHE_ROOT,
+            root=bundle.repository_root,
+        ).resolve()
+    except (RuntimeError, ValueError) as exc:
+        raise OfflineOrchestratorError(
+            "formal-v24 predecessor cache root cannot be resolved"
+        ) from exc
+    progress_root = cache_root / "progress"
+    entries_root = cache_root / "entries"
+    if not progress_root.is_dir() or not entries_root.is_dir():
+        raise OfflineOrchestratorError("formal-v24 predecessor cache roots are missing")
+    expected_source = bundle.source_manifest["canonical_manifest_sha256"]
+    expected_panel = bundle.panel_manifest["canonical_panel_manifest_sha256"]
+    expected_fold = bundle.execution_manifest["fold_manifest_sha256"]
+    progress_schema = (
+        f"{offline.IDENTITY}.offline_replay_adapter_v1.day_progress.v2"
+    )
+    cache_schema = f"{offline.IDENTITY}.offline_replay_adapter_v1.day_cache.v2"
+    completed_units: list[dict[str, Any]] = []
+    completed_counts: dict[str, int] = {}
+    excluded_states: dict[str, int] = {}
+    for progress_path in sorted(progress_root.glob("*.json")):
+        progress = _load_json(progress_path, label="formal-v24 day progress receipt")
+        key = progress.get("cache_key")
+        if not isinstance(key, Mapping) or key.get(
+            "execution_manifest_sha256"
+        ) != V24_EXECUTION_MANIFEST_CANONICAL_SHA256:
+            continue
+        if (
+            progress.get("schema_version") != progress_schema
+            or progress.get("cache_key_sha256") != progress_path.stem
+            or progress.get("cache_key_sha256")
+            != _canonical_sha256({"schema_version": cache_schema, **dict(key)})
+            or progress.get("receipt_sha256")
+            != _document_sha256(progress, "receipt_sha256")
+            or key.get("adapter_artifact_sha256")
+            != V24_REPLAY_ADAPTER_ARTIFACT_SHA256
+            or key.get("source_manifest_sha256") != expected_source
+            or key.get("panel_manifest_sha256") != expected_panel
+            or key.get("fold_manifest_sha256") != expected_fold
+            or key.get("exact_owner_policy_sha256")
+            != offline.ACTIVE_OWNER_POLICY_SHA256
+        ):
+            raise OfflineOrchestratorError("formal-v24 progress receipt identity drifted")
+        side = str(key.get("side"))
+        stage = str(key.get("stage"))
+        state = str(progress.get("state"))
+        if side == "SELL":
+            excluded_states[state] = excluded_states.get(state, 0) + 1
+            if (entries_root / progress_path.stem / "manifest.json").exists():
+                raise OfflineOrchestratorError(
+                    "formal-v24 unfinished SELL entry unexpectedly became admissible"
+                )
+            continue
+        if side != "BUY" or state != "complete":
+            raise OfflineOrchestratorError(
+                "formal-v24 completed-side census found non-complete BUY work"
+            )
+        entry_path = entries_root / progress_path.stem / "manifest.json"
+        entry = _load_json(entry_path, label="formal-v24 completed BUY cache manifest")
+        files = entry.get("files")
+        if (
+            entry.get("schema_version") != cache_schema
+            or entry.get("cache_key_sha256") != progress_path.stem
+            or entry.get("cache_key") != dict(key)
+            or entry.get("complete") is not True
+            or entry.get("atomic_admission") is not True
+            or entry.get("receipt_sha256") != _document_sha256(entry, "receipt_sha256")
+            or not isinstance(files, Mapping)
+            or not files
+        ):
+            raise OfflineOrchestratorError("formal-v24 completed BUY cache manifest drifted")
+        file_bindings: dict[str, str] = {}
+        for name, raw_binding in sorted(files.items()):
+            if not isinstance(raw_binding, Mapping):
+                raise OfflineOrchestratorError("formal-v24 BUY cache file binding drifted")
+            file_path = entry_path.parent / str(raw_binding.get("file"))
+            expected_sha = str(raw_binding.get("sha256"))
+            if not file_path.is_file() or _file_sha256(file_path) != expected_sha:
+                raise OfflineOrchestratorError("formal-v24 BUY cache file hash drifted")
+            file_bindings[str(name)] = expected_sha
+        completed_counts[stage] = completed_counts.get(stage, 0) + 1
+        completed_units.append(
+            {
+                "cache_key_sha256": progress_path.stem,
+                "stage": stage,
+                "fold_id": str(key.get("fold_id")),
+                "utc_day": str(key.get("utc_day")),
+                "progress_receipt_sha256": progress["receipt_sha256"],
+                "cache_receipt_sha256": entry["receipt_sha256"],
+                "file_sha256": file_bindings,
+            }
+        )
+    contract = completed_side_resume_contract()
+    if (
+        completed_counts != contract["required_stage_counts"]
+        or len(completed_units) != contract["required_complete_cache_units"]
+        or excluded_states != {"running": 10}
+    ):
+        raise OfflineOrchestratorError("formal-v24 completed-side cache census drifted")
+    unit_set_sha256 = _canonical_sha256(completed_units)
+    receipt: dict[str, Any] = {
+        "schema_version": (
+            f"{offline.IDENTITY}.formal_v25_completed_side_cache_census.v1"
+        ),
+        "identity": "f05_formal_v24_completed_buy_cache_census_v1",
+        "status": "passed_577_completed_buy_units_sell_excluded",
+        "successor_execution_manifest_sha256": bundle.execution_manifest[
+            "canonical_execution_manifest_sha256"
+        ],
+        "completed_side_resume": contract,
+        "completed_stage_counts": completed_counts,
+        "completed_cache_units": len(completed_units),
+        "excluded_predecessor_states": {"SELL": excluded_states},
+        "completed_unit_set_sha256": unit_set_sha256,
+        "completed_units": completed_units,
+        "parquet_payloads_parsed": False,
+        "economic_values_read": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "action_authorized": False,
+        "live_authorized": False,
+    }
+    receipt["canonical_receipt_sha256"] = _document_sha256(
+        receipt,
+        "canonical_receipt_sha256",
+    )
+    return receipt
+
+
+def admit_completed_buy_cache_census_receipt(
+    successor_manifest_path: Path,
+    output_path: Path,
+) -> Mapping[str, Any]:
+    successor_path = successor_manifest_path.expanduser().resolve()
+    destination = output_path.expanduser().resolve()
+    if destination != successor_path.parent / COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME:
+        raise OfflineOrchestratorError("completed BUY cache census path is not canonical")
+    if destination.exists():
+        raise OfflineOrchestratorError("immutable completed BUY cache census already exists")
+    bundle = _load_formal_offline_bundle(
+        successor_path,
+        verify_source_bytes=True,
+        require_clean_tag=True,
+        require_cpp_qualification=False,
+        require_invariance=True,
+        require_completed_side_census=False,
+    )
+    receipt = _completed_buy_cache_census(bundle)
+    _atomic_json(destination, receipt)
+    return receipt
+
+
+def _validate_completed_buy_cache_census_receipt(
+    bundle: FormalOfflineBundle,
+    *,
+    verify_cache_artifacts: bool,
+) -> Mapping[str, Any]:
+    path = bundle.execution_manifest_path.parent / COMPLETED_BUY_CACHE_CENSUS_RECEIPT_NAME
+    receipt = _load_json(path, label="formal-v24 completed BUY cache census")
+    if (
+        receipt.get("successor_execution_manifest_sha256")
+        != bundle.execution_manifest.get("canonical_execution_manifest_sha256")
+        or receipt.get("completed_side_resume") != completed_side_resume_contract()
+        or receipt.get("economic_values_read") is not False
+        or receipt.get("validation_read") is not False
+        or receipt.get("sealed_holdout_read") is not False
+        or receipt.get("action_authorized") is not False
+        or receipt.get("live_authorized") is not False
+        or receipt.get("canonical_receipt_sha256")
+        != _document_sha256(receipt, "canonical_receipt_sha256")
+    ):
+        raise OfflineOrchestratorError("completed BUY cache census receipt failed closed")
+    if verify_cache_artifacts and receipt != _completed_buy_cache_census(bundle):
+        raise OfflineOrchestratorError("completed BUY cache census no longer reproduces")
     return receipt
 
 
@@ -853,7 +1403,7 @@ def _cpp_qualification_contract() -> dict[str, Any]:
     return {
         "identity": CPP_QUALIFICATION_IDENTITY,
         "receipt_file": CPP_QUALIFICATION_RECEIPT_NAME,
-        "invariance_receipt_file": V23_V24_INVARIANCE_RECEIPT_NAME,
+        "invariance_receipt_file": V24_V25_INVARIANCE_RECEIPT_NAME,
         "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_day_index": 0,
         "all_opportunities_required": True,
@@ -919,8 +1469,8 @@ def _validate_cpp_qualification_receipt(
     if contract != _cpp_qualification_contract():
         raise OfflineOrchestratorError("C++ one-shot qualification contract drifted")
     invariance_receipt = _load_json(
-        manifest_path.parent / V23_V24_INVARIANCE_RECEIPT_NAME,
-        label="formal-v23-to-v24 invariance receipt",
+        manifest_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME,
+        label="formal-v24-to-v25 invariance receipt",
     )
     builder_path = manifest_path.parent / CPP_BUILDER_PREFLIGHT_RECEIPT_NAME
     builder_receipt = _load_json(
@@ -937,7 +1487,7 @@ def _validate_cpp_qualification_receipt(
         or int(builder_receipt.get("cpp_startup_validated_row_count", 0))
         != CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         or int(builder_receipt.get("economic_evaluator_call_count", -1)) != 0
-        or builder_receipt.get("formal_v23_to_v24_invariance_receipt_sha256")
+        or builder_receipt.get("formal_v24_to_v25_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or builder_receipt.get("economic_values_read") is not False
         or builder_receipt.get("economic_values_persisted") is not False
@@ -963,7 +1513,7 @@ def _validate_cpp_qualification_receipt(
         or int(quick_receipt.get("zero_mismatch_arm_count", 0)) != 8
         or quick_receipt.get("all_panel_builder_preflight_receipt_sha256")
         != builder_receipt.get("canonical_receipt_sha256")
-        or quick_receipt.get("formal_v23_to_v24_invariance_receipt_sha256")
+        or quick_receipt.get("formal_v24_to_v25_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or quick_receipt.get("economic_values_persisted") is not False
         or quick_receipt.get("economic_values_exposed") is not False
@@ -992,7 +1542,7 @@ def _validate_cpp_qualification_receipt(
         or int(receipt.get("arm_count", 0)) != int(receipt.get("opportunity_count", 0)) * 8
         or qualification.get("all_panel_builder_preflight_receipt_sha256")
         != builder_receipt.get("canonical_receipt_sha256")
-        or qualification.get("formal_v23_to_v24_invariance_receipt_sha256")
+        or qualification.get("formal_v24_to_v25_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or qualification.get("first_opportunity_all_arm_preflight_receipt_sha256")
         != quick_receipt.get("canonical_receipt_sha256")
@@ -1036,6 +1586,7 @@ def _load_formal_offline_bundle(
     require_clean_tag: bool = True,
     require_cpp_qualification: bool = True,
     require_invariance: bool = True,
+    require_completed_side_census: bool = True,
 ) -> FormalOfflineBundle:
     """Internal loader with test-only verification controls."""
 
@@ -1150,7 +1701,7 @@ def _load_formal_offline_bundle(
             tag=str(manifest.get("annotated_tag", "")),
         )
     if require_invariance:
-        _validate_v23_v24_invariance_receipt(
+        _validate_v24_v25_invariance_receipt(
             path,
             manifest,
             source=source,
@@ -1158,13 +1709,7 @@ def _load_formal_offline_bundle(
             repository_root=repository_root,
             verify_runtime_artifacts=verify_source_bytes,
         )
-    if require_cpp_qualification:
-        _validate_cpp_qualification_receipt(
-            path,
-            manifest,
-            verify_runtime_artifacts=verify_source_bytes,
-        )
-    return _new_formal_offline_bundle(
+    bundle = _new_formal_offline_bundle(
         execution_manifest_path=path,
         execution_manifest=manifest,
         source_manifest_path=source_path,
@@ -1174,6 +1719,18 @@ def _load_formal_offline_bundle(
         panel_files=panel_files,
         repository_root=repository_root,
     )
+    if require_completed_side_census:
+        _validate_completed_buy_cache_census_receipt(
+            bundle,
+            verify_cache_artifacts=verify_source_bytes,
+        )
+    if require_cpp_qualification:
+        _validate_cpp_qualification_receipt(
+            path,
+            manifest,
+            verify_runtime_artifacts=verify_source_bytes,
+        )
+    return bundle
 
 
 def load_formal_offline_bundle(
@@ -1201,6 +1758,7 @@ def load_formal_offline_bundle_for_cpp_qualification(
         require_clean_tag=True,
         require_cpp_qualification=False,
         require_invariance=False,
+        require_completed_side_census=False,
     )
 
 
@@ -1446,6 +2004,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     invariance.add_argument("predecessor_manifest", type=Path)
     invariance.add_argument("successor_manifest", type=Path)
     invariance.add_argument("--output", type=Path, required=True)
+    resume_invariance = subparsers.add_parser("admit-v24-v25-invariance")
+    resume_invariance.add_argument("predecessor_manifest", type=Path)
+    resume_invariance.add_argument("successor_manifest", type=Path)
+    resume_invariance.add_argument("--output", type=Path, required=True)
+    cache_census = subparsers.add_parser("admit-completed-buy-cache-census")
+    cache_census.add_argument("successor_manifest", type=Path)
+    cache_census.add_argument("--output", type=Path, required=True)
     preflight = subparsers.add_parser("preflight")
     preflight.add_argument("manifest", type=Path)
     preflight.add_argument("--output", type=Path)
@@ -1482,6 +2047,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             "identity": receipt["identity"],
             "status": receipt["status"],
             "research_contract_sha256": receipt["research_contract_sha256"],
+            "economic_outcomes_read": False,
+        }
+    elif args.command == "admit-v24-v25-invariance":
+        receipt = admit_v24_v25_invariance_receipt(
+            args.predecessor_manifest,
+            args.successor_manifest,
+            args.output,
+        )
+        result = {
+            "identity": receipt["identity"],
+            "status": receipt["status"],
+            "research_contract_sha256": receipt["research_contract_sha256"],
+            "economic_outcomes_read": False,
+        }
+    elif args.command == "admit-completed-buy-cache-census":
+        receipt = admit_completed_buy_cache_census_receipt(
+            args.successor_manifest,
+            args.output,
+        )
+        result = {
+            "identity": receipt["identity"],
+            "status": receipt["status"],
+            "completed_cache_units": receipt["completed_cache_units"],
             "economic_outcomes_read": False,
         }
     elif args.command == "preflight":
