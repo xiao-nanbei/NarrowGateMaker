@@ -462,13 +462,15 @@ def _bindings(
     nested_fold_manifest: Mapping[str, Any],
     nested_fold_sha256: str,
     source_fold_sha256: str,
+    expected_backend_module: str = orchestrator.CANONICAL_BACKEND_MODULE,
+    expected_backend_function: str = orchestrator.CANONICAL_BACKEND_FUNCTION,
 ) -> FormalExecutionBindings:
     execution = bundle.execution_manifest
     source = bundle.source_manifest
     panel = bundle.panel_manifest
     if execution.get("backend") != {
-        "module": orchestrator.CANONICAL_BACKEND_MODULE,
-        "function": orchestrator.CANONICAL_BACKEND_FUNCTION,
+        "module": expected_backend_module,
+        "function": expected_backend_function,
         "custom_evaluator_allowed": False,
     }:
         raise OfflineRepeatedPolicyBackendError("custom or alternate evaluator is forbidden")
@@ -527,6 +529,9 @@ def _bindings(
 
 def load_outcome_blind_mechanics(
     bundle: orchestrator.FormalOfflineBundle,
+    *,
+    expected_backend_module: str = orchestrator.CANONICAL_BACKEND_MODULE,
+    expected_backend_function: str = orchestrator.CANONICAL_BACKEND_FUNCTION,
 ) -> OutcomeBlindMechanics:
     """Load the five mechanics tables and independently revalidate their identity."""
 
@@ -558,6 +563,8 @@ def load_outcome_blind_mechanics(
         nested_fold_manifest=nested_fold_manifest,
         nested_fold_sha256=folds.manifest_sha256,
         source_fold_sha256=source_fold_sha,
+        expected_backend_module=expected_backend_module,
+        expected_backend_function=expected_backend_function,
     )
     loaded: dict[str, pd.DataFrame] = {}
     file_hashes: dict[str, str] = {}
