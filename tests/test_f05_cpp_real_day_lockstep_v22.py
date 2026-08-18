@@ -94,6 +94,7 @@ def test_all_panel_builder_walk_validates_every_opportunity(
         policy_path=tmp_path / "policy.json",
         predicate_path=tmp_path / "predicates.json",
         invariance_receipt={"canonical_receipt_sha256": "e" * 64},
+        invariance_receipt_field=lockstep.SELL_ONLY_INVARIANCE_RECEIPT_FIELD,
         receipt_path=receipt_path,
     )
 
@@ -103,7 +104,8 @@ def test_all_panel_builder_walk_validates_every_opportunity(
     assert receipt["economic_values_persisted"] is False
     assert receipt["cpp_startup_validated_row_count"] == len(days)
     assert receipt["economic_evaluator_call_count"] == 0
-    assert receipt["formal_v24_to_v26_invariance_receipt_sha256"] == "e" * 64
+    assert receipt[lockstep.SELL_ONLY_INVARIANCE_RECEIPT_FIELD] == "e" * 64
+    assert lockstep.DEFAULT_INVARIANCE_RECEIPT_FIELD not in receipt
     assert len(validated) == len(days)
     assert json.loads(receipt_path.read_text(encoding="ascii")) == receipt
 

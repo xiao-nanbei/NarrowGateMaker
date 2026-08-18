@@ -48,6 +48,9 @@ CPP_QUALIFICATION_REUSE_IDENTITY = "f05_cpp_v26_both_side_to_v27_sell_only_reuse
 CPP_QUALIFICATION_REUSE_RECEIPT_NAME = "cpp_v26_qualification_reuse_receipt.json"
 PREDECESSOR_CPP_QUALIFICATION_COPY_NAME = "cpp_v26_real_day_lockstep_receipt.json"
 CPP_QUALIFICATION_REUSE_STATUS = "passed_v26_both_side_superset_for_v27_sell_only"
+CURRENT_CPP_QUALIFICATION_INVARIANCE_FIELD = (
+    "formal_v26_to_v27_invariance_receipt_sha256"
+)
 V26_EXECUTION_MANIFEST_CANONICAL_SHA256 = (
     "e0f4d92181609a6d6b1794b4ff88850775d01538f5642018254fb004e55f85df"
 )
@@ -219,6 +222,31 @@ def cpp_qualification_reuse_contract() -> dict[str, Any]:
     }
 
 
+def cpp_current_qualification_contract() -> dict[str, Any]:
+    """Require lockstep qualification against the exact current runtime bytes."""
+
+    return {
+        "identity": base.CPP_QUALIFICATION_IDENTITY,
+        "receipt_file": base.CPP_QUALIFICATION_RECEIPT_NAME,
+        "invariance_receipt_file": INVARIANCE_RECEIPT_NAME,
+        "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
+        "qualification_day_index": 0,
+        "all_opportunities_required": True,
+        "all_side_specific_duration_arms_required": True,
+        "zero_mismatches_required": True,
+        "all_panel_zero_economic_builder_walk_required": True,
+        "builder_preflight_receipt_file": base.CPP_BUILDER_PREFLIGHT_RECEIPT_NAME,
+        "builder_preflight_opportunity_count": base.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES,
+        "builder_formal_runtime_instantiation_required": True,
+        "first_opportunity_all_arm_preflight_required": True,
+        "first_opportunity_all_arm_preflight_receipt_file": (
+            base.CPP_QUICK_PREFLIGHT_RECEIPT_NAME
+        ),
+        "fresh_current_source_hash_equality_required": True,
+        "economic_values_persisted": False,
+    }
+
+
 def _semantic_source_hashes(repository_root: Path) -> dict[str, dict[str, Any]]:
     hashes: dict[str, dict[str, Any]] = {}
     for relative_path in base._V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS:
@@ -296,7 +324,7 @@ def _validate_manifest_core(
         raise SellOnlyOrchestratorError("formal-v27 executor or no-resume contract drifted")
     if manifest.get("composition_contract") != formal_composition_contract():
         raise SellOnlyOrchestratorError("formal-v27 composition contract drifted")
-    if manifest.get("cpp_one_shot_qualification") != cpp_qualification_reuse_contract():
+    if manifest.get("cpp_one_shot_qualification") != cpp_current_qualification_contract():
         raise SellOnlyOrchestratorError("formal-v27 C++ qualification contract drifted")
     if manifest.get("permissions") != {
         "validation_read": False,
@@ -440,7 +468,7 @@ def bind_formal_sell_only_execution_manifest(
         "execution_contract": formal_execution_contract(),
         "executor": formal_executor_contract(),
         "composition_contract": formal_composition_contract(),
-        "cpp_one_shot_qualification": cpp_qualification_reuse_contract(),
+        "cpp_one_shot_qualification": cpp_current_qualification_contract(),
         "source_contract": {
             "panel_role": offline.PANEL_ROLE,
             "queue_identity": offline.QUEUE_IDENTITY,
@@ -742,6 +770,120 @@ def _validate_cpp_qualification_reuse_receipt(
     return receipt
 
 
+def _validate_cpp_current_qualification_receipt(
+    bundle: base.FormalOfflineBundle,
+) -> Mapping[str, Any]:
+    """Validate lockstep evidence produced by the exact bound runtime bytes."""
+
+    contract = bundle.execution_manifest.get("cpp_one_shot_qualification")
+    if contract != cpp_current_qualification_contract():
+        raise SellOnlyOrchestratorError("current C++ qualification contract drifted")
+    root = bundle.execution_manifest_path.parent
+    invariance = _validate_invariance_receipt(bundle)
+    invariance_sha = invariance["canonical_receipt_sha256"]
+
+    builder = _load_json(
+        root / base.CPP_BUILDER_PREFLIGHT_RECEIPT_NAME,
+        label="current C++ all-panel builder preflight receipt",
+    )
+    if (
+        builder.get("identity") != base.CPP_BUILDER_PREFLIGHT_IDENTITY
+        or builder.get("status") != base.CPP_BUILDER_PREFLIGHT_STATUS
+        or builder.get("execution_manifest_sha256")
+        != bundle.execution_manifest.get("canonical_execution_manifest_sha256")
+        or builder.get("source_manifest_sha256")
+        != bundle.source_manifest.get("canonical_manifest_sha256")
+        or builder.get("panel_manifest_sha256")
+        != bundle.panel_manifest.get("canonical_panel_manifest_sha256")
+        or int(builder.get("opportunity_count", 0))
+        != base.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
+        or builder.get(CURRENT_CPP_QUALIFICATION_INVARIANCE_FIELD) != invariance_sha
+        or int(builder.get("economic_evaluator_call_count", -1)) != 0
+        or builder.get("economic_values_read") is not False
+        or builder.get("economic_values_persisted") is not False
+        or builder.get("validation_read") is not False
+        or builder.get("sealed_holdout_read") is not False
+        or builder.get("action_authorized") is not False
+        or builder.get("live_authorized") is not False
+        or builder.get("canonical_receipt_sha256")
+        != _document_sha256(builder, "canonical_receipt_sha256")
+    ):
+        raise SellOnlyOrchestratorError("current C++ builder preflight drifted")
+
+    quick = _load_json(
+        root / base.CPP_QUICK_PREFLIGHT_RECEIPT_NAME,
+        label="current C++ first-opportunity lockstep receipt",
+    )
+    if (
+        quick.get("identity") != base.CPP_QUICK_PREFLIGHT_IDENTITY
+        or quick.get("status") != base.CPP_QUICK_PREFLIGHT_STATUS
+        or quick.get("execution_manifest_sha256")
+        != bundle.execution_manifest.get("canonical_execution_manifest_sha256")
+        or int(quick.get("opportunity_count", 0)) != 1
+        or int(quick.get("arm_count", 0)) != 8
+        or int(quick.get("zero_mismatch_arm_count", 0)) != 8
+        or quick.get("all_panel_builder_preflight_receipt_sha256")
+        != builder.get("canonical_receipt_sha256")
+        or quick.get(CURRENT_CPP_QUALIFICATION_INVARIANCE_FIELD) != invariance_sha
+        or quick.get("economic_values_persisted") is not False
+        or quick.get("economic_values_exposed") is not False
+        or quick.get("economic_values_used_for_selection") is not False
+        or quick.get("validation_read") is not False
+        or quick.get("sealed_holdout_read") is not False
+        or quick.get("action_authorized") is not False
+        or quick.get("live_authorized") is not False
+        or quick.get("canonical_receipt_sha256")
+        != _document_sha256(quick, "canonical_receipt_sha256")
+    ):
+        raise SellOnlyOrchestratorError("current C++ quick lockstep drifted")
+
+    receipt = _load_json(
+        root / base.CPP_QUALIFICATION_RECEIPT_NAME,
+        label="current C++ real-day lockstep receipt",
+    )
+    qualification = receipt.get("qualification_contract")
+    if (
+        not isinstance(qualification, Mapping)
+        or receipt.get("identity") != base.CPP_QUALIFICATION_IDENTITY
+        or receipt.get("status") != contract["required_status"]
+        or receipt.get("cpp_one_shot_formal_authorized") is not True
+        or receipt.get("python_sequential_engine_remains_authoritative") is not True
+        or int(receipt.get("opportunity_count", 0)) <= 0
+        or int(receipt.get("arm_count", 0))
+        != int(receipt.get("opportunity_count", 0)) * 8
+        or receipt.get("zero_mismatch_arm_count") != receipt.get("arm_count")
+        or qualification.get("execution_manifest_sha256")
+        != bundle.execution_manifest.get("canonical_execution_manifest_sha256")
+        or qualification.get("source_manifest_sha256")
+        != bundle.source_manifest.get("canonical_manifest_sha256")
+        or qualification.get("panel_manifest_sha256")
+        != bundle.panel_manifest.get("canonical_panel_manifest_sha256")
+        or qualification.get("public_base_commit")
+        != bundle.execution_manifest.get("public_base_commit")
+        or qualification.get("annotated_tag")
+        != bundle.execution_manifest.get("annotated_tag")
+        or qualification.get("all_panel_builder_preflight_receipt_sha256")
+        != builder.get("canonical_receipt_sha256")
+        or qualification.get("first_opportunity_all_arm_preflight_receipt_sha256")
+        != quick.get("canonical_receipt_sha256")
+        or qualification.get(CURRENT_CPP_QUALIFICATION_INVARIANCE_FIELD)
+        != invariance_sha
+        or qualification.get("source_hashes")
+        != base._current_cpp_qualification_source_hashes()
+        or receipt.get("qualification_sha256") != _canonical_sha256(qualification)
+        or receipt.get("economic_values_persisted") is not False
+        or receipt.get("economic_values_used_for_selection") is not False
+        or receipt.get("validation_read") is not False
+        or receipt.get("sealed_holdout_read") is not False
+        or receipt.get("action_authorized") is not False
+        or receipt.get("live_authorized") is not False
+        or receipt.get("canonical_receipt_sha256")
+        != _document_sha256(receipt, "canonical_receipt_sha256")
+    ):
+        raise SellOnlyOrchestratorError("current C++ qualification drifted")
+    return receipt
+
+
 def load_formal_sell_only_bundle_for_admission(
     execution_manifest_path: Path,
 ) -> base.FormalOfflineBundle:
@@ -757,7 +899,7 @@ def load_formal_sell_only_bundle(
 ) -> base.FormalOfflineBundle:
     bundle = load_formal_sell_only_bundle_for_admission(execution_manifest_path)
     _validate_invariance_receipt(bundle)
-    _validate_cpp_qualification_reuse_receipt(bundle)
+    _validate_cpp_current_qualification_receipt(bundle)
     return bundle
 
 

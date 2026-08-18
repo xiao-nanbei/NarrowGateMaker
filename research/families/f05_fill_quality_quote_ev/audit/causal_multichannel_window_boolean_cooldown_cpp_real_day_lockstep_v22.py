@@ -51,6 +51,15 @@ BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
 QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v26"
 QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
 QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
+DEFAULT_INVARIANCE_RECEIPT_FIELD = (
+    "formal_v24_to_v26_invariance_receipt_sha256"
+)
+SELL_ONLY_INVARIANCE_RECEIPT_FIELD = (
+    "formal_v26_to_v27_invariance_receipt_sha256"
+)
+SELL_ONLY_ORCHESTRATOR_IDENTITY = (
+    f"{offline.IDENTITY}.formal_sell_only_orchestrator_v1"
+)
 
 
 class CppRealDayLockstepError(RuntimeError):
@@ -250,6 +259,7 @@ def preflight_all_panel_target_rows(
     policy_path: Path,
     predicate_path: Path,
     invariance_receipt: Mapping[str, Any],
+    invariance_receipt_field: str = DEFAULT_INVARIANCE_RECEIPT_FIELD,
     receipt_path: Path,
 ) -> Mapping[str, Any]:
     """Validate every target-row builder result without executing an economic arm."""
@@ -352,9 +362,7 @@ def preflight_all_panel_target_rows(
         "target_row_semantics": (
             "sparse_target_support_row_with_cpp_runtime_derived_compiled_owner_predicates"
         ),
-        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
-            "canonical_receipt_sha256"
-        ],
+        invariance_receipt_field: invariance_receipt["canonical_receipt_sha256"],
         "cpp_startup_contract_validation": True,
         "cpp_startup_validator": "validate_f05_cooldown_predicate_rows",
         "cpp_startup_validated_row_count": len(row_identities),
@@ -556,6 +564,7 @@ def _run_first_opportunity_all_arm_preflight(
     shared_tape: Any,
     builder_receipt: Mapping[str, Any],
     invariance_receipt: Mapping[str, Any],
+    invariance_receipt_field: str,
     qualification_seed: Mapping[str, Any],
     output_path: Path,
     started: float,
@@ -666,9 +675,7 @@ def _run_first_opportunity_all_arm_preflight(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
-            "canonical_receipt_sha256"
-        ],
+        invariance_receipt_field: invariance_receipt["canonical_receipt_sha256"],
         "quick_qualification_sha256": quick_qualification_sha256,
         "economic_values_computed_for_lockstep_only": True,
         "economic_values_persisted": False,
@@ -699,23 +706,39 @@ def _run_lockstep_impl(
     stage: dict[str, str],
 ) -> Mapping[str, Any]:
     stage["value"] = "load_bound_manifest"
-    bundle = orchestrator.load_formal_offline_bundle_for_cpp_qualification(manifest_path)
+    manifest = json.loads(manifest_path.read_text(encoding="ascii"))
+    if manifest.get("identity") == SELL_ONLY_ORCHESTRATOR_IDENTITY:
+        from research.families.f05_fill_quality_quote_ev.audit import (
+            causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_sell_only_orchestrator_v1 as sell_only_orchestrator,
+        )
+
+        bundle = sell_only_orchestrator.load_formal_sell_only_bundle_for_admission(
+            manifest_path
+        )
+        invariance_receipt = sell_only_orchestrator._validate_invariance_receipt(
+            bundle
+        )
+        invariance_receipt_field = SELL_ONLY_INVARIANCE_RECEIPT_FIELD
+    else:
+        bundle = orchestrator.load_formal_offline_bundle_for_cpp_qualification(
+            manifest_path
+        )
+        invariance_receipt = orchestrator._validate_v24_v26_invariance_receipt(
+            manifest_path,
+            bundle.execution_manifest,
+            source=bundle.source_manifest,
+            panel=bundle.panel_manifest,
+            repository_root=Path(bundle.repository_root),
+            verify_runtime_artifacts=True,
+        )
+        orchestrator._validate_completed_buy_cache_census_receipt(
+            bundle,
+            verify_cache_artifacts=True,
+        )
+        invariance_receipt_field = DEFAULT_INVARIANCE_RECEIPT_FIELD
     stage["value"] = "verify_clean_bound_commit"
     _require_clean_bound_commit(bundle)
-    stage["value"] = "verify_v24_to_v26_invariance"
-    invariance_receipt = orchestrator._validate_v24_v26_invariance_receipt(
-        manifest_path,
-        bundle.execution_manifest,
-        source=bundle.source_manifest,
-        panel=bundle.panel_manifest,
-        repository_root=Path(bundle.repository_root),
-        verify_runtime_artifacts=True,
-    )
-    stage["value"] = "verify_completed_buy_cache_census"
-    orchestrator._validate_completed_buy_cache_census_receipt(
-        bundle,
-        verify_cache_artifacts=True,
-    )
+    stage["value"] = "verify_research_invariance"
     days = tuple(str(value) for value in bundle.source_manifest["selected_days"])
     import narrowgate_cpp as cpp
 
@@ -728,6 +751,7 @@ def _run_lockstep_impl(
         policy_path=policy_path,
         predicate_path=predicate_path,
         invariance_receipt=invariance_receipt,
+        invariance_receipt_field=invariance_receipt_field,
         receipt_path=builder_receipt_path,
     )
     _write_progress(
@@ -774,9 +798,7 @@ def _run_lockstep_impl(
         "worker_tokens": WORKER_TOKENS,
         "all_panel_builder_preflight_receipt_sha256": builder_receipt["canonical_receipt_sha256"],
         "all_panel_builder_preflight_opportunity_count": builder_receipt["opportunity_count"],
-        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
-            "canonical_receipt_sha256"
-        ],
+        invariance_receipt_field: invariance_receipt["canonical_receipt_sha256"],
         "python_authority": "posix_cow_shared_prefix_at_fill_callback",
         "cpp_candidate": "full_day_direct_replay_shared_observation_tape",
         "economic_values_persisted": False,
@@ -802,6 +824,7 @@ def _run_lockstep_impl(
         shared_tape=shared_tape,
         builder_receipt=builder_receipt,
         invariance_receipt=invariance_receipt,
+        invariance_receipt_field=invariance_receipt_field,
         qualification_seed=qualification_seed,
         output_path=output_path,
         started=started,

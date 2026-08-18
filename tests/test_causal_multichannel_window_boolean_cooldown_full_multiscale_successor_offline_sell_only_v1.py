@@ -27,12 +27,16 @@ class _NoResumeAdapter:
 
 def test_sell_only_executor_forbids_cross_execution_strategy_cache_reuse() -> None:
     executor = orchestrator.formal_executor_contract()
+    qualification = orchestrator.cpp_current_qualification_contract()
 
     assert executor["formal_sides"] == ["SELL"]
     assert executor["cross_execution_strategy_cache_reuse_allowed"] is False
     assert executor["predecessor_cache_key_transform_allowed"] is False
     assert executor["same_execution_exact_key_resume_allowed"] is True
     assert "completed_side_resume" not in executor
+    assert qualification["invariance_receipt_file"] == orchestrator.INVARIANCE_RECEIPT_NAME
+    assert qualification["fresh_current_source_hash_equality_required"] is True
+    assert "predecessor_receipt_file" not in qualification
 
 
 def test_sell_only_target_source_coverage_has_only_two_legal_paths() -> None:
@@ -99,7 +103,12 @@ def test_adapter_factory_receives_no_predecessor_cache_transform(
         execution_manifest={"executor": orchestrator.formal_executor_contract()},
         repository_root=tmp_path,
     )
-    monkeypatch.setattr(backend.orchestrator, "_validate_cpp_qualification_reuse_receipt", lambda _bundle: {})
+    qualification_sha256 = "f" * 64
+    monkeypatch.setattr(
+        backend.orchestrator,
+        "_validate_cpp_current_qualification_receipt",
+        lambda _bundle: {"canonical_receipt_sha256": qualification_sha256},
+    )
     monkeypatch.setattr(backend.importlib, "import_module", lambda _name: module)
     monkeypatch.setattr(
         backend.backend,
@@ -123,9 +132,7 @@ def test_adapter_factory_receives_no_predecessor_cache_transform(
     assert observed is adapter
     assert captured["completed_side_resume"] is None
     assert captured["completed_side_resume_receipt_sha256"] is None
-    assert captured["cpp_qualification_receipt_sha256"] == (
-        orchestrator.V26_CPP_QUALIFICATION_CANONICAL_SHA256
-    )
+    assert captured["cpp_qualification_receipt_sha256"] == qualification_sha256
 
 
 def test_formal_backend_executes_only_sell(

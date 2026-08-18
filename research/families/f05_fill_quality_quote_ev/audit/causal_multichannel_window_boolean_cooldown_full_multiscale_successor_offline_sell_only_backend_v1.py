@@ -46,7 +46,9 @@ def _load_canonical_replay_adapter(
         raise backend.OfflineRepeatedPolicyBackendError(
             "formal SELL-only executor contract drifted"
         )
-    orchestrator._validate_cpp_qualification_reuse_receipt(bundle)
+    qualification_receipt = orchestrator._validate_cpp_current_qualification_receipt(
+        bundle
+    )
     try:
         module = importlib.import_module(backend.CANONICAL_REPLAY_ADAPTER_MODULE)
     except ModuleNotFoundError as exc:
@@ -101,7 +103,7 @@ def _load_canonical_replay_adapter(
             acceleration=acceleration,
             global_worker_tokens=int(executor["global_worker_tokens"]),
             cpp_qualification_receipt_sha256=(
-                orchestrator.V26_CPP_QUALIFICATION_CANONICAL_SHA256
+                qualification_receipt["canonical_receipt_sha256"]
             ),
             completed_side_resume=None,
             completed_side_resume_receipt_sha256=None,
