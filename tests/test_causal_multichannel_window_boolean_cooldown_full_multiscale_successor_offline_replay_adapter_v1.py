@@ -259,6 +259,14 @@ def _common_replay_inputs(
                 offline.ACTIVE_PRIVATE_CONFIG_SHA256 for _ in row_ids
             ),
             "exact_owner_action": tuple(exact_owner_action for _ in row_ids),
+            "exact_owner_duration_ms": tuple(
+                (85_000 if side == "BUY" else 166_000) for _ in row_ids
+            ),
+            "owner_fallback_reason": tuple(
+                ("buy_control_by_contract" if side == "BUY" else None)
+                for _ in row_ids
+            ),
+            "owner_support_valid": tuple(True for _ in row_ids),
             "replay_input_receipt_sha256": tuple("8" * 64 for _ in row_ids),
             "economic_outcomes_read": tuple(False for _ in row_ids),
             "labels_read": tuple(False for _ in row_ids),
@@ -597,6 +605,23 @@ def test_formal_preflight_returns_backend_mechanics_ready_status(
             "continuous_comparator_bound": continuous.name,
             "global_worker_tokens": self._global_worker_tokens,
             "mmap_acceleration_bound": self._acceleration is not None,
+            "economic_outcomes_read": False,
+        },
+    )
+    monkeypatch.setattr(
+        adapter_module._CanonicalOfflineReplayAdapter,
+        "_preflight_exact_owner_action_contract",
+        lambda self, _mechanics, _rows: {
+            "status": "exact_owner_action_contract_walk_complete",
+            "engine": "cpp",
+            "day_count": 30,
+            "opportunity_count": 1,
+            "matched_decision_count": 1,
+            "mismatch_count": 0,
+            "projection_mode": "canonical_bound_day_projection",
+            "formal_mmap_acceleration_required": True,
+            "read_only_mmap_opened_by_action_walk": False,
+            "day_receipts": [{} for _ in range(30)],
             "economic_outcomes_read": False,
         },
     )

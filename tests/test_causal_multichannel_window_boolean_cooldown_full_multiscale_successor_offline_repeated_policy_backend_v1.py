@@ -96,6 +96,9 @@ def _bundle_fixture(
             "baseline_duration_ms": 85_000 + slots,
             "role_at_fill": ["opener" if side == "BUY" else "add" for side in side_column],
             "inventory_after_fill_btc": slots.astype(float) / 1_000.0,
+            "policy_input_valid": True,
+            "feature::support_valid": True,
+            "feature::channel_support_valid": True,
         }
     )
     boolean = pd.DataFrame(
@@ -119,6 +122,16 @@ def _bundle_fixture(
             "exact_owner_action": [
                 CONTROL_ACTION if side == "BUY" else "FIXED_166S" for side in side_column
             ],
+            "exact_owner_duration_ms": [
+                85_000 + int(slot) if side == "BUY" else 166_000
+                for slot, side in zip(slots, side_column, strict=True)
+            ],
+            "owner_fallback_reason": [
+                "buy_control_by_contract" if side == "BUY" else None
+                for side in side_column
+            ],
+            "owner_matched_rule_index": [None if side == "BUY" else 0 for side in side_column],
+            "owner_support_valid": True,
         }
     )
     replay = pd.DataFrame(
@@ -444,6 +457,19 @@ class _NeverCalledAdapter:
                 ),
                 "economic_outcomes_read": False,
             },
+            "exact_owner_action_contract_walk": {
+                "status": "exact_owner_action_contract_walk_complete",
+                "engine": "cpp",
+                "day_count": 30,
+                "opportunity_count": 60,
+                "matched_decision_count": 60,
+                "mismatch_count": 0,
+                "projection_mode": "canonical_bound_day_projection",
+                "formal_mmap_acceleration_required": True,
+                "read_only_mmap_opened_by_action_walk": False,
+                "day_receipts": [{} for _ in range(30)],
+                "economic_outcomes_read": False,
+            },
             "permissions": {
                 "economic_outcomes_read": False,
                 "validation_read": False,
@@ -485,6 +511,22 @@ def test_ready_adapter_preflight_accepts_only_empty_blocker_census(
     result = backend._preflight_adapter(mechanics, _ReadyAdapter())
 
     assert result["status"] == backend.MECHANICS_READY_STATUS
+
+
+def test_ready_adapter_preflight_requires_exact_owner_action_walk(tmp_path: Path) -> None:
+    mechanics = backend.load_outcome_blind_mechanics(_bundle_fixture(tmp_path))
+
+    class _MissingOwnerWalkAdapter(_NeverCalledAdapter):
+        def preflight_formal_economics(self, mechanics):
+            result = dict(super().preflight_formal_economics(mechanics))
+            result.pop("exact_owner_action_contract_walk")
+            return result
+
+    with pytest.raises(
+        backend.OfflineRepeatedPolicyBackendError,
+        match="lacks exact-owner action contract walk",
+    ):
+        backend._preflight_adapter(mechanics, _MissingOwnerWalkAdapter())
 
 
 @pytest.mark.parametrize("invalid_blockers", (["field"], "field", {"field"}))
@@ -649,6 +691,12 @@ def test_replay_fields_are_bound_from_same_panel_metadata_when_not_duplicated(
         2_000 + np.arange(60, dtype=np.int64)
     )
     assert set(mechanics.replay_inputs["role_at_fill"]) == {"opener", "add"}
+    assert mechanics.replay_inputs["policy_input_valid"].all()
+    assert mechanics.replay_inputs["feature::support_valid"].all()
+    assert mechanics.replay_inputs["feature::channel_support_valid"].all()
+    assert set(mechanics.replay_inputs["owner_fallback_reason"].dropna()) == {
+        "buy_control_by_contract"
+    }
 
 
 def test_formal_provider_adds_fold_scope_without_mutating_admitted_rows() -> None:

@@ -135,6 +135,7 @@ def _read_qualification_rows(bundle: Any, day: str) -> pd.DataFrame:
         "feature::support_valid",
         "fill_visible_ts_ns",
         "inventory_after_fill_btc",
+        "policy_input_valid",
         "role_at_fill",
         "side",
     ):

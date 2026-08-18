@@ -185,16 +185,35 @@ def build_shared_observation_tape(
 
 
 def build_target_predicate_row(cpp: Any, opportunity: Mapping[str, Any]) -> Any:
+    required = (
+        "exposure_fill_ordinal",
+        "fill_visible_ts_ms",
+        "side",
+        "campaign_id",
+        "opportunity_id",
+        "policy_input_valid",
+        "feature::support_valid",
+        "feature::channel_support_valid",
+        "owner_fallback_reason",
+    )
+    missing = tuple(name for name in required if name not in opportunity)
+    if missing:
+        raise CppOwnerRuntimeError(
+            f"C++ target predicate row lacks required fields: {list(missing)}"
+        )
     row = cpp.F05CooldownPredicateRow()
     row.exposure_fill_ordinal = int(opportunity["exposure_fill_ordinal"])
     row.fill_ts_ms = int(opportunity["fill_visible_ts_ms"])
     row.side = cpp.Side.Buy if str(opportunity["side"]).upper() == "BUY" else cpp.Side.Sell
     row.campaign_id = int(opportunity["campaign_id"])
     row.snapshot_id = str(opportunity["opportunity_id"])
-    row.policy_input_valid = bool(opportunity.get("feature::support_valid", False))
-    row.support_valid = bool(opportunity.get("feature::support_valid", False))
-    row.channel_support_valid = bool(opportunity.get("feature::channel_support_valid", False))
-    row.snapshot_fallback_reason = str(opportunity.get("owner_fallback_reason") or "")
+    row.policy_input_valid = bool(opportunity["policy_input_valid"])
+    row.support_valid = bool(opportunity["feature::support_valid"])
+    row.channel_support_valid = bool(opportunity["feature::channel_support_valid"])
+    fallback_reason = opportunity["owner_fallback_reason"]
+    row.snapshot_fallback_reason = (
+        "" if fallback_reason is None or fallback_reason != fallback_reason else str(fallback_reason)
+    )
     row.predicate_values = []
     return row
 
@@ -225,6 +244,18 @@ def validate_target_predicate_row(
         )
     if int(row.exposure_fill_ordinal) <= 0 or int(row.fill_ts_ms) <= 0:
         raise CppOwnerRuntimeError("C++ target predicate-row identity is incomplete")
+    expected_support = {
+        "policy_input_valid": bool(opportunity["policy_input_valid"]),
+        "support_valid": bool(opportunity["feature::support_valid"]),
+        "channel_support_valid": bool(opportunity["feature::channel_support_valid"]),
+    }
+    observed_support = {
+        "policy_input_valid": bool(row.policy_input_valid),
+        "support_valid": bool(row.support_valid),
+        "channel_support_valid": bool(row.channel_support_valid),
+    }
+    if observed_support != expected_support:
+        raise CppOwnerRuntimeError("C++ target predicate-row support state drifted")
     values = list(row.predicate_values)
     if values and len(values) != expected_predicate_count:
         raise CppOwnerRuntimeError("C++ target predicate-row width drifted")

@@ -102,6 +102,16 @@ REPLAY_METADATA_DIRECT_BINDINGS = {
     "baseline_duration_ms": "baseline_duration_ms",
     "role_at_fill": "role_at_fill",
     "inventory_after_fill_btc": "inventory_after_fill_btc",
+    "policy_input_valid": "policy_input_valid",
+    "feature::support_valid": "feature::support_valid",
+    "feature::channel_support_valid": "feature::channel_support_valid",
+}
+REPLAY_OWNER_DIRECT_BINDINGS = {
+    "exact_owner_action": "exact_owner_action",
+    "exact_owner_duration_ms": "exact_owner_duration_ms",
+    "owner_fallback_reason": "owner_fallback_reason",
+    "owner_matched_rule_index": "owner_matched_rule_index",
+    "owner_support_valid": "owner_support_valid",
 }
 REPLAY_FILL_VISIBLE_MS_SOURCE = "fill_visible_ts_ns"
 _BUY_OWNER_ACTIONS = frozenset({"CONTROL_85N"})
@@ -689,16 +699,29 @@ def load_outcome_blind_mechanics(
 
     replay_inputs = indexed["replay_inputs"]
     replay_inputs = replay_inputs.copy()
-    if "exact_owner_action" in replay_inputs:
-        if not replay_inputs["exact_owner_action"].astype(str).equals(owner_actions):
+    for target, source in REPLAY_OWNER_DIRECT_BINDINGS.items():
+        if source not in owner_rows:
             raise OfflineRepeatedPolicyBackendError(
-                "replay input exact owner action drifted from the admitted panel"
+                f"exact owner action panel lacks required {source}"
             )
-    else:
-        replay_inputs["exact_owner_action"] = owner_actions
+        expected = owner_rows[source]
+        if target == "exact_owner_action":
+            expected = owner_actions
+        if target in replay_inputs:
+            observed = replay_inputs[target]
+            if target == "exact_owner_action":
+                observed = observed.astype(str)
+            if not observed.equals(expected):
+                raise OfflineRepeatedPolicyBackendError(
+                    f"replay input {target} drifted from admitted exact owner actions"
+                )
+        else:
+            replay_inputs[target] = expected
     for target, source in REPLAY_METADATA_DIRECT_BINDINGS.items():
         if source not in metadata:
-            continue
+            raise OfflineRepeatedPolicyBackendError(
+                f"admitted metadata lacks required replay field {source}"
+            )
         expected = metadata[source]
         if target == "side":
             expected = expected.map(_normalize_side)
@@ -909,6 +932,34 @@ def _preflight_adapter(
         if int(walk.get("fold_day_slots_checked", 0)) <= 0:
             raise OfflineRepeatedPolicyBackendError(
                 "all-fold zero-economic walk did not inspect fold-day slots"
+            )
+        owner_walk = result.get("exact_owner_action_contract_walk")
+        expected_owner_walk = {
+            "status": "exact_owner_action_contract_walk_complete",
+            "engine": "cpp",
+            "day_count": len(mechanics.selected_days),
+            "opportunity_count": len(mechanics.replay_inputs),
+            "matched_decision_count": len(mechanics.replay_inputs),
+            "mismatch_count": 0,
+            "projection_mode": "canonical_bound_day_projection",
+            "formal_mmap_acceleration_required": True,
+            "read_only_mmap_opened_by_action_walk": False,
+            "economic_outcomes_read": False,
+        }
+        if not isinstance(owner_walk, Mapping):
+            raise OfflineRepeatedPolicyBackendError(
+                "ready adapter preflight lacks exact-owner action contract walk"
+            )
+        for field, expected in expected_owner_walk.items():
+            if owner_walk.get(field) != expected:
+                raise OfflineRepeatedPolicyBackendError(
+                    f"exact-owner action contract walk drifted at {field}"
+                )
+        if not isinstance(owner_walk.get("day_receipts"), list) or len(
+            owner_walk["day_receipts"]
+        ) != len(mechanics.selected_days):
+            raise OfflineRepeatedPolicyBackendError(
+                "exact-owner action contract walk lacks day receipts"
             )
     return dict(result)
 

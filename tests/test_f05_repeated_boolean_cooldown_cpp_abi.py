@@ -1150,6 +1150,7 @@ def test_cpp_real_builder_accepts_sparse_support_row_with_runtime_predicates() -
     opportunity = {
         **target,
         "opportunity_id": "synthetic-real-builder-second-fill",
+        "policy_input_valid": True,
         "feature::support_valid": True,
         "feature::channel_support_valid": True,
         "owner_fallback_reason": "",
@@ -1191,6 +1192,7 @@ def test_cpp_real_builder_rejects_identity_and_width_drift() -> None:
         "fill_visible_ts_ms": BASE_MS + 1_000,
         "side": "SELL",
         "campaign_id": 1,
+        "policy_input_valid": True,
         "feature::support_valid": True,
         "feature::channel_support_valid": True,
         "owner_fallback_reason": "",
@@ -1207,6 +1209,34 @@ def test_cpp_real_builder_rejects_identity_and_width_drift() -> None:
     row.exposure_fill_ordinal = 3
     row.predicate_values = [cpp.F05TriState.TRUE]
     with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="width drifted"):
+        cpp_runtime_v22.validate_target_predicate_row(
+            cpp,
+            row,
+            opportunity,
+            expected_predicate_count=len(PREDICATE_COLUMNS),
+        )
+
+
+def test_cpp_real_builder_rejects_missing_or_drifted_support_state() -> None:
+    opportunity = {
+        "opportunity_id": "synthetic-builder-support",
+        "exposure_fill_ordinal": 1,
+        "fill_visible_ts_ms": BASE_MS + 1_000,
+        "side": "SELL",
+        "campaign_id": 1,
+        "policy_input_valid": True,
+        "feature::support_valid": True,
+        "feature::channel_support_valid": True,
+        "owner_fallback_reason": "",
+    }
+    missing = dict(opportunity)
+    missing.pop("feature::support_valid")
+    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="lacks required fields"):
+        cpp_runtime_v22.build_target_predicate_row(cpp, missing)
+
+    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
+    row.support_valid = False
+    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="support state drifted"):
         cpp_runtime_v22.validate_target_predicate_row(
             cpp,
             row,

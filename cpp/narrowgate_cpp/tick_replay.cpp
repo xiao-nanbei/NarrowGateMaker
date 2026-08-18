@@ -6244,7 +6244,20 @@ TickReplayResult simulate_tick_arrays(
                             runtime_decision.policy_sha256 !=
                                 params.cooldown_duration_fork_expected_owner_policy_sha256) {
                             throw std::runtime_error(
-                                "F05 one-shot exact-owner target decision drifted"
+                                "F05 one-shot exact-owner target decision drifted: "
+                                "expected_action=" +
+                                params.cooldown_duration_fork_expected_owner_action +
+                                ", observed_action=" + runtime_decision.action_id +
+                                ", expected_policy_sha256=" +
+                                params.cooldown_duration_fork_expected_owner_policy_sha256 +
+                                ", observed_policy_sha256=" +
+                                runtime_decision.policy_sha256 +
+                                ", exposure_fill_ordinal=" +
+                                std::to_string(exposure_fill_ordinal) +
+                                ", fill_ts_ms=" + std::to_string(fill_ts_ms) +
+                                ", side=" +
+                                (fill_side == Side::Buy ? "BUY" : "SELL") +
+                                ", campaign_id=" + std::to_string(campaign_id)
                             );
                         }
                         cooldown_fork_trace.schema_version =

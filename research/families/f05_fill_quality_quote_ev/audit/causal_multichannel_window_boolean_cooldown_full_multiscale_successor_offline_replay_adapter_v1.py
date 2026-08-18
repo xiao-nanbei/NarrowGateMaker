@@ -195,6 +195,9 @@ _COMMON_REPLAY_COLUMNS = frozenset(
         "exact_owner_predicate_bundle_sha256",
         "exact_owner_private_config_sha256",
         "exact_owner_action",
+        "exact_owner_duration_ms",
+        "owner_fallback_reason",
+        "owner_support_valid",
         "replay_input_receipt_sha256",
         "economic_outcomes_read",
         "labels_read",
@@ -221,6 +224,9 @@ _EXECUTABLE_REPLAY_COLUMNS = frozenset(
         "baseline_duration_ms",
         "role_at_fill",
         "inventory_after_fill_btc",
+        "policy_input_valid",
+        "feature::support_valid",
+        "feature::channel_support_valid",
         "assignment_equity_usdc",
         "d_plus_1_utc_day",
         "d_plus_1_market_identity_sha256",
@@ -3493,6 +3499,157 @@ def _execute_exact_owner_one_day_mechanics(
     }
 
 
+def _execute_cpp_exact_owner_action_contract_day(
+    *,
+    utc_day: str,
+    portable_binding: Mapping[str, Any],
+    rows: pd.DataFrame,
+    qualification_receipt_sha256: str,
+) -> Mapping[str, Any]:
+    """Run one B0 path and compare every target decision without reading economics."""
+
+    request, replay = _canonical_day_projection_from_rows(
+        utc_day=utc_day,
+        binding=portable_binding,
+        rows=rows,
+    )
+    identity_hashes = _day_identity_hashes(request)
+    try:
+        import narrowgate_cpp as cpp
+    except ImportError as exc:
+        raise OfflineReplayAdapterError(
+            "exact-owner action preflight requires the C++ extension"
+        ) from exc
+    tape = cpp_observation_tape.load_cpp_observation_tape(
+        request.native_observation_root,
+        target_day=utc_day,
+        continuation_day=replay.continuation_day,
+        deep_validate=False,
+    )
+    shared_tape = cpp_runtime_v22.build_shared_observation_tape(
+        cpp,
+        tape.arrays,
+        content_sha256=str(tape.receipt["array_sha256"]),
+    )
+    runtime_config = cpp_runtime_v22.build_cpp_runtime_config(
+        cpp,
+        policy_path=resolve_portable_path(FIXED_OWNER_POLICY_PATH).resolve(),
+        predicate_bundle_path=resolve_portable_path(
+            FIXED_OWNER_PREDICATE_BUNDLE_PATH
+        ).resolve(),
+        qualification_sha256=qualification_receipt_sha256,
+    )
+    predicate_rows = []
+    for _, opportunity in rows.sort_values("exposure_fill_ordinal").iterrows():
+        payload = opportunity.to_dict()
+        predicate_row = cpp_runtime_v22.build_target_predicate_row(cpp, payload)
+        cpp_runtime_v22.validate_target_predicate_row(
+            cpp,
+            predicate_row,
+            payload,
+            expected_predicate_count=len(runtime_config.policy.predicate_columns),
+        )
+        predicate_rows.append(predicate_row)
+    params = _cpp_exact_owner_runtime_params(
+        replay,
+        identity_hashes=identity_hashes,
+        qualification_receipt_sha256=qualification_receipt_sha256,
+    )
+    params.update(
+        {
+            "cooldown_duration_policy_cpp_runtime": (
+                cpp.F05RepeatedBooleanCooldownRuntime(runtime_config)
+            ),
+            "cooldown_duration_policy_cpp_parity_qualified": True,
+            "cooldown_duration_policy_cpp_event_loop_parity_qualified": True,
+            "cooldown_duration_policy_cpp_parity_receipt_sha256": (
+                qualification_receipt_sha256
+            ),
+            "_cooldown_duration_policy_cpp_window_tape_handle": shared_tape,
+            "_cooldown_duration_policy_cpp_predicate_rows": predicate_rows,
+            "trace_cooldown_duration_opportunities_max": len(rows) + 1_000,
+        }
+    )
+    params = importlib.import_module(FIXED_ONE_SHOT_REPLAY_MODULE)._prepare_base_params(
+        params,
+        trace_opportunities=True,
+    )
+    started = time.perf_counter()
+    result = importlib.import_module(FIXED_BACKTEST_MODULE)._simulate_tick_with_engine(
+        "cpp",
+        replay.trades,
+        replay.var_ts_ms,
+        replay.var_ssq,
+        params,
+        ml_data=replay.ml_data,
+        bbo_data=replay.bbo_data,
+        l2_data=replay.l2_data,
+        var_ti=replay.var_ti,
+        var_retsq=replay.var_retsq,
+    )
+    target_ids = set(str(value) for value in rows.index)
+    observed: dict[str, Mapping[str, Any]] = {}
+    for decision in result.get("_cooldown_duration_policy_decisions", ()):
+        snapshot_id = str(decision.get("snapshot_id", ""))
+        if snapshot_id not in target_ids:
+            continue
+        if snapshot_id in observed:
+            raise OfflineReplayAdapterError(
+                f"exact-owner action preflight duplicated target {snapshot_id}"
+            )
+        observed[snapshot_id] = decision
+    del result
+
+    def nullable(value: Any) -> Any:
+        return None if value is None or bool(pd.isna(value)) else value
+
+    mismatches: list[dict[str, Any]] = []
+    for opportunity_id, expected in rows.iterrows():
+        decision = observed.get(str(opportunity_id))
+        if decision is None:
+            mismatches.append(
+                {"opportunity_id": str(opportunity_id), "field": "missing_decision"}
+            )
+            continue
+        expected_values = {
+            "action_id": str(expected["exact_owner_action"]),
+            "duration_ms": int(expected["exact_owner_duration_ms"]),
+            "fallback_reason": nullable(expected["owner_fallback_reason"]),
+            "matched_rule_index": nullable(expected["owner_matched_rule_index"]),
+            "support_valid": bool(expected["owner_support_valid"]),
+            "policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
+            "predicate_bundle_sha256": offline.ACTIVE_PREDICATE_BUNDLE_SHA256,
+        }
+        for field, expected_value in expected_values.items():
+            observed_value = nullable(decision.get(field))
+            if observed_value != expected_value:
+                mismatches.append(
+                    {
+                        "opportunity_id": str(opportunity_id),
+                        "field": field,
+                        "expected": expected_value,
+                        "observed": observed_value,
+                    }
+                )
+                break
+    if mismatches:
+        first = mismatches[0]
+        raise OfflineReplayAdapterError(
+            "exact-owner action preflight drifted: "
+            f"day={utc_day} target={first['opportunity_id']} "
+            f"field={first['field']} expected={first.get('expected')} "
+            f"observed={first.get('observed')}"
+        )
+    return {
+        "utc_day": utc_day,
+        "opportunity_count": len(rows),
+        "matched_decision_count": len(observed),
+        "mismatch_count": 0,
+        "replay_wall_time_s": time.perf_counter() - started,
+        "economic_outcomes_read": False,
+    }
+
+
 def _execute_b0_control_day(job: _DayReplayJob) -> _DayReplayJobResult:
     if job.kind != "b0_control":
         raise OfflineReplayAdapterError("B0 materialization job kind drifted")
@@ -5525,8 +5682,9 @@ class _CanonicalOfflineReplayAdapter:
         owner_actions = frozenset(str(value) for value in exact_owner_action_columns)
         missing = set(nested.REQUIRED_METADATA_COLUMNS) - metadata
         missing_replay = set(_COMMON_REPLAY_COLUMNS | _EXECUTABLE_REPLAY_COLUMNS) - replay
-        if "exact_owner_action" in missing_replay and "exact_owner_action" in owner_actions:
-            missing_replay.remove("exact_owner_action")
+        for target, source in backend.REPLAY_OWNER_DIRECT_BINDINGS.items():
+            if target in missing_replay and source in owner_actions:
+                missing_replay.remove(target)
         for target, source in backend.REPLAY_METADATA_DIRECT_BINDINGS.items():
             if target in missing_replay and source in metadata:
                 missing_replay.remove(target)
@@ -5647,6 +5805,63 @@ class _CanonicalOfflineReplayAdapter:
             "economic_outcomes_read": False,
         }
 
+    def _preflight_exact_owner_action_contract(
+        self,
+        mechanics: backend.OutcomeBlindMechanics,
+        rows: pd.DataFrame,
+    ) -> Mapping[str, Any]:
+        """Require every admitted B0 target decision to match before OOF starts."""
+
+        qualification = self._cpp_qualification_receipt_sha256
+        if qualification is None:
+            raise OfflineReplayAdapterError(
+                "exact-owner action preflight lacks C++ qualification identity"
+            )
+        if self._acceleration is None:
+            raise OfflineReplayAdapterError(
+                "exact-owner action preflight lacks formal mmap acceleration binding"
+            )
+        options = _resolve_execution_options(rows)
+        day_receipts = []
+        for day in mechanics.selected_days:
+            day_rows = rows.loc[rows["utc_day"] == day].copy()
+            if day_rows.empty:
+                raise OfflineReplayAdapterError(
+                    f"exact-owner action preflight lacks admitted rows for {day}"
+                )
+            day_receipts.append(
+                _execute_cpp_exact_owner_action_contract_day(
+                    utc_day=day,
+                    portable_binding=options.binding,
+                    rows=day_rows,
+                    qualification_receipt_sha256=qualification,
+                )
+            )
+        opportunity_count = sum(
+            int(receipt["opportunity_count"]) for receipt in day_receipts
+        )
+        mismatch_count = sum(int(receipt["mismatch_count"]) for receipt in day_receipts)
+        if opportunity_count != len(rows) or mismatch_count != 0:
+            raise OfflineReplayAdapterError(
+                "exact-owner action preflight denominator or mismatch census drifted"
+            )
+        return {
+            "status": "exact_owner_action_contract_walk_complete",
+            "engine": "cpp",
+            "day_count": len(day_receipts),
+            "opportunity_count": opportunity_count,
+            "matched_decision_count": sum(
+                int(receipt["matched_decision_count"]) for receipt in day_receipts
+            ),
+            "mismatch_count": mismatch_count,
+            "qualification_receipt_sha256": qualification,
+            "projection_mode": "canonical_bound_day_projection",
+            "formal_mmap_acceleration_required": True,
+            "read_only_mmap_opened_by_action_walk": False,
+            "day_receipts": day_receipts,
+            "economic_outcomes_read": False,
+        }
+
     def preflight_formal_economics(
         self,
         mechanics: backend.OutcomeBlindMechanics,
@@ -5660,6 +5875,7 @@ class _CanonicalOfflineReplayAdapter:
         missing: list[str] = []
         duration_action_contract: Mapping[str, Any] | None = None
         all_fold_walk: Mapping[str, Any] | None = None
+        exact_owner_action_walk: Mapping[str, Any] | None = None
         try:
             duration_action_contract, _actions = _load_frozen_duration_action_contract()
         except OfflineReplayAdapterMechanicsMissing as exc:
@@ -5711,6 +5927,10 @@ class _CanonicalOfflineReplayAdapter:
                     ladder,
                     continuous,
                 )
+                exact_owner_action_walk = self._preflight_exact_owner_action_contract(
+                    mechanics,
+                    rows,
+                )
                 if completed_side_walk is not None:
                     all_fold_walk = {
                         **all_fold_walk,
@@ -5730,6 +5950,7 @@ class _CanonicalOfflineReplayAdapter:
             "fixed_canonical_api_bindings": _fixed_api_bindings(),
             "duration_action_contract": duration_action_contract,
             "all_fold_zero_economic_contract_walk": all_fold_walk,
+            "exact_owner_action_contract_walk": exact_owner_action_walk,
             "permissions": {
                 "economic_outcomes_read": False,
                 "validation_read": False,
