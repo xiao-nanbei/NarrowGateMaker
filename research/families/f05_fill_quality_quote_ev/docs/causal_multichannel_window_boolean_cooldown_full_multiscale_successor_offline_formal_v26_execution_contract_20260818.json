@@ -1,0 +1,53 @@
+{
+  "action_authorized": false,
+  "candidate_ladder_changed": false,
+  "completed_side_resume": {
+    "all_entry_zero_economic_dry_walk_required": true,
+    "completed_unit_set_sha256": "be4d2e4f4c1b7bf63f62e10c4ee84c522f8f8a4a418246ef2e813e7dab8cca68",
+    "excluded_execution_identities": [
+      "formal_v25"
+    ],
+    "excluded_predecessor_side": "SELL",
+    "inherited_one_shot_semantic_registration_count": 67,
+    "inherited_side": "BUY",
+    "payloads_parsed_during_preflight": false,
+    "predecessor_adapter_artifact_sha256": "3fe25034aef8a0149f1e67c80ae5b7d236b04790c2e2e583cdb62ebb6cf353e1",
+    "predecessor_execution_manifest_canonical_sha256": "2021a70f2f15f4fff82240cdc494556413da0fc24d369be00fd60628bcf3395a",
+    "recompute_inherited_side_allowed": false,
+    "required_complete_cache_units": 577,
+    "required_stage_counts": {
+      "inner_oof": 250,
+      "outer_oof": 260,
+      "outer_train_one_shot": 67
+    },
+    "semantic_day_input_sha256_propagation_required": true
+  },
+  "data_changed": false,
+  "economic_outcomes_read_during_preflight": false,
+  "estimand_changed": false,
+  "execution_identity": "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v6",
+  "execution_only_changed_sources": [
+    "offline_replay_adapter_v1",
+    "offline_repeated_policy_backend_v1",
+    "offline_orchestrator_v1",
+    "cpp_real_day_lockstep_v22"
+  ],
+  "formal_successor": "formal_v26",
+  "lifetime_repair": {
+    "cancel_queued_siblings_on_failure": true,
+    "close_mmap_after_all_siblings_stopped": true,
+    "failure_injection_test_required": true,
+    "wait_for_running_siblings_on_failure": true
+  },
+  "live_authorized": false,
+  "one_shot_effect_aggregation_used": false,
+  "owner_continuation_authorized": true,
+  "predecessor_cache_identity": "formal_v24",
+  "predecessor_execution_failure": "formal_v25_semantic_resume_failure",
+  "repeated_sequential_policy_estimand": true,
+  "schema_version": "f05_full_multiscale_offline_formal_v26.execution_contract.v1",
+  "sealed_holdout_read": false,
+  "statistics_changed": false,
+  "status": "formal_v26_implemented_local_pre_admission",
+  "validation_read": false
+}

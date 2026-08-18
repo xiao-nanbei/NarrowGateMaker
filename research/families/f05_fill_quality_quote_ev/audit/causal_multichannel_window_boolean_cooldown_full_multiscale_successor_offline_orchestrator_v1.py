@@ -42,7 +42,7 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v5"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v6"
 EXECUTOR_DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f05_full_multiscale_offline_day_input_mmap_v2"
@@ -61,13 +61,13 @@ EXECUTOR_ONE_SHOT_TOPOLOGY = {
 }
 CPP_QUALIFICATION_RECEIPT_NAME = "cpp_real_day_lockstep_receipt.json"
 CPP_BUILDER_PREFLIGHT_IDENTITY = (
-    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v25"
+    "f05_cpp_target_predicate_builder_all_opportunity_zero_economic_v26"
 )
 CPP_BUILDER_PREFLIGHT_RECEIPT_NAME = "cpp_target_predicate_builder_walk_receipt.json"
 CPP_BUILDER_PREFLIGHT_STATUS = "passed_all_3516_zero_economic_builder_walk"
 CPP_BUILDER_PREFLIGHT_OPPORTUNITIES = 3_516
-CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
-CPP_QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v25"
+CPP_QUALIFICATION_IDENTITY = "f05_cpp_one_shot_real_day_all_arm_lockstep_v26"
+CPP_QUICK_PREFLIGHT_IDENTITY = "f05_cpp_first_opportunity_all_arm_lockstep_v26"
 CPP_QUICK_PREFLIGHT_RECEIPT_NAME = "cpp_first_opportunity_all_arm_preflight_receipt.json"
 CPP_QUICK_PREFLIGHT_STATUS = "passed_first_opportunity_all_side_specific_arms_lockstep"
 V23_V24_INVARIANCE_IDENTITY = "f05_formal_v23_to_v24_execution_only_invariance_v1"
@@ -84,9 +84,9 @@ V23_ANNOTATED_TAG = (
     "research/f05/causal-multichannel-window-boolean-cooldown-full-multiscale-"
     "successor-offline/formal-cpp-one-shot-v23-20260816"
 )
-V24_V25_INVARIANCE_IDENTITY = "f05_formal_v24_to_v25_execution_only_invariance_v1"
-V24_V25_INVARIANCE_RECEIPT_NAME = "formal_v24_to_v25_invariance_receipt.json"
-V24_V25_INVARIANCE_STATUS = "passed_execution_only_research_contract_invariance"
+V24_V26_INVARIANCE_IDENTITY = "f05_formal_v24_to_v26_execution_only_invariance_v1"
+V24_V26_INVARIANCE_RECEIPT_NAME = "formal_v24_to_v26_invariance_receipt.json"
+V24_V26_INVARIANCE_STATUS = "passed_execution_only_research_contract_invariance"
 V24_EXECUTION_MANIFEST_CANONICAL_SHA256 = (
     "2021a70f2f15f4fff82240cdc494556413da0fc24d369be00fd60628bcf3395a"
 )
@@ -146,7 +146,7 @@ _RESEARCH_SEMANTIC_SOURCE_PATHS = (
         "offline_v1_execution_contract_20260813.json"
     ),
 )
-_V24_V25_EXECUTION_ONLY_SOURCE_PATHS = (
+_V24_V26_EXECUTION_ONLY_SOURCE_PATHS = (
     (
         "research/families/f05_fill_quality_quote_ev/audit/"
         "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
@@ -167,10 +167,10 @@ _V24_V25_EXECUTION_ONLY_SOURCE_PATHS = (
         "causal_multichannel_window_boolean_cooldown_cpp_real_day_lockstep_v22.py"
     ),
 )
-_V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS = tuple(
+_V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS = tuple(
     path
     for path in _RESEARCH_SEMANTIC_SOURCE_PATHS
-    if path not in _V24_V25_EXECUTION_ONLY_SOURCE_PATHS
+    if path not in _V24_V26_EXECUTION_ONLY_SOURCE_PATHS
 )
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -658,12 +658,12 @@ def _validate_v23_v24_invariance_receipt(
     return receipt
 
 
-def _v24_v25_semantic_source_hashes(
+def _v24_v26_semantic_source_hashes(
     *,
     repository_root: Path,
 ) -> dict[str, dict[str, Any]]:
     hashes: dict[str, dict[str, Any]] = {}
-    for relative_path in _V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS:
+    for relative_path in _V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS:
         current_path = repository_root / relative_path
         if not current_path.is_file():
             raise OfflineOrchestratorError(
@@ -683,18 +683,18 @@ def _v24_v25_semantic_source_hashes(
             )
         hashes[relative_path] = {
             "formal_v24_sha256": predecessor_sha256,
-            "formal_v25_sha256": current_sha256,
+            "formal_v26_sha256": current_sha256,
             "equal": True,
         }
     return hashes
 
 
-def _v24_v25_execution_source_hashes(
+def _v24_v26_execution_source_hashes(
     *,
     repository_root: Path,
 ) -> dict[str, dict[str, Any]]:
     hashes: dict[str, dict[str, Any]] = {}
-    for relative_path in _V24_V25_EXECUTION_ONLY_SOURCE_PATHS:
+    for relative_path in _V24_V26_EXECUTION_ONLY_SOURCE_PATHS:
         current_path = repository_root / relative_path
         if not current_path.is_file():
             raise OfflineOrchestratorError(
@@ -714,14 +714,14 @@ def _v24_v25_execution_source_hashes(
             )
         hashes[relative_path] = {
             "formal_v24_sha256": predecessor_sha256,
-            "formal_v25_sha256": current_sha256,
+            "formal_v26_sha256": current_sha256,
             "equal": False,
-            "change_class": "mmap_lifetime_repair_or_completed_side_resume_only",
+            "change_class": "mmap_lifetime_or_completed_side_semantic_resume_only",
         }
     return hashes
 
 
-def _execution_only_manifest_invariance_v24_v25(
+def _execution_only_manifest_invariance_v24_v26(
     predecessor: Mapping[str, Any],
     successor: Mapping[str, Any],
 ) -> None:
@@ -738,7 +738,7 @@ def _execution_only_manifest_invariance_v24_v25(
         successor_normalized.pop(field, None)
     if predecessor_normalized != successor_normalized:
         raise OfflineOrchestratorError(
-            "formal-v25 changed a manifest field outside the execution-only allowance"
+            "formal-v26 changed a manifest field outside the execution-only allowance"
         )
 
     predecessor_executor = dict(predecessor.get("executor") or {})
@@ -748,14 +748,14 @@ def _execution_only_manifest_invariance_v24_v25(
     ):
         raise OfflineOrchestratorError("formal-v24 executor identity drifted")
     if successor_executor.pop("identity", None) != EXECUTOR_ACCELERATION_IDENTITY:
-        raise OfflineOrchestratorError("formal-v25 executor identity drifted")
+        raise OfflineOrchestratorError("formal-v26 executor identity drifted")
     if successor_executor.pop("completed_side_resume", None) != (
         completed_side_resume_contract()
     ):
-        raise OfflineOrchestratorError("formal-v25 completed-side resume contract drifted")
+        raise OfflineOrchestratorError("formal-v26 completed-side resume contract drifted")
     if predecessor_executor != successor_executor:
         raise OfflineOrchestratorError(
-            "formal-v25 changed the executor beyond mmap lifetime repair and resume"
+            "formal-v26 changed the executor beyond mmap lifetime repair and resume"
         )
 
     predecessor_qualification = dict(predecessor.get("cpp_one_shot_qualification") or {})
@@ -765,16 +765,16 @@ def _execution_only_manifest_invariance_v24_v25(
     ):
         raise OfflineOrchestratorError("formal-v24 qualification identity drifted")
     if successor_qualification.pop("identity", None) != CPP_QUALIFICATION_IDENTITY:
-        raise OfflineOrchestratorError("formal-v25 qualification identity drifted")
+        raise OfflineOrchestratorError("formal-v26 qualification identity drifted")
     predecessor_qualification.pop("invariance_receipt_file", None)
     successor_qualification.pop("invariance_receipt_file", None)
     if predecessor_qualification != successor_qualification:
         raise OfflineOrchestratorError(
-            "formal-v25 changed C++ qualification beyond receipt rebinding"
+            "formal-v26 changed C++ qualification beyond receipt rebinding"
         )
 
 
-def admit_v24_v25_invariance_receipt(
+def admit_v24_v26_invariance_receipt(
     predecessor_manifest_path: Path,
     successor_manifest_path: Path,
     output_path: Path,
@@ -785,10 +785,10 @@ def admit_v24_v25_invariance_receipt(
     predecessor_path = predecessor_manifest_path.expanduser().resolve()
     successor_path = successor_manifest_path.expanduser().resolve()
     destination = output_path.expanduser().resolve()
-    if destination != successor_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME:
-        raise OfflineOrchestratorError("v24-to-v25 invariance receipt path is not canonical")
+    if destination != successor_path.parent / V24_V26_INVARIANCE_RECEIPT_NAME:
+        raise OfflineOrchestratorError("v24-to-v26 invariance receipt path is not canonical")
     if destination.exists():
-        raise OfflineOrchestratorError("immutable v24-to-v25 invariance receipt already exists")
+        raise OfflineOrchestratorError("immutable v24-to-v26 invariance receipt already exists")
     if _file_sha256(predecessor_path) != V24_EXECUTION_MANIFEST_FILE_SHA256:
         raise OfflineOrchestratorError("formal-v24 execution manifest byte identity drifted")
     predecessor = _load_json(predecessor_path, label="formal-v24 execution manifest")
@@ -810,18 +810,18 @@ def admit_v24_v25_invariance_receipt(
         require_completed_side_census=False,
     )
     successor = bundle.execution_manifest
-    _execution_only_manifest_invariance_v24_v25(predecessor, successor)
+    _execution_only_manifest_invariance_v24_v26(predecessor, successor)
     research_contract = _research_contract_snapshot(
         manifest=successor,
         source=bundle.source_manifest,
         panel=bundle.panel_manifest,
     )
-    semantic_sources = _v24_v25_semantic_source_hashes(repository_root=root)
-    execution_sources = _v24_v25_execution_source_hashes(repository_root=root)
+    semantic_sources = _v24_v26_semantic_source_hashes(repository_root=root)
+    execution_sources = _v24_v26_execution_source_hashes(repository_root=root)
     receipt: dict[str, Any] = {
-        "schema_version": f"{V24_V25_INVARIANCE_IDENTITY}.receipt.v1",
-        "identity": V24_V25_INVARIANCE_IDENTITY,
-        "status": V24_V25_INVARIANCE_STATUS,
+        "schema_version": f"{V24_V26_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": V24_V26_INVARIANCE_IDENTITY,
+        "status": V24_V26_INVARIANCE_STATUS,
         "formal_v24": {
             "canonical_execution_manifest_sha256": (
                 V24_EXECUTION_MANIFEST_CANONICAL_SHA256
@@ -830,7 +830,7 @@ def admit_v24_v25_invariance_receipt(
             "public_base_commit": V24_PUBLIC_BASE_COMMIT,
             "annotated_tag": V24_ANNOTATED_TAG,
         },
-        "formal_v25": {
+        "formal_v26": {
             "canonical_execution_manifest_sha256": successor[
                 "canonical_execution_manifest_sha256"
             ],
@@ -845,7 +845,7 @@ def admit_v24_v25_invariance_receipt(
         "execution_only_source_hashes": execution_sources,
         "execution_only_source_count": len(execution_sources),
         "completed_side_resume": completed_side_resume_contract(),
-        "mmap_lifetime_repair_only": True,
+        "execution_only_repair": "mmap_lifetime_and_completed_side_semantic_resume",
         "data_changed": False,
         "candidate_ladder_changed": False,
         "duration_vocabulary_changed": False,
@@ -866,7 +866,7 @@ def admit_v24_v25_invariance_receipt(
     return receipt
 
 
-def _validate_v24_v25_invariance_receipt(
+def _validate_v24_v26_invariance_receipt(
     manifest_path: Path,
     manifest: Mapping[str, Any],
     *,
@@ -876,11 +876,11 @@ def _validate_v24_v25_invariance_receipt(
     verify_runtime_artifacts: bool,
 ) -> Mapping[str, Any]:
     receipt = _load_json(
-        manifest_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME,
-        label="formal-v24-to-v25 invariance receipt",
+        manifest_path.parent / V24_V26_INVARIANCE_RECEIPT_NAME,
+        label="formal-v24-to-v26 invariance receipt",
     )
     formal_v24 = receipt.get("formal_v24")
-    formal_v25 = receipt.get("formal_v25")
+    formal_v26 = receipt.get("formal_v26")
     expected_contract = _research_contract_snapshot(
         manifest=manifest,
         source=source,
@@ -900,48 +900,49 @@ def _validate_v24_v25_invariance_receipt(
         "live_authorized",
     )
     if (
-        receipt.get("identity") != V24_V25_INVARIANCE_IDENTITY
-        or receipt.get("status") != V24_V25_INVARIANCE_STATUS
-        or receipt.get("mmap_lifetime_repair_only") is not True
+        receipt.get("identity") != V24_V26_INVARIANCE_IDENTITY
+        or receipt.get("status") != V24_V26_INVARIANCE_STATUS
+        or receipt.get("execution_only_repair")
+        != "mmap_lifetime_and_completed_side_semantic_resume"
         or receipt.get("completed_side_resume") != completed_side_resume_contract()
         or not isinstance(formal_v24, Mapping)
-        or not isinstance(formal_v25, Mapping)
+        or not isinstance(formal_v26, Mapping)
         or formal_v24.get("canonical_execution_manifest_sha256")
         != V24_EXECUTION_MANIFEST_CANONICAL_SHA256
         or formal_v24.get("manifest_file_sha256")
         != V24_EXECUTION_MANIFEST_FILE_SHA256
         or formal_v24.get("public_base_commit") != V24_PUBLIC_BASE_COMMIT
         or formal_v24.get("annotated_tag") != V24_ANNOTATED_TAG
-        or formal_v25.get("canonical_execution_manifest_sha256")
+        or formal_v26.get("canonical_execution_manifest_sha256")
         != manifest.get("canonical_execution_manifest_sha256")
-        or formal_v25.get("manifest_file_sha256") != _file_sha256(manifest_path)
-        or formal_v25.get("public_base_commit") != manifest.get("public_base_commit")
-        or formal_v25.get("annotated_tag") != manifest.get("annotated_tag")
+        or formal_v26.get("manifest_file_sha256") != _file_sha256(manifest_path)
+        or formal_v26.get("public_base_commit") != manifest.get("public_base_commit")
+        or formal_v26.get("annotated_tag") != manifest.get("annotated_tag")
         or receipt.get("research_contract") != expected_contract
         or receipt.get("research_contract_sha256") != _canonical_sha256(expected_contract)
         or int(receipt.get("semantic_source_count", 0))
-        != len(_V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS)
+        != len(_V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS)
         or int(receipt.get("execution_only_source_count", 0))
-        != len(_V24_V25_EXECUTION_ONLY_SOURCE_PATHS)
+        != len(_V24_V26_EXECUTION_ONLY_SOURCE_PATHS)
         or any(receipt.get(field) is not False for field in false_fields)
         or receipt.get("canonical_receipt_sha256")
         != _document_sha256(receipt, "canonical_receipt_sha256")
     ):
-        raise OfflineOrchestratorError("formal-v24-to-v25 invariance receipt failed closed")
+        raise OfflineOrchestratorError("formal-v24-to-v26 invariance receipt failed closed")
     if verify_runtime_artifacts:
-        expected_sources = _v24_v25_semantic_source_hashes(
+        expected_sources = _v24_v26_semantic_source_hashes(
             repository_root=repository_root
         )
         if receipt.get("semantic_source_hashes") != expected_sources:
             raise OfflineOrchestratorError(
-                "formal-v24-to-v25 semantic source identity drifted"
+                "formal-v24-to-v26 semantic source identity drifted"
             )
-        expected_execution_sources = _v24_v25_execution_source_hashes(
+        expected_execution_sources = _v24_v26_execution_source_hashes(
             repository_root=repository_root
         )
         if receipt.get("execution_only_source_hashes") != expected_execution_sources:
             raise OfflineOrchestratorError(
-                "formal-v24-to-v25 execution source identity drifted"
+                "formal-v24-to-v26 execution source identity drifted"
             )
     return receipt
 
@@ -1054,7 +1055,7 @@ def _completed_buy_cache_census(
     unit_set_sha256 = _canonical_sha256(completed_units)
     receipt: dict[str, Any] = {
         "schema_version": (
-            f"{offline.IDENTITY}.formal_v25_completed_side_cache_census.v1"
+            f"{offline.IDENTITY}.formal_v26_completed_side_cache_census.v1"
         ),
         "identity": "f05_formal_v24_completed_buy_cache_census_v1",
         "status": "passed_577_completed_buy_units_sell_excluded",
@@ -1403,7 +1404,7 @@ def _cpp_qualification_contract() -> dict[str, Any]:
     return {
         "identity": CPP_QUALIFICATION_IDENTITY,
         "receipt_file": CPP_QUALIFICATION_RECEIPT_NAME,
-        "invariance_receipt_file": V24_V25_INVARIANCE_RECEIPT_NAME,
+        "invariance_receipt_file": V24_V26_INVARIANCE_RECEIPT_NAME,
         "required_status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_day_index": 0,
         "all_opportunities_required": True,
@@ -1469,8 +1470,8 @@ def _validate_cpp_qualification_receipt(
     if contract != _cpp_qualification_contract():
         raise OfflineOrchestratorError("C++ one-shot qualification contract drifted")
     invariance_receipt = _load_json(
-        manifest_path.parent / V24_V25_INVARIANCE_RECEIPT_NAME,
-        label="formal-v24-to-v25 invariance receipt",
+        manifest_path.parent / V24_V26_INVARIANCE_RECEIPT_NAME,
+        label="formal-v24-to-v26 invariance receipt",
     )
     builder_path = manifest_path.parent / CPP_BUILDER_PREFLIGHT_RECEIPT_NAME
     builder_receipt = _load_json(
@@ -1487,7 +1488,7 @@ def _validate_cpp_qualification_receipt(
         or int(builder_receipt.get("cpp_startup_validated_row_count", 0))
         != CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         or int(builder_receipt.get("economic_evaluator_call_count", -1)) != 0
-        or builder_receipt.get("formal_v24_to_v25_invariance_receipt_sha256")
+        or builder_receipt.get("formal_v24_to_v26_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or builder_receipt.get("economic_values_read") is not False
         or builder_receipt.get("economic_values_persisted") is not False
@@ -1513,7 +1514,7 @@ def _validate_cpp_qualification_receipt(
         or int(quick_receipt.get("zero_mismatch_arm_count", 0)) != 8
         or quick_receipt.get("all_panel_builder_preflight_receipt_sha256")
         != builder_receipt.get("canonical_receipt_sha256")
-        or quick_receipt.get("formal_v24_to_v25_invariance_receipt_sha256")
+        or quick_receipt.get("formal_v24_to_v26_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or quick_receipt.get("economic_values_persisted") is not False
         or quick_receipt.get("economic_values_exposed") is not False
@@ -1542,7 +1543,7 @@ def _validate_cpp_qualification_receipt(
         or int(receipt.get("arm_count", 0)) != int(receipt.get("opportunity_count", 0)) * 8
         or qualification.get("all_panel_builder_preflight_receipt_sha256")
         != builder_receipt.get("canonical_receipt_sha256")
-        or qualification.get("formal_v24_to_v25_invariance_receipt_sha256")
+        or qualification.get("formal_v24_to_v26_invariance_receipt_sha256")
         != invariance_receipt.get("canonical_receipt_sha256")
         or qualification.get("first_opportunity_all_arm_preflight_receipt_sha256")
         != quick_receipt.get("canonical_receipt_sha256")
@@ -1701,7 +1702,7 @@ def _load_formal_offline_bundle(
             tag=str(manifest.get("annotated_tag", "")),
         )
     if require_invariance:
-        _validate_v24_v25_invariance_receipt(
+        _validate_v24_v26_invariance_receipt(
             path,
             manifest,
             source=source,
@@ -2004,7 +2005,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     invariance.add_argument("predecessor_manifest", type=Path)
     invariance.add_argument("successor_manifest", type=Path)
     invariance.add_argument("--output", type=Path, required=True)
-    resume_invariance = subparsers.add_parser("admit-v24-v25-invariance")
+    resume_invariance = subparsers.add_parser("admit-v24-v26-invariance")
     resume_invariance.add_argument("predecessor_manifest", type=Path)
     resume_invariance.add_argument("successor_manifest", type=Path)
     resume_invariance.add_argument("--output", type=Path, required=True)
@@ -2049,8 +2050,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "research_contract_sha256": receipt["research_contract_sha256"],
             "economic_outcomes_read": False,
         }
-    elif args.command == "admit-v24-v25-invariance":
-        receipt = admit_v24_v25_invariance_receipt(
+    elif args.command == "admit-v24-v26-invariance":
+        receipt = admit_v24_v26_invariance_receipt(
             args.predecessor_manifest,
             args.successor_manifest,
             args.output,

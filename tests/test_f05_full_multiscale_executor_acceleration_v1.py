@@ -281,7 +281,7 @@ def test_global_one_shot_scheduler_uses_one_cpp_pool_and_requires_mmap(
             payload={
                 "one_shot_topology": topology.payload(),
                 "day_input_mmap_binding": {"bound": True},
-                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v25"),
+                "cpp_qualification_identity": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v26"),
                 "cpp_qualification_receipt_sha256": _sha("a"),
             },
         )
@@ -457,6 +457,126 @@ def test_completed_buy_cache_inheritance_rebinds_only_execution_identities(
         if target_payload[name] != source_payload[name]
     }
     assert changed == {"adapter_artifact_sha256", "execution_manifest_sha256"}
+
+
+def test_completed_one_shot_inheritance_is_immediately_semantic_registerable(
+    tmp_path: Path,
+) -> None:
+    cache = adapter.DayReplayCache(tmp_path / "cache")
+    contract = adapter.CompletedSideResumeContract.from_payload(
+        _resume_contract_payload()
+    )
+    target = _day_key(side="BUY", stage=adapter.ONE_SHOT_STAGE)
+    source = contract.predecessor_key(target)
+    assert source is not None
+    outcomes = pd.DataFrame({"CONTROL_85N": (1.0,)}, index=pd.Index(["opp-1"]))
+    supported = pd.DataFrame(
+        {"CONTROL_85N": (True,)},
+        index=pd.Index(["opp-1"]),
+    )
+    semantic_day_input_sha256 = _sha("5")
+    cache.admit_one_shot(
+        source,
+        outcomes,
+        supported,
+        evidence={"semantic_day_input_sha256": semantic_day_input_sha256},
+    )
+
+    inherited = cache.inherit_completed_one_shot(
+        target_key=target,
+        source_key=source,
+        census_receipt_sha256=_sha("6"),
+    )
+    semantic_key = adapter.OneShotSemanticCacheKey(
+        adapter_artifact_sha256=target.adapter_artifact_sha256,
+        source_manifest_sha256=target.source_manifest_sha256,
+        panel_manifest_sha256=target.panel_manifest_sha256,
+        fold_manifest_sha256=target.fold_manifest_sha256,
+        execution_manifest_sha256=target.execution_manifest_sha256,
+        exact_owner_policy_sha256=target.exact_owner_policy_sha256,
+        candidate_policy_sha256=target.candidate_policy_sha256,
+        side=target.side,
+        utc_day=target.utc_day,
+        semantic_day_input_sha256=semantic_day_input_sha256,
+    )
+    cache.register_one_shot_semantic(target, semantic_key)
+
+    pd.testing.assert_frame_equal(inherited[0], outcomes)
+    pd.testing.assert_frame_equal(inherited[1], supported)
+    assert cache.load_semantic_one_shot(semantic_key) is not None
+
+
+def test_completed_one_shot_inheritance_rejects_missing_semantic_evidence(
+    tmp_path: Path,
+) -> None:
+    cache = adapter.DayReplayCache(tmp_path / "cache")
+    contract = adapter.CompletedSideResumeContract.from_payload(
+        _resume_contract_payload()
+    )
+    target = _day_key(side="BUY", stage=adapter.ONE_SHOT_STAGE)
+    source = contract.predecessor_key(target)
+    assert source is not None
+    frame = pd.DataFrame({"CONTROL_85N": (1.0,)})
+    cache.admit_one_shot(source, frame, frame.astype(bool))
+
+    with pytest.raises(adapter.OfflineReplayAdapterError, match="semantic evidence"):
+        cache.inherit_completed_one_shot(
+            target_key=target,
+            source_key=source,
+            census_receipt_sha256=_sha("6"),
+        )
+
+
+def test_completed_side_zero_economic_preflight_walks_all_semantic_contracts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_DATA_ROOT", str(tmp_path))
+    payload = _resume_contract_payload()
+    cache = adapter.DayReplayCache(tmp_path / "cache" / "replay_dag" / "test-cache")
+    for stage, candidate in (
+        (adapter.ONE_SHOT_STAGE, "1"),
+        ("inner_oof", "2"),
+        ("outer_oof", "3"),
+    ):
+        target = _day_key(candidate=candidate, side="BUY", stage=stage)
+        source = adapter.CompletedSideResumeContract.from_payload(
+            payload
+        ).predecessor_key(target)
+        assert source is not None
+        frame = pd.DataFrame({"CONTROL_85N": (1.0,)})
+        if stage == adapter.ONE_SHOT_STAGE:
+            cache.admit_one_shot(
+                source,
+                frame,
+                frame.astype(bool),
+                evidence={"semantic_day_input_sha256": _sha("5")},
+            )
+        else:
+            cache.admit_sequential(source, frame)
+        cache.write_progress(source, state="complete")
+    replay = adapter._CanonicalOfflineReplayAdapter(
+        completed_side_resume=payload,
+        completed_side_resume_receipt_sha256=_sha("6"),
+    )
+
+    receipt = replay._preflight_completed_side_resume_cache(
+        cache=cache,
+        bindings=SimpleNamespace(execution_manifest_sha256=_sha("e")),
+    )
+
+    assert receipt == {
+        "status": "all_completed_predecessor_entries_semantic_ready",
+        "stage_counts": {
+            adapter.ONE_SHOT_STAGE: 1,
+            "inner_oof": 1,
+            "outer_oof": 1,
+        },
+        "complete_cache_units": 3,
+        "one_shot_semantic_registration_count": 1,
+        "payloads_parsed": False,
+        "economic_outcomes_read": False,
+    }
 
 
 def test_completed_buy_cache_inheritance_fails_when_source_is_missing(

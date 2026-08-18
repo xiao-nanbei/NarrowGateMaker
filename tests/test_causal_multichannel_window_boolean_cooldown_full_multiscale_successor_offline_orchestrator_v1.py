@@ -215,9 +215,9 @@ def _write_cpp_qualification_receipt(
         panel=panel,
     )
     invariance_receipt: dict[str, object] = {
-        "schema_version": f"{orchestrator.V24_V25_INVARIANCE_IDENTITY}.receipt.v1",
-        "identity": orchestrator.V24_V25_INVARIANCE_IDENTITY,
-        "status": orchestrator.V24_V25_INVARIANCE_STATUS,
+        "schema_version": f"{orchestrator.V24_V26_INVARIANCE_IDENTITY}.receipt.v1",
+        "identity": orchestrator.V24_V26_INVARIANCE_IDENTITY,
+        "status": orchestrator.V24_V26_INVARIANCE_STATUS,
         "formal_v24": {
             "canonical_execution_manifest_sha256": (
                 orchestrator.V24_EXECUTION_MANIFEST_CANONICAL_SHA256
@@ -226,7 +226,7 @@ def _write_cpp_qualification_receipt(
             "public_base_commit": orchestrator.V24_PUBLIC_BASE_COMMIT,
             "annotated_tag": orchestrator.V24_ANNOTATED_TAG,
         },
-        "formal_v25": {
+        "formal_v26": {
             "canonical_execution_manifest_sha256": execution[
                 "canonical_execution_manifest_sha256"
             ],
@@ -238,14 +238,14 @@ def _write_cpp_qualification_receipt(
         "research_contract_sha256": orchestrator._canonical_sha256(research_contract),
         "semantic_source_hashes": {},
         "semantic_source_count": len(
-            orchestrator._V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS
+            orchestrator._V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS
         ),
         "execution_only_source_hashes": {},
         "execution_only_source_count": len(
-            orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS
+            orchestrator._V24_V26_EXECUTION_ONLY_SOURCE_PATHS
         ),
         "completed_side_resume": orchestrator.completed_side_resume_contract(),
-        "mmap_lifetime_repair_only": True,
+        "execution_only_repair": "mmap_lifetime_and_completed_side_semantic_resume",
         "data_changed": False,
         "candidate_ladder_changed": False,
         "duration_vocabulary_changed": False,
@@ -263,7 +263,7 @@ def _write_cpp_qualification_receipt(
         "canonical_receipt_sha256",
     )
     _write_json(
-        execution_path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME,
+        execution_path.parent / orchestrator.V24_V26_INVARIANCE_RECEIPT_NAME,
         invariance_receipt,
     )
     census_receipt: dict[str, object] = {
@@ -286,7 +286,7 @@ def _write_cpp_qualification_receipt(
         census_receipt,
     )
     builder_receipt: dict[str, object] = {
-        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v25.builder_preflight.v1"),
+        "schema_version": ("f05_cpp_one_shot_real_day_all_arm_lockstep_v26.builder_preflight.v1"),
         "identity": orchestrator.CPP_BUILDER_PREFLIGHT_IDENTITY,
         "status": orchestrator.CPP_BUILDER_PREFLIGHT_STATUS,
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
@@ -297,7 +297,7 @@ def _write_cpp_qualification_receipt(
         "cpp_startup_validated_row_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_evaluator_call_count": 0,
@@ -327,7 +327,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_values_persisted": False,
@@ -347,7 +347,7 @@ def _write_cpp_qualification_receipt(
         quick_receipt,
     )
     qualification = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v25.contract.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v26.contract.v1",
         "execution_manifest_sha256": execution["canonical_execution_manifest_sha256"],
         "source_manifest_sha256": source["canonical_manifest_sha256"],
         "panel_manifest_sha256": panel["canonical_panel_manifest_sha256"],
@@ -360,7 +360,7 @@ def _write_cpp_qualification_receipt(
         "all_panel_builder_preflight_opportunity_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[
@@ -369,7 +369,7 @@ def _write_cpp_qualification_receipt(
         "source_hashes": {"cpp_extension": "d" * 64},
     }
     receipt: dict[str, object] = {
-        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v25.receipt.v1",
+        "schema_version": "f05_cpp_one_shot_real_day_all_arm_lockstep_v26.receipt.v1",
         "identity": orchestrator.CPP_QUALIFICATION_IDENTITY,
         "status": "passed_real_day_all_opportunity_all_arm_lockstep",
         "qualification_contract": qualification,
@@ -533,12 +533,12 @@ def test_formal_loader_rejects_quick_preflight_mismatch(
         )
 
 
-def test_formal_loader_requires_v24_to_v25_invariance_receipt(
+def test_formal_loader_requires_v24_to_v26_invariance_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V24_V26_INVARIANCE_RECEIPT_NAME
     receipt_path.unlink()
 
     with pytest.raises(
@@ -601,7 +601,7 @@ def test_formal_loader_rejects_recomputed_invariance_contract_tamper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     path, *_ = _bundle_fixture(tmp_path, monkeypatch)
-    receipt_path = path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME
+    receipt_path = path.parent / orchestrator.V24_V26_INVARIANCE_RECEIPT_NAME
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     receipt["research_contract"]["candidate_ladder"].append("OUTCOME_INFORMED")
     receipt["research_contract_sha256"] = orchestrator._canonical_sha256(
@@ -660,18 +660,18 @@ def test_execution_only_invariance_rejects_research_contract_change(
         orchestrator._execution_only_manifest_invariance(predecessor, successor)
 
 
-def test_v24_v25_invariance_separates_research_and_execution_sources() -> None:
+def test_v24_v26_invariance_separates_research_and_execution_sources() -> None:
     backend_path = (
         "research/families/f05_fill_quality_quote_ev/audit/"
         "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
         "offline_repeated_policy_backend_v1.py"
     )
-    assert backend_path in orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS
-    assert backend_path not in orchestrator._V24_V25_RESEARCH_SEMANTIC_SOURCE_PATHS
-    assert len(orchestrator._V24_V25_EXECUTION_ONLY_SOURCE_PATHS) == 4
+    assert backend_path in orchestrator._V24_V26_EXECUTION_ONLY_SOURCE_PATHS
+    assert backend_path not in orchestrator._V24_V26_RESEARCH_SEMANTIC_SOURCE_PATHS
+    assert len(orchestrator._V24_V26_EXECUTION_ONLY_SOURCE_PATHS) == 4
 
 
-def test_v24_v25_execution_only_invariance_rejects_research_contract_change(
+def test_v24_v26_execution_only_invariance_rejects_research_contract_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -693,7 +693,7 @@ def test_v24_v25_execution_only_invariance_rejects_research_contract_change(
         orchestrator.V23_V24_INVARIANCE_RECEIPT_NAME
     )
 
-    orchestrator._execution_only_manifest_invariance_v24_v25(
+    orchestrator._execution_only_manifest_invariance_v24_v26(
         predecessor,
         successor,
     )
@@ -702,7 +702,7 @@ def test_v24_v25_execution_only_invariance_rejects_research_contract_change(
         orchestrator.OfflineOrchestratorError,
         match="outside the execution-only allowance",
     ):
-        orchestrator._execution_only_manifest_invariance_v24_v25(
+        orchestrator._execution_only_manifest_invariance_v24_v26(
             predecessor,
             successor,
         )

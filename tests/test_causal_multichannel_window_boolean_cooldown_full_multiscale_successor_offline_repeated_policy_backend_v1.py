@@ -233,8 +233,8 @@ def _bundle_fixture(
     execution_path = tmp_path / "execution.json"
     _write_json(execution_path, execution)
     invariance_receipt: dict[str, object] = {
-        "identity": orchestrator.V24_V25_INVARIANCE_IDENTITY,
-        "status": orchestrator.V24_V25_INVARIANCE_STATUS,
+        "identity": orchestrator.V24_V26_INVARIANCE_IDENTITY,
+        "status": orchestrator.V24_V26_INVARIANCE_STATUS,
         "economic_outcomes_read": False,
         "action_authorized": False,
         "live_authorized": False,
@@ -244,7 +244,7 @@ def _bundle_fixture(
         "canonical_receipt_sha256",
     )
     _write_json(
-        execution_path.parent / orchestrator.V24_V25_INVARIANCE_RECEIPT_NAME,
+        execution_path.parent / orchestrator.V24_V26_INVARIANCE_RECEIPT_NAME,
         invariance_receipt,
     )
     census_receipt: dict[str, object] = {
@@ -280,7 +280,7 @@ def _bundle_fixture(
         "cpp_startup_validated_row_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_evaluator_call_count": 0,
@@ -311,7 +311,7 @@ def _bundle_fixture(
         "all_panel_builder_preflight_receipt_sha256": builder_receipt[
             "canonical_receipt_sha256"
         ],
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "economic_values_persisted": False,
@@ -342,7 +342,7 @@ def _bundle_fixture(
         "all_panel_builder_preflight_opportunity_count": (
             orchestrator.CPP_BUILDER_PREFLIGHT_OPPORTUNITIES
         ),
-        "formal_v24_to_v25_invariance_receipt_sha256": invariance_receipt[
+        "formal_v24_to_v26_invariance_receipt_sha256": invariance_receipt[
             "canonical_receipt_sha256"
         ],
         "first_opportunity_all_arm_preflight_receipt_sha256": quick_receipt[

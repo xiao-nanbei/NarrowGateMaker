@@ -26,6 +26,7 @@ import shutil
 import tempfile
 import time
 import uuid
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
 from contextlib import contextmanager
@@ -110,7 +111,7 @@ DAY_PROGRESS_SCHEMA = f"{IDENTITY}.day_progress.v2"
 COMPLETED_SIDE_RESUME_SCHEMA = f"{IDENTITY}.completed_side_resume.v1"
 ONE_SHOT_SEMANTIC_CACHE_SCHEMA = f"{IDENTITY}.one_shot_semantic_cache.v1"
 B0_CONTROL_CACHE_SCHEMA = f"{IDENTITY}.b0_control_day_cache.v1"
-EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v5"
+EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v6"
 DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 DAY_INPUT_MMAP_BINDING_SCHEMA = f"{DAY_INPUT_CACHE_IDENTITY}.day_input_mmap.v1"
 ONE_SHOT_STAGE = "outer_train_one_shot"
@@ -1251,6 +1252,33 @@ def _one_shot_semantic_day_input_sha256(rows: pd.DataFrame) -> str:
     return _frame_sha256(semantic)
 
 
+def _completed_side_resume_target_evidence(
+    *,
+    source_manifest: Mapping[str, Any],
+    kind: Literal["one_shot", "sequential"],
+    resume_evidence: Mapping[str, Any],
+) -> dict[str, Any]:
+    evidence: dict[str, Any] = {"completed_side_resume": dict(resume_evidence)}
+    if kind == "one_shot":
+        source_evidence = source_manifest.get("evidence")
+        if not isinstance(source_evidence, Mapping):
+            raise OfflineReplayAdapterError(
+                "completed one-shot predecessor lacks semantic evidence"
+            )
+        semantic_day_input_sha256 = source_evidence.get(
+            "semantic_day_input_sha256"
+        )
+        if semantic_day_input_sha256 is None:
+            raise OfflineReplayAdapterError(
+                "completed one-shot predecessor lacks semantic evidence"
+            )
+        evidence["semantic_day_input_sha256"] = _require_sha(
+            semantic_day_input_sha256,
+            label="completed one-shot predecessor semantic day input SHA256",
+        )
+    return evidence
+
+
 class DayReplayCache:
     """Atomic cache for deterministic day-level one-shot and sequential results."""
 
@@ -1674,19 +1702,26 @@ class DayReplayCache:
             "stage": target_key.stage,
             "failed_or_running_predecessor_entry_reused": False,
         }
+        target_evidence = _completed_side_resume_target_evidence(
+            source_manifest=source_manifest,
+            kind=kind,
+            resume_evidence=resume_evidence,
+        )
         target_manifest = self._manifest(target_key)
         if target_manifest is None:
             self._admit_frames(
                 target_key,
                 kind=kind,
                 frames=dict(zip(names, source_frames, strict=True)),
-                evidence={"completed_side_resume": resume_evidence},
+                evidence=target_evidence,
             )
             target_manifest = self._manifest(target_key)
-        target_evidence = None if target_manifest is None else target_manifest.get("evidence")
+        observed_target_evidence = (
+            None if target_manifest is None else target_manifest.get("evidence")
+        )
         if (
-            not isinstance(target_evidence, Mapping)
-            or target_evidence.get("completed_side_resume") != resume_evidence
+            not isinstance(observed_target_evidence, Mapping)
+            or dict(observed_target_evidence) != target_evidence
         ):
             raise OfflineReplayAdapterError("completed-side successor cache evidence drifted")
         target_frames = self._load_frames(
@@ -3080,7 +3115,7 @@ def _execute_one_shot_day(
     )
     if (
         job.payload.get("cpp_qualification_identity")
-        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
+        != "f05_cpp_one_shot_real_day_all_arm_lockstep_v26"
     ):
         raise OfflineReplayAdapterError("C++ one-shot qualification identity drifted")
     rows = job.payload.get("replay_inputs")
@@ -5371,6 +5406,111 @@ class _CanonicalOfflineReplayAdapter:
             "economic_values_exposed_during_resume": False,
         }
 
+    def _preflight_completed_side_resume_cache(
+        self,
+        *,
+        cache: DayReplayCache,
+        bindings: backend.FormalExecutionBindings,
+    ) -> Mapping[str, Any] | None:
+        contract = self._completed_side_resume
+        if contract is None:
+            return None
+        contract.validate_cache_root(cache.root)
+        observed: Counter[str] = Counter()
+        one_shot_semantic_registrations = 0
+        if not cache.progress.is_dir():
+            raise OfflineReplayAdapterError(
+                "completed-side predecessor progress root is missing"
+            )
+        for progress_path in sorted(cache.progress.glob("*.json")):
+            progress = _read_json(
+                progress_path,
+                label="completed-side predecessor progress receipt",
+            )
+            raw_key = progress.get("cache_key")
+            if not isinstance(raw_key, Mapping):
+                continue
+            if (
+                raw_key.get("execution_manifest_sha256")
+                != contract.predecessor_execution_manifest_sha256
+            ):
+                continue
+            source_key = DayReplayCacheKey(**dict(raw_key))
+            if source_key.side not in contract.inherited_sides:
+                continue
+            if (
+                progress.get("state") != "complete"
+                or source_key.adapter_artifact_sha256
+                != contract.predecessor_adapter_artifact_sha256
+            ):
+                raise OfflineReplayAdapterError(
+                    "completed-side predecessor progress is not reusable"
+                )
+            target_key = replace(
+                source_key,
+                adapter_artifact_sha256=self.artifact_sha256,
+                execution_manifest_sha256=bindings.execution_manifest_sha256,
+            )
+            if contract.predecessor_key(target_key) != source_key:
+                raise OfflineReplayAdapterError(
+                    "completed-side predecessor key dry-run drifted"
+                )
+            source_manifest = cache._manifest(source_key)
+            if source_manifest is None:
+                raise OfflineReplayAdapterError(
+                    "completed-side predecessor manifest is missing"
+                )
+            kind: Literal["one_shot", "sequential"] = (
+                "one_shot" if source_key.stage == ONE_SHOT_STAGE else "sequential"
+            )
+            if source_manifest.get("kind") != kind:
+                raise OfflineReplayAdapterError(
+                    "completed-side predecessor payload kind drifted"
+                )
+            target_evidence = _completed_side_resume_target_evidence(
+                source_manifest=source_manifest,
+                kind=kind,
+                resume_evidence={
+                    "schema_version": COMPLETED_SIDE_RESUME_SCHEMA,
+                    "mode": "zero_economic_preflight_only",
+                    "source_cache_key_sha256": source_key.cache_key_sha256,
+                    "target_cache_key_sha256": target_key.cache_key_sha256,
+                },
+            )
+            if kind == "one_shot":
+                semantic_key = OneShotSemanticCacheKey(
+                    adapter_artifact_sha256=target_key.adapter_artifact_sha256,
+                    source_manifest_sha256=target_key.source_manifest_sha256,
+                    panel_manifest_sha256=target_key.panel_manifest_sha256,
+                    fold_manifest_sha256=target_key.fold_manifest_sha256,
+                    execution_manifest_sha256=target_key.execution_manifest_sha256,
+                    exact_owner_policy_sha256=target_key.exact_owner_policy_sha256,
+                    candidate_policy_sha256=target_key.candidate_policy_sha256,
+                    side=target_key.side,
+                    utc_day=target_key.utc_day,
+                    semantic_day_input_sha256=str(
+                        target_evidence["semantic_day_input_sha256"]
+                    ),
+                )
+                cache._validate_semantic_source_key(target_key, semantic_key)
+                one_shot_semantic_registrations += 1
+            observed[source_key.stage] += 1
+        expected = dict(contract.required_stage_counts)
+        if dict(observed) != expected:
+            raise OfflineReplayAdapterError(
+                "completed-side predecessor dry-run census drifted"
+            )
+        return {
+            "status": "all_completed_predecessor_entries_semantic_ready",
+            "stage_counts": dict(observed),
+            "complete_cache_units": sum(observed.values()),
+            "one_shot_semantic_registration_count": (
+                one_shot_semantic_registrations
+            ),
+            "payloads_parsed": False,
+            "economic_outcomes_read": False,
+        }
+
     def preflight_formal_panel_schema(
         self,
         *,
@@ -5552,6 +5692,12 @@ class _CanonicalOfflineReplayAdapter:
                 )
                 _validate_d_plus_one_contract(rows)
                 options = _resolve_execution_options(rows)
+                completed_side_walk = None
+                if self._completed_side_resume is not None:
+                    completed_side_walk = self._preflight_completed_side_resume_cache(
+                        cache=options.cache,
+                        bindings=mechanics.bindings,
+                    )
                 for day in sorted(set(rows["utc_day"])):
                     _canonical_day_request(
                         binding=options.binding,
@@ -5565,6 +5711,11 @@ class _CanonicalOfflineReplayAdapter:
                     ladder,
                     continuous,
                 )
+                if completed_side_walk is not None:
+                    all_fold_walk = {
+                        **all_fold_walk,
+                        "completed_side_resume_cache_walk": completed_side_walk,
+                    }
             except OfflineReplayAdapterMechanicsMissing as exc:
                 status = MECHANICS_MISSING_STATUS
                 missing = list(exc.missing)
@@ -6011,7 +6162,7 @@ class _CanonicalOfflineReplayAdapter:
                         "duration_vocabulary": label.duration_vocabulary,
                         "one_shot_topology": topology.payload(),
                         "cpp_qualification_identity": (
-                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v25"
+                            "f05_cpp_one_shot_real_day_all_arm_lockstep_v26"
                         ),
                         "cpp_qualification_receipt_sha256": (
                             self._cpp_qualification_receipt_sha256
