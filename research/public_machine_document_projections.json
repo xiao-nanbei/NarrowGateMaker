@@ -1,6 +1,6 @@
 {
   "schema_version": "narrowgate_public_machine_document_projections_v1",
-  "last_materially_modified": "2026-08-19",
+  "last_materially_modified": "2026-08-21",
   "contract": "docs/public_private_documentation_contract.md",
   "private_layout": "research/PRIVATE_EVIDENCE.md",
   "entries": [
@@ -1836,7 +1836,7 @@
     {
       "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
       "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "37f945207008923429e24b3ba5aa64af4af81398244ed772429a71d68db82e5c",
+      "source_private_sha256": "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f",
       "public_projection_sha256": "3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd",
       "transformation": "locator_and_operational_identifier_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
@@ -2002,8 +2002,8 @@
     {
       "public_path": "research/registry.json",
       "unit_id": "research/shared/experiment_governance",
-      "source_private_sha256": "3b1c1bab9a31a6dfea85b370e0bea53dbb6fa25c3cb0fae26008d8089a88eee7",
-      "public_projection_sha256": "e936e3585ea919fb00c960ed80023ead9a7107bfb9e2b2ccbd63f9b40dc37146",
+      "source_private_sha256": "f09829baa37f43dac3c3521985a1fa53df7af7a570b71a78b31912a3f9529770",
+      "public_projection_sha256": "ad2bc147ad02df96a82fc7e1a3515b6c33274f1b8b8dc15bbdd1a6ac9f53fcd0",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 19
