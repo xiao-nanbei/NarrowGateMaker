@@ -2,7 +2,7 @@
 
 > Avellaneda-Stoikov + LightGBM ML增强 — 面向 Binance BTCUSDC 永续合约的做市算法研究与回测项目
 
-Last materially modified: 2026-08-04
+Last materially modified: 2026-08-20
 
 ---
 
@@ -109,7 +109,9 @@ development 中 BUY `widen_1tick` 的 DR reward uplift 为 `+0.01783 USDC/interv
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v7.json`：v8 的冻结前身；运行时仍为 Python 3.12、13-head ML-ON 与 empirical P3，q90 shadow 保留且 action 关闭，同时 BUY fill-selection action 关闭、scorer shadow 开启。该 operational overlay 不改写已读 panel 的研究身份，campaign q10 仍未解决，research authority 仍为 false；
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v8.json`：v9 的冻结前身；它保持 v7 的策略语义，并新增已部署的 immutable quote snapshot、bookTicker freshness fallback 和分离的 visible-age/source-lag 合同。该 successor 仅修复 baseline integrity，没有读取 PnL，也没有授权新 action；
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json`：v10 的历史前身；在 v8 远端代码上通过配置关闭 BUY fill-selection shadow，并清空其模型路径；
-- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json`：当前滚动 live identity。它保持 causal-v12 ML-ON、empirical P3、global BER、q90 shadow-ON/action-OFF，以及 BUY fill-selection action/shadow-OFF；v10 只收缩无效 shadow 观测，不改变报价经济路径；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json`：历史 observability-only live identity，冻结保留；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json`：启用 owner-risk-accepted SELL Boolean cooldown 的冻结历史身份；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json`：当前滚动 live identity；它只把 v11 的相同 runtime/config/model/policy 字节迁移到新 AWS host epoch，不改变策略语义或研究权限；
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json`：指向当前不可变 live identity 和当前默认 replay control 的可变机器入口；
 - `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`：当前 pooled 50 日回测 denominator。immutable 前 40 日为 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC`、`17,118` fills；新增 10 日为 `-21.314331 USDC`、`-21.064631 USDC`、`3,029` fills；合并 50 日为 `-165.566079 USDC`、`-168.530979 USDC`、`20,147` fills。当前实现只消费 native-derived top-20/100ms BBO/L2，没有 raw snapshot/delta queue tape、经验 REST 延迟或 AWS receive/feature-ready 可见延迟，因此只承担同模拟器 diagnostic control，不授权订单路径 action，也不冒充连续 live PnL。严格 successor 已完成全部 50 日 source preflight，并在 `2026-06-29` 一日消费 5,086,247 条 native events、完成 19,460 次零 missing queue lookup 和 14,825 次 visibility-delay application；严格 50 日 panel 尚未运行；
 - `research/system_engineering/docs/time_unit_contract_repair_20260726.md`：causal-v7、13-head ML-OFF、empirical-P3-on 历史回滚契约；实际远端仍须以 preflight、`run.sh status` 和启动 hash 核验；
@@ -480,7 +482,7 @@ CryptoHFTData 的来源边界也已明确：它是个人/第三方维护的 Bina
 | bookDepth 百分比桶 | data.binance.vision | removed legacy source | none | 粗粒度百分比桶不是逐档 L2；2026-07-17 已删除 downloader、preprocessor、feature fallback 与 replay proxy |
 | Metrics (OI/LS) | data.binance.vision | 2026 retained/enhanced 窗口按需 | daily CSV + daily parquet | 多空比/OI 5 分钟，已按日接入 `metrics_5m` |
 
-**2026-06-28 历史粒度审计（已由 2026-08-02 continuous substrate 扩展）**：当时为隔离坏日和未冻结的跨日拼接，正式证据收敛到 UTC 日 fresh-start rows，并清理非日度 parquet 容器。该结论仍约束所有冻结为 `fresh_start` 的历史 identity，但不再表示项目禁止跨日状态。当前 v10 live identity 和 continuous-path scorecard 要求现金、库存及经济 campaign 跨午夜延续，UTC 日只作统计 cluster；带缺口日历必须使用版本化 restart manifest，在维护边界终止活动单并保留持仓 MTM。每日与连续口径不可混用，必须由实验 Spec 明确冻结。
+**2026-06-28 历史粒度审计（已由 2026-08-02 continuous substrate 扩展）**：当时为隔离坏日和未冻结的跨日拼接，正式证据收敛到 UTC 日 fresh-start rows，并清理非日度 parquet 容器。该结论仍约束所有冻结为 `fresh_start` 的历史 identity，但不再表示项目禁止跨日状态。当前 operational pointer 与 continuous-path scorecard 要求现金、库存及经济 campaign 跨午夜延续，UTC 日只作统计 cluster；带缺口日历必须使用版本化 restart manifest，在维护边界终止活动单并保留持仓 MTM。每日与连续口径不可混用，必须由实验 Spec 明确冻结。
 
 ### 4.2 预处理流水线
 
@@ -601,7 +603,7 @@ Binance individual `trades` 只能恢复公开逐笔撮合和 aggressor flow，�
 
 ### 6.3 Empirical P3 成交校准
 
-旧 SU-Johnson 参数与固定 delta/kappa 数值已删除，不再进入 feature、live 或 replay 真源。当前 10 秒 P3 由 bundle 内显式 empirical-survival artifact 提供，当前 v10 绑定的 causal-v12 artifact 记录 `delta_star=13.9990859817 USDC/BTC` 与 `effective_kappa=0.0673564264`。它们绑定 horizon、fill definition、数据和 artifact hash，不是可脱离校准身份单独搜索的固定策略参数。
+旧 SU-Johnson 参数与固定 delta/kappa 数值已删除，不再进入 feature、live 或 replay 真源。当前 10 秒 P3 由 bundle 内显式 empirical-survival artifact 提供；当前 v12 继续绑定与 v10/v11 相同的 causal-v12 artifact，其中记录 `delta_star=13.9990859817 USDC/BTC` 与 `effective_kappa=0.0673564264`。它们绑定 horizon、fill definition、数据和 artifact hash，不是可脱离校准身份单独搜索的固定策略参数。
 
 ### 6.4 历史 Transformer 研究（入口已删除）
 
@@ -1044,9 +1046,9 @@ Python/C++ formal replay 已恢复代表日精确 parity：ML ON/OFF 的 2026-04
 
 ### 2026-08-02 至 2026-08-09 causal-v12 operational baseline promotion
 
-用户先明确接受低成本 live 验证，并在随后将 `causal_v12_expanded_source_aware_semantics_v6` 正式指定为当前 operational 和 backtest baseline。当前运行使用 Python 3.12.13、v6 Feature DAG 与未改变的 empirical P3；queue、latency、cooldown、size、inventory limit 和 hard safety gates 保持不变。最初晋级只修改身份；随后 v5 安全处置关闭 q90 action、保留 shadow。v6 根据当前栈 40 日成对诊断的负经济点估计，进一步暂停 BUY fill-selection action；v7 随后将 scorer/shadow 与 action 权限拆开，保持 action OFF、shadow ON；v8 再以 baseline-integrity successor 修复同一报价决策内的 depth/mid 原子性与执行时钟合同；v9 将没有 operational evidence 的 BUY fill-selection shadow 退役，保留 q90 shadow；v10 再停止已关闭 fair-center、inventory what-if 和 depth 候选的持续 shadow 写入，不改变报价经济路径。处置均通过可回滚变更和受控重启生效。
+用户先明确接受低成本 live 验证，并在随后将 `causal_v12_expanded_source_aware_semantics_v6` 正式指定为 operational 和 backtest baseline。当前运行使用 Python 3.12.13、v6 Feature DAG 与未改变的 empirical P3；queue、latency、size、inventory limit 和 hard safety gates 保持不变。最初晋级只修改身份；随后 v5 安全处置关闭 q90 action、保留 shadow。v6 暂停 BUY fill-selection action；v7 将 scorer/shadow 与 action 权限拆开；v8 修复 depth/mid 原子性与执行时钟合同；v9 退役无 operational evidence 的 BUY fill-selection shadow；v10 停止已关闭候选的持续 shadow 写入；v11 以 owner-risk-accepted 路径启用 SELL Boolean cooldown；v12 只迁移 host/epoch，不改变 v11 策略语义。处置均通过可回滚变更和受控重启生效。
 
-owner-amended v2 以 80%-120% fill band、closed-campaign primary outcome 和 loss/fill selectivity 重新登记 operational 判断：27 日中 19 日 PnL 改善，closed-campaign uplift 为 `+1.1050 USDC/day`，95% 区间 `[+0.4801,+1.7306]`，loss/fill ratio 为 `2.925`。但这些 panel 已经读过，且 campaign q10 区间仍跨零；因此 `ranking_score` 仍为 null，research prediction/live authority 仍为 false。当前 live identity 见 `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json`；当前 pooled 回测 denominator 见 `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`。它严格使用 live-held BER 时钟；immutable 前 40 日得到 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC` 和 `17,118` fills，合并 50 日得到 `-165.566079 USDC`、`-168.530979 USDC` 和 `20,147` fills。该实现仍是无 raw snapshot/delta tape、无经验 REST/receive-time 延迟的 native-derived diagnostic，strict-native latency successor 完成前不能授权订单路径 action。该 successor 已在 `2026-06-29` 通过一日 raw queue + latency mechanics，但尚无严格 50 日聚合经济结果。旧部署身份只承担不可变 provenance 与回滚，不再承担新实验的默认比较臂。
+owner-amended v2 以 80%-120% fill band、closed-campaign primary outcome 和 loss/fill selectivity 重新登记 operational 判断：27 日中 19 日 PnL 改善，closed-campaign uplift 为 `+1.1050 USDC/day`，95% 区间 `[+0.4801,+1.7306]`，loss/fill ratio 为 `2.925`。但这些 panel 已经读过，且 campaign q10 区间仍跨零；因此 `ranking_score` 仍为 null，research prediction/live authority 仍为 false。当前 live identity 由 `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json` 解析到 v12；当前 pooled 回测 denominator 见 `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`。它严格使用 live-held BER 时钟；immutable 前 40 日得到 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC` 和 `17,118` fills，合并 50 日得到 `-165.566079 USDC`、`-168.530979 USDC` 和 `20,147` fills。该实现仍是无 raw snapshot/delta tape、无经验 REST/receive-time 延迟的 native-derived diagnostic，strict-native latency successor 完成前不能授权订单路径 action。该 successor 已在 `2026-06-29` 通过一日 raw queue + latency mechanics，但尚无严格 50 日聚合经济结果。旧部署身份只承担不可变 provenance 与回滚，不再承担新实验的默认比较臂。
 
 ### 2026-08-02 continuous-path action scorecard v2
 

@@ -1,12 +1,12 @@
 # Market-Data Quality Rating Snapshot (2026-07-31)
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](public_private_documentation_contract.md).
 
 Status: historical snapshot, not a current denominator or freshness authority. The filename is retained for inbound references. The evidence below covers the explicit cutoffs stated in each row, with the canonical local ledger ending at 2026-07-25 and Tardis raw coverage ending at 2026-07-29.
 
-Deployment note (2026-08-11): all counts below remain a frozen historical snapshot. The current live host is AWS Tokyo `<current-live-host>`; original-AWS and intermediate-Vultr archives, three-epoch routing, and cross-host evidence reuse are governed by [`live_host_and_historical_data_access_20260811.md`](live_host_and_historical_data_access_20260811.md).
+Deployment note (2026-08-20): all counts below remain a frozen 2026-07-31 snapshot and are not revised in place. The live deployment now has four host epochs and three maintenance gaps; the separate receive-time program later completed 30 distinct days and closed on the reactivated-AWS predecessor. The current host has no inherited capture authority. Current routing and later readiness are governed by [`live_host_and_historical_data_access_20260811.md`](live_host_and_historical_data_access_20260811.md).
 
 As of 2026-07-31, the project data estate is rated by intended use rather than by a single universal good-day flag. The overall research-data rating is **B**: raw evidence and storage integrity are strong, but the authoritative continuous exact-lifecycle denominator is still only 46 days and AWS Tokyo receive-time evidence has not reached its frozen 30-day threshold.
 

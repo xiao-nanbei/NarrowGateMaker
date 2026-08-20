@@ -1,6 +1,6 @@
 # F03 Causal 13-Head Model
 
-Last materially modified: 2026-08-17
+Last materially modified: 2026-08-20
 
 Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
 
@@ -10,7 +10,7 @@ The 1-second cadence successor has completed its frozen 40-day native Developmen
 
 The root files own training, feature-profile experiments, and taker-tempo features. Runtime model contracts remain under `strategy/` because they are shared live/replay semantics. Shared dependencies: D, R, S, G.
 
-The sole current operational authority is the mutable [`operational_baseline_current.json`](../f10_live_replay_attribution/docs/operational_baseline_current.json) pointer. It resolves to immutable [`operational_baseline_identity_20260812_v11.json`](../f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json). v11 keeps causal-v12 ML ON, q90 shadow ON/action OFF, BUY fill-selection shadow OFF/action OFF, and the active depth-imbalance asymmetry, while adding the owner-approved SELL cooldown policy with BUY remaining on the control duration. v10 is the immediate historical predecessor and global-BER 50-day results remain a historical experiment control, not the current operational default. The v8 snapshot remains the historical quote-snapshot atomicity release; all earlier identities remain frozen historical evidence.
+The sole current operational authority is the mutable [`operational_baseline_current.json`](../f10_live_replay_attribution/docs/operational_baseline_current.json) pointer. It resolves to immutable [`operational_baseline_identity_20260820_v12.json`](../f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json). v12 preserves the v11 strategy/config/model bytes and active owner-risk-accepted SELL cooldown while rebinding the runtime to the successor AWS host epoch; it grants no new research authority. v11, v10, v9, v8, v7, v6, v5, and preceding canary identities remain frozen historical evidence.
 
 Latest post-fit evidence: `docs/causal_v12_postfit_native_oos_20260726_31_20260802.md`. Five Grade-A native dates produced a positive ML-ON terminal-PnL point estimate, but the prediction family passed only 5/13 head gates and the full-path screen failed PnL uncertainty, fill retention, campaign tail, and SELL maker-value gates.
 

@@ -1,6 +1,6 @@
 # Market Data
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](public_private_documentation_contract.md).
 
@@ -19,7 +19,7 @@ The `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` volume is APFS and must be mounted at 
 
 Public placeholders, private-path restrictions, and canonical root naming are defined in [Path Conventions](path_conventions.md).
 
-The current live host is AWS Tokyo `<current-live-host>`. The original AWS and intermediate Vultr live logs are queried from separate verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. Historical transport profiles retain their exact host/epoch labels and are sensitivities, not current-host measurements. See the [live-host and historical-data routing contract](live_host_and_historical_data_access_20260811.md).
+The current live host is AWS Tokyo `<current-live-host>`. Original AWS, intermediate Vultr, and reactivated-AWS predecessor logs are queried from separate verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. Historical transport profiles retain their exact host/epoch labels and are sensitivities, not current-host measurements. The completed seven-tape program remains closed on the predecessor capture source; the current host has no inherited capture authority. See the [live-host and historical-data routing contract](live_host_and_historical_data_access_20260811.md).
 
 ## Canonical Layout
 
@@ -454,7 +454,7 @@ python research/system_engineering/audit/market_data_latency.py \
   --environment location=Tokyo
 ```
 
-Frozen original-AWS and Vultr profiles remain valid for their exact historical epochs and may be selected as explicitly named transport sensitivities. Matching CPU/RAM size does not permit relabelling either as a current-AWS measurement.
+Frozen original-AWS, Vultr, and reactivated-AWS predecessor profiles remain valid for their exact historical epochs and may be selected as explicitly named transport sensitivities. Matching CPU/RAM size does not permit relabelling any of them as a current-AWS measurement.
 
 Replay modes are deliberately separate:
 

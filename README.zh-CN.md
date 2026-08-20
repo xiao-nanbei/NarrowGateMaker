@@ -4,7 +4,7 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -20,7 +20,7 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 
 术语约定：仓库中的 `campaign MAE` 始终指 Maximum Adverse Excursion；预测或模型评估语境中的 `prediction MAE` / `model MAE` 才指 Mean Absolute Error（平均绝对误差）。两者不得混用。
 
-当前运营入口：live 主机是 AWS Tokyo `<current-live-host>`（`<current-live-instance>`）。原 AWS 主机与中间 Vultr 主机 `<retired-intermediate-vultr-host>` 均已退役，只能查询本地 `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` 校验归档。参见 [当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。成交查询必须按三个 host epoch 和两个维护缺口分段；当前 AWS、中间 Vultr、原 AWS 的数据不得互相补齐相邻 epoch 的缺口。历史行情、live 和延迟证据仍可用于研究、经验分布/敏感度与 source-aware panel，但必须保留原 host/provider 标签。
+当前运营入口：live 主机是 AWS Tokyo `<current-live-host>`（`<current-live-instance>`）。原 AWS、中间 Vultr 与再激活 AWS 前任均为历史主机，只能查询本地 `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` 校验归档。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。成交查询必须按四个 host epoch 和三个维护缺口分段；当前 AWS 与任一前任的数据不得互相补齐相邻 epoch 的缺口。历史行情、live 和延迟证据仍可用于研究、经验分布/敏感度与 source-aware panel，但必须保留原 host/provider 标签。
 
 ## 摘要
 
@@ -282,7 +282,7 @@ python research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py \
 
 `captured` 使用记录的 `feature_ready_ts_ns`，不再增加延迟；`exchange_zero` 是理想化的 zero-feed-delay control；`profile_*` mode 根据 exchange time 重建 p50/p95/p99/p99.9/max 或 empirical visibility。不要把 profile mode 应用到 captured receive-time evidence 后称为“actual”。`profile_stable_spike` 是固定 seed 的 sensitivity，其中有 0.5% p95-p99 stall 分支；它不是主要 ranking baseline。
 
-冻结的原 AWS 与 Vultr Tokyo profile 仍可作为保留 host 标签的历史先验/敏感度复用，但不得改标成当前 AWS transport 实测。
+冻结的原 AWS、Vultr Tokyo 与再激活 AWS 前任 profile 仍可作为保留 host 标签的历史先验/敏感度复用，但不得改标成当前 AWS transport 实测。
 
 Latency profile 是 host assumption，不是 strategy parameter。Instance type、region、OS/runtime/native build、feed set、recorder、transport、gateway 或 strategy workload 发生变化时，都必须重新构建并选择 profile。更快的机器也必须获得新的 profile ID 和 replay，不能沿用旧的毫秒数值。
 
@@ -290,7 +290,7 @@ Latency profile 是 host assumption，不是 strategy parameter。Instance type�
 
 Python tick replay 现在具备共享 feature-ready multi-tape scheduler，并默认使用 no-op `MultiMarketPolicy`。在修正 event clock、feature-ready contract 和 empirical-P3 baseline 之前生成的历史 stop-add、fixed-rearm、fixed-cooldown 与 one-tick response 结果，已经从公开 evidence surface 移除。它们不能用于选择参数或声称 action uplift。
 
-当前 strategy evidence 从已知 propensity、campaign-level reward attribution 的冻结 randomized action panel 出发。当前 rolling live 身份是 causal-v12 semantics-v6 的 [v10 identity](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json)，由 [operational_baseline_current.json](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 解析。它运行 Python 3.12、13-head ML-ON 与 empirical P3；q90 为 shadow ON、action OFF，BUY fill-selection 的 shadow 和 action 均关闭。v10 只改变观测面，继续继承不可变报价快照和执行时钟合同。
+当前 strategy evidence 从已知 propensity、campaign-level reward attribution 的冻结 randomized action panel 出发。当前 rolling live 身份是 [operational baseline v12](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json)，由 [operational_baseline_current.json](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 解析。它保留 v11 的 13-head semantics-v6 模型、empirical P3、q90 action-OFF、BUY fill-selection action/shadow-OFF，以及 owner-risk-accepted SELL Boolean cooldown。v12 只是 host-only migration identity，不改变策略、模型、配置、action 或 research permission。
 
 当前 pooled 50 日回测 denominator 是 [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json)。它严格复刻 live BER 时钟：持有最近一个已完成 canonical 10 秒桶的 `trade_intensity_60s`，并在已完成 1 秒 bar 回调上采样。冻结的 daily-fresh-start 前 40 日结果为 terminal MTM `-144.251748 USDC`、closed-campaign `-147.466348 USDC`、`17,118` fills；新增 10 个 Grade-A 日分别贡献 `-21.314331 USDC`、`-21.064631 USDC` 和 `3,029` fills。合并 50 日结果为 terminal MTM `-165.566079 USDC`（`-3.311322/day`）、closed-campaign `-168.530979 USDC`、`20,147` fills。
 

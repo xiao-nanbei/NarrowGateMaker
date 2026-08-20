@@ -1837,7 +1837,7 @@
       "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
       "unit_id": "research/families/f10_live_replay_attribution",
       "source_private_sha256": "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f",
-      "public_projection_sha256": "3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd",
+      "public_projection_sha256": "fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc",
       "transformation": "locator_and_operational_identifier_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 2,
@@ -1954,6 +1954,16 @@
       "operational_identifier_redaction_count": 0
     },
     {
+      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json",
+      "unit_id": "research/families/f10_live_replay_attribution",
+      "source_private_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
+      "public_projection_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
+      "transformation": "public_private_identity_annotation_only",
+      "availability": "public_repository_projection_private_source_not_distributed",
+      "private_locator_count": 0,
+      "operational_identifier_redaction_count": 0
+    },
+    {
       "public_path": "research/families/f10_live_replay_attribution/docs/quote_decision_snapshot_atomicity_v2_operational_release_20260804.json",
       "unit_id": "research/families/f10_live_replay_attribution",
       "source_private_sha256": "9a47cf3dcc07ce73246e018ae99d34d29b88030583db1bbca7b2096ffd393500",
@@ -2003,7 +2013,7 @@
       "public_path": "research/registry.json",
       "unit_id": "research/shared/experiment_governance",
       "source_private_sha256": "f09829baa37f43dac3c3521985a1fa53df7af7a570b71a78b31912a3f9529770",
-      "public_projection_sha256": "bfec41270d93da9eeb3edd04a5d95f48c2ac8368985a603bec06fcf64e36cad9",
+      "public_projection_sha256": "41426ccdad65ccd2c4f3440ec69c250c8bdc1d67af3c345208494546b1102609",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 19

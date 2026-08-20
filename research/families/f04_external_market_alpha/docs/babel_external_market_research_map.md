@@ -1,6 +1,6 @@
 # BABEL External-Market Research Map
 
-Last materially modified: 2026-08-02
+Last materially modified: 2026-08-20
 
 Status: active evidence routing; no external-market action or live authority.
 
@@ -23,7 +23,7 @@ An artifact from one layer never inherits the authority of the next layer.
 
 ```text
 BABEL-P1 receive-time first-add M0/M1 -----------------\
-    background collection to 30 distinct valid UTC days \
+    30-day collection complete; lifecycle/row gates block \
                                                           > same exact surface
 BABEL-E6/P2 adverse-edge mechanics --------------------/
     outcome-blind clock, LOO, role, quote and cap audit
@@ -35,7 +35,7 @@ BABEL-E6/P2 adverse-edge mechanics --------------------/
                                              randomized replay / OPE
 ```
 
-P1's 30-day requirement blocks only P1 fitting. It does not block E6/P2 mechanics. As of the 2026-08-02 ledger check, the capture ledger contains 19 valid full windows over 18 distinct UTC days. The duplicate 2026-07-21 window counts once toward P1.
+P1's 30-day count gate is complete and does not block E6/P2 mechanics. The closed capture ledger contains 31 valid full windows over 30 distinct UTC days; the duplicate 2026-07-21 window counts once. Collection ended on the reactivated-AWS predecessor, the automation is deleted, and the current host has no inherited capture authority. P1 fitting remains blocked by the exact-lifecycle successor and every frozen chronological, side-specific, Grade-A/Grade-B, common-row, source-transport, true-LOO, causal-clock, and late-panel gate.
 
 ## Identities
 
@@ -61,11 +61,11 @@ P2 v1 currently covers observed paired quote-log opportunities. This is a histor
 
 The infrastructure-only [`external_adverse_quote_edge_guard_exact_opener_mechanics_v2`](external_adverse_quote_edge_guard_exact_opener_mechanics_v2_spec_20260802.json) now defines a prospective native tape with stable decision IDs, exact signed inventory, feature-ready time, baseline/candidate coordinates, and submit, activation, cancel/ACK, partial/full-fill and queue-reset lineage. It reads no economic outcome and does not enter F09. The [`v2.1 execution amendment`](external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1_20260802.md) accurately discloses that operational lifecycle outcomes are read for native linkage and executed-action support, while PnL, reward, markout, and campaign labels remain forbidden. It also freezes exact-schema validation and requires BUY and SELL each to pass the unchanged 5% candidate-rate floor; pooled support is diagnostic only. If either side remains below that floor, the guard closes for action support. An outcome-blind rank budget or removal of LOO would require a new identity and cannot rewrite v1, v2, or v2.1.
 
-The later [`v2.1 collection preflight`](external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1_collection_preflight_failure_20260802.md) withdrew prospective collection eligibility before the tape was enabled. The frozen validator does not bind the runtime producers or deployment config, and the current append-only CSV path lacks fail-closed writer health, hot-start quarantine, complete cancel-reject journaling, and atomic `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` admission. A v2.2 execution amendment must close those infrastructure gaps before the side-specific 5% denominator is counted. This does not change P2's estimand or P1's independent background capture.
+The later [`v2.1 collection preflight`](external_adverse_quote_edge_guard_exact_opener_mechanics_v2_1_collection_preflight_failure_20260802.md) withdrew prospective collection eligibility before the tape was enabled. The frozen validator does not bind the runtime producers or deployment config, and the current append-only CSV path lacks fail-closed writer health, hot-start quarantine, complete cancel-reject journaling, and atomic `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` admission. A v2.2 execution amendment must close those infrastructure gaps before the side-specific 5% denominator is counted. This does not change P2's estimand or the now-closed P1 capture denominator.
 
 ### P1: First-Add External Incremental Value
 
-[`first_add_external_incremental_value_m0_m1_v1`](first_add_external_incremental_value_m0_m1_v1_preregistration_20260730.md) targets F10's direct first-add-to-campaign-terminal USDC outcome. It remains blocked until 30 distinct valid full-window UTC days and every frozen chronological, side, Grade A/B, lifecycle, true LOO and late-panel denominator passes. A passing result is prediction evidence only.
+[`first_add_external_incremental_value_m0_m1_v1`](first_add_external_incremental_value_m0_m1_v1_preregistration_20260730.md) targets F10's direct first-add-to-campaign-terminal USDC outcome. The 30-distinct-day count gate is complete; it remains blocked until the corrected exact-lifecycle successor and every frozen chronological, side, Grade A/B, common-row, source-transport, true LOO, causal-clock, and late-panel denominator pass. A passing result is prediction evidence only.
 
 ### A1: Symmetric Fair-Center Shift
 

@@ -1,6 +1,6 @@
 # Path Conventions
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 Status: Current public path and privacy contract.
 
@@ -30,7 +30,15 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `${NARROWGATE_REMOTE_ROOT}` | Repository root on the current private live host; resolved from the ignored current-host pointer |
 | `${NARROWGATE_REMOTE_HOME}` | Home directory on a private remote host; resolved locally and never published literally |
 | `<current-live-host>` | Logical name for the current private live host; the public repository does not publish its address |
+| `<current-live-instance>` | Logical name for the current cloud instance; the public repository does not publish its instance ID |
+| `<current-live-ssh-target>` | Private SSH target resolved from the ignored current-host pointer; never a public endpoint |
+| `<current-live-eip-allocation>` | Logical current public-address allocation identity; never publish the allocation ID |
+| `<current-live-epoch>` | Mutable current-epoch locator in current-facing documents; inside a frozen dated contract it means the epoch current when that contract was frozen and must not be rebound |
 | `<retired-live-host>` | Logical name for a retired deployment epoch; it is not a reachable endpoint |
+| `<retired-reactivated-aws-host>` | Logical predecessor AWS host retired at the 2026-08-19 cutover |
+| `<retired-reactivated-aws-instance>` | Logical predecessor AWS instance; historical/control-plane cleanup identity only |
+| `<retired-reactivated-aws-epoch>` | Frozen source/runtime epoch of the 2026-08-11 through 2026-08-19 AWS deployment |
+| `<retired-reactivated-aws-archive>` | Verified owner-local retirement archive for that predecessor; not a public path |
 | `<tag>` | User-chosen experiment tag |
 | `<symbol>` | Lowercase symbol suffix, for example `btcusdc` |
 
@@ -49,7 +57,7 @@ export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
 
 Cross-project private runtime pointers remain under `docs/private/`. Component-local unpublished evidence is owned by the ignored `live/private/`, `data/private/`, `models/private/`, or `execution/private/` root defined in [Non-Research Private Evidence Owners](non_research_private_evidence_owners.md). Each concrete research unit also owns an ignored `private/` directory for its artifact catalog and owner-only research context; see [Public Research and Private Evidence Layout](../research/PRIVATE_EVIDENCE.md). None of these private surfaces is published, and a component-private root may not duplicate or override repository-wide current authority.
 
-The physical storage volume and current private-host locator are machine-local configuration, not public documentation. The default cache tier remains the internal disk. The governed cache-tier LRU may atomically migrate validated cache artifacts to the project `cache/` namespace while preserving their internal paths as verified symlinks. It fails closed when the configured storage root is absent; it does not silently choose another data source. See [the cache-tier contract](cache_tier_lru_governance_v1_20260808.md). Frozen evidence paths are resolved through the private locator without changing evidence bytes or identity.
+The physical storage volume and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the deployment that was current when that report became effective; it must not be dynamically rebound to today's host. Mutable current pointers may advance, while immutable event receipts retain their original host epoch. The default cache tier remains the internal disk. The governed cache-tier LRU may atomically migrate validated cache artifacts to the project `cache/` namespace while preserving their internal paths as verified symlinks. It fails closed when the configured storage root is absent; it does not silently choose another data source. See [the cache-tier contract](cache_tier_lru_governance_v1_20260808.md). Frozen evidence paths are resolved through the private locator without changing evidence bytes or identity.
 
 Repository package names do not identify data-storage roots. `data/` contains offline acquisition and normalization code. `live/orderbook/` contains the in-process execution-market book reconstructed from REST snapshot plus WebSocket diff depth. Actual market-data files belong only under `${NARROWGATE_DATA_ROOT}`. Tick replay and mechanics caches belong under `${NARROWGATE_CACHE_ROOT}`; `NARROWGATE_TICK_WINDOW_CACHE_DIR` may override the legacy tick-window subdirectory without changing the data root. `NARROWGATE_REPLAY_DAG_CACHE_DIR` may separately override the component cache; its default is `${NARROWGATE_CACHE_ROOT}/replay_dag`. An external override must remain below `${NARROWGATE_DATA_ROOT}/cache`, not a raw-data or evidence directory. Strategy-dependent order, queue, fill, inventory and campaign paths must never be shared through either cache root.
 
