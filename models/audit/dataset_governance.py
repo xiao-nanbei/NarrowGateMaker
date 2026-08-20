@@ -10,6 +10,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from data_paths import resolve_portable_path
+
 SCHEMA_VERSION = "narrowgate_experiment_dataset_binding.v1"
 CANONICAL_FULL_PATH_BASELINE = (
     "research/families/f10_live_replay_attribution/docs/"
@@ -21,6 +23,7 @@ FULL_PATH_CLASSES = {
 }
 EXPERIMENT_CLASSES = {
     "prediction",
+    "chronological_policy_learning",
     "daily_fresh_start_full_path_action",
     "strict_native_queue_action",
     "diagnostic",
@@ -58,7 +61,10 @@ def _project_root() -> Path:
 
 
 def _resolve_path(value: object, *, root: Path) -> Path:
-    path = Path(str(value)).expanduser()
+    try:
+        path = resolve_portable_path(str(value), root=root).expanduser()
+    except (RuntimeError, ValueError) as exc:
+        raise ValueError(f"dataset binding path is not portable: {value}") from exc
     return path if path.is_absolute() else (root / path).resolve()
 
 
@@ -66,6 +72,15 @@ def _mapping(value: object, *, name: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ValueError(f"{name} must be an object")
     return value
+
+
+def _nested_value(payload: Mapping[str, Any], field: str, *, name: str) -> object:
+    current: object = payload
+    for component in field.split("."):
+        if not isinstance(current, Mapping) or component not in current:
+            raise ValueError(f"{name} does not contain days_field={field!r}")
+        current = current[component]
+    return current
 
 
 def _days(value: object, *, name: str, allow_empty: bool = False) -> list[str]:
@@ -111,12 +126,48 @@ def _validate_universe(payload: Mapping[str, Any], *, root: Path) -> list[str]:
     if not expected_hash or sha256_file(path) != expected_hash:
         raise ValueError("universe manifest hash does not match")
 
+    try:
+        universe_payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("universe manifest is not valid JSON") from exc
+    universe_obj = _mapping(universe_payload, name="universe manifest root")
+    days_field = str(universe.get("days_field", "days"))
+    universe_days = _days(
+        _nested_value(universe_obj, days_field, name="universe manifest"),
+        name="universe manifest days",
+    )
+
     requirements = payload.get("required_capabilities")
     if not isinstance(requirements, list) or not requirements:
         raise ValueError("required_capabilities must be a non-empty list")
     if any(not str(item).strip() for item in requirements):
         raise ValueError("required_capabilities contains an empty capability")
-    return _days(payload.get("eligible_days"), name="eligible_days")
+    eligible_days = _days(payload.get("eligible_days"), name="eligible_days")
+    outside = sorted(set(eligible_days) - set(universe_days))
+    if outside:
+        raise ValueError(f"eligible_days are absent from the universe manifest: {outside}")
+    mode = str(universe.get("eligibility_mode", "exact"))
+    if mode not in {"exact", "capability_subset"}:
+        raise ValueError("universe_manifest.eligibility_mode is invalid")
+    missing = sorted(set(universe_days) - set(eligible_days))
+    if mode == "exact" and missing:
+        raise ValueError("exact universe binding does not include every universe day")
+    exclusions = payload.get("excluded_days", [])
+    if not isinstance(exclusions, list):
+        raise ValueError("excluded_days must be a list")
+    excluded_map: dict[str, list[object]] = {}
+    for index, row in enumerate(exclusions):
+        excluded = _mapping(row, name=f"excluded_days[{index}]")
+        day = str(excluded.get("day", ""))
+        reasons = excluded.get("reasons")
+        if not day or not isinstance(reasons, list) or not reasons:
+            raise ValueError("every excluded day requires at least one capability reason")
+        if day in excluded_map:
+            raise ValueError(f"excluded_days contains duplicate day {day}")
+        excluded_map[day] = reasons
+    if sorted(excluded_map) != missing:
+        raise ValueError("excluded_days do not match the universe-minus-eligible set")
+    return eligible_days
 
 
 def _validate_panels(payload: Mapping[str, Any], *, eligible_days: list[str]) -> list[str]:
@@ -160,7 +211,7 @@ def _validate_panels(payload: Mapping[str, Any], *, eligible_days: list[str]) ->
 
 def _validate_training_and_oof(
     payload: Mapping[str, Any], *, development_days: list[str]
-) -> None:
+) -> list[str]:
     training = _mapping(payload.get("training_window"), name="training_window")
     mode = str(training.get("mode", ""))
     if mode not in TRAINING_WINDOW_MODES:
@@ -189,7 +240,7 @@ def _validate_training_and_oof(
     if not enabled:
         if folds not in ([], None):
             raise ValueError("disabled OOF must not contain folds")
-        return
+        return []
     if str(oof.get("scope", "")) != "development_only":
         raise ValueError("OOF scope must be development_only")
     if not isinstance(folds, list) or not folds:
@@ -212,6 +263,39 @@ def _validate_training_and_oof(
         seen_test.update(test)
     if int(oof.get("test_day_count", -1)) != len(seen_test):
         raise ValueError("oof.test_day_count does not match the emitted fold dates")
+    return sorted(seen_test)
+
+
+def _validate_policy_learning_denominator(
+    payload: Mapping[str, Any], *, oof_test_days: list[str]
+) -> None:
+    if str(payload.get("experiment_class", "")) != "chronological_policy_learning":
+        return
+    if not oof_test_days:
+        raise ValueError("chronological policy learning requires outer OOF test days")
+    execution = _mapping(payload.get("execution_denominator"), name="execution_denominator")
+    if str(execution.get("role", "")) != "outer_oof_learning_algorithm":
+        raise ValueError("policy-learning execution denominator role drifted")
+    actual_days = _days(execution.get("days"), name="execution denominator days")
+    if actual_days != oof_test_days:
+        raise ValueError("policy-learning execution days must equal the outer OOF test days")
+    if bool(execution.get("claims_current_50_day_baseline", False)):
+        raise ValueError("policy-learning OOF cannot claim the current 50-day baseline")
+    if execution.get("future_canonical_50_day_confirmation_required") is not True:
+        raise ValueError("policy learning must retain the canonical 50-day confirmation gate")
+    if execution.get("one_shot_effect_aggregation_used") is not False:
+        raise ValueError("policy-learning economics cannot aggregate one-shot effects")
+    timing = _mapping(payload.get("binding_timing"), name="binding_timing")
+    if timing != {
+        "created_before_economic_execution": True,
+        "post_execution_remediation": False,
+    }:
+        raise ValueError("formal policy-learning binding was not frozen before economics")
+    permissions = _mapping(payload.get("permissions"), name="permissions")
+    if permissions.get("action_authorized") is not False:
+        raise ValueError("dataset binding cannot grant action authority")
+    if permissions.get("live_authorized") is not False:
+        raise ValueError("dataset binding cannot grant live authority")
 
 
 def _validate_full_path_denominator(payload: Mapping[str, Any], *, root: Path) -> None:
@@ -269,7 +353,11 @@ def validate_dataset_binding(
 
     eligible_days = _validate_universe(payload, root=root)
     development_days = _validate_panels(payload, eligible_days=eligible_days)
-    _validate_training_and_oof(payload, development_days=development_days)
+    oof_test_days = _validate_training_and_oof(
+        payload,
+        development_days=development_days,
+    )
+    _validate_policy_learning_denominator(payload, oof_test_days=oof_test_days)
     _validate_full_path_denominator(payload, root=root)
     return {
         "experiment_id": str(payload["experiment_id"]),
@@ -279,6 +367,34 @@ def validate_dataset_binding(
         "oof_test_day_count": int(payload["oof"].get("test_day_count", 0)),
         "valid": True,
     }
+
+
+def load_dataset_binding(
+    path: Path,
+    *,
+    expected_file_sha256: str | None = None,
+    expected_experiment_id: str | None = None,
+    project_root: Path | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load one hash-bound binding and run the complete governance validator."""
+
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise ValueError(f"dataset binding is missing: {resolved}")
+    if expected_file_sha256 is not None and sha256_file(resolved) != expected_file_sha256:
+        raise ValueError("dataset binding file hash does not match")
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("dataset binding is not valid JSON") from exc
+    binding = dict(_mapping(payload, name="dataset binding root"))
+    result = validate_dataset_binding(binding, project_root=project_root)
+    if (
+        expected_experiment_id is not None
+        and result["experiment_id"] != expected_experiment_id
+    ):
+        raise ValueError("dataset binding experiment identity does not match")
+    return binding, result
 
 
 def _cmd_validate(args: argparse.Namespace) -> None:

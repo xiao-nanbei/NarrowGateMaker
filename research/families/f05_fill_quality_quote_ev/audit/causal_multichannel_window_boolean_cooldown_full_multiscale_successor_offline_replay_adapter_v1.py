@@ -1363,7 +1363,7 @@ class DayReplayCache:
         self,
         key: DayReplayCacheKey,
         *,
-        state: Literal["queued", "running", "complete", "failed"],
+        state: Literal["queued", "dispatched", "running", "complete", "failed"],
         detail: str | None = None,
         counters: Mapping[str, int] | None = None,
     ) -> None:
@@ -1375,7 +1375,16 @@ class DayReplayCache:
                 prior = _read_json(path, label="day replay progress")
             except OfflineReplayAdapterError:
                 prior = {}
-        normalized_counters: dict[str, int] = {}
+        prior_counters = prior.get("counters")
+        normalized_counters: dict[str, int] = (
+            {
+                str(name): int(value)
+                for name, value in prior_counters.items()
+                if not isinstance(value, bool) and int(value) >= 0
+            }
+            if isinstance(prior_counters, Mapping)
+            else {}
+        )
         for name, value in dict(counters or {}).items():
             if isinstance(value, bool) or int(value) < 0:
                 raise OfflineReplayAdapterError("day replay progress counter is invalid")
@@ -1388,11 +1397,17 @@ class DayReplayCache:
             "detail": detail,
             "counters": dict(sorted(normalized_counters.items())),
             "queued_at_utc": prior.get("queued_at_utc", now),
+            "dispatched_at_utc": (
+                prior.get("dispatched_at_utc")
+                if state == "queued"
+                else (prior.get("dispatched_at_utc") or now)
+            ),
             "started_at_utc": (
                 prior.get("started_at_utc")
-                if state == "queued"
+                if state in {"queued", "dispatched"}
                 else (prior.get("started_at_utc") or now)
             ),
+            "worker_pid": os.getpid() if state == "running" else prior.get("worker_pid"),
             "updated_at_utc": now,
             "completed_at_utc": now if state in {"complete", "failed"} else None,
         }
@@ -4272,6 +4287,23 @@ def _execute_fixed_day_job(job: _DayReplayJob) -> _DayReplayJobResult:
             f"arbitrary replay/evaluator injection is forbidden: {list(forbidden)}"
         )
     _validate_fixed_bridge(job.payload.get("fixed_bridge"), context=f"{job.kind}:{job.utc_day}")
+    if job.kind in {"one_shot", "sequential"}:
+        cache_root = job.payload.get("cache_root")
+        if not isinstance(cache_root, str) or not cache_root.strip():
+            raise OfflineReplayAdapterError("day replay progress cache root is missing")
+        cache_counters = {
+            name: int(job.payload[name])
+            for name in (
+                "day_input_mmap_cache_hit",
+                "b0_control_cache_hit",
+            )
+            if name in job.payload
+        }
+        DayReplayCache(Path(cache_root)).write_progress(
+            job.cache_key,
+            state="running",
+            counters=cache_counters,
+        )
     if job.kind == "day_input_materialize":
         return _execute_day_input_materialization(job)
     if job.kind == "one_shot":
@@ -5247,9 +5279,22 @@ def _prepare_sequential_replay(
                 counters={"total_days": 1, "completed_days": 1},
             )
         if cached is not None:
+            options.cache.write_progress(
+                key,
+                state="complete",
+                detail="sequential_result_cache_hit",
+                counters={"sequential_result_cache_hit": 1},
+            )
             cached_frames.append(cached)
             continue
-        options.cache.write_progress(key, state="queued")
+        options.cache.write_progress(
+            key,
+            state="queued",
+            counters={
+                "sequential_result_cache_hit": 0,
+                "sequential_result_cache_miss": 1,
+            },
+        )
         jobs.append(
             _DayReplayJob(
                 kind="sequential",
@@ -5294,6 +5339,7 @@ def _build_bulk_b0_and_candidate_phases(
                     payload={
                         **dict(job.payload),
                         "b0_control_pre_materialized": True,
+                        "b0_control_cache_hit": int(existing is not None),
                     },
                 )
             )
@@ -5393,6 +5439,10 @@ def _bind_day_jobs_to_input_mmaps(
                 "day_input_mmap_binding": contracts[
                     _day_input_materialization_key(job, acceleration)
                 ].payload(),
+                "day_input_mmap_cache_hit": int(
+                    _day_input_materialization_key(job, acceleration)
+                    not in cold_representatives
+                ),
             },
         )
         for job in jobs
@@ -5431,12 +5481,18 @@ def _bind_bulk_day_input_mmaps(
 def _mark_prepared_jobs(
     prepared: Sequence[_PreparedSequentialReplay],
     *,
-    state: Literal["running", "failed"],
+    state: Literal["dispatched", "failed"],
     detail: str | None = None,
 ) -> None:
+    total_jobs = sum(len(item.jobs) for item in prepared)
     for item in prepared:
         for job in item.jobs:
-            item.options.cache.write_progress(job.cache_key, state=state, detail=detail)
+            item.options.cache.write_progress(
+                job.cache_key,
+                state=state,
+                detail=detail,
+                counters={"batch_total_jobs": total_jobs},
+            )
 
 
 def _admit_prepared_sequential_results(
@@ -6328,6 +6384,12 @@ class _CanonicalOfflineReplayAdapter:
                     },
                 )
             if cached is not None:
+                options.cache.write_progress(
+                    key,
+                    state="complete",
+                    detail="one_shot_result_cache_hit",
+                    counters={"one_shot_result_cache_hit": 1},
+                )
                 options.cache.register_one_shot_semantic(key, semantic_key)
                 collected_outcomes.append(cached[0])
                 collected_supported.append(cached[1])
@@ -6358,6 +6420,8 @@ class _CanonicalOfflineReplayAdapter:
                     state="complete",
                     detail="semantic_fold_reuse",
                     counters={
+                        "one_shot_result_cache_hit": 0,
+                        "one_shot_semantic_cache_hit": 1,
                         "total_opportunities": len(semantic_outcomes),
                         "completed_opportunities": len(semantic_outcomes),
                         "total_arms": int(semantic_outcomes.size),
@@ -6368,7 +6432,15 @@ class _CanonicalOfflineReplayAdapter:
                 collected_outcomes.append(semantic_outcomes)
                 collected_supported.append(semantic_supported)
                 continue
-            options.cache.write_progress(key, state="queued")
+            options.cache.write_progress(
+                key,
+                state="queued",
+                counters={
+                    "one_shot_result_cache_hit": 0,
+                    "one_shot_semantic_cache_hit": 0,
+                    "one_shot_result_cache_miss": 1,
+                },
+            )
             semantic_by_cache_key[key.cache_key_sha256] = semantic_key
             jobs.append(
                 _DayReplayJob(
@@ -6406,7 +6478,11 @@ class _CanonicalOfflineReplayAdapter:
                     )
                 )
                 for job in jobs:
-                    options.cache.write_progress(job.cache_key, state="running")
+                    options.cache.write_progress(
+                        job.cache_key,
+                        state="dispatched",
+                        counters={"batch_total_jobs": len(jobs)},
+                    )
                 results = run_global_one_shot_day_jobs(
                     jobs,
                     total_worker_tokens=self._global_worker_tokens,
@@ -6495,7 +6571,7 @@ class _CanonicalOfflineReplayAdapter:
             inherited_cache_keys=self._inherited_cache_keys,
         )
         if prepared.jobs:
-            _mark_prepared_jobs((prepared,), state="running")
+            _mark_prepared_jobs((prepared,), state="dispatched")
             try:
                 results = _run_day_jobs(
                     prepared.jobs,
@@ -6566,7 +6642,7 @@ class _CanonicalOfflineReplayAdapter:
                         raise OfflineReplayAdapterError(
                             "bulk B0 materialization did not admit every control"
                         )
-                _mark_prepared_jobs(prepared, state="running")
+                _mark_prepared_jobs(prepared, state="dispatched")
                 results = run_global_policy_day_jobs(
                     candidate_jobs,
                     total_worker_tokens=total_worker_tokens,

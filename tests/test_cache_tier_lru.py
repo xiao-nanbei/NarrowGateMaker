@@ -132,6 +132,61 @@ def test_referenced_and_frozen_may_migrate_but_unknown_needs_explicit_permission
     ]
 
 
+def test_unknown_migration_is_disabled_by_default(tmp_path: Path) -> None:
+    config = CacheTierConfig(
+        hot_root=tmp_path / "hot",
+        cold_root=tmp_path / "cold",
+        ledger_path=tmp_path / "hot" / ".cache_tier_lru" / "access.sqlite3",
+    )
+
+    assert config.allow_unknown_migration is False
+
+
+def test_active_manifest_protects_overlapping_cache_and_invalidates_plan(
+    tmp_path: Path,
+) -> None:
+    config = _config(
+        tmp_path,
+        reserve=100,
+        target=150,
+        allow_unknown_migration=False,
+    )
+    _artifact(config.hot_root, "replay_dag/active/run", content=b"a" * 100, mtime_ns=1)
+    _artifact(config.hot_root, "window_cache/eligible", content=b"e" * 100, mtime_ns=2)
+    scan_cache_tiers(
+        config,
+        reference_classes={
+            "replay_dag/active": "referenced",
+            "window_cache/eligible": "referenced",
+        },
+    )
+    manifest = cache_lru.write_active_cache_manifest(
+        config,
+        run_id="formal-v24",
+        protected_paths=["replay_dag/active/run"],
+        ttl_s=3600,
+        identity_sha256="a" * 64,
+    )
+
+    plan = _migration_plan(config)
+
+    assert [row["relative_path"] for row in plan["migrations"]] == [
+        "window_cache/eligible"
+    ]
+    assert plan["active_cache_protection"]["protected_relative_paths"] == [
+        "replay_dag/active/run"
+    ]
+    assert any(
+        row["relative_path"] == "replay_dag/active"
+        and row["reason"] == "active_manifest_protection"
+        for row in plan["migration_exclusions"]
+    )
+    validate_plan(plan, config)
+    cache_lru.remove_active_cache_manifest(config, manifest)
+    with pytest.raises(CacheTierValidationError, match="active-cache protection drift"):
+        validate_plan(plan, config)
+
+
 def test_apply_is_dry_run_by_default_and_requires_operation_owner_token(
     tmp_path: Path,
 ) -> None:

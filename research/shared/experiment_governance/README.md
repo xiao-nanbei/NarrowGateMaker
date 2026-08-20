@@ -1,6 +1,6 @@
 # G: Experiment Governance
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-17
 
 Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
 
@@ -9,6 +9,8 @@ The exact v1 and v2 research-layout migration snapshots are owned by this govern
 Canonical code remains at `models/audit/experiment_manifest.py`, `models/audit/evidence_split.py`, `models/audit/experiment_scorecard.py`, and `models/audit/panel_promotion_controller.py`.
 
 Dataset selection for new experiments is governed by [`unified_data_universe_and_split_contract_v1`](docs/unified_data_universe_and_split_contract_v1_20260812.md) and `models/audit/dataset_governance.py`. The project has one append-only daily capability universe, while each experiment derives its source-compatible denominator and chronological evidence split from explicit requirements. New full-path action studies use the canonical 50-day execution denominator unless they register a capability-driven reduced-support identity.
+
+Long-task scheduling and observable progress are governed by [`execution_worker_and_progress_contract_v1`](docs/execution_worker_and_progress_contract_v1_20260817.md) and `models/audit/execution_governance.py`. A host-wide token lease prevents independently launched research jobs from jointly oversubscribing the machine, nested governed pools fail closed, and atomic receipts distinguish queued, dispatched, and genuinely running work while reporting cache use and evidence-based ETA.
 
 Research continuation after a frozen gate is governed by [`dual_path_research_progression_contract_v1`](docs/dual_path_research_progression_contract_v1.md) and `models/audit/research_progression.py`. Hard-gate evidence remains immutable; an explicit owner path may continue and can ultimately reach live only under the separately labeled `owner_risk_accepted_promotion` route.
 

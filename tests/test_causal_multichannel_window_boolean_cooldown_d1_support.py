@@ -11,6 +11,9 @@ import pytest
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_d1_support as audit,
 )
+from research.families.f10_live_replay_attribution.audit import (
+    current_live_held_ber_replay_baseline_50d as baseline50,
+)
 
 
 def _sha(path: Path) -> str:
@@ -224,6 +227,11 @@ def _fixture(tmp_path: Path) -> tuple[audit.AuditPaths, str, str]:
             }
         },
     )
+    binding_root = tmp_path / "dataset-binding"
+    dataset_binding = baseline50._ensure_dataset_binding(
+        binding_root,
+        baseline50._spec(),
+    )
     paths = audit.AuditPaths(
         v2_spec=v2_spec,
         panel_spec=panel_spec,
@@ -235,6 +243,7 @@ def _fixture(tmp_path: Path) -> tuple[audit.AuditPaths, str, str]:
         model_bundle_meta=model_meta,
         prefix_overlay_panel=prefix_panel,
         panel_execution_plan=execution_plan,
+        dataset_binding=Path(dataset_binding["path"]),
     )
     return paths, _sha(v2_spec), panel_sha
 

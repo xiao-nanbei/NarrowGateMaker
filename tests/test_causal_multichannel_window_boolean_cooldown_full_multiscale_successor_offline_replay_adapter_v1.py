@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
@@ -196,6 +197,28 @@ def _mechanics(*, include_m2: bool = True) -> backend.OutcomeBlindMechanics:
         file_sha256={},
         mechanics_receipt_sha256="9" * 64,
     )
+
+
+@pytest.fixture
+def _frozen_duration_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Mapping[str, Any]:
+    binding = {
+        "schema_version": f"{adapter_module.IDENTITY}.duration_action_contract.v1",
+        "source_identity": "frozen-test-duration-actions.v1",
+        "source_sha256": SHA_A,
+        "duration_action_universe_sha256": SHA_B,
+        "actions": {},
+        "historical_operational_baseline_read": False,
+        "historical_execution_plan_read": False,
+        "economic_outcomes_read": False,
+    }
+    monkeypatch.setattr(
+        adapter_module,
+        "_load_frozen_duration_action_contract",
+        lambda: (binding, {}),
+    )
+    return binding
 
 
 def _label_request(
@@ -541,7 +564,9 @@ def test_one_day_exact_owner_targets_only_the_row_wise_owner_arm() -> None:
     )
 
 
-def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api() -> None:
+def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api(
+    _frozen_duration_contract: Mapping[str, Any],
+) -> None:
     adapter = adapter_module.build_canonical_replay_adapter()
 
     result = adapter.preflight_formal_economics(_mechanics())
@@ -562,6 +587,7 @@ def test_formal_preflight_reports_missing_admitted_replay_inputs_not_fixed_api()
 
 def test_formal_preflight_returns_backend_mechanics_ready_status(
     monkeypatch: pytest.MonkeyPatch,
+    _frozen_duration_contract: Mapping[str, Any],
 ) -> None:
     rows = _common_replay_inputs(("sell-row",), side="SELL")
     mechanics = replace(_mechanics(), replay_inputs=rows)
@@ -1220,6 +1246,46 @@ def test_atomic_day_cache_round_trip_and_progress_receipt(tmp_path: Path) -> Non
     assert progress["receipt_sha256"] == adapter_module._document_sha256(
         progress, "receipt_sha256"
     )
+
+
+def test_progress_distinguishes_dispatch_from_worker_start_and_preserves_cache_counters(
+    tmp_path: Path,
+) -> None:
+    cache = adapter_module.DayReplayCache(tmp_path / "cache")
+    key = _cache_key()
+    cache.write_progress(
+        key,
+        state="queued",
+        counters={"sequential_result_cache_miss": 1},
+    )
+    cache.write_progress(
+        key,
+        state="dispatched",
+        counters={"batch_total_jobs": 7},
+    )
+    path = tmp_path / "cache" / "progress" / f"{key.cache_key_sha256}.json"
+    dispatched = json.loads(path.read_text())
+
+    assert dispatched["state"] == "dispatched"
+    assert dispatched["started_at_utc"] is None
+    assert dispatched["worker_pid"] is None
+
+    cache.write_progress(
+        key,
+        state="running",
+        counters={"day_input_mmap_cache_hit": 1, "b0_control_cache_hit": 0},
+    )
+    cache.write_progress(key, state="complete")
+    completed = json.loads(path.read_text())
+
+    assert completed["started_at_utc"] is not None
+    assert completed["worker_pid"] == os.getpid()
+    assert completed["counters"] == {
+        "b0_control_cache_hit": 0,
+        "batch_total_jobs": 7,
+        "day_input_mmap_cache_hit": 1,
+        "sequential_result_cache_miss": 1,
+    }
 
 
 def test_shared_prefix_day_audit_accepts_mixed_resume_and_new_work() -> None:

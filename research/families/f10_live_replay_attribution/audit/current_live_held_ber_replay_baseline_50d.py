@@ -22,6 +22,7 @@ import pandas as pd
 from data_paths import data_root, external_cache_root, resolve_portable_path
 from models import backtest_tick as bt
 from models import data_windows
+from models.audit import dataset_governance
 from research.families.f03_causal_13_head.audit import (
     causal_v12_1s_native_40day_full_path_ml_ab as native_runner,
 )
@@ -54,6 +55,8 @@ MODE_CPP = "cpp_screen"
 MODE_PARITY = "python_cpp_parity"
 DAY_SUCCESS = "_SUCCESS"
 FINAL_SUCCESS = "_PANEL_SUCCESS"
+DATASET_UNIVERSE_NAME = "dataset-universe.json"
+DATASET_BINDING_NAME = "dataset-binding.json"
 ACCOUNTING_TOLERANCE = 1e-6
 REPLAY_TOLERANCE = 1e-9
 
@@ -148,6 +151,114 @@ def ordered_days(spec: Mapping[str, Any]) -> list[str]:
         *list(spec["immutable_prefix"]["ordered_utc_days"]),
         *list(spec["added_panel"]["ordered_utc_days"]),
     ]
+
+
+def _ensure_dataset_binding(
+    cache_root: Path,
+    spec: Mapping[str, Any],
+) -> dict[str, str]:
+    """Create the governance envelope for future executions without rewriting history."""
+
+    cache_root = cache_root.expanduser().resolve()
+    days = ordered_days(spec)
+    canonical_identity, canonical_days = dataset_governance.canonical_full_path_days(
+        root=ROOT
+    )
+    if canonical_identity != IDENTITY or days != canonical_days:
+        raise Baseline50Error("canonical dataset-governance denominator drifted")
+    universe_path = cache_root / DATASET_UNIVERSE_NAME
+    universe = {
+        "schema_version": f"{IDENTITY}.dataset_universe.v1",
+        "identity": f"{IDENTITY}.dataset_universe",
+        "days": days,
+        "source_spec": {
+            "path": str(SPEC.relative_to(ROOT)),
+            "sha256": _sha256_file(SPEC),
+        },
+        "historical_result_pre_execution_binding_claimed": False,
+    }
+    if universe_path.exists():
+        if _load_json(universe_path, role="50-day dataset universe") != universe:
+            raise Baseline50Error("50-day dataset universe drifted")
+    else:
+        _atomic_json(universe_path, universe)
+
+    binding_path = cache_root / DATASET_BINDING_NAME
+    binding = {
+        "schema_version": dataset_governance.SCHEMA_VERSION,
+        "experiment_id": IDENTITY,
+        "experiment_class": "daily_fresh_start_full_path_action",
+        "universe_manifest": {
+            "path": str(universe_path),
+            "sha256": _sha256_file(universe_path),
+            "days_field": "days",
+            "eligibility_mode": "exact",
+        },
+        "required_capabilities": [
+            "individual_trades",
+            "normalized_bbo_l2_top20_100ms",
+            "causal_v12_10s_overlay",
+        ],
+        "eligible_days": days,
+        "excluded_days": [],
+        "evidence": {
+            "panels": {
+                "development": {"days": days, "status": "consumed"},
+                "embargo_1": {"days": [], "status": "not_allocated"},
+                "validation": {"days": [], "status": "not_allocated"},
+                "embargo_2": {"days": [], "status": "not_allocated"},
+                "sealed_holdout": {"days": [], "status": "not_allocated"},
+            }
+        },
+        "training_window": {
+            "mode": "not_applicable",
+            "cutoff_basis": "not_applicable",
+            "source_authorities": [
+                "native_derived_normalized_l2",
+                "causal_v12_feature_overlay",
+            ],
+            "source_pooling": "source_stratified",
+        },
+        "oof": {
+            "enabled": False,
+            "scope": "development_only",
+            "test_day_count": 0,
+            "folds": [],
+        },
+        "execution_denominator": {
+            "identity": IDENTITY,
+            "days": days,
+            "reduced_support": False,
+            "claims_current_50_day_baseline": True,
+            "report_prefix40_added10_pooled50": True,
+        },
+        "binding_scope": "future_reexecution_governance_only",
+        "historical_result_pre_execution_binding_claimed": False,
+        "permissions": {
+            "action_authorized": False,
+            "live_authorized": False,
+        },
+    }
+    if binding_path.exists():
+        if _load_json(binding_path, role="50-day dataset binding") != binding:
+            raise Baseline50Error("50-day dataset binding drifted")
+    else:
+        _atomic_json(binding_path, binding)
+    try:
+        dataset_governance.load_dataset_binding(
+            binding_path,
+            expected_file_sha256=_sha256_file(binding_path),
+            expected_experiment_id=IDENTITY,
+            project_root=ROOT,
+        )
+    except ValueError as exc:
+        raise Baseline50Error("50-day dataset binding is invalid") from exc
+    return {
+        "path": str(binding_path),
+        "sha256": _sha256_file(binding_path),
+        "universe_path": str(universe_path),
+        "universe_sha256": _sha256_file(universe_path),
+    }
 
 
 def _resolve_repo_path(value: str) -> Path:
@@ -355,6 +466,7 @@ def _write_overlay(
 
 def prepare(cache_root: Path = DEFAULT_CACHE) -> dict[str, Any]:
     spec = _spec()
+    _ensure_dataset_binding(cache_root, spec)
     plan_path = cache_root / "execution-plan.json"
     marker_path = cache_root / "_PLAN_SUCCESS"
     if plan_path.exists() or marker_path.exists():
@@ -706,6 +818,7 @@ def execute_day(
     spec = _spec()
     if day not in ordered_days(spec):
         raise Baseline50Error(f"day is outside the frozen 50-day panel: {day}")
+    dataset_binding = _ensure_dataset_binding(cache_root, spec)
     prefix = _prefix_plan(spec)
     prepared = _load_prepared_plan(cache_root)
     window, ml_data, binding = _load_day_inputs(
@@ -744,6 +857,7 @@ def execute_day(
             "mode": mode,
             "day": day,
             "spec_sha256": _sha256_file(SPEC),
+            "dataset_binding": dataset_binding,
             "input_binding": binding,
             "summary": {
                 "path": str(final / "summary.json"),
@@ -853,6 +967,7 @@ def finalize(
     output: Path = DEFAULT_OUTPUT,
 ) -> dict[str, Any]:
     spec = _spec()
+    dataset_binding = _ensure_dataset_binding(cache_root, spec)
     days = ordered_days(spec)
     prefix_days = list(spec["immutable_prefix"]["ordered_utc_days"])
     added_days = list(spec["added_panel"]["ordered_utc_days"])
@@ -978,6 +1093,7 @@ def finalize(
             "path": str(cache_root / "execution-plan.json"),
             "sha256": _sha256_file(cache_root / "execution-plan.json"),
         },
+        "dataset_binding": dataset_binding,
         "report": {"path": str(report_path), "sha256": _sha256_file(report_path)},
         "daily": {"path": str(daily_path), "sha256": _sha256_file(daily_path)},
         "campaigns": {"path": str(campaigns_path), "sha256": _sha256_file(campaigns_path)},
@@ -1018,7 +1134,8 @@ def status(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("preflight")
+    preflight_parser = sub.add_parser("preflight")
+    preflight_parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE)
     prepare_parser = sub.add_parser("prepare")
     prepare_parser.add_argument("--cache-root", type=Path, default=DEFAULT_CACHE)
     run_parser = sub.add_parser("run")
@@ -1042,11 +1159,13 @@ def main() -> int:
         _prefix_plan(spec)
         _added_window_rows(spec)
         _feature_receipts(spec)
+        dataset_binding = _ensure_dataset_binding(args.cache_root, spec)
         payload = {
             "identity": IDENTITY,
             "days": len(ordered_days(spec)),
             "prefix_days": 40,
             "added_days": 10,
+            "dataset_binding": dataset_binding,
             "passed": True,
         }
     elif args.command == "prepare":

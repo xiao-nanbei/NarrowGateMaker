@@ -1,6 +1,6 @@
 # Cache Tier LRU Governance v1
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-17
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -25,6 +25,8 @@ The hot path remains stable after migration. A migrated artifact is replaced by 
 4. Referenced and frozen cache may move because the stable hot path is preserved. Reference class never grants deletion authority.
 5. Cold deletion is limited to `unreferenced` artifacts created by this LRU. The artifact must have lived in cold storage for at least 180 days and must have no observed access during that interval. A later access restarts the inactivity interval.
 6. Pre-existing `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` cache, unknown-reference cache, and transaction recovery remnants are never granted deletion authority automatically.
+7. Unknown-reference cache is not migration-eligible by default. An operator must pass the explicit unknown-migration permission for a specific frozen plan; a library caller receives the same fail-closed default.
+8. A running long task publishes a TTL-bound active-cache manifest below the hot-tier state directory. A protected path, its managed ancestor, and its descendants are excluded from both migration and deletion. The frozen plan records the active semantic protection set, and execution fails if that set changes before application.
 
 Accesses to nested day/hour artifacts are charged to the narrowest already managed ancestor. This keeps the LRU observation boundary identical to the migration boundary and prevents parent/child rows from competing in one plan.
 

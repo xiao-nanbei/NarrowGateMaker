@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import Any
 
 from data_paths import resolve_portable_path
+from models import cache_tier_lru
+from models.audit import dataset_governance, execution_governance
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_mechanics_v1 as mechanics,
 )
@@ -42,12 +44,19 @@ CANONICAL_BACKEND_MODULE = (
 )
 CANONICAL_BACKEND_FUNCTION = "run_canonical_offline_economics"
 FORMAL_RESULT_SCHEMA = f"{IDENTITY}.formal_result.v1"
+DATASET_BINDING_NAME = "formal_dataset_binding.json"
 EXECUTOR_ACCELERATION_IDENTITY = "f05_full_multiscale_offline_replay_executor_cpp_one_shot_v6"
 EXECUTOR_DAY_INPUT_CACHE_IDENTITY = "f05_full_multiscale_offline_replay_executor_acceleration_v2"
 EXECUTOR_DAY_INPUT_CACHE_ROOT = (
     "${NARROWGATE_DATA_ROOT}/cache/replay_dag/f05_full_multiscale_offline_day_input_mmap_v2"
 )
+EXECUTOR_SEQUENTIAL_CACHE_ROOT = (
+    "${NARROWGATE_DATA_ROOT}/cache/replay_dag/"
+    "f05_full_multiscale_successor_offline_sequential_replay_cache_v2"
+)
+EXECUTOR_ACTIVE_CACHE_TTL_S = 14 * 24 * 60 * 60
 EXECUTOR_GLOBAL_WORKER_TOKENS = 10
+EXECUTOR_WORKER_GOVERNOR_ROOT = "${NARROWGATE_CACHE_ROOT}/execution_governor_v1"
 EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS = 2
 EXECUTOR_ONE_SHOT_TOPOLOGY = {
     "total_worker_tokens": 10,
@@ -234,6 +243,13 @@ def formal_executor_contract() -> dict[str, Any]:
         },
         "global_worker_tokens": EXECUTOR_GLOBAL_WORKER_TOKENS,
         "nested_worker_pools_allowed": False,
+        "host_worker_governor": {
+            "identity": execution_governance.WORKER_GOVERNOR_IDENTITY,
+            "root": EXECUTOR_WORKER_GOVERNOR_ROOT,
+            "capacity": EXECUTOR_GLOBAL_WORKER_TOKENS,
+            "requested_tokens": EXECUTOR_GLOBAL_WORKER_TOKENS,
+            "nested_governed_pool_allowed": False,
+        },
         "one_shot_process_topology": dict(EXECUTOR_ONE_SHOT_TOPOLOGY),
         "day_input_materialization_workers": (EXECUTOR_DAY_INPUT_MATERIALIZATION_WORKERS),
         "day_input_mmap": {
@@ -1187,6 +1203,100 @@ def _binding(path: Path, *, repository_root: Path) -> dict[str, Any]:
     }
 
 
+def _build_dataset_binding(
+    *,
+    source_path: Path,
+    source: Mapping[str, Any],
+    nested_folds: Mapping[str, Any],
+    repository_root: Path,
+) -> dict[str, Any]:
+    """Derive the mandatory dataset binding from admitted, outcome-blind inputs."""
+
+    selected_days = list(source.get("selected_days") or ())
+    outer_folds = nested_folds.get("outer_folds")
+    if not isinstance(outer_folds, list) or not outer_folds:
+        raise OfflineOrchestratorError("dataset binding lacks outer chronological folds")
+    folds: list[dict[str, list[str]]] = []
+    test_days: set[str] = set()
+    for index, raw_fold in enumerate(outer_folds):
+        if not isinstance(raw_fold, Mapping):
+            raise OfflineOrchestratorError(f"dataset binding outer fold {index} is invalid")
+        train = [str(day) for day in raw_fold.get("train_days") or ()]
+        test = [str(day) for day in raw_fold.get("test_days") or ()]
+        folds.append({"train_days": train, "test_days": test})
+        test_days.update(test)
+    binding: dict[str, Any] = {
+        "schema_version": dataset_governance.SCHEMA_VERSION,
+        "experiment_id": IDENTITY,
+        "experiment_class": "chronological_policy_learning",
+        "universe_manifest": {
+            # This receipt is owner-private execution evidence. The enclosing
+            # formal manifest remains portable and hash-binds these bytes.
+            "path": str(source_path.expanduser().resolve()),
+            "sha256": _file_sha256(source_path),
+            "days_field": "selected_days",
+            "eligibility_mode": "exact",
+        },
+        "required_capabilities": [
+            "individual_trades",
+            "native_normalized_bbo_100ms",
+            "native_normalized_l2_top20_100ms",
+            "causal_v12_prediction_overlay",
+            "previous_natural_day_warmup",
+            "d_plus_1_common_washout",
+            "modeled_queue_same_millisecond_ambiguity_censoring",
+        ],
+        "eligible_days": selected_days,
+        "excluded_days": [],
+        "evidence": {
+            "panels": {
+                "development": {"days": selected_days, "status": "open"},
+                "embargo_1": {"days": [], "status": "not_allocated"},
+                "validation": {"days": [], "status": "not_allocated"},
+                "embargo_2": {"days": [], "status": "not_allocated"},
+                "sealed_holdout": {"days": [], "status": "not_allocated"},
+            }
+        },
+        "training_window": {
+            "mode": "expanding_all_eligible_pre_cutoff",
+            "cutoff_basis": "evidence_panel_boundary",
+            "source_authorities": [mechanics.SOURCE_AUTHORITY],
+            "source_pooling": "single_authority",
+        },
+        "oof": {
+            "enabled": True,
+            "scope": "development_only",
+            "test_day_count": len(test_days),
+            "folds": folds,
+        },
+        "execution_denominator": {
+            "role": "outer_oof_learning_algorithm",
+            "days": sorted(test_days),
+            "claims_current_50_day_baseline": False,
+            "future_canonical_50_day_confirmation_required": True,
+            "one_shot_effect_aggregation_used": False,
+        },
+        "binding_timing": {
+            "created_before_economic_execution": True,
+            "post_execution_remediation": False,
+        },
+        "permissions": {
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "action_authorized": False,
+            "live_authorized": False,
+        },
+    }
+    try:
+        dataset_governance.validate_dataset_binding(
+            binding,
+            project_root=repository_root,
+        )
+    except ValueError as exc:
+        raise OfflineOrchestratorError("derived dataset binding failed governance") from exc
+    return binding
+
+
 def _git(*args: str, root: Path) -> str:
     try:
         result = subprocess.run(
@@ -1232,6 +1342,8 @@ class FormalOfflineBundle:
     source_manifest: Mapping[str, Any]
     panel_manifest_path: Path
     panel_manifest: Mapping[str, Any]
+    dataset_binding_path: Path
+    dataset_binding: Mapping[str, Any]
     panel_files: Mapping[str, Path]
     repository_root: Path
 
@@ -1244,6 +1356,8 @@ def _new_formal_offline_bundle(
     source_manifest: Mapping[str, Any],
     panel_manifest_path: Path,
     panel_manifest: Mapping[str, Any],
+    dataset_binding_path: Path,
+    dataset_binding: Mapping[str, Any],
     panel_files: Mapping[str, Path],
     repository_root: Path,
 ) -> FormalOfflineBundle:
@@ -1257,6 +1371,8 @@ def _new_formal_offline_bundle(
         "source_manifest": source_manifest,
         "panel_manifest_path": panel_manifest_path,
         "panel_manifest": panel_manifest,
+        "dataset_binding_path": dataset_binding_path,
+        "dataset_binding": dataset_binding,
         "panel_files": panel_files,
         "repository_root": repository_root,
     }
@@ -1695,6 +1811,34 @@ def _load_formal_offline_bundle(
         "nested_fold_manifest_sha256"
     ):
         raise OfflineOrchestratorError("formal nested-fold SHA256 drifted")
+    dataset_binding_path = _resolve_bound_file(
+        manifest.get("dataset_binding") or {},
+        label="formal dataset binding",
+        repository_root=repository_root,
+    )
+    try:
+        dataset_binding, _ = dataset_governance.load_dataset_binding(
+            dataset_binding_path,
+            expected_file_sha256=str(manifest["dataset_binding"]["sha256"]),
+            expected_experiment_id=IDENTITY,
+            project_root=repository_root,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OfflineOrchestratorError("formal dataset binding failed closed") from exc
+    expected_oof_folds = [
+        {
+            "train_days": list(fold["train_days"]),
+            "test_days": list(fold["test_days"]),
+        }
+        for fold in expected_nested_folds["outer_folds"]
+    ]
+    if (
+        dataset_binding.get("eligible_days") != list(source.get("selected_days") or ())
+        or (dataset_binding.get("oof") or {}).get("folds") != expected_oof_folds
+        or (dataset_binding.get("universe_manifest") or {}).get("sha256")
+        != _file_sha256(source_path)
+    ):
+        raise OfflineOrchestratorError("formal dataset binding drifted from source/folds")
     if require_clean_tag:
         _validate_clean_annotated_tag(
             repository_root=repository_root,
@@ -1717,6 +1861,8 @@ def _load_formal_offline_bundle(
         source_manifest=source,
         panel_manifest_path=panel_path,
         panel_manifest=panel,
+        dataset_binding_path=dataset_binding_path,
+        dataset_binding=dataset_binding,
         panel_files=panel_files,
         repository_root=repository_root,
     )
@@ -1811,6 +1957,11 @@ def bind_formal_execution_manifest(
         raise OfflineOrchestratorError(
             f"immutable formal execution manifest already exists: {destination}"
         )
+    dataset_binding_path = destination.parent / DATASET_BINDING_NAME
+    if dataset_binding_path.exists():
+        raise OfflineOrchestratorError(
+            f"immutable formal dataset binding already exists: {dataset_binding_path}"
+        )
     commit_sha = _git("rev-parse", "HEAD", root=root)
     _validate_clean_annotated_tag(
         repository_root=root,
@@ -1852,6 +2003,13 @@ def bind_formal_execution_manifest(
         raise OfflineOrchestratorError(
             "canonical source admission cannot freeze the complete 4x3 fold contract"
         ) from exc
+    dataset_binding = _build_dataset_binding(
+        source_path=source_path,
+        source=source,
+        nested_folds=nested_folds,
+        repository_root=root,
+    )
+    _atomic_json(dataset_binding_path, dataset_binding)
     manifest: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "identity": IDENTITY,
@@ -1861,6 +2019,7 @@ def bind_formal_execution_manifest(
         "annotated_tag": annotated_tag,
         "source_manifest": _binding(source_path, repository_root=root),
         "panel_manifest": _binding(panel_path, repository_root=root),
+        "dataset_binding": _binding(dataset_binding_path, repository_root=root),
         "fold_manifest_sha256": folds["fold_manifest_sha256"],
         "nested_fold_manifest": nested_folds,
         "nested_fold_manifest_sha256": nested_folds["nested_fold_manifest_sha256"],
@@ -1901,6 +2060,7 @@ def bind_formal_execution_manifest(
         load_formal_offline_bundle_for_cpp_qualification(destination)
     except Exception:
         destination.unlink(missing_ok=True)
+        dataset_binding_path.unlink(missing_ok=True)
         raise
     return manifest
 
@@ -1922,7 +2082,40 @@ def run_formal_offline_economics(
     runner = getattr(backend, CANONICAL_BACKEND_FUNCTION, None)
     if not callable(runner):
         raise OfflineOrchestratorError("canonical backend function is unavailable")
-    result = runner(execution_manifest_path)
+    cache_config = cache_tier_lru.CacheTierConfig.from_environment()
+    protected_paths = [
+        resolve_portable_path(EXECUTOR_DAY_INPUT_CACHE_ROOT, root=bundle.repository_root),
+        resolve_portable_path(EXECUTOR_SEQUENTIAL_CACHE_ROOT, root=bundle.repository_root),
+    ]
+    governor_root = resolve_portable_path(
+        EXECUTOR_WORKER_GOVERNOR_ROOT,
+        root=bundle.repository_root,
+    )
+    execution_sha256 = str(
+        bundle.execution_manifest["canonical_execution_manifest_sha256"]
+    )
+    run_id = f"f05-formal-{execution_sha256[:16]}"
+    execution_governance.validate_worker_topology(
+        total_worker_tokens=EXECUTOR_GLOBAL_WORKER_TOKENS,
+        outer_pool_workers=EXECUTOR_GLOBAL_WORKER_TOKENS,
+        nested_pool_workers=0,
+    )
+    with execution_governance.worker_lease(
+        run_id=run_id,
+        execution_identity=EXECUTOR_ACCELERATION_IDENTITY,
+        requested_tokens=EXECUTOR_GLOBAL_WORKER_TOKENS,
+        capacity=EXECUTOR_GLOBAL_WORKER_TOKENS,
+        root=governor_root,
+    ) as lease:
+        with cache_tier_lru.active_cache_manifest(
+            cache_config,
+            run_id=run_id,
+            protected_paths=protected_paths,
+            ttl_s=EXECUTOR_ACTIVE_CACHE_TTL_S,
+            identity_sha256=execution_sha256,
+        ):
+            result = runner(execution_manifest_path)
+    lease_receipt = dict(lease.receipt)
     if not isinstance(result, Mapping):
         raise OfflineOrchestratorError("canonical backend did not return a result manifest")
     if result.get("schema_version") != FORMAL_RESULT_SCHEMA:
@@ -1942,6 +2135,14 @@ def run_formal_offline_economics(
         raise OfflineOrchestratorError("formal result read a forbidden evidence split")
     output = output_dir.expanduser().resolve()
     payload = dict(result)
+    payload["host_worker_governor"] = {
+        "identity": execution_governance.WORKER_GOVERNOR_IDENTITY,
+        "lease_id": lease.lease_id,
+        "lease_receipt_sha256": lease_receipt["receipt_sha256"],
+        "lease_state": lease_receipt["state"],
+        "capacity": lease.capacity,
+        "requested_tokens": lease.requested_tokens,
+    }
     payload["canonical_result_sha256"] = _document_sha256(payload, "canonical_result_sha256")
     _atomic_json(output / "formal_result.json", payload)
     return payload

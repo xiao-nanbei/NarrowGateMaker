@@ -21,10 +21,14 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from data_paths import data_root, marketdata_root
+from data_paths import data_root, external_cache_root, marketdata_root
+from models.audit import dataset_governance
 
 IDENTITY = "causal_multichannel_window_boolean_cooldown_duration_v2"
 SCHEMA_VERSION = f"{IDENTITY}.d_minus_1_d_d_plus_1_support_audit.v1"
+CANONICAL_50D_EXPERIMENT_ID = (
+    "btc_usdc_current_live_held_ber_replay_baseline_50d_20260810"
+)
 SYMBOL = "BTCUSDC"
 EXCHANGE = "binance_futures"
 EXPECTED_V2_SPEC_SHA256 = (
@@ -32,24 +36,6 @@ EXPECTED_V2_SPEC_SHA256 = (
 )
 EXPECTED_PANEL_SPEC_SHA256 = (
     "98762d1000ff27aa6bbc72e3e219c6a73abf49da4bdd6f95f0f1679ec04a4abb"
-)
-
-PREFIX40 = (
-    "2026-04-17", "2026-04-18", "2026-04-19", "2026-04-20",
-    "2026-04-22", "2026-04-23", "2026-05-01", "2026-05-02",
-    "2026-05-03", "2026-05-04", "2026-05-05", "2026-05-06",
-    "2026-05-13", "2026-05-29", "2026-05-30", "2026-05-31",
-    "2026-06-02", "2026-06-03", "2026-06-05", "2026-06-06",
-    "2026-06-07", "2026-06-08", "2026-06-09", "2026-06-10",
-    "2026-06-11", "2026-06-12", "2026-06-13", "2026-06-14",
-    "2026-06-15", "2026-06-16", "2026-06-17", "2026-06-18",
-    "2026-06-19", "2026-06-20", "2026-06-21", "2026-06-22",
-    "2026-06-23", "2026-06-24", "2026-06-25", "2026-06-26",
-)
-ADDED10 = (
-    "2026-06-29", "2026-07-03", "2026-07-04", "2026-07-05",
-    "2026-07-06", "2026-07-07", "2026-07-08", "2026-07-09",
-    "2026-07-10", "2026-07-16",
 )
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -70,9 +56,22 @@ DEFAULT_PREFIX_OVERLAY_PANEL = DATA_ROOT / (
     "cache/f03_v9_10s_control_overlay_repair_v1/"
     "control_overlay_panel_admission_v1_1/panel-manifest.json"
 )
-DEFAULT_50D_PLAN = DATA_ROOT / (
-    "cache/current_live_held_ber_baseline_50d_20260810/execution-plan.json"
+DEFAULT_50D_PLAN = external_cache_root(ROOT) / (
+    "current_live_held_ber_baseline_50d_20260810/execution-plan.json"
 )
+DEFAULT_50D_DATASET_BINDING = external_cache_root(ROOT) / (
+    "current_live_held_ber_baseline_50d_20260810/dataset-binding.json"
+)
+
+
+def _public_panel_days() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    payload = json.loads(PANEL_SPEC.read_text(encoding="utf-8"))
+    prefix = tuple(str(day) for day in payload["immutable_prefix"]["ordered_utc_days"])
+    added = tuple(str(day) for day in payload["added_panel"]["ordered_utc_days"])
+    return prefix, added
+
+
+PREFIX40, ADDED10 = _public_panel_days()
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _TRADE_HEADER = ("id", "price", "qty", "quote_qty", "time", "is_buyer_maker")
@@ -100,6 +99,7 @@ class AuditPaths:
     )
     prefix_overlay_panel: Path = DEFAULT_PREFIX_OVERLAY_PANEL
     panel_execution_plan: Path = DEFAULT_50D_PLAN
+    dataset_binding: Path = DEFAULT_50D_DATASET_BINDING
 
 
 def file_sha256(path: Path) -> str:
@@ -188,7 +188,7 @@ def _load_frozen_denominator(
     *,
     expected_v2_spec_sha256: str,
     expected_panel_spec_sha256: str,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, str]]:
     v2_path = _require_bound_file(
         paths.v2_spec,
         expected_v2_spec_sha256,
@@ -215,7 +215,32 @@ def _load_frozen_denominator(
     _strict_days(panel_added, expected=ADDED10, label="panel added10")
     if set(PREFIX40).intersection(ADDED10):
         raise SupportAuditError("frozen prefix40 and added10 overlap")
-    return v2, panel
+    canonical_identity, canonical_days = dataset_governance.canonical_full_path_days(
+        root=ROOT
+    )
+    if canonical_identity != CANONICAL_50D_EXPERIMENT_ID:
+        raise SupportAuditError("canonical 50-day dataset identity drifted")
+    if [*PREFIX40, *ADDED10] != canonical_days:
+        raise SupportAuditError("public 50-day panel no longer matches dataset governance")
+    binding_path = paths.dataset_binding.expanduser().resolve()
+    try:
+        binding, result = dataset_governance.load_dataset_binding(
+            binding_path,
+            expected_file_sha256=file_sha256(binding_path),
+            expected_experiment_id=CANONICAL_50D_EXPERIMENT_ID,
+            project_root=ROOT,
+        )
+    except (OSError, ValueError) as exc:
+        raise SupportAuditError("canonical 50-day dataset binding is unavailable") from exc
+    if result.get("valid") is not True:
+        raise SupportAuditError("canonical 50-day dataset binding is invalid")
+    execution = binding.get("execution_denominator")
+    if not isinstance(execution, Mapping) or execution.get("days") != canonical_days:
+        raise SupportAuditError("canonical 50-day dataset binding denominator drifted")
+    return v2, panel, {
+        "path": str(binding_path),
+        "sha256": file_sha256(binding_path),
+    }
 
 
 def _metadata_identity(path: Path, *, content_sha256: str | None = None) -> dict[str, Any]:
@@ -655,7 +680,7 @@ def build_support_audit(
     """Return the frozen source-support report without reading economics."""
 
     paths = paths or AuditPaths()
-    _, panel = _load_frozen_denominator(
+    _, panel, dataset_binding = _load_frozen_denominator(
         paths,
         expected_v2_spec_sha256=expected_v2_spec_sha256,
         expected_panel_spec_sha256=expected_panel_spec_sha256,
@@ -800,6 +825,7 @@ def build_support_audit(
             "panel_spec_sha256": expected_panel_spec_sha256,
         },
         "source_bindings": {
+            "dataset_binding": dataset_binding,
             "raw_cryptohft_root": str(paths.raw_cryptohft_root.resolve()),
             "normalized": normalized_binding,
             "individual_trade_root": str(paths.individual_trade_root.resolve()),
