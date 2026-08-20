@@ -585,6 +585,7 @@ def test_lru_hot_migration_reopens_only_exact_governed_cold_target(
         cache_tier_lru.CacheTierConfig.from_environment(),
         hot_safety_reserve_bytes=1,
         hot_target_free_bytes=1,
+        allow_unknown_migration=True,
     )
     plan = cache_tier_lru.build_cache_tier_plan(
         config,
