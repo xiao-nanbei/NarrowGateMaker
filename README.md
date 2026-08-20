@@ -4,7 +4,7 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -20,7 +20,7 @@ It is **not** a packaged trading bot and it does not ship a promoted live parame
 
 Terminology: `campaign MAE` always means Maximum Adverse Excursion. Only `prediction MAE` or `model MAE` means Mean Absolute Error. The two metrics must not be mixed.
 
-Current operations: the live host is AWS Tokyo `<current-live-host>` (`<current-live-instance>`). The original AWS host and intermediate Vultr host `<retired-intermediate-vultr-host>` are retired; query both only through their verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. See the [current host and data-routing contract](docs/live_host_and_historical_data_access_20260811.md). Fill queries are partitioned across three source-labelled host epochs and two explicit maintenance gaps. Current AWS, retired Vultr, and original AWS rows must never substitute for a missing neighboring epoch. Historical market, live, and latency evidence remains reusable for research and sensitivity only with its original host/provider label.
+Current operations: the live host is AWS Tokyo `<current-live-host>` (`<current-live-instance>`). The original AWS, intermediate Vultr, and reactivated-AWS predecessor are historical; query them only through their verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. See the [current host and data-routing contract](docs/live_host_and_historical_data_access_20260811.md). Fill queries are partitioned across four source-labelled host epochs and three explicit maintenance gaps. Rows from the current AWS host or any predecessor must never substitute for a missing neighboring epoch. Historical market, live, and latency evidence remains reusable for research and sensitivity only with its original host/provider label.
 
 ## TL;DR
 
@@ -283,7 +283,7 @@ python research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py \
 
 `captured` uses the recorded `feature_ready_ts_ns` and adds nothing; `exchange_zero` is an idealized zero-feed-delay control; the `profile_*` modes rebuild p50/p95/p99/p99.9/max or empirical visibility from exchange time. Do not apply a profile mode to captured receive-time evidence and call the result "actual". `profile_stable_spike` is a fixed-seed sensitivity with a 0.5% p95-p99 stall branch; it is not the primary ranking baseline.
 
-Frozen original-AWS and Vultr Tokyo profiles may still be used as host-labelled historical priors/sensitivities. They must not be relabelled as current AWS transport.
+Frozen original-AWS, Vultr Tokyo, and reactivated-AWS predecessor profiles may still be used as host-labelled historical priors/sensitivities. They must not be relabelled as current AWS transport.
 
 Latency profiles are host assumptions, not strategy parameters. Rebuild and reselect the profile whenever the instance type, region, OS/runtime/native build, feed set, recorder, transport, gateway, or strategy workload changes. A faster machine must receive a new profile ID and a new replay instead of inheriting the old millisecond values.
 
@@ -291,7 +291,7 @@ The retained111 reference report remains a frozen causal-one-second diagnostic. 
 
 Python tick replay now has a shared feature-ready multi-tape scheduler and a default no-op `MultiMarketPolicy`. Historical stop-add, fixed-rearm, fixed-cooldown and one-tick response results produced before the corrected event clock, feature-ready contract and empirical-P3 baseline have been removed from the public evidence surface. They must not be used to select a parameter or claim action uplift.
 
-Current strategy evidence starts from a frozen randomized action panel with known propensity and campaign-level reward attribution. The rolling live identity is causal-v12 v10, recorded in [research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json) and resolved through [research/families/f10_live_replay_attribution/docs/operational_baseline_current.json](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json). It runs 13-head semantics-v6 inference with empirical P3 on Python 3.12, keeps q90 shadow ON with its action OFF, and keeps both the BUY fill-selection action and shadow OFF. v10 is an observability-only successor to v9 and retains the immutable quote-snapshot and execution-clock contract.
+Current strategy evidence starts from a frozen randomized action panel with known propensity and campaign-level reward attribution. The rolling live identity is [operational baseline v12](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json), resolved through [operational_baseline_current.json](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json). It preserves v11's 13-head semantics-v6 model, empirical P3, q90 action OFF, BUY fill-selection action/shadow OFF, and owner-risk-accepted SELL Boolean cooldown. v12 is a host-only migration identity: it changes no strategy, model, config, action, or research permission.
 
 The current pooled 50-day replay denominator is [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json). It uses the live BER clock exactly: the last completed canonical 10-second `trade_intensity_60s` feature is held and sampled on completed 1-second bar callbacks. The immutable first 40 days record `-144.251748 USDC` terminal MTM, `-147.466348 USDC` closed-campaign value, and `17,118` fills. The added ten Grade-A days contribute `-21.314331 USDC`, `-21.064631 USDC`, and `3,029` fills. The pooled 50-day result is `-165.566079 USDC` terminal MTM (`-3.311322/day`), `-168.530979 USDC` closed-campaign value, and `20,147` fills.
 

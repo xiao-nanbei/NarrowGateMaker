@@ -2,6 +2,8 @@
 
 Date: 2026-07-27
 
+Last materially modified: 2026-08-20
+
 Machine-readable registry: `docs/value_provenance_registry_20260727.json`
 
 Status: historical provenance snapshot. It does not grant current live authority. Current operational authority is resolved only through `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json`.
@@ -32,7 +34,7 @@ The direct/selection split is operational. P3 slopes, latency distributions, OOF
 
 ## Historical live-baseline snapshot
 
-The table below records the state understood on 2026-07-27. Its values and `live_authority` flags are retained for provenance only and must not be used to resolve the current runtime. The current v11 baseline has causal-v12 ML ON, BUY fill-selection shadow/action OFF, q90 shadow ON/action OFF, and the F05 SELL Boolean cooldown active under `owner_risk_accepted_promotion`. Its research hard gates remain failed. Follow the operational pointer above for the hash-bound identity.
+The table below records the state understood on 2026-07-27. Its values and `live_authority` flags are retained for provenance only and must not be used to resolve the current runtime. As of 2026-08-20, the current v12 host-only identity preserves v11's causal-v12 ML, BUY fill-selection shadow/action OFF, q90 shadow ON/action OFF, and F05 SELL Boolean cooldown under `owner_risk_accepted_promotion`. Its research hard gates remain failed. Follow the operational pointer above for the hash-bound identity.
 
 | Item | Current value | Classification | Important limitation |
 |---|---:|---|---|

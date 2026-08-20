@@ -4,7 +4,7 @@ Initial audit date: 2026-07-27
 
 Snapshot date: 2026-08-04
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-20
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -81,17 +81,17 @@ There are 70 maintained Markdown files without a material-modification tag and 3
 
 ## Current operational and research authority
 
-The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointer was last reconciled on 2026-08-12.
+The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointer was last reconciled after the 2026-08-19 host-only cutover.
 
-### Operational baseline v11
+### Operational baseline v12
 
-The current pointer resolves to `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json`. The current identities are:
+The current pointer resolves to `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json`. The current identities are:
 
-- baseline identity SHA256: `edb0de785b698c70bce2b2cdb169b78c89a5f6076015b7ab8a313557567dead4`;
-- pointer SHA256: `3dcbcdb8cd994a2641a6a5920e53647338f7e55d2c23e3ef21738523de2277dd`;
+- baseline identity SHA256: `af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967`;
+- pointer SHA256: `fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc`;
 - operational config SHA256: `800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85`.
 
-The declared baseline keeps causal-v12 feature semantics v6, empirical P3 v2, q90 shadow ON/action OFF, BUY fill-selection shadow/action OFF, the v10 observation retirements, and active depth imbalance asymmetry. v11 adds only the SELL Boolean cooldown policy under a permanent `owner_risk_accepted_promotion` label. Its historical hard gates remain failed; BUY and reducing quotes retain predecessor behavior.
+The declared baseline keeps causal-v12 feature semantics v6, empirical P3 v2, q90 shadow ON/action OFF, BUY fill-selection shadow/action OFF, the v10 observation retirements, active depth imbalance asymmetry, and the v11 SELL Boolean cooldown policy under its permanent `owner_risk_accepted_promotion` label. v12 changes only the host/epoch binding. Its historical hard gates remain failed; BUY and reducing quotes retain predecessor behavior.
 
 ### F02 P3
 
@@ -107,7 +107,7 @@ q90 production action remains suspended. The authoritative v1.6 40-day mechanics
 
 ### BABEL / F04
 
-The first-add external M0/M1 identity has 18 distinct valid receive-time UTC days against a frozen requirement of 30. This blocks only that identity, not unrelated foreground research. The original adverse-edge mechanics action rate was 0.334%, below its 5% gate. The exact-opener v2.2 successor is disabled because its historical runtime hash is stale; first-add P1 and opener P2 must not be merged.
+The first-add external M0/M1 source-aware collection reached 30 distinct valid receive-time UTC days and then closed on the reactivated-AWS predecessor. The current host has no inherited capture authority. M0/M1 remains blocked on the lifecycle successor and the unchanged row-level gates. The original adverse-edge mechanics action rate was 0.334%, below its 5% gate. The exact-opener v2.2 successor is disabled because its historical runtime hash is stale; first-add P1 and opener P2 must not be merged.
 
 ## Research-layout migration governance
 
@@ -125,14 +125,14 @@ Frozen documents may keep literal historical paths. Current imports, CLIs, tests
 
 P0 does not mean “oldest”; it means that a mismatch can misidentify the active system. Review these as one identity surface whenever any member changes:
 
-1. `research/registry.json`, the v11 identity and `operational_baseline_current.json`;
+1. `research/registry.json`, the v12 identity and `operational_baseline_current.json`;
 2. `live/config.py`, `live/config.yaml`, `live/main.py`, `live/runtime_policy.py` and deploy preflight;
 3. `strategy/maker_engine.py`, `strategy/signal.py`, `strategy/quote_core.py`, `features/feature_dag.py` and `strategy/model_contract.py`;
 4. `models/backtest_config.py` and `models/backtest_tick.py`;
 5. `README.md`, `README.zh-CN.md`, `project.md` and `research/README.md`;
 6. dual-path and direct full-path promotion contracts.
 
-The v11 pointer and identity are the current operational authority. The queue still marks governance files P0 because a future run must not silently attach new code or policy bytes to an old baseline identity.
+The v12 pointer and identity are the current operational authority. The queue still marks governance files P0 because a future run must not silently attach new code or policy bytes to an old baseline identity.
 
 ## P1 approval-gated deletion group
 
