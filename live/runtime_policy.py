@@ -17,6 +17,9 @@ F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV = (
 )
 F05_BOOLEAN_COOLDOWN_EVIDENCE_ROUTE = "owner_risk_accepted_promotion"
 F05_BOOLEAN_COOLDOWN_HARD_GATES_PASSED = False
+F05_BUY_E3_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY"
+F05_BUY_E3_EVIDENCE_ROUTE = "owner_risk_accepted_buy_e3_v1"
+F05_BUY_E3_HARD_GATES_PASSED = False
 RUNTIME_POLICY_SCHEMA_VERSION = "narrowgate_runtime_policy.v1"
 
 
@@ -142,6 +145,73 @@ def require_f05_boolean_cooldown_restart(
     if changed:
         raise ValueError(
             "F05 Boolean cooldown policy is restart-only; changed field(s): "
+            + ", ".join(changed)
+        )
+
+
+def f05_buy_e3_runtime_policy(
+    enabled: bool,
+    *,
+    evidence_route: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Require a separate owner grant for the BUY-only E3 artifact."""
+
+    environment = os.environ if environ is None else environ
+    override_requested = environment.get(F05_BUY_E3_OWNER_OVERRIDE_ENV) == "1"
+    normalized_route = str(evidence_route).strip()
+    if enabled and normalized_route != F05_BUY_E3_EVIDENCE_ROUTE:
+        raise ValueError(
+            "enabled F05 BUY E3 policy must retain the permanent "
+            f"{F05_BUY_E3_EVIDENCE_ROUTE} evidence label"
+        )
+    if enabled and not override_requested:
+        raise ValueError(
+            "F05 BUY E3 formal hierarchy and hard gates did not pass; set "
+            f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1 only for the explicit "
+            "owner risk-accepted deployment"
+        )
+    return {
+        "schema_version": RUNTIME_POLICY_SCHEMA_VERSION,
+        "f05_buy_e3_enabled": bool(enabled),
+        "f05_buy_e3_research_supported": False,
+        "f05_buy_e3_hard_gates_passed": F05_BUY_E3_HARD_GATES_PASSED,
+        "f05_buy_e3_evidence_route": normalized_route,
+        "f05_buy_e3_owner_override_env": F05_BUY_E3_OWNER_OVERRIDE_ENV,
+        "f05_buy_e3_owner_override_requested": override_requested,
+        "f05_buy_e3_owner_override_effective": bool(
+            enabled and override_requested
+        ),
+        "f05_buy_e3_runtime_authority": (
+            "owner_risk_accepted_active"
+            if enabled and override_requested
+            else "disabled"
+        ),
+    }
+
+
+def require_f05_buy_e3_restart(
+    previous: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> None:
+    """Keep the BUY E3 artifact and all bindings restart-only."""
+
+    fields = (
+        "buy_e3_cooldown_policy_enabled",
+        "buy_e3_cooldown_artifact_manifest_path",
+        "buy_e3_cooldown_artifact_manifest_sha256",
+        "buy_e3_cooldown_artifact_sha256",
+        "buy_e3_cooldown_policy_path",
+        "buy_e3_cooldown_policy_sha256",
+        "buy_e3_cooldown_predicate_bundle_path",
+        "buy_e3_cooldown_predicate_bundle_sha256",
+        "buy_e3_cooldown_ema_warmup_s",
+        "buy_e3_cooldown_evidence_route",
+    )
+    changed = [name for name in fields if previous.get(name) != candidate.get(name)]
+    if changed:
+        raise ValueError(
+            "F05 BUY E3 cooldown policy is restart-only; changed field(s): "
             + ", ".join(changed)
         )
 

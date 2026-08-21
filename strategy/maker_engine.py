@@ -107,6 +107,7 @@ from strategy.fill_cooldown import (
     update_same_side_fill_units,
 )
 from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
+from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
 from strategy.dynamic_fill_hazard_model import (
     DynamicFillHazardActionPolicy,
     DynamicFillHazardBundle,
@@ -1016,6 +1017,34 @@ def _load_boolean_cooldown_live_policy(cfg) -> Optional[LiveBooleanCooldownPolic
     )
 
 
+def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
+    if not bool(getattr(cfg.strategy, "buy_e3_cooldown_policy_enabled", False)):
+        return None
+    return LiveBuyE3CooldownPolicy.from_files(
+        artifact_manifest_path=_resolve_repo_runtime_path(
+            cfg.strategy.buy_e3_cooldown_artifact_manifest_path
+        ),
+        artifact_manifest_sha256=str(
+            cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
+        ).strip().lower(),
+        expected_artifact_sha256=str(
+            cfg.strategy.buy_e3_cooldown_artifact_sha256
+        ).strip().lower(),
+        policy_path=_resolve_repo_runtime_path(
+            cfg.strategy.buy_e3_cooldown_policy_path
+        ),
+        policy_sha256=str(cfg.strategy.buy_e3_cooldown_policy_sha256).strip().lower(),
+        predicate_bundle_path=_resolve_repo_runtime_path(
+            cfg.strategy.buy_e3_cooldown_predicate_bundle_path
+        ),
+        predicate_bundle_sha256=str(
+            cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
+        ).strip().lower(),
+        warmup_s=float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
+        max_feature_age_s=float(cfg.risk.max_exec_book_visible_age_s),
+    )
+
+
 class MakerEngine:
     """
     Event-driven market making engine.
@@ -1064,6 +1093,11 @@ class MakerEngine:
         if self._boolean_cooldown_policy is not None:
             self.signal.add_depth_observer(
                 self._boolean_cooldown_policy.observe_depth
+            )
+        self._buy_e3_cooldown_policy = _load_buy_e3_cooldown_live_policy(cfg)
+        if self._buy_e3_cooldown_policy is not None:
+            self.signal.add_depth_observer(
+                self._buy_e3_cooldown_policy.observe_depth
             )
         self.orders = OrderManager(
             on_fill=self._on_fill,
@@ -1150,6 +1184,7 @@ class MakerEngine:
         self._consec_sell: float = 0.0
         self._last_same_side_fill_epoch_ms = {"BUY": 0, "SELL": 0}
         self._last_fill_side: str = ""
+        self._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
         self._last_cooldown_cancel_time: float = 0.0
         self._last_stale_data_block_log: float = 0.0
         self._last_quote_snapshot_block_log: float = 0.0
@@ -2901,6 +2936,38 @@ class MakerEngine:
             }
         return policy.audit()
 
+    def buy_e3_cooldown_policy_snapshot(self) -> dict[str, Any]:
+        policy = self._buy_e3_cooldown_policy
+        if policy is None:
+            return {
+                "enabled": 0,
+                "evaluations": 0,
+                "supported": 0,
+                "nonbaseline": 0,
+                "fallback": 0,
+                "last_action": "CONTROL_85N",
+                "last_fallback": "disabled",
+                "last_decision_age_s": -1.0,
+                "decision_latency_samples": 0,
+                "decision_latency_p99_us": 0.0,
+                "artifact_sha256": "",
+                "binding_error": "",
+                "windows": {
+                    "updates": 0,
+                    "completed_windows": 0,
+                    "gap_windows": 0,
+                    "resets": 0,
+                    "invalid_updates": 0,
+                    "out_of_order_updates": 0,
+                    "gap_resets": 0,
+                    "warmup_elapsed_s": 0.0,
+                    "warmup_time_admitted": 0,
+                    "feature_ready_ts_ns": 0,
+                    "last_error": "",
+                },
+            }
+        return policy.audit()
+
     def dynamic_fill_hazard_shadow_snapshot(self) -> dict[str, Any]:
         rows = int(self._dynamic_fill_hazard_shadow_rows)
         valid = int(self._dynamic_fill_hazard_shadow_valid_rows)
@@ -3819,6 +3886,9 @@ class MakerEngine:
         if until <= 0.0 or now_s < until:
             return
         self._fill_cooldown_until[normalized] = 0.0
+        identities = getattr(self, "_fill_cooldown_deadline_identity", None)
+        if isinstance(identities, dict):
+            identities[normalized] = "B0"
         if self._fill_cooldown_reset_policy() == RESET_OPPOSITE_FILL_OR_EXPIRY:
             if normalized == "BUY":
                 self._consec_buy = 0.0
@@ -3830,7 +3900,7 @@ class MakerEngine:
 
         current_ms = int(now_ms if now_ms is not None else time.time() * 1000.0)
         return {
-            "schema_version": "narrowgate_fill_cooldown_state.v1",
+            "schema_version": "narrowgate_fill_cooldown_state.v2",
             "reset_policy": self._fill_cooldown_reset_policy(),
             "consec_buy": float(self._consec_buy),
             "consec_sell": float(self._consec_sell),
@@ -3843,6 +3913,16 @@ class MakerEngine:
             "last_buy_fill_ts_ms": int(self._last_same_side_fill_epoch_ms["BUY"]),
             "last_sell_fill_ts_ms": int(self._last_same_side_fill_epoch_ms["SELL"]),
             "last_fill_side": str(self._last_fill_side),
+            "buy_deadline_identity": str(
+                getattr(self, "_fill_cooldown_deadline_identity", {}).get(
+                    "BUY", "B0"
+                )
+            ),
+            "sell_deadline_identity": str(
+                getattr(self, "_fill_cooldown_deadline_identity", {}).get(
+                    "SELL", "B0"
+                )
+            ),
             "snapshot_ts_ms": current_ms,
         }
 
@@ -3876,6 +3956,36 @@ class MakerEngine:
             return float(baseline_duration_s), decision
         return decision.duration_ms / 1_000.0, decision
 
+    def _select_buy_e3_cooldown_duration(
+        self,
+        *,
+        side: str,
+        exposure_increasing_fill: bool,
+        baseline_duration_s: float,
+        campaign_age_s: float,
+        fill_visible_ts_ns: int,
+        snapshot_id: str,
+    ) -> tuple[float, Any | None]:
+        """Apply BUY E3 only to an exposure-increasing executed BUY fill."""
+
+        policy = self._buy_e3_cooldown_policy
+        if (
+            policy is None
+            or not exposure_increasing_fill
+            or str(side).upper() != "BUY"
+        ):
+            return float(baseline_duration_s), None
+        decision = policy.evaluate(
+            side="BUY",
+            baseline_duration_ms=int(round(float(baseline_duration_s) * 1_000.0)),
+            campaign_age_s=float(campaign_age_s),
+            decision_ts_ns=int(fill_visible_ts_ns),
+            snapshot_id=str(snapshot_id),
+        )
+        if decision.action_id == "CONTROL_85N":
+            return float(baseline_duration_s), decision
+        return decision.duration_ms / 1_000.0, decision
+
     def restore_fill_cooldown_state(
         self,
         payload: dict[str, Any],
@@ -3884,7 +3994,11 @@ class MakerEngine:
     ) -> None:
         """Restore a state captured by :meth:`fill_cooldown_state_snapshot`."""
 
-        if str(payload.get("schema_version", "")) != "narrowgate_fill_cooldown_state.v1":
+        schema = str(payload.get("schema_version", ""))
+        if schema not in {
+            "narrowgate_fill_cooldown_state.v1",
+            "narrowgate_fill_cooldown_state.v2",
+        }:
             raise ValueError("unsupported fill cooldown state schema")
         policy = normalize_consecutive_reset_policy(
             payload.get("reset_policy"), require_explicit=True
@@ -3894,12 +4008,34 @@ class MakerEngine:
         current_ms = int(now_ms if now_ms is not None else time.time() * 1000.0)
         self._consec_buy = max(0.0, float(payload.get("consec_buy", 0.0) or 0.0))
         self._consec_sell = max(0.0, float(payload.get("consec_sell", 0.0) or 0.0))
+        self._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
         for side in ("BUY", "SELL"):
             remaining = max(0, int(payload.get(f"{side.lower()}_remaining_ms", 0) or 0))
-            self._fill_cooldown_until[side] = (current_ms + remaining) / 1000.0
-            self._last_same_side_fill_epoch_ms[side] = int(
+            last_fill_ms = int(
                 payload.get(f"last_{side.lower()}_fill_ts_ms", 0) or 0
             )
+            self._last_same_side_fill_epoch_ms[side] = last_fill_ms
+            source_identity = (
+                str(payload.get(f"{side.lower()}_deadline_identity", "B0") or "B0")
+                if schema.endswith(".v2")
+                else "B0"
+            )
+            if side == "BUY" and source_identity.startswith("BUY_E3:"):
+                active = getattr(self, "_buy_e3_cooldown_policy", None)
+                active_identity = (
+                    active.deadline_identity if active is not None else "B0"
+                )
+                if source_identity != active_identity:
+                    natural_deadline_ms = (
+                        last_fill_ms
+                        + int(round(85_000.0 * max(1.0, self._consec_buy)))
+                        if last_fill_ms > 0
+                        else current_ms
+                    )
+                    remaining = max(0, natural_deadline_ms - current_ms)
+                    source_identity = "B0"
+            self._fill_cooldown_until[side] = (current_ms + remaining) / 1000.0
+            self._fill_cooldown_deadline_identity[side] = source_identity
             if remaining == 0 and policy == RESET_OPPOSITE_FILL_OR_EXPIRY:
                 if side == "BUY":
                     self._consec_buy = 0.0
@@ -8058,6 +8194,7 @@ class MakerEngine:
         )
         opposite = "SELL" if side == "BUY" else "BUY"
         self._fill_cooldown_until[opposite] = 0.0
+        self._fill_cooldown_deadline_identity[opposite] = "B0"
         self._last_same_side_fill_epoch_ms[side] = int(
             trade_time_ms or time.time() * 1000.0
         )
@@ -8131,7 +8268,68 @@ class MakerEngine:
                     boolean_decision.policy_sha256[:12],
                     boolean_decision.predicate_bundle_sha256[:12],
                 )
+            elif (
+                exposure_increasing_fill
+                and side == "BUY"
+                and self._buy_e3_cooldown_policy is not None
+            ):
+                campaign = self.inventory.campaign_snapshot()
+                fill_visible_ts_ns = int(
+                    event.get("_local_receive_ts_ns", 0) or time.time_ns()
+                )
+                event_id = str(
+                    event.get("t")
+                    or event.get("tradeId")
+                    or event.get("T")
+                    or fill_visible_ts_ns
+                )
+                cd, boolean_decision = self._select_buy_e3_cooldown_duration(
+                    side=side,
+                    exposure_increasing_fill=exposure_increasing_fill,
+                    baseline_duration_s=cd,
+                    campaign_age_s=float(campaign.age_s),
+                    fill_visible_ts_ns=fill_visible_ts_ns,
+                    snapshot_id=f"live-fill-{order.client_order_id}-{event_id}",
+                )
+                logger.warning(
+                    "F05_BUY_E3_COOLDOWN side=%s action=%s baseline_ms=%d "
+                    "chosen_ms=%d supported=%d rule=%s fallback=%s "
+                    "feature_age_ms=%.3f artifact_sha=%s policy_sha=%s bundle_sha=%s",
+                    side,
+                    boolean_decision.action_id,
+                    int(round(effective_fc * max(1.0, consec) * 1_000.0)),
+                    int(round(cd * 1_000.0)),
+                    int(boolean_decision.support_valid),
+                    (
+                        boolean_decision.matched_rule_index
+                        if boolean_decision.matched_rule_index is not None
+                        else "none"
+                    ),
+                    boolean_decision.fallback_reason or "none",
+                    float(boolean_decision.feature_age_ms),
+                    boolean_decision.artifact_sha256[:12],
+                    boolean_decision.policy_sha256[:12],
+                    boolean_decision.predicate_bundle_sha256[:12],
+                )
             self._fill_cooldown_until[side] = now + cd
+            if (
+                side == "BUY"
+                and boolean_decision is not None
+                and boolean_decision.action_id != "CONTROL_85N"
+            ):
+                self._fill_cooldown_deadline_identity[side] = (
+                    self._buy_e3_cooldown_policy.deadline_identity
+                )
+            elif (
+                side == "SELL"
+                and boolean_decision is not None
+                and boolean_decision.action_id != "CONTROL_85N"
+            ):
+                self._fill_cooldown_deadline_identity[side] = (
+                    f"SELL_OWNER:{boolean_decision.policy_sha256}"
+                )
+            else:
+                self._fill_cooldown_deadline_identity[side] = "B0"
             logger.info(
                 f"FILL_CD: {side} kind={cd_kind} qty={qty:.4f} consec={consec:.2f} "
                 f"base={raw_fc:.1f}s effective_base={effective_fc:.1f}s "

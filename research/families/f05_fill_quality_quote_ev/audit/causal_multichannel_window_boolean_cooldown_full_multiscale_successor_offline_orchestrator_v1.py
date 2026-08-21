@@ -1342,7 +1342,7 @@ class FormalOfflineBundle:
     source_manifest: Mapping[str, Any]
     panel_manifest_path: Path
     panel_manifest: Mapping[str, Any]
-    dataset_binding_path: Path
+    dataset_binding_path: Path | None
     dataset_binding: Mapping[str, Any]
     panel_files: Mapping[str, Path]
     repository_root: Path
@@ -1356,10 +1356,10 @@ def _new_formal_offline_bundle(
     source_manifest: Mapping[str, Any],
     panel_manifest_path: Path,
     panel_manifest: Mapping[str, Any],
-    dataset_binding_path: Path,
-    dataset_binding: Mapping[str, Any],
     panel_files: Mapping[str, Path],
     repository_root: Path,
+    dataset_binding_path: Path | None = None,
+    dataset_binding: Mapping[str, Any] | None = None,
 ) -> FormalOfflineBundle:
     """Construct a bundle only after the strict loader validates every binding."""
 
@@ -1372,7 +1372,7 @@ def _new_formal_offline_bundle(
         "panel_manifest_path": panel_manifest_path,
         "panel_manifest": panel_manifest,
         "dataset_binding_path": dataset_binding_path,
-        "dataset_binding": dataset_binding,
+        "dataset_binding": dataset_binding or {},
         "panel_files": panel_files,
         "repository_root": repository_root,
     }

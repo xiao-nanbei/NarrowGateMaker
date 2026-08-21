@@ -9,10 +9,13 @@ from live.config import Config, _validate_config
 from live.main import record_startup_runtime_identity
 from live.runtime_policy import (
     F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
+    F05_BUY_E3_OWNER_OVERRIDE_ENV,
     Q90_ACTION_OWNER_OVERRIDE_ENV,
     f05_boolean_cooldown_runtime_policy,
+    f05_buy_e3_runtime_policy,
     q90_action_runtime_policy,
     require_f05_boolean_cooldown_restart,
+    require_f05_buy_e3_restart,
     require_q90_action_restart,
     write_runtime_identity,
 )
@@ -156,3 +159,47 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
     changed = {**base, "boolean_cooldown_policy_enabled": True}
     with pytest.raises(ValueError, match="restart-only"):
         require_f05_boolean_cooldown_restart(base, changed)
+
+
+def test_f05_buy_e3_requires_separate_owner_override_and_label() -> None:
+    with pytest.raises(ValueError, match="owner risk-accepted"):
+        f05_buy_e3_runtime_policy(
+            True,
+            evidence_route="owner_risk_accepted_buy_e3_v1",
+            environ={},
+        )
+    with pytest.raises(ValueError, match="permanent"):
+        f05_buy_e3_runtime_policy(
+            True,
+            evidence_route="research_supported",
+            environ={F05_BUY_E3_OWNER_OVERRIDE_ENV: "1"},
+        )
+    policy = f05_buy_e3_runtime_policy(
+        True,
+        evidence_route="owner_risk_accepted_buy_e3_v1",
+        environ={F05_BUY_E3_OWNER_OVERRIDE_ENV: "1"},
+    )
+    assert policy["f05_buy_e3_research_supported"] is False
+    assert policy["f05_buy_e3_hard_gates_passed"] is False
+    assert policy["f05_buy_e3_owner_override_effective"] is True
+
+
+def test_f05_buy_e3_identity_is_restart_only() -> None:
+    base = {
+        "buy_e3_cooldown_policy_enabled": False,
+        "buy_e3_cooldown_artifact_manifest_path": "",
+        "buy_e3_cooldown_artifact_manifest_sha256": "",
+        "buy_e3_cooldown_artifact_sha256": "",
+        "buy_e3_cooldown_policy_path": "",
+        "buy_e3_cooldown_policy_sha256": "",
+        "buy_e3_cooldown_predicate_bundle_path": "",
+        "buy_e3_cooldown_predicate_bundle_sha256": "",
+        "buy_e3_cooldown_ema_warmup_s": 2048.0,
+        "buy_e3_cooldown_evidence_route": "owner_risk_accepted_buy_e3_v1",
+    }
+    require_f05_buy_e3_restart(base, dict(base))
+    with pytest.raises(ValueError, match="restart-only"):
+        require_f05_buy_e3_restart(
+            base,
+            {**base, "buy_e3_cooldown_policy_enabled": True},
+        )

@@ -132,3 +132,37 @@ def test_historical_expiry_policy_clears_units() -> None:
     engine._fill_cooldown_until["BUY"] = 2.0
     engine._expire_fill_cooldown_state("BUY", 3.0)
     assert engine._consec_buy == 0.0
+
+
+def test_buy_e3_rollback_clamps_long_deadline_to_natural_b0() -> None:
+    source = _bare_engine(RESET_OPPOSITE_FILL_ONLY)
+    source._consec_buy = 2.0
+    source._last_same_side_fill_epoch_ms["BUY"] = 1_000
+    source._fill_cooldown_until["BUY"] = 2_049.0
+    source._fill_cooldown_deadline_identity = {
+        "BUY": f"BUY_E3:{'a' * 64}",
+        "SELL": "B0",
+    }
+    payload = source.fill_cooldown_state_snapshot(now_ms=1_000)
+
+    rollback = _bare_engine(RESET_OPPOSITE_FILL_ONLY)
+    rollback._buy_e3_cooldown_policy = None
+    rollback.restore_fill_cooldown_state(payload, now_ms=10_000)
+
+    # Natural B0 deadline is 1s + 85s * 2 units = 171s, not 2049s.
+    assert rollback._fill_cooldown_until["BUY"] == pytest.approx(171.0)
+    assert rollback._fill_cooldown_deadline_identity["BUY"] == "B0"
+
+
+def test_same_buy_e3_artifact_may_restore_its_exact_deadline() -> None:
+    source = _bare_engine(RESET_OPPOSITE_FILL_ONLY)
+    identity = f"BUY_E3:{'b' * 64}"
+    source._fill_cooldown_until["BUY"] = 2_049.0
+    source._fill_cooldown_deadline_identity = {"BUY": identity, "SELL": "B0"}
+    payload = source.fill_cooldown_state_snapshot(now_ms=1_000)
+
+    restored = _bare_engine(RESET_OPPOSITE_FILL_ONLY)
+    restored._buy_e3_cooldown_policy = SimpleNamespace(deadline_identity=identity)
+    restored.restore_fill_cooldown_state(payload, now_ms=10_000)
+    assert restored._fill_cooldown_until["BUY"] == pytest.approx(2058.0)
+    assert restored._fill_cooldown_deadline_identity["BUY"] == identity

@@ -201,3 +201,67 @@ def test_boolean_cooldown_control_fallback_preserves_exact_baseline() -> None:
     )
     assert selected == 127.5004
     assert decision.action_id == "CONTROL_85N"
+
+
+def test_buy_e3_changes_only_buy_exposure_duration_and_uses_total_action() -> None:
+    engine = object.__new__(MakerEngine)
+
+    class StubPolicy:
+        def evaluate(self, **kwargs):
+            assert kwargs["side"] == "BUY"
+            assert kwargs["baseline_duration_ms"] == 255_000
+            return SimpleNamespace(action_id="FIXED_2048S", duration_ms=2_048_000)
+
+    engine._buy_e3_cooldown_policy = StubPolicy()
+    selected, decision = engine._select_buy_e3_cooldown_duration(
+        side="BUY",
+        exposure_increasing_fill=True,
+        baseline_duration_s=255.0,
+        campaign_age_s=500.0,
+        fill_visible_ts_ns=1_800_000_000_000_000_000,
+        snapshot_id="buy-fill-1",
+    )
+    assert selected == 2_048.0
+    assert decision.action_id == "FIXED_2048S"
+
+    reducing, reducing_decision = engine._select_buy_e3_cooldown_duration(
+        side="BUY",
+        exposure_increasing_fill=False,
+        baseline_duration_s=12.0,
+        campaign_age_s=500.0,
+        fill_visible_ts_ns=1_800_000_000_000_000_000,
+        snapshot_id="buy-fill-2",
+    )
+    assert reducing == 12.0
+    assert reducing_decision is None
+
+    sell, sell_decision = engine._select_buy_e3_cooldown_duration(
+        side="SELL",
+        exposure_increasing_fill=True,
+        baseline_duration_s=255.0,
+        campaign_age_s=500.0,
+        fill_visible_ts_ns=1_800_000_000_000_000_000,
+        snapshot_id="buy-fill-3",
+    )
+    assert sell == 255.0
+    assert sell_decision is None
+
+
+def test_buy_e3_control_fallback_preserves_exact_b0_duration() -> None:
+    engine = object.__new__(MakerEngine)
+
+    class StubPolicy:
+        def evaluate(self, **kwargs):
+            return SimpleNamespace(action_id="CONTROL_85N", duration_ms=255_000)
+
+    engine._buy_e3_cooldown_policy = StubPolicy()
+    selected, decision = engine._select_buy_e3_cooldown_duration(
+        side="BUY",
+        exposure_increasing_fill=True,
+        baseline_duration_s=255.0004,
+        campaign_age_s=500.0,
+        fill_visible_ts_ns=1_800_000_000_000_000_000,
+        snapshot_id="buy-fill-control",
+    )
+    assert selected == 255.0004
+    assert decision.action_id == "CONTROL_85N"

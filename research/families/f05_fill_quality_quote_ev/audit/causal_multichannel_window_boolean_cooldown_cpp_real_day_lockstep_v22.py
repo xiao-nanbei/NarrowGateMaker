@@ -60,6 +60,12 @@ SELL_ONLY_INVARIANCE_RECEIPT_FIELD = (
 SELL_ONLY_ORCHESTRATOR_IDENTITY = (
     f"{offline.IDENTITY}.formal_sell_only_orchestrator_v1"
 )
+OWNER_BUY_E3_ORCHESTRATOR_IDENTITY = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
+)
+OWNER_BUY_E3_EXECUTION_CONTRACT_FIELD = (
+    "owner_buy_e3_execution_manifest_contract_sha256"
+)
 
 
 class CppRealDayLockstepError(RuntimeError):
@@ -95,11 +101,27 @@ def _file_sha256(path: Path) -> str:
 def _atomic_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary.write_text(
-        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True),
-        encoding="ascii",
-    )
-    os.replace(temporary, path)
+    try:
+        with temporary.open("w", encoding="ascii") as handle:
+            json.dump(
+                payload,
+                handle,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        descriptor = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _require_clean_bound_commit(bundle: Any) -> None:
@@ -719,6 +741,23 @@ def _run_lockstep_impl(
             bundle
         )
         invariance_receipt_field = SELL_ONLY_INVARIANCE_RECEIPT_FIELD
+    elif manifest.get("identity") == OWNER_BUY_E3_ORCHESTRATOR_IDENTITY:
+        from research.families.f05_fill_quality_quote_ev.audit import (
+            causal_multichannel_window_boolean_cooldown_owner_buy_e3_refit_v1 as owner_refit,
+        )
+
+        bundle = owner_refit.load_owner_execution_bundle(
+            manifest_path,
+            repository_root=Path(__file__).resolve().parents[4],
+            verify_source_bytes=True,
+            require_clean_tag=True,
+        )
+        invariance_receipt = {
+            "canonical_receipt_sha256": bundle.execution_manifest[
+                "canonical_execution_manifest_sha256"
+            ]
+        }
+        invariance_receipt_field = OWNER_BUY_E3_EXECUTION_CONTRACT_FIELD
     else:
         bundle = orchestrator.load_formal_offline_bundle_for_cpp_qualification(
             manifest_path

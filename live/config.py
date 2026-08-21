@@ -167,6 +167,18 @@ class StrategyConfig:
     boolean_cooldown_predicate_bundle_sha256: str = ""
     boolean_cooldown_ema_warmup_s: float = 2048.0
     boolean_cooldown_evidence_route: str = "owner_risk_accepted_promotion"
+    # Independent owner-risk-accepted BUY E3 artifact. It may replace only
+    # the total exposure-increasing BUY cooldown selected on an executed fill.
+    buy_e3_cooldown_policy_enabled: bool = False
+    buy_e3_cooldown_artifact_manifest_path: str = ""
+    buy_e3_cooldown_artifact_manifest_sha256: str = ""
+    buy_e3_cooldown_artifact_sha256: str = ""
+    buy_e3_cooldown_policy_path: str = ""
+    buy_e3_cooldown_policy_sha256: str = ""
+    buy_e3_cooldown_predicate_bundle_path: str = ""
+    buy_e3_cooldown_predicate_bundle_sha256: str = ""
+    buy_e3_cooldown_ema_warmup_s: float = 2048.0
+    buy_e3_cooldown_evidence_route: str = "owner_risk_accepted_buy_e3_v1"
     post_fill_quote_response_enabled: bool = False
     post_fill_quote_response_mode: str = "noop"
     post_fill_inventory_ticks_per_order_unit: float = 0.25
@@ -618,6 +630,16 @@ BACKTEST_PARAM_SOURCES = (
     ("boolean_cooldown_predicate_bundle_sha256", ("strategy", "boolean_cooldown_predicate_bundle_sha256")),
     ("boolean_cooldown_ema_warmup_s", ("strategy", "boolean_cooldown_ema_warmup_s")),
     ("boolean_cooldown_evidence_route", ("strategy", "boolean_cooldown_evidence_route")),
+    ("buy_e3_cooldown_policy_enabled", ("strategy", "buy_e3_cooldown_policy_enabled")),
+    ("buy_e3_cooldown_artifact_manifest_path", ("strategy", "buy_e3_cooldown_artifact_manifest_path")),
+    ("buy_e3_cooldown_artifact_manifest_sha256", ("strategy", "buy_e3_cooldown_artifact_manifest_sha256")),
+    ("buy_e3_cooldown_artifact_sha256", ("strategy", "buy_e3_cooldown_artifact_sha256")),
+    ("buy_e3_cooldown_policy_path", ("strategy", "buy_e3_cooldown_policy_path")),
+    ("buy_e3_cooldown_policy_sha256", ("strategy", "buy_e3_cooldown_policy_sha256")),
+    ("buy_e3_cooldown_predicate_bundle_path", ("strategy", "buy_e3_cooldown_predicate_bundle_path")),
+    ("buy_e3_cooldown_predicate_bundle_sha256", ("strategy", "buy_e3_cooldown_predicate_bundle_sha256")),
+    ("buy_e3_cooldown_ema_warmup_s", ("strategy", "buy_e3_cooldown_ema_warmup_s")),
+    ("buy_e3_cooldown_evidence_route", ("strategy", "buy_e3_cooldown_evidence_route")),
     ("post_fill_quote_response_enabled", ("strategy", "post_fill_quote_response_enabled")),
     ("post_fill_quote_response_mode", ("strategy", "post_fill_quote_response_mode")),
     ("post_fill_inventory_ticks_per_order_unit", ("strategy", "post_fill_inventory_ticks_per_order_unit")),
@@ -804,6 +826,7 @@ def _validate_config(cfg: Config) -> None:
     """Validate loaded config before it can drive live/reload behavior."""
     from live.runtime_policy import (
         f05_boolean_cooldown_runtime_policy,
+        f05_buy_e3_runtime_policy,
         q90_action_runtime_policy,
     )
     from strategy.fill_cooldown import normalize_consecutive_reset_policy
@@ -962,6 +985,10 @@ def _validate_config(cfg: Config) -> None:
         bool(cfg.strategy.boolean_cooldown_policy_enabled),
         evidence_route=cfg.strategy.boolean_cooldown_evidence_route,
     )
+    f05_buy_e3_runtime_policy(
+        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
+        evidence_route=cfg.strategy.buy_e3_cooldown_evidence_route,
+    )
     if bool(cfg.strategy.boolean_cooldown_policy_enabled):
         if not math.isclose(
             float(cfg.strategy.fill_cooldown),
@@ -998,6 +1025,44 @@ def _validate_config(cfg: Config) -> None:
             if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
                 raise ValueError(
                     f"enabled F05 Boolean cooldown requires SHA256 field {field_name}"
+                )
+    if bool(cfg.strategy.buy_e3_cooldown_policy_enabled):
+        if not math.isclose(
+            float(cfg.strategy.fill_cooldown),
+            85.0,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("enabled F05 BUY E3 requires fill_cooldown=85")
+        if bool(cfg.strategy.adaptive_add_cooldown_enabled):
+            raise ValueError(
+                "enabled F05 BUY E3 requires adaptive add cooldown OFF"
+            )
+        if cfg.strategy.fill_cooldown_consecutive_reset_policy != "opposite_fill_only":
+            raise ValueError(
+                "enabled F05 BUY E3 requires opposite_fill_only reset"
+            )
+        if float(cfg.strategy.buy_e3_cooldown_ema_warmup_s) < 2048.0:
+            raise ValueError(
+                "buy_e3_cooldown_ema_warmup_s must be at least 2048 seconds"
+            )
+        for field_name in (
+            "buy_e3_cooldown_artifact_manifest_path",
+            "buy_e3_cooldown_policy_path",
+            "buy_e3_cooldown_predicate_bundle_path",
+        ):
+            if not str(getattr(cfg.strategy, field_name)).strip():
+                raise ValueError(f"enabled F05 BUY E3 requires {field_name}")
+        for field_name in (
+            "buy_e3_cooldown_artifact_manifest_sha256",
+            "buy_e3_cooldown_artifact_sha256",
+            "buy_e3_cooldown_policy_sha256",
+            "buy_e3_cooldown_predicate_bundle_sha256",
+        ):
+            value = str(getattr(cfg.strategy, field_name)).strip().lower()
+            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+                raise ValueError(
+                    f"enabled F05 BUY E3 requires SHA256 field {field_name}"
                 )
     cap_mode = str(getattr(cfg.strategy, "spread_cap_mode", "compress") or "compress").strip().lower()
     if cap_mode not in {"compress", "pause_exposure", "observe"}:
@@ -1196,6 +1261,7 @@ def reload_config(*_args):
         if previous_cfg is not None:
             from live.runtime_policy import (
                 require_f05_boolean_cooldown_restart,
+                require_f05_buy_e3_restart,
                 require_q90_action_restart,
             )
 
@@ -1204,6 +1270,10 @@ def reload_config(*_args):
                 cfg.strategy.dynamic_fill_hazard_action_enabled,
             )
             require_f05_boolean_cooldown_restart(
+                vars(previous_cfg.strategy),
+                vars(cfg.strategy),
+            )
+            require_f05_buy_e3_restart(
                 vars(previous_cfg.strategy),
                 vars(cfg.strategy),
             )

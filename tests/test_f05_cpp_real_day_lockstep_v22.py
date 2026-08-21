@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -108,6 +109,7 @@ def test_all_panel_builder_walk_validates_every_opportunity(
     assert lockstep.DEFAULT_INVARIANCE_RECEIPT_FIELD not in receipt
     assert len(validated) == len(days)
     assert json.loads(receipt_path.read_text(encoding="ascii")) == receipt
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
 
 
 def test_all_panel_builder_walk_rejects_unqualified_runtime_before_rows(

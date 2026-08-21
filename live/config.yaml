@@ -87,6 +87,16 @@ strategy:
   boolean_cooldown_predicate_bundle_sha256: ""
   boolean_cooldown_ema_warmup_s: 2048.0
   boolean_cooldown_evidence_route: "owner_risk_accepted_promotion"
+  buy_e3_cooldown_policy_enabled: false
+  buy_e3_cooldown_artifact_manifest_path: ""
+  buy_e3_cooldown_artifact_manifest_sha256: ""
+  buy_e3_cooldown_artifact_sha256: ""
+  buy_e3_cooldown_policy_path: ""
+  buy_e3_cooldown_policy_sha256: ""
+  buy_e3_cooldown_predicate_bundle_path: ""
+  buy_e3_cooldown_predicate_bundle_sha256: ""
+  buy_e3_cooldown_ema_warmup_s: 2048.0
+  buy_e3_cooldown_evidence_route: "owner_risk_accepted_buy_e3_v1"
   adaptive_add_cooldown_enabled: false
   adaptive_add_cooldown_gate_enabled: false
   # Post-fill quote response research surface. I shifts the pair center;

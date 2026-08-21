@@ -39,6 +39,24 @@ def test_sell_only_executor_forbids_cross_execution_strategy_cache_reuse() -> No
     assert "predecessor_receipt_file" not in qualification
 
 
+def test_historical_sell_only_bundle_does_not_invent_dataset_binding(
+    tmp_path: Path,
+) -> None:
+    bundle = orchestrator.base._new_formal_offline_bundle(
+        execution_manifest_path=tmp_path / "execution.json",
+        execution_manifest={},
+        source_manifest_path=tmp_path / "source.json",
+        source_manifest={},
+        panel_manifest_path=tmp_path / "panel.json",
+        panel_manifest={},
+        panel_files={},
+        repository_root=tmp_path,
+    )
+
+    assert bundle.dataset_binding_path is None
+    assert bundle.dataset_binding == {}
+
+
 def test_sell_only_target_source_coverage_has_only_two_legal_paths() -> None:
     coverage = backend._target_request_source_coverage(_NoResumeAdapter())
 

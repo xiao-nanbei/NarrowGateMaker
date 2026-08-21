@@ -42,6 +42,7 @@ sys.path.insert(0, str(ROOT))
 from live.config import install_reload_handler, load_config, set_engine_ref
 from live.runtime_policy import (
     f05_boolean_cooldown_runtime_policy,
+    f05_buy_e3_runtime_policy,
     q90_action_runtime_policy,
     write_runtime_identity,
 )
@@ -211,6 +212,15 @@ def record_startup_runtime_identity(
         for key, value in f05_policy.items()
         if key != "schema_version"
     }
+    f05_buy_e3_policy = f05_buy_e3_runtime_policy(
+        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
+        evidence_route=cfg.strategy.buy_e3_cooldown_evidence_route,
+    )
+    f05_buy_e3_policy_fields = {
+        key: value
+        for key, value in f05_buy_e3_policy.items()
+        if key != "schema_version"
+    }
     model_dir = Path(str(cfg.ml.model_dir)).expanduser()
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
@@ -262,6 +272,25 @@ def record_startup_runtime_identity(
         ).strip().lower(),
         "f05_boolean_cooldown_ema_warmup_s": float(
             cfg.strategy.boolean_cooldown_ema_warmup_s
+        ),
+        "f05_buy_e3_runtime_policy_schema_version": f05_buy_e3_policy[
+            "schema_version"
+        ],
+        **f05_buy_e3_policy_fields,
+        "f05_buy_e3_artifact_manifest_sha256": str(
+            cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
+        ).strip().lower(),
+        "f05_buy_e3_artifact_sha256": str(
+            cfg.strategy.buy_e3_cooldown_artifact_sha256
+        ).strip().lower(),
+        "f05_buy_e3_policy_sha256": str(
+            cfg.strategy.buy_e3_cooldown_policy_sha256
+        ).strip().lower(),
+        "f05_buy_e3_predicate_bundle_sha256": str(
+            cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
+        ).strip().lower(),
+        "f05_buy_e3_ema_warmup_s": float(
+            cfg.strategy.buy_e3_cooldown_ema_warmup_s
         ),
     }
     write_runtime_identity(identity_path, identity)
@@ -583,6 +612,12 @@ def main():
             "OWNER_RISK_ACCEPTED_OVERRIDE f05_boolean_cooldown=ON authority=%s",
             runtime_identity["f05_boolean_cooldown_runtime_authority"],
         )
+    if runtime_identity["f05_buy_e3_owner_override_effective"]:
+        logger.warning(
+            "OWNER_RISK_ACCEPTED_OVERRIDE f05_buy_e3=ON authority=%s artifact=%s",
+            runtime_identity["f05_buy_e3_runtime_authority"],
+            runtime_identity["f05_buy_e3_artifact_sha256"],
+        )
     project_name = getattr(cfg, "project_name", "NarrowGate")
     logger.info(f"{project_name} Maker Engine Starting")
     logger.info(f"  Symbol:    {cfg.symbol}")
@@ -791,6 +826,7 @@ def main():
                 buy_fill_sel = engine.buy_fill_selection_live_snapshot()
                 fill_hazard = engine.dynamic_fill_hazard_shadow_snapshot()
                 boolean_cooldown = engine.boolean_cooldown_policy_snapshot()
+                buy_e3_cooldown = engine.buy_e3_cooldown_policy_snapshot()
                 market_tape = ws.market_tape_snapshot()
                 deep_book = ws.deep_book_snapshot()
                 active_order_depth = ws.active_order_depth_snapshot()
@@ -990,6 +1026,7 @@ def main():
                     f"fillHazardActionKeeps={fill_hazard['action_keep_count']} "
                     f"fillHazardActionInvalidHold={fill_hazard['action_invalid_hold_count']} "
                     f"booleanCooldownEnabled={boolean_cooldown['enabled']} "
+                    f"booleanCooldownUpdates={boolean_cooldown['windows']['updates']} "
                     f"booleanCooldownEval={boolean_cooldown['evaluations']} "
                     f"booleanCooldownSupported={boolean_cooldown['supported']} "
                     f"booleanCooldownNonbaseline={boolean_cooldown['nonbaseline']} "
@@ -1000,6 +1037,19 @@ def main():
                     f"booleanCooldownGaps={boolean_cooldown['windows']['gap_windows']} "
                     f"booleanCooldownResets={boolean_cooldown['windows']['resets']} "
                     f"booleanCooldownInvalid={boolean_cooldown['windows']['invalid_updates']} "
+                    f"buyE3CooldownEnabled={buy_e3_cooldown['enabled']} "
+                    f"buyE3CooldownUpdates={buy_e3_cooldown['windows']['updates']} "
+                    f"buyE3CooldownEval={buy_e3_cooldown['evaluations']} "
+                    f"buyE3CooldownSupported={buy_e3_cooldown['supported']} "
+                    f"buyE3CooldownNonbaseline={buy_e3_cooldown['nonbaseline']} "
+                    f"buyE3CooldownFallback={buy_e3_cooldown['fallback']} "
+                    f"buyE3CooldownLastAction={buy_e3_cooldown['last_action']} "
+                    f"buyE3CooldownDecisionP99Us={buy_e3_cooldown['decision_latency_p99_us']:.1f} "
+                    f"buyE3CooldownWarm={buy_e3_cooldown['windows']['warmup_time_admitted']} "
+                    f"buyE3CooldownWindows={buy_e3_cooldown['windows']['completed_windows']} "
+                    f"buyE3CooldownGapResets={buy_e3_cooldown['windows']['gap_resets']} "
+                    f"buyE3CooldownResets={buy_e3_cooldown['windows']['resets']} "
+                    f"buyE3CooldownInvalid={buy_e3_cooldown['windows']['invalid_updates']} "
                     f"marketTapeEnabled={market_tape['enabled']} "
                     f"marketTapeWritten={market_tape['written']} "
                     f"marketTapeDropped={market_tape['dropped']} "
