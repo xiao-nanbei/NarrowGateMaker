@@ -81,6 +81,16 @@ FORMAL_V24_BUY_ADAPTER_ARTIFACT_SHA256 = (
 FORMAL_V24_BUY_CANDIDATE_BUNDLE_SHA256 = (
     "61c56ebb3f4a0ff58f86247188fcb54464c20705147147ee07bd88c83906ddc9"
 )
+PREDECESSOR_BUY_PROJECTION_SCHEMA = f"{IDENTITY}.predecessor_buy_input_projection.v1"
+PREDECESSOR_BUY_ENRICHMENT_COLUMNS = (
+    "exact_owner_duration_ms",
+    "owner_fallback_reason",
+    "owner_matched_rule_index",
+    "owner_support_valid",
+    "policy_input_valid",
+    "feature::support_valid",
+    "feature::channel_support_valid",
+)
 
 
 class OwnerBuyE3RefitError(RuntimeError):
@@ -481,6 +491,88 @@ def _full_development_buy_request(
     return request, buy_index, days, replay_rows
 
 
+def _predecessor_buy_input_projection(
+    rows: pd.DataFrame,
+) -> tuple[pd.DataFrame, Mapping[str, Any]]:
+    """Recover the v24 BUY provider schema after validating new redundant bindings."""
+
+    required = {
+        "side",
+        "exact_owner_action",
+        "baseline_duration_ms",
+        *PREDECESSOR_BUY_ENRICHMENT_COLUMNS,
+    }
+    missing = sorted(required - set(rows.columns))
+    if missing:
+        raise OwnerBuyE3RefitError(
+            "predecessor BUY projection lacks bound columns: " + ", ".join(missing)
+        )
+    if rows.empty or set(rows["side"].astype(str).str.upper()) != {"BUY"}:
+        raise OwnerBuyE3RefitError("predecessor projection is not a non-empty BUY frame")
+    if not rows["exact_owner_action"].astype(str).eq("CONTROL_85N").all():
+        raise OwnerBuyE3RefitError("predecessor BUY projection escaped exact B0")
+
+    try:
+        baseline = pd.to_numeric(rows["baseline_duration_ms"], errors="raise")
+        owner_duration = pd.to_numeric(rows["exact_owner_duration_ms"], errors="raise")
+    except (TypeError, ValueError) as exc:
+        raise OwnerBuyE3RefitError(
+            "predecessor BUY projection duration binding is not numeric"
+        ) from exc
+    if (
+        baseline.isna().any()
+        or owner_duration.isna().any()
+        or not baseline.eq(owner_duration).all()
+    ):
+        raise OwnerBuyE3RefitError(
+            "predecessor BUY owner duration drifted from frozen baseline duration"
+        )
+    if not rows["owner_fallback_reason"].astype(str).eq(
+        "buy_control_by_contract"
+    ).all():
+        raise OwnerBuyE3RefitError("predecessor BUY fallback reason drifted")
+    if not rows["owner_matched_rule_index"].isna().all():
+        raise OwnerBuyE3RefitError("predecessor BUY unexpectedly matched an owner rule")
+    for column in (
+        "owner_support_valid",
+        "policy_input_valid",
+        "feature::support_valid",
+        "feature::channel_support_valid",
+    ):
+        values = rows[column]
+        if values.isna().any() or not values.eq(True).all():
+            raise OwnerBuyE3RefitError(
+                f"predecessor BUY redundant support binding drifted at {column}"
+            )
+
+    projected = rows.drop(columns=list(PREDECESSOR_BUY_ENRICHMENT_COLUMNS))
+    audit = {
+        "schema_version": PREDECESSOR_BUY_PROJECTION_SCHEMA,
+        "side": "BUY",
+        "row_count": len(rows),
+        "removed_columns": list(PREDECESSOR_BUY_ENRICHMENT_COLUMNS),
+        "constraints": {
+            "exact_owner_action": "CONTROL_85N",
+            "exact_owner_duration_equals_baseline_duration": True,
+            "owner_fallback_reason": "buy_control_by_contract",
+            "owner_matched_rule_index_is_null": True,
+            "all_support_bindings_true": True,
+        },
+        "current_input_sha256": (
+            replay_adapter._one_shot_semantic_day_input_sha256(rows)
+        ),
+        "predecessor_projection_sha256": (
+            replay_adapter._one_shot_semantic_day_input_sha256(projected)
+        ),
+        "economic_outcomes_read": False,
+    }
+    audit["canonical_projection_receipt_sha256"] = document_sha256(
+        audit,
+        "canonical_projection_receipt_sha256",
+    )
+    return projected, audit
+
+
 def _predecessor_semantic_sources(
     *,
     cache: replay_adapter.DayReplayCache,
@@ -537,7 +629,10 @@ def _predecessor_semantic_sources(
     audits: list[dict[str, Any]] = []
     for day, (key, manifest) in sorted(candidates.items()):
         day_rows = replay_rows.loc[replay_rows["utc_day"].astype(str) == day]
-        expected_semantic_sha = replay_adapter._one_shot_semantic_day_input_sha256(day_rows)
+        projected_rows, projection_audit = _predecessor_buy_input_projection(day_rows)
+        expected_semantic_sha = replay_adapter._one_shot_semantic_day_input_sha256(
+            projected_rows
+        )
         if key.semantic_day_input_sha256 != expected_semantic_sha:
             raise OwnerBuyE3RefitError(f"predecessor BUY semantic day input drifted for {day}")
         loaded = cache.load_semantic_one_shot(key)
@@ -572,6 +667,7 @@ def _predecessor_semantic_sources(
                 "source_cache_receipt_sha256": evidence["source_cache_receipt_sha256"],
                 "outcomes_frame_sha256": source_frames["outcomes"],
                 "supported_frame_sha256": source_frames["supported"],
+                "input_projection": projection_audit,
             }
         )
     return frames, audits
@@ -708,6 +804,9 @@ def materialize_full_development_buy_labels(
         "fresh_supported_frame_sha256": replay_adapter._frame_sha256(fresh_result.supported),
         "combined_outcomes_frame_sha256": replay_adapter._frame_sha256(outcomes),
         "combined_supported_frame_sha256": replay_adapter._frame_sha256(supported),
+        "cross_execution_one_shot_label_receipts_reused": True,
+        "predecessor_reuse_scope": "buy_one_shot_label_receipts_only",
+        "predecessor_input_projection_schema": PREDECESSOR_BUY_PROJECTION_SCHEMA,
         "strategy_dependent_cross_execution_cache_imported": False,
         "economic_values_persisted_in_receipt": False,
         "validation_read": False,
@@ -1287,8 +1386,9 @@ def _predecessor_semantic_receipt_census(
         if key.utc_day in audited:
             raise OwnerBuyE3RefitError("semantic preflight predecessor day is duplicated")
         day_rows = replay_rows.loc[replay_rows["utc_day"].astype(str) == key.utc_day]
-        if key.semantic_day_input_sha256 != (
-            replay_adapter._one_shot_semantic_day_input_sha256(day_rows)
+        projected_rows, projection_audit = _predecessor_buy_input_projection(day_rows)
+        if key.semantic_day_input_sha256 != replay_adapter._one_shot_semantic_day_input_sha256(
+            projected_rows
         ):
             raise OwnerBuyE3RefitError("semantic preflight day input drifted")
         validated_manifest = cache._semantic_manifest(key)
@@ -1319,6 +1419,7 @@ def _predecessor_semantic_receipt_census(
             "source_cache_key_sha256": source_key.cache_key_sha256,
             "source_cache_receipt_sha256": source_manifest["receipt_sha256"],
             "verified_file_sha256": verified_files,
+            "input_projection": projection_audit,
         }
     fresh_days = tuple(day for day in days if day not in audited)
     if (
@@ -1333,6 +1434,10 @@ def _predecessor_semantic_receipt_census(
         "fresh_day_count": len(fresh_days),
         "fresh_days": list(fresh_days),
         "day_receipts": [{"utc_day": day, **audit} for day, audit in sorted(audited.items())],
+        "cross_execution_one_shot_label_receipts_reused": True,
+        "predecessor_reuse_scope": "buy_one_shot_label_receipts_only",
+        "predecessor_input_projection_schema": PREDECESSOR_BUY_PROJECTION_SCHEMA,
+        "strategy_dependent_cross_execution_cache_imported": False,
         "economic_frame_payloads_parsed": False,
         "economic_values_exposed": False,
     }

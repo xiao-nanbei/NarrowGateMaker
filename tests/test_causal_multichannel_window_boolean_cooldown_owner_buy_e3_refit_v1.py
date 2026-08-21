@@ -239,6 +239,15 @@ def test_materializer_audits_24_predecessor_days_and_fresh_computes_six(
             "utc_day": panel.metadata["utc_day"],
             "side": "BUY",
             "stable_input": range(len(panel.metadata)),
+            "exact_owner_action": "CONTROL_85N",
+            "baseline_duration_ms": 85_000,
+            "exact_owner_duration_ms": 85_000,
+            "owner_fallback_reason": "buy_control_by_contract",
+            "owner_matched_rule_index": pd.NA,
+            "owner_support_valid": True,
+            "policy_input_valid": True,
+            "feature::support_valid": True,
+            "feature::channel_support_valid": True,
         },
         index=panel.metadata.index,
     )
@@ -265,7 +274,8 @@ def test_materializer_audits_24_predecessor_days_and_fresh_computes_six(
     )
     for ordinal, day in enumerate(days[:24]):
         day_rows = scoped.loc[scoped["utc_day"].astype(str) == day]
-        semantic_sha = replay_adapter._one_shot_semantic_day_input_sha256(day_rows)
+        projected_rows, _ = subject._predecessor_buy_input_projection(day_rows)
+        semantic_sha = replay_adapter._one_shot_semantic_day_input_sha256(projected_rows)
         source_key = replay_adapter.DayReplayCacheKey(
             adapter_artifact_sha256="a" * 64,
             source_manifest_sha256=bindings.source_manifest_sha256,
@@ -349,6 +359,10 @@ def test_materializer_audits_24_predecessor_days_and_fresh_computes_six(
     assert tuple(current.calls[0][0].label_request.train_days) == days[24:]
     assert materialized.receipt["predecessor_day_count"] == 24
     assert materialized.receipt["fresh_day_count"] == 6
+    assert materialized.receipt["cross_execution_one_shot_label_receipts_reused"] is True
+    assert materialized.receipt["predecessor_reuse_scope"] == (
+        "buy_one_shot_label_receipts_only"
+    )
     assert materialized.receipt["strategy_dependent_cross_execution_cache_imported"] is False
     assert len(materialized.outcomes) == 30
     assert len(materialized.supported) == 30
@@ -359,3 +373,65 @@ def test_materializer_audits_24_predecessor_days_and_fresh_computes_six(
     assert bound.has_preconstructed_labels
     assert batch.provider_identity == subject.LABEL_PROVIDER_IDENTITY
     assert batch.provider_artifact_sha256 == materialized.receipt_sha256
+
+
+def _projection_rows() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "utc_day": ["2026-07-01"],
+            "side": ["BUY"],
+            "stable_input": [1],
+            "exact_owner_action": ["CONTROL_85N"],
+            "baseline_duration_ms": [170_000],
+            "exact_owner_duration_ms": [170_000],
+            "owner_fallback_reason": ["buy_control_by_contract"],
+            "owner_matched_rule_index": [pd.NA],
+            "owner_support_valid": [True],
+            "policy_input_valid": [True],
+            "feature::support_valid": [True],
+            "feature::channel_support_valid": [True],
+            "outer_fold_id": [subject.OWNER_FOLD_ID],
+            "fold_row_role": ["outer_train"],
+        },
+        index=pd.Index(["BUY:1"], name="opportunity_id"),
+    )
+
+
+def test_predecessor_buy_projection_removes_only_bound_redundant_columns() -> None:
+    rows = _projection_rows()
+    projected, audit = subject._predecessor_buy_input_projection(rows)
+
+    assert set(rows.columns) - set(projected.columns) == set(
+        subject.PREDECESSOR_BUY_ENRICHMENT_COLUMNS
+    )
+    assert audit["constraints"]["exact_owner_duration_equals_baseline_duration"] is True
+    assert audit["economic_outcomes_read"] is False
+    assert audit["predecessor_projection_sha256"] == (
+        replay_adapter._one_shot_semantic_day_input_sha256(projected)
+    )
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    (
+        ("side", "SELL", "non-empty BUY"),
+        ("exact_owner_action", "FIXED_79S", "exact B0"),
+        ("exact_owner_duration_ms", 85_000, "duration drifted"),
+        ("owner_fallback_reason", "none", "fallback reason"),
+        ("owner_matched_rule_index", 0, "matched an owner rule"),
+        ("owner_support_valid", False, "support binding"),
+        ("policy_input_valid", False, "support binding"),
+        ("feature::support_valid", False, "support binding"),
+        ("feature::channel_support_valid", False, "support binding"),
+    ),
+)
+def test_predecessor_buy_projection_fails_closed_on_binding_drift(
+    column: str,
+    value: object,
+    message: str,
+) -> None:
+    rows = _projection_rows()
+    rows.loc[rows.index[0], column] = value
+
+    with pytest.raises(subject.OwnerBuyE3RefitError, match=message):
+        subject._predecessor_buy_input_projection(rows)
