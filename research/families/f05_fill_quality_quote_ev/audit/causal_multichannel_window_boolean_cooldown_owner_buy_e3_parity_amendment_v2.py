@@ -23,11 +23,15 @@ from typing import Any
 
 import pandas as pd
 
+from data_paths import resolve_portable_path
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_formal_component_closeout_v1 as component_closeout,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_predicate_view_v1 as predicate_view,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_repeated_policy_backend_v1 as repeated_backend,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_v1 as parity_v1,
@@ -38,6 +42,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 
 IDENTITY = parity_v1.IDENTITY
 SCHEMA_AMENDMENT = f"{IDENTITY}.layer4_receipt_binding_amendment.v2"
+MECHANICS_IDENTITY_RECEIPT_SCHEMA = (
+    f"{IDENTITY}.outcome_blind_mechanics_identity_receipt.v1"
+)
 LAYER4_CONTRACT_SCHEMA = f"{IDENTITY}.layer4_lockstep_contract.v1"
 LOCKSTEP_DAY_SCHEMA_V2 = f"{IDENTITY}.repeated_policy_lockstep_day.v2"
 LAYER4_RECEIPT_SCHEMA_V2 = f"{IDENTITY}.parity_receipt.v2"
@@ -83,6 +90,25 @@ _LOCKSTEP_RESULT_FIELDS = {
     "fill_count",
     "mismatch_count",
 }
+_MECHANICS_BODY_FIELDS = {
+    "schema_version",
+    "selected_days",
+    "file_sha256",
+    "metadata_sha256",
+    "boolean_features_sha256",
+    "primitive_boolean_features_sha256",
+    "continuous_features_sha256",
+    "exact_owner_actions_sha256",
+    "replay_inputs_sha256",
+    "predicate_view_receipt",
+    "bindings",
+    "economic_outcomes_present",
+}
+_SOURCE_IDENTITY_ROLES = (
+    "source_execution_manifest",
+    "source_manifest",
+    "panel_manifest",
+)
 
 
 class OwnerBuyE3ParityAmendmentError(RuntimeError):
@@ -461,13 +487,423 @@ def _parity_source_binding() -> dict[str, str]:
     }
 
 
+def _owner_bound_file(
+    owner_manifest: Mapping[str, Any],
+    role: str,
+    *,
+    label: str,
+) -> tuple[Path, dict[str, Any]]:
+    bindings = owner_manifest.get("bindings")
+    raw = bindings.get(role) if isinstance(bindings, Mapping) else None
+    if not isinstance(raw, Mapping):
+        raise OwnerBuyE3ParityAmendmentError(f"owner attempt2 lacks {role} binding")
+    try:
+        path = resolve_portable_path(str(raw["path"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OwnerBuyE3ParityAmendmentError(f"owner attempt2 {role} path is invalid") from exc
+    binding = _file_binding(path, label=label)
+    try:
+        expected_size = int(raw["size_bytes"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise OwnerBuyE3ParityAmendmentError(f"owner attempt2 {role} size is invalid") from exc
+    if (
+        binding["file_sha256"]
+        != _require_sha256(raw.get("sha256"), f"owner attempt2 {role} file SHA256")
+        or binding["size_bytes"] != expected_size
+    ):
+        raise OwnerBuyE3ParityAmendmentError(f"owner attempt2 {role} binding drifted")
+    return _absolute_path(path), binding
+
+
+def _owner_bound_document(
+    owner_manifest: Mapping[str, Any],
+    role: str,
+    *,
+    canonical_field: str,
+    label: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    path, file_binding = _owner_bound_file(owner_manifest, role, label=label)
+    document = _load_json(path, label=label)
+    canonical = _require_sha256(
+        document.get(canonical_field), f"{label} canonical SHA256"
+    )
+    if canonical != _document_sha256(document, canonical_field):
+        raise OwnerBuyE3ParityAmendmentError(f"{label} canonical identity drifted")
+    return document, {
+        "file": file_binding,
+        "schema_version": str(document.get("schema_version", "")),
+        "identity": str(document.get("identity", "")),
+        "canonical_field": canonical_field,
+        "canonical_sha256": canonical,
+    }
+
+
+def _panel_file_bindings(
+    panel_manifest: Mapping[str, Any],
+    mechanics_file_sha256: Mapping[str, Any],
+) -> tuple[dict[str, str], Path]:
+    files = panel_manifest.get("files")
+    if not isinstance(files, Mapping) or set(files) != set(repeated_backend._PANEL_ROLES):
+        raise OwnerBuyE3ParityAmendmentError("mechanics panel file census drifted")
+    normalized: dict[str, str] = {}
+    boolean_path: Path | None = None
+    for role in repeated_backend._PANEL_ROLES:
+        raw = files.get(role)
+        if not isinstance(raw, Mapping):
+            raise OwnerBuyE3ParityAmendmentError(f"mechanics panel {role} binding is malformed")
+        try:
+            path = resolve_portable_path(str(raw["path"]))
+            expected_size = int(raw["size_bytes"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise OwnerBuyE3ParityAmendmentError(
+                f"mechanics panel {role} path binding is invalid"
+            ) from exc
+        source = _regular_file(path, label=f"mechanics panel {role}", private=False)
+        expected_sha = _require_sha256(raw.get("sha256"), f"mechanics panel {role} SHA256")
+        if _file_sha256(source) != expected_sha or source.stat().st_size != expected_size:
+            raise OwnerBuyE3ParityAmendmentError(f"mechanics panel {role} file drifted")
+        normalized[role] = expected_sha
+        if role == "boolean_features":
+            boolean_path = source
+    supplied = {str(key): str(value) for key, value in mechanics_file_sha256.items()}
+    if supplied != normalized:
+        raise OwnerBuyE3ParityAmendmentError("OutcomeBlindMechanics file SHA256 map drifted")
+    assert boolean_path is not None
+    return normalized, boolean_path
+
+
+def _primitive_boolean_frame_sha256(
+    boolean_path: Path,
+    *,
+    selected_days: Sequence[str],
+) -> str:
+    try:
+        raw = pd.read_parquet(boolean_path)
+    except Exception as exc:  # pragma: no cover - engine errors are environment-specific.
+        raise OwnerBuyE3ParityAmendmentError(
+            "primitive Boolean mechanics frame is unreadable"
+        ) from exc
+    try:
+        indexed = repeated_backend._index_panel_table(
+            raw,
+            role="boolean_features",
+            selected_days=selected_days,
+        )
+    except Exception as exc:
+        raise OwnerBuyE3ParityAmendmentError(
+            "primitive Boolean mechanics frame identity drifted"
+        ) from exc
+    columns = [
+        column
+        for column in indexed.columns
+        if column not in {*repeated_backend._INDEX_COLUMNS, "side"}
+    ]
+    if not columns:
+        raise OwnerBuyE3ParityAmendmentError("primitive Boolean mechanics frame is empty")
+    return repeated_backend._frame_sha256(indexed.loc[:, columns])
+
+
+def _formal_execution_bindings_payload(mechanics: Any) -> dict[str, str]:
+    bindings = getattr(mechanics, "bindings", None)
+    if isinstance(bindings, repeated_backend.FormalExecutionBindings):
+        payload = bindings.payload()
+    elif hasattr(bindings, "payload"):
+        payload = bindings.payload()
+    elif isinstance(bindings, Mapping):
+        payload = dict(bindings)
+    else:
+        raise OwnerBuyE3ParityAmendmentError("FormalExecutionBindings are missing")
+    expected = set(repeated_backend.FormalExecutionBindings.__dataclass_fields__)
+    if not isinstance(payload, Mapping) or set(payload) != expected:
+        raise OwnerBuyE3ParityAmendmentError("FormalExecutionBindings shape drifted")
+    return {
+        field: _require_sha256(payload[field], f"FormalExecutionBindings.{field}")
+        for field in repeated_backend.FormalExecutionBindings.__dataclass_fields__
+    }
+
+
+def _derive_mechanics_sources(
+    owner_manifest: Mapping[str, Any],
+    mechanics_body: Mapping[str, Any],
+) -> dict[str, Any]:
+    source_execution, source_execution_binding = _owner_bound_document(
+        owner_manifest,
+        "source_execution_manifest",
+        canonical_field="canonical_execution_manifest_sha256",
+        label="source execution manifest",
+    )
+    source_manifest, source_binding = _owner_bound_document(
+        owner_manifest,
+        "source_manifest",
+        canonical_field="canonical_manifest_sha256",
+        label="source manifest",
+    )
+    panel_manifest, panel_binding = _owner_bound_document(
+        owner_manifest,
+        "panel_manifest",
+        canonical_field="canonical_panel_manifest_sha256",
+        label="panel manifest",
+    )
+    predicate_document, predicate_binding = _owner_bound_document(
+        owner_manifest,
+        "outcome_blind_2025_predicate_bundle",
+        canonical_field="canonical_sha256",
+        label="outcome-blind source predicate bundle",
+    )
+    del predicate_document
+
+    body_days = _ordered_days(mechanics_body.get("selected_days", ()))
+    if (
+        tuple(source_manifest.get("selected_days", ())) != body_days
+        or tuple(panel_manifest.get("selected_days", ())) != body_days
+        or panel_manifest.get("economic_outcomes_present") is not False
+    ):
+        raise OwnerBuyE3ParityAmendmentError("mechanics source day or outcome boundary drifted")
+    body_files = mechanics_body.get("file_sha256")
+    if not isinstance(body_files, Mapping):
+        raise OwnerBuyE3ParityAmendmentError("mechanics body file SHA256 map is missing")
+    normalized_files, _boolean_path = _panel_file_bindings(panel_manifest, body_files)
+    body_bindings = mechanics_body.get("bindings")
+    if not isinstance(body_bindings, Mapping):
+        raise OwnerBuyE3ParityAmendmentError("mechanics body FormalExecutionBindings are missing")
+    fold_sha = _require_sha256(
+        owner_manifest.get("fold_manifest_sha256"), "owner attempt2 fold manifest SHA256"
+    )
+    nested_fold_sha = _require_sha256(
+        owner_manifest.get("nested_fold_manifest_sha256"),
+        "owner attempt2 nested-fold manifest SHA256",
+    )
+    expected_bindings = {
+        "execution_manifest_sha256": _require_sha256(
+            owner_manifest.get("canonical_execution_manifest_sha256"),
+            "owner attempt2 canonical execution manifest SHA256",
+        ),
+        "source_manifest_sha256": source_binding["canonical_sha256"],
+        "panel_manifest_sha256": panel_binding["canonical_sha256"],
+        "fold_manifest_sha256": fold_sha,
+        "nested_fold_manifest_sha256": nested_fold_sha,
+        "exact_owner_policy_sha256": _require_sha256(
+            panel_manifest.get("exact_current_owner_policy_sha256"),
+            "panel exact owner policy SHA256",
+        ),
+        "exact_owner_predicate_bundle_sha256": _require_sha256(
+            panel_manifest.get("exact_current_predicate_bundle_sha256"),
+            "panel exact owner predicate bundle SHA256",
+        ),
+        "exact_owner_private_config_sha256": _require_sha256(
+            panel_manifest.get("exact_current_private_config_sha256"),
+            "panel exact owner private config SHA256",
+        ),
+    }
+    if dict(body_bindings) != expected_bindings:
+        raise OwnerBuyE3ParityAmendmentError("mechanics FormalExecutionBindings drifted")
+    if (
+        source_execution.get("fold_manifest_sha256") != fold_sha
+        or source_execution.get("nested_fold_manifest_sha256") != nested_fold_sha
+        or predicate_binding["file"]["file_sha256"]
+        != expected_bindings["exact_owner_predicate_bundle_sha256"]
+    ):
+        raise OwnerBuyE3ParityAmendmentError("mechanics source/fold identity drifted")
+    return {
+        "source_execution_manifest": source_execution_binding,
+        "source_manifest": source_binding,
+        "panel_manifest": panel_binding,
+        "outcome_blind_predicate_bundle": predicate_binding,
+        "panel_file_sha256": normalized_files,
+        "fold_manifest_sha256": fold_sha,
+        "nested_fold_manifest_sha256": nested_fold_sha,
+    }
+
+
+def _reconstruct_mechanics_body(
+    mechanics: Any,
+    *,
+    owner_manifest: Mapping[str, Any],
+) -> dict[str, Any]:
+    days = _ordered_days(tuple(getattr(mechanics, "selected_days", ())))
+    file_sha256 = getattr(mechanics, "file_sha256", None)
+    if not isinstance(file_sha256, Mapping):
+        raise OwnerBuyE3ParityAmendmentError("OutcomeBlindMechanics file SHA256 map is missing")
+    panel_manifest, _panel_binding = _owner_bound_document(
+        owner_manifest,
+        "panel_manifest",
+        canonical_field="canonical_panel_manifest_sha256",
+        label="panel manifest",
+    )
+    normalized_files, boolean_path = _panel_file_bindings(panel_manifest, file_sha256)
+    panel = getattr(mechanics, "panel", None)
+    replay_inputs = getattr(mechanics, "replay_inputs", None)
+    predicate_receipt = getattr(mechanics, "predicate_view_receipt", None)
+    if panel is None or not isinstance(replay_inputs, pd.DataFrame):
+        raise OwnerBuyE3ParityAmendmentError("OutcomeBlindMechanics frames are missing")
+    if not isinstance(predicate_receipt, Mapping):
+        raise OwnerBuyE3ParityAmendmentError("predicate-view receipt is missing")
+    body = {
+        "schema_version": f"{repeated_backend.IDENTITY}.outcome_blind_mechanics_receipt.v1",
+        "selected_days": list(days),
+        "file_sha256": normalized_files,
+        "metadata_sha256": repeated_backend._frame_sha256(panel.metadata),
+        "boolean_features_sha256": repeated_backend._frame_sha256(panel.boolean_features),
+        "primitive_boolean_features_sha256": _primitive_boolean_frame_sha256(
+            boolean_path,
+            selected_days=days,
+        ),
+        "continuous_features_sha256": repeated_backend._frame_sha256(
+            panel.continuous_features
+        ),
+        "exact_owner_actions_sha256": repeated_backend._frame_sha256(
+            panel.exact_owner_actions
+        ),
+        "replay_inputs_sha256": repeated_backend._frame_sha256(replay_inputs),
+        "predicate_view_receipt": dict(predicate_receipt),
+        "bindings": _formal_execution_bindings_payload(mechanics),
+        "economic_outcomes_present": False,
+    }
+    if _canonical_sha256(body) != _require_sha256(
+        getattr(mechanics, "mechanics_receipt_sha256", None),
+        "OutcomeBlindMechanics receipt SHA256",
+    ):
+        raise OwnerBuyE3ParityAmendmentError(
+            "reconstructed OutcomeBlindMechanics canonical body drifted"
+        )
+    return body
+
+
+def _validate_mechanics_identity_payload(
+    payload: Mapping[str, Any],
+    *,
+    mechanics: Any | None = None,
+    expected_owner_execution_manifest_path: Path | None = None,
+) -> dict[str, Any]:
+    if (
+        payload.get("schema_version") != MECHANICS_IDENTITY_RECEIPT_SCHEMA
+        or payload.get("schema_amendment") != SCHEMA_AMENDMENT
+        or payload.get("identity") != IDENTITY
+        or payload.get("status") != "outcome_blind_mechanics_identity_materialized"
+        or payload.get("economic_outcomes_present") is not False
+        or payload.get("evidence_boundary") != _BOUNDARY
+        or payload.get("permissions") != _PERMISSIONS
+        or payload.get("canonical_mechanics_identity_receipt_sha256")
+        != _document_sha256(payload, "canonical_mechanics_identity_receipt_sha256")
+    ):
+        raise OwnerBuyE3ParityAmendmentError("mechanics identity receipt drifted")
+    body = payload.get("mechanics_body")
+    if not isinstance(body, Mapping) or set(body) != _MECHANICS_BODY_FIELDS:
+        raise OwnerBuyE3ParityAmendmentError("mechanics canonical body is malformed")
+    if body.get("economic_outcomes_present") is not False:
+        raise OwnerBuyE3ParityAmendmentError("mechanics canonical body contains outcomes")
+    mechanics_sha = _require_sha256(
+        payload.get("mechanics_receipt_sha256"), "mechanics receipt SHA256"
+    )
+    if mechanics_sha != _canonical_sha256(body):
+        raise OwnerBuyE3ParityAmendmentError("embedded mechanics receipt SHA256 drifted")
+    owner_binding = payload.get("owner_execution_attempt")
+    if not isinstance(owner_binding, Mapping):
+        raise OwnerBuyE3ParityAmendmentError("mechanics owner execution binding is missing")
+    owner_path = _validate_file_binding(
+        owner_binding.get("manifest"), label="mechanics owner attempt2 manifest"
+    )
+    owner_manifest, derived_owner = _validate_attempt2_manifest(owner_path)
+    if dict(owner_binding) != derived_owner:
+        raise OwnerBuyE3ParityAmendmentError("mechanics owner execution binding drifted")
+    if expected_owner_execution_manifest_path is not None and owner_path != _regular_file(
+        expected_owner_execution_manifest_path,
+        label="expected owner attempt2 execution manifest",
+        private=True,
+    ):
+        raise OwnerBuyE3ParityAmendmentError("mechanics owner execution path drifted")
+    derived_sources = _derive_mechanics_sources(owner_manifest, body)
+    if payload.get("source_identity") != derived_sources:
+        raise OwnerBuyE3ParityAmendmentError("mechanics source identity drifted")
+    if mechanics is not None:
+        reconstructed = _reconstruct_mechanics_body(mechanics, owner_manifest=owner_manifest)
+        if dict(body) != reconstructed or mechanics_sha != _require_sha256(
+            getattr(mechanics, "mechanics_receipt_sha256", None),
+            "loaded OutcomeBlindMechanics receipt SHA256",
+        ):
+            raise OwnerBuyE3ParityAmendmentError("loaded OutcomeBlindMechanics drifted")
+    return dict(payload)
+
+
+def materialize_mechanics_identity_receipt(
+    *,
+    output_path: Path,
+    owner_execution_manifest_path: Path,
+    mechanics: Any,
+) -> Mapping[str, Any]:
+    """Materialize the independently resolvable OutcomeBlindMechanics identity."""
+
+    owner_manifest, owner_binding = _validate_attempt2_manifest(owner_execution_manifest_path)
+    body = _reconstruct_mechanics_body(mechanics, owner_manifest=owner_manifest)
+    mechanics_sha = _canonical_sha256(body)
+    receipt: dict[str, Any] = {
+        "schema_version": MECHANICS_IDENTITY_RECEIPT_SCHEMA,
+        "schema_amendment": SCHEMA_AMENDMENT,
+        "identity": IDENTITY,
+        "status": "outcome_blind_mechanics_identity_materialized",
+        "owner_execution_attempt": owner_binding,
+        "source_identity": _derive_mechanics_sources(owner_manifest, body),
+        "mechanics_body": body,
+        "mechanics_receipt_sha256": mechanics_sha,
+        "economic_outcomes_present": False,
+        "evidence_boundary": dict(_BOUNDARY),
+        "permissions": dict(_PERMISSIONS),
+    }
+    receipt["canonical_mechanics_identity_receipt_sha256"] = _document_sha256(
+        receipt, "canonical_mechanics_identity_receipt_sha256"
+    )
+    _validate_mechanics_identity_payload(
+        receipt,
+        mechanics=mechanics,
+        expected_owner_execution_manifest_path=owner_execution_manifest_path,
+    )
+    _atomic_write_json(output_path, receipt)
+    return receipt
+
+
+def validate_mechanics_identity_receipt(
+    path: Path,
+    *,
+    mechanics: Any | None = None,
+    expected_owner_execution_manifest_path: Path | None = None,
+) -> Mapping[str, Any]:
+    source = _regular_file(path, label="mechanics identity receipt", private=True)
+    payload = _load_json(source, label="mechanics identity receipt")
+    return _validate_mechanics_identity_payload(
+        payload,
+        mechanics=mechanics,
+        expected_owner_execution_manifest_path=expected_owner_execution_manifest_path,
+    )
+
+
+def _mechanics_identity_binding(
+    path: Path,
+    *,
+    mechanics: Any | None = None,
+    expected_owner_execution_manifest_path: Path | None = None,
+) -> dict[str, Any]:
+    payload = validate_mechanics_identity_receipt(
+        path,
+        mechanics=mechanics,
+        expected_owner_execution_manifest_path=expected_owner_execution_manifest_path,
+    )
+    return {
+        "receipt": _file_binding(path, label="mechanics identity receipt"),
+        "schema_version": MECHANICS_IDENTITY_RECEIPT_SCHEMA,
+        "canonical_receipt_sha256": payload[
+            "canonical_mechanics_identity_receipt_sha256"
+        ],
+        "mechanics_receipt_sha256": payload["mechanics_receipt_sha256"],
+    }
+
+
 def freeze_layer4_lockstep_contract(
     *,
     output_path: Path,
     formal_buy_component_artifact_manifest_path: Path,
     owner_execution_manifest_path: Path,
     artifact: LoadedExactArtifact,
-    mechanics_receipt_sha256: str,
+    mechanics_identity_receipt_path: Path,
     source_predicate_bundle: predicate_view.FrozenPredicateBundle,
     ordered_development_days: Sequence[str],
 ) -> Mapping[str, Any]:
@@ -482,6 +918,10 @@ def freeze_layer4_lockstep_contract(
         formal_buy_component_artifact_manifest_path
     )
     _attempt, execution = _validate_attempt2_manifest(owner_execution_manifest_path)
+    mechanics_identity = _mechanics_identity_binding(
+        mechanics_identity_receipt_path,
+        expected_owner_execution_manifest_path=owner_execution_manifest_path,
+    )
     artifact_bindings = {
         "artifact_manifest": _file_binding(artifact.manifest_path, label="artifact manifest"),
         "policy": _file_binding(artifact.policy_path, label="artifact policy"),
@@ -510,9 +950,7 @@ def freeze_layer4_lockstep_contract(
         ],
         "execution_attempt": execution,
         "exact_artifact": artifact_bindings,
-        "mechanics_receipt_sha256": _require_sha256(
-            mechanics_receipt_sha256, "mechanics receipt SHA256"
-        ),
+        "mechanics_identity_receipt": mechanics_identity,
         "source_predicate_bundle": source_binding,
         "parity_source": _parity_source_binding(),
         "ordered_development_days": list(days),
@@ -525,7 +963,7 @@ def freeze_layer4_lockstep_contract(
     _validate_contract_payload(
         receipt,
         artifact=artifact,
-        expected_mechanics_receipt_sha256=mechanics_receipt_sha256,
+        expected_mechanics_identity_receipt_path=mechanics_identity_receipt_path,
         source_predicate_bundle=source_predicate_bundle,
         ordered_development_days=days,
     )
@@ -537,7 +975,8 @@ def _validate_contract_payload(
     payload: Mapping[str, Any],
     *,
     artifact: LoadedExactArtifact | None = None,
-    expected_mechanics_receipt_sha256: str | None = None,
+    mechanics: Any | None = None,
+    expected_mechanics_identity_receipt_path: Path | None = None,
     source_predicate_bundle: predicate_view.FrozenPredicateBundle | None = None,
     ordered_development_days: Sequence[str] | None = None,
 ) -> dict[str, Any]:
@@ -584,13 +1023,37 @@ def _validate_contract_payload(
         raise OwnerBuyE3ParityAmendmentError("exact artifact binding is missing")
     _validate_artifact_documents(artifact, artifact_binding, ordered_days=days)
 
-    mechanics_sha = _require_sha256(
-        payload.get("mechanics_receipt_sha256"), "mechanics receipt SHA256"
+    if "mechanics_receipt_sha256" in payload:
+        raise OwnerBuyE3ParityAmendmentError(
+            "legacy bare mechanics SHA contract is forbidden"
+        )
+    mechanics_binding = payload.get("mechanics_identity_receipt")
+    if not isinstance(mechanics_binding, Mapping):
+        raise OwnerBuyE3ParityAmendmentError(
+            "mechanics identity receipt file binding is missing"
+        )
+    mechanics_path = _validate_file_binding(
+        mechanics_binding.get("receipt"), label="mechanics identity receipt"
     )
-    if expected_mechanics_receipt_sha256 is not None and mechanics_sha != _require_sha256(
-        expected_mechanics_receipt_sha256, "expected mechanics receipt SHA256"
+    if (
+        expected_mechanics_identity_receipt_path is not None
+        and mechanics_path
+        != _regular_file(
+            expected_mechanics_identity_receipt_path,
+            label="expected mechanics identity receipt",
+            private=True,
+        )
     ):
-        raise OwnerBuyE3ParityAmendmentError("mechanics receipt SHA256 drifted")
+        raise OwnerBuyE3ParityAmendmentError("mechanics identity receipt path drifted")
+    derived_mechanics = _mechanics_identity_binding(
+        mechanics_path,
+        mechanics=mechanics,
+        expected_owner_execution_manifest_path=attempt_path,
+    )
+    if dict(mechanics_binding) != derived_mechanics:
+        raise OwnerBuyE3ParityAmendmentError(
+            "mechanics identity receipt binding drifted"
+        )
     source_binding = payload.get("source_predicate_bundle")
     if not isinstance(source_binding, Mapping):
         raise OwnerBuyE3ParityAmendmentError("source predicate bundle binding is missing")
@@ -604,7 +1067,8 @@ def validate_layer4_lockstep_contract(
     path: Path,
     *,
     artifact: LoadedExactArtifact | None = None,
-    expected_mechanics_receipt_sha256: str | None = None,
+    mechanics: Any | None = None,
+    expected_mechanics_identity_receipt_path: Path | None = None,
     source_predicate_bundle: predicate_view.FrozenPredicateBundle | None = None,
     ordered_development_days: Sequence[str] | None = None,
 ) -> Mapping[str, Any]:
@@ -613,7 +1077,10 @@ def validate_layer4_lockstep_contract(
     return _validate_contract_payload(
         payload,
         artifact=artifact,
-        expected_mechanics_receipt_sha256=expected_mechanics_receipt_sha256,
+        mechanics=mechanics,
+        expected_mechanics_identity_receipt_path=(
+            expected_mechanics_identity_receipt_path
+        ),
         source_predicate_bundle=source_predicate_bundle,
         ordered_development_days=ordered_development_days,
     )
@@ -674,7 +1141,7 @@ def _day_receipt_payload(
         "artifact_manifest_file_sha256": artifact["artifact_manifest"]["file_sha256"],
         "policy_file_sha256": artifact["policy"]["file_sha256"],
         "predicate_bundle_file_sha256": artifact["predicate_bundle"]["file_sha256"],
-        "mechanics_receipt_sha256": contract["mechanics_receipt_sha256"],
+        "mechanics_identity_receipt": dict(contract["mechanics_identity_receipt"]),
         "source_predicate_bundle_file_sha256": source["bundle"]["file_sha256"],
         "parity_source_file_sha256": parity_source["amendment_file_sha256"],
         "v1_parity_source_file_sha256": parity_source["v1_parity_file_sha256"],
@@ -744,7 +1211,7 @@ def run_repeated_policy_lockstep_parity_v2(
     contract = validate_layer4_lockstep_contract(
         contract_file,
         artifact=artifact,
-        expected_mechanics_receipt_sha256=mechanics.mechanics_receipt_sha256,
+        mechanics=mechanics,
         source_predicate_bundle=source_predicate_bundle,
         ordered_development_days=days,
     )
@@ -822,12 +1289,12 @@ def run_repeated_policy_lockstep_parity_v2(
         "artifact_manifest_file_sha256": exact_artifact["artifact_manifest"]["file_sha256"],
         "policy_file_sha256": exact_artifact["policy"]["file_sha256"],
         "predicate_bundle_file_sha256": exact_artifact["predicate_bundle"]["file_sha256"],
+        "mechanics_identity_receipt": dict(contract["mechanics_identity_receipt"]),
         "evidence": {
             "day_count": len(days),
             "ordered_development_days": list(days),
             "day_receipts": admitted,
             "day_receipts_sha256": _canonical_sha256(admitted),
-            "mechanics_receipt_sha256": contract["mechanics_receipt_sha256"],
             "source_predicate_bundle_file_sha256": contract[
                 "source_predicate_bundle"
             ]["bundle"]["file_sha256"],
@@ -850,7 +1317,7 @@ def run_repeated_policy_lockstep_parity_v2(
         contract_path=contract_file,
         day_receipt_dir=day_root,
         artifact=artifact,
-        mechanics_receipt_sha256=mechanics.mechanics_receipt_sha256,
+        mechanics=mechanics,
         source_predicate_bundle=source_predicate_bundle,
     )
 
@@ -861,7 +1328,7 @@ def validate_layer4_receipt_v2(
     contract_path: Path,
     day_receipt_dir: Path,
     artifact: LoadedExactArtifact | None = None,
-    mechanics_receipt_sha256: str | None = None,
+    mechanics: Any | None = None,
     source_predicate_bundle: predicate_view.FrozenPredicateBundle | None = None,
 ) -> Mapping[str, Any]:
     contract_file = _regular_file(contract_path, label="Layer-4 contract", private=True)
@@ -869,7 +1336,7 @@ def validate_layer4_receipt_v2(
     contract = validate_layer4_lockstep_contract(
         contract_file,
         artifact=artifact,
-        expected_mechanics_receipt_sha256=mechanics_receipt_sha256,
+        mechanics=mechanics,
         source_predicate_bundle=source_predicate_bundle,
     )
     days = _ordered_days(contract["ordered_development_days"])
@@ -896,6 +1363,8 @@ def validate_layer4_receipt_v2(
         or final.get("policy_file_sha256") != exact_artifact["policy"]["file_sha256"]
         or final.get("predicate_bundle_file_sha256")
         != exact_artifact["predicate_bundle"]["file_sha256"]
+        or final.get("mechanics_identity_receipt")
+        != contract["mechanics_identity_receipt"]
         or final.get("economic_values_materialized_by_replay") is not True
         or final.get("evidence_boundary") != _BOUNDARY
         or final.get("permissions") != _PERMISSIONS
@@ -938,8 +1407,6 @@ def validate_layer4_receipt_v2(
         evidence.get("day_count") != len(days)
         or evidence.get("ordered_development_days") != list(days)
         or evidence.get("day_receipts_sha256") != _canonical_sha256(validated)
-        or evidence.get("mechanics_receipt_sha256")
-        != contract["mechanics_receipt_sha256"]
         or evidence.get("source_predicate_bundle_file_sha256")
         != contract["source_predicate_bundle"]["bundle"]["file_sha256"]
         or evidence.get("parity_source") != contract["parity_source"]
@@ -981,7 +1448,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_artifact_arguments(freeze)
     freeze.add_argument("--formal-buy-component-artifact-manifest", required=True)
     freeze.add_argument("--owner-execution-manifest", required=True)
-    freeze.add_argument("--mechanics-receipt-sha256", required=True)
+    freeze.add_argument("--mechanics-identity-receipt", required=True)
     freeze.add_argument("--source-predicate-bundle", required=True)
     freeze.add_argument("--source-predicate-bundle-file-sha256", required=True)
     freeze.add_argument("--development-day", action="append", required=True)
@@ -1010,7 +1477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             owner_execution_manifest_path=Path(args.owner_execution_manifest),
             artifact=artifact,
-            mechanics_receipt_sha256=args.mechanics_receipt_sha256,
+            mechanics_identity_receipt_path=Path(args.mechanics_identity_receipt),
             source_predicate_bundle=source_bundle,
             ordered_development_days=args.development_day,
         )

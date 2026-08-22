@@ -33,6 +33,7 @@ LAYER1_ROLE: Final = "parity_research_compiled"
 LAYER2_ROLE: Final = "parity_development_snapshot"
 LAYER3_ROLE: Final = "parity_streaming_offline"
 LAYER4_DAY_PREFIX: Final = "layer4_day::"
+LAYER4_MECHANICS_ROLE: Final = "layer4_mechanics"
 
 STATIC_STATUS_BY_ROLE: Final[dict[str, str]] = {
     "formal_buy_component_manifest": "formal_buy_component_manifest_bound",
@@ -59,6 +60,7 @@ BASE_ROLE_ORDER: Final[tuple[str, ...]] = (
     LAYER1_ROLE,
     LAYER2_ROLE,
     LAYER3_ROLE,
+    LAYER4_MECHANICS_ROLE,
     "layer4_contract",
 )
 
@@ -89,6 +91,7 @@ CANONICAL_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     LAYER1_ROLE: ("canonical_receipt_sha256",),
     LAYER2_ROLE: ("canonical_receipt_sha256",),
     LAYER3_ROLE: ("canonical_receipt_sha256",),
+    LAYER4_MECHANICS_ROLE: ("canonical_mechanics_identity_receipt_sha256",),
     "layer4_contract": ("canonical_contract_sha256",),
     "layer4_final": (
         "canonical_receipt_sha256",
@@ -124,6 +127,22 @@ FALSE_EVIDENCE_KEYS: Final[frozenset[str]] = frozenset(
 _SHA_RE: Final = re.compile(r"^[0-9a-f]{64}$")
 _GIT_SHA_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _UTC_DAY_RE: Final = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_MECHANICS_BODY_FIELDS: Final[frozenset[str]] = frozenset(
+    {
+        "schema_version",
+        "selected_days",
+        "file_sha256",
+        "metadata_sha256",
+        "boolean_features_sha256",
+        "primitive_boolean_features_sha256",
+        "continuous_features_sha256",
+        "exact_owner_actions_sha256",
+        "replay_inputs_sha256",
+        "predicate_view_receipt",
+        "bindings",
+        "economic_outcomes_present",
+    }
+)
 
 
 class FinalCompositionError(RuntimeError):
@@ -150,6 +169,7 @@ class CompositionInputs:
     parity_research_compiled: Path
     parity_development_snapshot: Path
     parity_streaming_offline: Path
+    layer4_mechanics: Path
     layer4_contract: Path
     layer4_day_receipts: tuple[Path, ...]
     layer4_final: Path
@@ -335,6 +355,80 @@ def _admit_input_path(path: Path, root: Path) -> Path:
     return resolved
 
 
+def _validate_private_file_binding(
+    binding: Any,
+    *,
+    label: str,
+    expected_path: Path | None = None,
+) -> Path:
+    if not isinstance(binding, Mapping) or set(binding) != {
+        "path",
+        "file_sha256",
+        "size_bytes",
+        "mode",
+    }:
+        raise FinalCompositionError(f"{label} file binding is malformed")
+    raw = Path(str(binding["path"])).expanduser()
+    if not raw.is_absolute() or ".." in raw.parts:
+        raise FinalCompositionError(f"{label} path is not an absolute canonical path")
+    path = Path(os.path.abspath(raw))
+    for candidate in (path, *path.parents):
+        try:
+            metadata = candidate.lstat()
+        except OSError as exc:
+            raise FinalCompositionError(f"{label} path is unavailable") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise FinalCompositionError(f"{label} path traverses a symlink")
+    metadata = path.stat()
+    if not stat.S_ISREG(metadata.st_mode):
+        raise FinalCompositionError(f"{label} is not a regular file")
+    if stat.S_IMODE(metadata.st_mode) != 0o600 or binding["mode"] != "0600":
+        raise FinalCompositionError(f"{label} permission drifted")
+    try:
+        expected_size = int(binding["size_bytes"])
+    except (TypeError, ValueError) as exc:
+        raise FinalCompositionError(f"{label} size is malformed") from exc
+    if (
+        file_sha256(path) != _require_sha(binding["file_sha256"], f"{label} file SHA256")
+        or metadata.st_size != expected_size
+    ):
+        raise FinalCompositionError(f"{label} file binding drifted")
+    if expected_path is not None and path != expected_path.resolve(strict=True):
+        raise FinalCompositionError(f"{label} path drifted")
+    return path
+
+
+def _validate_referenced_document(
+    binding: Any,
+    *,
+    label: str,
+    expected_path: Path | None = None,
+) -> tuple[dict[str, Any], Path]:
+    if not isinstance(binding, Mapping) or set(binding) != {
+        "file",
+        "schema_version",
+        "identity",
+        "canonical_field",
+        "canonical_sha256",
+    }:
+        raise FinalCompositionError(f"{label} document binding is malformed")
+    path = _validate_private_file_binding(
+        binding["file"], label=label, expected_path=expected_path
+    )
+    payload = strict_load_json(path)
+    field = str(binding["canonical_field"])
+    if (
+        payload.get("schema_version") != binding["schema_version"]
+        or payload.get("identity") != binding["identity"]
+        or payload.get(field) != _require_sha(
+            binding["canonical_sha256"], f"{label} canonical SHA256"
+        )
+        or payload.get(field) != document_sha256(payload, field)
+    ):
+        raise FinalCompositionError(f"{label} document identity drifted")
+    return payload, path
+
+
 def _admit_output_path(path: Path, root: Path) -> Path:
     lexical = _lexical_under_root(path, root)
     if lexical.exists() or lexical.is_symlink():
@@ -430,6 +524,9 @@ def _schema_matches(role: str, schema: str) -> bool:
         LAYER1_ROLE: f"{IDENTITY}.parity_receipt.v1",
         LAYER2_ROLE: f"{IDENTITY}.parity_receipt.v1",
         LAYER3_ROLE: f"{IDENTITY}.parity_receipt.v1",
+        LAYER4_MECHANICS_ROLE: (
+            f"{IDENTITY}.outcome_blind_mechanics_identity_receipt.v1"
+        ),
         "sell_54_case": f"{IDENTITY}.parity_receipt.v1",
         "runtime_regression": f"{IDENTITY}.runtime_regression_test_receipt.v2",
         # The post-freeze auditor is amendment v2, but it introduces the first
@@ -484,6 +581,7 @@ def _validate_role_shape(role: str, payload: Mapping[str, Any]) -> None:
         LAYER1_ROLE,
         LAYER2_ROLE,
         LAYER3_ROLE,
+        LAYER4_MECHANICS_ROLE,
         "layer4_contract",
         "layer4_final",
         "sell_54_case",
@@ -927,6 +1025,247 @@ def _validate_refit_and_artifact_chain(
     return artifact_sha, normalized_days
 
 
+def _validate_mechanics_identity_chain(
+    documents: Mapping[str, Mapping[str, Any]],
+    bindings: Mapping[str, Mapping[str, Any]],
+    *,
+    execution_sha: str,
+    ordered_days: tuple[str, ...],
+) -> tuple[str, str]:
+    receipt = documents[LAYER4_MECHANICS_ROLE]
+    _require_equal(
+        receipt.get("schema_amendment"),
+        f"{IDENTITY}.layer4_receipt_binding_amendment.v2",
+        "mechanics receipt amendment",
+    )
+    _require_equal(
+        receipt.get("status"),
+        "outcome_blind_mechanics_identity_materialized",
+        "mechanics receipt status",
+    )
+    _require_bool(
+        receipt.get("economic_outcomes_present"), False, "mechanics receipt outcomes"
+    )
+    body = receipt.get("mechanics_body")
+    if not isinstance(body, Mapping) or set(body) != _MECHANICS_BODY_FIELDS:
+        raise FinalCompositionError("mechanics canonical body is malformed")
+    _require_bool(
+        body.get("economic_outcomes_present"), False, "mechanics canonical body outcomes"
+    )
+    mechanics_sha = _require_sha(
+        receipt.get("mechanics_receipt_sha256"), "mechanics receipt SHA256"
+    )
+    _require_equal(canonical_sha256(body), mechanics_sha, "mechanics canonical body")
+    _require_equal(
+        tuple(str(day) for day in body.get("selected_days", ())),
+        ordered_days,
+        "mechanics selected days",
+    )
+    for field in (
+        "metadata_sha256",
+        "boolean_features_sha256",
+        "primitive_boolean_features_sha256",
+        "continuous_features_sha256",
+        "exact_owner_actions_sha256",
+        "replay_inputs_sha256",
+    ):
+        _require_sha(body.get(field), f"mechanics body {field}")
+    predicate_receipt = body.get("predicate_view_receipt")
+    if not isinstance(predicate_receipt, Mapping) or (
+        predicate_receipt.get("economic_outcomes_read") is not False
+    ):
+        raise FinalCompositionError("mechanics predicate-view receipt is not outcome blind")
+
+    owner_binding = receipt.get("owner_execution_attempt")
+    if not isinstance(owner_binding, Mapping):
+        raise FinalCompositionError("mechanics owner execution binding is missing")
+    # owner_execution_attempt uses the attempt binding shape rather than the
+    # generic referenced-document shape.
+    owner_manifest_path = _validate_private_file_binding(
+        owner_binding.get("manifest"), label="mechanics owner attempt2 manifest"
+    )
+    owner_document = strict_load_json(owner_manifest_path)
+    _require_equal(
+        owner_document,
+        documents["attempt_execution_manifest"],
+        "mechanics owner attempt2 document",
+    )
+    _require_equal(
+        owner_binding.get("canonical_execution_manifest_sha256"),
+        execution_sha,
+        "mechanics owner execution manifest",
+    )
+    _require_equal(
+        owner_binding.get("execution_commit"),
+        owner_document.get("public_base_commit"),
+        "mechanics owner execution commit",
+    )
+    _require_equal(
+        owner_binding.get("annotated_tag"),
+        owner_document.get("annotated_tag"),
+        "mechanics owner execution tag",
+    )
+    _require_equal(
+        _optional_field(owner_binding, "manifest", "file_sha256"),
+        bindings["attempt_execution_manifest"]["file_sha256"],
+        "mechanics owner execution file",
+    )
+
+    source_identity = receipt.get("source_identity")
+    if not isinstance(source_identity, Mapping) or set(source_identity) != {
+        "source_execution_manifest",
+        "source_manifest",
+        "panel_manifest",
+        "outcome_blind_predicate_bundle",
+        "panel_file_sha256",
+        "fold_manifest_sha256",
+        "nested_fold_manifest_sha256",
+    }:
+        raise FinalCompositionError("mechanics source identity is malformed")
+    source_execution, _source_execution_path = _validate_referenced_document(
+        source_identity["source_execution_manifest"],
+        label="mechanics source execution manifest",
+    )
+    source_manifest, _source_manifest_path = _validate_referenced_document(
+        source_identity["source_manifest"], label="mechanics source manifest"
+    )
+    panel_manifest, _panel_manifest_path = _validate_referenced_document(
+        source_identity["panel_manifest"], label="mechanics panel manifest"
+    )
+    _predicate_bundle, _predicate_path = _validate_referenced_document(
+        source_identity["outcome_blind_predicate_bundle"],
+        label="mechanics outcome-blind predicate bundle",
+    )
+    _require_equal(
+        source_execution,
+        documents["source_execution_manifest"],
+        "mechanics source execution document",
+    )
+    _require_equal(
+        _optional_field(
+            source_identity, "source_execution_manifest", "file", "file_sha256"
+        ),
+        bindings["source_execution_manifest"]["file_sha256"],
+        "mechanics source execution file",
+    )
+    attempt_bindings = owner_document.get("bindings")
+    if not isinstance(attempt_bindings, Mapping):
+        raise FinalCompositionError("owner attempt2 source bindings are missing")
+    for role, source_role in (
+        ("source_execution_manifest", "source_execution_manifest"),
+        ("source_manifest", "source_manifest"),
+        ("panel_manifest", "panel_manifest"),
+        ("outcome_blind_2025_predicate_bundle", "outcome_blind_predicate_bundle"),
+    ):
+        attempt_file = attempt_bindings.get(role)
+        if not isinstance(attempt_file, Mapping):
+            raise FinalCompositionError(f"owner attempt2 {role} binding is missing")
+        _require_equal(
+            attempt_file.get("sha256"),
+            _optional_field(source_identity, source_role, "file", "file_sha256"),
+            f"mechanics owner/source file {role}",
+        )
+    fold_sha = _require_sha(
+        source_identity.get("fold_manifest_sha256"), "mechanics fold manifest SHA256"
+    )
+    nested_fold_sha = _require_sha(
+        source_identity.get("nested_fold_manifest_sha256"),
+        "mechanics nested-fold manifest SHA256",
+    )
+    _require_equal(
+        fold_sha, owner_document.get("fold_manifest_sha256"), "mechanics owner fold manifest"
+    )
+    _require_equal(
+        nested_fold_sha,
+        owner_document.get("nested_fold_manifest_sha256"),
+        "mechanics owner nested-fold manifest",
+    )
+    _require_equal(
+        source_execution.get("fold_manifest_sha256"),
+        fold_sha,
+        "mechanics source execution fold manifest",
+    )
+    _require_equal(
+        source_execution.get("nested_fold_manifest_sha256"),
+        nested_fold_sha,
+        "mechanics source execution nested-fold manifest",
+    )
+    _require_equal(
+        tuple(source_manifest.get("selected_days", ())),
+        ordered_days,
+        "mechanics source manifest days",
+    )
+    _require_equal(
+        tuple(panel_manifest.get("selected_days", ())),
+        ordered_days,
+        "mechanics panel manifest days",
+    )
+    _require_bool(
+        panel_manifest.get("economic_outcomes_present"),
+        False,
+        "mechanics panel outcomes",
+    )
+    panel_files = panel_manifest.get("files")
+    body_files = body.get("file_sha256")
+    if not isinstance(panel_files, Mapping) or not isinstance(body_files, Mapping):
+        raise FinalCompositionError("mechanics panel file identities are missing")
+    expected_panel_files = {
+        str(role): _require_sha(record.get("sha256"), f"mechanics panel {role} SHA256")
+        for role, record in panel_files.items()
+        if isinstance(record, Mapping)
+    }
+    _require_equal(
+        dict(body_files), expected_panel_files, "mechanics canonical body panel files"
+    )
+    _require_equal(
+        source_identity.get("panel_file_sha256"),
+        expected_panel_files,
+        "mechanics source panel files",
+    )
+    formal_bindings = body.get("bindings")
+    if not isinstance(formal_bindings, Mapping) or set(formal_bindings) != {
+        "execution_manifest_sha256",
+        "source_manifest_sha256",
+        "panel_manifest_sha256",
+        "fold_manifest_sha256",
+        "nested_fold_manifest_sha256",
+        "exact_owner_policy_sha256",
+        "exact_owner_predicate_bundle_sha256",
+        "exact_owner_private_config_sha256",
+    }:
+        raise FinalCompositionError("mechanics FormalExecutionBindings are malformed")
+    expected_formal_bindings = {
+        "execution_manifest_sha256": execution_sha,
+        "source_manifest_sha256": source_identity["source_manifest"]["canonical_sha256"],
+        "panel_manifest_sha256": source_identity["panel_manifest"]["canonical_sha256"],
+        "fold_manifest_sha256": fold_sha,
+        "nested_fold_manifest_sha256": nested_fold_sha,
+        "exact_owner_policy_sha256": panel_manifest.get(
+            "exact_current_owner_policy_sha256"
+        ),
+        "exact_owner_predicate_bundle_sha256": panel_manifest.get(
+            "exact_current_predicate_bundle_sha256"
+        ),
+        "exact_owner_private_config_sha256": panel_manifest.get(
+            "exact_current_private_config_sha256"
+        ),
+    }
+    for field, value in expected_formal_bindings.items():
+        expected_formal_bindings[field] = _require_sha(value, f"mechanics binding {field}")
+    _require_equal(
+        dict(formal_bindings), expected_formal_bindings, "mechanics FormalExecutionBindings"
+    )
+    _require_equal(
+        expected_formal_bindings["exact_owner_predicate_bundle_sha256"],
+        source_identity["outcome_blind_predicate_bundle"]["file"]["file_sha256"],
+        "mechanics outcome-blind predicate source",
+    )
+    return (
+        _binding_sha(bindings, LAYER4_MECHANICS_ROLE),
+        mechanics_sha,
+    )
+
+
 def _validate_parity_chain(
     documents: Mapping[str, Mapping[str, Any]],
     bindings: Mapping[str, Mapping[str, Any]],
@@ -935,6 +1274,7 @@ def _validate_parity_chain(
     learning_sha: str,
     artifact_sha: str,
     ordered_days: tuple[str, ...],
+    evidence_root: Path,
 ) -> str:
     expected_layers = {
         LAYER1_ROLE: ("research_compiled", ("mismatch_count",)),
@@ -970,6 +1310,12 @@ def _validate_parity_chain(
                 0,
                 f"{layer} {field}",
             )
+    mechanics_canonical_sha, mechanics_sha = _validate_mechanics_identity_chain(
+        documents,
+        bindings,
+        execution_sha=execution_sha,
+        ordered_days=ordered_days,
+    )
     contract = documents["layer4_contract"]
     _require_equal(
         contract.get("schema_amendment"),
@@ -980,6 +1326,44 @@ def _validate_parity_chain(
         contract.get("status"),
         "layer4_lockstep_contract_frozen",
         "Layer4 contract status",
+    )
+    if "mechanics_receipt_sha256" in contract:
+        raise FinalCompositionError("legacy Layer4 bare mechanics SHA is forbidden")
+    mechanics_binding = contract.get("mechanics_identity_receipt")
+    if not isinstance(mechanics_binding, Mapping) or set(mechanics_binding) != {
+        "receipt",
+        "schema_version",
+        "canonical_receipt_sha256",
+        "mechanics_receipt_sha256",
+    }:
+        raise FinalCompositionError("Layer4 mechanics receipt file binding is missing")
+    mechanics_path = (
+        evidence_root / str(bindings[LAYER4_MECHANICS_ROLE]["path"])
+    ).resolve(strict=True)
+    _validate_private_file_binding(
+        mechanics_binding["receipt"],
+        label="Layer4 mechanics identity receipt",
+        expected_path=mechanics_path,
+    )
+    _require_equal(
+        _optional_field(mechanics_binding, "receipt", "file_sha256"),
+        bindings[LAYER4_MECHANICS_ROLE]["file_sha256"],
+        "Layer4 mechanics receipt file",
+    )
+    _require_equal(
+        mechanics_binding.get("schema_version"),
+        documents[LAYER4_MECHANICS_ROLE].get("schema_version"),
+        "Layer4 mechanics receipt schema",
+    )
+    _require_equal(
+        mechanics_binding.get("canonical_receipt_sha256"),
+        mechanics_canonical_sha,
+        "Layer4 mechanics canonical receipt",
+    )
+    _require_equal(
+        mechanics_binding.get("mechanics_receipt_sha256"),
+        mechanics_sha,
+        "Layer4 embedded mechanics receipt",
     )
     contract_sha = _binding_sha(bindings, "layer4_contract")
     _require_equal(
@@ -1034,7 +1418,6 @@ def _validate_parity_chain(
         component.get("nested_oof_artifact_manifest_canonical_sha256"),
         "Layer4 nested OOF manifest",
     )
-    _require_sha(contract.get("mechanics_receipt_sha256"), "Layer4 mechanics receipt")
     _require_sha(
         _optional_field(
             contract,
@@ -1124,6 +1507,11 @@ def _validate_parity_chain(
             f"Layer4 {utc_day} bundle file",
         )
         _require_equal(
+            receipt.get("mechanics_identity_receipt"),
+            mechanics_binding,
+            f"Layer4 {utc_day} mechanics receipt",
+        )
+        _require_equal(
             _optional_field(receipt, "lockstep", "mismatch_count"), 0, f"Layer4 {utc_day} mismatch"
         )
         admitted_days.append(
@@ -1167,6 +1555,11 @@ def _validate_parity_chain(
         final.get("predicate_bundle_file_sha256"),
         bindings["exact_predicate_bundle"]["file_sha256"],
         "Layer4 final predicate bundle file",
+    )
+    _require_equal(
+        final.get("mechanics_identity_receipt"),
+        mechanics_binding,
+        "Layer4 final mechanics receipt",
     )
     _require_equal(
         _optional_field(final, "evidence", "day_receipts"),
@@ -1549,6 +1942,15 @@ def _build_final_payload(
             "research_compiled_sha256": _binding_sha(bindings, LAYER1_ROLE),
             "development_snapshot_sha256": _binding_sha(bindings, LAYER2_ROLE),
             "streaming_offline_sha256": _binding_sha(bindings, LAYER3_ROLE),
+            "mechanics_identity_receipt_sha256": _binding_sha(
+                bindings, LAYER4_MECHANICS_ROLE
+            ),
+            "mechanics_identity_receipt_file_sha256": bindings[
+                LAYER4_MECHANICS_ROLE
+            ]["file_sha256"],
+            "outcome_blind_mechanics_sha256": documents[LAYER4_MECHANICS_ROLE][
+                "mechanics_receipt_sha256"
+            ],
             "layer4_contract_sha256": layer4_contract_sha,
             "layer4_day_receipt_sha256": [
                 _binding_sha(bindings, f"{LAYER4_DAY_PREFIX}{index:02d}")
@@ -1680,6 +2082,7 @@ def compose_final_composition(
         learning_sha=learning_sha,
         artifact_sha=artifact_sha,
         ordered_days=ordered_days,
+        evidence_root=root,
     )
     _validate_operational_gate_chain(
         documents,
@@ -1810,6 +2213,7 @@ def validate_final_composition(
         learning_sha=learning_sha,
         artifact_sha=artifact_sha,
         ordered_days=artifact_days,
+        evidence_root=root,
     )
     _validate_operational_gate_chain(
         documents,
@@ -1868,6 +2272,7 @@ def _add_input_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--parity-research-compiled", type=_path_argument, required=True)
     parser.add_argument("--parity-development-snapshot", type=_path_argument, required=True)
     parser.add_argument("--parity-streaming-offline", type=_path_argument, required=True)
+    parser.add_argument("--layer4-mechanics", type=_path_argument, required=True)
     parser.add_argument("--layer4-contract", type=_path_argument, required=True)
     parser.add_argument(
         "--layer4-day-receipt",
@@ -1902,6 +2307,7 @@ def _inputs_from_args(args: argparse.Namespace) -> CompositionInputs:
         parity_research_compiled=args.parity_research_compiled,
         parity_development_snapshot=args.parity_development_snapshot,
         parity_streaming_offline=args.parity_streaming_offline,
+        layer4_mechanics=args.layer4_mechanics,
         layer4_contract=args.layer4_contract,
         layer4_day_receipts=tuple(args.layer4_day_receipt),
         layer4_final=args.layer4_final,

@@ -9,13 +9,13 @@ from typing import Any
 import pytest
 
 from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as deployment_v2,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_final_composition_v1 as composition,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_amendment_v2 as parity_v2,
-)
-from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as deployment_v2,
 )
 
 SHA_COMPONENT_RESULT = "1" * 64
@@ -24,6 +24,10 @@ SHA_FRESH_ADAPTER = "3" * 64
 
 
 def test_layer4_schema_contract_matches_parity_amendment() -> None:
+    assert composition._schema_matches(
+        composition.LAYER4_MECHANICS_ROLE,
+        parity_v2.MECHANICS_IDENTITY_RECEIPT_SCHEMA,
+    )
     assert composition._schema_matches(
         "layer4_contract", parity_v2.LAYER4_CONTRACT_SCHEMA
     )
@@ -157,9 +161,60 @@ class EvidenceFixture:
                     "identity": "historical_sell_only_v7",
                     "formal_sides": ["SELL"],
                 },
+                "fold_manifest_sha256": "d" * 64,
+                "nested_fold_manifest_sha256": "e" * 64,
                 "permissions": _permissions(),
             },
             "canonical_execution_manifest_sha256",
+        )
+        mechanics_source_manifest = self._write(
+            "mechanics_source_manifest",
+            {
+                "schema_version": "f05_mechanics.source_manifest.v1",
+                "identity": "f05_mechanics_source",
+                "status": "source_frozen",
+                "selected_days": list(self.days),
+                "permissions": _permissions(),
+            },
+            "canonical_manifest_sha256",
+        )
+        panel_file_sha256 = {
+            "metadata": "1" * 64,
+            "boolean_features": "2" * 64,
+            "continuous_features": "3" * 64,
+            "exact_owner_actions": "4" * 64,
+            "replay_inputs": "5" * 64,
+        }
+        self._write(
+            "mechanics_predicate_bundle",
+            {
+                "schema_version": "f05_mechanics.predicate_bundle.v1",
+                "identity": "f05_mechanics_predicate_bundle",
+                "status": "predicate_bundle_frozen",
+                "permissions": _permissions(),
+            },
+            "canonical_sha256",
+        )
+        mechanics_panel_manifest = self._write(
+            "mechanics_panel_manifest",
+            {
+                "schema_version": "f05_mechanics.panel_manifest.v1",
+                "identity": "f05_mechanics_panel",
+                "status": "mechanics_panel_frozen",
+                "selected_days": list(self.days),
+                "files": {
+                    role: {"sha256": digest}
+                    for role, digest in panel_file_sha256.items()
+                },
+                "exact_current_owner_policy_sha256": "6" * 64,
+                "exact_current_predicate_bundle_sha256": composition.file_sha256(
+                    self.paths["mechanics_predicate_bundle"]
+                ),
+                "exact_current_private_config_sha256": "8" * 64,
+                "economic_outcomes_present": False,
+                "permissions": _permissions(),
+            },
+            "canonical_panel_manifest_sha256",
         )
         self._write(
             "joint_closeout_manifest",
@@ -219,6 +274,10 @@ class EvidenceFixture:
                 },
                 "backend": source_execution["backend"],
                 "executor": source_execution["executor"],
+                "fold_manifest_sha256": source_execution["fold_manifest_sha256"],
+                "nested_fold_manifest_sha256": source_execution[
+                    "nested_fold_manifest_sha256"
+                ],
                 "bindings": {
                     "owner_decision": {
                         "sha256": composition.file_sha256(self.paths["owner_decision"])
@@ -227,7 +286,24 @@ class EvidenceFixture:
                         "sha256": composition.file_sha256(self.paths["joint_closeout_manifest"])
                     },
                     "source_execution_manifest": {
-                        "sha256": composition.file_sha256(self.paths["source_execution_manifest"])
+                        "path": str(self.paths["source_execution_manifest"]),
+                        "sha256": composition.file_sha256(self.paths["source_execution_manifest"]),
+                        "size_bytes": self.paths["source_execution_manifest"].stat().st_size,
+                    },
+                    "source_manifest": {
+                        "path": str(self.paths["mechanics_source_manifest"]),
+                        "sha256": composition.file_sha256(self.paths["mechanics_source_manifest"]),
+                        "size_bytes": self.paths["mechanics_source_manifest"].stat().st_size,
+                    },
+                    "panel_manifest": {
+                        "path": str(self.paths["mechanics_panel_manifest"]),
+                        "sha256": composition.file_sha256(self.paths["mechanics_panel_manifest"]),
+                        "size_bytes": self.paths["mechanics_panel_manifest"].stat().st_size,
+                    },
+                    "outcome_blind_2025_predicate_bundle": {
+                        "path": str(self.paths["mechanics_predicate_bundle"]),
+                        "sha256": composition.file_sha256(self.paths["mechanics_predicate_bundle"]),
+                        "size_bytes": self.paths["mechanics_predicate_bundle"].stat().st_size,
                     },
                 },
                 "evidence_boundary": {
@@ -465,6 +541,133 @@ class EvidenceFixture:
                 },
                 "canonical_receipt_sha256",
             )
+        def private_file_binding(path: Path) -> dict[str, Any]:
+            return {
+                "path": str(path.resolve()),
+                "file_sha256": composition.file_sha256(path),
+                "size_bytes": path.stat().st_size,
+                "mode": "0600",
+            }
+
+        def source_document_binding(
+            role: str,
+            canonical_field: str,
+        ) -> dict[str, Any]:
+            document = self.documents[role]
+            return {
+                "file": private_file_binding(self.paths[role]),
+                "schema_version": document["schema_version"],
+                "identity": document["identity"],
+                "canonical_field": canonical_field,
+                "canonical_sha256": document[canonical_field],
+            }
+
+        mechanics_body = {
+            "schema_version": "f05_mechanics.outcome_blind_mechanics_receipt.v1",
+            "selected_days": list(self.days),
+            "file_sha256": panel_file_sha256,
+            "metadata_sha256": "9" * 64,
+            "boolean_features_sha256": "a" * 64,
+            "primitive_boolean_features_sha256": "b" * 64,
+            "continuous_features_sha256": "c" * 64,
+            "exact_owner_actions_sha256": "d" * 64,
+            "replay_inputs_sha256": "e" * 64,
+            "predicate_view_receipt": {
+                "identity": "outcome_blind_predicate_view",
+                "economic_outcomes_read": False,
+            },
+            "bindings": {
+                "execution_manifest_sha256": execution_sha,
+                "source_manifest_sha256": mechanics_source_manifest[
+                    "canonical_manifest_sha256"
+                ],
+                "panel_manifest_sha256": mechanics_panel_manifest[
+                    "canonical_panel_manifest_sha256"
+                ],
+                "fold_manifest_sha256": source_execution["fold_manifest_sha256"],
+                "nested_fold_manifest_sha256": source_execution[
+                    "nested_fold_manifest_sha256"
+                ],
+                "exact_owner_policy_sha256": mechanics_panel_manifest[
+                    "exact_current_owner_policy_sha256"
+                ],
+                "exact_owner_predicate_bundle_sha256": mechanics_panel_manifest[
+                    "exact_current_predicate_bundle_sha256"
+                ],
+                "exact_owner_private_config_sha256": mechanics_panel_manifest[
+                    "exact_current_private_config_sha256"
+                ],
+            },
+            "economic_outcomes_present": False,
+        }
+        mechanics_receipt = self._write(
+            "layer4_mechanics",
+            {
+                "schema_version": parity_v2.MECHANICS_IDENTITY_RECEIPT_SCHEMA,
+                "schema_amendment": parity_v2.SCHEMA_AMENDMENT,
+                "identity": composition.IDENTITY,
+                "status": "outcome_blind_mechanics_identity_materialized",
+                "owner_execution_attempt": {
+                    "manifest": private_file_binding(
+                        self.paths["attempt_execution_manifest"]
+                    ),
+                    "canonical_execution_manifest_sha256": execution_sha,
+                    "execution_commit": execution["public_base_commit"],
+                    "annotated_tag": execution["annotated_tag"],
+                },
+                "source_identity": {
+                    "source_execution_manifest": source_document_binding(
+                        "source_execution_manifest",
+                        "canonical_execution_manifest_sha256",
+                    ),
+                    "source_manifest": source_document_binding(
+                        "mechanics_source_manifest", "canonical_manifest_sha256"
+                    ),
+                    "panel_manifest": source_document_binding(
+                        "mechanics_panel_manifest",
+                        "canonical_panel_manifest_sha256",
+                    ),
+                    "outcome_blind_predicate_bundle": source_document_binding(
+                        "mechanics_predicate_bundle", "canonical_sha256"
+                    ),
+                    "panel_file_sha256": panel_file_sha256,
+                    "fold_manifest_sha256": source_execution[
+                        "fold_manifest_sha256"
+                    ],
+                    "nested_fold_manifest_sha256": source_execution[
+                        "nested_fold_manifest_sha256"
+                    ],
+                },
+                "mechanics_body": mechanics_body,
+                "mechanics_receipt_sha256": composition.canonical_sha256(
+                    mechanics_body
+                ),
+                "economic_outcomes_present": False,
+                "evidence_boundary": {
+                    "economic_values_exposed": False,
+                    "economic_values_used_for_selection": False,
+                    "validation_read": False,
+                    "sealed_holdout_read": False,
+                    "hypothetical_live_scoring": False,
+                },
+                "permissions": {
+                    "research_authorized": False,
+                    "action_authorized": False,
+                    "live_authorized": False,
+                },
+            },
+            "canonical_mechanics_identity_receipt_sha256",
+        )
+        mechanics_contract_binding = {
+            "receipt": private_file_binding(self.paths["layer4_mechanics"]),
+            "schema_version": mechanics_receipt["schema_version"],
+            "canonical_receipt_sha256": mechanics_receipt[
+                "canonical_mechanics_identity_receipt_sha256"
+            ],
+            "mechanics_receipt_sha256": mechanics_receipt[
+                "mechanics_receipt_sha256"
+            ],
+        }
         contract = self._write(
             "layer4_contract",
             {
@@ -499,7 +702,7 @@ class EvidenceFixture:
                         "nested_oof_artifact_manifest_canonical_sha256"
                     ],
                 },
-                "mechanics_receipt_sha256": "7" * 64,
+                "mechanics_identity_receipt": mechanics_contract_binding,
                 "source_predicate_bundle": {
                     "bundle": {"file_sha256": "8" * 64},
                     "canonical_sha256": "a" * 64,
@@ -571,6 +774,7 @@ class EvidenceFixture:
                     "predicate_bundle_file_sha256": composition.file_sha256(
                         self.paths["exact_predicate_bundle"]
                     ),
+                    "mechanics_identity_receipt": mechanics_contract_binding,
                     "lockstep": {"mismatch_count": 0},
                     "evidence_boundary": {
                         "economic_values_exposed": False,
@@ -620,6 +824,7 @@ class EvidenceFixture:
                 "predicate_bundle_file_sha256": composition.file_sha256(
                     self.paths["exact_predicate_bundle"]
                 ),
+                "mechanics_identity_receipt": mechanics_contract_binding,
                 "evidence": {
                     "day_count": composition.EXPECTED_DAY_COUNT,
                     "day_receipts": admitted_days,
@@ -821,6 +1026,7 @@ class EvidenceFixture:
             parity_research_compiled=self.paths["parity_research_compiled"],
             parity_development_snapshot=self.paths["parity_development_snapshot"],
             parity_streaming_offline=self.paths["parity_streaming_offline"],
+            layer4_mechanics=self.paths["layer4_mechanics"],
             layer4_contract=self.paths["layer4_contract"],
             layer4_day_receipts=tuple(
                 self.paths[f"layer4_day::{index:02d}"]
@@ -942,6 +1148,86 @@ def test_layer4_cannot_substitute_exact_artifact_for_learning_algorithm(
 
     _rewrite_document(path, mutate, "canonical_contract_sha256")
     with pytest.raises(composition.FinalCompositionError, match="learning algorithm"):
+        evidence.compose()
+
+
+def test_layer4_mechanics_tamper_is_rejected(evidence: EvidenceFixture) -> None:
+    path = evidence.paths["layer4_mechanics"]
+
+    def mutate(payload: dict[str, Any]) -> None:
+        payload["mechanics_body"]["metadata_sha256"] = "f" * 64
+        payload["mechanics_receipt_sha256"] = composition.canonical_sha256(
+            payload["mechanics_body"]
+        )
+
+    _rewrite_document(path, mutate, "canonical_mechanics_identity_receipt_sha256")
+    with pytest.raises(
+        composition.FinalCompositionError,
+        match="mechanics identity receipt file",
+    ):
+        evidence.compose()
+
+
+def test_layer4_mechanics_missing_or_permission_drift_is_rejected(
+    evidence: EvidenceFixture,
+) -> None:
+    missing = evidence.root / "inputs/missing-layer4-mechanics.json"
+    with pytest.raises(composition.FinalCompositionError, match="missing"):
+        composition.compose_final_composition(
+            evidence_root=evidence.root,
+            inputs=replace(evidence.inputs(), layer4_mechanics=missing),
+            source_role_output=evidence.source_output,
+            output=evidence.final_output,
+        )
+    evidence.paths["layer4_mechanics"].chmod(0o644)
+    with pytest.raises(composition.FinalCompositionError, match="permission drifted"):
+        evidence.compose()
+
+
+def test_layer4_mechanics_cross_execution_is_rejected(
+    evidence: EvidenceFixture,
+) -> None:
+    path = evidence.paths["layer4_mechanics"]
+
+    def mutate(payload: dict[str, Any]) -> None:
+        payload["owner_execution_attempt"][
+            "canonical_execution_manifest_sha256"
+        ] = "f" * 64
+
+    _rewrite_document(path, mutate, "canonical_mechanics_identity_receipt_sha256")
+    contract = evidence.paths["layer4_contract"]
+
+    def rebind(payload: dict[str, Any]) -> None:
+        payload["mechanics_identity_receipt"]["receipt"][
+            "file_sha256"
+        ] = composition.file_sha256(path)
+        payload["mechanics_identity_receipt"]["receipt"][
+            "size_bytes"
+        ] = path.stat().st_size
+        payload["mechanics_identity_receipt"][
+            "canonical_receipt_sha256"
+        ] = composition.strict_load_json(path)[
+            "canonical_mechanics_identity_receipt_sha256"
+        ]
+
+    _rewrite_document(contract, rebind, "canonical_contract_sha256")
+    with pytest.raises(composition.FinalCompositionError, match="owner execution manifest"):
+        evidence.compose()
+
+
+def test_layer4_legacy_bare_mechanics_sha_is_rejected(
+    evidence: EvidenceFixture,
+) -> None:
+    path = evidence.paths["layer4_contract"]
+
+    def mutate(payload: dict[str, Any]) -> None:
+        binding = payload.pop("mechanics_identity_receipt")
+        payload["mechanics_receipt_sha256"] = binding[
+            "mechanics_receipt_sha256"
+        ]
+
+    _rewrite_document(path, mutate, "canonical_contract_sha256")
+    with pytest.raises(composition.FinalCompositionError, match="legacy Layer4 bare"):
         evidence.compose()
 
 
@@ -1107,6 +1393,7 @@ def test_cli_compose_and_validate(
         "parity_research_compiled",
         "parity_development_snapshot",
         "parity_streaming_offline",
+        "layer4_mechanics",
         "layer4_contract",
         "layer4_final",
         "sell_54_case",

@@ -19,6 +19,9 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_predicate_view_v1 as predicate_view,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_repeated_policy_backend_v1 as repeated_backend,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_amendment_v2 as subject,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
@@ -59,13 +62,14 @@ class EvidenceFixture:
     artifact: parity_v1.LoadedExactArtifact
     source_bundle: predicate_view.FrozenPredicateBundle
     mechanics: SimpleNamespace
+    mechanics_receipt_path: Path
 
     def freeze_contract(
         self,
         path: Path,
         *,
         days: tuple[str, ...] | None = None,
-        mechanics_sha256: str | None = None,
+        mechanics_receipt_path: Path | None = None,
     ) -> dict[str, Any]:
         return dict(
             subject.freeze_layer4_lockstep_contract(
@@ -73,8 +77,8 @@ class EvidenceFixture:
                 formal_buy_component_artifact_manifest_path=self.component_manifest_path,
                 owner_execution_manifest_path=self.owner_manifest_path,
                 artifact=self.artifact,
-                mechanics_receipt_sha256=(
-                    mechanics_sha256 or self.mechanics.mechanics_receipt_sha256
+                mechanics_identity_receipt_path=(
+                    mechanics_receipt_path or self.mechanics_receipt_path
                 ),
                 source_predicate_bundle=self.source_bundle,
                 ordered_development_days=days or self.days,
@@ -114,32 +118,6 @@ def evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceFixture
         "FORMAL_V24_EXECUTION_MANIFEST_SHA256",
         component_manifest["source_execution_manifest_sha256"],
     )
-
-    owner_manifest = _document(
-        {
-            "schema_version": refit.EXECUTION_MANIFEST_SCHEMA,
-            "identity": subject.IDENTITY,
-            "status": "pre_refit_owner_execution_bound",
-            "public_base_commit": "a" * 40,
-            "annotated_tag": "f05-owner-buy-e3-test-attempt2",
-            "permissions": {
-                "research_authorized": False,
-                "action_authorized": False,
-                "live_authorized": False,
-                "validation_read": False,
-                "sealed_holdout_read": False,
-            },
-        },
-        "canonical_execution_manifest_sha256",
-    )
-    owner_path = _write_json(tmp_path / "owner_execution_manifest.json", owner_manifest)
-    monkeypatch.setattr(
-        subject,
-        "ATTEMPT2_EXECUTION_MANIFEST_SHA256",
-        owner_manifest["canonical_execution_manifest_sha256"],
-    )
-    monkeypatch.setattr(subject, "ATTEMPT2_EXECUTION_COMMIT", owner_manifest["public_base_commit"])
-    monkeypatch.setattr(subject, "ATTEMPT2_EXECUTION_TAG", owner_manifest["annotated_tag"])
 
     policy = _document(
         {
@@ -211,16 +189,248 @@ def evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceFixture
         artifact_file_sha256=MappingProxyType({}),
     )
 
+    opportunity_ids = [f"opportunity-{index:02d}" for index in range(len(days))]
+    sides = ["BUY" if index % 2 == 0 else "SELL" for index in range(len(days))]
+    raw_frames = {
+        "metadata": pd.DataFrame(
+            {
+                "opportunity_id": opportunity_ids,
+                "utc_day": days,
+                "side": sides,
+            }
+        ),
+        "boolean_features": pd.DataFrame(
+            {
+                "opportunity_id": opportunity_ids,
+                "utc_day": days,
+                "side": sides,
+                "primitive::ready": [index % 2 for index in range(len(days))],
+            }
+        ),
+        "continuous_features": pd.DataFrame(
+            {
+                "opportunity_id": opportunity_ids,
+                "utc_day": days,
+                "side": sides,
+                "continuous::value": [float(index) for index in range(len(days))],
+            }
+        ),
+        "exact_owner_actions": pd.DataFrame(
+            {
+                "opportunity_id": opportunity_ids,
+                "utc_day": days,
+                "side": sides,
+                "exact_owner_action": ["CONTROL_85N"] * len(days),
+            }
+        ),
+        "replay_inputs": pd.DataFrame(
+            {
+                "opportunity_id": opportunity_ids,
+                "utc_day": days,
+                "side": sides,
+                "day_input_sha256": [_sha(f"day-input:{day}") for day in days],
+            }
+        ),
+    }
+    panel_files: dict[str, dict[str, Any]] = {}
+    mechanics_file_sha256: dict[str, str] = {}
+    for role, frame in raw_frames.items():
+        path = tmp_path / "panel" / f"{role}.parquet"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        frame.to_parquet(path, index=False)
+        path.chmod(0o644)
+        digest = subject._file_sha256(path)
+        mechanics_file_sha256[role] = digest
+        panel_files[role] = {
+            "path": str(path),
+            "sha256": digest,
+            "size_bytes": path.stat().st_size,
+        }
+
+    fold_sha = _sha("fold-manifest")
+    nested_fold_sha = _sha("nested-fold-manifest")
+    owner_policy_sha = _sha("owner-policy")
+    owner_config_sha = _sha("owner-config")
+    source_execution = _document(
+        {
+            "schema_version": "test.source_execution_manifest.v1",
+            "identity": "test_source_execution",
+            "status": "pre_execution_bound",
+            "fold_manifest_sha256": fold_sha,
+            "nested_fold_manifest_sha256": nested_fold_sha,
+            "permissions": {
+                "research_authorized": False,
+                "action_authorized": False,
+                "live_authorized": False,
+                "validation_read": False,
+                "sealed_holdout_read": False,
+            },
+        },
+        "canonical_execution_manifest_sha256",
+    )
+    source_execution_path = _write_json(
+        tmp_path / "source" / "source_execution_manifest.json", source_execution
+    )
+    source_manifest = _document(
+        {
+            "schema_version": "test.source_manifest.v1",
+            "identity": "test_source_manifest",
+            "status": "source_frozen",
+            "selected_days": list(days),
+            "permissions": {
+                "research_authorized": False,
+                "action_authorized": False,
+                "live_authorized": False,
+                "validation_read": False,
+                "sealed_holdout_read": False,
+            },
+        },
+        "canonical_manifest_sha256",
+    )
+    source_manifest_path = _write_json(
+        tmp_path / "source" / "source_manifest.json", source_manifest
+    )
+    panel_manifest = _document(
+        {
+            "schema_version": "test.panel_manifest.v1",
+            "identity": "test_panel_manifest",
+            "status": "mechanics_panel_frozen",
+            "selected_days": list(days),
+            "files": panel_files,
+            "exact_current_owner_policy_sha256": owner_policy_sha,
+            "exact_current_predicate_bundle_sha256": source_bundle.file_sha256,
+            "exact_current_private_config_sha256": owner_config_sha,
+            "economic_outcomes_present": False,
+            "permissions": {
+                "research_authorized": False,
+                "action_authorized": False,
+                "live_authorized": False,
+                "validation_read": False,
+                "sealed_holdout_read": False,
+            },
+        },
+        "canonical_panel_manifest_sha256",
+    )
+    panel_manifest_path = _write_json(
+        tmp_path / "source" / "panel_manifest.json", panel_manifest
+    )
+
+    def owner_file(path: Path) -> dict[str, Any]:
+        return {
+            "path": str(path),
+            "sha256": subject._file_sha256(path),
+            "size_bytes": path.stat().st_size,
+        }
+
+    owner_manifest = _document(
+        {
+            "schema_version": refit.EXECUTION_MANIFEST_SCHEMA,
+            "identity": subject.IDENTITY,
+            "status": "pre_refit_owner_execution_bound",
+            "public_base_commit": "a" * 40,
+            "annotated_tag": "f05-owner-buy-e3-test-attempt2",
+            "fold_manifest_sha256": fold_sha,
+            "nested_fold_manifest_sha256": nested_fold_sha,
+            "bindings": {
+                "source_execution_manifest": owner_file(source_execution_path),
+                "source_manifest": owner_file(source_manifest_path),
+                "panel_manifest": owner_file(panel_manifest_path),
+                "outcome_blind_2025_predicate_bundle": owner_file(source_bundle_path),
+            },
+            "permissions": {
+                "research_authorized": False,
+                "action_authorized": False,
+                "live_authorized": False,
+                "validation_read": False,
+                "sealed_holdout_read": False,
+            },
+        },
+        "canonical_execution_manifest_sha256",
+    )
+    owner_path = _write_json(tmp_path / "owner_execution_manifest.json", owner_manifest)
+    monkeypatch.setattr(
+        subject,
+        "ATTEMPT2_EXECUTION_MANIFEST_SHA256",
+        owner_manifest["canonical_execution_manifest_sha256"],
+    )
+    monkeypatch.setattr(subject, "ATTEMPT2_EXECUTION_COMMIT", owner_manifest["public_base_commit"])
+    monkeypatch.setattr(subject, "ATTEMPT2_EXECUTION_TAG", owner_manifest["annotated_tag"])
+
+    indexed = {
+        role: repeated_backend._index_panel_table(
+            frame,
+            role=role,
+            selected_days=days,
+        )
+        for role, frame in raw_frames.items()
+    }
+    primitive_boolean = indexed["boolean_features"].loc[:, ["primitive::ready"]]
+    expanded_boolean = primitive_boolean.astype("int8")
+    metadata = indexed["metadata"]
+    continuous = indexed["continuous_features"].loc[:, ["continuous::value"]]
+    owner_actions = indexed["exact_owner_actions"]["exact_owner_action"].astype(str)
     replay_inputs = pd.DataFrame(
         {
+            "opportunity_id": opportunity_ids,
             "utc_day": days,
+            "side": sides,
             "day_input_sha256": [_sha(f"day-input:{day}") for day in days],
-        }
+        },
+        index=metadata.index,
+    )
+    predicate_view_receipt = {
+        "identity": "test_preexpanded_predicate_view",
+        "economic_outcomes_read": False,
+    }
+    formal_bindings = repeated_backend.FormalExecutionBindings(
+        execution_manifest_sha256=owner_manifest[
+            "canonical_execution_manifest_sha256"
+        ],
+        source_manifest_sha256=source_manifest["canonical_manifest_sha256"],
+        panel_manifest_sha256=panel_manifest["canonical_panel_manifest_sha256"],
+        fold_manifest_sha256=fold_sha,
+        nested_fold_manifest_sha256=nested_fold_sha,
+        exact_owner_policy_sha256=owner_policy_sha,
+        exact_owner_predicate_bundle_sha256=source_bundle.file_sha256,
+        exact_owner_private_config_sha256=owner_config_sha,
     )
     mechanics = SimpleNamespace(
+        panel=SimpleNamespace(
+            metadata=metadata,
+            boolean_features=expanded_boolean,
+            continuous_features=continuous,
+            exact_owner_actions=owner_actions,
+        ),
         selected_days=days,
-        mechanics_receipt_sha256=_sha("mechanics-a"),
+        bindings=formal_bindings,
+        file_sha256=mechanics_file_sha256,
+        predicate_view_receipt=predicate_view_receipt,
         replay_inputs=replay_inputs,
+    )
+    mechanics_body = {
+        "schema_version": (
+            f"{repeated_backend.IDENTITY}.outcome_blind_mechanics_receipt.v1"
+        ),
+        "selected_days": list(days),
+        "file_sha256": mechanics_file_sha256,
+        "metadata_sha256": repeated_backend._frame_sha256(metadata),
+        "boolean_features_sha256": repeated_backend._frame_sha256(expanded_boolean),
+        "primitive_boolean_features_sha256": repeated_backend._frame_sha256(
+            primitive_boolean
+        ),
+        "continuous_features_sha256": repeated_backend._frame_sha256(continuous),
+        "exact_owner_actions_sha256": repeated_backend._frame_sha256(owner_actions),
+        "replay_inputs_sha256": repeated_backend._frame_sha256(replay_inputs),
+        "predicate_view_receipt": predicate_view_receipt,
+        "bindings": formal_bindings.payload(),
+        "economic_outcomes_present": False,
+    }
+    mechanics.mechanics_receipt_sha256 = subject._canonical_sha256(mechanics_body)
+    mechanics_receipt_path = tmp_path / "mechanics_identity_receipt.json"
+    subject.materialize_mechanics_identity_receipt(
+        output_path=mechanics_receipt_path,
+        owner_execution_manifest_path=owner_path,
+        mechanics=mechanics,
     )
     return EvidenceFixture(
         root=tmp_path,
@@ -231,6 +441,7 @@ def evidence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> EvidenceFixture
         artifact=artifact,
         source_bundle=source_bundle,
         mechanics=mechanics,
+        mechanics_receipt_path=mechanics_receipt_path,
     )
 
 
@@ -300,6 +511,120 @@ def test_contract_derives_formal_learning_algorithm_sha(evidence: EvidenceFixtur
     ]
     assert os.stat(contract_path).st_mode & 0o777 == 0o600
     assert subject.validate_layer4_lockstep_contract(contract_path) == contract
+
+
+def test_mechanics_identity_receipt_materializes_exact_canonical_body(
+    evidence: EvidenceFixture,
+) -> None:
+    receipt = subject.validate_mechanics_identity_receipt(
+        evidence.mechanics_receipt_path,
+        mechanics=evidence.mechanics,
+        expected_owner_execution_manifest_path=evidence.owner_manifest_path,
+    )
+    assert (evidence.mechanics_receipt_path.stat().st_mode & 0o777) == 0o600
+    assert receipt["economic_outcomes_present"] is False
+    assert receipt["mechanics_body"]["economic_outcomes_present"] is False
+    assert receipt["mechanics_receipt_sha256"] == subject._canonical_sha256(
+        receipt["mechanics_body"]
+    )
+    assert receipt["mechanics_receipt_sha256"] == (
+        evidence.mechanics.mechanics_receipt_sha256
+    )
+    assert receipt["source_identity"]["fold_manifest_sha256"] == (
+        evidence.mechanics.bindings.fold_manifest_sha256
+    )
+
+
+def test_contract_rejects_tampered_mechanics_receipt_file(
+    evidence: EvidenceFixture,
+) -> None:
+    contract_path = evidence.root / "contract.json"
+    evidence.freeze_contract(contract_path)
+    receipt = json.loads(evidence.mechanics_receipt_path.read_text(encoding="ascii"))
+    receipt["mechanics_body"]["metadata_sha256"] = _sha("tampered-metadata")
+    receipt["mechanics_receipt_sha256"] = subject._canonical_sha256(
+        receipt["mechanics_body"]
+    )
+    receipt["canonical_mechanics_identity_receipt_sha256"] = subject._document_sha256(
+        receipt, "canonical_mechanics_identity_receipt_sha256"
+    )
+    _write_json(evidence.mechanics_receipt_path, receipt)
+
+    with pytest.raises(
+        subject.OwnerBuyE3ParityAmendmentError,
+        match="binding drifted",
+    ):
+        subject.validate_layer4_lockstep_contract(contract_path)
+
+
+def test_contract_rejects_missing_or_nonprivate_mechanics_receipt(
+    evidence: EvidenceFixture,
+) -> None:
+    contract_path = evidence.root / "contract.json"
+    evidence.freeze_contract(contract_path)
+    evidence.mechanics_receipt_path.unlink()
+    with pytest.raises(subject.OwnerBuyE3ParityAmendmentError, match="missing"):
+        subject.validate_layer4_lockstep_contract(contract_path)
+
+    receipt = subject.materialize_mechanics_identity_receipt(
+        output_path=evidence.mechanics_receipt_path,
+        owner_execution_manifest_path=evidence.owner_manifest_path,
+        mechanics=evidence.mechanics,
+    )
+    assert receipt["status"] == "outcome_blind_mechanics_identity_materialized"
+    evidence.mechanics_receipt_path.chmod(0o644)
+    with pytest.raises(subject.OwnerBuyE3ParityAmendmentError, match="mode is not 0600"):
+        subject.validate_layer4_lockstep_contract(contract_path)
+
+
+def test_mechanics_receipt_rejects_cross_execution_substitution(
+    evidence: EvidenceFixture,
+) -> None:
+    other_owner = json.loads(evidence.owner_manifest_path.read_text(encoding="ascii"))
+    other_owner["public_base_commit"] = "b" * 40
+    other_owner["canonical_execution_manifest_sha256"] = subject._document_sha256(
+        other_owner, "canonical_execution_manifest_sha256"
+    )
+    other_path = _write_json(evidence.root / "other-owner.json", other_owner)
+    receipt = json.loads(evidence.mechanics_receipt_path.read_text(encoding="ascii"))
+    receipt["owner_execution_attempt"]["manifest"] = subject._file_binding(
+        other_path, label="other owner"
+    )
+    receipt["owner_execution_attempt"]["canonical_execution_manifest_sha256"] = (
+        other_owner["canonical_execution_manifest_sha256"]
+    )
+    receipt["owner_execution_attempt"]["execution_commit"] = "b" * 40
+    receipt["canonical_mechanics_identity_receipt_sha256"] = subject._document_sha256(
+        receipt, "canonical_mechanics_identity_receipt_sha256"
+    )
+    substituted = _write_json(evidence.root / "cross-execution-mechanics.json", receipt)
+
+    with pytest.raises(
+        subject.OwnerBuyE3ParityAmendmentError,
+        match="owner attempt2 execution identity drifted",
+    ):
+        subject.validate_mechanics_identity_receipt(substituted)
+
+
+def test_legacy_bare_mechanics_sha_contract_is_rejected(
+    evidence: EvidenceFixture,
+) -> None:
+    contract_path = evidence.root / "contract.json"
+    contract = evidence.freeze_contract(contract_path)
+    mechanics_sha = contract.pop("mechanics_identity_receipt")[
+        "mechanics_receipt_sha256"
+    ]
+    contract["mechanics_receipt_sha256"] = mechanics_sha
+    contract["canonical_contract_sha256"] = subject._document_sha256(
+        contract, "canonical_contract_sha256"
+    )
+    legacy = _write_json(evidence.root / "legacy-contract.json", contract)
+
+    with pytest.raises(
+        subject.OwnerBuyE3ParityAmendmentError,
+        match="legacy bare mechanics SHA",
+    ):
+        subject.validate_layer4_lockstep_contract(legacy)
 
 
 @pytest.mark.parametrize(
@@ -396,13 +721,13 @@ def test_resume_rejects_changed_contract(
         output_path=evidence.root / "layer4-a.json",
     )
 
-    mechanics_b_sha = _sha("mechanics-b")
+    mechanics_b_receipt = evidence.root / "mechanics-identity-b.json"
+    mechanics_b_receipt.write_bytes(evidence.mechanics_receipt_path.read_bytes())
+    mechanics_b_receipt.chmod(0o600)
     contract_b = evidence.root / "contract-b.json"
-    evidence.freeze_contract(contract_b, mechanics_sha256=mechanics_b_sha)
-    mechanics_b = SimpleNamespace(
-        selected_days=evidence.days,
-        mechanics_receipt_sha256=mechanics_b_sha,
-        replay_inputs=evidence.mechanics.replay_inputs,
+    evidence.freeze_contract(
+        contract_b,
+        mechanics_receipt_path=mechanics_b_receipt,
     )
     with pytest.raises(
         subject.OwnerBuyE3ParityAmendmentError,
@@ -414,7 +739,7 @@ def test_resume_rejects_changed_contract(
             contract_path=contract_b,
             day_root=day_root,
             output_path=evidence.root / "layer4-b.json",
-            mechanics=mechanics_b,
+            mechanics=evidence.mechanics,
         )
 
 
@@ -453,6 +778,9 @@ def test_all_v2_receipts_bind_false_evidence_boundaries(
     assert final["learning_algorithm_artifact_sha256"] == contract[
         "learning_algorithm_artifact_sha256"
     ]
+    assert final["mechanics_identity_receipt"] == contract[
+        "mechanics_identity_receipt"
+    ]
     for day in evidence.days:
         receipt = json.loads((day_root / f"{day}.json").read_text(encoding="ascii"))
         assert receipt["schema_version"] == subject.LOCKSTEP_DAY_SCHEMA_V2
@@ -461,6 +789,9 @@ def test_all_v2_receipts_bind_false_evidence_boundaries(
         ]
         assert receipt["learning_algorithm_artifact_sha256"] == contract[
             "learning_algorithm_artifact_sha256"
+        ]
+        assert receipt["mechanics_identity_receipt"] == contract[
+            "mechanics_identity_receipt"
         ]
         assert receipt["evidence_boundary"] == subject._BOUNDARY
 
