@@ -34,16 +34,43 @@ def _preflight(enabled: bool) -> dict:
     return payload
 
 
-def _process_probe(pid: int = 101) -> str:
+def _process_probe(
+    plan: dict,
+    phase: str,
+    pid: int = 101,
+    **overrides,
+) -> str:
+    expected = subject._expected_process_binding(plan, phase)
+    cmdline = [expected["python_executable"], "live/main.py", "--config", expected["config_path"]]
     payload = {
         "schema_version": gate_v2.PROCESS_IDENTITY_SCHEMA,
+        "captured_utc": "2026-08-22T00:00:00Z",
         "pid": pid,
-        "buy_e3_enabled": False,
-        "owner_override_effective": False,
+        "pid_start_ticks": 12345 + pid,
+        "cmdline": cmdline,
+        "cmdline_sha256": gate_v2.canonical_sha256(cmdline),
+        "cwd": expected["repo_root"],
+        "config_path": expected["config_path"],
+        "config_sha256": expected["config_sha256"],
+        "python_executable": expected["python_executable"],
+        "python_binary_resolved": expected["python_executable"],
+        "venv_root": expected["venv_root"],
+        "runtime_identity": {
+            "present": True,
+            "path": "/remote/repo/logs/runtime_identity.json",
+            "file_sha256": "9" * 64,
+            "schema_version": "runtime_identity.v1",
+        },
+        "execution_commit": expected["execution_commit"],
+        "execution_tree": expected["execution_tree"],
+        "artifact_sha256": expected["artifact_sha256"],
+        "runtime_code_sha256": expected["runtime_code_sha256"],
+        "buy_e3_enabled": expected["enabled"],
+        "owner_override_effective": expected["enabled"],
         "initial_buy_deadline_identity": "B0",
         "e3_deadline_imported": False,
-        "canonical_process_identity_sha256": "",
     }
+    payload.update(overrides)
     payload["canonical_process_identity_sha256"] = gate_v2.document_sha256(
         payload, "canonical_process_identity_sha256"
     )
@@ -150,6 +177,98 @@ def _specification(tmp_path: Path) -> dict:
     }
 
 
+def _activation_gate_payload(spec: dict) -> dict:
+    payload = {
+        "schema_version": gate_v2.SCHEMA_VERSION,
+        "status": "disabled_deploy_gate_passed_activation_not_yet_authorized",
+        "execution_identity": {
+            "execution_commit": gate_v2.FROZEN_EXECUTION_COMMIT,
+            "execution_tree": "5" * 40,
+            "annotated_tag": spec["execution"]["annotated_tag"],
+            "annotated_tag_object": "6" * 40,
+            "tag_peeled_commit": gate_v2.FROZEN_EXECUTION_COMMIT,
+        },
+        "runtime_sources": {"runtime_code_sha256": "b" * 64},
+        "artifact_binding": {"artifact_sha256": "a" * 64},
+        "config_binding": {
+            "disabled": {"enabled": False, "config_sha256": "c" * 64},
+            "active": {"enabled": True, "config_sha256": "d" * 64},
+        },
+        "host_binding": {
+            "active_pointer_file_sha256": "7" * 64,
+            "known_hosts_file_sha256": "8" * 64,
+            "host_key_fingerprint": "SHA256:fake",
+            "repo_root": "/remote/repo",
+            "python_executable": "/remote/repo/.venv/bin/python",
+            "venv_root": "/remote/repo/.venv",
+        },
+        "rollback_identities": {
+            name: dict(identity)
+            for name, identity in spec["rollback_identities"].items()
+        },
+        "activation_contract": {
+            "restart_only": True,
+            "sighup_allowed": False,
+            "fresh_pid_required": True,
+        },
+        "permissions": {"live_authorized": False},
+    }
+    payload["canonical_amendment_receipt_sha256"] = gate_v2.document_sha256(
+        payload, "canonical_amendment_receipt_sha256"
+    )
+    return payload
+
+
+def _bind_activation_gate(tmp_path: Path, spec: dict, payload: dict | None = None) -> Path:
+    receipt = tmp_path / "activation_gate.json"
+    body = payload or _activation_gate_payload(spec)
+    receipt.write_text(json.dumps(body, sort_keys=True) + "\n", encoding="ascii")
+    receipt.chmod(0o600)
+    spec["activation_gate"] = {
+        "path": str(receipt),
+        "file_sha256": gate_v2.file_sha256(receipt),
+    }
+    return receipt
+
+
+def _recanonicalize_plan(plan: dict) -> None:
+    plan["canonical_plan_sha256"] = gate_v2.document_sha256(plan, "canonical_plan_sha256")
+
+
+def _successful_runner(plan: dict, phase: str):
+    commands: list[str] = []
+
+    def run(command):
+        joined = " ".join(command)
+        commands.append(joined)
+        if "printf '%s" in joined or "cat /remote/repo/logs/maker.pid" in joined:
+            output = "100\n"
+        elif " process-probe " in joined:
+            output = _process_probe(plan, phase)
+        else:
+            output = "ok"
+        return subprocess.CompletedProcess(command, 0, output, "")
+
+    return run, commands
+
+
+def _set_nested(payload: dict, path: tuple[str, ...], value) -> None:
+    cursor = payload
+    for field in path[:-1]:
+        cursor = cursor[field]
+    cursor[path[-1]] = value
+
+
+def _write_receipt(path: Path, payload: dict, *, recanonicalize: bool = True) -> Path:
+    if recanonicalize:
+        payload["canonical_receipt_sha256"] = gate_v2.document_sha256(
+            payload, "canonical_receipt_sha256"
+        )
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(0o600)
+    return path
+
+
 def _patch_plan_dependencies(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, spec: dict) -> None:
     artifact_files = {
         "manifest": {
@@ -227,8 +346,15 @@ def _patch_plan_dependencies(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sp
     )
 
 
-def _plan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[dict, dict]:
+def _plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    activation_gate: bool = False,
+) -> tuple[dict, dict]:
     spec = _specification(tmp_path)
+    if activation_gate:
+        _bind_activation_gate(tmp_path, spec)
     _patch_plan_dependencies(monkeypatch, tmp_path, spec)
     plan = subject.build_plan(
         specification=spec,
@@ -388,6 +514,40 @@ def test_activation_requires_separate_amended_gate_binding(
         )
 
 
+def test_activation_rejects_hash_without_bound_gate_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    plan["activation_gate_receipt_sha256"] = "f" * 64
+    _recanonicalize_plan(plan)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="binding is incomplete"):
+        subject.execute_phase(
+            plan=plan,
+            phase="activate",
+            token="token-activate",
+            authorize_remote_mutation=True,
+            output_path=tmp_path / "must-not-exist.json",
+        )
+
+
+def test_authorized_execution_requires_immutable_receipt_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    calls: list[Sequence[str]] = []
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="immutable receipt"):
+        subject.execute_phase(
+            plan=plan,
+            phase="disabled-deploy",
+            token="token-disabled-deploy",
+            authorize_remote_mutation=True,
+            runner=lambda command: calls.append(command),
+        )
+    assert calls == []
+
+
 def test_post_stop_failure_attempts_primary_rollback_and_writes_0600_receipt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -401,9 +561,17 @@ def test_post_stop_failure_attempts_primary_rollback_and_writes_0600_receipt(
         if "printf '%s" in joined:
             return subprocess.CompletedProcess(command, 0, "100\n", "")
         # Fail after stop/quiescence/checkout when disabled start is attempted.
-        if "bash live/run.sh start" in joined and "disabled.yaml" in joined:
+        if (
+            "bash live/run.sh start" in joined
+            and "disabled.yaml" in joined
+            and not failed_at
+        ):
             failed_at.append(len(calls))
             return subprocess.CompletedProcess(command, 1, "", "failed")
+        if " process-probe " in joined:
+            return subprocess.CompletedProcess(
+                command, 0, _process_probe(plan, "rollback-primary"), ""
+            )
         return subprocess.CompletedProcess(command, 0, "101\n", "")
 
     receipt = tmp_path / "transaction.json"
@@ -418,27 +586,27 @@ def test_post_stop_failure_attempts_primary_rollback_and_writes_0600_receipt(
         )
     assert failed_at and len(calls) > failed_at[0]
     payload = json.loads(receipt.read_text(encoding="ascii"))
+    assert payload["status"] == subject.PHASE_FAILED_CLOSED
+    assert payload["failure_class"] == "command_returncode_nonzero"
     assert payload["rollback_attempted"] is True
+    assert payload["rollback_status"] == "rollback_complete"
+    assert payload["rollback_process_identity"]["buy_e3_enabled"] is False
     assert any(row["label"].startswith("automatic-rollback:") for row in payload["results"])
+    receipt_text = receipt.read_text(encoding="ascii")
+    assert '"stdout":' not in receipt_text
+    assert '"stderr":' not in receipt_text
     assert oct(receipt.stat().st_mode & 0o777) == "0o600"
+    assert subject.validate_phase_receipt(
+        receipt, plan=plan, expected_phase="disabled-deploy"
+    ) == payload
 
 
 def test_successful_disabled_phase_never_uses_sighup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan, _spec = _plan(tmp_path, monkeypatch)
-    commands: list[str] = []
-
-    def fake_runner(command):
-        commands.append(" ".join(command))
-        joined = commands[-1]
-        if "printf '%s" in joined:
-            output = "100\n"
-        elif " process-probe " in joined:
-            output = _process_probe()
-        else:
-            output = "ok"
-        return subprocess.CompletedProcess(command, 0, output, "")
+    fake_runner, commands = _successful_runner(plan, "disabled-deploy")
+    receipt = tmp_path / "disabled-transaction.json"
 
     result = subject.execute_phase(
         plan=plan,
@@ -446,9 +614,257 @@ def test_successful_disabled_phase_never_uses_sighup(
         token="token-disabled-deploy",
         authorize_remote_mutation=True,
         runner=fake_runner,
+        output_path=receipt,
     )
-    assert result["status"] == "phase_complete"
+    assert result["status"] == subject.PHASE_COMPLETE
     assert result["rollback_attempted"] is False
+    assert result["actual_process_identity"]["artifact_sha256"] == plan["artifact"][
+        "artifact_sha256"
+    ]
+    assert result["actual_process_identity"]["runtime_code_sha256"] == plan[
+        "runtime_sources"
+    ]["runtime_code_sha256"]
+    assert subject.validate_phase_receipt(
+        receipt, plan=plan, expected_phase="disabled-deploy"
+    ) == result
     assert not any(
         "sighup" in command.lower() or " reload" in command.lower() for command in commands
     )
+
+
+def test_successful_activation_receipt_embeds_exact_fresh_process_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch, activation_gate=True)
+    fake_runner, _commands = _successful_runner(plan, "activate")
+    receipt = tmp_path / "activate-transaction.json"
+
+    result = subject.execute_phase(
+        plan=plan,
+        phase="activate",
+        token="token-activate",
+        authorize_remote_mutation=True,
+        runner=fake_runner,
+        output_path=receipt,
+    )
+
+    process = result["actual_process_identity"]
+    assert result["status"] == subject.PHASE_COMPLETE
+    assert process["buy_e3_enabled"] is True
+    assert process["owner_override_effective"] is True
+    assert process["artifact_sha256"] == plan["artifact"]["artifact_sha256"]
+    assert process["runtime_code_sha256"] == plan["runtime_sources"]["runtime_code_sha256"]
+    assert process["config_sha256"] == plan["configs"]["active"]["config_sha256"]
+    assert process["execution_tree"] == plan["execution"]["execution_tree"]
+    assert process["pid"] != next(
+        row["observed_pid"] for row in result["results"] if row["label"] == "capture-old-pid"
+    )
+    assert process["initial_buy_deadline_identity"] == "B0"
+    assert process["e3_deadline_imported"] is False
+    assert subject.validate_phase_receipt(
+        receipt, plan=plan, expected_phase="activate"
+    ) == result
+
+
+@pytest.mark.parametrize(
+    ("field_path", "replacement"),
+    [
+        (("execution_identity", "execution_tree"), "0" * 40),
+        (("execution_identity", "annotated_tag_object"), "1" * 40),
+        (("runtime_sources", "runtime_code_sha256"), "0" * 64),
+        (("config_binding", "disabled", "config_sha256"), "0" * 64),
+        (("config_binding", "active", "config_sha256"), "1" * 64),
+        (("host_binding", "active_pointer_file_sha256"), "0" * 64),
+        (("host_binding", "known_hosts_file_sha256"), "1" * 64),
+        (("host_binding", "host_key_fingerprint"), "SHA256:another"),
+        (("host_binding", "repo_root"), "/another/repo"),
+        (("host_binding", "python_executable"), "/another/python"),
+        (("host_binding", "venv_root"), "/another/venv"),
+        (("rollback_identities", "primary_disabled", "config_sha256"), "0" * 64),
+        (("rollback_identities", "deep_predecessor", "execution_tree"), "0" * 40),
+    ],
+)
+def test_build_plan_rejects_activation_gate_cross_binding_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field_path: tuple[str, ...],
+    replacement: str,
+) -> None:
+    spec = _specification(tmp_path)
+    payload = _activation_gate_payload(spec)
+    _set_nested(payload, field_path, replacement)
+    payload["canonical_amendment_receipt_sha256"] = gate_v2.document_sha256(
+        payload, "canonical_amendment_receipt_sha256"
+    )
+    _bind_activation_gate(tmp_path, spec, payload)
+    _patch_plan_dependencies(monkeypatch, tmp_path, spec)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="cross-binding"):
+        subject.build_plan(
+            specification=spec,
+            repository_root=tmp_path,
+            preflight_runner=lambda _repo, _config, enabled: _preflight(enabled),
+        )
+
+
+def test_revalidate_plan_rejects_rehashed_activation_gate_cross_binding_tamper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, spec = _plan(tmp_path, monkeypatch, activation_gate=True)
+    path = Path(plan["activation_gate"]["path"])
+    payload = _activation_gate_payload(spec)
+    payload["execution_identity"]["annotated_tag_object"] = "0" * 40
+    payload["canonical_amendment_receipt_sha256"] = gate_v2.document_sha256(
+        payload, "canonical_amendment_receipt_sha256"
+    )
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(0o600)
+    plan["activation_gate"]["file_sha256"] = gate_v2.file_sha256(path)
+    plan["activation_gate"]["canonical_receipt_sha256"] = payload[
+        "canonical_amendment_receipt_sha256"
+    ]
+    _recanonicalize_plan(plan)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="cross-binding"):
+        subject._revalidate_plan_inputs(plan)
+
+
+def test_validate_phase_receipt_rejects_rehashed_command_tampering(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    runner, _commands = _successful_runner(plan, "disabled-deploy")
+    original = tmp_path / "original.json"
+    subject.execute_phase(
+        plan=plan,
+        phase="disabled-deploy",
+        token="token-disabled-deploy",
+        authorize_remote_mutation=True,
+        runner=runner,
+        output_path=original,
+    )
+    payload = json.loads(original.read_text(encoding="ascii"))
+    payload["results"][0]["label"] = "tampered-command"
+    tampered = _write_receipt(tmp_path / "tampered-command.json", payload)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="order/hash"):
+        subject.validate_phase_receipt(tampered, plan=plan)
+
+
+def test_validate_phase_receipt_rejects_embedded_stdout_even_when_rehashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    runner, _commands = _successful_runner(plan, "disabled-deploy")
+    original = tmp_path / "original.json"
+    subject.execute_phase(
+        plan=plan,
+        phase="disabled-deploy",
+        token="token-disabled-deploy",
+        authorize_remote_mutation=True,
+        runner=runner,
+        output_path=original,
+    )
+    payload = json.loads(original.read_text(encoding="ascii"))
+    payload["results"][0]["stdout"] = "not allowed"
+    tampered = _write_receipt(tmp_path / "embedded-stdout.json", payload)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="forbidden fields"):
+        subject.validate_phase_receipt(tampered, plan=plan)
+
+
+def test_validate_phase_receipt_rejects_wrong_phase_even_when_rehashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    runner, _commands = _successful_runner(plan, "disabled-deploy")
+    original = tmp_path / "original.json"
+    subject.execute_phase(
+        plan=plan,
+        phase="disabled-deploy",
+        token="token-disabled-deploy",
+        authorize_remote_mutation=True,
+        runner=runner,
+        output_path=original,
+    )
+    payload = json.loads(original.read_text(encoding="ascii"))
+    payload["phase"] = "rollback-primary"
+    tampered = _write_receipt(tmp_path / "wrong-phase.json", payload)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="phase drifted"):
+        subject.validate_phase_receipt(
+            tampered, plan=plan, expected_phase="disabled-deploy"
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("owner_override_effective", False),
+        ("runtime_code_sha256", "0" * 64),
+        ("artifact_sha256", "1" * 64),
+        ("initial_buy_deadline_identity", "E3"),
+        ("e3_deadline_imported", True),
+        ("pid", 100),
+    ],
+)
+def test_validate_activation_receipt_rejects_process_artifact_and_deadline_tamper(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    replacement,
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch, activation_gate=True)
+    runner, _commands = _successful_runner(plan, "activate")
+    original = tmp_path / "original.json"
+    subject.execute_phase(
+        plan=plan,
+        phase="activate",
+        token="token-activate",
+        authorize_remote_mutation=True,
+        runner=runner,
+        output_path=original,
+    )
+    payload = json.loads(original.read_text(encoding="ascii"))
+    process = payload["actual_process_identity"]
+    process[field] = replacement
+    process["canonical_process_identity_sha256"] = gate_v2.document_sha256(
+        process, "canonical_process_identity_sha256"
+    )
+    process_result = next(
+        row for row in payload["results"] if row["label"] == "fresh-active-process-probe"
+    )
+    process_result["process_identity_sha256"] = process[
+        "canonical_process_identity_sha256"
+    ]
+    if field == "pid":
+        process_result["observed_pid"] = replacement
+    tampered = _write_receipt(tmp_path / f"wrong-{field}.json", payload)
+
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="process|PID"):
+        subject.validate_phase_receipt(tampered, plan=plan, expected_phase="activate")
+
+
+def test_validate_phase_receipt_rejects_bad_canonical_hash_and_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    runner, _commands = _successful_runner(plan, "disabled-deploy")
+    original = tmp_path / "original.json"
+    subject.execute_phase(
+        plan=plan,
+        phase="disabled-deploy",
+        token="token-disabled-deploy",
+        authorize_remote_mutation=True,
+        runner=runner,
+        output_path=original,
+    )
+    payload = json.loads(original.read_text(encoding="ascii"))
+    payload["canonical_receipt_sha256"] = "0" * 64
+    bad_hash = _write_receipt(tmp_path / "bad-hash.json", payload, recanonicalize=False)
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="identity drifted"):
+        subject.validate_phase_receipt(bad_hash, plan=plan)
+
+    original.chmod(0o644)
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="0600"):
+        subject.validate_phase_receipt(original, plan=plan)

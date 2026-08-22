@@ -14,6 +14,7 @@ import importlib.util
 import json
 import os
 import shlex
+import stat
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
@@ -47,13 +48,38 @@ except ImportError:
 
 
 PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v1"
-RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v1"
+RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v2"
 PREFLIGHT_SCHEMA = "f05_buy_e3_owner_isolated_config_preflight.v1"
 POINTER_SCHEMA = "narrowgate_live_remote_pointer.v1"
 ACTIVE_POINTER_STATUS = "current_active"
 
 PHASES = ("disabled-deploy", "activate", "rollback-primary", "rollback-deep")
 MUTATING_PHASES = frozenset(PHASES)
+PHASE_COMPLETE = "phase_complete"
+PHASE_FAILED_CLOSED = "phase_failed_closed"
+FAILURE_CLASSES = frozenset(
+    {
+        "command_returncode_nonzero",
+        "command_runner_exception",
+        "old_pid_probe_invalid",
+        "process_probe_invalid",
+        "process_identity_invalid",
+        "process_authority_or_deadline_mismatch",
+        "fresh_pid_required",
+        "phase_contract_validation_failed",
+    }
+)
+RECEIPT_EVIDENCE_BOUNDARY = {
+    "validation_read": False,
+    "sealed_holdout_read": False,
+    "economic_arms_run": False,
+    "economic_values_read": False,
+    "stdout_or_stderr_embedded": False,
+}
+RECEIPT_PERMISSIONS = {
+    "required_mode": "0600",
+    "immutable_create_only": True,
+}
 REMOTE_OVERRIDE_ENV = (
     "NARROWGATE_LIVE_REMOTE",
     "NARROWGATE_LIVE_REMOTE_POINTER",
@@ -70,6 +96,67 @@ class BuyE3TransactionalDeployError(RuntimeError):
 
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 PreflightRunner = Callable[[Path, Path, bool], Mapping[str, Any]]
+
+_PROCESS_IDENTITY_FIELDS = frozenset(
+    {
+        "schema_version",
+        "captured_utc",
+        "pid",
+        "pid_start_ticks",
+        "cmdline",
+        "cmdline_sha256",
+        "cwd",
+        "config_path",
+        "config_sha256",
+        "python_executable",
+        "python_binary_resolved",
+        "venv_root",
+        "runtime_identity",
+        "execution_commit",
+        "execution_tree",
+        "artifact_sha256",
+        "runtime_code_sha256",
+        "buy_e3_enabled",
+        "owner_override_effective",
+        "initial_buy_deadline_identity",
+        "e3_deadline_imported",
+        "canonical_process_identity_sha256",
+    }
+)
+_RESULT_FIELDS = frozenset(
+    {
+        "label",
+        "command_sha256",
+        "returncode",
+        "stdout_sha256",
+        "stderr_sha256",
+        "observed_pid",
+        "process_identity_sha256",
+    }
+)
+_PHASE_RECEIPT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "plan_sha256",
+        "phase",
+        "status",
+        "remote_mutation_authorized",
+        "phase_authorization_token_sha256",
+        "transaction_contract_sha256",
+        "expected_commands",
+        "expected_automatic_rollback_commands",
+        "results",
+        "actual_process_identity",
+        "rollback_attempted",
+        "rollback_status",
+        "rollback_failure_class",
+        "rollback_process_identity",
+        "failure_class",
+        "permissions",
+        "evidence_boundary",
+        "canonical_receipt_sha256",
+    }
+)
 
 
 def _sha256_text(value: str) -> str:
@@ -367,6 +454,105 @@ def _validate_rollback_identity(name: str, raw: Any) -> dict[str, Any]:
     for field in ("config_sha256", "runtime_code_sha256"):
         normalized[field] = _require_sha256(raw[field], f"rollback {name} {field}")
     return normalized
+
+
+def _activation_gate_cross_binding(
+    *,
+    execution: Mapping[str, Any],
+    runtime_sources: Mapping[str, Any],
+    artifact: Mapping[str, Any],
+    configs: Mapping[str, Any],
+    pointer: Mapping[str, Any],
+    known_hosts: Mapping[str, Any],
+    host: Mapping[str, Any],
+    rollback: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "execution": {
+            field: execution.get(field)
+            for field in (
+                "execution_commit",
+                "execution_tree",
+                "annotated_tag",
+                "annotated_tag_object",
+                "tag_peeled_commit",
+            )
+        },
+        "runtime_code_sha256": runtime_sources.get("runtime_code_sha256"),
+        "artifact_sha256": artifact.get("artifact_sha256"),
+        "configs": {
+            name: configs.get(name, {}).get("config_sha256")
+            for name in ("disabled", "active")
+        },
+        "host": {
+            "active_pointer_file_sha256": pointer.get("file_sha256"),
+            "known_hosts_file_sha256": known_hosts.get("file_sha256"),
+            "host_key_fingerprint": known_hosts.get("expected_fingerprint"),
+            "repo_root": pointer.get("repo_root"),
+            "python_executable": host.get("python_executable"),
+            "venv_root": host.get("venv_root"),
+        },
+        "rollback_identities": {
+            name: dict(rollback.get(name, {}))
+            for name in ("primary_disabled", "deep_predecessor")
+        },
+    }
+
+
+def _activation_gate_receipt_cross_binding(receipt: Mapping[str, Any]) -> dict[str, Any]:
+    execution = receipt.get("execution_identity")
+    runtime_sources = receipt.get("runtime_sources")
+    artifact = receipt.get("artifact_binding")
+    configs = receipt.get("config_binding")
+    host = receipt.get("host_binding")
+    rollback = receipt.get("rollback_identities")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (execution, runtime_sources, artifact, configs, host, rollback)
+    ):
+        raise BuyE3TransactionalDeployError("activation gate cross-binding is incomplete")
+    return {
+        "execution": {
+            field: execution.get(field)
+            for field in (
+                "execution_commit",
+                "execution_tree",
+                "annotated_tag",
+                "annotated_tag_object",
+                "tag_peeled_commit",
+            )
+        },
+        "runtime_code_sha256": runtime_sources.get("runtime_code_sha256"),
+        "artifact_sha256": artifact.get("artifact_sha256"),
+        "configs": {
+            name: configs.get(name, {}).get("config_sha256")
+            for name in ("disabled", "active")
+        },
+        "host": {
+            field: host.get(field)
+            for field in (
+                "active_pointer_file_sha256",
+                "known_hosts_file_sha256",
+                "host_key_fingerprint",
+                "repo_root",
+                "python_executable",
+                "venv_root",
+            )
+        },
+        "rollback_identities": {
+            name: dict(rollback.get(name, {}))
+            for name in ("primary_disabled", "deep_predecessor")
+        },
+    }
+
+
+def _require_activation_gate_cross_binding(
+    receipt: Mapping[str, Any], expected: Mapping[str, Any]
+) -> str:
+    observed = _activation_gate_receipt_cross_binding(receipt)
+    if observed != dict(expected):
+        raise BuyE3TransactionalDeployError("activation gate cross-binding drifted")
+    return gate_v2.canonical_sha256(observed)
 
 
 def _ssh_base(known_hosts: str) -> list[str]:
@@ -1020,17 +1206,24 @@ def build_plan(
         if gate_v2.file_sha256(activation_path.resolve(strict=True)) != expected_file_sha:
             raise BuyE3TransactionalDeployError("activation gate file hash drifted")
         activation_receipt = gate_v2.validate_amended_gate_receipt(activation_path)
-        if (
-            activation_receipt.get("execution_identity", {}).get("execution_commit")
-            != execution["execution_commit"]
-            or activation_receipt.get("artifact_binding", {}).get("artifact_sha256")
-            != artifact_binding["artifact_sha256"]
-        ):
-            raise BuyE3TransactionalDeployError("activation gate binds another runtime")
+        expected_cross_binding = _activation_gate_cross_binding(
+            execution=execution,
+            runtime_sources=runtime_sources,
+            artifact=artifact_binding,
+            configs=config_binding,
+            pointer=pointer,
+            known_hosts=known_hosts,
+            host=host,
+            rollback=rollback,
+        )
+        cross_binding_sha256 = _require_activation_gate_cross_binding(
+            activation_receipt, expected_cross_binding
+        )
         activation_gate_binding = {
             "path": str(activation_path.resolve(strict=True)),
             "file_sha256": expected_file_sha,
             "canonical_receipt_sha256": activation_receipt["canonical_amendment_receipt_sha256"],
+            "cross_binding_sha256": cross_binding_sha256,
         }
     plan: dict[str, Any] = {
         "schema_version": PLAN_SCHEMA,
@@ -1135,11 +1328,33 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
     if runtime.get("runtime_code_sha256") != plan["runtime_sources"].get("runtime_code_sha256"):
         raise BuyE3TransactionalDeployError("runtime source aggregate drifted")
     activation = plan.get("activation_gate")
+    activation_receipt_sha256 = plan.get("activation_gate_receipt_sha256")
+    if (activation is None) != (activation_receipt_sha256 is None):
+        raise BuyE3TransactionalDeployError("activation gate plan binding is incomplete")
     if activation is not None:
+        if not isinstance(activation, Mapping):
+            raise BuyE3TransactionalDeployError("activation gate plan binding is malformed")
         path = Path(str(activation["path"]))
         if gate_v2.file_sha256(path.resolve(strict=True)) != activation["file_sha256"]:
             raise BuyE3TransactionalDeployError("activation gate bytes drifted")
-        gate_v2.validate_amended_gate_receipt(path)
+        receipt = gate_v2.validate_amended_gate_receipt(path)
+        expected_cross_binding = _activation_gate_cross_binding(
+            execution=plan["execution"],
+            runtime_sources=plan["runtime_sources"],
+            artifact=plan["artifact"],
+            configs=plan["configs"],
+            pointer=plan["active_pointer"],
+            known_hosts=plan["ssh"],
+            host=plan["host"],
+            rollback=plan["rollback_identities"],
+        )
+        cross_binding_sha256 = _require_activation_gate_cross_binding(
+            receipt, expected_cross_binding
+        )
+        if cross_binding_sha256 != activation.get("cross_binding_sha256"):
+            raise BuyE3TransactionalDeployError("activation gate plan binding drifted")
+        if receipt.get("canonical_amendment_receipt_sha256") != activation_receipt_sha256:
+            raise BuyE3TransactionalDeployError("activation gate canonical binding drifted")
 
 
 def phase_authorization_token_sha256(token: str) -> str:
@@ -1150,6 +1365,454 @@ def phase_authorization_token_sha256(token: str) -> str:
 
 def _default_runner(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, check=False, capture_output=True, text=True)
+
+
+def _expected_commands(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
+    return [
+        {
+            "label": str(row["label"]),
+            "command_sha256": _require_sha256(row["command_sha256"], "command hash"),
+        }
+        for row in rows
+    ]
+
+
+def _automatic_rollback_rows(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [
+        row
+        for row in plan["phases"]["rollback-primary"]
+        if row["label"] != "capture-old-pid"
+    ]
+
+
+def _expected_process_binding(plan: Mapping[str, Any], phase: str) -> dict[str, Any]:
+    if phase in {"disabled-deploy", "activate"}:
+        config_name = "active" if phase == "activate" else "disabled"
+        return {
+            "enabled": phase == "activate",
+            "config_path": plan["remote"][f"{config_name}_config_path"],
+            "config_sha256": plan["configs"][config_name]["config_sha256"],
+            "execution_commit": plan["execution"]["execution_commit"],
+            "execution_tree": plan["execution"]["execution_tree"],
+            "artifact_sha256": plan["artifact"]["artifact_sha256"],
+            "runtime_code_sha256": plan["runtime_sources"]["runtime_code_sha256"],
+            "repo_root": plan["active_pointer"]["repo_root"],
+            "python_executable": plan["host"]["python_executable"],
+            "venv_root": plan["host"]["venv_root"],
+        }
+    rollback_name = {
+        "rollback-primary": "primary_disabled",
+        "rollback-deep": "deep_predecessor",
+    }.get(phase)
+    if rollback_name is None:
+        raise BuyE3TransactionalDeployError("process identity phase is unknown")
+    identity = plan["rollback_identities"][rollback_name]
+    return {
+        "enabled": False,
+        "config_path": identity["config_path"],
+        "config_sha256": identity["config_sha256"],
+        "execution_commit": identity["execution_commit"],
+        "execution_tree": identity["execution_tree"],
+        "artifact_sha256": str(identity.get("artifact_sha256", "")),
+        "runtime_code_sha256": identity["runtime_code_sha256"],
+        "repo_root": plan["active_pointer"]["repo_root"],
+        "python_executable": identity["python_executable"],
+        "venv_root": identity["venv_root"],
+    }
+
+
+def _validate_actual_process_identity(
+    process: Mapping[str, Any],
+    *,
+    plan: Mapping[str, Any],
+    phase: str,
+    old_pid: int | None,
+) -> dict[str, Any]:
+    if set(process) != _PROCESS_IDENTITY_FIELDS:
+        raise BuyE3TransactionalDeployError("actual process identity fields drifted")
+    if (
+        process.get("schema_version") != gate_v2.PROCESS_IDENTITY_SCHEMA
+        or process.get("canonical_process_identity_sha256")
+        != gate_v2.document_sha256(process, "canonical_process_identity_sha256")
+    ):
+        raise BuyE3TransactionalDeployError("actual process identity hash drifted")
+    expected = _expected_process_binding(plan, phase)
+    try:
+        pid = int(process.get("pid", -1))
+        start_ticks = int(process.get("pid_start_ticks", -1))
+    except (TypeError, ValueError) as exc:
+        raise BuyE3TransactionalDeployError("actual process PID identity is malformed") from exc
+    if pid <= 0 or start_ticks <= 0 or old_pid is None or pid == old_pid:
+        raise BuyE3TransactionalDeployError("actual process PID is not fresh")
+    cmdline = process.get("cmdline")
+    runtime_identity = process.get("runtime_identity")
+    if (
+        not isinstance(cmdline, list)
+        or not cmdline
+        or process.get("cmdline_sha256") != gate_v2.canonical_sha256(cmdline)
+        or not isinstance(runtime_identity, Mapping)
+        or runtime_identity.get("present") is not True
+        or not str(runtime_identity.get("path", "")).strip()
+        or not str(runtime_identity.get("schema_version", "")).strip()
+    ):
+        raise BuyE3TransactionalDeployError("actual runtime process binding is malformed")
+    _require_sha256(runtime_identity.get("file_sha256"), "runtime identity file hash")
+    exact_fields = {
+        "cwd": expected["repo_root"],
+        "config_path": expected["config_path"],
+        "config_sha256": expected["config_sha256"],
+        "python_executable": expected["python_executable"],
+        "venv_root": expected["venv_root"],
+        "execution_commit": expected["execution_commit"],
+        "execution_tree": expected["execution_tree"],
+        "artifact_sha256": expected["artifact_sha256"],
+        "runtime_code_sha256": expected["runtime_code_sha256"],
+    }
+    if any(process.get(field) != value for field, value in exact_fields.items()):
+        raise BuyE3TransactionalDeployError("actual process artifact/runtime/config identity drifted")
+    if (
+        process.get("buy_e3_enabled") is not expected["enabled"]
+        or process.get("owner_override_effective") is not expected["enabled"]
+        or process.get("initial_buy_deadline_identity") != "B0"
+        or process.get("e3_deadline_imported") is not False
+    ):
+        raise BuyE3TransactionalDeployError("actual process authority/deadline identity drifted")
+    if not str(process.get("captured_utc", "")).strip() or not str(
+        process.get("python_binary_resolved", "")
+    ).strip():
+        raise BuyE3TransactionalDeployError("actual process capture identity is incomplete")
+    return dict(process)
+
+
+def _classify_process_error(exc: Exception) -> str:
+    message = str(exc)
+    if "probe" in message or "not JSON" in message:
+        return "process_probe_invalid"
+    if "fresh" in message or "PID" in message:
+        return "fresh_pid_required"
+    if "authority/deadline" in message:
+        return "process_authority_or_deadline_mismatch"
+    return "process_identity_invalid"
+
+
+def _parse_process_probe(
+    stdout: str,
+    *,
+    plan: Mapping[str, Any],
+    phase: str,
+    old_pid: int | None,
+) -> dict[str, Any]:
+    try:
+        process = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise BuyE3TransactionalDeployError("fresh process probe is not JSON") from exc
+    if not isinstance(process, dict):
+        raise BuyE3TransactionalDeployError("fresh process probe is malformed")
+    return _validate_actual_process_identity(process, plan=plan, phase=phase, old_pid=old_pid)
+
+
+def _command_result(
+    row: Mapping[str, Any], completed: subprocess.CompletedProcess[str] | None
+) -> dict[str, Any]:
+    if completed is None:
+        return {
+            "label": row["label"],
+            "command_sha256": row["command_sha256"],
+            "returncode": None,
+            "stdout_sha256": None,
+            "stderr_sha256": None,
+        }
+    return {
+        "label": row["label"],
+        "command_sha256": row["command_sha256"],
+        "returncode": int(completed.returncode),
+        "stdout_sha256": _sha256_text(completed.stdout or ""),
+        "stderr_sha256": _sha256_text(completed.stderr or ""),
+    }
+
+
+def _build_phase_receipt(
+    *,
+    plan: Mapping[str, Any],
+    phase: str,
+    status: str,
+    results: Sequence[Mapping[str, Any]],
+    actual_process_identity: Mapping[str, Any] | None,
+    rollback_attempted: bool,
+    rollback_status: str,
+    rollback_failure_class: str | None,
+    rollback_process_identity: Mapping[str, Any] | None,
+    failure_class: str | None,
+) -> dict[str, Any]:
+    rollback_rows = _automatic_rollback_rows(plan) if rollback_attempted else []
+    receipt: dict[str, Any] = {
+        "schema_version": RECEIPT_SCHEMA,
+        "plan_sha256": plan["canonical_plan_sha256"],
+        "phase": phase,
+        "status": status,
+        "remote_mutation_authorized": True,
+        "phase_authorization_token_sha256": plan["phase_token_sha256"][phase],
+        "transaction_contract_sha256": gate_v2.canonical_sha256(
+            plan["transaction_contract"]
+        ),
+        "expected_commands": _expected_commands(plan["phases"][phase]),
+        "expected_automatic_rollback_commands": _expected_commands(rollback_rows),
+        "results": [dict(result) for result in results],
+        "actual_process_identity": (
+            dict(actual_process_identity) if actual_process_identity is not None else None
+        ),
+        "rollback_attempted": bool(rollback_attempted),
+        "rollback_status": rollback_status,
+        "rollback_failure_class": rollback_failure_class,
+        "rollback_process_identity": (
+            dict(rollback_process_identity) if rollback_process_identity is not None else None
+        ),
+        "failure_class": failure_class,
+        "permissions": dict(RECEIPT_PERMISSIONS),
+        "evidence_boundary": dict(RECEIPT_EVIDENCE_BOUNDARY),
+    }
+    receipt["canonical_receipt_sha256"] = gate_v2.document_sha256(
+        receipt, "canonical_receipt_sha256"
+    )
+    return receipt
+
+
+def _validate_result_shape(result: Mapping[str, Any]) -> None:
+    if set(result) - _RESULT_FIELDS:
+        raise BuyE3TransactionalDeployError("phase result embeds forbidden fields")
+    label = result.get("label")
+    if not isinstance(label, str) or not label:
+        raise BuyE3TransactionalDeployError("phase result label is malformed")
+    _require_sha256(result.get("command_sha256"), "phase result command hash")
+    returncode = result.get("returncode")
+    if returncode is None:
+        if result.get("stdout_sha256") is not None or result.get("stderr_sha256") is not None:
+            raise BuyE3TransactionalDeployError("runner failure output binding is malformed")
+        if set(result) != {
+            "label",
+            "command_sha256",
+            "returncode",
+            "stdout_sha256",
+            "stderr_sha256",
+        }:
+            raise BuyE3TransactionalDeployError("runner failure carries fabricated identity")
+        return
+    else:
+        if not isinstance(returncode, int):
+            raise BuyE3TransactionalDeployError("phase return code is malformed")
+        _require_sha256(result.get("stdout_sha256"), "phase stdout hash")
+        _require_sha256(result.get("stderr_sha256"), "phase stderr hash")
+    identity_fields = set(result) - {
+        "label",
+        "command_sha256",
+        "returncode",
+        "stdout_sha256",
+        "stderr_sha256",
+    }
+    bare_label = label.removeprefix("automatic-rollback:")
+    if bare_label == "capture-old-pid":
+        if identity_fields != {"observed_pid"} or int(result["observed_pid"]) <= 0:
+            raise BuyE3TransactionalDeployError("old PID result binding is malformed")
+    elif "process-probe" in bare_label:
+        if identity_fields != {"observed_pid", "process_identity_sha256"}:
+            raise BuyE3TransactionalDeployError("process result binding is malformed")
+        if int(result["observed_pid"]) <= 0:
+            raise BuyE3TransactionalDeployError("process result PID is malformed")
+        _require_sha256(result["process_identity_sha256"], "process identity hash")
+    elif identity_fields:
+        raise BuyE3TransactionalDeployError("non-probe result carries process identity")
+
+
+def validate_phase_receipt(
+    receipt_path: Path,
+    *,
+    plan: Mapping[str, Any],
+    expected_phase: str | None = None,
+) -> dict[str, Any]:
+    """Validate one immutable phase receipt against its complete frozen plan."""
+
+    validate_plan(plan)
+    _revalidate_plan_inputs(plan)
+    candidate = receipt_path.expanduser()
+    if candidate.is_symlink() or not candidate.is_file():
+        raise BuyE3TransactionalDeployError("phase receipt is not an immutable regular file")
+    target = candidate.resolve(strict=True)
+    if stat.S_IMODE(target.stat().st_mode) != 0o600:
+        raise BuyE3TransactionalDeployError("phase receipt permission drifted from 0600")
+    receipt = gate_v2.read_json(target)
+    if set(receipt) != _PHASE_RECEIPT_FIELDS:
+        raise BuyE3TransactionalDeployError("phase receipt fields drifted")
+    phase = str(receipt.get("phase", ""))
+    if phase not in MUTATING_PHASES or (expected_phase is not None and phase != expected_phase):
+        raise BuyE3TransactionalDeployError("phase receipt phase drifted")
+    if (
+        receipt.get("schema_version") != RECEIPT_SCHEMA
+        or receipt.get("plan_sha256") != plan["canonical_plan_sha256"]
+        or receipt.get("canonical_receipt_sha256")
+        != gate_v2.document_sha256(receipt, "canonical_receipt_sha256")
+        or receipt.get("remote_mutation_authorized") is not True
+        or receipt.get("phase_authorization_token_sha256")
+        != plan["phase_token_sha256"][phase]
+        or receipt.get("transaction_contract_sha256")
+        != gate_v2.canonical_sha256(plan["transaction_contract"])
+        or receipt.get("permissions") != RECEIPT_PERMISSIONS
+        or receipt.get("evidence_boundary") != RECEIPT_EVIDENCE_BOUNDARY
+    ):
+        raise BuyE3TransactionalDeployError("phase receipt identity drifted")
+    expected = _expected_commands(plan["phases"][phase])
+    if receipt.get("expected_commands") != expected:
+        raise BuyE3TransactionalDeployError("phase receipt expected command binding drifted")
+    raw_results = receipt.get("results")
+    if not isinstance(raw_results, list) or not raw_results:
+        raise BuyE3TransactionalDeployError("phase receipt lacks command results")
+    results: list[dict[str, Any]] = []
+    for raw in raw_results:
+        if not isinstance(raw, Mapping):
+            raise BuyE3TransactionalDeployError("phase result is malformed")
+        result = dict(raw)
+        _validate_result_shape(result)
+        results.append(result)
+    first_rollback = next(
+        (index for index, result in enumerate(results) if result["label"].startswith("automatic-rollback:")),
+        len(results),
+    )
+    main_results = results[:first_rollback]
+    rollback_results = results[first_rollback:]
+    if any(result["label"].startswith("automatic-rollback:") for result in main_results) or any(
+        not result["label"].startswith("automatic-rollback:") for result in rollback_results
+    ):
+        raise BuyE3TransactionalDeployError("phase result ordering drifted")
+    if len(main_results) > len(expected):
+        raise BuyE3TransactionalDeployError("phase result count exceeds frozen commands")
+    for index, result in enumerate(main_results):
+        if {
+            "label": result["label"],
+            "command_sha256": result["command_sha256"],
+        } != expected[index]:
+            raise BuyE3TransactionalDeployError("phase command order/hash drifted")
+    status = receipt.get("status")
+    failure_class = receipt.get("failure_class")
+    if status == PHASE_COMPLETE:
+        if (
+            len(main_results) != len(expected)
+            or rollback_results
+            or any(result["returncode"] != 0 for result in main_results)
+            or failure_class is not None
+        ):
+            raise BuyE3TransactionalDeployError("completed phase did not run every command")
+    elif status == PHASE_FAILED_CLOSED:
+        if failure_class not in FAILURE_CLASSES:
+            raise BuyE3TransactionalDeployError("failed phase lacks a safe failure class")
+        if any(result["returncode"] not in {0, None} for result in main_results[:-1]):
+            raise BuyE3TransactionalDeployError("phase continued after a failed command")
+        last_returncode = main_results[-1]["returncode"]
+        if failure_class == "command_returncode_nonzero" and (
+            not isinstance(last_returncode, int) or last_returncode == 0
+        ):
+            raise BuyE3TransactionalDeployError("failed command return code was not preserved")
+        if failure_class == "command_runner_exception" and last_returncode is not None:
+            raise BuyE3TransactionalDeployError("runner failure return code was fabricated")
+    else:
+        raise BuyE3TransactionalDeployError("phase receipt status drifted")
+    old_pid = next(
+        (
+            int(result["observed_pid"])
+            for result in main_results
+            if result["label"] == "capture-old-pid" and "observed_pid" in result
+        ),
+        None,
+    )
+    process = receipt.get("actual_process_identity")
+    if process is not None:
+        if not isinstance(process, Mapping):
+            raise BuyE3TransactionalDeployError("actual process receipt binding is malformed")
+        validated_process = _validate_actual_process_identity(
+            process, plan=plan, phase=phase, old_pid=old_pid
+        )
+        process_hash = validated_process["canonical_process_identity_sha256"]
+        matching = [
+            result
+            for result in main_results
+            if result.get("process_identity_sha256") == process_hash
+        ]
+        if len(matching) != 1:
+            raise BuyE3TransactionalDeployError("process probe result is not rebound")
+    elif status == PHASE_COMPLETE:
+        raise BuyE3TransactionalDeployError("completed phase lacks actual process identity")
+    stopped = any(
+        result["label"] == "stop-live" and result["returncode"] == 0
+        for result in main_results
+    )
+    expected_rollback_attempt = (
+        status == PHASE_FAILED_CLOSED
+        and stopped
+        and phase not in {"rollback-primary", "rollback-deep"}
+    )
+    if receipt.get("rollback_attempted") is not expected_rollback_attempt:
+        raise BuyE3TransactionalDeployError("automatic rollback behavior drifted")
+    expected_rollback = (
+        _expected_commands(_automatic_rollback_rows(plan)) if expected_rollback_attempt else []
+    )
+    if receipt.get("expected_automatic_rollback_commands") != expected_rollback:
+        raise BuyE3TransactionalDeployError("automatic rollback command binding drifted")
+    rollback_status = receipt.get("rollback_status")
+    rollback_failure_class = receipt.get("rollback_failure_class")
+    rollback_process = receipt.get("rollback_process_identity")
+    if not expected_rollback_attempt:
+        if (
+            rollback_results
+            or rollback_status != "not_required"
+            or rollback_failure_class is not None
+            or rollback_process is not None
+        ):
+            raise BuyE3TransactionalDeployError("unexpected automatic rollback evidence")
+    else:
+        if not rollback_results or len(rollback_results) > len(expected_rollback):
+            raise BuyE3TransactionalDeployError("automatic rollback results are incomplete")
+        for index, result in enumerate(rollback_results):
+            expected_result = expected_rollback[index]
+            if {
+                "label": result["label"].removeprefix("automatic-rollback:"),
+                "command_sha256": result["command_sha256"],
+            } != expected_result:
+                raise BuyE3TransactionalDeployError("automatic rollback order/hash drifted")
+        if rollback_status == "rollback_complete":
+            if (
+                len(rollback_results) != len(expected_rollback)
+                or any(result["returncode"] != 0 for result in rollback_results)
+                or rollback_failure_class is not None
+                or not isinstance(rollback_process, Mapping)
+            ):
+                raise BuyE3TransactionalDeployError("automatic rollback completion is unproven")
+            validated_rollback = _validate_actual_process_identity(
+                rollback_process,
+                plan=plan,
+                phase="rollback-primary",
+                old_pid=old_pid,
+            )
+            rollback_hash = validated_rollback["canonical_process_identity_sha256"]
+            if sum(
+                result.get("process_identity_sha256") == rollback_hash
+                for result in rollback_results
+            ) != 1:
+                raise BuyE3TransactionalDeployError("rollback process probe is not rebound")
+        elif rollback_status == "rollback_failed_closed":
+            if rollback_failure_class not in FAILURE_CLASSES:
+                raise BuyE3TransactionalDeployError("rollback failure class is unsafe")
+            if rollback_process is not None:
+                if not isinstance(rollback_process, Mapping):
+                    raise BuyE3TransactionalDeployError(
+                        "failed rollback process binding is malformed"
+                    )
+                _validate_actual_process_identity(
+                    rollback_process,
+                    plan=plan,
+                    phase="rollback-primary",
+                    old_pid=old_pid,
+                )
+        else:
+            raise BuyE3TransactionalDeployError("automatic rollback status drifted")
+    return receipt
 
 
 def execute_phase(
@@ -1174,115 +1837,131 @@ def execute_phase(
         raise PermissionError("phase token does not match the frozen plan")
     if phase == "activate" and not plan.get("activation_gate_receipt_sha256"):
         raise PermissionError("activation requires a separately bound amended gate receipt")
+    if output_path is None:
+        raise BuyE3TransactionalDeployError("remote phase requires an immutable receipt output")
+    receipt_target = output_path.expanduser().absolute()
+    if receipt_target.exists() or receipt_target.is_symlink():
+        raise BuyE3TransactionalDeployError("immutable phase receipt already exists")
     rows = plan["phases"][phase]
     results: list[dict[str, Any]] = []
     stopped = False
     rollback_attempted = False
+    rollback_status = "not_required"
+    rollback_failure_class: str | None = None
+    actual_process_identity: dict[str, Any] | None = None
+    rollback_process_identity: dict[str, Any] | None = None
+    phase_complete = False
+    failure_class: str | None = None
     old_pid: int | None = None
     try:
         for row in rows:
-            completed = runner(tuple(str(value) for value in row["argv"]))
-            result = {
-                "label": row["label"],
-                "command_sha256": row["command_sha256"],
-                "returncode": int(completed.returncode),
-                "stdout_sha256": _sha256_text(completed.stdout or ""),
-                "stderr_sha256": _sha256_text(completed.stderr or ""),
-            }
+            try:
+                completed = runner(tuple(str(value) for value in row["argv"]))
+            except Exception:
+                results.append(_command_result(row, None))
+                failure_class = "command_runner_exception"
+                raise
+            result = _command_result(row, completed)
+            results.append(result)
+            if completed.returncode != 0:
+                failure_class = "command_returncode_nonzero"
+                raise BuyE3TransactionalDeployError(
+                    f"remote phase failed closed at {row['label']}"
+                )
             if completed.returncode == 0 and row["label"] == "capture-old-pid":
                 try:
                     old_pid = int((completed.stdout or "").strip())
                 except ValueError as exc:
+                    failure_class = "old_pid_probe_invalid"
                     raise BuyE3TransactionalDeployError("old PID probe is malformed") from exc
                 if old_pid <= 0:
+                    failure_class = "old_pid_probe_invalid"
                     raise BuyE3TransactionalDeployError("old PID probe is invalid")
                 result["observed_pid"] = old_pid
-            if completed.returncode == 0 and "fresh-" in row["label"]:
-                if "process-probe" in row["label"]:
-                    try:
-                        process = json.loads(completed.stdout)
-                    except json.JSONDecodeError as exc:
-                        raise BuyE3TransactionalDeployError(
-                            "fresh process probe is not JSON"
-                        ) from exc
-                    if not isinstance(process, dict):
-                        raise BuyE3TransactionalDeployError("fresh process probe is malformed")
-                    fresh_pid = int(process.get("pid", -1))
-                    if process.get(
-                        "schema_version"
-                    ) != gate_v2.PROCESS_IDENTITY_SCHEMA or process.get(
-                        "canonical_process_identity_sha256"
-                    ) != gate_v2.document_sha256(process, "canonical_process_identity_sha256"):
-                        raise BuyE3TransactionalDeployError("fresh process identity hash drifted")
-                    expected_enabled = row["label"] == "fresh-active-process-probe"
-                    if (
-                        process.get("buy_e3_enabled") is not expected_enabled
-                        or process.get("owner_override_effective") is not expected_enabled
-                        or process.get("initial_buy_deadline_identity") != "B0"
-                        or process.get("e3_deadline_imported") is not False
-                    ):
-                        raise BuyE3TransactionalDeployError(
-                            "fresh process activation/deadline identity drifted"
-                        )
-                else:
-                    try:
-                        fresh_pid = int((completed.stdout or "").strip())
-                    except ValueError as exc:
-                        raise BuyE3TransactionalDeployError(
-                            "fresh rollback PID probe is malformed"
-                        ) from exc
-                if old_pid is None or fresh_pid <= 0 or fresh_pid == old_pid:
-                    raise BuyE3TransactionalDeployError("restart did not produce a fresh PID")
-                result["observed_pid"] = fresh_pid
-            results.append(result)
+            if completed.returncode == 0 and "process-probe" in row["label"]:
+                try:
+                    actual_process_identity = _parse_process_probe(
+                        completed.stdout or "", plan=plan, phase=phase, old_pid=old_pid
+                    )
+                except BuyE3TransactionalDeployError as exc:
+                    failure_class = _classify_process_error(exc)
+                    raise
+                result["observed_pid"] = actual_process_identity["pid"]
+                result["process_identity_sha256"] = actual_process_identity[
+                    "canonical_process_identity_sha256"
+                ]
             if row["label"] == "stop-live" and completed.returncode == 0:
                 stopped = True
-            if completed.returncode != 0:
-                raise BuyE3TransactionalDeployError(f"remote phase failed closed at {row['label']}")
+        if actual_process_identity is None:
+            failure_class = "phase_contract_validation_failed"
+            raise BuyE3TransactionalDeployError("phase did not return actual process identity")
+        if len(results) != len(rows) or any(result["returncode"] != 0 for result in results):
+            failure_class = "phase_contract_validation_failed"
+            raise BuyE3TransactionalDeployError("phase command completion is incomplete")
+        _revalidate_plan_inputs(plan)
+        phase_complete = True
     except Exception:
+        if failure_class is None:
+            failure_class = "phase_contract_validation_failed"
         if stopped and phase not in {"rollback-primary", "rollback-deep"}:
             rollback_attempted = True
+            rollback_status = "rollback_failed_closed"
+            completed_rollback_rows = 0
             for row in plan["phases"]["rollback-primary"]:
-                if row["label"] in {"capture-old-pid", "stop-live"}:
+                if row["label"] == "capture-old-pid":
                     continue
-                completed = runner(tuple(str(value) for value in row["argv"]))
-                results.append(
-                    {
-                        "label": f"automatic-rollback:{row['label']}",
-                        "command_sha256": row["command_sha256"],
-                        "returncode": int(completed.returncode),
-                        "stdout_sha256": _sha256_text(completed.stdout or ""),
-                        "stderr_sha256": _sha256_text(completed.stderr or ""),
-                    }
-                )
-                if completed.returncode != 0:
+                automatic_row = dict(row)
+                automatic_row["label"] = f"automatic-rollback:{row['label']}"
+                try:
+                    completed = runner(tuple(str(value) for value in row["argv"]))
+                except Exception:
+                    results.append(_command_result(automatic_row, None))
+                    rollback_failure_class = "command_runner_exception"
                     break
+                result = _command_result(automatic_row, completed)
+                results.append(result)
+                completed_rollback_rows += 1
+                if completed.returncode != 0:
+                    rollback_failure_class = "command_returncode_nonzero"
+                    break
+                if "process-probe" in row["label"]:
+                    try:
+                        rollback_process_identity = _parse_process_probe(
+                            completed.stdout or "",
+                            plan=plan,
+                            phase="rollback-primary",
+                            old_pid=old_pid,
+                        )
+                    except BuyE3TransactionalDeployError as exc:
+                        rollback_failure_class = _classify_process_error(exc)
+                        break
+                    result["observed_pid"] = rollback_process_identity["pid"]
+                    result["process_identity_sha256"] = rollback_process_identity[
+                        "canonical_process_identity_sha256"
+                    ]
+            if (
+                rollback_failure_class is None
+                and completed_rollback_rows == len(_automatic_rollback_rows(plan))
+                and rollback_process_identity is not None
+            ):
+                rollback_status = "rollback_complete"
         raise
     finally:
-        if output_path is not None:
-            receipt: dict[str, Any] = {
-                "schema_version": RECEIPT_SCHEMA,
-                "plan_sha256": plan["canonical_plan_sha256"],
-                "phase": phase,
-                "remote_mutation_authorized": True,
-                "results": results,
-                "rollback_attempted": rollback_attempted,
-                "validation_read": False,
-                "sealed_holdout_read": False,
-                "economic_arms_run": False,
-            }
-            receipt["canonical_receipt_sha256"] = gate_v2.document_sha256(
-                receipt, "canonical_receipt_sha256"
-            )
-            gate_v2.atomic_write_receipt(output_path, receipt)
-    return {
-        "schema_version": RECEIPT_SCHEMA,
-        "plan_sha256": plan["canonical_plan_sha256"],
-        "phase": phase,
-        "status": "phase_complete",
-        "results": results,
-        "rollback_attempted": rollback_attempted,
-    }
+        receipt = _build_phase_receipt(
+            plan=plan,
+            phase=phase,
+            status=PHASE_COMPLETE if phase_complete else PHASE_FAILED_CLOSED,
+            results=results,
+            actual_process_identity=actual_process_identity,
+            rollback_attempted=rollback_attempted,
+            rollback_status=rollback_status,
+            rollback_failure_class=rollback_failure_class,
+            rollback_process_identity=rollback_process_identity,
+            failure_class=None if phase_complete else failure_class,
+        )
+        gate_v2.atomic_write_receipt(receipt_target, receipt)
+        validate_phase_receipt(receipt_target, plan=plan, expected_phase=phase)
+    return receipt
 
 
 def _build_spec_parser(parser: argparse.ArgumentParser) -> None:
@@ -1398,7 +2077,10 @@ if __name__ == "__main__":
 __all__ = [
     "ACTIVE_POINTER_STATUS",
     "BuyE3TransactionalDeployError",
+    "FAILURE_CLASSES",
     "PHASES",
+    "PHASE_COMPLETE",
+    "PHASE_FAILED_CLOSED",
     "PLAN_SCHEMA",
     "PREFLIGHT_SCHEMA",
     "RECEIPT_SCHEMA",
@@ -1410,5 +2092,6 @@ __all__ = [
     "load_sha_bound_active_pointer",
     "phase_authorization_token_sha256",
     "run_isolated_preflight",
+    "validate_phase_receipt",
     "validate_plan",
 ]
