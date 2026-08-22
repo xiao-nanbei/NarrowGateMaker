@@ -462,7 +462,8 @@ def materialize_snapshot_predicates(
     if normalized_side not in _SIDES:
         raise OfflinePredicateViewError("snapshot predicate side is invalid")
     enriched = dict(feature_row)
-    enriched.setdefault("utc_day", _utc_day_from_feature_row(enriched))
+    if "utc_day" not in enriched:
+        enriched["utc_day"] = _utc_day_from_feature_row(enriched)
     definitions: dict[str, predicates.PredicateDefinition] = {}
     for group in _GROUPS:
         artifact = bundle.artifacts[f"{group}.{normalized_side}"]

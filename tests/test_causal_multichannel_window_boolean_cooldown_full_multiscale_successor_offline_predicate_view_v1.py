@@ -152,6 +152,29 @@ def test_panel_and_snapshot_use_the_same_frozen_predicate_semantics(
     assert receipt["bundle"]["reference_days_are_2025"] is True
 
 
+def test_snapshot_uses_bound_utc_day_without_requiring_decision_timestamp(
+    tmp_path: Path,
+) -> None:
+    bundle_path, bundle_sha = _write_bundle(tmp_path)
+    bundle = view.load_frozen_predicate_bundle(
+        bundle_path, expected_file_sha256=bundle_sha
+    )
+
+    snapshot = view.materialize_snapshot_predicates(
+        predicate_names=["tri::quantile::book_signal::ge::q5000"],
+        feature_row={
+            "utc_day": "2026-01-01",
+            "book_signal": 0.9,
+            "side": "BUY",
+        },
+        side="BUY",
+        baseline_duration_ms=85_000,
+        bundle=bundle,
+    )
+
+    assert snapshot == {"tri::quantile::book_signal::ge::q5000": 1}
+
+
 def test_bundle_and_artifact_hash_drift_fail_closed(tmp_path: Path) -> None:
     bundle_path, bundle_sha = _write_bundle(tmp_path)
     with pytest.raises(view.OfflinePredicateViewError, match="bundle file SHA256"):
