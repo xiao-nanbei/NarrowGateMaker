@@ -11,10 +11,35 @@ import pytest
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_final_composition_v1 as composition,
 )
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_amendment_v2 as parity_v2,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as deployment_v2,
+)
 
 SHA_COMPONENT_RESULT = "1" * 64
 SHA_EXECUTION_SOURCE = "2" * 64
 SHA_FRESH_ADAPTER = "3" * 64
+
+
+def test_layer4_schema_contract_matches_parity_amendment() -> None:
+    assert composition._schema_matches(
+        "layer4_contract", parity_v2.LAYER4_CONTRACT_SCHEMA
+    )
+    assert composition._schema_matches(
+        "layer4_final", parity_v2.LAYER4_RECEIPT_SCHEMA_V2
+    )
+    assert composition._schema_matches(
+        "layer4_day::00", parity_v2.LOCKSTEP_DAY_SCHEMA_V2
+    )
+
+
+def test_operational_schema_contract_matches_deployment_amendment() -> None:
+    assert composition._schema_matches(
+        "runtime_regression", deployment_v2.RUNTIME_REGRESSION_SCHEMA
+    )
+    assert composition._schema_matches("deployment_gate", deployment_v2.SCHEMA_VERSION)
 
 
 def _permissions() -> dict[str, bool]:
@@ -443,41 +468,81 @@ class EvidenceFixture:
         contract = self._write(
             "layer4_contract",
             {
-                "schema_version": f"{composition.IDENTITY}.layer4_lockstep_contract.v2",
+                "schema_version": f"{composition.IDENTITY}.layer4_lockstep_contract.v1",
+                "schema_amendment": (
+                    f"{composition.IDENTITY}.layer4_receipt_binding_amendment.v2"
+                ),
                 "identity": composition.IDENTITY,
                 "status": "layer4_lockstep_contract_frozen",
-                "execution_manifest_canonical_sha256": execution_sha,
+                "execution_attempt": {
+                    "canonical_execution_manifest_sha256": execution_sha,
+                },
                 "learning_algorithm_artifact_sha256": component[
                     "canonical_artifact_manifest_sha256"
                 ],
-                "learning_algorithm_manifest_file_sha256": composition.file_sha256(
-                    self.paths["formal_buy_component_manifest"]
-                ),
-                "formal_v24_execution_manifest_sha256": component[
-                    "source_execution_manifest_sha256"
-                ],
-                "component_result_canonical_sha256": component["component_result_canonical_sha256"],
-                "nested_oof_manifest_canonical_sha256": component[
-                    "nested_oof_artifact_manifest_canonical_sha256"
-                ],
+                "formal_learning_algorithm": {
+                    "manifest": {
+                        "file_sha256": composition.file_sha256(
+                            self.paths["formal_buy_component_manifest"]
+                        ),
+                    },
+                    "learning_algorithm_artifact_sha256": component[
+                        "canonical_artifact_manifest_sha256"
+                    ],
+                    "formal_v24_execution_manifest_sha256": component[
+                        "source_execution_manifest_sha256"
+                    ],
+                    "component_result_canonical_sha256": component[
+                        "component_result_canonical_sha256"
+                    ],
+                    "nested_oof_artifact_manifest_canonical_sha256": component[
+                        "nested_oof_artifact_manifest_canonical_sha256"
+                    ],
+                },
                 "mechanics_receipt_sha256": "7" * 64,
-                "source_predicate_bundle_sha256": "8" * 64,
-                "parity_source_file_sha256": "9" * 64,
-                "exact_artifact_sha256": artifact_sha,
-                "artifact_manifest_file_sha256": composition.file_sha256(
-                    self.paths["exact_artifact_manifest"]
-                ),
-                "policy_file_sha256": composition.file_sha256(self.paths["exact_policy"]),
-                "predicate_bundle_file_sha256": composition.file_sha256(
-                    self.paths["exact_predicate_bundle"]
-                ),
+                "source_predicate_bundle": {
+                    "bundle": {"file_sha256": "8" * 64},
+                    "canonical_sha256": "a" * 64,
+                },
+                "parity_source": {
+                    "amendment_file_sha256": "9" * 64,
+                    "v1_parity_file_sha256": "b" * 64,
+                },
+                "exact_artifact": {
+                    "artifact_sha256": artifact_sha,
+                    "artifact_manifest": {
+                        "file_sha256": composition.file_sha256(
+                            self.paths["exact_artifact_manifest"]
+                        ),
+                    },
+                    "policy": {
+                        "file_sha256": composition.file_sha256(
+                            self.paths["exact_policy"]
+                        ),
+                    },
+                    "predicate_bundle": {
+                        "file_sha256": composition.file_sha256(
+                            self.paths["exact_predicate_bundle"]
+                        ),
+                    },
+                },
                 "ordered_development_days": list(self.days),
-                "economic_values_exposed": False,
-                "economic_values_used_for_selection": False,
-                **_boundaries(),
+                "evidence_boundary": {
+                    "economic_values_exposed": False,
+                    "economic_values_used_for_selection": False,
+                    "validation_read": False,
+                    "sealed_holdout_read": False,
+                    "hypothetical_live_scoring": False,
+                },
+                "permissions": {
+                    "research_authorized": False,
+                    "action_authorized": False,
+                    "live_authorized": False,
+                },
             },
             "canonical_contract_sha256",
         )
+        contract_file_sha = composition.file_sha256(self.paths["layer4_contract"])
         admitted_days: list[dict[str, str]] = []
         for index, utc_day in enumerate(self.days):
             role = f"layer4_day::{index:02d}"
@@ -488,11 +553,17 @@ class EvidenceFixture:
                     "identity": composition.IDENTITY,
                     "status": "day_lockstep_complete",
                     "utc_day": utc_day,
-                    "canonical_contract_sha256": contract["canonical_contract_sha256"],
+                    "schema_amendment": (
+                        f"{composition.IDENTITY}.layer4_receipt_binding_amendment.v2"
+                    ),
+                    "layer4_lockstep_contract_sha256": contract[
+                        "canonical_contract_sha256"
+                    ],
+                    "layer4_lockstep_contract_file_sha256": contract_file_sha,
                     "learning_algorithm_artifact_sha256": component[
                         "canonical_artifact_manifest_sha256"
                     ],
-                    "exact_artifact_sha256": artifact_sha,
+                    "artifact_sha256": artifact_sha,
                     "artifact_manifest_file_sha256": composition.file_sha256(
                         self.paths["exact_artifact_manifest"]
                     ),
@@ -501,15 +572,25 @@ class EvidenceFixture:
                         self.paths["exact_predicate_bundle"]
                     ),
                     "lockstep": {"mismatch_count": 0},
-                    "economic_values_exposed": False,
-                    "economic_values_used_for_selection": False,
-                    **_boundaries(),
+                    "evidence_boundary": {
+                        "economic_values_exposed": False,
+                        "economic_values_used_for_selection": False,
+                        "validation_read": False,
+                        "sealed_holdout_read": False,
+                        "hypothetical_live_scoring": False,
+                    },
+                    "permissions": {
+                        "research_authorized": False,
+                        "action_authorized": False,
+                        "live_authorized": False,
+                    },
                 },
                 "canonical_day_receipt_sha256",
             )
             admitted_days.append(
                 {
                     "utc_day": utc_day,
+                    "file_name": f"{utc_day}.json",
                     "file_sha256": composition.file_sha256(self.paths[role]),
                     "canonical_day_receipt_sha256": day_receipt["canonical_day_receipt_sha256"],
                 }
@@ -521,11 +602,17 @@ class EvidenceFixture:
                 "identity": composition.IDENTITY,
                 "status": "parity_complete",
                 "layer": "repeated_policy_lockstep",
-                "canonical_contract_sha256": contract["canonical_contract_sha256"],
+                "schema_amendment": (
+                    f"{composition.IDENTITY}.layer4_receipt_binding_amendment.v2"
+                ),
+                "layer4_lockstep_contract_sha256": contract[
+                    "canonical_contract_sha256"
+                ],
+                "layer4_lockstep_contract_file_sha256": contract_file_sha,
                 "learning_algorithm_artifact_sha256": component[
                     "canonical_artifact_manifest_sha256"
                 ],
-                "exact_artifact_sha256": artifact_sha,
+                "artifact_sha256": artifact_sha,
                 "artifact_manifest_file_sha256": composition.file_sha256(
                     self.paths["exact_artifact_manifest"]
                 ),
@@ -538,9 +625,18 @@ class EvidenceFixture:
                     "day_receipts": admitted_days,
                     "mismatch_count": 0,
                 },
-                "economic_values_exposed": False,
-                "economic_values_used_for_selection": False,
-                **_boundaries(),
+                "evidence_boundary": {
+                    "economic_values_exposed": False,
+                    "economic_values_used_for_selection": False,
+                    "validation_read": False,
+                    "sealed_holdout_read": False,
+                    "hypothetical_live_scoring": False,
+                },
+                "permissions": {
+                    "research_authorized": False,
+                    "action_authorized": False,
+                    "live_authorized": False,
+                },
             },
             "canonical_receipt_sha256",
         )
@@ -573,101 +669,136 @@ class EvidenceFixture:
         self._write(
             "runtime_regression",
             {
-                "schema_version": (f"{composition.IDENTITY}.runtime_regression_test_receipt.v1"),
+                "schema_version": deployment_v2.RUNTIME_REGRESSION_SCHEMA,
                 "identity": composition.IDENTITY,
                 "status": "passed",
                 "artifact_sha256": artifact_sha,
-                "execution_commit": execution["public_base_commit"],
-                "execution_tag": execution["annotated_tag"],
-                "passed": 100,
+                "execution_identity": {
+                    "execution_commit": execution["public_base_commit"],
+                    "execution_tree": "4" * 40,
+                    "annotated_tag": execution["annotated_tag"],
+                    "annotated_tag_object": "5" * 40,
+                    "tag_peeled_commit": execution["public_base_commit"],
+                },
+                "expected_passed": 67,
+                "passed": 67,
                 "failed": 0,
+                "errors": 0,
+                "return_code": 0,
+                "coverage": {
+                    "lexical_venv_entrypoint_preserved": True,
+                    "physical_interpreter_bound_separately": True,
+                    "buy_disabled_equals_b0": True,
+                    "restart_and_rollback": True,
+                    "sell_integration_unchanged": True,
+                },
+                "superseded_v1_failed_attempt": {
+                    "present": True,
+                    "role": "superseded_failed_attempt_only",
+                    "eligible_for_gate_satisfaction": False,
+                    "status": "failed",
+                },
                 "economic_values_read": False,
                 **_boundaries(),
             },
             "canonical_receipt_sha256",
         )
-        runtime = self._write(
-            "host_runtime_identity",
-            {
-                "schema_version": f"{composition.IDENTITY}.host_runtime_identity_receipt.v2",
-                "identity": composition.IDENTITY,
-                "status": "host_runtime_identity_verified",
-                "artifact_sha256": artifact_sha,
-                "execution_commit": execution["public_base_commit"],
-                "execution_tag": execution["annotated_tag"],
-                "actual_config_file_sha256": "5" * 64,
-                "runtime_code_sha256": "6" * 64,
-                "economic_values_persisted": False,
-                **_boundaries(),
-            },
-            "canonical_runtime_identity_receipt_sha256",
+        process = {
+            "schema_version": deployment_v2.PROCESS_IDENTITY_SCHEMA,
+            "pid": 1234,
+            "artifact_sha256": artifact_sha,
+            "config_sha256": "6" * 64,
+            "runtime_code_sha256": "7" * 64,
+        }
+        process["canonical_process_identity_sha256"] = composition.document_sha256(
+            process, "canonical_process_identity_sha256"
         )
-        runtime_sha = runtime["canonical_runtime_identity_receipt_sha256"]
-        health = self._write(
-            "host_health",
-            {
-                "schema_version": f"{composition.IDENTITY}.host_health_window.v2",
-                "identity": composition.IDENTITY,
-                "status": "disabled_live_health_window_complete",
-                "artifact_sha256": artifact_sha,
-                "runtime_identity_receipt_sha256": runtime_sha,
-                "runtime": {"buy_e3_enabled": False, "sell_owner_enabled": True},
-                "economic_values_persisted": False,
-                "hypothetical_live_actions_scored": False,
-                **_boundaries(),
+        resource = {
+            "schema_version": deployment_v2.RESOURCE_WINDOW_SCHEMA,
+            "status": "concurrent_disabled_live_benchmark_passed",
+            "live_pid": 1234,
+            "checks": {
+                "concurrent_live_and_benchmark_observed": True,
+                "post_benchmark_same_pid_health": True,
             },
-            "canonical_health_receipt_sha256",
-        )
-        benchmark = self._write(
-            "host_benchmark",
-            {
-                "schema_version": f"{composition.IDENTITY}.host_benchmark.v2",
-                "identity": composition.IDENTITY,
-                "status": "exact_artifact_host_benchmark_complete",
-                "artifact_sha256": artifact_sha,
-                "runtime_identity_receipt_sha256": runtime_sha,
-                "health_receipt_sha256": health["canonical_health_receipt_sha256"],
-                "economic_values_persisted": False,
-                "hypothetical_live_actions_scored": False,
-                **_boundaries(),
-            },
-            "canonical_benchmark_receipt_sha256",
-        )
-        post_health = self._write(
-            "host_post_health",
-            {
-                "schema_version": f"{composition.IDENTITY}.host_health_window.v2",
-                "identity": composition.IDENTITY,
-                "status": "post_benchmark_live_health_window_complete",
-                "artifact_sha256": artifact_sha,
-                "runtime_identity_receipt_sha256": runtime_sha,
-                "runtime": {"buy_e3_enabled": False, "sell_owner_enabled": True},
-                "economic_values_persisted": False,
-                "hypothetical_live_actions_scored": False,
-                **_boundaries(),
-            },
-            "canonical_health_receipt_sha256",
+            "economic_values_persisted": False,
+            "hypothetical_live_actions_scored": False,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+        }
+        resource["canonical_resource_window_sha256"] = composition.document_sha256(
+            resource, "canonical_resource_window_sha256"
         )
         self._write(
             "deployment_gate",
             {
-                "schema_version": f"{composition.IDENTITY}.deployment_gate.v2",
+                "schema_version": deployment_v2.SCHEMA_VERSION,
                 "identity": composition.IDENTITY,
-                "status": "deployment_gate_passed",
-                "artifact_sha256": artifact_sha,
-                "execution_commit": execution["public_base_commit"],
-                "execution_tag": execution["annotated_tag"],
-                "runtime_identity_receipt_sha256": runtime_sha,
-                "health_receipt_sha256": health["canonical_health_receipt_sha256"],
-                "benchmark_receipt_sha256": benchmark["canonical_benchmark_receipt_sha256"],
-                "post_health_receipt_sha256": post_health["canonical_health_receipt_sha256"],
-                "checks": {"all_runtime_identity_and_resource_checks": True},
-                "activation_allowed": True,
+                "status": "disabled_deploy_gate_passed_activation_not_yet_authorized",
+                "execution_identity": {
+                    "execution_commit": execution["public_base_commit"],
+                    "execution_tree": "4" * 40,
+                    "annotated_tag": execution["annotated_tag"],
+                    "annotated_tag_object": "5" * 40,
+                    "tag_peeled_commit": execution["public_base_commit"],
+                },
+                "artifact_binding": {
+                    "artifact_sha256": artifact_sha,
+                    "artifact_files": {
+                        "manifest": {
+                            "sha256": composition.file_sha256(
+                                self.paths["exact_artifact_manifest"]
+                            )
+                        },
+                        "policy": {
+                            "sha256": composition.file_sha256(self.paths["exact_policy"])
+                        },
+                        "predicate_bundle": {
+                            "sha256": composition.file_sha256(
+                                self.paths["exact_predicate_bundle"]
+                            )
+                        },
+                    },
+                },
+                "config_binding": {
+                    "disabled": {
+                        "enabled": False,
+                        "artifact_sha256": artifact_sha,
+                        "artifact_loaded_with_from_files": True,
+                        "config_sha256": "6" * 64,
+                    },
+                    "active": {
+                        "enabled": True,
+                        "artifact_sha256": artifact_sha,
+                        "artifact_loaded_with_from_files": True,
+                        "config_sha256": "8" * 64,
+                    },
+                },
+                "disabled_process_identity": process,
+                "resource_window": resource,
+                "rollback_identities": {
+                    "primary_disabled": {
+                        "buy_e3_enabled": False,
+                        "buy_deadline_identity": "B0",
+                    },
+                    "deep_predecessor": {
+                        "buy_e3_enabled": False,
+                        "buy_deadline_identity": "B0",
+                    },
+                },
+                "activation_contract": {
+                    "restart_only": True,
+                    "sighup_allowed": False,
+                    "fresh_pid_required": True,
+                    "external_narrowgate_live_config_required": True,
+                    "warmup_executes_natural_b0": True,
+                    "hypothetical_scorer_allowed": False,
+                },
                 "economic_values_persisted": False,
                 "hypothetical_live_actions_scored": False,
-                **_boundaries(),
+                "permissions": _permissions(),
             },
-            "canonical_deployment_gate_receipt_sha256",
+            "canonical_amendment_receipt_sha256",
         )
 
     def inputs(self) -> composition.CompositionInputs:
@@ -698,10 +829,6 @@ class EvidenceFixture:
             layer4_final=self.paths["layer4_final"],
             sell_54_case=self.paths["sell_54_case"],
             runtime_regression=self.paths["runtime_regression"],
-            host_runtime_identity=self.paths["host_runtime_identity"],
-            host_health=self.paths["host_health"],
-            host_benchmark=self.paths["host_benchmark"],
-            host_post_health=self.paths["host_post_health"],
             deployment_gate=self.paths["deployment_gate"],
         )
 
@@ -850,7 +977,7 @@ def test_exact_artifact_oof_claim_is_rejected(evidence: EvidenceFixture) -> None
 
 def test_upstream_byte_drift_breaks_later_validation(evidence: EvidenceFixture) -> None:
     evidence.compose()
-    path = evidence.paths["host_post_health"]
+    path = evidence.paths["deployment_gate"]
     raw = path.read_bytes()
     path.write_bytes(raw + b" ")
     path.chmod(0o600)
@@ -984,10 +1111,6 @@ def test_cli_compose_and_validate(
         "layer4_final",
         "sell_54_case",
         "runtime_regression",
-        "host_runtime_identity",
-        "host_health",
-        "host_benchmark",
-        "host_post_health",
         "deployment_gate",
     ):
         arguments.extend((f"--{field.replace('_', '-')}", str(getattr(inputs, field))))

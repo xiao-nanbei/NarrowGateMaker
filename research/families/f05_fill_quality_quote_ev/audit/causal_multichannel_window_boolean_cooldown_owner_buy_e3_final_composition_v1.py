@@ -66,10 +66,6 @@ TAIL_ROLE_ORDER: Final[tuple[str, ...]] = (
     "layer4_final",
     "sell_54_case",
     "runtime_regression",
-    "host_runtime_identity",
-    "host_health",
-    "host_benchmark",
-    "host_post_health",
     "deployment_gate",
 )
 
@@ -100,15 +96,7 @@ CANONICAL_FIELDS: Final[dict[str, tuple[str, ...]]] = {
     ),
     "sell_54_case": ("canonical_receipt_sha256",),
     "runtime_regression": ("canonical_receipt_sha256",),
-    "host_runtime_identity": (
-        "canonical_runtime_identity_receipt_sha256",
-        "canonical_runtime_identity_sha256",
-        "canonical_receipt_sha256",
-    ),
-    "host_health": ("canonical_health_receipt_sha256",),
-    "host_benchmark": ("canonical_benchmark_receipt_sha256",),
-    "host_post_health": ("canonical_health_receipt_sha256",),
-    "deployment_gate": ("canonical_deployment_gate_receipt_sha256",),
+    "deployment_gate": ("canonical_amendment_receipt_sha256",),
 }
 
 FALSE_EVIDENCE_KEYS: Final[frozenset[str]] = frozenset(
@@ -167,10 +155,6 @@ class CompositionInputs:
     layer4_final: Path
     sell_54_case: Path
     runtime_regression: Path
-    host_runtime_identity: Path
-    host_health: Path
-    host_benchmark: Path
-    host_post_health: Path
     deployment_gate: Path
 
 
@@ -447,13 +431,13 @@ def _schema_matches(role: str, schema: str) -> bool:
         LAYER2_ROLE: f"{IDENTITY}.parity_receipt.v1",
         LAYER3_ROLE: f"{IDENTITY}.parity_receipt.v1",
         "sell_54_case": f"{IDENTITY}.parity_receipt.v1",
-        "runtime_regression": f"{IDENTITY}.runtime_regression_test_receipt.v1",
-        "layer4_contract": f"{IDENTITY}.layer4_lockstep_contract.v2",
+        "runtime_regression": f"{IDENTITY}.runtime_regression_test_receipt.v2",
+        # The post-freeze auditor is amendment v2, but it introduces the first
+        # Layer-4 contract document.  The document schema is therefore v1 and
+        # carries an explicit v2 amendment identity.
+        "layer4_contract": f"{IDENTITY}.layer4_lockstep_contract.v1",
         "layer4_final": f"{IDENTITY}.parity_receipt.v2",
-        "host_health": f"{IDENTITY}.host_health_window.v2",
-        "host_benchmark": f"{IDENTITY}.host_benchmark.v2",
-        "host_post_health": f"{IDENTITY}.host_health_window.v2",
-        "deployment_gate": f"{IDENTITY}.deployment_gate.v2",
+        "deployment_gate": f"{IDENTITY}.deployment_gate_amendment.v2",
         "source_role_resolution": SOURCE_ROLE_SCHEMA,
     }
     if role in exact:
@@ -468,8 +452,6 @@ def _schema_matches(role: str, schema: str) -> bool:
         "cpp_quick_preflight": ".receipt.v1",
         "cpp_qualification": ".receipt.v1",
     }
-    if role == "host_runtime_identity":
-        return bool(re.search(r"\.host_runtime_identity(?:_receipt)?\.v2$", schema))
     suffix = suffixes.get(role)
     return suffix is not None and schema.endswith(suffix)
 
@@ -506,10 +488,6 @@ def _validate_role_shape(role: str, payload: Mapping[str, Any]) -> None:
         "layer4_final",
         "sell_54_case",
         "runtime_regression",
-        "host_runtime_identity",
-        "host_health",
-        "host_benchmark",
-        "host_post_health",
         "deployment_gate",
     }
     if role.startswith(LAYER4_DAY_PREFIX):
@@ -993,8 +971,11 @@ def _validate_parity_chain(
                 f"{layer} {field}",
             )
     contract = documents["layer4_contract"]
-    if str(contract.get("schema_version", "")).endswith(".v1"):
-        raise FinalCompositionError("Layer4 v1 contracts are forbidden")
+    _require_equal(
+        contract.get("schema_amendment"),
+        f"{IDENTITY}.layer4_receipt_binding_amendment.v2",
+        "Layer4 contract amendment",
+    )
     _require_equal(
         contract.get("status"),
         "layer4_lockstep_contract_frozen",
@@ -1002,7 +983,11 @@ def _validate_parity_chain(
     )
     contract_sha = _binding_sha(bindings, "layer4_contract")
     _require_equal(
-        contract.get("execution_manifest_canonical_sha256"),
+        _optional_field(
+            contract,
+            "execution_attempt",
+            "canonical_execution_manifest_sha256",
+        ),
         execution_sha,
         "Layer4 execution manifest",
     )
@@ -1013,44 +998,87 @@ def _validate_parity_chain(
     )
     component = documents["formal_buy_component_manifest"]
     _require_equal(
-        contract.get("learning_algorithm_manifest_file_sha256"),
+        _optional_field(
+            contract,
+            "formal_learning_algorithm",
+            "manifest",
+            "file_sha256",
+        ),
         bindings["formal_buy_component_manifest"]["file_sha256"],
         "Layer4 learning algorithm manifest file",
     )
     _require_equal(
-        contract.get("formal_v24_execution_manifest_sha256"),
+        _optional_field(
+            contract,
+            "formal_learning_algorithm",
+            "formal_v24_execution_manifest_sha256",
+        ),
         component.get("source_execution_manifest_sha256"),
         "Layer4 formal v24 execution",
     )
     _require_equal(
-        contract.get("component_result_canonical_sha256"),
+        _optional_field(
+            contract,
+            "formal_learning_algorithm",
+            "component_result_canonical_sha256",
+        ),
         component.get("component_result_canonical_sha256"),
         "Layer4 component result",
     )
     _require_equal(
-        contract.get("nested_oof_manifest_canonical_sha256"),
+        _optional_field(
+            contract,
+            "formal_learning_algorithm",
+            "nested_oof_artifact_manifest_canonical_sha256",
+        ),
         component.get("nested_oof_artifact_manifest_canonical_sha256"),
         "Layer4 nested OOF manifest",
     )
-    for field in (
-        "mechanics_receipt_sha256",
-        "source_predicate_bundle_sha256",
-        "parity_source_file_sha256",
-    ):
-        _require_sha(contract.get(field), f"Layer4 {field}")
-    _require_equal(contract.get("exact_artifact_sha256"), artifact_sha, "Layer4 exact artifact")
+    _require_sha(contract.get("mechanics_receipt_sha256"), "Layer4 mechanics receipt")
+    _require_sha(
+        _optional_field(
+            contract,
+            "source_predicate_bundle",
+            "bundle",
+            "file_sha256",
+        ),
+        "Layer4 source predicate bundle file",
+    )
+    _require_sha(
+        _optional_field(contract, "parity_source", "amendment_file_sha256"),
+        "Layer4 amendment source file",
+    )
+    _require_sha(
+        _optional_field(contract, "parity_source", "v1_parity_file_sha256"),
+        "Layer4 v1 parity source file",
+    )
     _require_equal(
-        contract.get("artifact_manifest_file_sha256"),
+        _optional_field(contract, "exact_artifact", "artifact_sha256"),
+        artifact_sha,
+        "Layer4 exact artifact",
+    )
+    _require_equal(
+        _optional_field(
+            contract,
+            "exact_artifact",
+            "artifact_manifest",
+            "file_sha256",
+        ),
         bindings["exact_artifact_manifest"]["file_sha256"],
         "Layer4 artifact manifest file",
     )
     _require_equal(
-        contract.get("policy_file_sha256"),
+        _optional_field(contract, "exact_artifact", "policy", "file_sha256"),
         bindings["exact_policy"]["file_sha256"],
         "Layer4 policy file",
     )
     _require_equal(
-        contract.get("predicate_bundle_file_sha256"),
+        _optional_field(
+            contract,
+            "exact_artifact",
+            "predicate_bundle",
+            "file_sha256",
+        ),
         bindings["exact_predicate_bundle"]["file_sha256"],
         "Layer4 predicate file",
     )
@@ -1063,7 +1091,14 @@ def _validate_parity_chain(
         _require_equal(receipt.get("status"), "day_lockstep_complete", f"Layer4 {utc_day} status")
         _require_equal(receipt.get("utc_day"), utc_day, f"Layer4 day {index}")
         _require_equal(
-            receipt.get("canonical_contract_sha256"), contract_sha, f"Layer4 {utc_day} contract"
+            receipt.get("layer4_lockstep_contract_sha256"),
+            contract_sha,
+            f"Layer4 {utc_day} contract",
+        )
+        _require_equal(
+            receipt.get("layer4_lockstep_contract_file_sha256"),
+            bindings["layer4_contract"]["file_sha256"],
+            f"Layer4 {utc_day} contract file",
         )
         _require_equal(
             receipt.get("learning_algorithm_artifact_sha256"),
@@ -1071,7 +1106,7 @@ def _validate_parity_chain(
             f"Layer4 {utc_day} learning algorithm",
         )
         _require_equal(
-            receipt.get("exact_artifact_sha256"), artifact_sha, f"Layer4 {utc_day} exact artifact"
+            receipt.get("artifact_sha256"), artifact_sha, f"Layer4 {utc_day} exact artifact"
         )
         _require_equal(
             receipt.get("artifact_manifest_file_sha256"),
@@ -1094,6 +1129,7 @@ def _validate_parity_chain(
         admitted_days.append(
             {
                 "utc_day": utc_day,
+                "file_name": f"{utc_day}.json",
                 "file_sha256": str(bindings[role]["file_sha256"]),
                 "canonical_day_receipt_sha256": str(bindings[role]["canonical_sha256"]),
             }
@@ -1101,13 +1137,22 @@ def _validate_parity_chain(
     final = documents["layer4_final"]
     _require_equal(final.get("status"), "parity_complete", "Layer4 final status")
     _require_equal(final.get("layer"), "repeated_policy_lockstep", "Layer4 final layer")
-    _require_equal(final.get("canonical_contract_sha256"), contract_sha, "Layer4 final contract")
+    _require_equal(
+        final.get("layer4_lockstep_contract_sha256"),
+        contract_sha,
+        "Layer4 final contract",
+    )
+    _require_equal(
+        final.get("layer4_lockstep_contract_file_sha256"),
+        bindings["layer4_contract"]["file_sha256"],
+        "Layer4 final contract file",
+    )
     _require_equal(
         final.get("learning_algorithm_artifact_sha256"),
         learning_sha,
         "Layer4 final learning algorithm",
     )
-    _require_equal(final.get("exact_artifact_sha256"), artifact_sha, "Layer4 final exact artifact")
+    _require_equal(final.get("artifact_sha256"), artifact_sha, "Layer4 final exact artifact")
     _require_equal(
         final.get("artifact_manifest_file_sha256"),
         bindings["exact_artifact_manifest"]["file_sha256"],
@@ -1174,73 +1219,175 @@ def _validate_operational_gate_chain(
     regression = documents["runtime_regression"]
     _require_equal(regression.get("status"), "passed", "runtime regression status")
     _require_equal(regression.get("failed"), 0, "runtime regression failures")
+    _require_equal(regression.get("errors"), 0, "runtime regression errors")
+    _require_equal(regression.get("return_code"), 0, "runtime regression return code")
+    _require_equal(
+        regression.get("passed"),
+        regression.get("expected_passed"),
+        "runtime regression completed test count",
+    )
+    if not isinstance(regression.get("passed"), int) or int(regression["passed"]) <= 0:
+        raise FinalCompositionError("runtime regression did not complete any test")
     _require_equal(regression.get("artifact_sha256"), artifact_sha, "runtime regression artifact")
     execution_commit = str(execution.get("public_base_commit", ""))
     execution_tag = str(execution.get("annotated_tag", ""))
+    regression_execution = regression.get("execution_identity")
+    if not isinstance(regression_execution, Mapping):
+        raise FinalCompositionError("runtime regression execution identity is missing")
     _require_equal(
-        regression.get("execution_commit"), execution_commit, "runtime regression commit"
-    )
-    _require_equal(regression.get("execution_tag"), execution_tag, "runtime regression tag")
-    runtime = documents["host_runtime_identity"]
-    _require_equal(runtime.get("status"), "host_runtime_identity_verified", "host runtime status")
-    _require_equal(runtime.get("artifact_sha256"), artifact_sha, "host runtime artifact")
-    _require_equal(runtime.get("execution_commit"), execution_commit, "host runtime commit")
-    _require_equal(runtime.get("execution_tag"), execution_tag, "host runtime tag")
-    runtime_sha = _binding_sha(bindings, "host_runtime_identity")
-    health = documents["host_health"]
-    post_health = documents["host_post_health"]
-    benchmark = documents["host_benchmark"]
-    _require_equal(
-        health.get("status"), "disabled_live_health_window_complete", "host health status"
+        regression_execution.get("execution_commit"),
+        execution_commit,
+        "runtime regression commit",
     )
     _require_equal(
-        post_health.get("status"),
-        "post_benchmark_live_health_window_complete",
-        "host post-health status",
+        regression_execution.get("annotated_tag"),
+        execution_tag,
+        "runtime regression tag",
     )
-    for payload, label in ((health, "host health"), (post_health, "host post-health")):
-        _require_equal(payload.get("artifact_sha256"), artifact_sha, f"{label} artifact")
-        _require_equal(
-            payload.get("runtime_identity_receipt_sha256"), runtime_sha, f"{label} runtime"
-        )
-        _require_equal(
-            _optional_field(payload, "runtime", "buy_e3_enabled"), False, f"{label} BUY disabled"
-        )
-        _require_equal(
-            _optional_field(payload, "runtime", "sell_owner_enabled"), True, f"{label} SELL enabled"
-        )
-    health_sha = _binding_sha(bindings, "host_health")
-    benchmark_sha = _binding_sha(bindings, "host_benchmark")
-    post_health_sha = _binding_sha(bindings, "host_post_health")
     _require_equal(
-        benchmark.get("status"), "exact_artifact_host_benchmark_complete", "host benchmark status"
+        regression_execution.get("tag_peeled_commit"),
+        execution_commit,
+        "runtime regression tag peel",
     )
-    _require_equal(benchmark.get("artifact_sha256"), artifact_sha, "host benchmark artifact")
-    _require_equal(
-        benchmark.get("runtime_identity_receipt_sha256"), runtime_sha, "host benchmark runtime"
-    )
-    _require_equal(benchmark.get("health_receipt_sha256"), health_sha, "host benchmark health")
+    for field in ("execution_tree", "annotated_tag_object"):
+        if _GIT_SHA_RE.fullmatch(str(regression_execution.get(field, ""))) is None:
+            raise FinalCompositionError(f"runtime regression {field} is not a Git object id")
+    coverage = regression.get("coverage")
+    if not isinstance(coverage, Mapping) or not coverage or any(
+        value is not True for value in coverage.values()
+    ):
+        raise FinalCompositionError("runtime regression coverage is incomplete")
+    superseded = regression.get("superseded_v1_failed_attempt")
+    if (
+        not isinstance(superseded, Mapping)
+        or superseded.get("present") is not True
+        or superseded.get("role") != "superseded_failed_attempt_only"
+        or superseded.get("eligible_for_gate_satisfaction") is not False
+        or superseded.get("status") != "failed"
+    ):
+        raise FinalCompositionError("runtime regression did not preserve the superseded v1 failure")
+
     gate = documents["deployment_gate"]
-    _require_equal(gate.get("status"), "deployment_gate_passed", "deployment gate status")
-    _require_bool(gate.get("activation_allowed"), True, "deployment gate activation")
-    _require_equal(gate.get("artifact_sha256"), artifact_sha, "deployment gate artifact")
-    _require_equal(gate.get("execution_commit"), execution_commit, "deployment gate commit")
-    _require_equal(gate.get("execution_tag"), execution_tag, "deployment gate tag")
     _require_equal(
-        gate.get("runtime_identity_receipt_sha256"), runtime_sha, "deployment gate runtime"
+        gate.get("status"),
+        "disabled_deploy_gate_passed_activation_not_yet_authorized",
+        "deployment gate status",
     )
-    _require_equal(gate.get("health_receipt_sha256"), health_sha, "deployment gate health")
-    _require_equal(gate.get("benchmark_receipt_sha256"), benchmark_sha, "deployment gate benchmark")
+    gate_execution = gate.get("execution_identity")
+    gate_artifact = gate.get("artifact_binding")
+    gate_configs = gate.get("config_binding")
+    process = gate.get("disabled_process_identity")
+    resource = gate.get("resource_window")
+    rollback = gate.get("rollback_identities")
+    activation = gate.get("activation_contract")
+    if any(
+        not isinstance(value, Mapping)
+        for value in (
+            gate_execution,
+            gate_artifact,
+            gate_configs,
+            process,
+            resource,
+            rollback,
+            activation,
+        )
+    ):
+        raise FinalCompositionError("deployment amendment is structurally incomplete")
+    _require_equal(gate_execution.get("execution_commit"), execution_commit, "deployment commit")
+    _require_equal(gate_execution.get("annotated_tag"), execution_tag, "deployment tag")
     _require_equal(
-        gate.get("post_health_receipt_sha256"), post_health_sha, "deployment gate post-health"
+        gate_execution.get("tag_peeled_commit"), execution_commit, "deployment tag peel"
     )
-    checks = gate.get("checks")
+    _require_equal(gate_artifact.get("artifact_sha256"), artifact_sha, "deployment artifact")
+    artifact_files = gate_artifact.get("artifact_files")
+    if not isinstance(artifact_files, Mapping):
+        raise FinalCompositionError("deployment artifact triple is missing")
+    for role, binding_role in (
+        ("manifest", "exact_artifact_manifest"),
+        ("policy", "exact_policy"),
+        ("predicate_bundle", "exact_predicate_bundle"),
+    ):
+        record = artifact_files.get(role)
+        if not isinstance(record, Mapping):
+            raise FinalCompositionError(f"deployment artifact file is missing: {role}")
+        _require_equal(
+            record.get("sha256"),
+            bindings[binding_role]["file_sha256"],
+            f"deployment artifact file {role}",
+        )
+    disabled_config = gate_configs.get("disabled")
+    active_config = gate_configs.get("active")
+    if not isinstance(disabled_config, Mapping) or not isinstance(active_config, Mapping):
+        raise FinalCompositionError("deployment config pair is missing")
+    _require_bool(disabled_config.get("enabled"), False, "disabled deployment config")
+    _require_bool(active_config.get("enabled"), True, "active deployment config")
+    for config, label in ((disabled_config, "disabled"), (active_config, "active")):
+        _require_equal(config.get("artifact_sha256"), artifact_sha, f"{label} config artifact")
+        _require_bool(
+            config.get("artifact_loaded_with_from_files"),
+            True,
+            f"{label} config artifact load",
+        )
+    _require_equal(
+        process.get("artifact_sha256"), artifact_sha, "disabled process artifact"
+    )
+    _require_equal(
+        process.get("canonical_process_identity_sha256"),
+        document_sha256(process, "canonical_process_identity_sha256"),
+        "disabled process canonical identity",
+    )
+    _require_equal(
+        process.get("config_sha256"),
+        disabled_config.get("config_sha256"),
+        "disabled process config",
+    )
+    _require_equal(
+        resource.get("status"),
+        "concurrent_disabled_live_benchmark_passed",
+        "deployment resource window status",
+    )
+    _require_equal(
+        resource.get("canonical_resource_window_sha256"),
+        document_sha256(resource, "canonical_resource_window_sha256"),
+        "deployment resource window canonical identity",
+    )
+    checks = resource.get("checks")
     if (
         not isinstance(checks, Mapping)
         or not checks
         or any(value is not True for value in checks.values())
     ):
         raise FinalCompositionError("deployment gate checks are not all true")
+    _require_equal(
+        int(resource.get("live_pid", -1)),
+        int(process.get("pid", -2)),
+        "deployment resource/live PID",
+    )
+    if set(rollback) != {"primary_disabled", "deep_predecessor"}:
+        raise FinalCompositionError("deployment rollback identities are incomplete")
+    for name, rollback_identity in rollback.items():
+        if not isinstance(rollback_identity, Mapping):
+            raise FinalCompositionError(f"deployment rollback identity is malformed: {name}")
+        _require_bool(
+            rollback_identity.get("buy_e3_enabled"),
+            False,
+            f"deployment rollback {name} BUY E3",
+        )
+        _require_equal(
+            rollback_identity.get("buy_deadline_identity"),
+            "B0",
+            f"deployment rollback {name} deadline",
+        )
+    for field, expected in (
+        ("restart_only", True),
+        ("sighup_allowed", False),
+        ("fresh_pid_required", True),
+        ("external_narrowgate_live_config_required", True),
+        ("warmup_executes_natural_b0", True),
+        ("hypothetical_scorer_allowed", False),
+    ):
+        _require_bool(activation.get(field), expected, f"deployment activation {field}")
+    _permissions_are_false(gate, "deployment gate amendment")
 
 
 def _build_source_role_resolution(
@@ -1419,12 +1566,25 @@ def _build_final_payload(
             "failed": 0,
         },
         "deployment_evidence": {
-            "host_runtime_identity_sha256": _binding_sha(bindings, "host_runtime_identity"),
-            "health_sha256": _binding_sha(bindings, "host_health"),
-            "benchmark_sha256": _binding_sha(bindings, "host_benchmark"),
-            "post_health_sha256": _binding_sha(bindings, "host_post_health"),
             "deployment_gate_sha256": _binding_sha(bindings, "deployment_gate"),
             "deployment_gate_schema": documents["deployment_gate"]["schema_version"],
+            "disabled_process_identity_sha256": _require_sha(
+                _optional_field(
+                    documents["deployment_gate"],
+                    "disabled_process_identity",
+                    "canonical_process_identity_sha256",
+                ),
+                "disabled process identity SHA256",
+            ),
+            "concurrent_resource_window_sha256": _require_sha(
+                _optional_field(
+                    documents["deployment_gate"],
+                    "resource_window",
+                    "canonical_resource_window_sha256",
+                ),
+                "concurrent resource window SHA256",
+            ),
+            "activation_authorized": False,
         },
         "evidence_boundary": {
             "panel_role": "Development",
@@ -1719,10 +1879,6 @@ def _add_input_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--layer4-final", type=_path_argument, required=True)
     parser.add_argument("--sell-54-case", type=_path_argument, required=True)
     parser.add_argument("--runtime-regression", type=_path_argument, required=True)
-    parser.add_argument("--host-runtime-identity", type=_path_argument, required=True)
-    parser.add_argument("--host-health", type=_path_argument, required=True)
-    parser.add_argument("--host-benchmark", type=_path_argument, required=True)
-    parser.add_argument("--host-post-health", type=_path_argument, required=True)
     parser.add_argument("--deployment-gate", type=_path_argument, required=True)
 
 
@@ -1751,10 +1907,6 @@ def _inputs_from_args(args: argparse.Namespace) -> CompositionInputs:
         layer4_final=args.layer4_final,
         sell_54_case=args.sell_54_case,
         runtime_regression=args.runtime_regression,
-        host_runtime_identity=args.host_runtime_identity,
-        host_health=args.host_health,
-        host_benchmark=args.host_benchmark,
-        host_post_health=args.host_post_health,
         deployment_gate=args.deployment_gate,
     )
 
