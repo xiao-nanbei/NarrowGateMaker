@@ -20,8 +20,8 @@ import subprocess
 import time
 from base64 import b64decode, urlsafe_b64encode
 from collections.abc import Callable, Mapping, Sequence
-from datetime import UTC, datetime
-from pathlib import Path
+from datetime import UTC, datetime, timedelta
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -44,6 +44,12 @@ FROZEN_EXECUTION_COMMIT = "c170493ea5838b6e3a715006db352c0a484d3943"
 FROZEN_EXECUTION_TREE = "52fe1cde0e0c789acb9e4b0dbac95572ca61d483"
 FROZEN_EXECUTION_TAG = "f05-owner-buy-e3-live-attempt2-20260821"
 FROZEN_EXECUTION_TAG_OBJECT = "cda11b7700e3fec21464401a391133f129be74c1"
+FROZEN_ARTIFACT_SHA256 = "17e99df737157c6587602e6b496eadbecbed0a98d025da1d1db4cc8ef670786d"
+FROZEN_ARTIFACT_FILE_SHA256 = {
+    "manifest": "c64f8551268d0aaabab1a17bfc2f184cc576a2570cad3d0efb63fdcbc33c9929",
+    "policy": "ba041dac4f082829f72e9f6838bc50b0c5dce61b24fcb5e1897ef2ac6c2c754b",
+    "predicate_bundle": "4e127745fcc7987fb2eddc3bbf3ceaa19d64251c20ec156bb6d9b5d57edef915",
+}
 EXPECTED_RUNTIME_REGRESSION_PASSED = 67
 
 MIB = 1024 * 1024
@@ -62,6 +68,29 @@ REQUIRED_RUNTIME_PATHS = {
     "live_runtime_policy": "live/runtime_policy.py",
     "live_main": "live/main.py",
 }
+FROZEN_RUNTIME_SOURCE_SHA256 = {
+    "live_buy_runtime": "e4a7514c0f6ffda23622f4d6c2e77e38361844dd5e842c8a88a408834bf02b80",
+    "maker_engine": "5baf313be0f7f10fce41ec4c7aed457e8c7062167e72e38b6dc5241ad9ea5f42",
+    "live_config": "f3a31d9fa4e148eb9e549c7936480521fec6dfbf898dbcac325cb657d3b11830",
+    "live_runtime_policy": "ad53d771a057dd76e1359a67c0cf97f8369ef679b9fe2568c0a67cddd7cff1d7",
+    "live_main": "02adecbc0dc0e346bf3cff148624693a34bb94a8a82ec57a11da2ba23fec3e08",
+}
+EXACT_CONFIG_DIFF = ("strategy.buy_e3_cooldown_policy_enabled",)
+RESOURCE_CHECK_NAMES = (
+    "concurrent_live_and_benchmark_observed",
+    "min_mem_available_at_least_512mib",
+    "live_rss_at_most_512mib",
+    "benchmark_rss_at_most_256mib",
+    "combined_rss_at_most_768mib",
+    "no_oom_events",
+    "no_swap_activity",
+    "zero_drop_invalid_overflow_delta",
+    "deep_book_buffer_zero",
+    "true_2x_observed_rate",
+    "callback_p99_at_most_2ms",
+    "decision_p99_at_most_10ms",
+    "post_benchmark_same_pid_health",
+)
 REQUIRED_ZERO_COUNTERS = (
     "marketTapeDropped",
     "marketTapeInvalid",
@@ -1327,6 +1356,628 @@ def capture_concurrent_disabled_live_benchmark(
     )
 
 
+def _require_mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not a mapping")
+    return value
+
+
+def _require_exact_keys(value: Mapping[str, Any], expected: Sequence[str], label: str) -> None:
+    observed = set(value)
+    required = set(expected)
+    if observed != required:
+        missing = sorted(required - observed)
+        extra = sorted(observed - required)
+        raise BuyE3DeploymentGateAmendmentError(
+            f"{label} fields drifted: missing={missing}, extra={extra}"
+        )
+
+
+def _require_nonempty_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip() or value != value.strip():
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not a stable string")
+    return value
+
+
+def _require_utc_timestamp(value: Any, label: str) -> str:
+    raw = _require_nonempty_string(value, label)
+    if not raw.endswith("Z"):
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not UTC Z time")
+    try:
+        parsed = datetime.fromisoformat(f"{raw[:-1]}+00:00")
+    except ValueError as exc:
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is malformed") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not UTC")
+    return raw
+
+
+def _require_absolute_posix_path(value: Any, label: str) -> PurePosixPath:
+    raw = _require_nonempty_string(value, label)
+    path = PurePosixPath(raw)
+    if not path.is_absolute() or ".." in path.parts or str(path) != raw:
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not an absolute stable path")
+    return path
+
+
+def _require_strict_finite(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise BuyE3DeploymentGateAmendmentError(f"{label} is not a numeric scalar")
+    return _finite_number(value, label)
+
+
+def _validate_gate_execution_identity(raw: Any) -> dict[str, Any]:
+    execution = _require_mapping(raw, "execution identity")
+    expected = {
+        "execution_commit": FROZEN_EXECUTION_COMMIT,
+        "execution_tree": FROZEN_EXECUTION_TREE,
+        "annotated_tag": FROZEN_EXECUTION_TAG,
+        "annotated_tag_object": FROZEN_EXECUTION_TAG_OBJECT,
+        "tag_peeled_commit": FROZEN_EXECUTION_COMMIT,
+    }
+    _require_exact_keys(execution, tuple(expected), "execution identity")
+    if dict(execution) != expected:
+        raise BuyE3DeploymentGateAmendmentError("frozen execution Git identity drifted")
+    return expected
+
+
+def _validate_gate_runtime_sources(raw: Any) -> dict[str, Any]:
+    runtime = _require_mapping(raw, "runtime source binding")
+    _require_exact_keys(runtime, ("files", "runtime_code_sha256"), "runtime source binding")
+    files = _require_mapping(runtime.get("files"), "runtime source files")
+    _require_exact_keys(files, tuple(REQUIRED_RUNTIME_PATHS), "runtime source files")
+    normalized: dict[str, Any] = {}
+    for role, expected_path in REQUIRED_RUNTIME_PATHS.items():
+        binding = _require_mapping(files.get(role), f"runtime source {role}")
+        expected_sha = FROZEN_RUNTIME_SOURCE_SHA256[role]
+        expected_binding = {
+            "repository_relative_path": expected_path,
+            "artifact_manifest_sha256": expected_sha,
+            "execution_commit_blob_sha256": expected_sha,
+            "working_file_sha256": expected_sha,
+        }
+        _require_exact_keys(binding, tuple(expected_binding), f"runtime source {role}")
+        if dict(binding) != expected_binding:
+            raise BuyE3DeploymentGateAmendmentError(
+                f"frozen runtime source identity drifted: {role}"
+            )
+        normalized[role] = expected_binding
+    expected_aggregate = canonical_sha256(normalized)
+    if runtime.get("runtime_code_sha256") != expected_aggregate:
+        raise BuyE3DeploymentGateAmendmentError("runtime aggregate hash drifted")
+    return {"files": normalized, "runtime_code_sha256": expected_aggregate}
+
+
+def _validate_gate_artifact_files(raw: Any, label: str) -> dict[str, Any]:
+    files = _require_mapping(raw, label)
+    _require_exact_keys(files, tuple(FROZEN_ARTIFACT_FILE_SHA256), label)
+    normalized: dict[str, Any] = {}
+    paths: set[str] = set()
+    for role, expected_sha in FROZEN_ARTIFACT_FILE_SHA256.items():
+        binding = _require_mapping(files.get(role), f"{label} {role}")
+        _require_exact_keys(binding, ("path", "sha256"), f"{label} {role}")
+        path = str(_require_absolute_posix_path(binding.get("path"), f"{label} {role} path"))
+        if path in paths:
+            raise BuyE3DeploymentGateAmendmentError("artifact triple paths are not distinct")
+        paths.add(path)
+        if binding.get("sha256") != expected_sha:
+            raise BuyE3DeploymentGateAmendmentError(f"frozen artifact file hash drifted: {role}")
+        normalized[role] = {"path": path, "sha256": expected_sha}
+    return normalized
+
+
+def _validate_gate_artifact_binding(raw: Any) -> dict[str, Any]:
+    artifact = _require_mapping(raw, "artifact binding")
+    _require_exact_keys(artifact, ("artifact_sha256", "artifact_files"), "artifact binding")
+    if artifact.get("artifact_sha256") != FROZEN_ARTIFACT_SHA256:
+        raise BuyE3DeploymentGateAmendmentError("frozen artifact identity drifted")
+    return {
+        "artifact_sha256": FROZEN_ARTIFACT_SHA256,
+        "artifact_files": _validate_gate_artifact_files(
+            artifact.get("artifact_files"), "artifact files"
+        ),
+    }
+
+
+def _validate_gate_config_binding(
+    raw: Any, *, artifact_binding: Mapping[str, Any]
+) -> dict[str, Any]:
+    configs = _require_mapping(raw, "config pair binding")
+    expected_fields = (
+        "disabled",
+        "active",
+        "allowlisted_diff",
+        "allowlisted_diff_sha256",
+        "observed_diff",
+    )
+    _require_exact_keys(configs, expected_fields, "config pair binding")
+    expected_diff = list(EXACT_CONFIG_DIFF)
+    if (
+        configs.get("allowlisted_diff") != expected_diff
+        or configs.get("observed_diff") != expected_diff
+        or configs.get("allowlisted_diff_sha256") != canonical_sha256(expected_diff)
+    ):
+        raise BuyE3DeploymentGateAmendmentError("config exact-only enabled diff drifted")
+    normalized: dict[str, Any] = {}
+    config_fields = (
+        "enabled",
+        "config_path",
+        "config_sha256",
+        "artifact_sha256",
+        "artifact_files",
+        "artifact_loaded_with_from_files",
+    )
+    for name, expected_enabled in (("disabled", False), ("active", True)):
+        binding = _require_mapping(configs.get(name), f"{name} config binding")
+        _require_exact_keys(binding, config_fields, f"{name} config binding")
+        if binding.get("enabled") is not expected_enabled:
+            raise BuyE3DeploymentGateAmendmentError(f"{name} config enablement drifted")
+        path = str(_require_absolute_posix_path(binding.get("config_path"), f"{name} config path"))
+        config_sha = _require_sha256(binding.get("config_sha256"), f"{name} config hash")
+        if (
+            binding.get("artifact_sha256") != FROZEN_ARTIFACT_SHA256
+            or binding.get("artifact_loaded_with_from_files") is not True
+        ):
+            raise BuyE3DeploymentGateAmendmentError(f"{name} config artifact load identity drifted")
+        artifact_files = _validate_gate_artifact_files(
+            binding.get("artifact_files"), f"{name} config artifact files"
+        )
+        if artifact_files != artifact_binding["artifact_files"]:
+            raise BuyE3DeploymentGateAmendmentError(
+                f"{name} config artifact triple differs from frozen artifact"
+            )
+        normalized[name] = {
+            "enabled": expected_enabled,
+            "config_path": path,
+            "config_sha256": config_sha,
+            "artifact_sha256": FROZEN_ARTIFACT_SHA256,
+            "artifact_files": artifact_files,
+            "artifact_loaded_with_from_files": True,
+        }
+    if normalized["disabled"]["config_path"] == normalized["active"]["config_path"]:
+        raise BuyE3DeploymentGateAmendmentError("disabled/active config paths are not distinct")
+    if normalized["disabled"]["config_sha256"] == normalized["active"]["config_sha256"]:
+        raise BuyE3DeploymentGateAmendmentError("disabled/active config hashes are not distinct")
+    return {
+        **normalized,
+        "allowlisted_diff": expected_diff,
+        "allowlisted_diff_sha256": canonical_sha256(expected_diff),
+        "observed_diff": expected_diff,
+    }
+
+
+def _validate_gate_host_binding(raw: Any) -> dict[str, Any]:
+    host = _require_mapping(raw, "host binding")
+    fields = (
+        "active_pointer_file_sha256",
+        "known_hosts_file_sha256",
+        "host_key_fingerprint",
+        "repo_root",
+        "python_executable",
+        "venv_root",
+    )
+    _require_exact_keys(host, fields, "host binding")
+    pointer_sha = _require_sha256(
+        host.get("active_pointer_file_sha256"), "active pointer file hash"
+    )
+    known_hosts_sha = _require_sha256(host.get("known_hosts_file_sha256"), "known-hosts file hash")
+    fingerprint = _require_nonempty_string(host.get("host_key_fingerprint"), "host key fingerprint")
+    if re.fullmatch(r"SHA256:[A-Za-z0-9+/_-]{4,}", fingerprint) is None:
+        raise BuyE3DeploymentGateAmendmentError("host key fingerprint is malformed")
+    repo_root = _require_absolute_posix_path(host.get("repo_root"), "host repo root")
+    venv_root = _require_absolute_posix_path(host.get("venv_root"), "host venv root")
+    python = _require_absolute_posix_path(host.get("python_executable"), "host Python executable")
+    if repo_root == PurePosixPath("/") or not venv_root.is_relative_to(repo_root):
+        raise BuyE3DeploymentGateAmendmentError("host venv is outside the repository")
+    if not python.is_relative_to(venv_root):
+        raise BuyE3DeploymentGateAmendmentError("host Python is outside the bound venv")
+    return {
+        "active_pointer_file_sha256": pointer_sha,
+        "known_hosts_file_sha256": known_hosts_sha,
+        "host_key_fingerprint": fingerprint,
+        "repo_root": str(repo_root),
+        "python_executable": str(python),
+        "venv_root": str(venv_root),
+    }
+
+
+def _validate_gate_process_identity(
+    raw: Any,
+    *,
+    runtime_sources: Mapping[str, Any],
+    artifact_binding: Mapping[str, Any],
+    config_binding: Mapping[str, Any],
+    host_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    process = _require_mapping(raw, "disabled process identity")
+    fields = (
+        "schema_version",
+        "captured_utc",
+        "pid",
+        "pid_start_ticks",
+        "cmdline",
+        "cmdline_sha256",
+        "cwd",
+        "config_path",
+        "config_sha256",
+        "python_executable",
+        "python_binary_resolved",
+        "venv_root",
+        "runtime_identity",
+        "artifact_sha256",
+        "runtime_code_sha256",
+        "canonical_process_identity_sha256",
+    )
+    _require_exact_keys(process, fields, "disabled process identity")
+    if process.get("schema_version") != PROCESS_IDENTITY_SCHEMA:
+        raise BuyE3DeploymentGateAmendmentError("disabled process schema drifted")
+    _require_utc_timestamp(process.get("captured_utc"), "disabled process capture time")
+    for field in ("pid", "pid_start_ticks"):
+        if isinstance(process.get(field), bool) or not isinstance(process.get(field), int):
+            raise BuyE3DeploymentGateAmendmentError(f"disabled process {field} is malformed")
+        if int(process[field]) <= 0:
+            raise BuyE3DeploymentGateAmendmentError(f"disabled process {field} is not positive")
+    cmdline = process.get("cmdline")
+    if (
+        not isinstance(cmdline, list)
+        or not cmdline
+        or any(not isinstance(argument, str) or not argument for argument in cmdline)
+        or process.get("cmdline_sha256") != canonical_sha256(cmdline)
+    ):
+        raise BuyE3DeploymentGateAmendmentError("disabled process command identity drifted")
+    if cmdline[0] != host_binding["python_executable"] or not any(
+        argument.endswith("live/main.py") for argument in cmdline
+    ):
+        raise BuyE3DeploymentGateAmendmentError("disabled process is not the bound live runtime")
+    cwd = _require_absolute_posix_path(process.get("cwd"), "disabled process cwd")
+    config_path = _require_absolute_posix_path(
+        process.get("config_path"), "disabled process config path"
+    )
+    command_config = PurePosixPath(_cmdline_config_path(cmdline))
+    if not command_config.is_absolute():
+        command_config = cwd / command_config
+    if ".." in command_config.parts or command_config != config_path:
+        raise BuyE3DeploymentGateAmendmentError("disabled process command config drifted")
+    python = _require_absolute_posix_path(
+        process.get("python_executable"), "disabled process Python"
+    )
+    python_binary = _require_absolute_posix_path(
+        process.get("python_binary_resolved"), "disabled process resolved Python"
+    )
+    venv = _require_absolute_posix_path(process.get("venv_root"), "disabled process venv")
+    del python_binary
+    disabled_config = config_binding["disabled"]
+    if (
+        str(cwd) != host_binding["repo_root"]
+        or str(config_path) != disabled_config["config_path"]
+        or process.get("config_sha256") != disabled_config["config_sha256"]
+        or str(python) != host_binding["python_executable"]
+        or str(venv) != host_binding["venv_root"]
+        or process.get("artifact_sha256") != artifact_binding["artifact_sha256"]
+        or process.get("runtime_code_sha256") != runtime_sources["runtime_code_sha256"]
+    ):
+        raise BuyE3DeploymentGateAmendmentError("actual disabled PID identity is inconsistent")
+    runtime_identity = _require_mapping(
+        process.get("runtime_identity"), "disabled process runtime identity"
+    )
+    _require_exact_keys(
+        runtime_identity,
+        ("present", "path", "file_sha256", "schema_version"),
+        "disabled process runtime identity",
+    )
+    if runtime_identity.get("present") is not True:
+        raise BuyE3DeploymentGateAmendmentError("disabled runtime identity file is absent")
+    _require_absolute_posix_path(runtime_identity.get("path"), "disabled runtime identity path")
+    _require_sha256(runtime_identity.get("file_sha256"), "disabled runtime identity file hash")
+    if runtime_identity.get("schema_version") != "narrowgate_live_runtime_identity.v1":
+        raise BuyE3DeploymentGateAmendmentError("disabled runtime identity schema drifted")
+    canonical = _require_sha256(
+        process.get("canonical_process_identity_sha256"),
+        "disabled process canonical hash",
+    )
+    if canonical != document_sha256(process, "canonical_process_identity_sha256"):
+        raise BuyE3DeploymentGateAmendmentError("disabled process canonical hash drifted")
+    return dict(process)
+
+
+def _validate_gate_startup_log(raw: Any) -> dict[str, Any]:
+    startup = _require_mapping(raw, "startup log binding")
+    fields = (
+        "checkpoint_sha256",
+        "segment_sha256",
+        "segment_size_bytes",
+        "required_markers_sha256",
+        "fatal_pattern_counts",
+    )
+    _require_exact_keys(startup, fields, "startup log binding")
+    for field in ("checkpoint_sha256", "segment_sha256", "required_markers_sha256"):
+        _require_sha256(startup.get(field), f"startup log {field}")
+    size = startup.get("segment_size_bytes")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        raise BuyE3DeploymentGateAmendmentError("startup log segment size is malformed")
+    fatal_counts = _require_mapping(
+        startup.get("fatal_pattern_counts"), "startup fatal-pattern counts"
+    )
+    _require_exact_keys(fatal_counts, FATAL_STARTUP_PATTERNS, "startup fatal-pattern counts")
+    if any(
+        type(fatal_counts[pattern]) is not int or fatal_counts[pattern] != 0
+        for pattern in FATAL_STARTUP_PATTERNS
+    ):
+        raise BuyE3DeploymentGateAmendmentError("startup log contains a fatal marker")
+    return dict(startup)
+
+
+def _validate_gate_resource_window(
+    raw: Any, *, disabled_process_identity: Mapping[str, Any]
+) -> dict[str, Any]:
+    resource = _require_mapping(raw, "concurrent resource window")
+    fields = (
+        "schema_version",
+        "status",
+        "sample_count",
+        "live_pid",
+        "pre_health_sha256",
+        "post_health_sha256",
+        "thresholds",
+        "observed",
+        "checks",
+        "sample_series_sha256",
+        "economic_values_persisted",
+        "hypothetical_live_actions_scored",
+        "validation_read",
+        "sealed_holdout_read",
+        "canonical_resource_window_sha256",
+    )
+    _require_exact_keys(resource, fields, "concurrent resource window")
+    if (
+        resource.get("schema_version") != RESOURCE_WINDOW_SCHEMA
+        or resource.get("status") != "concurrent_disabled_live_benchmark_passed"
+    ):
+        raise BuyE3DeploymentGateAmendmentError("concurrent resource window status drifted")
+    sample_count = resource.get("sample_count")
+    live_pid = resource.get("live_pid")
+    if (
+        isinstance(sample_count, bool)
+        or not isinstance(sample_count, int)
+        or sample_count < 2
+        or isinstance(live_pid, bool)
+        or not isinstance(live_pid, int)
+        or live_pid != disabled_process_identity["pid"]
+    ):
+        raise BuyE3DeploymentGateAmendmentError("concurrent resource live PID/window drifted")
+    process_sha = disabled_process_identity["canonical_process_identity_sha256"]
+    if (
+        resource.get("pre_health_sha256") != process_sha
+        or resource.get("post_health_sha256") != process_sha
+    ):
+        raise BuyE3DeploymentGateAmendmentError(
+            "concurrent resource pre/post process identity drifted"
+        )
+    thresholds = _require_mapping(resource.get("thresholds"), "resource thresholds")
+    expected_thresholds = {
+        "min_mem_available_mib": MIN_MEM_AVAILABLE_MIB,
+        "max_live_rss_mib": MAX_LIVE_RSS_MIB,
+        "max_benchmark_rss_mib": MAX_BENCHMARK_RSS_MIB,
+        "max_combined_rss_mib": MAX_COMBINED_RSS_MIB,
+        "min_achieved_to_observed_rate": MIN_RATE_MULTIPLIER,
+        "max_callback_p99_us": MAX_CALLBACK_P99_US,
+        "max_decision_p99_us": MAX_DECISION_P99_US,
+    }
+    _require_exact_keys(thresholds, tuple(expected_thresholds), "resource thresholds")
+    if dict(thresholds) != expected_thresholds:
+        raise BuyE3DeploymentGateAmendmentError("concurrent resource thresholds drifted")
+    observed = _require_mapping(resource.get("observed"), "resource observations")
+    observed_fields = (
+        "min_mem_available_mib",
+        "max_live_rss_mib",
+        "max_benchmark_rss_mib",
+        "max_combined_rss_mib",
+        "achieved_to_observed_rate",
+        "callback_p99_us",
+        "decision_p99_us",
+    )
+    _require_exact_keys(observed, observed_fields, "resource observations")
+    values = {
+        field: _require_strict_finite(observed.get(field), field) for field in observed_fields
+    }
+    if (
+        values["min_mem_available_mib"] < MIN_MEM_AVAILABLE_MIB
+        or values["max_live_rss_mib"] > MAX_LIVE_RSS_MIB
+        or values["max_benchmark_rss_mib"] > MAX_BENCHMARK_RSS_MIB
+        or values["max_combined_rss_mib"] > MAX_COMBINED_RSS_MIB
+        or values["achieved_to_observed_rate"] < MIN_RATE_MULTIPLIER
+        or values["callback_p99_us"] > MAX_CALLBACK_P99_US
+        or values["decision_p99_us"] > MAX_DECISION_P99_US
+    ):
+        raise BuyE3DeploymentGateAmendmentError("concurrent resource observations fail limits")
+    checks = _require_mapping(resource.get("checks"), "resource checks")
+    _require_exact_keys(checks, RESOURCE_CHECK_NAMES, "resource checks")
+    if any(checks[name] is not True for name in RESOURCE_CHECK_NAMES):
+        raise BuyE3DeploymentGateAmendmentError("concurrent resource check is not true")
+    _require_sha256(resource.get("sample_series_sha256"), "resource sample-series hash")
+    for field in (
+        "economic_values_persisted",
+        "hypothetical_live_actions_scored",
+        "validation_read",
+        "sealed_holdout_read",
+    ):
+        if resource.get(field) is not False:
+            raise BuyE3DeploymentGateAmendmentError(f"resource evidence boundary drifted: {field}")
+    canonical = _require_sha256(
+        resource.get("canonical_resource_window_sha256"), "resource canonical hash"
+    )
+    if canonical != document_sha256(resource, "canonical_resource_window_sha256"):
+        raise BuyE3DeploymentGateAmendmentError("resource window canonical hash drifted")
+    return dict(resource)
+
+
+def _validate_gate_rollback_identities(
+    raw: Any,
+    *,
+    execution_identity: Mapping[str, Any],
+    runtime_sources: Mapping[str, Any],
+    config_binding: Mapping[str, Any],
+    host_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    rollback = _require_mapping(raw, "rollback identities")
+    _require_exact_keys(rollback, ("primary_disabled", "deep_predecessor"), "rollback identities")
+    fields = (
+        "identity",
+        "execution_commit",
+        "execution_tree",
+        "config_path",
+        "config_sha256",
+        "python_executable",
+        "venv_root",
+        "runtime_code_sha256",
+        "buy_e3_enabled",
+        "buy_deadline_identity",
+        "imports_e3_deadline",
+    )
+    normalized: dict[str, Any] = {}
+    for name in ("primary_disabled", "deep_predecessor"):
+        identity = _require_mapping(rollback.get(name), f"rollback identity {name}")
+        _require_exact_keys(identity, fields, f"rollback identity {name}")
+        logical_identity = _require_nonempty_string(identity.get("identity"), f"{name} identity")
+        commit = _require_git_sha(identity.get("execution_commit"), f"{name} commit")
+        tree = _require_git_sha(identity.get("execution_tree"), f"{name} tree")
+        config_path = str(
+            _require_absolute_posix_path(identity.get("config_path"), f"{name} config path")
+        )
+        config_sha = _require_sha256(identity.get("config_sha256"), f"{name} config hash")
+        python = _require_absolute_posix_path(
+            identity.get("python_executable"), f"{name} Python executable"
+        )
+        venv = _require_absolute_posix_path(identity.get("venv_root"), f"{name} venv root")
+        if not python.is_relative_to(venv):
+            raise BuyE3DeploymentGateAmendmentError(f"rollback Python escaped venv: {name}")
+        runtime_sha = _require_sha256(identity.get("runtime_code_sha256"), f"{name} runtime hash")
+        if (
+            identity.get("buy_e3_enabled") is not False
+            or identity.get("buy_deadline_identity") != "B0"
+            or identity.get("imports_e3_deadline") is not False
+        ):
+            raise BuyE3DeploymentGateAmendmentError(f"rollback identity is not B0-safe: {name}")
+        normalized[name] = {
+            "identity": logical_identity,
+            "execution_commit": commit,
+            "execution_tree": tree,
+            "config_path": config_path,
+            "config_sha256": config_sha,
+            "python_executable": str(python),
+            "venv_root": str(venv),
+            "runtime_code_sha256": runtime_sha,
+            "buy_e3_enabled": False,
+            "buy_deadline_identity": "B0",
+            "imports_e3_deadline": False,
+        }
+    if normalized["primary_disabled"]["identity"] == normalized["deep_predecessor"]["identity"]:
+        raise BuyE3DeploymentGateAmendmentError("dual rollback identities are not distinct")
+    primary = normalized["primary_disabled"]
+    disabled = config_binding["disabled"]
+    if (
+        primary["execution_commit"] != execution_identity["execution_commit"]
+        or primary["execution_tree"] != execution_identity["execution_tree"]
+        or primary["config_path"] != disabled["config_path"]
+        or primary["config_sha256"] != disabled["config_sha256"]
+        or primary["python_executable"] != host_binding["python_executable"]
+        or primary["venv_root"] != host_binding["venv_root"]
+        or primary["runtime_code_sha256"] != runtime_sources["runtime_code_sha256"]
+    ):
+        raise BuyE3DeploymentGateAmendmentError(
+            "primary disabled rollback is not the exact frozen attempt"
+        )
+    return normalized
+
+
+def validate_amended_gate_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Independently revalidate every nested deployment-gate invariant."""
+
+    receipt = _require_mapping(payload, "amended gate receipt")
+    fields = (
+        "schema_version",
+        "identity",
+        "status",
+        "generated_utc",
+        "execution_identity",
+        "runtime_sources",
+        "artifact_binding",
+        "config_binding",
+        "host_binding",
+        "disabled_process_identity",
+        "startup_log_binding",
+        "resource_window",
+        "rollback_identities",
+        "activation_contract",
+        "permissions",
+        "canonical_amendment_receipt_sha256",
+    )
+    _require_exact_keys(receipt, fields, "amended gate receipt")
+    if (
+        receipt.get("schema_version") != SCHEMA_VERSION
+        or receipt.get("identity") != OWNER_IDENTITY
+        or receipt.get("status") != "disabled_deploy_gate_passed_activation_not_yet_authorized"
+    ):
+        raise BuyE3DeploymentGateAmendmentError("amended gate receipt identity drifted")
+    _require_utc_timestamp(receipt.get("generated_utc"), "amended gate generation time")
+    canonical = _require_sha256(
+        receipt.get("canonical_amendment_receipt_sha256"), "amended gate canonical hash"
+    )
+    if canonical != document_sha256(receipt, "canonical_amendment_receipt_sha256"):
+        raise BuyE3DeploymentGateAmendmentError("amended gate canonical hash drifted")
+
+    execution = _validate_gate_execution_identity(receipt.get("execution_identity"))
+    runtime = _validate_gate_runtime_sources(receipt.get("runtime_sources"))
+    artifact = _validate_gate_artifact_binding(receipt.get("artifact_binding"))
+    configs = _validate_gate_config_binding(
+        receipt.get("config_binding"), artifact_binding=artifact
+    )
+    host = _validate_gate_host_binding(receipt.get("host_binding"))
+    process = _validate_gate_process_identity(
+        receipt.get("disabled_process_identity"),
+        runtime_sources=runtime,
+        artifact_binding=artifact,
+        config_binding=configs,
+        host_binding=host,
+    )
+    _validate_gate_startup_log(receipt.get("startup_log_binding"))
+    _validate_gate_resource_window(
+        receipt.get("resource_window"), disabled_process_identity=process
+    )
+    _validate_gate_rollback_identities(
+        receipt.get("rollback_identities"),
+        execution_identity=execution,
+        runtime_sources=runtime,
+        config_binding=configs,
+        host_binding=host,
+    )
+
+    expected_activation = {
+        "restart_only": True,
+        "sighup_allowed": False,
+        "fresh_pid_required": True,
+        "external_narrowgate_live_config_required": True,
+        "warmup_executes_natural_b0": True,
+        "hypothetical_scorer_allowed": False,
+    }
+    activation = _require_mapping(receipt.get("activation_contract"), "activation contract")
+    _require_exact_keys(activation, tuple(expected_activation), "activation contract")
+    if dict(activation) != expected_activation:
+        raise BuyE3DeploymentGateAmendmentError("activation contract drifted")
+    expected_permissions = {
+        "research_authorized": False,
+        "action_authorized": False,
+        "live_authorized": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+    }
+    permissions = _require_mapping(receipt.get("permissions"), "permissions")
+    _require_exact_keys(permissions, tuple(expected_permissions), "permissions")
+    if dict(permissions) != expected_permissions:
+        raise BuyE3DeploymentGateAmendmentError("deployment permissions drifted")
+    return dict(receipt)
+
+
 def build_amended_gate_receipt(
     *,
     execution_identity: Mapping[str, Any],
@@ -1339,99 +1990,6 @@ def build_amended_gate_receipt(
     resource_window: Mapping[str, Any],
     rollback_identities: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if execution_identity.get("execution_commit") != FROZEN_EXECUTION_COMMIT:
-        raise BuyE3DeploymentGateAmendmentError("amendment is not bound to frozen execution")
-    if config_binding.get("disabled", {}).get("enabled") is not False:
-        raise BuyE3DeploymentGateAmendmentError("deployment gate did not run disabled")
-    if resource_window.get("schema_version") != RESOURCE_WINDOW_SCHEMA:
-        raise BuyE3DeploymentGateAmendmentError("resource window identity drifted")
-    if resource_window.get("canonical_resource_window_sha256") != document_sha256(
-        resource_window, "canonical_resource_window_sha256"
-    ):
-        raise BuyE3DeploymentGateAmendmentError("resource window hash drifted")
-    if set(rollback_identities) != {"primary_disabled", "deep_predecessor"}:
-        raise BuyE3DeploymentGateAmendmentError("dual rollback identities are incomplete")
-    for name, identity in rollback_identities.items():
-        if not isinstance(identity, Mapping) or identity.get("buy_e3_enabled") is not False:
-            raise BuyE3DeploymentGateAmendmentError(f"rollback identity is unsafe: {name}")
-        if identity.get("buy_deadline_identity") != "B0":
-            raise BuyE3DeploymentGateAmendmentError(
-                f"rollback identity can import an E3 deadline: {name}"
-            )
-    required_execution = (
-        "execution_commit",
-        "execution_tree",
-        "annotated_tag",
-        "annotated_tag_object",
-        "tag_peeled_commit",
-    )
-    if any(not execution_identity.get(field) for field in required_execution):
-        raise BuyE3DeploymentGateAmendmentError("execution Git binding is incomplete")
-    if execution_identity.get("tag_peeled_commit") != execution_identity.get("execution_commit"):
-        raise BuyE3DeploymentGateAmendmentError("annotated tag peel is inconsistent")
-    runtime_files = runtime_sources.get("files")
-    if (
-        not isinstance(runtime_files, Mapping)
-        or set(REQUIRED_RUNTIME_PATHS) - set(runtime_files)
-        or _SHA256_RE.fullmatch(str(runtime_sources.get("runtime_code_sha256", ""))) is None
-    ):
-        raise BuyE3DeploymentGateAmendmentError("runtime source binding is incomplete")
-    artifact_sha = _require_sha256(artifact_binding.get("artifact_sha256"), "artifact hash")
-    artifact_files = artifact_binding.get("artifact_files")
-    if not isinstance(artifact_files, Mapping) or set(artifact_files) != {
-        "manifest",
-        "policy",
-        "predicate_bundle",
-    }:
-        raise BuyE3DeploymentGateAmendmentError("artifact triple binding is incomplete")
-    for role, binding in artifact_files.items():
-        if not isinstance(binding, Mapping):
-            raise BuyE3DeploymentGateAmendmentError(f"artifact binding is malformed: {role}")
-        _require_sha256(binding.get("sha256"), f"artifact file {role}")
-    disabled_config = config_binding.get("disabled")
-    active_config = config_binding.get("active")
-    if not isinstance(disabled_config, Mapping) or not isinstance(active_config, Mapping):
-        raise BuyE3DeploymentGateAmendmentError("private config pair binding is incomplete")
-    if (
-        disabled_config.get("enabled") is not False
-        or active_config.get("enabled") is not True
-        or disabled_config.get("artifact_loaded_with_from_files") is not True
-        or active_config.get("artifact_loaded_with_from_files") is not True
-        or disabled_config.get("artifact_sha256") != artifact_sha
-        or active_config.get("artifact_sha256") != artifact_sha
-    ):
-        raise BuyE3DeploymentGateAmendmentError("private config pair was not isolated-validated")
-    required_host = (
-        "active_pointer_file_sha256",
-        "known_hosts_file_sha256",
-        "host_key_fingerprint",
-        "repo_root",
-        "python_executable",
-        "venv_root",
-    )
-    if any(not host_binding.get(field) for field in required_host):
-        raise BuyE3DeploymentGateAmendmentError("host/SSH identity binding is incomplete")
-    for field in ("active_pointer_file_sha256", "known_hosts_file_sha256"):
-        _require_sha256(host_binding[field], field)
-    if (
-        disabled_process_identity.get("schema_version") != PROCESS_IDENTITY_SCHEMA
-        or disabled_process_identity.get("canonical_process_identity_sha256")
-        != document_sha256(disabled_process_identity, "canonical_process_identity_sha256")
-        or disabled_process_identity.get("config_sha256") != disabled_config.get("config_sha256")
-        or disabled_process_identity.get("cwd") != host_binding.get("repo_root")
-        or disabled_process_identity.get("artifact_sha256") != artifact_sha
-        or disabled_process_identity.get("runtime_code_sha256")
-        != runtime_sources.get("runtime_code_sha256")
-    ):
-        raise BuyE3DeploymentGateAmendmentError("actual disabled PID identity is inconsistent")
-    if (
-        _SHA256_RE.fullmatch(str(startup_log_binding.get("checkpoint_sha256", ""))) is None
-        or _SHA256_RE.fullmatch(str(startup_log_binding.get("segment_sha256", ""))) is None
-        or any(startup_log_binding.get("fatal_pattern_counts", {}).values())
-    ):
-        raise BuyE3DeploymentGateAmendmentError("startup log binding is incomplete")
-    if int(resource_window.get("live_pid", -1)) != int(disabled_process_identity.get("pid", -2)):
-        raise BuyE3DeploymentGateAmendmentError("resource window used another live PID")
     receipt: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "identity": OWNER_IDENTITY,
@@ -1465,30 +2023,12 @@ def build_amended_gate_receipt(
     receipt["canonical_amendment_receipt_sha256"] = document_sha256(
         receipt, "canonical_amendment_receipt_sha256"
     )
+    validate_amended_gate_payload(receipt)
     return receipt
 
 
 def validate_amended_gate_receipt(path: Path) -> dict[str, Any]:
-    payload = read_json(path)
-    if (
-        payload.get("schema_version") != SCHEMA_VERSION
-        or payload.get("status") != "disabled_deploy_gate_passed_activation_not_yet_authorized"
-        or payload.get("canonical_amendment_receipt_sha256")
-        != document_sha256(payload, "canonical_amendment_receipt_sha256")
-        or payload.get("permissions", {}).get("live_authorized") is not False
-    ):
-        raise BuyE3DeploymentGateAmendmentError("amended gate receipt identity drifted")
-    if (
-        payload.get("execution_identity", {}).get("execution_commit") != FROZEN_EXECUTION_COMMIT
-        or payload.get("activation_contract", {}).get("restart_only") is not True
-        or payload.get("activation_contract", {}).get("sighup_allowed") is not False
-        or payload.get("activation_contract", {}).get("fresh_pid_required") is not True
-        or payload.get("config_binding", {}).get("disabled", {}).get("enabled") is not False
-        or payload.get("config_binding", {}).get("active", {}).get("enabled") is not True
-        or set(payload.get("rollback_identities", {})) != {"primary_disabled", "deep_predecessor"}
-    ):
-        raise BuyE3DeploymentGateAmendmentError("amended gate semantic contract drifted")
-    return payload
+    return validate_amended_gate_payload(read_json(path))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -1522,6 +2062,9 @@ __all__ = [
     "FROZEN_EXECUTION_TAG",
     "FROZEN_EXECUTION_TAG_OBJECT",
     "FROZEN_EXECUTION_TREE",
+    "FROZEN_ARTIFACT_FILE_SHA256",
+    "FROZEN_ARTIFACT_SHA256",
+    "FROZEN_RUNTIME_SOURCE_SHA256",
     "PROCESS_IDENTITY_SCHEMA",
     "RESOURCE_WINDOW_SCHEMA",
     "RUNTIME_REGRESSION_SCHEMA",
@@ -1543,6 +2086,7 @@ __all__ = [
     "run_runtime_regression_tests_v2",
     "ssh_host_key_fingerprints",
     "validate_amended_gate_receipt",
+    "validate_amended_gate_payload",
     "validate_concurrent_resource_evidence",
     "validate_config_artifact",
     "validate_private_config_pair",

@@ -4,6 +4,7 @@ import json
 import os
 import stat
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -87,6 +88,222 @@ def _benchmark(**callback_overrides) -> dict:
         "callback_benchmark": callback,
         "decision_benchmark": {"latency_p99_us": 9_000.0},
     }
+
+
+def _frozen_artifact_files() -> dict:
+    return {
+        role: {
+            "path": f"/remote/repo/live/private/e3/{role}.json",
+            "sha256": sha256,
+        }
+        for role, sha256 in subject.FROZEN_ARTIFACT_FILE_SHA256.items()
+    }
+
+
+def _frozen_runtime_sources() -> dict:
+    files = {
+        role: {
+            "repository_relative_path": subject.REQUIRED_RUNTIME_PATHS[role],
+            "artifact_manifest_sha256": sha256,
+            "execution_commit_blob_sha256": sha256,
+            "working_file_sha256": sha256,
+        }
+        for role, sha256 in subject.FROZEN_RUNTIME_SOURCE_SHA256.items()
+    }
+    return {"files": files, "runtime_code_sha256": subject.canonical_sha256(files)}
+
+
+def _valid_amended_gate_payload() -> dict:
+    runtime_sources = _frozen_runtime_sources()
+    artifact_files = _frozen_artifact_files()
+    artifact_binding = {
+        "artifact_sha256": subject.FROZEN_ARTIFACT_SHA256,
+        "artifact_files": deepcopy(artifact_files),
+    }
+    disabled_path = "/remote/repo/live/private/e3/disabled.yaml"
+    active_path = "/remote/repo/live/private/e3/active.yaml"
+    disabled_sha = "d" * 64
+    active_sha = "e" * 64
+    config_binding = {
+        "disabled": {
+            "enabled": False,
+            "config_path": disabled_path,
+            "config_sha256": disabled_sha,
+            "artifact_sha256": subject.FROZEN_ARTIFACT_SHA256,
+            "artifact_files": deepcopy(artifact_files),
+            "artifact_loaded_with_from_files": True,
+        },
+        "active": {
+            "enabled": True,
+            "config_path": active_path,
+            "config_sha256": active_sha,
+            "artifact_sha256": subject.FROZEN_ARTIFACT_SHA256,
+            "artifact_files": deepcopy(artifact_files),
+            "artifact_loaded_with_from_files": True,
+        },
+        "allowlisted_diff": list(subject.EXACT_CONFIG_DIFF),
+        "allowlisted_diff_sha256": subject.canonical_sha256(list(subject.EXACT_CONFIG_DIFF)),
+        "observed_diff": list(subject.EXACT_CONFIG_DIFF),
+    }
+    host_binding = {
+        "active_pointer_file_sha256": "7" * 64,
+        "known_hosts_file_sha256": "8" * 64,
+        "host_key_fingerprint": "SHA256:ZmFrZUZpbmdlcnByaW50",
+        "repo_root": "/remote/repo",
+        "python_executable": "/remote/repo/.venv/bin/python",
+        "venv_root": "/remote/repo/.venv",
+    }
+    cmdline = [
+        host_binding["python_executable"],
+        "/remote/repo/live/main.py",
+        "--config",
+        disabled_path,
+    ]
+    process = {
+        "schema_version": subject.PROCESS_IDENTITY_SCHEMA,
+        "captured_utc": "2026-08-22T01:02:03Z",
+        "pid": 4312,
+        "pid_start_ticks": 998877,
+        "cmdline": cmdline,
+        "cmdline_sha256": subject.canonical_sha256(cmdline),
+        "cwd": host_binding["repo_root"],
+        "config_path": disabled_path,
+        "config_sha256": disabled_sha,
+        "python_executable": host_binding["python_executable"],
+        "python_binary_resolved": "/usr/bin/python3.12",
+        "venv_root": host_binding["venv_root"],
+        "runtime_identity": {
+            "present": True,
+            "path": "/remote/repo/logs/runtime_identity.json",
+            "file_sha256": "9" * 64,
+            "schema_version": "narrowgate_live_runtime_identity.v1",
+        },
+        "artifact_sha256": subject.FROZEN_ARTIFACT_SHA256,
+        "runtime_code_sha256": runtime_sources["runtime_code_sha256"],
+    }
+    process["canonical_process_identity_sha256"] = subject.document_sha256(
+        process, "canonical_process_identity_sha256"
+    )
+    startup = {
+        "checkpoint_sha256": "1" * 64,
+        "segment_sha256": "2" * 64,
+        "segment_size_bytes": 2048,
+        "required_markers_sha256": "3" * 64,
+        "fatal_pattern_counts": {pattern: 0 for pattern in subject.FATAL_STARTUP_PATTERNS},
+    }
+    resource = {
+        "schema_version": subject.RESOURCE_WINDOW_SCHEMA,
+        "status": "concurrent_disabled_live_benchmark_passed",
+        "sample_count": 3,
+        "live_pid": process["pid"],
+        "pre_health_sha256": process["canonical_process_identity_sha256"],
+        "post_health_sha256": process["canonical_process_identity_sha256"],
+        "thresholds": {
+            "min_mem_available_mib": subject.MIN_MEM_AVAILABLE_MIB,
+            "max_live_rss_mib": subject.MAX_LIVE_RSS_MIB,
+            "max_benchmark_rss_mib": subject.MAX_BENCHMARK_RSS_MIB,
+            "max_combined_rss_mib": subject.MAX_COMBINED_RSS_MIB,
+            "min_achieved_to_observed_rate": subject.MIN_RATE_MULTIPLIER,
+            "max_callback_p99_us": subject.MAX_CALLBACK_P99_US,
+            "max_decision_p99_us": subject.MAX_DECISION_P99_US,
+        },
+        "observed": {
+            "min_mem_available_mib": 700.0,
+            "max_live_rss_mib": 300.0,
+            "max_benchmark_rss_mib": 150.0,
+            "max_combined_rss_mib": 450.0,
+            "achieved_to_observed_rate": 2.05,
+            "callback_p99_us": 1_900.0,
+            "decision_p99_us": 9_000.0,
+        },
+        "checks": {name: True for name in subject.RESOURCE_CHECK_NAMES},
+        "sample_series_sha256": "4" * 64,
+        "economic_values_persisted": False,
+        "hypothetical_live_actions_scored": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+    }
+    resource["canonical_resource_window_sha256"] = subject.document_sha256(
+        resource, "canonical_resource_window_sha256"
+    )
+    rollback = {
+        "primary_disabled": {
+            "identity": "attempt2-disabled-b0",
+            "execution_commit": subject.FROZEN_EXECUTION_COMMIT,
+            "execution_tree": subject.FROZEN_EXECUTION_TREE,
+            "config_path": disabled_path,
+            "config_sha256": disabled_sha,
+            "python_executable": host_binding["python_executable"],
+            "venv_root": host_binding["venv_root"],
+            "runtime_code_sha256": runtime_sources["runtime_code_sha256"],
+            "buy_e3_enabled": False,
+            "buy_deadline_identity": "B0",
+            "imports_e3_deadline": False,
+        },
+        "deep_predecessor": {
+            "identity": "deep-predecessor-b0",
+            "execution_commit": "a" * 40,
+            "execution_tree": "b" * 40,
+            "config_path": "/rollback/repo/live/private/b0.yaml",
+            "config_sha256": "5" * 64,
+            "python_executable": "/rollback/repo/.venv/bin/python",
+            "venv_root": "/rollback/repo/.venv",
+            "runtime_code_sha256": "6" * 64,
+            "buy_e3_enabled": False,
+            "buy_deadline_identity": "B0",
+            "imports_e3_deadline": False,
+        },
+    }
+    return subject.build_amended_gate_receipt(
+        execution_identity={
+            "execution_commit": subject.FROZEN_EXECUTION_COMMIT,
+            "execution_tree": subject.FROZEN_EXECUTION_TREE,
+            "annotated_tag": subject.FROZEN_EXECUTION_TAG,
+            "annotated_tag_object": subject.FROZEN_EXECUTION_TAG_OBJECT,
+            "tag_peeled_commit": subject.FROZEN_EXECUTION_COMMIT,
+        },
+        runtime_sources=runtime_sources,
+        artifact_binding=artifact_binding,
+        config_binding=config_binding,
+        host_binding=host_binding,
+        disabled_process_identity=process,
+        startup_log_binding=startup,
+        resource_window=resource,
+        rollback_identities=rollback,
+    )
+
+
+def _recanonicalize_amended_gate(payload: dict) -> None:
+    runtime = payload["runtime_sources"]
+    runtime["runtime_code_sha256"] = subject.canonical_sha256(runtime["files"])
+    configs = payload["config_binding"]
+    configs["allowlisted_diff_sha256"] = subject.canonical_sha256(configs["allowlisted_diff"])
+    process = payload["disabled_process_identity"]
+    process["cmdline_sha256"] = subject.canonical_sha256(process["cmdline"])
+    process["canonical_process_identity_sha256"] = subject.document_sha256(
+        process, "canonical_process_identity_sha256"
+    )
+    resource = payload["resource_window"]
+    resource["canonical_resource_window_sha256"] = subject.document_sha256(
+        resource, "canonical_resource_window_sha256"
+    )
+    payload["canonical_amendment_receipt_sha256"] = subject.document_sha256(
+        payload, "canonical_amendment_receipt_sha256"
+    )
+
+
+def _set_nested(payload: dict, path: tuple[str, ...], value) -> None:
+    target = payload
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+
+def _write_gate_receipt(tmp_path: Path, payload: dict) -> Path:
+    path = tmp_path / "deployment-gate-amendment-v2.json"
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(0o600)
+    return path
 
 
 def _runtime_regression_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
@@ -367,26 +584,12 @@ def test_concurrent_sampler_overlaps_live_and_benchmark_without_real_processes()
 
 
 def test_amended_gate_requires_two_b0_rollback_identities() -> None:
-    resource = {
-        "schema_version": subject.RESOURCE_WINDOW_SCHEMA,
-        "canonical_resource_window_sha256": "",
-    }
-    resource["canonical_resource_window_sha256"] = subject.document_sha256(
-        resource, "canonical_resource_window_sha256"
-    )
-    execution = {"execution_commit": subject.FROZEN_EXECUTION_COMMIT}
-    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError, match="dual rollback"):
-        subject.build_amended_gate_receipt(
-            execution_identity=execution,
-            runtime_sources={},
-            artifact_binding={},
-            config_binding={"disabled": {"enabled": False}},
-            host_binding={},
-            disabled_process_identity={},
-            startup_log_binding={},
-            resource_window=resource,
-            rollback_identities={},
-        )
+    payload = deepcopy(_valid_amended_gate_payload())
+    del payload["rollback_identities"]["deep_predecessor"]
+    _recanonicalize_amended_gate(payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError, match="rollback identities"):
+        subject.validate_amended_gate_payload(payload)
 
 
 def test_verify_runtime_sources_binds_working_and_frozen_git_bytes(
@@ -563,3 +766,211 @@ def test_runtime_regression_v2_preserves_safe_failure_hashes(
         )["status"]
         == "failed"
     )
+
+
+def test_amended_gate_payload_revalidates_complete_nested_contract(tmp_path: Path) -> None:
+    payload = _valid_amended_gate_payload()
+    path = _write_gate_receipt(tmp_path, payload)
+
+    assert subject.validate_amended_gate_payload(payload) == payload
+    assert subject.validate_amended_gate_receipt(path) == payload
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("schema_version",), "attacker.v1"),
+        (("identity",), "attacker-owner"),
+        (("status",), "passed"),
+        (("generated_utc",), "not-a-time"),
+        (("execution_identity", "execution_commit"), "0" * 40),
+        (("execution_identity", "execution_tree"), "0" * 40),
+        (("execution_identity", "annotated_tag"), "attacker-tag"),
+        (("execution_identity", "annotated_tag_object"), "0" * 40),
+        (("execution_identity", "tag_peeled_commit"), "0" * 40),
+        (
+            (
+                "runtime_sources",
+                "files",
+                "live_main",
+                "repository_relative_path",
+            ),
+            "live/attacker.py",
+        ),
+        (
+            ("runtime_sources", "files", "live_main", "working_file_sha256"),
+            "0" * 64,
+        ),
+        (("artifact_binding", "artifact_sha256"), "0" * 64),
+        (
+            ("artifact_binding", "artifact_files", "policy", "sha256"),
+            "0" * 64,
+        ),
+        (("config_binding", "disabled", "enabled"), True),
+        (("config_binding", "active", "enabled"), False),
+        (("config_binding", "active", "artifact_loaded_with_from_files"), False),
+        (("config_binding", "observed_diff"), []),
+        (("config_binding", "allowlisted_diff"), []),
+        (
+            ("config_binding", "active", "artifact_files", "manifest", "path"),
+            "/remote/repo/live/private/e3/attacker.json",
+        ),
+        (("config_binding", "active", "config_sha256"), "d" * 64),
+        (("host_binding", "active_pointer_file_sha256"), "short"),
+        (("host_binding", "known_hosts_file_sha256"), "short"),
+        (("host_binding", "host_key_fingerprint"), "MD5:attacker"),
+        (("host_binding", "repo_root"), "/remote/other"),
+        (("host_binding", "python_executable"), "/usr/bin/python3"),
+        (("disabled_process_identity", "pid"), 0),
+        (("disabled_process_identity", "pid_start_ticks"), 0),
+        (("disabled_process_identity", "cwd"), "/remote/other"),
+        (("disabled_process_identity", "config_sha256"), "0" * 64),
+        (("disabled_process_identity", "artifact_sha256"), "0" * 64),
+        (("disabled_process_identity", "runtime_code_sha256"), "0" * 64),
+        (("disabled_process_identity", "runtime_identity", "present"), False),
+        (
+            ("disabled_process_identity", "runtime_identity", "schema_version"),
+            "attacker.v1",
+        ),
+        (("startup_log_binding", "checkpoint_sha256"), "short"),
+        (("startup_log_binding", "segment_sha256"), "short"),
+        (("startup_log_binding", "segment_size_bytes"), -1),
+        (
+            (
+                "startup_log_binding",
+                "fatal_pattern_counts",
+                subject.FATAL_STARTUP_PATTERNS[0],
+            ),
+            1,
+        ),
+        (("resource_window", "status"), "passed"),
+        (("resource_window", "sample_count"), 1),
+        (("resource_window", "live_pid"), 9999),
+        (("resource_window", "pre_health_sha256"), "0" * 64),
+        (("resource_window", "thresholds", "max_live_rss_mib"), 999.0),
+        (("resource_window", "observed", "min_mem_available_mib"), 511.0),
+        (("resource_window", "checks", subject.RESOURCE_CHECK_NAMES[0]), False),
+        (("resource_window", "hypothetical_live_actions_scored"), True),
+        (("rollback_identities", "primary_disabled", "buy_e3_enabled"), True),
+        (
+            ("rollback_identities", "primary_disabled", "buy_deadline_identity"),
+            "E3",
+        ),
+        (("rollback_identities", "primary_disabled", "imports_e3_deadline"), True),
+        (
+            ("rollback_identities", "primary_disabled", "runtime_code_sha256"),
+            "0" * 64,
+        ),
+        (
+            ("rollback_identities", "deep_predecessor", "identity"),
+            "attempt2-disabled-b0",
+        ),
+        (("activation_contract", "restart_only"), False),
+        (("activation_contract", "sighup_allowed"), True),
+        (("activation_contract", "fresh_pid_required"), False),
+        (("activation_contract", "hypothetical_scorer_allowed"), True),
+        (("permissions", "research_authorized"), True),
+        (("permissions", "action_authorized"), True),
+        (("permissions", "live_authorized"), True),
+        (("permissions", "validation_read"), True),
+        (("permissions", "sealed_holdout_read"), True),
+    ),
+)
+def test_amended_gate_rejects_self_rehashed_nested_tamper(
+    tmp_path: Path, path: tuple[str, ...], value
+) -> None:
+    payload = deepcopy(_valid_amended_gate_payload())
+    _set_nested(payload, path, value)
+    _recanonicalize_amended_gate(payload)
+    receipt = _write_gate_receipt(tmp_path, payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError):
+        subject.validate_amended_gate_receipt(receipt)
+
+
+@pytest.mark.parametrize(
+    ("container", "key"),
+    (
+        (("runtime_sources", "files"), "live_main"),
+        (("artifact_binding", "artifact_files"), "policy"),
+        (
+            ("startup_log_binding", "fatal_pattern_counts"),
+            subject.FATAL_STARTUP_PATTERNS[0],
+        ),
+        (("resource_window", "checks"), subject.RESOURCE_CHECK_NAMES[0]),
+        (("rollback_identities",), "deep_predecessor"),
+        (("activation_contract",), "restart_only"),
+        (("permissions",), "live_authorized"),
+    ),
+)
+def test_amended_gate_rejects_self_rehashed_missing_nested_field(
+    tmp_path: Path, container: tuple[str, ...], key: str
+) -> None:
+    payload = deepcopy(_valid_amended_gate_payload())
+    target = payload
+    for component in container:
+        target = target[component]
+    del target[key]
+    _recanonicalize_amended_gate(payload)
+    receipt = _write_gate_receipt(tmp_path, payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError):
+        subject.validate_amended_gate_receipt(receipt)
+
+
+def test_amended_gate_rejects_coordinated_rehashed_runtime_substitution(
+    tmp_path: Path,
+) -> None:
+    payload = deepcopy(_valid_amended_gate_payload())
+    substituted_sha = "0" * 64
+    binding = payload["runtime_sources"]["files"]["live_main"]
+    binding["artifact_manifest_sha256"] = substituted_sha
+    binding["execution_commit_blob_sha256"] = substituted_sha
+    binding["working_file_sha256"] = substituted_sha
+    payload["runtime_sources"]["runtime_code_sha256"] = subject.canonical_sha256(
+        payload["runtime_sources"]["files"]
+    )
+    substituted_runtime_sha = payload["runtime_sources"]["runtime_code_sha256"]
+    payload["disabled_process_identity"]["runtime_code_sha256"] = substituted_runtime_sha
+    payload["rollback_identities"]["primary_disabled"]["runtime_code_sha256"] = (
+        substituted_runtime_sha
+    )
+    _recanonicalize_amended_gate(payload)
+    process_sha = payload["disabled_process_identity"]["canonical_process_identity_sha256"]
+    payload["resource_window"]["pre_health_sha256"] = process_sha
+    payload["resource_window"]["post_health_sha256"] = process_sha
+    _recanonicalize_amended_gate(payload)
+    receipt = _write_gate_receipt(tmp_path, payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError, match="frozen runtime source"):
+        subject.validate_amended_gate_receipt(receipt)
+
+
+def test_amended_gate_rejects_coordinated_rehashed_artifact_substitution(
+    tmp_path: Path,
+) -> None:
+    payload = deepcopy(_valid_amended_gate_payload())
+    substituted_artifact = "0" * 64
+    payload["artifact_binding"]["artifact_sha256"] = substituted_artifact
+    payload["disabled_process_identity"]["artifact_sha256"] = substituted_artifact
+    for name in ("disabled", "active"):
+        payload["config_binding"][name]["artifact_sha256"] = substituted_artifact
+    _recanonicalize_amended_gate(payload)
+    process_sha = payload["disabled_process_identity"]["canonical_process_identity_sha256"]
+    payload["resource_window"]["pre_health_sha256"] = process_sha
+    payload["resource_window"]["post_health_sha256"] = process_sha
+    _recanonicalize_amended_gate(payload)
+    receipt = _write_gate_receipt(tmp_path, payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError, match="frozen artifact identity"):
+        subject.validate_amended_gate_receipt(receipt)
+
+
+def test_amended_gate_rejects_self_rehashed_unknown_fields(tmp_path: Path) -> None:
+    payload = deepcopy(_valid_amended_gate_payload())
+    payload["attacker_note"] = "looks harmless"
+    _recanonicalize_amended_gate(payload)
+    receipt = _write_gate_receipt(tmp_path, payload)
+
+    with pytest.raises(subject.BuyE3DeploymentGateAmendmentError, match="fields drifted"):
+        subject.validate_amended_gate_receipt(receipt)
