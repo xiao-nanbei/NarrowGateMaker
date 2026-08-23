@@ -6,6 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from research.families.f05_fill_quality_quote_ev.audit import (
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v3 as resource_v3,
+)
 from scripts import f05_buy_e3_evidence_completion as subject
 
 
@@ -75,7 +78,6 @@ def _direct_binding(path: Path) -> dict:
 
 
 def _v5_payload() -> dict:
-    days = {f"2026-07-{day:02d}": f"{day:064x}" for day in range(1, 31)}
     payload = {
         "schema_version": subject.V5_SCHEMA,
         "status": subject.V5_STATUS,
@@ -88,9 +90,9 @@ def _v5_payload() -> dict:
         "git_tree": "2" * 40,
         "tracked_worktree_clean": True,
         "imports": {},
-        "study_sha256": "5a293b1c" + "0" * 56,
-        "model_bundle_census_sha256": "74a0e698" + "1" * 56,
-        "input_binding_sha256": "717d955a" + "2" * 56,
+        "study_sha256": subject.V5_STUDY_SHA256,
+        "model_bundle_census_sha256": subject.V5_MODEL_CENSUS_SHA256,
+        "input_binding_sha256": subject.V5_INPUT_SHA256,
         "selected_day_count": 30,
         "output_root": "/private/tmp/exact",
         "economic_outcomes_read": False,
@@ -98,12 +100,12 @@ def _v5_payload() -> dict:
         "candidate_actions_generated": False,
         "validation_read": False,
         "sealed_holdout_read": False,
-        "raw_sha256": days,
-        "frame_sha256": days,
-        "envelope_sha256": days,
-        "row_key_sha256": days,
+        "raw_sha256": dict(subject.V5_RAW_SHA256),
+        "frame_sha256": dict(subject.V5_FRAME_SHA256),
+        "envelope_sha256": dict(subject.V5_ENVELOPE_SHA256),
+        "row_key_sha256": subject.V5_ROW_KEY_SHA256,
         "opportunity_count": 3516,
-        "mechanics_manifest": {"path": "/orico/mechanics.json", "file_sha256": "3" * 64},
+        "mechanics_manifest": subject.V5_MECHANICS_MANIFEST,
     }
     return _self_hash(payload, "canonical_receipt_sha256")
 
@@ -119,6 +121,15 @@ def test_exact_v5_accepts_only_isolated_outcome_blind_recovery(tmp_path: Path) -
     bad = _self_hash(bad, "canonical_receipt_sha256")
     with pytest.raises(subject.EvidenceCompletionError, match="evidence boundary"):
         subject._validate_v5_exact(_write(tmp_path / "bad-v5.json", bad))  # noqa: SLF001
+
+    wrong_bytes = _v5_payload()
+    wrong_bytes["raw_sha256"] = dict(subject.V5_RAW_SHA256)
+    wrong_bytes["raw_sha256"]["metadata"] = "0" * 64
+    wrong_bytes = _self_hash(wrong_bytes, "canonical_receipt_sha256")
+    with pytest.raises(subject.EvidenceCompletionError, match="aggregate raw_sha256"):
+        subject._validate_v5_exact(  # noqa: SLF001
+            _write(tmp_path / "wrong-v5-bytes.json", wrong_bytes)
+        )
 
 
 def _lifecycle_payload(runtime_sha: str = "4" * 64) -> dict:
@@ -495,3 +506,29 @@ def test_boundary_has_no_shadow_companion_or_economic_reads() -> None:
         "hypothetical_live_actions_scored": False,
     }
     assert hashlib.sha256(json.dumps(subject.FOCUSED_NODEIDS).encode()).hexdigest()
+
+
+def test_resource_v3_interface_and_disabled_process_shape_are_locked() -> None:
+    assert resource_v3.RESOURCE_SCHEMA == subject.RESOURCE_SCHEMA
+    assert resource_v3.RESOURCE_STATUS == subject.RESOURCE_STATUS
+    assert resource_v3.RESOURCE_CANONICAL_FIELD == subject.RESOURCE_CANONICAL_FIELD
+    process = subject._disabled_process(  # noqa: SLF001
+        {
+            "fresh_disabled_process": {
+                "prior_process_identity_sha256": "1" * 64,
+                "prior_pid": 8,
+                "prior_pid_start_ticks": 80,
+                "disabled_process_identity_sha256": "2" * 64,
+                "disabled_pid": 9,
+                "disabled_pid_start_ticks": 90,
+                "disabled_config_path": "/remote/config.disabled.yaml",
+                "disabled_config_sha256": "3" * 64,
+                "fresh_pid": True,
+                "fresh_start_ticks": True,
+                "same_pid_pre_post": True,
+            }
+        }
+    )
+    assert process["pid"] == 9
+    assert process["pid_start_ticks"] == 90
+    assert process["canonical_process_identity_sha256"] == "2" * 64

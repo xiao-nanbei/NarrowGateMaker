@@ -54,10 +54,41 @@ ATTEMPT4_TAG: Final = "f05-owner-buy-e3-live-attempt4-20260823"
 
 V5_SCHEMA: Final = "f05_v5_exact_isolated_verify.v1"
 V5_STATUS: Final = "historical_v5_exact_bytes_recovered"
-V5_MODEL_CENSUS_SHA256_PREFIX: Final = "74a0e698"
-V5_INPUT_SHA256_PREFIX: Final = "717d955a"
+V5_STUDY_SHA256: Final = "5a293b1c895f91693424489acdd993540b2f6c2ba0d3a6d26553635d044c8486"
+V5_MODEL_CENSUS_SHA256: Final = "74a0e698fe286e3b5efa25d4ebc5c94677a4a2a3ec8014683a5695e1ea563ed6"
+V5_INPUT_SHA256: Final = "717d955aa194b1de463615d5263f241d73ae431f245f8a0787174ba4678b3e3f"
 V5_DAY_COUNT: Final = 30
 V5_OPPORTUNITY_COUNT: Final = 3516
+V5_RAW_SHA256: Final = {
+    "metadata": "84cd849e21210027254d8a364efc553ee8d65d236364d246bdc3b88e669c287c",
+    "boolean_features": "1fd11ddef21e244a3e4e770c9fb52d11194b9275f2334c4bbc21ac54979cf7a1",
+    "continuous_features": "2e373a46863190131cf3decfd2f95b8ac5b1da0fea1c0e244e17180fb9e9d8e2",
+    "exact_owner_actions": "d0e5e72232f19688f30010b01b22941eea253245a8b848b71e51c31b5178365f",
+    "replay_inputs": "e8062e6354e6db9501d0d19746b6e64e2bbe32284aade34d9a2e46f35405d41d",
+}
+V5_FRAME_SHA256: Final = {
+    "metadata": "b2997df96d21d22991ddb8ea6adad81bec1cea8263fe42c40cee8e333664ad00",
+    "boolean_features": "7c4c62f7f6eb30a8f726440e3e6782dd53ac9c10d956dd6f2c64774586e23fd3",
+    "primitive_boolean_features": "a38e031e190bee6dce24e23b138f23961b306075f548938b560a25a9407367af",
+    "continuous_features": "5fd7df17c9114530abbd4c9e5cf6a9bcda446b8b860a667abbb4fcae764f4b0e",
+    "exact_owner_actions": "9e6138032e4ccf048b66093786518be1a0c484bbb910ffe24a1556c77c2a8790",
+    "replay_inputs": "6cff57a4d1cf8139d9d29a9933e2d2e119ba12a17be1438cd8a837bc44f1016a",
+}
+V5_ENVELOPE_SHA256: Final = {
+    "builder_manifest_file": "ca0e0b02dad04e97120aa09a374c781dec99d97087cfa7695ddd920ab5d83156",
+    "builder_manifest_canonical": "7438d19c9081fc56d1b35af78fb06f6f2a2b489fe95e209c8f38f496eb3034e0",
+    "merged_panel_manifest_file": "a814e0e3edba1279b8d21058e880795be5b0fa9ccac845e1e6faa914d3698fb7",
+    "merged_panel_manifest_canonical": "9920a13c7f0e6748b52a88ff818fa973f8816d57e51fbfcff1f77701c9ee8f20",
+    "portable_replay_binding_file": "b5bbeb01f01fabef8c99df55ecd6b649960d3e9b86e0576e7e01d77ea8e46c63",
+    "mechanics_manifest_file": "85e8bbcf30396a6353289f5e69b87fe9913ccb20d55a6d61edf35ff0dc1ec4a2",
+    "mechanics_manifest_canonical": "c90930f9bdb51996af33efaeb9ef4d5386716f3ba911fcf2e1e935a65a0c8cab",
+}
+V5_ROW_KEY_SHA256: Final = "e481d8a61eecb71a36e6e3c8f2be1630c483a466a5418adc583d6398c29330ec"
+V5_MECHANICS_MANIFEST: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
+    "f05_full_multiscale_offline_mechanics_v1/canonical_offline_v1/"
+    "mechanics_panel_manifest.json"
+)
 
 FOCUSED_SCHEMA: Final = f"{OWNER}.direct_v3_runtime_successor_regression.v1"
 FOCUSED_STATUS: Final = "direct_v3_runtime_successor_regression_passed"
@@ -453,38 +484,45 @@ def _validate_v5_exact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         payload.get("model_bundle_census_sha256"), "exact V5 model census SHA256"
     )
     source = _require_sha256(payload.get("input_binding_sha256"), "exact V5 input SHA256")
-    if not study.startswith("5a293b1c"):
+    if study != V5_STUDY_SHA256:
         raise EvidenceCompletionError("exact V5 study identity is not the isolated 5a293 bundle")
-    if not model.startswith(V5_MODEL_CENSUS_SHA256_PREFIX):
+    if model != V5_MODEL_CENSUS_SHA256:
         raise EvidenceCompletionError("exact V5 model bundle is not the frozen 74a0 census")
-    if not source.startswith(V5_INPUT_SHA256_PREFIX):
+    if source != V5_INPUT_SHA256:
         raise EvidenceCompletionError("exact V5 input is not the frozen 717d binding")
     if (
         payload.get("isolated") is not True
+        or payload.get("safe_path") is not True
         or payload.get("tracked_worktree_clean") is not True
         or payload.get("selected_day_count") != V5_DAY_COUNT
         or payload.get("opportunity_count") != V5_OPPORTUNITY_COUNT
     ):
         raise EvidenceCompletionError("exact V5 isolated reconstruction contract drifted")
-    day_maps: list[Mapping[str, Any]] = []
-    for name in ("raw_sha256", "frame_sha256", "envelope_sha256", "row_key_sha256"):
+    aggregate_maps = {
+        "raw_sha256": V5_RAW_SHA256,
+        "frame_sha256": V5_FRAME_SHA256,
+        "envelope_sha256": V5_ENVELOPE_SHA256,
+    }
+    for name, expected in aggregate_maps.items():
         value = payload.get(name)
-        if not isinstance(value, Mapping) or len(value) != V5_DAY_COUNT:
-            raise EvidenceCompletionError(f"exact V5 {name} day map drifted")
-        if any(_SHA256_RE.fullmatch(str(item)) is None for item in value.values()):
-            raise EvidenceCompletionError(f"exact V5 {name} contains a malformed digest")
-        day_maps.append(value)
-    day_keys = [tuple(sorted(value)) for value in day_maps]
-    if len(set(day_keys)) != 1:
-        raise EvidenceCompletionError("exact V5 recovered maps do not share the same days")
+        if not isinstance(value, Mapping) or dict(value) != expected:
+            raise EvidenceCompletionError(f"exact V5 aggregate {name} drifted")
+    row_key = _require_sha256(payload.get("row_key_sha256"), "exact V5 row-key SHA256")
+    if row_key != V5_ROW_KEY_SHA256:
+        raise EvidenceCompletionError("exact V5 row-key identity drifted")
     mechanics = payload.get("mechanics_manifest")
-    if not isinstance(mechanics, Mapping):
-        raise EvidenceCompletionError("exact V5 mechanics manifest binding is missing")
+    if mechanics != V5_MECHANICS_MANIFEST:
+        raise EvidenceCompletionError("exact V5 mechanics manifest path drifted")
     binding["study_sha256"] = study
     binding["model_bundle_census_sha256"] = model
     binding["input_binding_sha256"] = source
     binding["selected_day_count"] = V5_DAY_COUNT
     binding["opportunity_count"] = V5_OPPORTUNITY_COUNT
+    binding["raw_sha256"] = dict(V5_RAW_SHA256)
+    binding["frame_sha256"] = dict(V5_FRAME_SHA256)
+    binding["envelope_sha256"] = dict(V5_ENVELOPE_SHA256)
+    binding["row_key_sha256"] = row_key
+    binding["mechanics_manifest"] = mechanics
     return payload, binding
 
 
