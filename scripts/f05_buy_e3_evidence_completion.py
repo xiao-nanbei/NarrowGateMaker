@@ -1498,7 +1498,7 @@ def _validate_sell54(
         for role in ("manifest", "policy", "predicate_bundle")
     }
     try:
-        payload = gate_v1.validate_sell_owner_54_case_receipt(
+        validated_projection = gate_v1.validate_sell_owner_54_case_receipt(
             path,
             repository_root=direct_repository_root,
             expected_artifact_sha256=ARTIFACT_SHA256,
@@ -1513,9 +1513,14 @@ def _validate_sell54(
         expected_schema=gate_v1.SELL_PARITY_SCHEMA,
         expected_status="parity_complete",
     )
-    if rebound != payload:
+    if (
+        validated_projection.get("path") != binding["path"]
+        or validated_projection.get("file_sha256") != binding["file_sha256"]
+        or validated_projection.get("canonical_receipt_sha256")
+        != binding["canonical_sha256"]
+    ):
         raise EvidenceCompletionError("SELL 54-case parity changed during validation")
-    return payload, binding
+    return rebound, binding
 
 
 def _focused_binding(

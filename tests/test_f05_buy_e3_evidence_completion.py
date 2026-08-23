@@ -23,6 +23,45 @@ def test_lexical_python_entrypoint_preserves_venv_symlink(tmp_path: Path) -> Non
     assert observed != entrypoint.resolve()
 
 
+def test_sell54_validator_accepts_legacy_projection_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "sell54.json"
+    path.write_text("{}\n", encoding="ascii")
+    raw = {"status": "parity_complete"}
+    binding = _binding(path, canonical="c" * 64)
+    roles = {
+        role: {"file_sha256": digest}
+        for role, digest in {
+            "manifest": "1" * 64,
+            "policy": "2" * 64,
+            "predicate_bundle": "3" * 64,
+        }.items()
+    }
+    projection = {
+        "path": binding["path"],
+        "file_sha256": binding["file_sha256"],
+        "canonical_receipt_sha256": binding["canonical_sha256"],
+        "source_files": {"strategy/example.py": "4" * 64},
+    }
+    monkeypatch.setattr(subject, "_artifact_projection", lambda _payload: {"roles": roles})
+    monkeypatch.setattr(
+        subject.gate_v1,
+        "validate_sell_owner_54_case_receipt",
+        lambda *args, **kwargs: projection,
+    )
+    monkeypatch.setattr(subject, "_binding", lambda *args, **kwargs: (raw, binding))
+
+    observed_raw, observed_binding = subject._validate_sell54(  # noqa: SLF001
+        path,
+        direct_repository_root=tmp_path,
+        direct_release_payload={},
+    )
+
+    assert observed_raw == raw
+    assert observed_binding == binding
+
+
 def _write(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="ascii")
