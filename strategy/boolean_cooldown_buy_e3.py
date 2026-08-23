@@ -28,6 +28,17 @@ ACTIVE_RELEASE_SCHEMA = (
 )
 ACTIVE_RELEASE_IDENTITY = ACTIVE_RELEASE_SCHEMA
 ACTIVE_RELEASE_STATUS = "owner_authorized_active_release"
+DIRECT_OWNER_ACTIVE_RELEASE_SCHEMA = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "direct_owner_active_release.v1"
+)
+DIRECT_OWNER_ACTIVE_RELEASE_IDENTITY = DIRECT_OWNER_ACTIVE_RELEASE_SCHEMA
+DIRECT_OWNER_ACTIVE_RELEASE_STATUS = (
+    "owner_authorized_direct_live_with_incomplete_evidence"
+)
+DIRECT_OWNER_EXACT_ARTIFACT_SHA256 = (
+    "17e99df737157c6587602e6b496eadbecbed0a98d025da1d1db4cc8ef670786d"
+)
 SELECTED_CANDIDATE = "E3_HIGHER_ORDER_BOOLEAN"
 SELECTED_PROFILE = "e3_high_order_multirule_dnf_v1"
 LIVE_FEATURE_TRANSPORT_IDENTITY = "receive_time_100ms_full_mid_ema_bank_v1"
@@ -96,6 +107,54 @@ _ACTIVE_RELEASE_EVIDENCE_ROLES = frozenset(
         "activation_envelope",
     }
 )
+_DIRECT_OWNER_ACTIVE_RELEASE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "identity",
+        "status",
+        "generated_utc",
+        "research_supported",
+        "formal_hierarchy_passed",
+        "formal_hard_gates_passed",
+        "owner_risk_accepted",
+        "outcome_informed_owner_override",
+        "action_authorized",
+        "live_authorized",
+        "authorization_basis",
+        "scope",
+        "execution",
+        "exact_artifact",
+        "incomplete_evidence",
+        "rollback",
+        "evidence_boundary",
+        "canonical_active_release_sha256",
+    }
+)
+_DIRECT_OWNER_AUTHORIZATION_BASIS = {
+    "authority": "explicit_owner_directive",
+    "directive_id": "deploy_exact_buy_e3_while_v5_rebuild_continues_20260824",
+    "owner_accepts_unfinished_evidence_risk": True,
+    "live_timing_override_only": True,
+    "does_not_relabel_research_evidence": True,
+}
+_DIRECT_OWNER_INCOMPLETE_EVIDENCE = {
+    "legacy_v1_evidence_chain_complete": False,
+    "attempt4_final_receipt_complete": False,
+    "v5_exact_panel_rebuild_complete": False,
+    "final_composition_complete": False,
+    "concurrent_resource_window_receipt_complete": False,
+    "post_disabled_activation_envelope_complete": False,
+    "panel_rebuild_continues": True,
+    "legacy_v1_evidence_roles_bound": False,
+    "release_must_not_be_cited_as_an_evidence_gate_pass": True,
+    "unresolved_or_unbound_gates": [
+        "exact_v5_panel_hash_reproduction",
+        "compatible_execution_attempt_final_receipt",
+        "final_composition",
+        "concurrent_resource_window_receipt",
+        "post_disabled_activation_envelope",
+    ],
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,6 +361,141 @@ def _exact_mapping(value: Any, fields: frozenset[str], label: str) -> Mapping[st
     return value
 
 
+def _validate_direct_owner_active_release(
+    payload: Mapping[str, Any],
+    *,
+    expected_canonical_sha256: str,
+    expected_artifact_sha256: str,
+    expected_manifest_file_sha256: str,
+    expected_policy_file_sha256: str,
+    expected_predicate_bundle_file_sha256: str,
+) -> dict[str, str]:
+    if set(payload) != set(_DIRECT_OWNER_ACTIVE_RELEASE_FIELDS):
+        raise ValueError("buy_e3_direct_owner_active_release_fields_drifted")
+    _validate_canonical(
+        payload,
+        "canonical_active_release_sha256",
+        "buy_e3_direct_owner_active_release",
+    )
+    canonical = str(payload["canonical_active_release_sha256"])
+    if canonical != str(expected_canonical_sha256).strip().lower():
+        raise ValueError(
+            "buy_e3_direct_owner_active_release_expected_canonical_sha256_mismatch"
+        )
+    if (
+        payload.get("schema_version") != DIRECT_OWNER_ACTIVE_RELEASE_SCHEMA
+        or payload.get("identity") != DIRECT_OWNER_ACTIVE_RELEASE_IDENTITY
+        or payload.get("status") != DIRECT_OWNER_ACTIVE_RELEASE_STATUS
+        or payload.get("research_supported") is not False
+        or payload.get("formal_hierarchy_passed") is not False
+        or payload.get("formal_hard_gates_passed") is not False
+        or payload.get("owner_risk_accepted") is not True
+        or payload.get("outcome_informed_owner_override") is not True
+        or payload.get("action_authorized") is not True
+        or payload.get("live_authorized") is not True
+        or payload.get("authorization_basis") != _DIRECT_OWNER_AUTHORIZATION_BASIS
+        or payload.get("incomplete_evidence") != _DIRECT_OWNER_INCOMPLETE_EVIDENCE
+    ):
+        raise ValueError("buy_e3_direct_owner_active_release_authority_drifted")
+    if payload.get("scope") != {
+        "side": "BUY",
+        "trigger": "exposure_increasing_executed_fill",
+        "output": "total_cooldown",
+        "reducing_buy_unchanged": True,
+        "sell_owner_policy_unchanged": True,
+    }:
+        raise ValueError("buy_e3_direct_owner_active_release_scope_drifted")
+    if payload.get("rollback") != {
+        "buy_e3_enabled": False,
+        "buy_deadline_identity": "B0",
+        "e3_deadline_imported": False,
+        "b0_seconds": 85,
+        "b0_multiplier": "consecutive_fill_units",
+        "b0_contract": "85s_x_consecutive_fill_units",
+    }:
+        raise ValueError("buy_e3_direct_owner_active_release_rollback_drifted")
+    if payload.get("evidence_boundary") != {
+        "old_oof_applies_to_learning_algorithm_only": True,
+        "exact_artifact_oof_available": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "shadow_created": False,
+        "companion_created": False,
+        "new_economic_arm_run": False,
+    }:
+        raise ValueError("buy_e3_direct_owner_active_release_evidence_boundary_drifted")
+
+    execution = _exact_mapping(
+        payload.get("execution"),
+        frozenset(
+            {
+                "execution_commit",
+                "execution_tree",
+                "annotated_operational_tag",
+                "annotated_operational_tag_object",
+                "tag_peeled_commit",
+            }
+        ),
+        "buy_e3_direct_owner_active_release_execution",
+    )
+    commit = str(execution.get("execution_commit", ""))
+    tree = str(execution.get("execution_tree", ""))
+    tag_object = str(execution.get("annotated_operational_tag_object", ""))
+    if (
+        _GIT_SHA_RE.fullmatch(commit) is None
+        or _GIT_SHA_RE.fullmatch(tree) is None
+        or _GIT_SHA_RE.fullmatch(tag_object) is None
+        or execution.get("tag_peeled_commit") != commit
+        or not str(execution.get("annotated_operational_tag", "")).strip()
+    ):
+        raise ValueError("buy_e3_direct_owner_active_release_execution_identity_drifted")
+
+    if expected_artifact_sha256 != DIRECT_OWNER_EXACT_ARTIFACT_SHA256:
+        raise ValueError("buy_e3_direct_owner_expected_artifact_sha256_mismatch")
+    exact_artifact = _exact_mapping(
+        payload.get("exact_artifact"),
+        frozenset({"artifact_sha256", "roles"}),
+        "buy_e3_direct_owner_active_release_artifact",
+    )
+    if exact_artifact.get("artifact_sha256") != expected_artifact_sha256:
+        raise ValueError("buy_e3_direct_owner_active_release_artifact_sha256_mismatch")
+    roles = _exact_mapping(
+        exact_artifact.get("roles"),
+        frozenset({"manifest", "policy", "predicate_bundle"}),
+        "buy_e3_direct_owner_active_release_artifact_roles",
+    )
+    expected_files = {
+        "manifest": expected_manifest_file_sha256,
+        "policy": expected_policy_file_sha256,
+        "predicate_bundle": expected_predicate_bundle_file_sha256,
+    }
+    for role, expected in expected_files.items():
+        binding = _exact_mapping(
+            roles.get(role),
+            _ACTIVE_RELEASE_BINDING_FIELDS,
+            f"buy_e3_direct_owner_active_release_{role}",
+        )
+        if (
+            binding.get("role") != role
+            or binding.get("file_sha256") != expected
+            or binding.get("mode") != "0600"
+            or (
+                role == "manifest"
+                and binding.get("canonical_sha256") != DIRECT_OWNER_EXACT_ARTIFACT_SHA256
+            )
+        ):
+            raise ValueError(
+                f"buy_e3_direct_owner_active_release_{role}_binding_drifted"
+            )
+    return {
+        "file_canonical_sha256": canonical,
+        "execution_commit": commit,
+        "execution_tree": tree,
+        "annotated_operational_tag": str(execution["annotated_operational_tag"]),
+        "annotated_operational_tag_object": tag_object,
+    }
+
+
 def _validate_active_release(
     payload: Mapping[str, Any],
     *,
@@ -311,6 +505,15 @@ def _validate_active_release(
     expected_policy_file_sha256: str,
     expected_predicate_bundle_file_sha256: str,
 ) -> dict[str, str]:
+    if payload.get("schema_version") == DIRECT_OWNER_ACTIVE_RELEASE_SCHEMA:
+        return _validate_direct_owner_active_release(
+            payload,
+            expected_canonical_sha256=expected_canonical_sha256,
+            expected_artifact_sha256=expected_artifact_sha256,
+            expected_manifest_file_sha256=expected_manifest_file_sha256,
+            expected_policy_file_sha256=expected_policy_file_sha256,
+            expected_predicate_bundle_file_sha256=expected_predicate_bundle_file_sha256,
+        )
     if set(payload) != set(_ACTIVE_RELEASE_FIELDS):
         raise ValueError("buy_e3_active_release_fields_drifted")
     _validate_canonical(
