@@ -9149,6 +9149,14 @@ class MakerEngine:
         try:
             sync_start = time.time()  # before REST call
             positions = self.rest.get_position_risk(symbol=self.cfg.symbol)
+            if not isinstance(positions, list):
+                raise RuntimeError("position response was not a list")
+            # Binance USD-M positionRisk returns only symbols that currently
+            # have a position or open orders.  A successful, empty response to
+            # a symbol-scoped request is therefore the explicit flat state.
+            if not positions:
+                self.inventory.sync_from_exchange(0.0, 0.0, sync_start)
+                return True
             for pos in positions:
                 if pos.get("symbol") == self.cfg.symbol:
                     qty = float(pos.get("positionAmt", 0))
