@@ -1,0 +1,76 @@
+{
+  "engine_version": "narrowgate_replay_demo_engine.v1",
+  "expected_denominators": {
+    "campaigns": {
+      "closed": 1,
+      "open_at_terminal": 0,
+      "opened": 1
+    },
+    "events": {
+      "book": 3,
+      "mark": 1,
+      "market": 9,
+      "order_lifecycle": 4,
+      "tape_records": 14,
+      "trade": 5
+    },
+    "fill_opportunities": {
+      "eligible": 4,
+      "fill_events": 3,
+      "filled_quantity_btc": "0.02000000",
+      "with_fill": 3,
+      "without_fill": 1
+    },
+    "orders": {
+      "active_at_terminal": 0,
+      "canceled": 1,
+      "canceled_unfilled": 1,
+      "fill_eligible": 3,
+      "filled": 2,
+      "submitted": 3,
+      "terminal": 3,
+      "with_trade_opportunity": 2
+    }
+  },
+  "expected_terminal": {
+    "campaign_terminal_value_usdc": "0.00200000",
+    "cash_usdc": "0.00200000",
+    "cumulative_fees_usdc": "0.00000000",
+    "inventory_btc": "0.00000000",
+    "mark_price_usdc_per_btc": "100.25000000",
+    "terminal_pnl_usdc": "0.00200000"
+  },
+  "fixture": {
+    "classification": "synthetic_non_economic",
+    "economic_authority": "none",
+    "purpose": "public_mechanics_demonstration_only",
+    "source": "hand_authored_public_fixture"
+  },
+  "frozen_generated_at_utc": "2026-08-23T00:00:00Z",
+  "gate_contract": {
+    "economic_evidence_eligible": false,
+    "live_action_eligible": false,
+    "promotion_eligible": false,
+    "status_on_pass": "passed_demo_mechanics_only"
+  },
+  "market": {
+    "lot_size_btc": "0.001",
+    "maker_fee_rate": "0",
+    "symbol": "SYNTHETIC-BTCUSDC",
+    "tick_size": "0.10"
+  },
+  "permissions": {
+    "external_order_submission": false,
+    "live_runtime_import": false,
+    "network_access": false,
+    "private_evidence_read": false,
+    "runtime_clock_read": false
+  },
+  "schema_version": "narrowgate_replay_demo_contract.v1",
+  "tape": {
+    "artifact_id": "public_synthetic_queue_campaign_v1",
+    "path": "synthetic_tape.jsonl",
+    "schema_version": "narrowgate.synthetic_replay_tape.v1",
+    "sha256": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125"
+  }
+}

@@ -9,7 +9,6 @@ from typing import Any
 
 from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
 
-
 REQUIRED_MODEL_HEADS = (
     "dir_10s", "dir_30s", "dir_60s",
     "vol_10s", "vol_30s", "vol_60s",
@@ -29,6 +28,10 @@ REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS = (
 )
 OWNER_AUTHORIZED_LIVE_CANARY = "owner_authorized_live_canary"
 LIVE_CANARY_AUTHORIZATION_SCHEMA = "narrowgate.owner_authorized_live_canary.v1"
+PUBLIC_SYNTHETIC_MANIFEST_SCHEMA = "narrowgate_public_dry_run_model_bundle.v1"
+NON_LIVE_PROMOTION_AUTHORITIES = frozenset(
+    {"public_dry_run_only", "research_only"}
+)
 
 
 def _sha256(path: Path) -> str:
@@ -57,6 +60,10 @@ def _validate_owner_authorized_live_canary(
         raise ValueError(
             "live canary authorization requires active_live_inference_authorized=true"
         )
+    if "authority" in authorization:
+        authority = authorization.get("authority")
+        if not isinstance(authority, dict) or authority.get("live") is not True:
+            raise ValueError("live canary authorization requires authority.live=true")
     if authorization.get("baseline_promotion_authorized") is not False:
         raise ValueError(
             "live canary authorization must keep baseline promotion unauthorized"
@@ -89,10 +96,84 @@ def _validate_owner_authorized_live_canary(
         raise ValueError("live canary P3 hash mismatch")
 
 
+def _validate_bundle_manifest_live_authority(root: Path) -> None:
+    manifest_path = root / "fixture_manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"invalid bundle fixture manifest: {exc}") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError("bundle fixture manifest must be a mapping")
+    if manifest.get("synthetic") is True:
+        raise ValueError("synthetic model bundle cannot enter remote deployment")
+    authority = manifest.get("authority")
+    if not isinstance(authority, dict) or authority.get("live") is not True:
+        raise ValueError("bundle fixture manifest requires authority.live=true")
+
+
+def _validate_public_synthetic_manifest(root: Path) -> None:
+    manifest_path = root / "fixture_manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"invalid bundle fixture manifest: {exc}") from exc
+    if not isinstance(manifest, dict) or manifest.get("synthetic") is not True:
+        return
+    if manifest.get("schema_version") != PUBLIC_SYNTHETIC_MANIFEST_SCHEMA:
+        raise ValueError("public synthetic bundle has incompatible manifest schema")
+    if manifest.get("authority") != {
+        "action": False,
+        "live": False,
+        "research": False,
+    }:
+        raise ValueError("public synthetic bundle authority must remain all false")
+
+    entries = manifest.get("files")
+    if not isinstance(entries, list):
+        raise ValueError("public synthetic bundle manifest requires a files list")
+    expected_names = {
+        "fill_prob_params.json",
+        *(f"{name}.txt" for name in REQUIRED_MODEL_HEADS),
+        *(f"{name}_meta.json" for name in REQUIRED_MODEL_HEADS),
+    }
+    observed_names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError("public synthetic bundle file entry must be a mapping")
+        name = str(entry.get("path") or "")
+        relative = Path(name)
+        if not name or relative.is_absolute() or relative.name != name:
+            raise ValueError("public synthetic bundle file path must be one root-level name")
+        if name in observed_names:
+            raise ValueError(f"public synthetic bundle repeats manifest file {name}")
+        observed_names.add(name)
+        artifact = root / name
+        if artifact.is_symlink() or not artifact.is_file():
+            raise ValueError(f"public synthetic bundle is missing manifest file {name}")
+        expected_bytes = entry.get("bytes")
+        if (
+            not isinstance(expected_bytes, int)
+            or isinstance(expected_bytes, bool)
+            or expected_bytes < 0
+        ):
+            raise ValueError(f"public synthetic bundle has invalid byte count for {name}")
+        if artifact.stat().st_size != expected_bytes:
+            raise ValueError(f"public synthetic bundle byte count mismatch for {name}")
+        if _sha256(artifact) != str(entry.get("sha256") or ""):
+            raise ValueError(f"public synthetic bundle SHA256 mismatch for {name}")
+    if observed_names != expected_names:
+        raise ValueError("public synthetic bundle manifest file set is incomplete")
+
+
 def validate_model_bundle(
     model_dir: Path,
     *,
     allow_research_only: bool = False,
+    require_live_authorization: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Validate every runtime head before any model is admitted.
 
@@ -163,10 +244,28 @@ def validate_model_bundle(
         if not str(meta.get("feature_manifest_sha256") or ""):
             errors.append(f"{meta_path.name} requires feature_manifest_sha256")
             continue
+        promotion_authority = str(meta.get("promotion_authority") or "")
+        if require_live_authorization and not promotion_authority:
+            errors.append(
+                f"{meta_path.name} lacks explicit live promotion_authority"
+            )
+            continue
         if (
-            str(meta.get("promotion_authority") or "") == "research_only"
-            and not allow_research_only
+            require_live_authorization
+            and promotion_authority != OWNER_AUTHORIZED_LIVE_CANARY
         ):
+            if promotion_authority in NON_LIVE_PROMOTION_AUTHORITIES:
+                errors.append(
+                    f"{meta_path.name} is {promotion_authority} and cannot enter "
+                    "remote deployment"
+                )
+            else:
+                errors.append(
+                    f"{meta_path.name} promotion_authority="
+                    f"{promotion_authority!r} is not live-authorized"
+                )
+            continue
+        if promotion_authority == "research_only" and not allow_research_only:
             errors.append(f"{meta_path.name} is research_only and cannot enter live")
             continue
         if name.startswith("vol_"):
@@ -178,6 +277,11 @@ def validate_model_bundle(
                 )
                 continue
         metadata[name] = meta
+
+    try:
+        _validate_public_synthetic_manifest(root)
+    except ValueError as exc:
+        errors.append(str(exc))
 
     if len(metadata) == len(REQUIRED_MODEL_HEADS):
         manifest_hashes = {
@@ -215,6 +319,8 @@ def validate_model_bundle(
         if not errors and promotion_authorities == {OWNER_AUTHORIZED_LIVE_CANARY}:
             try:
                 _validate_owner_authorized_live_canary(root, metadata)
+                if require_live_authorization:
+                    _validate_bundle_manifest_live_authority(root)
             except ValueError as exc:
                 errors.append(str(exc))
 

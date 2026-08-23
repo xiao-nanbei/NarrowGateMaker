@@ -78,6 +78,7 @@ packages = [
   "research.families.f02_empirical_p3_touch",
   "research.families.f02_empirical_p3_touch.audit",
   "research.families.f03_causal_13_head",
+  "research.families.f03_causal_13_head.audit",
   "research.families.f04_external_market_alpha",
   "research.families.f04_external_market_alpha.audit",
   "research.families.f05_fill_quality_quote_ev",

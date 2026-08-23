@@ -9,6 +9,7 @@
 #   ./live/run.sh logs     # tail 日志
 #   ./live/run.sh reload   # 热重载配置 (SIGHUP)
 #   ./live/run.sh profile  # 显示将被持久化的 runtime profile
+#   ./live/run.sh dry-run  # 限时本地校验；零网络、零订单
 
 set -euo pipefail
 
@@ -17,6 +18,8 @@ PID_FILE="$DIR/logs/maker.pid"
 LOG_FILE="$DIR/logs/maker.log"
 MAIN_PY="$DIR/live/main.py"
 CONFIG_FILE="${NARROWGATE_LIVE_CONFIG:-$DIR/live/config.yaml}"
+DRY_RUN_CONFIG_FILE="${NARROWGATE_LIVE_CONFIG:-$DIR/live/formal_dry_run_public.yaml}"
+DRY_RUN_TIMEOUT_S="${NARROWGATE_DRY_RUN_TIMEOUT_S:-30}"
 PROFILE_STATE_FILE="$DIR/logs/maker.profile"
 PREFLIGHT_STATE_FILE="$DIR/logs/maker.preflight.json"
 if [[ -x "$DIR/.venv-active/bin/python3" ]]; then
@@ -87,7 +90,7 @@ _load_runtime_environment() {
 
 _run_deploy_preflight() {
     local preflight_tmp="$PREFLIGHT_STATE_FILE.tmp.$$"
-    "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else "NarrowGate requires Python >=3.10")'
+    "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
     if ! "$PYTHON_BIN" "$DIR/scripts/preflight_live_deploy.py" \
         --config "$CONFIG_FILE" \
         --repo-root "$DIR" > "$preflight_tmp"; then
@@ -107,6 +110,16 @@ profile() {
     echo "NARROWGATE_CPP_GLOBAL_FLOW=${NARROWGATE_CPP_GLOBAL_FLOW:-0}"
     echo "NARROWGATE_CPP_LIVE_ROUTING=${NARROWGATE_CPP_LIVE_ROUTING:-0}"
     echo "NARROWGATE_CPP_STRICT=${NARROWGATE_CPP_STRICT:-0}"
+}
+
+dry_run() {
+    # Deliberately do not source live/.env or a runtime profile. The formal
+    # dry-run is local-only and exits before credentials or network code matter.
+    "$PYTHON_BIN" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
+    "$PYTHON_BIN" "$MAIN_PY" \
+        --dry-run \
+        --dry-run-timeout-s "$DRY_RUN_TIMEOUT_S" \
+        --config "$DRY_RUN_CONFIG_FILE"
 }
 
 # Kill a single PID with escalation: TERM → INT → KILL
@@ -298,11 +311,12 @@ case "${1:-help}" in
     stop)    stop    ;;
     restart) restart ;;
     status)  status  ;;
+    dry-run) dry_run ;;
     profile) profile ;;
     reload)  reload  ;;
     logs)    logs    ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|profile|reload|logs}"
+        echo "Usage: $0 {start|stop|restart|status|dry-run|profile|reload|logs}"
         exit 1
         ;;
 esac
