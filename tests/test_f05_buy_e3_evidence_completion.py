@@ -12,6 +12,17 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 from scripts import f05_buy_e3_evidence_completion as subject
 
 
+def test_lexical_python_entrypoint_preserves_venv_symlink(tmp_path: Path) -> None:
+    entrypoint = tmp_path / ".venv/bin/python"
+    entrypoint.parent.mkdir(parents=True)
+    entrypoint.symlink_to(Path("/bin/sh"))
+
+    observed = subject._lexical_python_executable(entrypoint)  # noqa: SLF001
+
+    assert observed == entrypoint.absolute()
+    assert observed != entrypoint.resolve()
+
+
 def _write(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="ascii")

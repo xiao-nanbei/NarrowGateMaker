@@ -168,6 +168,15 @@ class EvidenceCompletionError(RuntimeError):
     """Raised when additive BUY E3 evidence fails closed."""
 
 
+def _lexical_python_executable(path: Path) -> Path:
+    """Preserve the venv entrypoint path while proving it names a file."""
+
+    executable = Path(os.path.abspath(os.fspath(path.expanduser())))
+    if not executable.is_file():
+        raise EvidenceCompletionError("focused regression Python executable is not a file")
+    return executable
+
+
 def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(
@@ -825,9 +834,7 @@ def build_focused_runtime_regression(
     release, release_binding = _direct_authority(
         direct_release_path, direct_repository_root=repository
     )
-    executable = python_executable.expanduser().resolve(strict=True)
-    if not executable.is_file():
-        raise EvidenceCompletionError("focused regression Python executable is not a file")
+    executable = _lexical_python_executable(python_executable)
     for relative in FOCUSED_SOURCES:
         if not (repository / relative).is_file():
             raise EvidenceCompletionError(f"focused regression source is missing: {relative}")
@@ -939,7 +946,9 @@ def validate_focused_runtime_regression(
         "evidence_boundary",
         "canonical_receipt_sha256",
     }
-    executable = Path(str(payload.get("python_executable", ""))).resolve(strict=True)
+    executable = _lexical_python_executable(
+        Path(str(payload.get("python_executable", "")))
+    )
     sources = {relative: _file_sha256(repository / relative) for relative in FOCUSED_SOURCES}
     counts = payload.get("counts")
     if (
