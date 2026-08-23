@@ -30,8 +30,8 @@ from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_v1 as gate_v1,
 )
 from scripts import f05_buy_e3_active_release as release_io
+from scripts import f05_buy_e3_attempt4_stability_successor as attempt4_successor
 from scripts import f05_buy_e3_direct_owner_release as direct_release
-from scripts import f05_buy_e3_execution_attempt as legacy_attempt
 
 OWNER: Final = "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
 ARTIFACT_SHA256: Final = direct_release.EXACT_ARTIFACT_SHA256
@@ -1405,7 +1405,7 @@ def _validate_attempt4_manifest(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     repository = repository_root.expanduser().resolve(strict=True)
     try:
-        payload = legacy_attempt.validate_manifest(
+        payload = attempt4_successor.validate_manifest(
             path,
             repository_root=repository,
             require_current_checkout=True,
@@ -1419,7 +1419,7 @@ def _validate_attempt4_manifest(
         or runtime.get("execution_commit") != ATTEMPT4_COMMIT
         or runtime.get("annotated_tag") != ATTEMPT4_TAG
         or not isinstance(evidence, Mapping)
-        or set(evidence) != set(legacy_attempt.PRE_ADMISSION_RECEIPT_ROLES)
+        or set(evidence) != set(attempt4_successor.stability.REQUIRED_ROLES)
         or "parity_layer2" not in evidence
         or "parity_layer4" not in evidence
     ):
@@ -1428,13 +1428,13 @@ def _validate_attempt4_manifest(
         path,
         label="historical Attempt4 manifest",
         canonical_field="canonical_execution_attempt_sha256",
-        expected_schema=legacy_attempt.SCHEMA_VERSION,
-        expected_status="compatible_runtime_frozen_not_activated",
+        expected_schema=attempt4_successor.MANIFEST_SCHEMA,
+        expected_status=attempt4_successor.MANIFEST_STATUS,
     )
     if rebound != payload:
         raise EvidenceCompletionError("historical Attempt4 manifest changed during validation")
     wrappers: dict[str, str] = {}
-    for role in legacy_attempt.PRE_ADMISSION_RECEIPT_ROLES:
+    for role in attempt4_successor.stability.REQUIRED_ROLES:
         row = evidence.get(role)
         if not isinstance(row, Mapping):
             raise EvidenceCompletionError(f"historical Attempt4 wrapper is missing: {role}")
@@ -1450,6 +1450,10 @@ def _validate_attempt4_manifest(
             "wrapper_canonical_sha256": wrappers,
             "layer2_canonical_sha256": wrappers["parity_layer2"],
             "layer4_canonical_sha256": wrappers["parity_layer4"],
+            "interpreter_equivalence_canonical_sha256": _require_sha256(
+                payload.get("interpreter_equivalence", {}).get("canonical_sha256"),
+                "historical Attempt4 interpreter equivalence",
+            ),
         }
     )
     return payload, binding

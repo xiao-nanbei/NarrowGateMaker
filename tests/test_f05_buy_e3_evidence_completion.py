@@ -69,6 +69,39 @@ def test_sell54_validator_accepts_legacy_projection_shape(
     assert observed_binding == binding
 
 
+def test_attempt4_anchor_requires_interpreter_equivalence_successor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "attempt4-successor.json"
+    manifest_path.write_text("{}\n", encoding="ascii")
+    roles = subject.attempt4_successor.stability.REQUIRED_ROLES
+    payload = {
+        "runtime_execution": {
+            "execution_commit": subject.ATTEMPT4_COMMIT,
+            "annotated_tag": subject.ATTEMPT4_TAG,
+        },
+        "pre_admission_evidence": {
+            role: {"canonical_sha256": f"{index + 1:064x}"}
+            for index, role in enumerate(roles)
+        },
+        "interpreter_equivalence": {"canonical_sha256": "f" * 64},
+    }
+    binding = _binding(manifest_path)
+    monkeypatch.setattr(
+        subject.attempt4_successor,
+        "validate_manifest",
+        lambda *args, **kwargs: payload,
+    )
+    monkeypatch.setattr(subject, "_binding", lambda *args, **kwargs: (payload, binding))
+
+    observed, observed_binding = subject._validate_attempt4_manifest(  # noqa: SLF001
+        manifest_path, repository_root=tmp_path
+    )
+
+    assert observed == payload
+    assert observed_binding["interpreter_equivalence_canonical_sha256"] == "f" * 64
+
+
 def _write(path: Path, payload: dict) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="ascii")
