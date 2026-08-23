@@ -552,6 +552,15 @@ def _nodeid_source_counts(nodeids: Sequence[str]) -> dict[str, int]:
     return counts
 
 
+def _lexical_python_executable(path: Path) -> Path:
+    """Keep the venv entrypoint path so Python activates that environment."""
+
+    executable = Path(os.path.abspath(os.fspath(path.expanduser())))
+    if not executable.is_file():
+        raise BuyE3DeploymentGateError("runtime regression Python is unavailable")
+    return executable
+
+
 def _numeric(value: str) -> int | float | str:
     try:
         numeric = float(value)
@@ -2209,10 +2218,8 @@ def run_runtime_regression_tests(
         or git["worktree_clean"] is not True
     ):
         raise BuyE3DeploymentGateError("runtime regression checkout is not frozen")
-    executable = (
-        python_executable.expanduser().resolve()
-        if python_executable is not None
-        else (root / ".venv/bin/python").resolve()
+    executable = _lexical_python_executable(
+        python_executable if python_executable is not None else root / ".venv/bin/python"
     )
     collect_command = [
         str(executable),
@@ -2385,7 +2392,9 @@ def validate_runtime_regression_receipt(
     expected_test_files = {path: _file_sha256(root / path) for path in RUNTIME_REGRESSION_TESTS}
     expected_sources = {path: _file_sha256(root / path) for path in RUNTIME_REGRESSION_SOURCES}
     expected_nodeid_source_counts = _nodeid_source_counts(nodeids_raw)
-    executable = Path(str(payload.get("python_executable", ""))).expanduser().resolve(strict=True)
+    executable = _lexical_python_executable(
+        Path(str(payload.get("python_executable", "")))
+    )
     expected_collect = [
         str(executable),
         "-m",

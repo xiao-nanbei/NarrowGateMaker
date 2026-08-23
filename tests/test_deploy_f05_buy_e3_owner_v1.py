@@ -3113,6 +3113,22 @@ def test_runtime_regression_receipt_freezes_nodeids_and_critical_sources(
         )
 
 
+def test_compatible_runtime_regression_preserves_lexical_venv_python(
+    tmp_path: Path,
+) -> None:
+    physical = tmp_path / "runtime/python3"
+    physical.parent.mkdir()
+    physical.write_text("physical interpreter\n", encoding="ascii")
+    lexical = tmp_path / ".venv/bin/python"
+    lexical.parent.mkdir(parents=True)
+    lexical.symlink_to(physical)
+
+    observed = subject.gate_v1._lexical_python_executable(lexical)
+
+    assert observed == lexical.absolute()
+    assert observed != physical.resolve()
+
+
 def _sell_54_case_receipt(path: Path, artifact_files: dict[str, str]) -> Path:
     gate_v1 = subject.gate_v1
     payload = {
