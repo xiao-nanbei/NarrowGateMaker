@@ -22,6 +22,16 @@ Terminology: `campaign MAE` always means Maximum Adverse Excursion. Only `predic
 
 Current operations: the live host is AWS Tokyo `<current-live-host>` (`<current-live-instance>`). The original AWS, intermediate Vultr, and reactivated-AWS predecessor are historical; query them only through their verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. See the [current host and data-routing contract](docs/live_host_and_historical_data_access_20260811.md). Fill queries are partitioned across four source-labelled host epochs and three explicit maintenance gaps. Rows from the current AWS host or any predecessor must never substitute for a missing neighboring epoch. Historical market, live, and latency evidence remains reusable for research and sensitivity only with its original host/provider label.
 
+## Stable Public Release
+
+The supported public software snapshot is the annotated Git tag `v0.1.0`, matching the package version in `pyproject.toml`. Pin that tag when reproducibility matters; `main` may contain newer governed work after the release:
+
+```bash
+git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+```
+
+Research reconstruction and execution-attempt tags are evidence identities, not software releases. A release tag does not include owner-side data, grant research or live authority, or certify the economics of any private artifact. See [Source, Research, and Execution Identities](docs/opensource/identity_and_release.md).
+
 ## TL;DR
 
 NarrowGate tries to make wrong maker conclusions harder to pass.

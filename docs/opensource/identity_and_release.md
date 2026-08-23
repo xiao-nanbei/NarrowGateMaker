@@ -4,6 +4,8 @@ Last materially modified: 2026-08-23
 
 Status: Current public naming and provenance guide.
 
+Current public software release: annotated tag `v0.1.0`, matching package version `0.1.0`. This tag names the tested public clone surface; it is distinct from every research reconstruction and execution-attempt tag.
+
 NarrowGateMaker uses several identities because source publication, scientific
 questions, execution attempts, and result bytes answer different audit questions.
 Do not collapse them into one version number or tag.

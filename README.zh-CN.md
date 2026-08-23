@@ -22,6 +22,16 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 
 当前运营入口：live 主机是 AWS Tokyo `<current-live-host>`（`<current-live-instance>`）。原 AWS、中间 Vultr 与再激活 AWS 前任均为历史主机，只能查询本地 `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` 校验归档。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。成交查询必须按四个 host epoch 和三个维护缺口分段；当前 AWS 与任一前任的数据不得互相补齐相邻 epoch 的缺口。历史行情、live 和延迟证据仍可用于研究、经验分布/敏感度与 source-aware panel，但必须保留原 host/provider 标签。
 
+## 稳定公开版本
+
+受支持的公开软件快照是 annotated Git tag `v0.1.0`，与 `pyproject.toml` 中的包版本一致。需要可复现环境时应固定该 tag；发布后 `main` 可能继续包含新的受治理改动：
+
+```bash
+git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+```
+
+研究重建 tag 和 execution-attempt tag 是证据身份，不是软件 release。软件 release 不包含 owner-side 数据，不授予研究或 live 权限，也不证明任何私有 artifact 的经济价值。参见[源码、研究与执行身份](docs/opensource/identity_and_release.md)。
+
 ## 摘要
 
 NarrowGate 的目标，是让错误的 maker 结论更难通过验证。
