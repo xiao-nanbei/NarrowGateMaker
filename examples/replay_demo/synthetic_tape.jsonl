@@ -1,0 +1,14 @@
+{"classification":"synthetic_non_economic","event":"metadata","schema_version":"narrowgate.synthetic_replay_tape.v1","seq":0,"symbol":"SYNTHETIC-BTCUSDC","ts_ms":1767225600000}
+{"ask_price":"100.10","ask_quantity":"0.020","bid_price":"100.00","bid_quantity":"0.015","event":"book","seq":1,"ts_ms":1767225601000}
+{"event":"submit","order_id":"demo-buy-001","price":"100.00","quantity":"0.010","seq":2,"side":"BUY","ts_ms":1767225602000}
+{"aggressor_side":"SELL","event":"trade","price":"100.00","quantity":"0.010","seq":3,"ts_ms":1767225603000}
+{"aggressor_side":"SELL","event":"trade","price":"100.00","quantity":"0.009","seq":4,"ts_ms":1767225604000}
+{"aggressor_side":"SELL","event":"trade","price":"100.00","quantity":"0.006","seq":5,"ts_ms":1767225605000}
+{"ask_price":"100.20","ask_quantity":"0.005","bid_price":"100.10","bid_quantity":"0.020","event":"book","seq":6,"ts_ms":1767225606000}
+{"event":"submit","order_id":"demo-sell-001","price":"100.20","quantity":"0.010","seq":7,"side":"SELL","ts_ms":1767225607000}
+{"aggressor_side":"BUY","event":"trade","price":"100.20","quantity":"0.015","seq":8,"ts_ms":1767225608000}
+{"ask_price":"100.30","ask_quantity":"0.020","bid_price":"100.20","bid_quantity":"0.010","event":"book","seq":9,"ts_ms":1767225609000}
+{"event":"submit","order_id":"demo-sell-002","price":"100.30","quantity":"0.010","seq":10,"side":"SELL","ts_ms":1767225610000}
+{"aggressor_side":"SELL","event":"trade","price":"100.20","quantity":"0.005","seq":11,"ts_ms":1767225611000}
+{"event":"cancel","order_id":"demo-sell-002","reason":"synthetic_end_of_session","seq":12,"ts_ms":1767225612000}
+{"event":"mark","price":"100.25","seq":13,"ts_ms":1767225613000}

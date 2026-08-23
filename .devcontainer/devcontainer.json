@@ -2,7 +2,10 @@
   "name": "NarrowGate",
   "build": {
     "dockerfile": "../Dockerfile",
-    "context": ".."
+    "context": "..",
+    "args": {
+      "NARROWGATE_INSTALL_TARGET": ".[all]"
+    }
   },
   "customizations": {
     "vscode": {
@@ -13,9 +16,15 @@
       ]
     }
   },
-  "postCreateCommand": "python -m pip install -e '.[dev]' && narrowgate doctor",
+  "mounts": [
+    "source=narrowgate-marketdata,target=/narrowgate/marketdata,type=volume",
+    "source=narrowgate-cache,target=/narrowgate/cache,type=volume"
+  ],
+  "postCreateCommand": "mkdir -p \"$NARROWGATE_DATA_ROOT\" \"$NARROWGATE_CACHE_ROOT\" && python -m pip install --no-deps --no-build-isolation -e . && narrowgate doctor",
   "remoteEnv": {
-    "NARROWGATE_DATA_ROOT": "/workspace/data",
-    "MM_DATA_ROOT": "/workspace/data"
+    "NARROWGATE_MARKETDATA_ROOT": "/narrowgate/marketdata",
+    "NARROWGATE_DATA_ROOT": "/narrowgate/marketdata/NarrowGate_BTCUSDC",
+    "NARROWGATE_CACHE_ROOT": "/narrowgate/cache",
+    "MM_DATA_ROOT": "/narrowgate/marketdata/NarrowGate_BTCUSDC"
   }
 }

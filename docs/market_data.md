@@ -1,6 +1,6 @@
 # Market Data
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-23
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](public_private_documentation_contract.md).
 
@@ -8,7 +8,7 @@ NarrowGate keeps large market data outside the git checkout. Every formal traini
 
 ```bash
 export NARROWGATE_ROOT="$PWD"
-export NARROWGATE_MARKETDATA_ROOT="${NARROWGATE_MARKETDATA_ROOT}"
+export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
 export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"

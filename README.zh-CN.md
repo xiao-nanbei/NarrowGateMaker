@@ -4,7 +4,7 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-23
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -21,6 +21,16 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 术语约定：仓库中的 `campaign MAE` 始终指 Maximum Adverse Excursion；预测或模型评估语境中的 `prediction MAE` / `model MAE` 才指 Mean Absolute Error（平均绝对误差）。两者不得混用。
 
 当前运营入口：live 主机是 AWS Tokyo `<current-live-host>`（`<current-live-instance>`）。原 AWS、中间 Vultr 与再激活 AWS 前任均为历史主机，只能查询本地 `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` 校验归档。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。成交查询必须按四个 host epoch 和三个维护缺口分段；当前 AWS 与任一前任的数据不得互相补齐相邻 epoch 的缺口。历史行情、live 和延迟证据仍可用于研究、经验分布/敏感度与 source-aware panel，但必须保留原 host/provider 标签。
+
+## 稳定公开版本
+
+受支持的公开软件快照是 annotated Git tag `v0.1.0`，与 `pyproject.toml` 中的包版本一致。需要可复现环境时应固定该 tag；发布后 `main` 可能继续包含新的受治理改动：
+
+```bash
+git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+```
+
+研究重建 tag 和 execution-attempt tag 是证据身份，不是软件 release。软件 release 不包含 owner-side 数据，不授予研究或 live 权限，也不证明任何私有 artifact 的经济价值。参见[源码、研究与执行身份](docs/opensource/identity_and_release.md)。
 
 ## 摘要
 
@@ -59,26 +69,36 @@ NarrowGate 的目标，是让错误的 maker 结论更难通过验证。
 
 ## 5 分钟快速开始
 
+NarrowGate 要求 Python 3.11 或更高版本；可执行文件不必恰好名为 `python3.11`。先检查本机已有解释器：
+
+```bash
+python3 --version
+```
+
+若该命令报告 Python 3.11 或更高版本，使用 `PYTHON=python3`。否则先安装受支持的解释器。默认 Quickstart 使用无需数据的基础 Demo 安装；research、live 与 contributor 依赖矩阵见[英文 README](README.md#5-minute-quickstart)。
+
 ```bash
 git clone <repo-url> narrowgate
 cd narrowgate
 
-python3.11 -m venv .venv
+PYTHON="${PYTHON:-python3}"
+"$PYTHON" -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
+"$PYTHON" -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e .
 
 narrowgate doctor
 narrowgate quote-demo
 python examples/order_level_score_demo.py
-python -m pytest tests/test_parameter_selection.py -q
+python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
 ```
 
 预期结果：
 
-- `narrowgate doctor` 输出 dependency 和 path 状态；
+- `narrowgate doctor` 输出 dependency 和 path 状态；基础 Demo 未安装的可选 research/C++ 依赖可能显示 `false`；
 - `narrowgate quote-demo` 计算一个无需数据的 quote-core 示例；
-- pytest smoke test 无需私有市场数据即可通过。
+- onboarding smoke test 无需 pytest、网络或私有市场数据即可通过。
 
 可选 C++ extension：
 
@@ -86,6 +106,10 @@ python -m pytest tests/test_parameter_selection.py -q
 python -m pip install -e cpp
 python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 ```
+
+## 正式无数据验证
+
+除 Quickstart smoke 外，公开仓库恰好有两条正式验证路径。Live 输入的唯一正式 dry-run 是 `bash live/run.sh dry-run`；它完成本地配置与完整模型合同校验后，在创建任何网络客户端、线程、引擎或订单路径之前退出，详见 [Live / Dry-Run Boundary](docs/ops/live_dry_run.md)。Synthetic replay demo 的唯一入口是 `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`；它在不读取私有数据、不取得经济或 live authority 的前提下，确定性验证 queue、fill、campaign、accounting 与 fail-closed evidence mechanics，详见 [Public Replay Demo](examples/replay_demo/README.md)。
 
 ## 本仓库适合做什么
 
@@ -151,7 +175,7 @@ flowchart LR
 
 ```bash
 export NARROWGATE_ROOT="$PWD"
-export NARROWGATE_MARKETDATA_ROOT="${NARROWGATE_MARKETDATA_ROOT}"
+export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
 export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
@@ -400,9 +424,7 @@ export NARROWGATE_LIVE_CONFIG="$PWD/docs/private/live_config.current.local.yaml"
 bash live/run.sh start
 ```
 
-`make deploy` 会拒绝部署标记为 `PUBLIC TEMPLATE` 的配置，使误部署公开模板 fail fast。它还会验证选定的 model bundle，并输出有效 P3 artifact identity；非零 P3 override 必须有显式的 `NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1` trial unlock。
-
-参见 [docs/ops/live_dry_run.md](docs/ops/live_dry_run.md)。
+`make deploy` 会拒绝标记为 `PUBLIC TEMPLATE` 的配置，并且只接受模型头与 bundle manifest 都明确授权 live、且由哈希绑定的模型包。公开 synthetic、`public_dry_run_only`、`research_only`、缺少授权或 `authority.live=false` 的 artifact 都会在任何远程同步前 fail closed。Preflight 还会输出有效 P3 artifact identity；非零 P3 override 必须有显式的 `NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1` trial unlock。
 
 ### 持久化 live runtime profile
 
@@ -462,7 +484,7 @@ narrowgate paths
 narrowgate quote-demo
 python examples/order_level_score_demo.py
 
-# Parameter coverage / racing dry-run
+# Parameter coverage / racing smoke
 python research/families/f01_fixed_parameter_racing/parameter_racing_sweep.py \
   --symbol BTCUSDC \
   --tag public_quick \
@@ -496,7 +518,7 @@ Deep probe 保留 v3 的 no-promotion 决策，但取代了其 queue mechanism �
 
 ## 测试与 CI
 
-本地检查：
+运行完整公开测试前先安装 `all` target。本地检查：
 
 ```bash
 python -m pytest -q

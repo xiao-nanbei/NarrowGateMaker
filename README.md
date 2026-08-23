@@ -4,7 +4,7 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-23
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -21,6 +21,16 @@ It is **not** a packaged trading bot and it does not ship a promoted live parame
 Terminology: `campaign MAE` always means Maximum Adverse Excursion. Only `prediction MAE` or `model MAE` means Mean Absolute Error. The two metrics must not be mixed.
 
 Current operations: the live host is AWS Tokyo `<current-live-host>` (`<current-live-instance>`). The original AWS, intermediate Vultr, and reactivated-AWS predecessor are historical; query them only through their verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. See the [current host and data-routing contract](docs/live_host_and_historical_data_access_20260811.md). Fill queries are partitioned across four source-labelled host epochs and three explicit maintenance gaps. Rows from the current AWS host or any predecessor must never substitute for a missing neighboring epoch. Historical market, live, and latency evidence remains reusable for research and sensitivity only with its original host/provider label.
+
+## Stable Public Release
+
+The supported public software snapshot is the annotated Git tag `v0.1.0`, matching the package version in `pyproject.toml`. Pin that tag when reproducibility matters; `main` may contain newer governed work after the release:
+
+```bash
+git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+```
+
+Research reconstruction and execution-attempt tags are evidence identities, not software releases. A release tag does not include owner-side data, grant research or live authority, or certify the economics of any private artifact. See [Source, Research, and Execution Identities](docs/opensource/identity_and_release.md).
 
 ## TL;DR
 
@@ -59,26 +69,64 @@ Only Binance USD-M `BTCUSDC` is an execution market. All reference connectors ar
 
 ## 5-Minute Quickstart
 
+NarrowGate requires Python 3.11 or newer; the executable does not need to be named `python3.11`. Check the interpreter already on your machine first:
+
+```bash
+python3 --version
+```
+
+If that command exists and reports Python 3.11 or newer, use `PYTHON=python3`. If it is missing or older, install a supported interpreter before creating the virtual environment:
+
+| Platform | Installation entry point | Interpreter for the commands below |
+| --- | --- | --- |
+| macOS with [Homebrew](https://brew.sh/) | `brew install python@3.11` | `PYTHON="$(brew --prefix python@3.11)/bin/python3.11"` |
+| Ubuntu 24.04+ or Debian 12+ | `sudo apt-get update && sudo apt-get install -y python3 python3-venv` | `PYTHON=python3` |
+| Other or older Linux distributions | Follow the official [pyenv installation guide](https://github.com/pyenv/pyenv#installation), then run `pyenv install 3.11 && pyenv local 3.11` | `PYTHON="$(pyenv which python)"` |
+
+The [Python downloads page](https://www.python.org/downloads/) is the fallback for macOS without Homebrew; after using its installer, set `PYTHON=python3`. Verify the selected interpreter before continuing:
+
+```bash
+"$PYTHON" -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
+```
+
+Choose one installation target. Extras are additive to the base package:
+
+| Use case | Install command inside the virtual environment | What it installs |
+| --- | --- | --- |
+| Demo | `python -m pip install -e .` | Base NumPy/Pandas/PyYAML dependencies, the CLI, and no-data examples |
+| Public data acquisition | `python -m pip install -e ".[data]"` | Demo dependencies plus Parquet, HTTP archive, and zstd tooling for public download/normalization commands |
+| Research | `python -m pip install -e ".[research]"` | Demo dependencies plus Parquet, scientific, ML, and compressed-data tooling |
+| Live integration | `python -m pip install -e ".[live]"` | Demo dependencies plus public REST/WebSocket connector libraries; the tracked live config remains a non-deployable template |
+| All / contributor | `python -m pip install -e ".[all]"` | Research and live dependencies plus pytest and Ruff for the complete public test suite |
+
+The `dev` extra contains only pytest and Ruff. Combine it explicitly with another target when needed, or use `all` for contributor work. The authenticated CryptoHFTData client is deliberately outside `all`: `python -m pip install -e ".[provider-cryptohft]"` adds only that provider client, while an actual order-book acquisition environment should combine it with the format/transport layer as `python -m pip install -e ".[data,provider-cryptohft]"`. Installing a client does not grant a provider account, a data license, or research eligibility.
+
+[`requirements.txt`](requirements.txt) is a legacy runtime/provider compatibility superset equivalent to the base package plus `.[data,research,live,provider-cryptohft]`; it intentionally excludes pytest and Ruff. New source checkouts should use the narrower extras above so a demo, public downloader, researcher, or live-integration contributor receives only the dependency surface they selected.
+
+The default quickstart is the data-free **Demo** target:
+
 ```bash
 git clone <repo-url> narrowgate
 cd narrowgate
 
-python3.11 -m venv .venv
+PYTHON="${PYTHON:-python3}"
+"$PYTHON" -c 'import sys; assert sys.version_info >= (3, 11), sys.version'
+"$PYTHON" -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[dev]"
+python -m pip install -e .
 
 narrowgate doctor
 narrowgate quote-demo
 python examples/order_level_score_demo.py
-python -m pytest tests/test_parameter_selection.py -q
+python -m unittest discover -s tests -p 'test_public_onboarding.py' -v
 ```
 
 Expected result:
 
-- `narrowgate doctor` prints dependency and path status.
+- `narrowgate doctor` prints dependency and path status; optional research/C++ dependencies may report `false` in a Demo installation.
 - `narrowgate quote-demo` computes a no-data quote-core example.
-- the pytest smoke test passes without private market data.
+- the onboarding smoke test passes without pytest, network access, or private market data.
 
 For the optional C++ extension:
 
@@ -86,6 +134,14 @@ For the optional C++ extension:
 python -m pip install -e cpp
 python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 ```
+
+## Official No-Data Validation
+
+The public repository has exactly two canonical validation routes beyond the Quickstart smoke. The formal live-input dry-run is `bash live/run.sh dry-run`; it validates local configuration and the complete model contract, then exits before any network client, thread, engine, or order path exists. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). The synthetic replay demo is `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`; it exercises deterministic queue, fill, campaign, accounting, and fail-closed evidence mechanics without private data or economic authority. See the [Public Replay Demo](examples/replay_demo/README.md).
+
+## Participate
+
+Start with [Open-source navigation](docs/opensource/README.md), follow [Contributing](CONTRIBUTING.md) for ordinary and research changes, and use the [Security policy](SECURITY.md) for vulnerabilities. The [one-day data pipeline](docs/opensource/one_day_data_pipeline.md) shows the honest boundary between public trade archives, optional authenticated L2, diagnostic replay, and formal evidence. Maintainers should configure the exact required checks documented under [Branch protection](docs/dev/branch_protection.md).
 
 ## What This Repo Is For
 
@@ -151,7 +207,7 @@ Large data lives outside the git checkout:
 
 ```bash
 export NARROWGATE_ROOT="$PWD"
-export NARROWGATE_MARKETDATA_ROOT="${NARROWGATE_MARKETDATA_ROOT}"
+export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
 export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
@@ -401,9 +457,7 @@ export NARROWGATE_LIVE_CONFIG="$PWD/docs/private/live_config.current.local.yaml"
 bash live/run.sh start
 ```
 
-`make deploy` refuses to deploy a config marked `PUBLIC TEMPLATE`, so accidental public-template deployment fails fast. It also validates the selected model bundle and prints the effective P3 artifact identity; a nonzero P3 override requires the explicit `NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1` trial unlock.
-
-See [docs/ops/live_dry_run.md](docs/ops/live_dry_run.md).
+`make deploy` refuses a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts therefore fail closed before any remote sync. The preflight also prints the effective P3 artifact identity; a nonzero P3 override requires the explicit `NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1` trial unlock.
 
 ### Persisted live runtime profiles
 
@@ -463,7 +517,7 @@ narrowgate paths
 narrowgate quote-demo
 python examples/order_level_score_demo.py
 
-# Parameter coverage / racing dry-run
+# Parameter coverage / racing smoke
 python research/families/f01_fixed_parameter_racing/parameter_racing_sweep.py \
   --symbol BTCUSDC \
   --tag public_quick \
@@ -488,7 +542,7 @@ Real replay/training commands require retained good-day market data under `MM_DA
 
 ## Testing and CI
 
-Local checks:
+Install the `all` target before running the complete public suite. Local checks:
 
 ```bash
 python -m pytest -q
@@ -507,11 +561,17 @@ See [docs/dev/ci.md](docs/dev/ci.md).
 ## Docker / Devcontainer
 
 ```bash
+# Base Demo image.
 docker build -t narrowgate .
 docker run --rm narrowgate
+
+# Optional image matching another installation-matrix row.
+docker build \
+  --build-arg NARROWGATE_INSTALL_TARGET='.[research]' \
+  -t narrowgate-research .
 ```
 
-VS Code users can open the repository in the included devcontainer.
+VS Code users can open the repository in the included devcontainer. It builds the `all` target, rebinds the editable install to the mounted checkout without downloading dependencies again, and keeps market data and caches on named volumes outside the source tree.
 
 ## Research Workflow
 

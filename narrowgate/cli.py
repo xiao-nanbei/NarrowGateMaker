@@ -143,6 +143,20 @@ def cmd_paths(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay_demo(args: argparse.Namespace) -> int:
+    """Run the deterministic, non-economic public replay demonstration."""
+    from scripts import narrowgate_replay_demo
+
+    forwarded: list[str] = []
+    if args.output_dir is not None:
+        forwarded.extend(("--output-dir", str(args.output_dir)))
+    if args.contract is not None:
+        forwarded.extend(("--contract", str(args.contract)))
+    if args.verify_reference:
+        forwarded.append("--verify-reference")
+    return int(narrowgate_replay_demo.main(forwarded))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="narrowgate", description="NarrowGate public CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -155,6 +169,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     paths = sub.add_parser("paths", help="print resolved repo/data/config paths")
     paths.set_defaults(func=cmd_paths)
+
+    replay_demo = sub.add_parser(
+        "replay-demo",
+        help="run the offline synthetic queue-to-campaign replay",
+    )
+    replay_demo.add_argument(
+        "--output-dir",
+        type=Path,
+        help="directory for deterministic summary, trace, and receipt artifacts",
+    )
+    replay_demo.add_argument(
+        "--contract",
+        type=Path,
+        help="alternate hash-bound synthetic fixture contract",
+    )
+    replay_demo.add_argument(
+        "--verify-reference",
+        action="store_true",
+        help="require byte equality with the distributed reference output",
+    )
+    replay_demo.set_defaults(func=cmd_replay_demo)
 
     return parser
 

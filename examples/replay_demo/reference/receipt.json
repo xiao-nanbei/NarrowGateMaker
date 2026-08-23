@@ -1,0 +1,124 @@
+{
+  "artifacts": {
+    "summary": {
+      "canonical_sha256": "05aa58490cb72b1ba39fc0a50af337e25e90364434379c4255efe1783b516aca",
+      "logical_path": "summary.json",
+      "sha256": "668b135b64cb9fc8a415e5a3e956590132804c98e8fc1269e27b06b5b73a04d1"
+    },
+    "trace": {
+      "logical_path": "trace.jsonl",
+      "schema_version": "narrowgate_replay_demo_trace.v1",
+      "sha256": "f126c1c614674065bde1c2cbefaa7fe0cc16c5a50bee0bc1c0ab2905b8db985c"
+    }
+  },
+  "campaign_terminal_value_usdc": "0.00200000",
+  "canonical_receipt_sha256": "2dfe5e916ae1ac7dc6b5ecb196d17485d36f4f6a49d6b4c580ad74203e6df62c",
+  "denominators": {
+    "campaigns": {
+      "closed": 1,
+      "open_at_terminal": 0,
+      "opened": 1
+    },
+    "events": {
+      "book": 3,
+      "mark": 1,
+      "market": 9,
+      "order_lifecycle": 4,
+      "tape_records": 14,
+      "trade": 5
+    },
+    "fill_opportunities": {
+      "eligible": 4,
+      "fill_events": 3,
+      "filled_quantity_btc": "0.02000000",
+      "with_fill": 3,
+      "without_fill": 1
+    },
+    "orders": {
+      "active_at_terminal": 0,
+      "canceled": 1,
+      "canceled_unfilled": 1,
+      "fill_eligible": 3,
+      "filled": 2,
+      "submitted": 3,
+      "terminal": 3,
+      "with_trade_opportunity": 2
+    }
+  },
+  "frozen_generated_at_utc": "2026-08-23T00:00:00Z",
+  "gate": {
+    "economic_evidence_eligible": false,
+    "live_action_eligible": false,
+    "passed": true,
+    "promotion_eligible": false,
+    "status": "passed_demo_mechanics_only"
+  },
+  "identity": {
+    "accounting_contract_version": "continuous_accounting_contract.v1",
+    "code": {
+      "bundle_sha256": "816b08377a643058909f67af3b8142b8fa85067c9d3bf5bd2d219e623efd72c3",
+      "sources": [
+        {
+          "path": "scripts/narrowgate_replay_demo.py",
+          "sha256": "64f3d08a1cfa83cede550aff73f2fbbd3cb70a063025db15a0b803ce57810f26"
+        },
+        {
+          "path": "models/__init__.py",
+          "sha256": "545c79574c158ae316e9894ad53374dff6a8fcdc4f54663c9e294a941b0897a6"
+        },
+        {
+          "path": "models/replay/__init__.py",
+          "sha256": "806aa0694d9bc85cf3d9d5e0a241f073f42d8ba4a61c817babae1449684481e3"
+        },
+        {
+          "path": "models/replay/continuous_accounting.py",
+          "sha256": "ad04ea1ca8557bae1c58a4b16ce0b0d9bfb4867754860141960a5a5f387893e6"
+        },
+        {
+          "path": "models/replay/continuous_calendar.py",
+          "sha256": "9321f022c8cc33eae5e65306c5d73252646831d60383e546a4784242d97e8a71"
+        },
+        {
+          "path": "models/replay/replay_state_checkpoint.py",
+          "sha256": "4189252229cca0c2dbced25ce5b208acd5d4f09fdd790274a5b9f3466c5d4453"
+        },
+        {
+          "path": "data/__init__.py",
+          "sha256": "b2078be97ed70b42b0d6239bddaf20ca3591173261cb1be6cfc267d8bd290e8f"
+        },
+        {
+          "path": "data/quality/__init__.py",
+          "sha256": "ea8e0f2e54531a11cdf063409d504fad494c1575fd87364bea457f374be79346"
+        },
+        {
+          "path": "data/quality/calendar_gap_manifest.py",
+          "sha256": "b84d53d01d73b859897066a74e7503594cb776a745cdc9f895ee8dab788d5a05"
+        },
+        {
+          "path": "data_paths.py",
+          "sha256": "882eeeb1109dd7220f6f3bc831cb960c3a51f307643abd0a4c7bce1c4b1fdf85"
+        }
+      ],
+      "version": "narrowgate_replay_demo_engine.v1"
+    },
+    "contract": {
+      "artifact_id": "public_replay_demo_contract",
+      "sha256": "f5ec7f12d7ee92614428003daa6ad2ba0f0d91cef981577b2875fa63c65a8ec7",
+      "version": "narrowgate_replay_demo_contract.v1"
+    },
+    "state_contract_version": "continuous_replay_state.v1",
+    "tape": {
+      "artifact_id": "public_synthetic_queue_campaign_v1",
+      "schema_version": "narrowgate.synthetic_replay_tape.v1",
+      "sha256": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125"
+    }
+  },
+  "permissions": {
+    "external_order_submission": false,
+    "live_runtime_import": false,
+    "network_access": false,
+    "private_evidence_read": false,
+    "runtime_clock_read": false
+  },
+  "schema_version": "narrowgate_replay_demo_receipt.v1"
+}

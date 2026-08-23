@@ -139,11 +139,12 @@ DEPLOY_REMOVED_DIRS := \
 	research_11_system_engineering \
 	research_shared
 
-deploy:
-	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running deploy." >&2; exit 2)
+deploy-preflight:
 	@test -f "$(LIVE_CONFIG)" || (echo "Set NARROWGATE_LIVE_CONFIG to a private deploy config file." >&2; exit 2)
-	@! grep -q "PUBLIC TEMPLATE" "$(LIVE_CONFIG)" || (echo "$(LIVE_CONFIG) is a public template; set NARROWGATE_LIVE_CONFIG to a private live config before deploy." >&2; exit 2)
 	@$(PYTHON) scripts/preflight_live_deploy.py --config "$(LIVE_CONFIG)"
+
+deploy: deploy-preflight
+	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running deploy." >&2; exit 2)
 	@echo "Syncing code/models to EC2 without restarting live engine..."
 	@echo "Config: $(LIVE_CONFIG)"
 	@echo "Model dir: $(DEPLOY_MODEL_DIR)"
@@ -160,8 +161,7 @@ deploy:
 	done
 	@echo "Synced. Live engine was not restarted; reload/restart manually only after explicit confirmation."
 
-deploy-dry:
-	@$(PYTHON) scripts/preflight_live_deploy.py --config "$(LIVE_CONFIG)"
+deploy-dry: deploy-preflight
 	@echo "Files to deploy:"
 	@for f in $(DEPLOY_FILES); do echo "  $$f"; done
 	@echo "Files removed after sync:"
@@ -184,4 +184,4 @@ clean-logs:
 	train train-tune platform-describe \
 	backtest backtest-sweep backtest-as backtest-tick \
 	run stop restart status logs reload \
-	deploy deploy-dry clean clean-logs
+	deploy-preflight deploy deploy-dry clean clean-logs

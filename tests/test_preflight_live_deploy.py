@@ -17,11 +17,44 @@ from strategy.model_contract import (
     REQUIRED_LABEL_SEMANTICS_VERSION,
     REQUIRED_LABEL_WINDOW_SEMANTICS,
     REQUIRED_MODEL_HEADS,
+    validate_model_bundle,
 )
 
 EXAMPLE_REMOTE_COLLECTION_ROOT = "/srv/example-live/formal_collection"
 EXAMPLE_STORAGE_ROOT = "/srv/example-storage"
 PUBLIC_DRY_RUN_BUNDLE = Path("examples/public_dry_run_model_bundle")
+
+
+def _write_live_authorization(model_dir: Path) -> None:
+    tree_hashes = {
+        head: hashlib.sha256((model_dir / f"{head}.txt").read_bytes()).hexdigest()
+        for head in REQUIRED_MODEL_HEADS
+    }
+    metadata_hashes = {
+        head: hashlib.sha256(
+            (model_dir / f"{head}_meta.json").read_bytes()
+        ).hexdigest()
+        for head in REQUIRED_MODEL_HEADS
+    }
+    authorization = {
+        "schema_version": "narrowgate.owner_authorized_live_canary.v1",
+        "training_experiment_id": "deploy-fixture-v1",
+        "owner_authorized": True,
+        "active_live_inference_authorized": True,
+        "baseline_promotion_authorized": False,
+        "authority": {"live": True},
+        "derived_bundle": {
+            "model_tree_sha256": tree_hashes,
+            "head_metadata_sha256": metadata_hashes,
+            "p3_sha256": hashlib.sha256(
+                (model_dir / "fill_prob_params.json").read_bytes()
+            ).hexdigest(),
+        },
+    }
+    (model_dir / "live_canary_authorization.json").write_text(
+        json.dumps(authorization),
+        encoding="utf-8",
+    )
 
 
 def _write_fixture(
@@ -61,6 +94,8 @@ def _write_fixture(
             "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
             "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
             "feature_manifest_sha256": "fixture-manifest",
+            "training_experiment_id": "deploy-fixture-v1",
+            "promotion_authority": "owner_authorized_live_canary",
         }
         if head.startswith("vol_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
@@ -68,6 +103,7 @@ def _write_fixture(
             json.dumps(metadata),
             encoding="utf-8",
         )
+    _write_live_authorization(model_dir)
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         yaml.safe_dump(
@@ -106,9 +142,11 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     assert identity["use_bar_pricing"] is False
     assert identity["max_exec_book_visible_age_s"] == pytest.approx(5.0)
     assert identity["max_exec_book_source_lag_s"] == pytest.approx(5.0)
+    assert identity["model_promotion_authority"] == "owner_authorized_live_canary"
+    assert identity["model_live_authorized"] is True
 
 
-def test_public_dry_run_bundle_is_hash_bound_and_preflight_valid() -> None:
+def test_public_dry_run_bundle_is_hash_bound_but_not_deploy_authorized() -> None:
     root = Path(__file__).resolve().parents[1]
     bundle = root / PUBLIC_DRY_RUN_BUNDLE
     manifest = json.loads(
@@ -122,15 +160,150 @@ def test_public_dry_run_bundle_is_hash_bound_and_preflight_valid() -> None:
         payload = path.read_bytes()
         assert len(payload) == entry["bytes"]
         assert hashlib.sha256(payload).hexdigest() == entry["sha256"]
+    assert sorted(validate_model_bundle(bundle)) == sorted(REQUIRED_MODEL_HEADS)
 
-    identity = validate_deploy_config(
-        root / "examples/live_dry_run_config.yaml",
-        root,
+    with pytest.raises(ValueError, match="public_dry_run_only"):
+        validate_deploy_config(
+            root / "examples/live_dry_run_config.yaml",
+            root,
+        )
+
+
+def test_formal_public_dry_run_config_cannot_pass_deploy_preflight() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    with pytest.raises(ValueError):
+        validate_deploy_config(root / "live/formal_dry_run_public.yaml", root)
+
+
+def test_public_dry_run_config_is_rejected_without_text_markers(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "examples/live_dry_run_config.yaml").read_text(encoding="utf-8")
+    config = yaml.safe_load(source)
+    config["ml"]["model_dir"] = str((root / PUBLIC_DRY_RUN_BUNDLE).resolve())
+    config_path = tmp_path / "renamed.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="public_dry_run_only"):
+        validate_deploy_config(config_path, root)
+
+
+def test_tracked_public_template_marker_fails_before_deploy_validation() -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    with pytest.raises(ValueError, match="marked PUBLIC TEMPLATE"):
+        validate_deploy_config(root / "live/config.yaml", root)
+
+
+@pytest.mark.parametrize(
+    ("promotion_authority", "message"),
+    [
+        (None, "lacks explicit live promotion_authority"),
+        ("public_dry_run_only", "public_dry_run_only"),
+        ("research_only", "research_only"),
+    ],
+)
+def test_preflight_rejects_non_live_model_authority(
+    tmp_path: Path,
+    promotion_authority: str | None,
+    message: str,
+) -> None:
+    config_path = _write_fixture(tmp_path)
+    model_dir = tmp_path / "models" / "bundle"
+    for head in REQUIRED_MODEL_HEADS:
+        metadata_path = model_dir / f"{head}_meta.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if promotion_authority is None:
+            metadata.pop("promotion_authority")
+        else:
+            metadata["promotion_authority"] = promotion_authority
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=message):
+        validate_deploy_config(config_path, tmp_path)
+
+
+def test_preflight_rejects_missing_live_authorization(tmp_path: Path) -> None:
+    config_path = _write_fixture(tmp_path)
+    authorization_path = (
+        tmp_path / "models" / "bundle" / "live_canary_authorization.json"
+    )
+    authorization_path.unlink()
+
+    with pytest.raises(ValueError, match="requires live_canary_authorization.json"):
+        validate_deploy_config(config_path, tmp_path)
+
+
+def test_preflight_rejects_explicit_authority_live_false(tmp_path: Path) -> None:
+    config_path = _write_fixture(tmp_path)
+    authorization_path = (
+        tmp_path / "models" / "bundle" / "live_canary_authorization.json"
+    )
+    authorization = json.loads(authorization_path.read_text(encoding="utf-8"))
+    authorization["authority"]["live"] = False
+    authorization_path.write_text(json.dumps(authorization), encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"authority\.live=true"):
+        validate_deploy_config(config_path, tmp_path)
+
+
+def test_preflight_rejects_bundle_manifest_live_false(tmp_path: Path) -> None:
+    config_path = _write_fixture(tmp_path)
+    manifest_path = tmp_path / "models" / "bundle" / "fixture_manifest.json"
+    manifest_path.write_text(
+        json.dumps({"synthetic": False, "authority": {"live": False}}),
+        encoding="utf-8",
     )
 
-    assert identity["ml_enabled"] is False
-    assert identity["dynamic_fill_hazard_action_enabled"] is False
-    assert identity["validated_model_heads"] == sorted(REQUIRED_MODEL_HEADS)
+    with pytest.raises(ValueError, match=r"authority\.live=true"):
+        validate_deploy_config(config_path, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "message"),
+    [
+        ("dir_10s.txt", "model hash mismatch"),
+        ("dir_10s_meta.json", "metadata hash mismatch"),
+        ("fill_prob_params.json", "P3 hash mismatch"),
+    ],
+)
+def test_preflight_rejects_hash_bound_bundle_tamper(
+    tmp_path: Path,
+    relative_path: str,
+    message: str,
+) -> None:
+    config_path = _write_fixture(tmp_path)
+    artifact_path = tmp_path / "models" / "bundle" / relative_path
+    artifact_path.write_bytes(artifact_path.read_bytes() + b"\n")
+
+    with pytest.raises(ValueError, match=message):
+        validate_deploy_config(config_path, tmp_path)
+
+
+def test_deploy_targets_share_structural_preflight() -> None:
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+
+    assert "deploy: deploy-preflight" in makefile
+    assert "deploy-dry: deploy-preflight" in makefile
+    assert "scripts/preflight_live_deploy.py --config" in makefile
+
+
+def test_ci_pytest_failure_remains_a_job_failure_with_summary() -> None:
+    root = Path(__file__).resolve().parents[1]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    )
+    steps = workflow["jobs"]["python"]["steps"]
+    pytest_step = next(step for step in steps if step.get("id") == "pytest")
+    summary_step = next(
+        step for step in steps if step.get("name") == "Publish failing pytest node IDs"
+    )
+
+    assert pytest_step.get("continue-on-error") is not True
+    assert "failure()" in summary_step["if"]
+    assert "steps.pytest.outcome == 'failure'" in summary_step["if"]
+    assert "scripts/report_pytest_failures.py" in summary_step["run"]
 
 
 def test_preflight_requires_explicit_quote_snapshot_clock_limits(

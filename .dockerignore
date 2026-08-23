@@ -1,11 +1,62 @@
+# Version-control and local tooling state never belongs in a build context.
 .git
+.github
+.devcontainer
 .pytest_cache
+.ruff_cache
+.mypy_cache
+.pyright
 .venv
-__pycache__
-*.pyc
-docs/private
+.venv-active
+**/__pycache__
+*.py[cod]
+*.egg-info
+build
+dist
+
+# Credentials and machine-local configuration.
+.env
+.env.*
+**/.env
+**/.env.*
+**/*.local.yaml
+**/*.current.local.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.local.json
+secrets.local.json
+secrets.local.yaml
+
+# Runtime output, caches, and non-public model bundles.
 logs
+logs/**
+**/logs
+**/logs/**
 results
+results/**
+**/results
+**/results/**
 models/saved*
-data/*
+models/saved*/**
+*.log
+*.partial
+*.tmp
+
+# data/ is a Python package, not a Docker data root. Keep only its tracked
+# source/documentation surface and exclude every possible local data payload.
+data/**
+!data/
 !data/*.py
+!data/README.md
+!data/quality/
+!data/quality/*.py
+!data/quality/**/*.py
+
+# Keep private roots last. Dockerignore uses last-match-wins semantics, so no
+# present or future source re-include above may admit a nested private file.
+private
+private/**
+**/private
+**/private/**

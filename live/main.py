@@ -17,8 +17,8 @@ Usage:
   # 正式网
   BINANCE_API_KEY=xxx BINANCE_API_SECRET=yyy python live/main.py --live
 
-  # 模拟模式 (不发送真实订单)
-  python live/main.py --dry-run
+  # 正式本地 dry-run (校验后退出，不创建网络客户端或订单路径)
+  python live/main.py --dry-run --config live/formal_dry_run_public.yaml
 """
 
 import argparse
@@ -66,12 +66,160 @@ CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_STRICT",
 )
 
+FORMAL_DRY_RUN_SCHEMA = "narrowgate.live_dry_run.v1"
+DEFAULT_DRY_RUN_TIMEOUT_S = 30.0
+DRY_RUN_TIMEOUT_EXIT_CODE = 124
+
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
     "market_fusion.py",
     "models/replay/baseline_epoch_manifest.py",
     "models/replay/prospective_baseline_epoch.py",
 )
+
+
+class FormalDryRunTimeout(TimeoutError):
+    """Raised when local validation exceeds its explicit deadline."""
+
+
+def _positive_finite_seconds(value: str) -> float:
+    try:
+        seconds = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("timeout must be a number") from exc
+    if not math.isfinite(seconds) or seconds <= 0.0:
+        raise argparse.ArgumentTypeError(
+            "timeout must be finite and greater than zero"
+        )
+    return seconds
+
+
+def _configured_model_dir(cfg) -> Path:
+    raw = str(getattr(cfg.ml, "model_dir", "") or "").strip()
+    if not raw:
+        raise ValueError("ml.model_dir must identify a model bundle")
+    model_dir = Path(raw).expanduser()
+    if not model_dir.is_absolute():
+        model_dir = ROOT / model_dir
+    return model_dir.resolve()
+
+
+def run_formal_dry_run(
+    config_path: Path,
+    *,
+    timeout_s: float = DEFAULT_DRY_RUN_TIMEOUT_S,
+    output=None,
+) -> int:
+    """Validate local startup inputs under a deadline and emit one JSON result."""
+
+    if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+        raise ValueError("dry-run timeout must be finite and greater than zero")
+
+    if output is None:
+        output = sys.stdout
+    started = time.monotonic()
+    summary = {
+        "schema_version": FORMAL_DRY_RUN_SCHEMA,
+        "mode": "formal_dry_run",
+        "status": "failed",
+        "exit_code": 1,
+        "timeout_s": float(timeout_s),
+        "termination": "validation_failed",
+        "config": {"path": str(Path(config_path).expanduser())},
+        "safety": {
+            "network_allowed": False,
+            "exchange_clients_created": 0,
+            "threads_started": 0,
+            "order_path_entered": False,
+            "orders_submitted": 0,
+        },
+        "authority": {
+            "scope": "local_validation_only",
+            "live_trading_authorized": False,
+            "remote_deploy_authorized": False,
+        },
+    }
+
+    def deadline_exceeded(_signum, _frame):
+        raise FormalDryRunTimeout(
+            f"formal dry-run exceeded {float(timeout_s):g}s deadline"
+        )
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+    deadline_armed = False
+    exit_code = 1
+    try:
+        signal.signal(signal.SIGALRM, deadline_exceeded)
+        signal.setitimer(signal.ITIMER_REAL, timeout_s)
+        deadline_armed = True
+
+        resolved_config = Path(config_path).expanduser().resolve()
+        cfg = load_config(resolved_config)
+
+        from strategy.model_contract import (
+            REQUIRED_FEATURE_DAG_ID,
+            REQUIRED_FEATURE_DAG_SHA256,
+            REQUIRED_MODEL_HEADS,
+            validate_model_bundle,
+        )
+
+        model_dir = _configured_model_dir(cfg)
+        model_metadata = validate_model_bundle(model_dir)
+        p3_path = model_dir / "fill_prob_params.json"
+        if not p3_path.is_file():
+            raise ValueError(
+                f"model bundle is missing fill_prob_params.json: {p3_path}"
+            )
+
+        summary.update(
+            {
+                "status": "passed",
+                "exit_code": 0,
+                "termination": "completed",
+                "config": {
+                    "path": str(resolved_config),
+                    "sha256": hashlib.sha256(
+                        resolved_config.read_bytes()
+                    ).hexdigest(),
+                },
+                "model_contract": {
+                    "model_dir": str(model_dir),
+                    "required_head_count": len(REQUIRED_MODEL_HEADS),
+                    "validated_head_count": len(model_metadata),
+                    "validated_heads": sorted(model_metadata),
+                    "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
+                    "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+                    "p3_path": str(p3_path),
+                    "p3_sha256": hashlib.sha256(p3_path.read_bytes()).hexdigest(),
+                    "ml_enabled": bool(cfg.ml.enabled),
+                },
+            }
+        )
+        exit_code = 0
+    except FormalDryRunTimeout as exc:
+        exit_code = DRY_RUN_TIMEOUT_EXIT_CODE
+        summary.update(
+            {
+                "status": "timed_out",
+                "exit_code": exit_code,
+                "termination": "deadline_exceeded",
+                "error": {"type": type(exc).__name__, "message": str(exc)},
+            }
+        )
+    except Exception as exc:
+        summary["error"] = {"type": type(exc).__name__, "message": str(exc)}
+    finally:
+        if deadline_armed:
+            signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+    summary["elapsed_ms"] = round((time.monotonic() - started) * 1000.0, 3)
+    print(
+        json.dumps(summary, sort_keys=True, separators=(",", ":")),
+        file=output,
+        flush=True,
+    )
+    return exit_code
 
 
 def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
@@ -449,10 +597,12 @@ def start_engine_with_prospective_collection(
 
 def create_rest_client(cfg, dry_run=False):
     """Create Binance Futures REST client."""
-    from binance.um_futures import UMFutures
-
     if dry_run:
-        return DryRunClient(cfg)
+        raise ValueError(
+            "legacy simulated REST dry-run was removed; use live/main.py --dry-run"
+        )
+
+    from binance.um_futures import UMFutures
 
     base_url = ("https://testnet.binancefuture.com"
                 if cfg.api.testnet
@@ -487,98 +637,40 @@ def resolve_logging_paths(cfg):
             setattr(cfg.logging, field, str(ROOT / value))
 
 
-class DryRunClient:
-    """Mock REST client for dry-run mode — logs all orders without sending."""
-
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self._order_id = 100000
-        self._logger = logging.getLogger("dry_run")
-
-    def new_order(self, **kwargs):
-        self._order_id += 1
-        self._logger.info(f"[DRY] NEW_ORDER {kwargs}")
-        return {
-            "orderId": self._order_id,
-            "clientOrderId": kwargs.get("newClientOrderId", ""),
-            "status": "NEW",
-        }
-
-    def cancel_order(self, **kwargs):
-        self._logger.info(f"[DRY] CANCEL_ORDER {kwargs}")
-        return {"status": "CANCELED"}
-
-    def cancel_open_orders(self, **kwargs):
-        self._logger.info(f"[DRY] CANCEL_ALL {kwargs}")
-        return []
-
-    def get_orders(self, **kwargs):
-        self._logger.info(f"[DRY] GET_OPEN_ORDERS {kwargs}")
-        return []
-
-    def query_order(self, **kwargs):
-        self._logger.info(f"[DRY] QUERY_ORDER {kwargs}")
-        return {
-            "symbol": self.cfg.symbol,
-            "clientOrderId": kwargs.get("origClientOrderId", ""),
-            "orderId": self._order_id,
-            "status": "NEW",
-            "side": "BUY",
-            "price": "0",
-            "origQty": "0",
-            "executedQty": "0",
-            "avgPrice": "0",
-            "updateTime": int(time.time() * 1000.0),
-        }
-
-    def get_position_risk(self, **kwargs):
-        return [{"symbol": self.cfg.symbol,
-                 "positionAmt": "0", "entryPrice": "0"}]
-
-    def account(self, **kwargs):
-        return {"totalWalletBalance": "10000", "availableBalance": "10000"}
-
-    def new_listen_key(self):
-        return {"listenKey": "dry_run_listen_key_placeholder"}
-
-    def renew_listen_key(self, listenKey: str = ""):
-        pass
-
-    def open_interest(self, **kwargs):
-        return {"openInterest": "50000"}
-
-    def top_long_short_position_ratio(self, **kwargs):
-        return [{"longShortRatio": "1.5"}]
-
-    def long_short_account_ratio(self, **kwargs):
-        return [{"longShortRatio": "1.2"}]
-
-    def taker_long_short_ratio(self, **kwargs):
-        return [{"buySellRatio": "0.9"}]
-
-    def change_leverage(self, **kwargs):
-        self._logger.info(f"[DRY] CHANGE_LEVERAGE {kwargs}")
-        return {"leverage": kwargs.get("leverage", 10)}
-
-
 def main():
     parser = argparse.ArgumentParser(description="NarrowGate Maker Engine")
     parser.add_argument("--live", action="store_true",
                         help="Use mainnet (override testnet config)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Dry run mode — no real orders")
+                        help="Validate config/model contract locally, then exit")
+    parser.add_argument(
+        "--dry-run-timeout-s",
+        type=_positive_finite_seconds,
+        default=DEFAULT_DRY_RUN_TIMEOUT_S,
+        help=(
+            "Formal dry-run deadline in seconds "
+            f"(default: {DEFAULT_DRY_RUN_TIMEOUT_S:g})"
+        ),
+    )
     parser.add_argument("--config", type=str, default=None,
                         help="Path to config.yaml")
     args = parser.parse_args()
 
-    # Load config
-    config_path = Path(args.config) if args.config else None
-    cfg = load_config(config_path)
-    resolved_config_path = (
-        config_path.expanduser().resolve()
-        if config_path is not None
-        else (ROOT / "live" / "config.yaml").resolve()
+    if args.dry_run and args.live:
+        parser.error("--dry-run and --live are mutually exclusive")
+
+    config_path = (
+        Path(args.config) if args.config else ROOT / "live" / "config.yaml"
     )
+    if args.dry_run:
+        return run_formal_dry_run(
+            config_path,
+            timeout_s=args.dry_run_timeout_s,
+        )
+
+    # Load config
+    cfg = load_config(config_path)
+    resolved_config_path = config_path.expanduser().resolve()
 
     if args.live:
         cfg.api.testnet = False
@@ -595,7 +687,7 @@ def main():
         cfg=cfg,
         config_path=resolved_config_path,
         native_runtime=native_runtime,
-        dry_run=args.dry_run,
+        dry_run=False,
     )
     logger.info(
         "RUNTIME_IDENTITY path=%s identity=%s",
@@ -622,7 +714,7 @@ def main():
     logger.info(f"{project_name} Maker Engine Starting")
     logger.info(f"  Symbol:    {cfg.symbol}")
     logger.info(f"  Testnet:   {cfg.api.testnet}")
-    logger.info(f"  Dry-run:   {args.dry_run}")
+    logger.info("  Mode:      live")
     logger.info(f"  ML:        {cfg.ml.enabled}")
     logger.info(f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} (P3 κ_eff used when available)")
     logger.info(f"  Order size: {cfg.strategy.order_size} BTC")
@@ -631,7 +723,7 @@ def main():
     logger.info("=" * 60)
 
     # Validate API keys
-    if not args.dry_run and (not cfg.api.key or not cfg.api.secret):
+    if not cfg.api.key or not cfg.api.secret:
         logger.error(
             "API key/secret not set. Use env vars BINANCE_API_KEY / "
             "BINANCE_API_SECRET, or set in config.yaml. On the live host, "
@@ -640,7 +732,7 @@ def main():
         sys.exit(1)
 
     # Create REST client
-    rest = create_rest_client(cfg, dry_run=args.dry_run)
+    rest = create_rest_client(cfg)
 
     # Create engine
     engine = MakerEngine(cfg, rest)
@@ -673,76 +765,74 @@ def main():
         engine.sync_position()
 
         # Check account
-        if not args.dry_run:
-            try:
-                acct = rest.account()
-                balance = float(acct.get("totalWalletBalance", 0))
-                available = float(acct.get("availableBalance", 0))
-                logger.info(
-                    f"Account: balance={balance:.2f} USD-equivalent, "
-                    f"available={available:.2f} USD-equivalent"
-                )
-            except Exception as e:
-                logger.warning(f"Account check failed: {e}")
+        try:
+            acct = rest.account()
+            balance = float(acct.get("totalWalletBalance", 0))
+            available = float(acct.get("availableBalance", 0))
+            logger.info(
+                f"Account: balance={balance:.2f} USD-equivalent, "
+                f"available={available:.2f} USD-equivalent"
+            )
+        except Exception as e:
+            logger.warning(f"Account check failed: {e}")
 
         # Preflight checks (mainnet safety)
-        if not args.dry_run:
-            try:
-                # Check position mode (must be One-way for reduceOnly logic)
-                pos_mode = rest.get_position_mode()
-                dual = pos_mode.get("dualSidePosition", False)
-                if dual:
-                    logger.error(
-                        "PREFLIGHT FAILED: Account is in Hedge Mode "
-                        "(dualSidePosition=true). This engine requires "
-                        "One-way Mode. Change via Binance app/web → "
-                        "Preferences → Position Mode → One-way."
-                    )
-                    sys.exit(1)
-                logger.info("Position mode: One-way (OK)")
-
-                # Check margin type
-                # Try to set CROSSED margin — if already set, this is a no-op
-                try:
-                    rest.change_margin_type(
-                        symbol=cfg.symbol, marginType="CROSSED"
-                    )
-                    logger.info("Margin type: set to CROSSED")
-                except Exception as e:
-                    msg = str(e)
-                    if "No need to change" in msg or "-4046" in msg:
-                        logger.info("Margin type: CROSSED (already set)")
-                    else:
-                        logger.warning(f"Margin type check: {e}")
-
-                # The engine constructor already loads the bundle strictly.
-                # Repeat the lightweight contract here so the preflight log
-                # records the exact head count and P3 identity.
-                from pathlib import Path as _P
-                from strategy.model_contract import validate_model_bundle
-                model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
-                if not model_dir.is_absolute():
-                    model_dir = _P(__file__).resolve().parent.parent / model_dir
-                required_models = ["fill_prob_params.json"]
-                # The configured bundle must remain restart-safe even while
-                # inference is disabled.  Validation reads metadata only; it
-                # does not load LightGBM trees into the live process.
-                model_metadata = validate_model_bundle(model_dir)
-                logger.info(
-                    "Models: %d strict LightGBM heads validated in %s (active=%s)",
-                    len(model_metadata),
-                    model_dir,
-                    cfg.ml.enabled,
+        try:
+            # Check position mode (must be One-way for reduceOnly logic)
+            pos_mode = rest.get_position_mode()
+            dual = pos_mode.get("dualSidePosition", False)
+            if dual:
+                logger.error(
+                    "PREFLIGHT FAILED: Account is in Hedge Mode "
+                    "(dualSidePosition=true). This engine requires "
+                    "One-way Mode. Change via Binance app/web → "
+                    "Preferences → Position Mode → One-way."
                 )
-                for mf in required_models:
-                    if not (model_dir / mf).exists():
-                        raise RuntimeError(f"PREFLIGHT: Missing {mf} in {model_dir}")
+                sys.exit(1)
+            logger.info("Position mode: One-way (OK)")
 
-            except SystemExit:
-                raise
+            # Check margin type
+            # Try to set CROSSED margin — if already set, this is a no-op
+            try:
+                rest.change_margin_type(
+                    symbol=cfg.symbol, marginType="CROSSED"
+                )
+                logger.info("Margin type: set to CROSSED")
             except Exception as e:
-                logger.error(f"PREFLIGHT FAILED: {e}")
-                raise
+                msg = str(e)
+                if "No need to change" in msg or "-4046" in msg:
+                    logger.info("Margin type: CROSSED (already set)")
+                else:
+                    logger.warning(f"Margin type check: {e}")
+
+            # The engine constructor already loads the bundle strictly.
+            # Repeat the lightweight contract here so the preflight log
+            # records the exact head count and P3 identity.
+            from pathlib import Path as _P
+            from strategy.model_contract import validate_model_bundle
+            model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
+            if not model_dir.is_absolute():
+                model_dir = _P(__file__).resolve().parent.parent / model_dir
+            required_models = ["fill_prob_params.json"]
+            # The configured bundle must remain restart-safe even while
+            # inference is disabled.  Validation reads metadata only; it
+            # does not load LightGBM trees into the live process.
+            model_metadata = validate_model_bundle(model_dir)
+            logger.info(
+                "Models: %d strict LightGBM heads validated in %s (active=%s)",
+                len(model_metadata),
+                model_dir,
+                cfg.ml.enabled,
+            )
+            for mf in required_models:
+                if not (model_dir / mf).exists():
+                    raise RuntimeError(f"PREFLIGHT: Missing {mf} in {model_dir}")
+
+        except SystemExit:
+            raise
+        except Exception as e:
+            logger.error(f"PREFLIGHT FAILED: {e}")
+            raise
 
         # Warm up and cancel startup orders before publishing the epoch.  The
         # writer is attached before any WebSocket can deliver a live event.
@@ -753,7 +843,7 @@ def main():
             rest=rest,
             config_path=resolved_config_path,
             native_runtime=native_runtime,
-            dry_run=bool(args.dry_run),
+            dry_run=False,
         )
         if prospective_epoch is not None:
             logger.info(
@@ -1190,4 +1280,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

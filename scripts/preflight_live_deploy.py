@@ -17,6 +17,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+PUBLIC_TEMPLATE_MARKER = "PUBLIC TEMPLATE"
+
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -29,6 +31,14 @@ def _as_mapping(value: Any, name: str) -> dict[str, Any]:
 
 
 def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]:
+    config_path = config_path.resolve()
+    config_text = config_path.read_text(encoding="utf-8")
+    if PUBLIC_TEMPLATE_MARKER in config_text:
+        raise ValueError(
+            f"{config_path} is marked {PUBLIC_TEMPLATE_MARKER}; "
+            "select a private deploy config"
+        )
+
     from execution.order_lifecycle_journal_storage_v2 import (
         BOUNDED_REMOTE_SPOOL,
         validate_lifecycle_journal_storage,
@@ -41,14 +51,14 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         FillProbabilityModel,
     )
     from strategy.model_contract import (
+        OWNER_AUTHORIZED_LIVE_CANARY,
         REQUIRED_FEATURE_DAG_ID,
         REQUIRED_FEATURE_DAG_SHA256,
         REQUIRED_MODEL_HEADS,
         validate_model_bundle,
     )
 
-    config_path = config_path.resolve()
-    config = _as_mapping(yaml.safe_load(config_path.read_text(encoding="utf-8")), "config")
+    config = _as_mapping(yaml.safe_load(config_text), "config")
     strategy = _as_mapping(config.get("strategy"), "strategy")
     ml = _as_mapping(config.get("ml"), "ml")
     risk = _as_mapping(config.get("risk"), "risk")
@@ -156,7 +166,16 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     ml_enabled = bool(ml.get("enabled", False))
     # Validate the configured bundle even while ML is disabled.  This keeps an
     # ML-OFF deployment restart-safe if the same config later enables ML.
-    model_metadata = validate_model_bundle(model_dir)
+    model_metadata = validate_model_bundle(
+        model_dir,
+        require_live_authorization=True,
+    )
+    promotion_authorities = {
+        str(metadata["promotion_authority"])
+        for metadata in model_metadata.values()
+    }
+    if promotion_authorities != {OWNER_AUTHORIZED_LIVE_CANARY}:
+        raise ValueError("deploy bundle does not have one explicit live authorization")
 
     if "quote_horizon_s" not in strategy:
         raise ValueError("strategy.quote_horizon_s must be explicit in deploy config")
@@ -299,6 +318,8 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         ),
         "required_model_heads": list(REQUIRED_MODEL_HEADS),
         "validated_model_heads": sorted(model_metadata),
+        "model_promotion_authority": OWNER_AUTHORIZED_LIVE_CANARY,
+        "model_live_authorized": True,
         "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
         "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
         "quote_horizon_s": quote_horizon_s,

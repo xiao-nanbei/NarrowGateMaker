@@ -1,6 +1,6 @@
 # Offline Data Tooling
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-23
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](../docs/public_private_documentation_contract.md).
 
@@ -36,6 +36,20 @@ $NARROWGATE_DATA_ROOT/cache/  explicit removable tier for reusable DAG cache
 Reusable source/feature materializations are declared by `models/replay_cache_dag.py`. Native CryptoHFT logical messages are cached per source hour, so target days, D-1 warmups and experiment arms reuse one parser output. Strategy-dependent order, queue, fill, inventory and campaign paths are explicitly non-cacheable across arms.
 
 Do not add live socket state machines or strategy logic to this package.
+
+## Public Synthetic Replay Demo
+
+The redistributable replay demonstration is the one intentional small data fixture outside this package's external-market-data rules. Its hand-authored, non-economic JSONL tape lives under [`examples/replay_demo/`](../examples/replay_demo/) so it cannot be mistaken for canonical provider data or admitted research evidence.
+
+Run the complete synthetic market-to-evidence path without network access, private evidence, or external order submission:
+
+```bash
+narrowgate replay-demo \
+  --output-dir results/replay_demo \
+  --verify-reference
+```
+
+The contract binds the public tape by SHA256 and the receipt binds the tape, contract, replay code, accounting contracts, denominators, campaign terminal value, gate status, and output artifacts. The passing status is `passed_demo_mechanics_only`; economic, promotion, live-action, and real-market fidelity claims remain ineligible.
 
 Provider archives remain source-separated. The Tardis downloader is a bounded, one-off historical acquisition tool. It writes directly below `${NARROWGATE_MARKETDATA_ROOT}/tardis/` and records remote size, ETag, SHA256, and zstd integrity in an atomic manifest:
 
