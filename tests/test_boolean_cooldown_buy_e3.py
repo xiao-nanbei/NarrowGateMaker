@@ -423,7 +423,7 @@ def test_invalid_baseline_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_gap_and_out_of_order_reset_receive_time_state() -> None:
+def test_short_gap_and_out_of_order_preserve_receive_time_state() -> None:
     windows = subject.ReceiveTimeFullMidEmaWindows(
         warmup_s=2048.0,
         max_feature_age_s=1.0,
@@ -437,17 +437,97 @@ def test_gap_and_out_of_order_reset_receive_time_state() -> None:
     windows.observe_depth(receive_ts_ns=100_000_001, **event)
     windows.observe_depth(receive_ts_ns=400_000_001, **event)
     assert windows.audit()["gap_windows"] == 2
-    assert windows.audit()["gap_resets"] == 1
-    assert windows.audit()["resets"] == 1
+    assert windows.audit()["gap_resets"] == 0
+    assert windows.audit()["resets"] == 0
     windows.observe_depth(receive_ts_ns=300_000_001, **event)
     audit = windows.audit()
     assert audit["out_of_order_updates"] == 1
     assert audit["warmup_time_admitted"] == 0
-    assert audit["resets"] == 2
+    assert audit["resets"] == 0
     windows.observe_depth(receive_ts_ns=1_600_000_001, **event)
     audit = windows.audit()
     assert audit["gap_resets"] == 1
-    assert audit["resets"] == 2
+    assert audit["resets"] == 1
+
+
+def test_sparse_receive_time_windows_match_offline_projector() -> None:
+    windows = subject.ReceiveTimeFullMidEmaWindows(
+        warmup_s=2048.0,
+        max_feature_age_s=1.0,
+    )
+    offline = CausalMultichannelEmaState(
+        block="R0",
+        warmup_admitted=True,
+        warmup_identity="sparse-live-parity",
+    )
+    width = subject.BASE_WINDOW_WIDTH_NS
+    previous_index: int | None = None
+    previous_mid: float | None = None
+    generation = 0
+    final_index = 20_493
+    for index in range(final_index + 1):
+        if index % 4 == 2:
+            continue
+        receive_ts_ns = index * width + 1
+        mid = 60_000.0 + 0.001 * index
+        windows.observe_depth(
+            receive_ts_ns=receive_ts_ns,
+            bids=((mid - 0.5, 1.0),),
+            asks=((mid + 0.5, 1.0),),
+            market_generation=index + 1,
+            depth_generation=index + 1,
+        )
+        if previous_index is not None:
+            generation += 1
+            offline.update(
+                CausalWindowObservation(
+                    left_ts_ns=previous_index * width,
+                    right_ts_ns=(previous_index + 1) * width,
+                    feature_ready_ts_ns=receive_ts_ns,
+                    market_generation=generation,
+                    depth_generation=generation,
+                    values={"mid_usdc_per_btc": previous_mid},
+                )
+            )
+            for gap_index in range(previous_index + 1, index):
+                generation += 1
+                offline.update(
+                    CausalWindowObservation(
+                        left_ts_ns=gap_index * width,
+                        right_ts_ns=(gap_index + 1) * width,
+                        feature_ready_ts_ns=receive_ts_ns,
+                        market_generation=generation,
+                        depth_generation=generation,
+                        values={"mid_usdc_per_btc": None},
+                        source_gap=True,
+                    )
+                )
+        previous_index = index
+        previous_mid = mid
+
+    decision_ts_ns = final_index * width + 1
+    live_row, reason, _ready, _age_ms = windows.feature_row(
+        decision_ts_ns=decision_ts_ns
+    )
+    assert reason is None
+    assert live_row is not None
+    offline_row = offline.channel_feature_row(
+        channel_name="mid_usdc_per_btc",
+        side="BUY",
+        decision_ts_ns=decision_ts_ns,
+    )
+    assert set(live_row) == set(offline_row)
+    for name, expected in offline_row.items():
+        observed = live_row[name]
+        if isinstance(expected, float):
+            assert observed == pytest.approx(expected, rel=0.0, abs=1e-12)
+        else:
+            assert observed == expected
+    audit = windows.audit()
+    assert audit["warmup_time_admitted"] == 1
+    assert audit["gap_windows"] > 0
+    assert audit["gap_resets"] == 0
+    assert audit["resets"] == 0
 
 
 def test_research_compiled_parity_writes_bound_receipt(tmp_path: Path) -> None:

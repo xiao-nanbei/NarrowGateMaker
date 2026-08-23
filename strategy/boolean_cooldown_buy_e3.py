@@ -929,7 +929,6 @@ class ReceiveTimeFullMidEmaWindows:
                     return
                 if left_ns < pending:
                     self._out_of_order += 1
-                    self._reset_locked("depth_callback_out_of_order")
                     return
                 if left_ns == pending:
                     self._pending_mid = mid
@@ -938,10 +937,10 @@ class ReceiveTimeFullMidEmaWindows:
                     0,
                     (left_ns - pending) // BASE_WINDOW_WIDTH_NS - 1,
                 )
-                if gap_windows > 0:
-                    self._gap_windows += int(gap_windows)
+                gap_s = gap_windows * BASE_WINDOW_WIDTH_NS / 1_000_000_000.0
+                if gap_s > self.max_feature_age_s:
                     self._gap_count += 1
-                    self._reset_locked("depth_callback_gap")
+                    self._reset_locked("depth_gap_exceeded_execution_freshness")
                     self._pending_left_ns = left_ns
                     self._pending_mid = mid
                     return
@@ -951,12 +950,19 @@ class ReceiveTimeFullMidEmaWindows:
                     mid=self._pending_mid,
                     source_gap=False,
                 )
+                for offset in range(1, int(gap_windows) + 1):
+                    self._emit_locked(
+                        left_ns=pending + offset * BASE_WINDOW_WIDTH_NS,
+                        feature_ready_ts_ns=receive_ns,
+                        mid=None,
+                        source_gap=True,
+                    )
                 self._pending_left_ns = left_ns
                 self._pending_mid = mid
         except Exception as exc:
             with self._lock:
                 self._invalid += 1
-                self._reset_locked(f"{type(exc).__name__}:{exc}")
+                self._last_error = f"{type(exc).__name__}:{exc}"
 
     def feature_row(
         self,
