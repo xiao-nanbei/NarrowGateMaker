@@ -23,6 +23,13 @@ def test_lexical_python_entrypoint_preserves_venv_symlink(tmp_path: Path) -> Non
     assert observed != entrypoint.resolve()
 
 
+def test_v5_mechanics_manifest_path_uses_frozen_v5_authority() -> None:
+    assert (
+        "f05_full_multiscale_offline_mechanics_v5/canonical_offline_v5"
+        in subject.V5_MECHANICS_MANIFEST
+    )
+
+
 def test_sell54_validator_accepts_legacy_projection_shape(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

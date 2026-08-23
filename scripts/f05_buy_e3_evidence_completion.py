@@ -86,7 +86,7 @@ V5_ENVELOPE_SHA256: Final = {
 V5_ROW_KEY_SHA256: Final = "e481d8a61eecb71a36e6e3c8f2be1630c483a466a5418adc583d6398c29330ec"
 V5_MECHANICS_MANIFEST: Final = (
     "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
-    "f05_full_multiscale_offline_mechanics_v1/canonical_offline_v1/"
+    "f05_full_multiscale_offline_mechanics_v5/canonical_offline_v5/"
     "mechanics_panel_manifest.json"
 )
 
