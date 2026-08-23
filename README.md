@@ -94,11 +94,14 @@ Choose one installation target. Extras are additive to the base package:
 | Use case | Install command inside the virtual environment | What it installs |
 | --- | --- | --- |
 | Demo | `python -m pip install -e .` | Base NumPy/Pandas/PyYAML dependencies, the CLI, and no-data examples |
+| Public data acquisition | `python -m pip install -e ".[data]"` | Demo dependencies plus Parquet, HTTP archive, and zstd tooling for public download/normalization commands |
 | Research | `python -m pip install -e ".[research]"` | Demo dependencies plus Parquet, scientific, ML, and compressed-data tooling |
 | Live integration | `python -m pip install -e ".[live]"` | Demo dependencies plus public REST/WebSocket connector libraries; the tracked live config remains a non-deployable template |
 | All / contributor | `python -m pip install -e ".[all]"` | Research and live dependencies plus pytest and Ruff for the complete public test suite |
 
-The `dev` extra contains only pytest and Ruff. Combine it explicitly with another target when needed, or use `all` for contributor work.
+The `dev` extra contains only pytest and Ruff. Combine it explicitly with another target when needed, or use `all` for contributor work. The authenticated CryptoHFTData client is deliberately outside `all`: `python -m pip install -e ".[provider-cryptohft]"` adds only that provider client, while an actual order-book acquisition environment should combine it with the format/transport layer as `python -m pip install -e ".[data,provider-cryptohft]"`. Installing a client does not grant a provider account, a data license, or research eligibility.
+
+[`requirements.txt`](requirements.txt) is a legacy runtime/provider compatibility superset equivalent to the base package plus `.[data,research,live,provider-cryptohft]`; it intentionally excludes pytest and Ruff. New source checkouts should use the narrower extras above so a demo, public downloader, researcher, or live-integration contributor receives only the dependency surface they selected.
 
 The default quickstart is the data-free **Demo** target:
 
@@ -134,7 +137,11 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
 ## Official No-Data Validation
 
-The public repository has exactly two canonical validation routes beyond the Quickstart smoke. The formal live-input dry-run is `bash live/run.sh dry-run`; it validates local configuration and the complete model contract, then exits before any network client, thread, engine, or order path exists. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). The synthetic replay demo is `python scripts/narrowgate_replay_demo.py --output-dir results/replay_demo --verify-reference`; it exercises deterministic queue, fill, campaign, accounting, and fail-closed evidence mechanics without private data or economic authority. See the [Public Replay Demo](examples/replay_demo/README.md).
+The public repository has exactly two canonical validation routes beyond the Quickstart smoke. The formal live-input dry-run is `bash live/run.sh dry-run`; it validates local configuration and the complete model contract, then exits before any network client, thread, engine, or order path exists. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). The synthetic replay demo is `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`; it exercises deterministic queue, fill, campaign, accounting, and fail-closed evidence mechanics without private data or economic authority. See the [Public Replay Demo](examples/replay_demo/README.md).
+
+## Participate
+
+Start with [Open-source navigation](docs/opensource/README.md), follow [Contributing](CONTRIBUTING.md) for ordinary and research changes, and use the [Security policy](SECURITY.md) for vulnerabilities. The [one-day data pipeline](docs/opensource/one_day_data_pipeline.md) shows the honest boundary between public trade archives, optional authenticated L2, diagnostic replay, and formal evidence. Maintainers should configure the exact required checks documented under [Branch protection](docs/dev/branch_protection.md).
 
 ## What This Repo Is For
 

@@ -44,7 +44,7 @@ The redistributable replay demonstration is the one intentional small data fixtu
 Run the complete synthetic market-to-evidence path without network access, private evidence, or external order submission:
 
 ```bash
-python scripts/narrowgate_replay_demo.py \
+narrowgate replay-demo \
   --output-dir results/replay_demo \
   --verify-reference
 ```

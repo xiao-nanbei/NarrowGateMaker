@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from narrowgate.cli import main as narrowgate_main
 from scripts import narrowgate_replay_demo as demo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,25 @@ FIXTURE_ROOT = ROOT / "examples" / "replay_demo"
 
 def _read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_public_replay_demo_is_exposed_through_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    return_code = narrowgate_main(
+        [
+            "replay-demo",
+            "--output-dir",
+            str(tmp_path / "cli"),
+            "--verify-reference",
+        ]
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert return_code == 0
+    assert payload["gate_status"] == "passed_demo_mechanics_only"
+    assert payload["reference_verified"] is True
+    assert Path(payload["summary"]).is_file()
 
 
 def test_public_replay_demo_matches_reference_byte_for_byte(tmp_path: Path) -> None:

@@ -29,7 +29,7 @@ Keep one pull request focused on one reviewable goal.
 1. Branch from the current maintained public branch.
 2. Make the smallest change that resolves the stated problem.
 3. Add or update tests in proportion to the behavioral risk.
-4. Run the relevant checks from [Developer Checks](docs/dev/ci.md).
+4. Run the relevant checks from [Developer Checks](docs/dev/ci.md); maintainers also preserve the exact [branch-protection check names](docs/dev/branch_protection.md).
 5. Inspect the complete diff for privacy, evidence, and authority claims.
 6. Open a pull request using the repository template.
 

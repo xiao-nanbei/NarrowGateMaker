@@ -14,15 +14,13 @@
 build
 dist
 
-# Credentials, machine-local configuration, and every private evidence root.
+# Credentials and machine-local configuration.
 .env
 .env.*
 **/.env
 **/.env.*
 **/*.local.yaml
 **/*.current.local.*
-**/private
-**/private/**
 *.pem
 *.key
 *.p12
@@ -55,3 +53,10 @@ data/**
 !data/quality/
 !data/quality/*.py
 !data/quality/**/*.py
+
+# Keep private roots last. Dockerignore uses last-match-wins semantics, so no
+# present or future source re-include above may admit a nested private file.
+private
+private/**
+**/private
+**/private/**

@@ -1,3 +1,11 @@
+# Legacy runtime/provider compatibility superset equivalent to the base package
+# plus .[data,research,live,provider-cryptohft]. It intentionally excludes the
+# pytest/Ruff developer tools. New source checkouts should use the narrower
+# pyproject.toml extras documented in README.md.
+#
+# cryptohftdata is an optional authenticated third-party provider client.
+# Installing this compatibility file grants neither provider access nor a
+# license or research-eligibility status for any dataset.
 requests>=2.28
 cryptohftdata>=0.2.1
 pandas>=2.0

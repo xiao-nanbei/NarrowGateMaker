@@ -14,12 +14,14 @@ review rules.
 | I want to... | Go to... |
 | --- | --- |
 | Understand and run the public project | [README](../../README.md), [Chinese README](../../README.zh-CN.md), and [Developer Checks](../dev/ci.md) |
+| Take one UTC day from download to diagnostic replay | [One-day data pipeline](one_day_data_pipeline.md) |
 | Understand permitted use | [License](../../LICENSE) |
 | Report a code defect | [Bug report form](../../.github/ISSUE_TEMPLATE/bug_report.yml) and [contribution workflow](../../CONTRIBUTING.md) |
 | Propose a focused feature | [Feature request form](../../.github/ISSUE_TEMPLATE/feature_request.yml) |
 | Improve public docs | [Documentation report form](../../.github/ISSUE_TEMPLATE/documentation.yml) and [public documentation contract](../public_private_documentation_contract.md) |
 | Propose or publish research evidence | [Research evidence PR rules](research_contributions.md) and [research evidence form](../../.github/ISSUE_TEMPLATE/research_evidence.yml) |
 | Understand versions, tags, attempts, manifests, and receipts | [Source, research, and execution identities](identity_and_release.md) |
+| Configure merge protection | [Required checks and branch protection](../dev/branch_protection.md) |
 | Decode project vocabulary | [Glossary](glossary.md) |
 | Report a vulnerability | [Security policy](../../SECURITY.md) |
 | Ask about commercial authorization | [License](../../LICENSE) and [commercial-license form](../../.github/ISSUE_TEMPLATE/commercial_license.yml) |

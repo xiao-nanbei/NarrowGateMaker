@@ -13,7 +13,7 @@ Can a new user exercise NarrowGate's market-event, maker-queue, order-fill, fill
 From the repository root with Python 3.11 or newer:
 
 ```bash
-python scripts/narrowgate_replay_demo.py \
+narrowgate replay-demo \
   --output-dir results/replay_demo \
   --verify-reference
 ```
@@ -25,7 +25,7 @@ The command writes `summary.json`, `trace.jsonl`, and `receipt.json`. A second r
 - [`contract.json`](contract.json) freezes the synthetic classification, denied permissions, input SHA256, denominator, expected terminal values, and gate authority.
 - [`synthetic_tape.jsonl`](synthetic_tape.jsonl) is a hand-authored top-of-book and trade sequence. It is not exchange data and has no empirical or economic authority.
 - [`reference/`](reference/) contains the byte-for-byte expected summary, event trace, and receipt for the distributed engine bytes.
-- [`../../scripts/narrowgate_replay_demo.py`](../../scripts/narrowgate_replay_demo.py) is the only entrypoint. Its reference engine supports only this small FIFO top-book teaching contract; it is not the private-data full replay and does not claim live fidelity.
+- [`../../narrowgate/cli.py`](../../narrowgate/cli.py) exposes the canonical public command and delegates to the existing [`../../scripts/narrowgate_replay_demo.py`](../../scripts/narrowgate_replay_demo.py) engine. That reference engine supports only this small FIFO top-book teaching contract; it is not the private-data full replay and does not claim live fidelity.
 
 ## Evidence Boundary
 

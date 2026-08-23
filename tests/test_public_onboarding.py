@@ -11,6 +11,8 @@ from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from narrowgate.cli import main as narrowgate_main
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -137,10 +139,16 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         excluded = (
             ".venv/bin/python",
             ".env",
+            "private/root-secret.py",
             "data/raw_trades/BTCUSDC/day.csv",
             "data/quality/private_day.parquet",
+            "data/private/secret.py",
+            "data/quality/private/secret.py",
+            "data/quality/nested/private/secret.py",
             "docs/private/live_config.current.local.yaml",
             "execution/private/runtime.json",
+            "examples/private/local-fixture.json",
+            "narrowgate/private/local-module.py",
             "research/families/example/private/result.json",
             "models/saved_private/model.txt",
             "logs/maker.log",
@@ -150,11 +158,76 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         self.assertTrue(all((ROOT / path).is_file() for path in required))
         self.assertTrue(all(_docker_context_includes(path) for path in required))
         self.assertTrue(all(not _docker_context_includes(path) for path in excluded))
+        self.assertEqual(
+            _dockerignore_rules()[-4:],
+            ["private", "private/**", "**/private", "**/private/**"],
+        )
 
     def test_all_extra_is_the_union_of_supported_workflows(self) -> None:
         optional = _project_config()["project"]["optional-dependencies"]
-        expected = set(optional["dev"]) | set(optional["research"]) | set(optional["live"])
+        expected = (
+            set(optional["dev"])
+            | set(optional["data"])
+            | set(optional["research"])
+            | set(optional["live"])
+        )
         self.assertEqual(set(optional["all"]), expected)
+        self.assertEqual(optional["provider-cryptohft"], ["cryptohftdata>=0.2.1"])
+        self.assertNotIn("cryptohftdata>=0.2.1", optional["all"])
+
+        requirements = {
+            line.strip()
+            for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+        compatibility_superset = (
+            set(_project_config()["project"]["dependencies"])
+            | set(optional["data"])
+            | set(optional["research"])
+            | set(optional["live"])
+            | set(optional["provider-cryptohft"])
+        )
+        self.assertEqual(requirements, compatibility_superset)
+
+    def test_ci_has_base_only_smoke_and_stable_required_check_names(self) -> None:
+        workflow = yaml.safe_load(
+            (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        )
+        jobs = workflow["jobs"]
+
+        base = jobs["base-install-smoke"]
+        self.assertEqual(base["name"], "Base install smoke")
+        base_install = next(
+            step for step in base["steps"] if step.get("name") == "Install base package only"
+        )["run"]
+        self.assertIn("python -m pip install -e .", base_install)
+        self.assertNotIn(".[", base_install)
+        base_smoke = next(
+            step for step in base["steps"] if step.get("name") == "Base-only public workflow smoke"
+        )["run"]
+        self.assertIn("narrowgate replay-demo", base_smoke)
+        self.assertIn("test_public_onboarding.py", base_smoke)
+
+        self.assertEqual(
+            jobs["python"]["name"],
+            "Python tests and lint (${{ matrix.python-version }})",
+        )
+        self.assertEqual(jobs["cpp-build-smoke"]["name"], "C++ extension build smoke")
+        pytest_step = next(
+            step for step in jobs["python"]["steps"] if step.get("id") == "pytest"
+        )
+        self.assertIsNot(pytest_step.get("continue-on-error"), True)
+
+        branch_protection = (ROOT / "docs" / "dev" / "branch_protection.md").read_text(
+            encoding="utf-8"
+        )
+        for required_name in (
+            "Base install smoke",
+            "Python tests and lint (3.11)",
+            "Python tests and lint (3.12)",
+            "C++ extension build smoke",
+        ):
+            self.assertIn(f"`{required_name}`", branch_protection)
 
     def test_devcontainer_uses_all_and_external_data_volumes(self) -> None:
         config = json.loads(
@@ -190,7 +263,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         )[0]
 
         self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
-        self.assertEqual(readme.count("python scripts/narrowgate_replay_demo.py"), 1)
+        self.assertEqual(readme.count("narrowgate replay-demo"), 1)
         self.assertEqual(readme.count("(docs/ops/live_dry_run.md)"), 1)
         self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)
         self.assertIn("docs/ops/live_dry_run.md", section)
@@ -206,9 +279,30 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         self.assertIn("test_public_onboarding.py", quickstart)
         self.assertNotIn("test_parameter_selection.py", quickstart)
         self.assertEqual(readme.count("bash live/run.sh dry-run"), 1)
-        self.assertEqual(readme.count("python scripts/narrowgate_replay_demo.py"), 1)
+        self.assertEqual(readme.count("narrowgate replay-demo"), 1)
         self.assertEqual(readme.count("(docs/ops/live_dry_run.md)"), 1)
+
+    def test_readme_links_public_participation_and_data_tutorial(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("[Contributing](CONTRIBUTING.md)", readme)
+        self.assertIn("[Security policy](SECURITY.md)", readme)
+        self.assertIn("[Open-source navigation](docs/opensource/README.md)", readme)
+        self.assertIn("[one-day data pipeline](docs/opensource/one_day_data_pipeline.md)", readme)
+        self.assertIn("[Branch protection](docs/dev/branch_protection.md)", readme)
         self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)
+
+    def test_data_dependency_contract_is_documented(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        tutorial = (ROOT / "docs" / "opensource" / "one_day_data_pipeline.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('python -m pip install -e ".[data]"', readme)
+        self.assertIn('python -m pip install -e ".[provider-cryptohft]"', readme)
+        self.assertIn("requirements.txt", readme)
+        self.assertIn("download-agg-trades", tutorial)
+        self.assertIn("audit-raw", tutorial)
+        self.assertIn("models.backtest_tick", tutorial)
 
 
 if __name__ == "__main__":

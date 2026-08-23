@@ -109,7 +109,7 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
 ## 正式无数据验证
 
-除 Quickstart smoke 外，公开仓库恰好有两条正式验证路径。Live 输入的唯一正式 dry-run 是 `bash live/run.sh dry-run`；它完成本地配置与完整模型合同校验后，在创建任何网络客户端、线程、引擎或订单路径之前退出，详见 [Live / Dry-Run Boundary](docs/ops/live_dry_run.md)。Synthetic replay demo 的唯一入口是 `python scripts/narrowgate_replay_demo.py --output-dir results/replay_demo --verify-reference`；它在不读取私有数据、不取得经济或 live authority 的前提下，确定性验证 queue、fill、campaign、accounting 与 fail-closed evidence mechanics，详见 [Public Replay Demo](examples/replay_demo/README.md)。
+除 Quickstart smoke 外，公开仓库恰好有两条正式验证路径。Live 输入的唯一正式 dry-run 是 `bash live/run.sh dry-run`；它完成本地配置与完整模型合同校验后，在创建任何网络客户端、线程、引擎或订单路径之前退出，详见 [Live / Dry-Run Boundary](docs/ops/live_dry_run.md)。Synthetic replay demo 的唯一入口是 `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`；它在不读取私有数据、不取得经济或 live authority 的前提下，确定性验证 queue、fill、campaign、accounting 与 fail-closed evidence mechanics，详见 [Public Replay Demo](examples/replay_demo/README.md)。
 
 ## 本仓库适合做什么
 
@@ -175,7 +175,7 @@ flowchart LR
 
 ```bash
 export NARROWGATE_ROOT="$PWD"
-export NARROWGATE_MARKETDATA_ROOT="${NARROWGATE_MARKETDATA_ROOT}"
+export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
 export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
