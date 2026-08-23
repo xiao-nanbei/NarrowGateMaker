@@ -102,7 +102,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         self.assertEqual(module_sources - copy_sources, set())
         self.assertIn("execution", copy_sources)
         self.assertIn("research", copy_sources)
-        self.assertIn("scripts/narrowgate_replay_demo.py", copy_sources)
+        self.assertIn("scripts", copy_sources)
 
     def test_docker_context_keeps_code_and_synthetic_examples_only(self) -> None:
         setuptools = _project_config()["tool"]["setuptools"]

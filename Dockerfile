@@ -26,7 +26,7 @@ COPY models ./models
 COPY research ./research
 COPY strategy ./strategy
 COPY examples ./examples
-COPY scripts/narrowgate_replay_demo.py ./scripts/narrowgate_replay_demo.py
+COPY scripts ./scripts
 COPY tests ./tests
 
 RUN python -m pip install --upgrade pip \
