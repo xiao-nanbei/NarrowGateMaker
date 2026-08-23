@@ -4,32 +4,40 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-Q90_ACTION_OWNER_OVERRIDE_ENV = (
-    "NARROWGATE_ALLOW_UNREPAIRED_Q90_ACTION_DEPLOY"
-)
+Q90_ACTION_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_UNREPAIRED_Q90_ACTION_DEPLOY"
 Q90_POST_CANCEL_RECOVERY_CONTRACT_SUPPORTED = False
-F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV = (
-    "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY"
-)
+F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY"
 F05_BOOLEAN_COOLDOWN_EVIDENCE_ROUTE = "owner_risk_accepted_promotion"
 F05_BOOLEAN_COOLDOWN_HARD_GATES_PASSED = False
 F05_BUY_E3_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY"
 F05_BUY_E3_EVIDENCE_ROUTE = "owner_risk_accepted_buy_e3_v1"
 F05_BUY_E3_HARD_GATES_PASSED = False
+F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV = "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH"
+F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV = (
+    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256"
+)
+F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV = (
+    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256"
+)
+F05_BUY_E3_ACTIVE_RELEASE_AUTHORITY_SCHEMA = (
+    "narrowgate_f05_buy_e3_active_release_runtime_authority.v1"
+)
 RUNTIME_POLICY_SCHEMA_VERSION = "narrowgate_runtime_policy.v1"
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def q90_action_runtime_policy(
     action_enabled: bool,
     *,
     environ: Mapping[str, str] | None = None,
-    post_cancel_recovery_supported: bool = (
-        Q90_POST_CANCEL_RECOVERY_CONTRACT_SUPPORTED
-    ),
+    post_cancel_recovery_supported: bool = (Q90_POST_CANCEL_RECOVERY_CONTRACT_SUPPORTED),
 ) -> dict[str, Any]:
     """Return q90 authority or reject an unsupported action at runtime."""
     environment = os.environ if environ is None else environ
@@ -89,9 +97,7 @@ def f05_boolean_cooldown_runtime_policy(
     """Require an explicit owner grant for the positive-estimate F05 policy."""
 
     environment = os.environ if environ is None else environ
-    override_requested = (
-        environment.get(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV) == "1"
-    )
+    override_requested = environment.get(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV) == "1"
     normalized_route = str(evidence_route).strip()
     if enabled and normalized_route != F05_BOOLEAN_COOLDOWN_EVIDENCE_ROUTE:
         raise ValueError(
@@ -107,21 +113,13 @@ def f05_boolean_cooldown_runtime_policy(
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA_VERSION,
         "f05_boolean_cooldown_enabled": bool(enabled),
-        "f05_boolean_cooldown_hard_gates_passed": (
-            F05_BOOLEAN_COOLDOWN_HARD_GATES_PASSED
-        ),
+        "f05_boolean_cooldown_hard_gates_passed": (F05_BOOLEAN_COOLDOWN_HARD_GATES_PASSED),
         "f05_boolean_cooldown_evidence_route": normalized_route,
-        "f05_boolean_cooldown_owner_override_env": (
-            F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV
-        ),
+        "f05_boolean_cooldown_owner_override_env": (F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV),
         "f05_boolean_cooldown_owner_override_requested": override_requested,
-        "f05_boolean_cooldown_owner_override_effective": bool(
-            enabled and override_requested
-        ),
+        "f05_boolean_cooldown_owner_override_effective": bool(enabled and override_requested),
         "f05_boolean_cooldown_runtime_authority": (
-            "owner_risk_accepted_active"
-            if enabled and override_requested
-            else "disabled"
+            "owner_risk_accepted_active" if enabled and override_requested else "disabled"
         ),
     }
 
@@ -144,8 +142,7 @@ def require_f05_boolean_cooldown_restart(
     changed = [name for name in fields if previous.get(name) != candidate.get(name)]
     if changed:
         raise ValueError(
-            "F05 Boolean cooldown policy is restart-only; changed field(s): "
-            + ", ".join(changed)
+            "F05 Boolean cooldown policy is restart-only; changed field(s): " + ", ".join(changed)
         )
 
 
@@ -179,15 +176,74 @@ def f05_buy_e3_runtime_policy(
         "f05_buy_e3_evidence_route": normalized_route,
         "f05_buy_e3_owner_override_env": F05_BUY_E3_OWNER_OVERRIDE_ENV,
         "f05_buy_e3_owner_override_requested": override_requested,
-        "f05_buy_e3_owner_override_effective": bool(
-            enabled and override_requested
-        ),
+        "f05_buy_e3_owner_override_effective": bool(enabled and override_requested),
         "f05_buy_e3_runtime_authority": (
-            "owner_risk_accepted_active"
-            if enabled and override_requested
-            else "disabled"
+            "owner_risk_accepted_active" if enabled and override_requested else "disabled"
         ),
     }
+
+
+def f05_buy_e3_active_release_runtime_authority(
+    enabled: bool,
+    *,
+    environ: Mapping[str, str] | None = None,
+    require_present: bool = True,
+) -> dict[str, Any]:
+    """Resolve the post-envelope active-release grant for one process start."""
+
+    environment = os.environ if environ is None else environ
+    active = bool(enabled)
+    path = str(environment.get(F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV, "")).strip()
+    file_sha256 = str(
+        environment.get(F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV, "")
+    ).strip().lower()
+    canonical_sha256 = str(
+        environment.get(F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV, "")
+    ).strip().lower()
+    if active and require_present:
+        if environment.get(F05_BUY_E3_OWNER_OVERRIDE_ENV) != "1":
+            raise ValueError("enabled F05 BUY E3 requires the owner override grant")
+        candidate = Path(path).expanduser()
+        if not path or "\x00" in path or not candidate.is_absolute():
+            raise ValueError(
+                f"enabled F05 BUY E3 requires an absolute {F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV}"
+            )
+        for label, value in (
+            (F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV, file_sha256),
+            (F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV, canonical_sha256),
+        ):
+            if _SHA256_RE.fullmatch(value) is None:
+                raise ValueError(f"enabled F05 BUY E3 requires a valid {label}")
+    elif not active:
+        path = ""
+        file_sha256 = ""
+        canonical_sha256 = ""
+    return {
+        "schema_version": F05_BUY_E3_ACTIVE_RELEASE_AUTHORITY_SCHEMA,
+        "required": active,
+        "active_release_path": path,
+        "active_release_file_sha256": file_sha256,
+        "active_release_canonical_sha256": canonical_sha256,
+    }
+
+
+def require_f05_buy_e3_active_release_restart(
+    previous: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> None:
+    """Keep the post-envelope active-release grant immutable for a process."""
+
+    fields = (
+        F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+    )
+    changed = [name for name in fields if previous.get(name) != candidate.get(name)]
+    if changed:
+        raise ValueError(
+            "F05 BUY E3 active-release authority is restart-only; changed field(s): "
+            + ", ".join(changed)
+        )
 
 
 def require_f05_buy_e3_restart(
@@ -211,21 +267,47 @@ def require_f05_buy_e3_restart(
     changed = [name for name in fields if previous.get(name) != candidate.get(name)]
     if changed:
         raise ValueError(
-            "F05 BUY E3 cooldown policy is restart-only; changed field(s): "
-            + ", ".join(changed)
+            "F05 BUY E3 cooldown policy is restart-only; changed field(s): " + ", ".join(changed)
         )
 
 
 def write_runtime_identity(path: Path, identity: Mapping[str, Any]) -> None:
-    """Atomically persist the machine-readable startup identity."""
-    path = path.expanduser().resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    """Atomically and durably persist the observed startup identity."""
+    candidate = path.expanduser()
+    if not candidate.is_absolute():
+        candidate = Path.cwd() / candidate
+    parent = candidate.parent.resolve()
+    parent.mkdir(parents=True, exist_ok=True)
+    destination = parent / candidate.name
+    if destination.is_symlink():
+        raise ValueError("runtime identity destination must not be a symlink")
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.tmp.",
+        dir=parent,
+    )
+    temporary = Path(temporary_name)
     try:
-        temporary.write_text(
-            json.dumps(identity, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        temporary.replace(path)
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            json.dump(
+                dict(identity),
+                handle,
+                allow_nan=False,
+                indent=2,
+                sort_keys=True,
+            )
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        destination.chmod(0o600)
+        directory_fd = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
     finally:
+        if descriptor >= 0:
+            os.close(descriptor)
         temporary.unlink(missing_ok=True)

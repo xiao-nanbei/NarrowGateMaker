@@ -13,11 +13,13 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import math
 import os
 import shlex
 import stat
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
@@ -28,13 +30,22 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from live.runtime_policy import (  # noqa: E402
+    F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
+    F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+    F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+    F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
     F05_BUY_E3_OWNER_OVERRIDE_ENV,
     f05_buy_e3_runtime_policy,
 )
+from scripts import f05_buy_e3_active_release as active_release  # noqa: E402
+from scripts import f05_buy_e3_execution_attempt as execution_attempt  # noqa: E402
 
 try:  # noqa: E402
     from research.families.f05_fill_quality_quote_ev.audit import (
         causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as gate_v2,
+    )
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_v1 as gate_v1,
     )
 except ImportError:
     external_gate = os.environ.get("NARROWGATE_BUY_E3_GATE_V2_PATH", "").strip()
@@ -50,20 +61,29 @@ except ImportError:
 
 
 PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v1"
-RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v3"
+COMPATIBLE_PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v2"
+LEGACY_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v3"
+RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v4"
 PREFLIGHT_SCHEMA = "f05_buy_e3_owner_isolated_config_preflight.v2"
 RUNTIME_IDENTITY_SCHEMA = "narrowgate_live_runtime_identity.v1"
-STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v2"
+LEGACY_STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v3"
+STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v4"
 RUNNING_CHECKOUT_SCHEMA = "narrowgate_running_checkout_identity.v2"
 FILL_COOLDOWN_STATE_SCHEMA = "narrowgate_fill_cooldown_state.v2"
 INTERPRETER_IDENTITY_SCHEMA = "narrowgate_interpreter_identity.v1"
 NATIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_native_runtime_identity.v1"
 RUNTIME_IDENTITY_BINDING_SCHEMA = "narrowgate_runtime_identity_binding.v1"
-RUNTIME_ATTESTATION_CONTRACT_SCHEMA = (
-    "narrowgate_runtime_written_startup_attestation_contract.v1"
+RUNTIME_ATTESTATION_CONTRACT_SCHEMA = "narrowgate_runtime_written_startup_attestation_contract.v1"
+COMPATIBLE_ACTIVATION_ENVELOPE_SCHEMA = "f05_buy_e3_compatible_activation_envelope.v1"
+ACTIVE_RELEASE_RUNTIME_AUTHORITY_SCHEMA = (
+    "narrowgate_f05_buy_e3_active_release_runtime_authority.v1"
 )
 POINTER_SCHEMA = "narrowgate_live_remote_pointer.v1"
 ACTIVE_POINTER_STATUS = "current_active"
+B0_FILL_COOLDOWN_SECONDS = 85.0
+REMOTE_ACTIVE_RELEASE_RELATIVE_DIRECTORY = PurePosixPath(
+    "live/private/f05_buy_e3_owner_v1"
+)
 
 PHASES = ("disabled-deploy", "activate", "rollback-primary", "rollback-deep")
 MUTATING_PHASES = frozenset(PHASES)
@@ -84,6 +104,7 @@ FAILURE_CLASSES = frozenset(
         "receipt_write_failed",
         "receipt_validation_failed",
         "phase_contract_validation_failed",
+        "phase_timeout",
     }
 )
 RECEIPT_EVIDENCE_BOUNDARY = {
@@ -129,12 +150,21 @@ TRANSACTION_CONTRACT = {
     "staged_tool_hash_and_exec_same_shell": True,
     "planner_host_bound_spool_existence_deferred": True,
     "remote_host_bound_spool_preflight_mandatory": True,
+    "per_command_timeout_s": 180,
+    "whole_phase_timeout_s": 1_800,
 }
 PLAN_EVIDENCE_BOUNDARY = {
     "validation_read": False,
     "sealed_holdout_read": False,
     "economic_arms_run": False,
     "hypothetical_live_actions_scored": False,
+}
+ACTIVATION_ENVELOPE_EVIDENCE_BOUNDARY = {
+    "economic_values_read": False,
+    "economic_values_persisted": False,
+    "hypothetical_live_actions_scored": False,
+    "validation_read": False,
+    "sealed_holdout_read": False,
 }
 REMOTE_OVERRIDE_ENV = (
     "NARROWGATE_LIVE_REMOTE",
@@ -143,7 +173,13 @@ REMOTE_OVERRIDE_ENV = (
 STRICT_SSH_OPTIONS = (
     "BatchMode=yes",
     "StrictHostKeyChecking=yes",
+    "ConnectTimeout=15",
+    "ServerAliveInterval=10",
+    "ServerAliveCountMax=3",
 )
+COMMAND_TIMEOUT_S = 180.0
+PHASE_TIMEOUT_S = 1_800.0
+MAX_ACTIVE_RELEASE_BYTES = 64 << 20
 HOST_BOUND_SPOOL_REMOTE_CHECKS = (
     "allowlisted_root_exists",
     "allowlisted_root_is_directory",
@@ -159,7 +195,7 @@ class BuyE3TransactionalDeployError(RuntimeError):
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 PreflightRunner = Callable[[Path, Path, bool], Mapping[str, Any]]
 
-_PROCESS_IDENTITY_FIELDS = frozenset(
+_LEGACY_PROCESS_IDENTITY_FIELDS = frozenset(
     {
         "schema_version",
         "captured_utc",
@@ -187,6 +223,17 @@ _PROCESS_IDENTITY_FIELDS = frozenset(
         "canonical_process_identity_sha256",
     }
 )
+_PROCESS_IDENTITY_FIELDS = _LEGACY_PROCESS_IDENTITY_FIELDS | frozenset(
+    {
+        "fill_cooldown_restore_mode",
+        "initial_buy_remaining_ms",
+        "active_release_path",
+        "active_release_file_sha256",
+        "active_release_canonical_sha256",
+        "active_release_execution_commit",
+        "active_release_execution_tree",
+    }
+)
 _RESULT_FIELDS = frozenset(
     {
         "label",
@@ -200,7 +247,7 @@ _RESULT_FIELDS = frozenset(
         "startup_attestation_sha256",
     }
 )
-_PHASE_RECEIPT_FIELDS = frozenset(
+_LEGACY_PHASE_RECEIPT_FIELDS = frozenset(
     {
         "schema_version",
         "plan_sha256",
@@ -230,7 +277,28 @@ _PHASE_RECEIPT_FIELDS = frozenset(
         "canonical_receipt_sha256",
     }
 )
-_RUNTIME_IDENTITY_BINDING_FIELDS = frozenset(
+_PHASE_RECEIPT_FIELDS = _LEGACY_PHASE_RECEIPT_FIELDS | frozenset({"active_release_binding"})
+_ACTIVATION_ENVELOPE_PHASE_BINDING_FIELDS = frozenset(
+    {
+        "path",
+        "file_sha256",
+        "canonical_activation_envelope_sha256",
+        "concurrent_resource_receipt_sha256",
+        "runtime_regression_receipt_sha256",
+        "sell_54_case_receipt_sha256",
+    }
+)
+_ACTIVE_RELEASE_PHASE_BINDING_FIELDS = frozenset(
+    {
+        "local_path",
+        "remote_path",
+        "file_sha256",
+        "canonical_active_release_sha256",
+        "schema_version",
+        "status",
+    }
+)
+_LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS = frozenset(
     {
         "schema_version",
         "authority",
@@ -252,7 +320,15 @@ _RUNTIME_IDENTITY_BINDING_FIELDS = frozenset(
         "canonical_runtime_identity_binding_sha256",
     }
 )
-_STARTUP_ATTESTATION_FIELDS = frozenset(
+_RUNTIME_IDENTITY_BINDING_FIELDS = _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS | frozenset(
+    {
+        "active_release_file_sha256",
+        "active_release_canonical_sha256",
+        "active_release_execution_commit",
+        "active_release_execution_tree",
+    }
+)
+_LEGACY_STARTUP_ATTESTATION_FIELDS = frozenset(
     {
         "schema_version",
         "status",
@@ -266,13 +342,17 @@ _STARTUP_ATTESTATION_FIELDS = frozenset(
         "errors",
     }
 )
-_STARTUP_GATE_FIELDS = frozenset(
+_STARTUP_ATTESTATION_FIELDS = _LEGACY_STARTUP_ATTESTATION_FIELDS | frozenset(
+    {"buy_e3_active_release"}
+)
+_LEGACY_STARTUP_GATE_FIELDS = frozenset(
     {
         "fill_cooldown_state_available",
         "fill_cooldown_state_schema_v2",
-        "buy_deadline_identity_is_b0",
-        "buy_remaining_ms_is_zero",
-        "buy_e3_deadline_not_imported",
+        "fill_cooldown_restore_mode_valid",
+        "fill_cooldown_checkpoint_binding_valid",
+        "fill_cooldown_deadline_contract_valid",
+        "fill_cooldown_artifact_contract_valid",
         "git_toplevel_matches_repo",
         "git_pre_snapshot_available",
         "git_pre_snapshot_stable",
@@ -293,6 +373,23 @@ _STARTUP_GATE_FIELDS = frozenset(
         "git_post_worktree_clean",
         "git_snapshot_stable",
         "safe_to_start_live_loops",
+    }
+)
+_STARTUP_GATE_FIELDS = _LEGACY_STARTUP_GATE_FIELDS | frozenset(
+    {
+        "buy_e3_active_release_contract_valid",
+        "buy_e3_active_release_matches_checkout",
+    }
+)
+_STARTUP_ACTIVE_RELEASE_FIELDS = frozenset(
+    {
+        "path",
+        "file_sha256",
+        "file_canonical_sha256",
+        "execution_commit",
+        "execution_tree",
+        "annotated_operational_tag",
+        "annotated_operational_tag_object",
     }
 )
 _RUNNING_CHECKOUT_FIELDS = frozenset(
@@ -359,12 +456,8 @@ _LOADED_RUNTIME_MODULE_FIELDS = frozenset(
         "source_sha256",
     }
 )
-_FILE_BYTE_IDENTITY_FIELDS = frozenset(
-    {"reported_path", "resolved_path", "sha256", "size_bytes"}
-)
-_INTERPRETER_IDENTITY_FIELDS = frozenset(
-    {"schema_version", "version", "before", "after", "stable"}
-)
+_FILE_BYTE_IDENTITY_FIELDS = frozenset({"reported_path", "resolved_path", "sha256", "size_bytes"})
+_INTERPRETER_IDENTITY_FIELDS = frozenset({"schema_version", "version", "before", "after", "stable"})
 _NATIVE_RUNTIME_IDENTITY_FIELDS = frozenset(
     {
         "schema_version",
@@ -390,9 +483,7 @@ _HOST_BOUND_STORAGE_GATE_FIELDS = frozenset(
         "required_remote_checks",
     }
 )
-_COMMAND_FIELDS = frozenset(
-    {"label", "argv", "command_sha256", "mutates_remote", "after_stop"}
-)
+_COMMAND_FIELDS = frozenset({"label", "argv", "command_sha256", "mutates_remote", "after_stop"})
 _EXTERNAL_PACKAGE_ROLES = (
     "deploy_script",
     "gate_amendment",
@@ -425,12 +516,8 @@ _PLAN_CORE_FIELDS = frozenset(
         "evidence_boundary",
     }
 )
-_PLAN_BASE_FIELDS = _PLAN_CORE_FIELDS | frozenset(
-    {"plan_core_sha256", "canonical_plan_sha256"}
-)
-_PLAN_ACTIVATION_FIELDS = frozenset(
-    {"activation_gate", "activation_gate_receipt_sha256"}
-)
+_PLAN_BASE_FIELDS = _PLAN_CORE_FIELDS | frozenset({"plan_core_sha256", "canonical_plan_sha256"})
+_PLAN_ACTIVATION_FIELDS = frozenset({"activation_gate", "activation_gate_receipt_sha256"})
 _ACTIVATION_GATE_BINDING_FIELDS = frozenset(
     {
         "path",
@@ -442,6 +529,8 @@ _ACTIVATION_GATE_BINDING_FIELDS = frozenset(
         "canonical_activation_binding_sha256",
     }
 )
+_COMPATIBLE_ACTIVATION_GATE_BINDING_FIELDS = _ACTIVATION_GATE_BINDING_FIELDS | {"kind"}
+_COMPATIBLE_ACTIVATION_GATE_KIND = "compatible_execution_generic_v1"
 _DISABLED_PHASE_BINDING_FIELDS = frozenset(
     {
         "path",
@@ -471,6 +560,15 @@ def _require_sha256(value: Any, label: str) -> str:
     if len(normalized) != 64 or any(char not in "0123456789abcdef" for char in normalized):
         raise BuyE3TransactionalDeployError(f"{label} is not a SHA256")
     return normalized
+
+
+def _remote_active_release_path(repo_root: str, file_sha256: str) -> str:
+    digest = _require_sha256(file_sha256, "active release file hash")
+    return str(
+        PurePosixPath(str(repo_root))
+        / REMOTE_ACTIVE_RELEASE_RELATIVE_DIRECTORY
+        / f"active_release-{digest}.json"
+    )
 
 
 def _plan_core_payload(plan: Mapping[str, Any]) -> dict[str, Any]:
@@ -504,6 +602,131 @@ def _runtime_attestation_contract(remote: Mapping[str, Any]) -> dict[str, Any]:
 
 def _read_json(path: Path) -> dict[str, Any]:
     return gate_v2.read_json(path)
+
+
+def _load_compatible_attempt(
+    *, repository_root: Path, raw: Any
+) -> tuple[dict[str, Any], dict[str, str]] | None:
+    if raw is None:
+        return None
+    allowed_fields = {"path", "file_sha256"}
+    if not isinstance(raw, Mapping) or set(raw) not in (
+        allowed_fields,
+        allowed_fields | {"canonical_sha256"},
+    ):
+        raise BuyE3TransactionalDeployError("compatible execution attempt binding is malformed")
+    path = Path(str(raw["path"])).expanduser().absolute()
+    expected_file_sha256 = _require_sha256(
+        raw["file_sha256"], "compatible execution attempt file hash"
+    )
+    if path.is_symlink() or not path.is_file():
+        raise BuyE3TransactionalDeployError("compatible execution attempt manifest is unavailable")
+    if gate_v2.file_sha256(path) != expected_file_sha256:
+        raise BuyE3TransactionalDeployError("compatible execution attempt file hash drifted")
+    try:
+        payload = execution_attempt.validate_manifest(
+            path,
+            repository_root=repository_root,
+            require_current_checkout=True,
+        )
+    except execution_attempt.ExecutionAttemptError as exc:
+        raise BuyE3TransactionalDeployError(
+            f"compatible execution attempt is invalid: {exc}"
+        ) from exc
+    binding = {
+        "path": str(path),
+        "file_sha256": expected_file_sha256,
+        "canonical_sha256": str(payload["canonical_execution_attempt_sha256"]),
+    }
+    if (
+        "canonical_sha256" in raw
+        and _require_sha256(raw["canonical_sha256"], "compatible execution attempt canonical hash")
+        != binding["canonical_sha256"]
+    ):
+        raise BuyE3TransactionalDeployError("compatible execution attempt canonical hash drifted")
+    return payload, binding
+
+
+def _compatible_execution_identity(
+    *,
+    specification_execution: Mapping[str, Any],
+    attempt_payload: Mapping[str, Any],
+    attempt_binding: Mapping[str, str],
+) -> dict[str, Any]:
+    runtime = attempt_payload.get("runtime_execution")
+    if not isinstance(runtime, Mapping):
+        raise BuyE3TransactionalDeployError("compatible execution attempt lacks runtime identity")
+    expected_specification = {
+        "commit": runtime.get("execution_commit"),
+        "tree": runtime.get("execution_tree"),
+        "annotated_tag": runtime.get("annotated_tag"),
+        "annotated_tag_object": runtime.get("annotated_tag_object"),
+    }
+    if dict(specification_execution) != expected_specification:
+        raise BuyE3TransactionalDeployError(
+            "deployment specification differs from compatible runtime identity"
+        )
+    return {
+        **dict(runtime),
+        "compatible_attempt_manifest": dict(attempt_binding),
+    }
+
+
+def _compatible_runtime_sources(attempt_payload: Mapping[str, Any]) -> dict[str, Any]:
+    runtime_sources = attempt_payload.get("runtime_sources")
+    files = runtime_sources.get("files") if isinstance(runtime_sources, Mapping) else None
+    if not isinstance(files, Mapping):
+        raise BuyE3TransactionalDeployError(
+            "compatible execution attempt lacks runtime source bindings"
+        )
+    by_path: dict[str, Mapping[str, Any]] = {}
+    for raw in files.values():
+        if not isinstance(raw, Mapping):
+            raise BuyE3TransactionalDeployError("compatible runtime source binding is malformed")
+        relative = str(raw.get("repository_relative_path", "")).strip()
+        if not relative or relative in by_path:
+            raise BuyE3TransactionalDeployError(
+                "compatible runtime source paths are incomplete or duplicated"
+            )
+        by_path[relative] = raw
+    bindings: dict[str, Any] = {}
+    for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items():
+        source = by_path.get(relative)
+        if source is None:
+            raise BuyE3TransactionalDeployError(
+                f"compatible attempt lacks deployed runtime source: {relative}"
+            )
+        sha256 = _require_sha256(source.get("file_sha256"), f"compatible runtime source {role}")
+        bindings[role] = {
+            "repository_relative_path": relative,
+            "artifact_manifest_sha256": sha256,
+            "execution_commit_blob_sha256": sha256,
+            "working_file_sha256": sha256,
+        }
+    return {
+        "files": bindings,
+        "runtime_code_sha256": gate_v2.canonical_sha256(bindings),
+    }
+
+
+def _revalidate_compatible_execution(
+    *, repository_root: Path, execution: Mapping[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    binding = execution.get("compatible_attempt_manifest")
+    loaded = _load_compatible_attempt(repository_root=repository_root, raw=binding)
+    if loaded is None:
+        raise BuyE3TransactionalDeployError(
+            "compatible deployment plan lacks its execution attempt manifest"
+        )
+    payload, observed_binding = loaded
+    runtime = payload.get("runtime_execution")
+    expected = {
+        **(dict(runtime) if isinstance(runtime, Mapping) else {}),
+        "compatible_attempt_manifest": observed_binding,
+    }
+    if dict(execution) != expected:
+        raise BuyE3TransactionalDeployError("compatible deployment execution identity drifted")
+    return payload, _compatible_runtime_sources(payload)
 
 
 def _reject_remote_environment_override() -> None:
@@ -587,9 +810,34 @@ def _strategy_mapping(config_path: Path) -> dict[str, Any]:
     return payload["strategy"]
 
 
-def _host_bound_spool_gate(
-    config_path: Path, *, defer_host_bound_spool: bool
+def validate_b0_config_contract(
+    config_path: Path,
+    *,
+    expected_fill_cooldown_s: float = B0_FILL_COOLDOWN_SECONDS,
 ) -> dict[str, Any]:
+    """Require an exact numeric B0 cooldown; no coercion or tolerance is allowed."""
+
+    expected = float(expected_fill_cooldown_s)
+    if not math.isfinite(expected) or expected != B0_FILL_COOLDOWN_SECONDS:
+        raise BuyE3TransactionalDeployError("B0 expected cooldown identity drifted")
+    value = _strategy_mapping(config_path).get("fill_cooldown")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or float(value) != expected
+    ):
+        raise BuyE3TransactionalDeployError(
+            "strategy.fill_cooldown must be the exact numeric B0 value 85"
+        )
+    return {
+        "field": "strategy.fill_cooldown",
+        "seconds": expected,
+        "exact_numeric": True,
+    }
+
+
+def _host_bound_spool_gate(config_path: Path, *, defer_host_bound_spool: bool) -> dict[str, Any]:
     from execution.order_lifecycle_journal_storage_v2 import (
         BOUNDED_REMOTE_SPOOL,
         validate_lifecycle_journal_storage,
@@ -625,9 +873,7 @@ def _host_bound_spool_gate(
             journal_root=str(lifecycle["root"]),
             prospective_epoch_root=str(lifecycle["prospective_epoch_root"]),
             required_mount=str(lifecycle["required_mount"]),
-            remote_spool_allowlisted_roots=lifecycle[
-                "remote_spool_allowlisted_roots"
-            ],
+            remote_spool_allowlisted_roots=lifecycle["remote_spool_allowlisted_roots"],
             enabled=False,
         )
     except (KeyError, TypeError, ValueError) as exc:
@@ -651,15 +897,11 @@ def _host_bound_spool_gate(
 
 
 @contextmanager
-def _host_bound_spool_validation_scope(
-    config_path: Path, *, defer_host_bound_spool: bool
-):
+def _host_bound_spool_validation_scope(config_path: Path, *, defer_host_bound_spool: bool):
     import live.config as live_config
     from execution.order_lifecycle_journal_storage_v2 import BOUNDED_REMOTE_SPOOL
 
-    gate = _host_bound_spool_gate(
-        config_path, defer_host_bound_spool=defer_host_bound_spool
-    )
+    gate = _host_bound_spool_gate(config_path, defer_host_bound_spool=defer_host_bound_spool)
     if gate["status"] != "deferred_to_mandatory_remote_preflight":
         yield gate
         return
@@ -695,8 +937,19 @@ def isolated_config_preflight(
 
     root = repository_root.expanduser().resolve(strict=True)
     config = config_path.expanduser().resolve(strict=True)
-    previous = os.environ.get(F05_BUY_E3_OWNER_OVERRIDE_ENV)
+    validate_b0_config_contract(config)
+    previous_buy = os.environ.get(F05_BUY_E3_OWNER_OVERRIDE_ENV)
+    previous_sell = os.environ.get(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV)
+    release_env_names = (
+        F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+    )
+    previous_release = {name: os.environ.get(name) for name in release_env_names}
     try:
+        for name in release_env_names:
+            os.environ.pop(name, None)
+        os.environ[F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV] = "1"
         if expected_enabled:
             os.environ[F05_BUY_E3_OWNER_OVERRIDE_ENV] = "1"
         else:
@@ -719,10 +972,19 @@ def isolated_config_preflight(
                 evidence_route=loaded.strategy.buy_e3_cooldown_evidence_route,
             )
     finally:
-        if previous is None:
+        if previous_buy is None:
             os.environ.pop(F05_BUY_E3_OWNER_OVERRIDE_ENV, None)
         else:
-            os.environ[F05_BUY_E3_OWNER_OVERRIDE_ENV] = previous
+            os.environ[F05_BUY_E3_OWNER_OVERRIDE_ENV] = previous_buy
+        if previous_sell is None:
+            os.environ.pop(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV, None)
+        else:
+            os.environ[F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV] = previous_sell
+        for name, value in previous_release.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     if bool(policy["f05_buy_e3_owner_override_effective"]) is not bool(expected_enabled):
         raise BuyE3TransactionalDeployError("isolated owner override was not exact")
     receipt: dict[str, Any] = {
@@ -771,6 +1033,12 @@ def run_isolated_preflight(
     )
     environment = dict(os.environ)
     environment.pop(F05_BUY_E3_OWNER_OVERRIDE_ENV, None)
+    for name in (
+        F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+        F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+    ):
+        environment.pop(name, None)
     completed = runner(
         command,
         cwd=repository_root,
@@ -778,6 +1046,7 @@ def run_isolated_preflight(
         check=True,
         capture_output=True,
         text=True,
+        timeout=COMMAND_TIMEOUT_S,
     )
     try:
         payload = json.loads(completed.stdout)
@@ -834,15 +1103,11 @@ def _validated_expected_runtime_source_hashes(
     expected: dict[str, str] = {}
     for role, raw in files.items():
         if not isinstance(raw, Mapping):
-            raise BuyE3TransactionalDeployError(
-                f"runtime source binding is malformed: {role}"
-            )
+            raise BuyE3TransactionalDeployError(f"runtime source binding is malformed: {role}")
         path = str(raw.get("repository_relative_path", "")).strip()
         relative = PurePosixPath(path)
         if not path or relative.is_absolute() or ".." in relative.parts:
-            raise BuyE3TransactionalDeployError(
-                f"runtime source path is unsafe: {role}"
-            )
+            raise BuyE3TransactionalDeployError(f"runtime source path is unsafe: {role}")
         hashes = {
             _require_sha256(raw.get(field), f"runtime source {role} {field}")
             for field in (
@@ -852,9 +1117,7 @@ def _validated_expected_runtime_source_hashes(
             )
         }
         if len(hashes) != 1 or path in expected:
-            raise BuyE3TransactionalDeployError(
-                f"runtime source binding disagrees: {role}"
-            )
+            raise BuyE3TransactionalDeployError(f"runtime source binding disagrees: {role}")
         expected[path] = hashes.pop()
     return expected
 
@@ -880,18 +1143,102 @@ def _validate_file_byte_identity(
         or not isinstance(size_bytes, int)
         or isinstance(size_bytes, bool)
         or size_bytes <= 0
-        or (
-            expected_reported_path is not None
-            and reported_path != expected_reported_path
-        )
-        or (
-            expected_resolved_path is not None
-            and resolved_path != expected_resolved_path
-        )
+        or (expected_reported_path is not None and reported_path != expected_reported_path)
+        or (expected_resolved_path is not None and resolved_path != expected_resolved_path)
     ):
         raise BuyE3TransactionalDeployError(f"{label} is malformed")
     _require_sha256(identity.get("sha256"), f"{label} hash")
     return identity
+
+
+def _empty_active_release_identity() -> dict[str, str]:
+    return {field: "" for field in _STARTUP_ACTIVE_RELEASE_FIELDS}
+
+
+def _expected_active_release_identity(
+    raw: Mapping[str, Any] | None,
+    *,
+    expected_execution_commit: str,
+    expected_execution_tree: str,
+) -> dict[str, str]:
+    if raw is None:
+        return _empty_active_release_identity()
+    if set(raw) != _ACTIVE_RELEASE_PHASE_BINDING_FIELDS:
+        raise BuyE3TransactionalDeployError("active release phase binding fields drifted")
+    return {
+        "path": str(raw["remote_path"]),
+        "file_sha256": _require_sha256(raw["file_sha256"], "active release file hash"),
+        "file_canonical_sha256": _require_sha256(
+            raw["canonical_active_release_sha256"],
+            "active release canonical hash",
+        ),
+        "execution_commit": str(expected_execution_commit),
+        "execution_tree": str(expected_execution_tree),
+    }
+
+
+def _validate_restore_contract(
+    state: Mapping[str, Any],
+    *,
+    expected_enabled: bool,
+    expected_artifact_sha256: str,
+) -> tuple[str, str, int, bool]:
+    restore_mode = str(state.get("restore_mode", ""))
+    checkpoint_loaded = state.get("checkpoint_loaded")
+    checkpoint_sequence = state.get("checkpoint_sequence")
+    buy_identity = str(state.get("buy_deadline_identity", ""))
+    remaining = state.get("buy_remaining_ms")
+    if not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0:
+        raise BuyE3TransactionalDeployError("runtime BUY cooldown remaining time is malformed")
+    checkpoint_valid = (
+        restore_mode == "fresh_b0_no_checkpoint"
+        and checkpoint_loaded is False
+        and type(checkpoint_sequence) is int
+        and checkpoint_sequence == 0
+    ) or (
+        restore_mode != "fresh_b0_no_checkpoint"
+        and checkpoint_loaded is True
+        and type(checkpoint_sequence) is int
+        and checkpoint_sequence > 0
+    )
+    enabled_modes = {
+        "fresh_b0_no_checkpoint",
+        "expired_to_b0",
+        "b0_checkpoint_resume",
+        "exact_same_artifact_resume",
+        "artifact_identity_changed_to_b0",
+    }
+    disabled_modes = {
+        "fresh_b0_no_checkpoint",
+        "expired_to_b0",
+        "b0_checkpoint_resume",
+        "rollback_to_b0",
+    }
+    admitted = enabled_modes if expected_enabled else disabled_modes
+    if restore_mode not in admitted or not checkpoint_valid:
+        raise BuyE3TransactionalDeployError("runtime cooldown restore mode is not admitted")
+    if restore_mode == "exact_same_artifact_resume":
+        deadline_valid = (
+            remaining > 0
+            and buy_identity
+            == f"BUY_E3:{_require_sha256(expected_artifact_sha256, 'expected artifact hash')}"
+        )
+        imported_e3 = True
+    elif restore_mode in {
+        "artifact_identity_changed_to_b0",
+        "rollback_to_b0",
+        "b0_checkpoint_resume",
+    }:
+        deadline_valid = buy_identity == "B0"
+        imported_e3 = False
+    else:
+        deadline_valid = buy_identity == "B0" and remaining == 0
+        imported_e3 = False
+    if not deadline_valid:
+        raise BuyE3TransactionalDeployError(
+            "runtime startup attestation is rejected or deadline-unsafe"
+        )
+    return restore_mode, buy_identity, remaining, imported_e3
 
 
 def _validate_startup_attestation(
@@ -899,37 +1246,101 @@ def _validate_startup_attestation(
     *,
     expected_execution_commit: str,
     expected_execution_tree: str,
+    expected_artifact_sha256: str,
     expected_runtime_sources: Mapping[str, Any],
     expected_python_executable: str,
     expected_python_binary_resolved: str,
+    expected_enabled: bool,
+    expected_active_release: Mapping[str, Any] | None,
+    allow_legacy: bool = False,
 ) -> dict[str, Any]:
-    if not isinstance(raw, Mapping) or set(raw) != _STARTUP_ATTESTATION_FIELDS:
+    if not isinstance(raw, Mapping):
         raise BuyE3TransactionalDeployError("runtime startup attestation fields drifted")
     attestation = dict(raw)
+    legacy = attestation.get("schema_version") == LEGACY_STARTUP_ATTESTATION_SCHEMA
+    expected_fields = _LEGACY_STARTUP_ATTESTATION_FIELDS if legacy else _STARTUP_ATTESTATION_FIELDS
+    expected_gate_fields = _LEGACY_STARTUP_GATE_FIELDS if legacy else _STARTUP_GATE_FIELDS
+    if set(attestation) != expected_fields or (legacy and not allow_legacy):
+        raise BuyE3TransactionalDeployError("runtime startup attestation fields drifted")
     gates = attestation.get("gates")
     state = attestation.get("fill_cooldown_state")
     checkout = attestation.get("running_checkout")
-    expected_gates = {name: True for name in _STARTUP_GATE_FIELDS}
+    expected_gates = {name: True for name in expected_gate_fields}
     if (
-        attestation.get("schema_version") != STARTUP_ATTESTATION_SCHEMA
+        attestation.get("schema_version")
+        != (LEGACY_STARTUP_ATTESTATION_SCHEMA if legacy else STARTUP_ATTESTATION_SCHEMA)
         or attestation.get("status") != "accepted"
         or not str(attestation.get("attested_at_utc", "")).strip()
         or attestation.get("errors") != []
         or not isinstance(gates, Mapping)
-        or set(gates) != _STARTUP_GATE_FIELDS
+        or set(gates) != expected_gate_fields
         or dict(gates) != expected_gates
         or not isinstance(state, Mapping)
         or state.get("schema_version") != FILL_COOLDOWN_STATE_SCHEMA
-        or state.get("buy_deadline_identity") != "B0"
-        or not isinstance(state.get("buy_remaining_ms"), int)
-        or isinstance(state.get("buy_remaining_ms"), bool)
-        or state.get("buy_remaining_ms") != 0
         or not isinstance(checkout, Mapping)
         or set(checkout) != _RUNNING_CHECKOUT_FIELDS
     ):
         raise BuyE3TransactionalDeployError(
             "runtime startup attestation is rejected or deadline-unsafe"
         )
+    if legacy:
+        restore_mode = state.get("restore_mode")
+        checkpoint_loaded = state.get("checkpoint_loaded")
+        checkpoint_sequence = state.get("checkpoint_sequence")
+        if (
+            expected_active_release is not None
+            or restore_mode not in {"fresh_b0_no_checkpoint", "expired_to_b0"}
+            or not (
+                (
+                    restore_mode == "fresh_b0_no_checkpoint"
+                    and checkpoint_loaded is False
+                    and type(checkpoint_sequence) is int
+                    and checkpoint_sequence == 0
+                )
+                or (
+                    restore_mode == "expired_to_b0"
+                    and checkpoint_loaded is True
+                    and type(checkpoint_sequence) is int
+                    and checkpoint_sequence > 0
+                )
+            )
+            or state.get("buy_deadline_identity") != "B0"
+            or state.get("buy_remaining_ms") != 0
+        ):
+            raise BuyE3TransactionalDeployError(
+                "legacy runtime startup attestation is deadline-unsafe"
+            )
+    else:
+        _validate_restore_contract(
+            state,
+            expected_enabled=expected_enabled,
+            expected_artifact_sha256=expected_artifact_sha256,
+        )
+        release = attestation.get("buy_e3_active_release")
+        if not isinstance(release, Mapping) or set(release) != _STARTUP_ACTIVE_RELEASE_FIELDS:
+            raise BuyE3TransactionalDeployError("runtime active release identity fields drifted")
+        expected_release = _expected_active_release_identity(
+            expected_active_release,
+            expected_execution_commit=expected_execution_commit,
+            expected_execution_tree=expected_execution_tree,
+        )
+        if expected_enabled:
+            if expected_active_release is None:
+                raise BuyE3TransactionalDeployError(
+                    "enabled runtime startup lacks post-envelope active release authority"
+                )
+            for field, value in expected_release.items():
+                if release.get(field) != value:
+                    raise BuyE3TransactionalDeployError("runtime active release identity drifted")
+            if (
+                not str(release.get("annotated_operational_tag", "")).strip()
+                or len(str(release.get("annotated_operational_tag_object", ""))) != 40
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "runtime active release operational tag identity is incomplete"
+                )
+        elif dict(release) != _empty_active_release_identity():
+            raise BuyE3TransactionalDeployError("disabled runtime retained active release identity")
     if (
         checkout.get("schema_version") != RUNNING_CHECKOUT_SCHEMA
         or checkout.get("git_commit") != expected_execution_commit
@@ -952,18 +1363,14 @@ def _validate_startup_attestation(
             or set(snapshot) != _GIT_SNAPSHOT_FIELDS
             or dict(snapshot) != expected_snapshot
         ):
-            raise BuyE3TransactionalDeployError(
-                f"runtime startup {label} drifted"
-            )
+            raise BuyE3TransactionalDeployError(f"runtime startup {label} drifted")
     stable_snapshot = checkout.get("stable_snapshot")
     if (
         not isinstance(stable_snapshot, Mapping)
         or set(stable_snapshot) != _STABLE_GIT_SNAPSHOT_FIELDS
         or any(value is not True for value in stable_snapshot.values())
     ):
-        raise BuyE3TransactionalDeployError(
-            "runtime startup stable Git snapshot drifted"
-        )
+        raise BuyE3TransactionalDeployError("runtime startup stable Git snapshot drifted")
     source_rows = checkout.get("runtime_source_files")
     if not isinstance(source_rows, list) or not source_rows:
         raise BuyE3TransactionalDeployError("runtime startup source manifest is empty")
@@ -971,9 +1378,7 @@ def _validate_startup_attestation(
     observed: dict[str, str] = {}
     for raw_row in source_rows:
         if not isinstance(raw_row, Mapping) or set(raw_row) != _RUNTIME_SOURCE_FILE_FIELDS:
-            raise BuyE3TransactionalDeployError(
-                "runtime startup source file binding drifted"
-            )
+            raise BuyE3TransactionalDeployError("runtime startup source file binding drifted")
         row = dict(raw_row)
         path = str(row.get("path", "")).strip()
         relative = PurePosixPath(path)
@@ -992,9 +1397,7 @@ def _validate_startup_attestation(
             or head_size != working_size
             or row.get("matches_head_blob") is not True
         ):
-            raise BuyE3TransactionalDeployError(
-                "runtime startup source file binding is malformed"
-            )
+            raise BuyE3TransactionalDeployError("runtime startup source file binding is malformed")
         working_sha256 = _require_sha256(
             row.get("working_file_sha256"),
             f"runtime startup working source {path}",
@@ -1004,24 +1407,16 @@ def _validate_startup_attestation(
             f"runtime startup HEAD source {path}",
         )
         if working_sha256 != head_sha256:
-            raise BuyE3TransactionalDeployError(
-                "runtime startup source differs from its HEAD blob"
-            )
+            raise BuyE3TransactionalDeployError("runtime startup source differs from its HEAD blob")
         observed[path] = working_sha256
         normalized_rows.append(row)
     if [row["path"] for row in normalized_rows] != sorted(observed):
         raise BuyE3TransactionalDeployError("runtime startup source manifest is not ordered")
-    if (
-        checkout.get("runtime_source_file_count") != len(normalized_rows)
-        or checkout.get("runtime_source_manifest_sha256")
-        != _runtime_source_manifest_sha256(normalized_rows)
-    ):
-        raise BuyE3TransactionalDeployError(
-            "runtime startup source manifest aggregate drifted"
-        )
-    expected_sources = _validated_expected_runtime_source_hashes(
-        expected_runtime_sources
-    )
+    if checkout.get("runtime_source_file_count") != len(normalized_rows) or checkout.get(
+        "runtime_source_manifest_sha256"
+    ) != _runtime_source_manifest_sha256(normalized_rows):
+        raise BuyE3TransactionalDeployError("runtime startup source manifest aggregate drifted")
+    expected_sources = _validated_expected_runtime_source_hashes(expected_runtime_sources)
     if any(observed.get(path) != sha256 for path, sha256 in expected_sources.items()):
         raise BuyE3TransactionalDeployError(
             "runtime startup source bytes differ from the frozen plan"
@@ -1031,20 +1426,13 @@ def _validate_startup_attestation(
         not isinstance(loaded_origins, Mapping)
         or set(loaded_origins) != _LOADED_RUNTIME_MODULE_ROLES
     ):
-        raise BuyE3TransactionalDeployError(
-            "runtime loaded module origin set drifted"
-        )
+        raise BuyE3TransactionalDeployError("runtime loaded module origin set drifted")
     for role, raw_module in loaded_origins.items():
-        if (
-            not isinstance(raw_module, Mapping)
-            or set(raw_module) != _LOADED_RUNTIME_MODULE_FIELDS
-        ):
+        if not isinstance(raw_module, Mapping) or set(raw_module) != _LOADED_RUNTIME_MODULE_FIELDS:
             raise BuyE3TransactionalDeployError(
                 f"runtime loaded module origin fields drifted: {role}"
             )
-        relative_path = str(
-            raw_module.get("repository_relative_path", "")
-        ).strip()
+        relative_path = str(raw_module.get("repository_relative_path", "")).strip()
         origin_path = str(raw_module.get("origin_path", "")).strip()
         module_name = str(raw_module.get("module_name", "")).strip()
         if (
@@ -1082,9 +1470,7 @@ def _validate_startup_attestation(
         expected_resolved_path=expected_python_binary_resolved,
     )
     if interpreter_before != interpreter_after:
-        raise BuyE3TransactionalDeployError(
-            "runtime interpreter bytes changed during attestation"
-        )
+        raise BuyE3TransactionalDeployError("runtime interpreter bytes changed during attestation")
     native = attestation.get("native_runtime_identity")
     if (
         not isinstance(native, Mapping)
@@ -1104,23 +1490,17 @@ def _validate_startup_attestation(
         )
         if (
             native_before != native_after
-            or native.get("reported_module_path")
-            != native_before["reported_path"]
-            or native.get("loaded_module_origin_path")
-            != native_before["resolved_path"]
+            or native.get("reported_module_path") != native_before["reported_path"]
+            or native.get("loaded_module_origin_path") != native_before["resolved_path"]
         ):
-            raise BuyE3TransactionalDeployError(
-                "native runtime module bytes or origin drifted"
-            )
+            raise BuyE3TransactionalDeployError("native runtime module bytes or origin drifted")
     elif (
         native.get("reported_module_path") != "disabled"
         or native.get("loaded_module_origin_path") is not None
         or native.get("before") is not None
         or native.get("after") is not None
     ):
-        raise BuyE3TransactionalDeployError(
-            "disabled native runtime identity is malformed"
-        )
+        raise BuyE3TransactionalDeployError("disabled native runtime identity is malformed")
     return attestation
 
 
@@ -1137,6 +1517,8 @@ def _validate_runtime_identity_authority(
     expected_execution_commit: str,
     expected_execution_tree: str,
     expected_runtime_sources: Mapping[str, Any],
+    expected_active_release: Mapping[str, Any] | None,
+    allow_legacy_startup: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(runtime, Mapping):
         raise BuyE3TransactionalDeployError("runtime identity file is not a mapping")
@@ -1147,25 +1529,74 @@ def _validate_runtime_identity_authority(
         or runtime.get("config_sha256") != expected_config_sha256
         or runtime.get("python_executable") != expected_python_executable
         or runtime.get("f05_buy_e3_enabled") is not bool(expected_enabled)
-        or runtime.get("f05_buy_e3_owner_override_effective")
-        is not bool(expected_enabled)
+        or runtime.get("f05_buy_e3_owner_override_effective") is not bool(expected_enabled)
         or (
             expected_artifact_sha256
-            and runtime.get("f05_buy_e3_artifact_sha256")
-            != expected_artifact_sha256
+            and runtime.get("f05_buy_e3_artifact_sha256") != expected_artifact_sha256
         )
         or not str(runtime.get("recorded_at_utc", "")).strip()
     ):
         raise BuyE3TransactionalDeployError(
             "runtime identity process/config/artifact authority drifted"
         )
+    expected_release = _expected_active_release_identity(
+        expected_active_release,
+        expected_execution_commit=expected_execution_commit,
+        expected_execution_tree=expected_execution_tree,
+    )
+    if expected_enabled:
+        if expected_active_release is None or (
+            runtime.get("f05_buy_e3_active_release_authority_schema_version")
+            != ACTIVE_RELEASE_RUNTIME_AUTHORITY_SCHEMA
+            or runtime.get("f05_buy_e3_required") is not True
+            or runtime.get("f05_buy_e3_active_release_path") != expected_release["path"]
+            or runtime.get("f05_buy_e3_active_release_file_sha256")
+            != expected_release["file_sha256"]
+            or runtime.get("f05_buy_e3_active_release_canonical_sha256")
+            != expected_release["file_canonical_sha256"]
+        ):
+            raise BuyE3TransactionalDeployError("runtime identity active release authority drifted")
+    else:
+        startup_raw = runtime.get("startup_attestation")
+        legacy_startup = (
+            isinstance(startup_raw, Mapping)
+            and startup_raw.get("schema_version") == LEGACY_STARTUP_ATTESTATION_SCHEMA
+        )
+        if legacy_startup and allow_legacy_startup:
+            invalid_disabled_release = any(
+                (
+                    runtime.get("f05_buy_e3_active_release_authority_schema_version")
+                    not in {None, ACTIVE_RELEASE_RUNTIME_AUTHORITY_SCHEMA},
+                    runtime.get("f05_buy_e3_required") not in {None, False},
+                    runtime.get("f05_buy_e3_active_release_path") not in {None, ""},
+                    runtime.get("f05_buy_e3_active_release_file_sha256") not in {None, ""},
+                    runtime.get("f05_buy_e3_active_release_canonical_sha256") not in {None, ""},
+                )
+            )
+        else:
+            invalid_disabled_release = (
+                runtime.get("f05_buy_e3_active_release_authority_schema_version")
+                != ACTIVE_RELEASE_RUNTIME_AUTHORITY_SCHEMA
+                or runtime.get("f05_buy_e3_required") is not False
+                or runtime.get("f05_buy_e3_active_release_path") != ""
+                or runtime.get("f05_buy_e3_active_release_file_sha256") != ""
+                or runtime.get("f05_buy_e3_active_release_canonical_sha256") != ""
+            )
+        if invalid_disabled_release:
+            raise BuyE3TransactionalDeployError(
+                "disabled runtime retained active release authority"
+            )
     attestation = _validate_startup_attestation(
         runtime.get("startup_attestation"),
         expected_execution_commit=expected_execution_commit,
         expected_execution_tree=expected_execution_tree,
+        expected_artifact_sha256=expected_artifact_sha256,
         expected_runtime_sources=expected_runtime_sources,
         expected_python_executable=expected_python_executable,
         expected_python_binary_resolved=expected_python_binary_resolved,
+        expected_enabled=expected_enabled,
+        expected_active_release=expected_active_release,
+        allow_legacy=allow_legacy_startup,
     )
     native_runtime = runtime.get("native_runtime")
     native_identity = attestation["native_runtime_identity"]
@@ -1181,8 +1612,7 @@ def _validate_runtime_identity_authority(
         or set(native_runtime) != {"profile", "module", *native_flag_names}
         or any(not isinstance(native_runtime.get(name), bool) for name in native_flag_names)
         or native_identity.get("profile") != native_runtime.get("profile")
-        or native_identity.get("reported_module_path")
-        != native_runtime.get("module")
+        or native_identity.get("reported_module_path") != native_runtime.get("module")
         or native_identity.get("enabled")
         is not any(bool(native_runtime[name]) for name in native_enable_flag_names)
     ):
@@ -1207,6 +1637,9 @@ def capture_runtime_process_probe(
     expected_artifact_sha256: str | None,
     expected_runtime_code_sha256: str,
     artifact_manifest_path: Path | None,
+    active_release_path: Path | None = None,
+    expected_active_release_file_sha256: str = "",
+    expected_active_release_canonical_sha256: str = "",
 ) -> dict[str, Any]:
     pid = int(pid_file.expanduser().resolve(strict=True).read_text(encoding="ascii").strip())
     process = gate_v2.capture_actual_process_identity(
@@ -1220,9 +1653,7 @@ def capture_runtime_process_probe(
     )
     runtime_candidate = runtime_identity_path.expanduser()
     if runtime_candidate.is_symlink() or not runtime_candidate.is_file():
-        raise BuyE3TransactionalDeployError(
-            "runtime identity is not a non-symlink regular file"
-        )
+        raise BuyE3TransactionalDeployError("runtime identity is not a non-symlink regular file")
     runtime_path = runtime_candidate.resolve(strict=True)
     runtime_bytes = runtime_path.read_bytes()
     runtime_file_sha256 = hashlib.sha256(runtime_bytes).hexdigest()
@@ -1242,12 +1673,54 @@ def capture_runtime_process_probe(
         else ""
     )
     if bool(artifact_sha) is not bool(artifact_manifest_path is not None):
-        raise BuyE3TransactionalDeployError(
-            "artifact hash and manifest must be supplied together"
-        )
+        raise BuyE3TransactionalDeployError("artifact hash and manifest must be supplied together")
     runtime_code_sha = _require_sha256(expected_runtime_code_sha256, "expected runtime code hash")
     if artifact_sha and runtime.get("f05_buy_e3_artifact_sha256") != artifact_sha:
         raise BuyE3TransactionalDeployError("actual process artifact identity drifted")
+    active_release_binding: dict[str, Any] | None = None
+    supplied_release = any(
+        (
+            active_release_path is not None,
+            bool(str(expected_active_release_file_sha256).strip()),
+            bool(str(expected_active_release_canonical_sha256).strip()),
+        )
+    )
+    if supplied_release:
+        if (
+            not expected_buy_e3_enabled
+            or active_release_path is None
+            or not str(expected_active_release_file_sha256).strip()
+            or not str(expected_active_release_canonical_sha256).strip()
+        ):
+            raise BuyE3TransactionalDeployError(
+                "active release process-probe binding is incomplete"
+            )
+        active_release_binding = {
+            "local_path": "not_transferred_to_probe_host",
+            "remote_path": str(active_release_path.expanduser().absolute()),
+            "file_sha256": _require_sha256(
+                expected_active_release_file_sha256,
+                "expected active release file hash",
+            ),
+            "canonical_active_release_sha256": _require_sha256(
+                expected_active_release_canonical_sha256,
+                "expected active release canonical hash",
+            ),
+            "schema_version": active_release.ACTIVE_RELEASE_SCHEMA,
+            "status": active_release.ACTIVE_RELEASE_STATUS,
+        }
+        _validate_installed_active_release_file(
+            active_release_path,
+            expected_file_sha256=active_release_binding["file_sha256"],
+            expected_canonical_sha256=active_release_binding["canonical_active_release_sha256"],
+            expected_execution_commit=expected_execution_commit,
+            expected_execution_tree=expected_execution_tree,
+            expected_artifact_sha256=artifact_sha,
+        )
+    elif expected_buy_e3_enabled:
+        raise BuyE3TransactionalDeployError(
+            "enabled process probe requires post-envelope active release authority"
+        )
     completed_commit = subprocess.run(
         ("git", "rev-parse", "HEAD"),
         cwd=repository_root,
@@ -1265,9 +1738,7 @@ def capture_runtime_process_probe(
     if completed_commit != expected_execution_commit or completed_tree != expected_execution_tree:
         raise BuyE3TransactionalDeployError("actual process checkout identity drifted")
     if artifact_manifest_path is not None:
-        manifest = gate_v2.read_json(
-            artifact_manifest_path.expanduser().resolve(strict=True)
-        )
+        manifest = gate_v2.read_json(artifact_manifest_path.expanduser().resolve(strict=True))
         actual_runtime_sources = gate_v2.verify_runtime_sources(
             repository_root=repository_root,
             execution_commit=completed_commit,
@@ -1293,28 +1764,38 @@ def capture_runtime_process_probe(
         expected_execution_commit=completed_commit,
         expected_execution_tree=completed_tree,
         expected_runtime_sources=actual_runtime_sources,
+        expected_active_release=active_release_binding,
     )
     startup_state = startup_attestation["fill_cooldown_state"]
-    startup_gates = startup_attestation["gates"]
+    startup_release = startup_attestation.get("buy_e3_active_release")
+    if not isinstance(startup_release, Mapping):
+        startup_release = _empty_active_release_identity()
+    restore_mode, _buy_identity, buy_remaining_ms, imported_e3 = _validate_restore_contract(
+        startup_state,
+        expected_enabled=expected_buy_e3_enabled,
+        expected_artifact_sha256=artifact_sha,
+    )
     process.update(
         {
             "execution_commit": completed_commit,
             "execution_tree": completed_tree,
             "runtime_identity_file_sha256": runtime_file_sha256,
-            "startup_attestation_sha256": gate_v2.canonical_sha256(
-                startup_attestation
-            ),
+            "startup_attestation_sha256": gate_v2.canonical_sha256(startup_attestation),
             "artifact_sha256": artifact_sha,
             "runtime_code_sha256": runtime_code_sha,
             "buy_e3_enabled": enabled,
             "owner_override_effective": effective,
-            "initial_buy_deadline_identity": startup_state[
-                "buy_deadline_identity"
-            ],
-            "e3_deadline_imported": startup_gates[
-                "buy_e3_deadline_not_imported"
-            ]
-            is not True,
+            "initial_buy_deadline_identity": startup_state["buy_deadline_identity"],
+            "fill_cooldown_restore_mode": restore_mode,
+            "initial_buy_remaining_ms": buy_remaining_ms,
+            "e3_deadline_imported": imported_e3,
+            "active_release_path": str(startup_release.get("path", "")),
+            "active_release_file_sha256": str(startup_release.get("file_sha256", "")),
+            "active_release_canonical_sha256": str(
+                startup_release.get("file_canonical_sha256", "")
+            ),
+            "active_release_execution_commit": str(startup_release.get("execution_commit", "")),
+            "active_release_execution_tree": str(startup_release.get("execution_tree", "")),
         }
     )
     process["canonical_process_identity_sha256"] = gate_v2.document_sha256(
@@ -1376,8 +1857,7 @@ def _activation_gate_cross_binding(
         "runtime_code_sha256": runtime_sources.get("runtime_code_sha256"),
         "artifact_sha256": artifact.get("artifact_sha256"),
         "configs": {
-            name: configs.get(name, {}).get("config_sha256")
-            for name in ("disabled", "active")
+            name: configs.get(name, {}).get("config_sha256") for name in ("disabled", "active")
         },
         "host": {
             "active_pointer_file_sha256": pointer.get("file_sha256"),
@@ -1388,8 +1868,7 @@ def _activation_gate_cross_binding(
             "venv_root": host.get("venv_root"),
         },
         "rollback_identities": {
-            name: dict(rollback.get(name, {}))
-            for name in ("primary_disabled", "deep_predecessor")
+            name: dict(rollback.get(name, {})) for name in ("primary_disabled", "deep_predecessor")
         },
     }
 
@@ -1420,8 +1899,7 @@ def _activation_gate_receipt_cross_binding(receipt: Mapping[str, Any]) -> dict[s
         "runtime_code_sha256": runtime_sources.get("runtime_code_sha256"),
         "artifact_sha256": artifact.get("artifact_sha256"),
         "configs": {
-            name: configs.get(name, {}).get("config_sha256")
-            for name in ("disabled", "active")
+            name: configs.get(name, {}).get("config_sha256") for name in ("disabled", "active")
         },
         "host": {
             field: host.get(field)
@@ -1435,8 +1913,7 @@ def _activation_gate_receipt_cross_binding(receipt: Mapping[str, Any]) -> dict[s
             )
         },
         "rollback_identities": {
-            name: dict(rollback.get(name, {}))
-            for name in ("primary_disabled", "deep_predecessor")
+            name: dict(rollback.get(name, {})) for name in ("primary_disabled", "deep_predecessor")
         },
     }
 
@@ -1451,15 +1928,11 @@ def _require_activation_gate_cross_binding(
 
 
 def _ssh_base(known_hosts: str) -> list[str]:
-    return [
-        "ssh",
-        "-o",
-        STRICT_SSH_OPTIONS[0],
-        "-o",
-        STRICT_SSH_OPTIONS[1],
-        "-o",
-        f"UserKnownHostsFile={known_hosts}",
-    ]
+    command = ["ssh"]
+    for option in STRICT_SSH_OPTIONS:
+        command.extend(("-o", option))
+    command.extend(("-o", f"UserKnownHostsFile={known_hosts}"))
+    return command
 
 
 def _ssh_command(*, target: str, known_hosts: str, remote_command: str) -> list[str]:
@@ -1481,15 +1954,51 @@ def _rsync_command(*, source: str, target: str, known_hosts: str, destination: s
     ]
 
 
-def _remote_external_config_start(repo_root: str, config_path: str, *, owner_override: bool) -> str:
-    authority = (
+def _release_env_unsets() -> str:
+    return " ".join(
+        f"-u {name}"
+        for name in (
+            F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
+            F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+            F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+        )
+    )
+
+
+def _remote_external_config_start(
+    repo_root: str,
+    config_path: str,
+    *,
+    owner_override: bool,
+    active_release_binding: Mapping[str, Any] | None = None,
+) -> str:
+    buy_authority = (
         f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1"
         if owner_override
         else f"-u {F05_BUY_E3_OWNER_OVERRIDE_ENV}"
     )
+    if active_release_binding is not None:
+        if not owner_override:
+            raise BuyE3TransactionalDeployError(
+                "disabled start cannot carry active release authority"
+            )
+        release_authority = " ".join(
+            (
+                f"{F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV}="
+                f"{shlex.quote(str(active_release_binding['remote_path']))}",
+                f"{F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV}="
+                f"{shlex.quote(str(active_release_binding['file_sha256']))}",
+                f"{F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV}="
+                f"{shlex.quote(str(active_release_binding['canonical_active_release_sha256']))}",
+            )
+        )
+    else:
+        release_authority = _release_env_unsets()
     return (
         f"cd {shlex.quote(repo_root)} && "
-        f"env {authority} NARROWGATE_LIVE_CONFIG={shlex.quote(config_path)} "
+        f"env {buy_authority} {release_authority} "
+        f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
+        f"NARROWGATE_LIVE_CONFIG={shlex.quote(config_path)} "
         "bash live/run.sh start"
     )
 
@@ -1497,7 +2006,7 @@ def _remote_external_config_start(repo_root: str, config_path: str, *, owner_ove
 def _remote_external_config_stop(repo_root: str, config_path: str) -> str:
     return (
         f"cd {shlex.quote(repo_root)} && "
-        f"env -u {F05_BUY_E3_OWNER_OVERRIDE_ENV} "
+        f"env -u {F05_BUY_E3_OWNER_OVERRIDE_ENV} {_release_env_unsets()} "
         f"NARROWGATE_LIVE_CONFIG={shlex.quote(config_path)} bash live/run.sh stop"
     )
 
@@ -1513,11 +2022,17 @@ def _remote_preflight(
     external_script_sha256: str,
     external_gate_sha256: str,
 ) -> str:
-    override = f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1 " if expected_enabled else ""
+    buy_authority = (
+        f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1"
+        if expected_enabled
+        else f"-u {F05_BUY_E3_OWNER_OVERRIDE_ENV}"
+    )
     command = (
-        f"cd {shlex.quote(repo_root)} && env PYTHONPATH={shlex.quote(repo_root)} "
+        f"cd {shlex.quote(repo_root)} && env {buy_authority} {_release_env_unsets()} "
+        f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
+        f"PYTHONPATH={shlex.quote(repo_root)} "
         f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-        f"{override}{shlex.quote(python)} {shlex.quote(external_script)} isolated-preflight "
+        f"{shlex.quote(python)} {shlex.quote(external_script)} isolated-preflight "
         f"--repository-root {shlex.quote(repo_root)} --config {shlex.quote(config_path)} "
         f"--expected-enabled {1 if expected_enabled else 0}"
     )
@@ -1577,8 +2092,7 @@ def _phase_commands(
     python = str(host["python_executable"])
     stage_root = str(remote["stage_root"])
     local_hashes = {
-        role: gate_v2.file_sha256(Path(local_package[role]))
-        for role in _EXTERNAL_PACKAGE_ROLES
+        role: gate_v2.file_sha256(Path(local_package[role])) for role in _EXTERNAL_PACKAGE_ROLES
     }
     package_sha256 = gate_v2.canonical_sha256(local_hashes)
     stage = f"{stage_root}/package-{package_sha256}"
@@ -1654,31 +2168,87 @@ def _phase_commands(
         ("disabled_config", disabled_config),
         ("active_config", active_config),
     )
-    install_fragments: list[str] = []
-    for role, destination in installs:
-        source = staged_paths[role]
-        parent = str(Path(destination).parent)
-        expected_sha = local_hashes[role]
-        install_fragments.append(
-            f"test \"$(sha256sum {shlex.quote(source)} | awk '{{print $1}}')\" = "
-            f"{shlex.quote(expected_sha)} && test ! -L {shlex.quote(destination)} && "
-            f"mkdir -p {shlex.quote(parent)} && "
-            f"chmod 700 {shlex.quote(parent)} && "
-            f"(test ! -e {shlex.quote(destination)} || "
-            f"cmp -s {shlex.quote(source)} {shlex.quote(destination)}) && "
-            f"install -m 600 {shlex.quote(source)} {shlex.quote(destination)} && "
-            f"test \"$(sha256sum {shlex.quote(destination)} | awk '{{print $1}}')\" = "
-            f"{shlex.quote(expected_sha)}"
+    compatible = execution.get("compatible_attempt_manifest") is not None
+
+    def install_command(label: str, destinations: Sequence[tuple[str, str]]) -> dict[str, Any]:
+        fragments: list[str] = []
+        for role, destination in destinations:
+            source = staged_paths[role]
+            parent = str(PurePosixPath(destination).parent)
+            expected_sha = local_hashes[role]
+            fragments.append(
+                f"test \"$(sha256sum {shlex.quote(source)} | awk '{{print $1}}')\" = "
+                f"{shlex.quote(expected_sha)} && test ! -L {shlex.quote(destination)} && "
+                f"mkdir -p {shlex.quote(parent)} && "
+                f"chmod 700 {shlex.quote(parent)} && "
+                f"(test ! -e {shlex.quote(destination)} || "
+                f"cmp -s {shlex.quote(source)} {shlex.quote(destination)}) && "
+                f"install -m 600 {shlex.quote(source)} {shlex.quote(destination)} && "
+                f"test \"$(sha256sum {shlex.quote(destination)} | awk '{{print $1}}')\" = "
+                f"{shlex.quote(expected_sha)}"
+            )
+        return _command(
+            label,
+            _ssh_command(
+                target=target,
+                known_hosts=known,
+                remote_command=" && ".join(fragments),
+            ),
+            mutates=True,
         )
-    install_bytes = _command(
-        "install-private-artifact-and-config-bytes",
-        _ssh_command(
-            target=target,
-            known_hosts=known,
-            remote_command=" && ".join(install_fragments),
-        ),
-        mutates=True,
-    )
+
+    install_bytes = install_command("install-private-artifact-and-config-bytes", installs)
+    isolated_root = f"{stage_root}/runtime-{execution['execution_commit']}"
+    isolated_installs: list[tuple[str, str]] = []
+    prepare_isolated_runtime: dict[str, Any] | None = None
+    install_isolated_bytes: dict[str, Any] | None = None
+    if compatible:
+        repo_prefix = PurePosixPath(repo_root)
+        for role, destination in installs:
+            try:
+                relative = PurePosixPath(destination).relative_to(repo_prefix)
+            except ValueError as exc:
+                raise BuyE3TransactionalDeployError(
+                    "compatible preflight paths must live below the remote repository"
+                ) from exc
+            isolated_installs.append((role, str(PurePosixPath(isolated_root) / relative)))
+        tag = str(execution["annotated_tag"])
+        commit = str(execution["execution_commit"])
+        tree = str(execution["execution_tree"])
+        tag_object = str(execution["annotated_tag_object"])
+        prepare_isolated_runtime = _command(
+            "fetch-and-prepare-isolated-runtime",
+            _ssh_command(
+                target=target,
+                known_hosts=known,
+                remote_command=(
+                    f"cd {shlex.quote(repo_root)} && "
+                    'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
+                    "git fetch --no-tags origin "
+                    "refs/heads/main:refs/remotes/origin/main && "
+                    f"git fetch --no-tags origin refs/tags/{shlex.quote(tag)}:"
+                    f"refs/tags/{shlex.quote(tag)} && "
+                    f'test "$(git cat-file -t refs/tags/{shlex.quote(tag)})" = tag && '
+                    f'test "$(git rev-parse refs/tags/{shlex.quote(tag)})" = '
+                    f"{shlex.quote(tag_object)} && "
+                    f'test "$(git rev-parse refs/tags/{shlex.quote(tag)}^{{}})" = '
+                    f"{shlex.quote(commit)} && "
+                    f"test ! -L {shlex.quote(isolated_root)} && "
+                    f"(test -d {shlex.quote(isolated_root)} || "
+                    f"git worktree add --detach {shlex.quote(isolated_root)} "
+                    f"{shlex.quote(commit)}) && "
+                    f"cd {shlex.quote(isolated_root)} && "
+                    f'test "$(git rev-parse HEAD)" = {shlex.quote(commit)} && '
+                    f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(tree)} && '
+                    'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+                ),
+            ),
+            mutates=True,
+        )
+        install_isolated_bytes = install_command(
+            "install-isolated-preflight-artifact-and-config-bytes",
+            isolated_installs,
+        )
     checkout = (
         f"cd {shlex.quote(repo_root)} && "
         f'test "$(git cat-file -t refs/tags/{shlex.quote(str(execution["annotated_tag"]))})" '
@@ -1687,12 +2257,24 @@ def _phase_commands(
         f'test "$(git rev-parse refs/tags/{shlex.quote(str(execution["annotated_tag"]))}^{{}})" '
         f"= {shlex.quote(str(execution['execution_commit']))} && git checkout --detach "
         f"{shlex.quote(str(execution['execution_commit']))} && "
-        f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(str(execution["execution_tree"]))}'
+        f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(str(execution["execution_tree"]))} '
+        '&& test -z "$(git status --porcelain=v1 --untracked-files=all)"'
+    )
+    preflight_root = isolated_root if compatible else repo_root
+    preflight_disabled_config = (
+        next(destination for role, destination in isolated_installs if role == "disabled_config")
+        if compatible
+        else disabled_config
+    )
+    preflight_active_config = (
+        next(destination for role, destination in isolated_installs if role == "active_config")
+        if compatible
+        else active_config
     )
     disabled_preflight = _remote_preflight(
-        repo_root=repo_root,
+        repo_root=preflight_root,
         external_script=external_script,
-        config_path=disabled_config,
+        config_path=preflight_disabled_config,
         expected_enabled=False,
         python=python,
         external_gate=external_gate,
@@ -1700,9 +2282,9 @@ def _phase_commands(
         external_gate_sha256=external_gate_sha256,
     )
     active_preflight = _remote_preflight(
-        repo_root=repo_root,
+        repo_root=preflight_root,
         external_script=external_script,
-        config_path=active_config,
+        config_path=preflight_active_config,
         expected_enabled=True,
         python=python,
         external_gate=external_gate,
@@ -1713,22 +2295,30 @@ def _phase_commands(
     def common_pre_stop(checkpoint_path: str) -> list[dict[str, Any]]:
         log_checkpoint = _verified_external_exec(
             command=(
-            f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-            f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-            f"{shlex.quote(external_script)} log-checkpoint --log "
-            f"{shlex.quote(str(remote['log_path']))} --output "
-            f"{shlex.quote(checkpoint_path)}"
+                f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
+                f"{shlex.quote(external_script)} log-checkpoint --log "
+                f"{shlex.quote(str(remote['log_path']))} --output "
+                f"{shlex.quote(checkpoint_path)}"
             ),
             external_script=external_script,
             external_script_sha256=external_script_sha256,
             external_gate=external_gate,
             external_gate_sha256=external_gate_sha256,
         )
+        if compatible:
+            if prepare_isolated_runtime is None or install_isolated_bytes is None:
+                raise BuyE3TransactionalDeployError(
+                    "compatible isolated preflight commands are incomplete"
+                )
+            preflight_setup = [prepare_isolated_runtime, install_isolated_bytes]
+        else:
+            preflight_setup = [install_bytes]
         return [
             prepare_stage,
             *transfers,
             freeze_stage,
-            install_bytes,
+            *preflight_setup,
             _command(
                 "isolated-disabled-preflight",
                 _ssh_command(target=target, known_hosts=known, remote_command=disabled_preflight),
@@ -1802,19 +2392,19 @@ def _phase_commands(
     ) -> list[str]:
         command = _verified_external_exec(
             command=(
-            f"cd {shlex.quote(repo_root)} && env "
-            f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-            f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-            f"{shlex.quote(external_script)} process-probe --repository-root "
-            f"{shlex.quote(repo_root)} --pid-file {shlex.quote(pid_file)} --config "
-            f"{shlex.quote(config_path)} --config-sha256 {shlex.quote(config_sha)} "
-            f"--python-executable {shlex.quote(python)} --venv-root "
-            f"{shlex.quote(str(host['venv_root']))} --runtime-identity "
-            f"{shlex.quote(str(remote['runtime_identity_path']))} --expected-enabled "
-            f"{1 if enabled else 0} --execution-commit "
-            f"{shlex.quote(str(expected_execution['execution_commit']))} --execution-tree "
-            f"{shlex.quote(str(expected_execution['execution_tree']))} "
-            f"--runtime-code-sha256 {shlex.quote(expected_runtime_code_sha256)}"
+                f"cd {shlex.quote(repo_root)} && env "
+                f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
+                f"{shlex.quote(external_script)} process-probe --repository-root "
+                f"{shlex.quote(repo_root)} --pid-file {shlex.quote(pid_file)} --config "
+                f"{shlex.quote(config_path)} --config-sha256 {shlex.quote(config_sha)} "
+                f"--python-executable {shlex.quote(python)} --venv-root "
+                f"{shlex.quote(str(host['venv_root']))} --runtime-identity "
+                f"{shlex.quote(str(remote['runtime_identity_path']))} --expected-enabled "
+                f"{1 if enabled else 0} --execution-commit "
+                f"{shlex.quote(str(expected_execution['execution_commit']))} --execution-tree "
+                f"{shlex.quote(str(expected_execution['execution_tree']))} "
+                f"--runtime-code-sha256 {shlex.quote(expected_runtime_code_sha256)}"
             ),
             external_script=external_script,
             external_script_sha256=external_script_sha256,
@@ -1844,11 +2434,11 @@ def _phase_commands(
         )
         command = _verified_external_exec(
             command=(
-            f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-            f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-            f"{shlex.quote(external_script)} log-validate --log "
-            f"{shlex.quote(str(remote['log_path']))} --checkpoint "
-            f"{shlex.quote(checkpoint_path)} {markers}"
+                f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
+                f"{shlex.quote(external_script)} log-validate --log "
+                f"{shlex.quote(str(remote['log_path']))} --checkpoint "
+                f"{shlex.quote(checkpoint_path)} {markers}"
             ),
             external_script=external_script,
             external_script_sha256=external_script_sha256,
@@ -1862,6 +2452,7 @@ def _phase_commands(
         _command("stop-live", stop_disabled, mutates=True, after_stop=True),
         _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
         _command("checkout-frozen-runtime", checkout_command, mutates=True, after_stop=True),
+        *([install_bytes] if compatible else []),
         _command("start-disabled", start_disabled, mutates=True, after_stop=True),
         _command(
             "fresh-disabled-process-probe",
@@ -1896,6 +2487,7 @@ def _phase_commands(
         ),
         _command("stop-live", stop_disabled, mutates=True, after_stop=True),
         _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
+        *([install_bytes] if compatible else []),
         _command("start-active-restart-only", start_active, mutates=True, after_stop=True),
         _command(
             "fresh-active-process-probe",
@@ -1975,6 +2567,166 @@ def _phase_commands(
     }
 
 
+def _validate_active_release_phase_binding(
+    raw: Mapping[str, Any], *, plan: Mapping[str, Any]
+) -> dict[str, Any]:
+    if set(raw) != _ACTIVE_RELEASE_PHASE_BINDING_FIELDS:
+        raise BuyE3TransactionalDeployError("active release phase binding fields drifted")
+    binding = dict(raw)
+    expected_remote_path = _remote_active_release_path(
+        str(plan["active_pointer"]["repo_root"]),
+        str(binding.get("file_sha256", "")),
+    )
+    local_path = Path(str(binding.get("local_path", ""))).expanduser().absolute()
+    if (
+        not local_path.is_absolute()
+        or binding.get("remote_path") != expected_remote_path
+        or binding.get("schema_version") != active_release.ACTIVE_RELEASE_SCHEMA
+        or binding.get("status") != active_release.ACTIVE_RELEASE_STATUS
+    ):
+        raise BuyE3TransactionalDeployError("active release phase binding identity drifted")
+    binding["file_sha256"] = _require_sha256(binding.get("file_sha256"), "active release file hash")
+    binding["canonical_active_release_sha256"] = _require_sha256(
+        binding.get("canonical_active_release_sha256"),
+        "active release canonical hash",
+    )
+    return binding
+
+
+def _activation_rows_with_active_release(
+    plan: Mapping[str, Any], active_release_binding: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Derive post-envelope authority commands without changing the frozen plan."""
+
+    binding = _validate_active_release_phase_binding(active_release_binding, plan=plan)
+    base_rows = [dict(row) for row in plan["phases"]["activate"]]
+    package = plan["external_tools_and_package"]
+    package_files = package["files"]
+    stage = f"{plan['remote']['stage_root']}/package-{package['content_package_sha256']}"
+    release_stage_path = (
+        f"{plan['remote']['stage_root']}/active-release-{binding['file_sha256']}.json"
+    )
+    target = str(plan["active_pointer"]["ssh_target"])
+    known_hosts = str(plan["ssh"]["path"])
+    repo_root = str(plan["active_pointer"]["repo_root"])
+    python = str(plan["host"]["python_executable"])
+
+    def staged_path(role: str) -> str:
+        local_path = Path(str(package_files[role]["path"]))
+        return f"{stage}/{role}-{package_files[role]['file_sha256']}{local_path.suffix}"
+
+    external_script = staged_path("deploy_script")
+    external_gate = staged_path("gate_amendment")
+    external_script_sha256 = str(package_files["deploy_script"]["file_sha256"])
+    external_gate_sha256 = str(package_files["gate_amendment"]["file_sha256"])
+    transfer = _command(
+        "stage-active-release",
+        _rsync_command(
+            source=str(binding["local_path"]),
+            target=target,
+            known_hosts=known_hosts,
+            destination=release_stage_path,
+        ),
+        mutates=True,
+    )
+    validate_stage = _command(
+        "validate-and-freeze-active-release-stage",
+        _ssh_command(
+            target=target,
+            known_hosts=known_hosts,
+            remote_command=(
+                f"test ! -L {shlex.quote(release_stage_path)} && "
+                f"test -f {shlex.quote(release_stage_path)} && "
+                f"(test \"$(stat -c '%a' {shlex.quote(release_stage_path)})\" = 600 || "
+                f"test \"$(stat -c '%a' {shlex.quote(release_stage_path)})\" = 400) && "
+                f"test \"$(stat -c '%h' {shlex.quote(release_stage_path)})\" = 1 && "
+                f'test "$(sha256sum {shlex.quote(release_stage_path)} | '
+                f"awk '{{print $1}}')\" = {shlex.quote(str(binding['file_sha256']))} && "
+                f"chmod 400 {shlex.quote(release_stage_path)}"
+            ),
+        ),
+        mutates=True,
+    )
+    install_command = _verified_external_exec(
+        command=(
+            f"cd {shlex.quote(repo_root)} && env {_release_env_unsets()} "
+            f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
+            f"{shlex.quote(external_script)} install-active-release --source "
+            f"{shlex.quote(release_stage_path)} --destination "
+            f"{shlex.quote(str(binding['remote_path']))} --file-sha256 "
+            f"{shlex.quote(str(binding['file_sha256']))}"
+        ),
+        external_script=external_script,
+        external_script_sha256=external_script_sha256,
+        external_gate=external_gate,
+        external_gate_sha256=external_gate_sha256,
+    )
+    install = _command(
+        "install-private-active-release",
+        _ssh_command(
+            target=target,
+            known_hosts=known_hosts,
+            remote_command=install_command,
+        ),
+        mutates=True,
+        after_stop=True,
+    )
+    start = _command(
+        "start-active-restart-only",
+        _ssh_command(
+            target=target,
+            known_hosts=known_hosts,
+            remote_command=_remote_external_config_start(
+                repo_root,
+                str(plan["remote"]["active_config_path"]),
+                owner_override=True,
+                active_release_binding=binding,
+            ),
+        ),
+        mutates=True,
+        after_stop=True,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for row in base_rows:
+        label = str(row["label"])
+        if label == "startup-log-checkpoint":
+            rows.extend((transfer, validate_stage))
+        if label == "start-active-restart-only":
+            rows.extend((install, start))
+            continue
+        if label == "fresh-active-process-probe":
+            argv = list(row["argv"])
+            argv[-1] = (
+                f"{argv[-1]} --active-release {shlex.quote(str(binding['remote_path']))} "
+                f"--active-release-file-sha256 "
+                f"{shlex.quote(str(binding['file_sha256']))} "
+                f"--active-release-canonical-sha256 "
+                f"{shlex.quote(str(binding['canonical_active_release_sha256']))}"
+            )
+            rows.append(
+                _command(
+                    label,
+                    argv,
+                    mutates=bool(row["mutates_remote"]),
+                    after_stop=bool(row["after_stop"]),
+                )
+            )
+            continue
+        rows.append(row)
+    return rows
+
+
+def _execution_rows(
+    plan: Mapping[str, Any],
+    phase: str,
+    active_release_binding: Mapping[str, Any] | None,
+) -> list[Mapping[str, Any]]:
+    if phase == "activate" and active_release_binding is not None:
+        return _activation_rows_with_active_release(plan, active_release_binding)
+    return list(plan["phases"][phase])
+
+
 def build_plan(
     *,
     specification: Mapping[str, Any],
@@ -2007,30 +2759,53 @@ def build_plan(
     ):
         if not isinstance(value, Mapping):
             raise BuyE3TransactionalDeployError(f"specification lacks {label}")
-    execution = gate_v2.verify_execution_git_identity(
+    compatible_loaded = _load_compatible_attempt(
         repository_root=root,
-        expected_commit=str(execution_raw["commit"]),
-        expected_tree=str(execution_raw["tree"]),
-        annotated_tag=str(execution_raw["annotated_tag"]),
-        expected_tag_object=str(execution_raw["annotated_tag_object"]),
+        raw=specification.get("compatible_execution_attempt"),
     )
+    if compatible_loaded is None:
+        attempt_payload = None
+        execution = gate_v2.verify_execution_git_identity(
+            repository_root=root,
+            expected_commit=str(execution_raw["commit"]),
+            expected_tree=str(execution_raw["tree"]),
+            annotated_tag=str(execution_raw["annotated_tag"]),
+            expected_tag_object=str(execution_raw["annotated_tag_object"]),
+        )
+        runtime_sources_from_attempt = None
+    else:
+        attempt_payload, attempt_binding = compatible_loaded
+        execution = _compatible_execution_identity(
+            specification_execution=execution_raw,
+            attempt_payload=attempt_payload,
+            attempt_binding=attempt_binding,
+        )
+        runtime_sources_from_attempt = _compatible_runtime_sources(attempt_payload)
     manifest_path = Path(str(artifact_raw["manifest_path"])).expanduser().resolve(strict=True)
     policy_path = Path(str(artifact_raw["policy_path"])).expanduser().resolve(strict=True)
     bundle_path = Path(str(artifact_raw["predicate_bundle_path"])).expanduser().resolve(strict=True)
     artifact_manifest = _read_json(manifest_path)
     policy_payload = _read_json(policy_path)
-    if (
-        policy_payload.get("bindings", {}).get("owner_execution_commit")
-        != execution["execution_commit"]
-    ):
+    expected_producer_commit = (
+        execution["execution_commit"]
+        if attempt_payload is None
+        else attempt_payload["artifact_producer_execution"]["execution_commit"]
+    )
+    if policy_payload.get("bindings", {}).get("owner_execution_commit") != expected_producer_commit:
         raise BuyE3TransactionalDeployError("policy artifact binds another execution commit")
-    runtime_sources = gate_v2.verify_runtime_sources(
-        repository_root=root,
-        execution_commit=execution["execution_commit"],
-        artifact_manifest=artifact_manifest,
+    runtime_sources = (
+        gate_v2.verify_runtime_sources(
+            repository_root=root,
+            execution_commit=execution["execution_commit"],
+            artifact_manifest=artifact_manifest,
+        )
+        if runtime_sources_from_attempt is None
+        else runtime_sources_from_attempt
     )
     disabled_config = Path(str(configs_raw["disabled_path"])).expanduser().resolve(strict=True)
     active_config = Path(str(configs_raw["active_path"])).expanduser().resolve(strict=True)
+    validate_b0_config_contract(disabled_config)
+    validate_b0_config_contract(active_config)
     config_binding = gate_v2.validate_private_config_pair(
         disabled_config_path=disabled_config,
         active_config_path=active_config,
@@ -2135,12 +2910,8 @@ def build_plan(
     disabled_preflight = dict(runner(root, disabled_config, False))
     active_preflight = dict(runner(root, active_config, True))
     expected_storage_gates = {
-        False: _host_bound_spool_gate(
-            disabled_config, defer_host_bound_spool=True
-        ),
-        True: _host_bound_spool_gate(
-            active_config, defer_host_bound_spool=True
-        ),
+        False: _host_bound_spool_gate(disabled_config, defer_host_bound_spool=True),
+        True: _host_bound_spool_gate(active_config, defer_host_bound_spool=True),
     }
     for payload, enabled in ((disabled_preflight, False), (active_preflight, True)):
         storage_gate = payload.get("host_bound_storage_gate")
@@ -2165,6 +2936,27 @@ def build_plan(
         "predicate_bundle_path": str(bundle_path),
         "predicate_bundle_file_sha256": gate_v2.file_sha256(bundle_path),
     }
+    if attempt_payload is not None:
+        admitted_artifact = attempt_payload.get("artifact")
+        admitted_files = (
+            admitted_artifact.get("files") if isinstance(admitted_artifact, Mapping) else None
+        )
+        observed_files = {
+            "manifest": artifact_binding["manifest_file_sha256"],
+            "policy": artifact_binding["policy_file_sha256"],
+            "predicate_bundle": artifact_binding["predicate_bundle_file_sha256"],
+        }
+        if (
+            not isinstance(admitted_files, Mapping)
+            or admitted_artifact.get("artifact_sha256") != artifact_binding["artifact_sha256"]
+            or any(
+                admitted_files.get(role, {}).get("file_sha256") != sha256
+                for role, sha256 in observed_files.items()
+            )
+        ):
+            raise BuyE3TransactionalDeployError(
+                "deployment artifact differs from compatible attempt binding"
+            )
     local_package = {
         "deploy_script": str(Path(__file__).resolve()),
         "gate_amendment": str(Path(gate_v2.__file__).resolve()),
@@ -2198,7 +2990,11 @@ def build_plan(
     )
     for phase, rows in commands.items():
         stop_positions = [index for index, row in enumerate(rows) if row["label"] == "stop-live"]
-        preflights = [index for index, row in enumerate(rows) if "preflight" in row["label"]]
+        preflights = [
+            index
+            for index, row in enumerate(rows)
+            if row["label"] in {"isolated-disabled-preflight", "isolated-active-preflight"}
+        ]
         if phase in {"disabled-deploy", "activate"} and (
             len(stop_positions) != 1 or len(preflights) != 2 or max(preflights) >= stop_positions[0]
         ):
@@ -2208,7 +3004,7 @@ def build_plan(
             if argv[0] not in {"ssh", "rsync"} or "StrictHostKeyChecking=yes" not in " ".join(argv):
                 raise BuyE3TransactionalDeployError("remote command lacks strict SSH")
     plan: dict[str, Any] = {
-        "schema_version": PLAN_SCHEMA,
+        "schema_version": (PLAN_SCHEMA if attempt_payload is None else COMPATIBLE_PLAN_SCHEMA),
         "status": "plan_only_no_remote_command_executed",
         "planner_repository_root": str(root),
         "execution": execution,
@@ -2238,6 +3034,10 @@ def build_plan(
     plan["plan_core_sha256"] = _plan_core_sha256(plan)
     activation_gate_raw = specification.get("activation_gate")
     if activation_gate_raw is not None:
+        if attempt_payload is not None:
+            raise BuyE3TransactionalDeployError(
+                "compatible execution activation must use a post-disabled activation envelope"
+            )
         if not isinstance(activation_gate_raw, Mapping):
             raise BuyE3TransactionalDeployError("activation gate binding is malformed")
         activation_path = Path(str(activation_gate_raw.get("path", ""))).expanduser()
@@ -2246,7 +3046,6 @@ def build_plan(
         )
         if gate_v2.file_sha256(activation_path.resolve(strict=True)) != expected_file_sha:
             raise BuyE3TransactionalDeployError("activation gate file hash drifted")
-        activation_receipt = gate_v2.validate_amended_gate_receipt(activation_path)
         expected_cross_binding = _activation_gate_cross_binding(
             execution=execution,
             runtime_sources=runtime_sources,
@@ -2257,25 +3056,49 @@ def build_plan(
             host=host,
             rollback=rollback,
         )
-        cross_binding_sha256 = _require_activation_gate_cross_binding(
-            activation_receipt, expected_cross_binding
-        )
+        activation_kind = str(activation_gate_raw.get("kind", "")).strip()
+        if activation_kind:
+            if attempt_payload is None or activation_kind != _COMPATIBLE_ACTIVATION_GATE_KIND:
+                raise BuyE3TransactionalDeployError(
+                    "activation gate kind is incompatible with this execution"
+                )
+            activation_receipt = gate_v1.validate_deployment_gate_receipt(
+                activation_path,
+                expected_artifact_sha256=str(artifact_binding["artifact_sha256"]),
+            )
+            if (
+                activation_receipt.get("execution_commit") != execution["execution_commit"]
+                or activation_receipt.get("execution_tag") != execution["annotated_tag"]
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "generic deployment gate binds another execution"
+                )
+            canonical_receipt_sha256 = activation_receipt[
+                "canonical_deployment_gate_receipt_sha256"
+            ]
+            cross_binding_sha256 = gate_v2.canonical_sha256(expected_cross_binding)
+        else:
+            if attempt_payload is not None:
+                raise BuyE3TransactionalDeployError(
+                    "compatible execution requires a generic v1 activation gate"
+                )
+            activation_receipt = gate_v2.validate_amended_gate_receipt(activation_path)
+            canonical_receipt_sha256 = activation_receipt["canonical_amendment_receipt_sha256"]
+            cross_binding_sha256 = _require_activation_gate_cross_binding(
+                activation_receipt, expected_cross_binding
+            )
         activation_gate_binding: dict[str, Any] = {
             "path": str(activation_path.resolve(strict=True)),
             "file_sha256": expected_file_sha,
-            "canonical_receipt_sha256": activation_receipt[
-                "canonical_amendment_receipt_sha256"
-            ],
+            "canonical_receipt_sha256": canonical_receipt_sha256,
             "cross_binding_sha256": cross_binding_sha256,
             "plan_core_sha256": plan["plan_core_sha256"],
-            "transaction_contract_sha256": gate_v2.canonical_sha256(
-                plan["transaction_contract"]
-            ),
+            "transaction_contract_sha256": gate_v2.canonical_sha256(plan["transaction_contract"]),
         }
-        activation_gate_binding["canonical_activation_binding_sha256"] = (
-            gate_v2.document_sha256(
-                activation_gate_binding, "canonical_activation_binding_sha256"
-            )
+        if activation_kind:
+            activation_gate_binding["kind"] = activation_kind
+        activation_gate_binding["canonical_activation_binding_sha256"] = gate_v2.document_sha256(
+            activation_gate_binding, "canonical_activation_binding_sha256"
         )
         plan["activation_gate"] = activation_gate_binding
         plan["activation_gate_receipt_sha256"] = activation_gate_binding["canonical_receipt_sha256"]
@@ -2291,11 +3114,34 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
     expected_fields = _PLAN_BASE_FIELDS | (_PLAN_ACTIVATION_FIELDS if has_activation else set())
     if set(plan) != expected_fields:
         raise BuyE3TransactionalDeployError("deployment plan fields drifted")
+    execution = plan.get("execution")
+    if not isinstance(execution, Mapping):
+        raise BuyE3TransactionalDeployError("deployment execution identity is malformed")
+    compatible_binding = execution.get("compatible_attempt_manifest")
+    compatible = compatible_binding is not None
+    if compatible and has_activation:
+        raise BuyE3TransactionalDeployError(
+            "compatible deployment plans cannot embed a plan-time activation gate"
+        )
+    if compatible:
+        if (
+            not isinstance(compatible_binding, Mapping)
+            or set(compatible_binding) != {"path", "file_sha256", "canonical_sha256"}
+            or not str(compatible_binding.get("path", "")).strip()
+        ):
+            raise BuyE3TransactionalDeployError("compatible execution attempt plan binding drifted")
+        _require_sha256(
+            compatible_binding.get("file_sha256"),
+            "compatible execution attempt plan file hash",
+        )
+        _require_sha256(
+            compatible_binding.get("canonical_sha256"),
+            "compatible execution attempt plan canonical hash",
+        )
     if (
-        plan.get("schema_version") != PLAN_SCHEMA
+        plan.get("schema_version") != (COMPATIBLE_PLAN_SCHEMA if compatible else PLAN_SCHEMA)
         or plan.get("status") != "plan_only_no_remote_command_executed"
-        or plan.get("execution", {}).get("execution_commit")
-        != gate_v2.FROZEN_EXECUTION_COMMIT
+        or (not compatible and execution.get("execution_commit") != gate_v2.FROZEN_EXECUTION_COMMIT)
         or plan.get("transaction_contract") != TRANSACTION_CONTRACT
         or plan.get("evidence_boundary") != PLAN_EVIDENCE_BOUNDARY
         or plan.get("runtime_attestation_contract")
@@ -2351,7 +3197,20 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
                 raise BuyE3TransactionalDeployError("deployment command core drifted")
     if has_activation:
         activation = plan.get("activation_gate")
-        if not isinstance(activation, Mapping) or set(activation) != _ACTIVATION_GATE_BINDING_FIELDS:
+        compatible_activation = (
+            isinstance(activation, Mapping)
+            and activation.get("kind") == _COMPATIBLE_ACTIVATION_GATE_KIND
+        )
+        expected_activation_fields = (
+            _COMPATIBLE_ACTIVATION_GATE_BINDING_FIELDS
+            if compatible_activation
+            else _ACTIVATION_GATE_BINDING_FIELDS
+        )
+        if (
+            not isinstance(activation, Mapping)
+            or set(activation) != expected_activation_fields
+            or compatible_activation is not compatible
+        ):
             raise BuyE3TransactionalDeployError("activation gate plan binding is incomplete")
         if (
             activation.get("plan_core_sha256") != plan["plan_core_sha256"]
@@ -2360,14 +3219,27 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
             or activation.get("canonical_receipt_sha256")
             != plan.get("activation_gate_receipt_sha256")
             or activation.get("canonical_activation_binding_sha256")
-            != gate_v2.document_sha256(
-                activation, "canonical_activation_binding_sha256"
-            )
+            != gate_v2.document_sha256(activation, "canonical_activation_binding_sha256")
         ):
             raise BuyE3TransactionalDeployError("activation gate plan/core binding drifted")
-    if plan.get("canonical_plan_sha256") != gate_v2.document_sha256(
-        plan, "canonical_plan_sha256"
-    ):
+        if compatible_activation:
+            expected_cross_binding = _activation_gate_cross_binding(
+                execution=plan["execution"],
+                runtime_sources=plan["runtime_sources"],
+                artifact=plan["artifact"],
+                configs=plan["configs"],
+                pointer=plan["active_pointer"],
+                known_hosts=plan["ssh"],
+                host=plan["host"],
+                rollback=plan["rollback_identities"],
+            )
+            if activation.get("cross_binding_sha256") != gate_v2.canonical_sha256(
+                expected_cross_binding
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "compatible activation gate cross-binding drifted"
+                )
+    if plan.get("canonical_plan_sha256") != gate_v2.document_sha256(plan, "canonical_plan_sha256"):
         raise BuyE3TransactionalDeployError("deployment plan canonical identity drifted")
 
 
@@ -2393,6 +3265,8 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
         observed_hashes[str(role)] = observed_hash
     if gate_v2.canonical_sha256(observed_hashes) != tools.get("content_package_sha256"):
         raise BuyE3TransactionalDeployError("external package aggregate drifted")
+    validate_b0_config_contract(Path(str(files["disabled_config"]["path"])))
+    validate_b0_config_contract(Path(str(files["active_config"]["path"])))
     pointer = plan["active_pointer"]
     load_sha_bound_active_pointer(
         pointer_path=Path(str(pointer["path"])),
@@ -2406,21 +3280,51 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
     )
     root = Path(str(plan["planner_repository_root"])).expanduser().resolve(strict=True)
     execution = plan["execution"]
-    gate_v2.verify_execution_git_identity(
-        repository_root=root,
-        expected_commit=str(execution["execution_commit"]),
-        expected_tree=str(execution["execution_tree"]),
-        annotated_tag=str(execution["annotated_tag"]),
-        expected_tag_object=str(execution["annotated_tag_object"]),
-    )
-    manifest = _read_json(Path(str(plan["artifact"]["manifest_path"])))
-    runtime = gate_v2.verify_runtime_sources(
-        repository_root=root,
-        execution_commit=str(execution["execution_commit"]),
-        artifact_manifest=manifest,
-    )
+    compatible_payload: dict[str, Any] | None
+    if execution.get("compatible_attempt_manifest") is None:
+        compatible_payload = None
+        gate_v2.verify_execution_git_identity(
+            repository_root=root,
+            expected_commit=str(execution["execution_commit"]),
+            expected_tree=str(execution["execution_tree"]),
+            annotated_tag=str(execution["annotated_tag"]),
+            expected_tag_object=str(execution["annotated_tag_object"]),
+        )
+        manifest = _read_json(Path(str(plan["artifact"]["manifest_path"])))
+        runtime = gate_v2.verify_runtime_sources(
+            repository_root=root,
+            execution_commit=str(execution["execution_commit"]),
+            artifact_manifest=manifest,
+        )
+    else:
+        compatible_payload, runtime = _revalidate_compatible_execution(
+            repository_root=root,
+            execution=execution,
+        )
     if runtime.get("runtime_code_sha256") != plan["runtime_sources"].get("runtime_code_sha256"):
         raise BuyE3TransactionalDeployError("runtime source aggregate drifted")
+    if runtime != plan["runtime_sources"]:
+        raise BuyE3TransactionalDeployError("runtime source binding drifted")
+    if compatible_payload is not None:
+        admitted_artifact = compatible_payload.get("artifact")
+        admitted_files = (
+            admitted_artifact.get("files") if isinstance(admitted_artifact, Mapping) else None
+        )
+        plan_artifact = plan["artifact"]
+        observed_files = {
+            "manifest": plan_artifact["manifest_file_sha256"],
+            "policy": plan_artifact["policy_file_sha256"],
+            "predicate_bundle": plan_artifact["predicate_bundle_file_sha256"],
+        }
+        if (
+            not isinstance(admitted_files, Mapping)
+            or admitted_artifact.get("artifact_sha256") != plan_artifact["artifact_sha256"]
+            or any(
+                admitted_files.get(role, {}).get("file_sha256") != sha256
+                for role, sha256 in observed_files.items()
+            )
+        ):
+            raise BuyE3TransactionalDeployError("compatible deployment artifact binding drifted")
     activation = plan.get("activation_gate")
     activation_receipt_sha256 = plan.get("activation_gate_receipt_sha256")
     if (activation is None) != (activation_receipt_sha256 is None):
@@ -2431,7 +3335,6 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
         path = Path(str(activation["path"]))
         if gate_v2.file_sha256(path.resolve(strict=True)) != activation["file_sha256"]:
             raise BuyE3TransactionalDeployError("activation gate bytes drifted")
-        receipt = gate_v2.validate_amended_gate_receipt(path)
         expected_cross_binding = _activation_gate_cross_binding(
             execution=plan["execution"],
             runtime_sources=plan["runtime_sources"],
@@ -2442,18 +3345,31 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
             host=plan["host"],
             rollback=plan["rollback_identities"],
         )
-        cross_binding_sha256 = _require_activation_gate_cross_binding(
-            receipt, expected_cross_binding
-        )
+        if activation.get("kind") == _COMPATIBLE_ACTIVATION_GATE_KIND:
+            receipt = gate_v1.validate_deployment_gate_receipt(
+                path,
+                expected_artifact_sha256=str(plan["artifact"]["artifact_sha256"]),
+            )
+            if (
+                receipt.get("execution_commit") != execution["execution_commit"]
+                or receipt.get("execution_tag") != execution["annotated_tag"]
+            ):
+                raise BuyE3TransactionalDeployError("generic deployment gate execution drifted")
+            cross_binding_sha256 = gate_v2.canonical_sha256(expected_cross_binding)
+            canonical_receipt_sha256 = receipt["canonical_deployment_gate_receipt_sha256"]
+        else:
+            receipt = gate_v2.validate_amended_gate_receipt(path)
+            cross_binding_sha256 = _require_activation_gate_cross_binding(
+                receipt, expected_cross_binding
+            )
+            canonical_receipt_sha256 = receipt["canonical_amendment_receipt_sha256"]
         if cross_binding_sha256 != activation.get("cross_binding_sha256"):
             raise BuyE3TransactionalDeployError("activation gate plan binding drifted")
-        if receipt.get("canonical_amendment_receipt_sha256") != activation_receipt_sha256:
+        if canonical_receipt_sha256 != activation_receipt_sha256:
             raise BuyE3TransactionalDeployError("activation gate canonical binding drifted")
-        if (
-            activation.get("plan_core_sha256") != plan["plan_core_sha256"]
-            or activation.get("transaction_contract_sha256")
-            != gate_v2.canonical_sha256(plan["transaction_contract"])
-        ):
+        if activation.get("plan_core_sha256") != plan["plan_core_sha256"] or activation.get(
+            "transaction_contract_sha256"
+        ) != gate_v2.canonical_sha256(plan["transaction_contract"]):
             raise BuyE3TransactionalDeployError("activation gate transactional binding drifted")
 
 
@@ -2512,8 +3428,203 @@ def _read_phase_token(*, token_file: Path | None, token_fd: int | None) -> str:
             os.close(descriptor)
 
 
+def _reject_symlink_components(path: Path, label: str) -> None:
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError as exc:
+            raise BuyE3TransactionalDeployError(f"{label} path component is missing") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise BuyE3TransactionalDeployError(f"{label} path traverses a symbolic link")
+
+
+def _read_bound_release_file(
+    path: Path,
+    *,
+    label: str,
+    admitted_modes: frozenset[int],
+) -> tuple[bytes, os.stat_result]:
+    candidate = path.expanduser().absolute()
+    _reject_symlink_components(candidate, label)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(candidate, flags)
+    except OSError as exc:
+        raise BuyE3TransactionalDeployError(f"{label} could not be opened safely") from exc
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_IMODE(before.st_mode) not in admitted_modes
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > MAX_ACTIVE_RELEASE_BYTES
+        ):
+            raise BuyE3TransactionalDeployError(
+                f"{label} is not an owner-only single-link immutable file"
+            )
+        chunks: list[bytes] = []
+        remaining = before.st_size
+        while remaining:
+            chunk = os.read(descriptor, min(1 << 20, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        after = os.fstat(descriptor)
+        if remaining or not _same_file_state(before, after):
+            raise BuyE3TransactionalDeployError(f"{label} changed while it was read")
+    finally:
+        os.close(descriptor)
+    lexical_after = candidate.lstat()
+    if not _same_file_state(before, lexical_after):
+        raise BuyE3TransactionalDeployError(f"{label} path was replaced while it was read")
+    return raw, before
+
+
+def install_private_active_release(
+    *, source_path: Path, destination_path: Path, expected_file_sha256: str
+) -> dict[str, Any]:
+    """Install immutable release bytes without following or replacing a path."""
+
+    expected_sha256 = _require_sha256(expected_file_sha256, "active release file hash")
+    source, _source_state = _read_bound_release_file(
+        source_path,
+        label="staged active release",
+        admitted_modes=frozenset({0o400, 0o600}),
+    )
+    if hashlib.sha256(source).hexdigest() != expected_sha256:
+        raise BuyE3TransactionalDeployError("staged active release file hash drifted")
+
+    destination = destination_path.expanduser().absolute()
+    destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _reject_symlink_components(destination.parent, "active release destination parent")
+    os.chmod(destination.parent, 0o700)
+    directory_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    directory_flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(destination.parent, directory_flags)
+    try:
+        create_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        create_flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(destination.name, create_flags, 0o600, dir_fd=directory_fd)
+        except FileExistsError as exc:
+            existing, _state = _read_bound_release_file(
+                destination,
+                label="installed active release",
+                admitted_modes=frozenset({0o600}),
+            )
+            if hashlib.sha256(existing).hexdigest() != expected_sha256 or existing != source:
+                raise BuyE3TransactionalDeployError(
+                    "active release destination already exists with different bytes"
+                ) from exc
+        else:
+            try:
+                os.fchmod(descriptor, 0o600)
+                offset = 0
+                while offset < len(source):
+                    written = os.write(descriptor, source[offset:])
+                    if written <= 0:
+                        raise BuyE3TransactionalDeployError(
+                            "active release install did not make progress"
+                        )
+                    offset += written
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.fsync(directory_fd)
+        installed, state = _read_bound_release_file(
+            destination,
+            label="installed active release",
+            admitted_modes=frozenset({0o600}),
+        )
+        if installed != source or hashlib.sha256(installed).hexdigest() != expected_sha256:
+            raise BuyE3TransactionalDeployError("installed active release bytes drifted")
+        return {
+            "path": str(destination),
+            "file_sha256": expected_sha256,
+            "mode": "0600",
+            "nlink": state.st_nlink,
+        }
+    finally:
+        os.close(directory_fd)
+
+
+def _validate_installed_active_release_file(
+    path: Path,
+    *,
+    expected_file_sha256: str,
+    expected_canonical_sha256: str,
+    expected_execution_commit: str,
+    expected_execution_tree: str,
+    expected_artifact_sha256: str,
+) -> dict[str, Any]:
+    """Independently bind the installed private release to process-probe inputs."""
+
+    raw, _state = _read_bound_release_file(
+        path,
+        label="installed active release process authority",
+        admitted_modes=frozenset({0o600}),
+    )
+    file_sha256 = _require_sha256(
+        expected_file_sha256,
+        "installed active release expected file hash",
+    )
+    canonical_sha256 = _require_sha256(
+        expected_canonical_sha256,
+        "installed active release expected canonical hash",
+    )
+    if hashlib.sha256(raw).hexdigest() != file_sha256:
+        raise BuyE3TransactionalDeployError(
+            "installed active release process authority file hash drifted"
+        )
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BuyE3TransactionalDeployError(
+            "installed active release process authority is not JSON"
+        ) from exc
+    execution = payload.get("execution") if isinstance(payload, Mapping) else None
+    artifact = payload.get("exact_artifact") if isinstance(payload, Mapping) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != active_release.ACTIVE_RELEASE_SCHEMA
+        or payload.get("identity") != active_release.ACTIVE_RELEASE_IDENTITY
+        or payload.get("status") != active_release.ACTIVE_RELEASE_STATUS
+        or payload.get("canonical_active_release_sha256") != canonical_sha256
+        or active_release.document_sha256(
+            payload,
+            "canonical_active_release_sha256",
+        )
+        != canonical_sha256
+        or not isinstance(execution, Mapping)
+        or execution.get("execution_commit") != expected_execution_commit
+        or execution.get("execution_tree") != expected_execution_tree
+        or not isinstance(artifact, Mapping)
+        or artifact.get("artifact_sha256")
+        != _require_sha256(
+            expected_artifact_sha256,
+            "installed active release expected artifact hash",
+        )
+    ):
+        raise BuyE3TransactionalDeployError(
+            "installed active release process authority identity drifted"
+        )
+    return payload
+
+
 def _default_runner(command: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, check=False, capture_output=True, text=True)
+    return subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=COMMAND_TIMEOUT_S,
+    )
 
 
 def _expected_commands(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]]:
@@ -2527,16 +3638,265 @@ def _expected_commands(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]
 
 
 def _automatic_rollback_rows(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    return [
-        row
-        for row in plan["phases"]["rollback-primary"]
-        if row["label"] != "capture-old-pid"
-    ]
+    return [row for row in plan["phases"]["rollback-primary"] if row["label"] != "capture-old-pid"]
 
 
-def _expected_process_binding(plan: Mapping[str, Any], phase: str) -> dict[str, Any]:
+def _same_file_state(before: os.stat_result, after: os.stat_result) -> bool:
+    return (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_uid,
+        before.st_nlink,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    ) == (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_uid,
+        after.st_nlink,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+
+
+@contextmanager
+def _stable_private_active_release(path: Path):
+    """Hold the caller-supplied release inode stable across independent validation."""
+
+    candidate = path.expanduser().absolute()
+    _reject_symlink_components(candidate, "active release")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(candidate, flags)
+    except OSError as exc:
+        raise BuyE3TransactionalDeployError(
+            "active release could not be opened with O_NOFOLLOW"
+        ) from exc
+    before: os.stat_result | None = None
+    try:
+        before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or stat.S_IMODE(before.st_mode) != 0o600
+            or before.st_uid != os.geteuid()
+            or before.st_nlink != 1
+            or before.st_size <= 0
+            or before.st_size > MAX_ACTIVE_RELEASE_BYTES
+        ):
+            raise BuyE3TransactionalDeployError(
+                "active release is not an owner-only 0600 single-link immutable receipt"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(1 << 20, MAX_ACTIVE_RELEASE_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_ACTIVE_RELEASE_BYTES:
+                raise BuyE3TransactionalDeployError("active release exceeds the size limit")
+        raw = b"".join(chunks)
+        after_read = os.fstat(descriptor)
+        if not _same_file_state(before, after_read) or len(raw) != before.st_size:
+            raise BuyE3TransactionalDeployError("active release changed while it was read")
+        try:
+            payload = json.loads(raw)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise BuyE3TransactionalDeployError("active release is not valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise BuyE3TransactionalDeployError("active release root is not an object")
+        yield candidate, raw, payload
+        after_validation = os.fstat(descriptor)
+        if not _same_file_state(before, after_validation):
+            raise BuyE3TransactionalDeployError(
+                "active release changed during independent validation"
+            )
+    finally:
+        os.close(descriptor)
+    if before is None:
+        raise BuyE3TransactionalDeployError("active release identity was not captured")
+    try:
+        lexical_after = candidate.lstat()
+    except FileNotFoundError as exc:
+        raise BuyE3TransactionalDeployError(
+            "active release path disappeared during validation"
+        ) from exc
+    if not _same_file_state(before, lexical_after):
+        raise BuyE3TransactionalDeployError("active release path was replaced during validation")
+
+
+def _release_role_binding(payload: Mapping[str, Any], section: str, role: str) -> Mapping[str, Any]:
+    raw_section = payload.get(section)
+    if section == "exact_artifact" and isinstance(raw_section, Mapping):
+        raw_section = raw_section.get("roles")
+    if not isinstance(raw_section, Mapping) or not isinstance(raw_section.get(role), Mapping):
+        raise BuyE3TransactionalDeployError(f"active release lacks {section}.{role}")
+    return raw_section[role]
+
+
+def _validate_active_release_for_activation(
+    path: Path,
+    *,
+    plan: Mapping[str, Any],
+    activation_envelope_binding: Mapping[str, Any],
+) -> dict[str, Any]:
+    attempt_plan_binding = plan["execution"].get("compatible_attempt_manifest")
+    if not isinstance(attempt_plan_binding, Mapping):
+        raise BuyE3TransactionalDeployError(
+            "post-envelope active release requires a compatible execution plan"
+        )
+    repository_root = Path(str(plan["planner_repository_root"]))
+    with _stable_private_active_release(path) as (candidate, raw, raw_payload):
+        try:
+            payload = active_release.validate_active_release(
+                candidate,
+                repository_root=repository_root,
+            )
+        except active_release.ActiveReleaseError as exc:
+            raise BuyE3TransactionalDeployError(f"active release validation failed: {exc}") from exc
+        if payload != raw_payload:
+            raise BuyE3TransactionalDeployError(
+                "active release bytes differ from the independently validated payload"
+            )
+
+        execution = payload.get("execution")
+        expected_execution = {
+            "execution_commit": plan["execution"]["execution_commit"],
+            "execution_tree": plan["execution"]["execution_tree"],
+            "annotated_operational_tag": plan["execution"]["annotated_tag"],
+            "annotated_operational_tag_object": plan["execution"]["annotated_tag_object"],
+            "tag_peeled_commit": plan["execution"]["execution_commit"],
+        }
+        if execution != expected_execution:
+            raise BuyE3TransactionalDeployError(
+                "active release execution commit/tree/tag differs from the plan"
+            )
+        exact_artifact = payload.get("exact_artifact")
+        if (
+            not isinstance(exact_artifact, Mapping)
+            or exact_artifact.get("artifact_sha256") != plan["artifact"]["artifact_sha256"]
+        ):
+            raise BuyE3TransactionalDeployError(
+                "active release exact artifact differs from the plan"
+            )
+        artifact_expectations = {
+            "manifest": (
+                plan["artifact"]["manifest_path"],
+                plan["artifact"]["manifest_file_sha256"],
+            ),
+            "policy": (
+                plan["artifact"]["policy_path"],
+                plan["artifact"]["policy_file_sha256"],
+            ),
+            "predicate_bundle": (
+                plan["artifact"]["predicate_bundle_path"],
+                plan["artifact"]["predicate_bundle_file_sha256"],
+            ),
+        }
+        for role, (expected_path, expected_sha256) in artifact_expectations.items():
+            role_binding = _release_role_binding(payload, "exact_artifact", role)
+            if (
+                Path(str(role_binding.get("path", ""))).resolve(strict=True)
+                != Path(str(expected_path)).resolve(strict=True)
+                or role_binding.get("file_sha256") != expected_sha256
+            ):
+                raise BuyE3TransactionalDeployError(
+                    f"active release artifact role differs from the plan: {role}"
+                )
+
+        envelope_release_binding = _release_role_binding(payload, "evidence", "activation_envelope")
+        envelope_path = Path(str(activation_envelope_binding["path"])).resolve(strict=True)
+        if (
+            Path(str(envelope_release_binding.get("path", ""))).resolve(strict=True)
+            != envelope_path
+            or envelope_release_binding.get("file_sha256")
+            != activation_envelope_binding["file_sha256"]
+            or envelope_release_binding.get("canonical_sha256")
+            != activation_envelope_binding["canonical_activation_envelope_sha256"]
+        ):
+            raise BuyE3TransactionalDeployError("active release binds another activation envelope")
+
+        attempt_final_binding = _release_role_binding(
+            payload, "evidence", "compatible_attempt_final"
+        )
+        attempt_final_path = Path(str(attempt_final_binding.get("path", "")))
+        try:
+            attempt_final = execution_attempt.validate_final_receipt(
+                attempt_final_path,
+                repository_root=repository_root,
+                require_current_checkout=True,
+            )
+        except execution_attempt.ExecutionAttemptError as exc:
+            raise BuyE3TransactionalDeployError(
+                f"active release compatible attempt is invalid: {exc}"
+            ) from exc
+        if (
+            attempt_final_binding.get("file_sha256")
+            != gate_v2.file_sha256(attempt_final_path.resolve(strict=True))
+            or attempt_final_binding.get("canonical_sha256")
+            != attempt_final.get("canonical_final_receipt_sha256")
+            or attempt_final.get("runtime_execution")
+            != {
+                "execution_commit": plan["execution"]["execution_commit"],
+                "execution_tree": plan["execution"]["execution_tree"],
+                "annotated_tag": plan["execution"]["annotated_tag"],
+                "annotated_tag_object": plan["execution"]["annotated_tag_object"],
+                "tag_peeled_commit": plan["execution"]["execution_commit"],
+            }
+        ):
+            raise BuyE3TransactionalDeployError(
+                "active release compatible attempt final differs from the plan"
+            )
+        attempt_manifest = attempt_final.get("attempt_manifest")
+        if (
+            not isinstance(attempt_manifest, Mapping)
+            or Path(str(attempt_manifest.get("path", ""))).resolve(strict=True)
+            != Path(str(attempt_plan_binding["path"])).resolve(strict=True)
+            or attempt_manifest.get("file_sha256") != attempt_plan_binding["file_sha256"]
+            or attempt_manifest.get("canonical_sha256") != attempt_plan_binding["canonical_sha256"]
+        ):
+            raise BuyE3TransactionalDeployError(
+                "active release attempt manifest differs from the plan"
+            )
+
+        file_sha256 = hashlib.sha256(raw).hexdigest()
+        canonical_sha256 = _require_sha256(
+            payload.get("canonical_active_release_sha256"),
+            "active release canonical hash",
+        )
+        remote_path = _remote_active_release_path(
+            str(plan["active_pointer"]["repo_root"]),
+            file_sha256,
+        )
+        return {
+            "local_path": str(candidate.resolve(strict=True)),
+            "remote_path": remote_path,
+            "file_sha256": file_sha256,
+            "canonical_active_release_sha256": canonical_sha256,
+            "schema_version": active_release.ACTIVE_RELEASE_SCHEMA,
+            "status": active_release.ACTIVE_RELEASE_STATUS,
+        }
+
+
+def _expected_process_binding(
+    plan: Mapping[str, Any],
+    phase: str,
+    active_release_binding: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if phase in {"disabled-deploy", "activate"}:
         config_name = "active" if phase == "activate" else "disabled"
+        if phase != "activate" and active_release_binding is not None:
+            raise BuyE3TransactionalDeployError(
+                "disabled process cannot carry active release authority"
+            )
         return {
             "enabled": phase == "activate",
             "config_path": plan["remote"][f"{config_name}_config_path"],
@@ -2548,6 +3908,11 @@ def _expected_process_binding(plan: Mapping[str, Any], phase: str) -> dict[str, 
             "repo_root": plan["active_pointer"]["repo_root"],
             "python_executable": plan["host"]["python_executable"],
             "venv_root": plan["host"]["venv_root"],
+            "active_release": _expected_active_release_identity(
+                active_release_binding,
+                expected_execution_commit=plan["execution"]["execution_commit"],
+                expected_execution_tree=plan["execution"]["execution_tree"],
+            ),
         }
     rollback_name = {
         "rollback-primary": "primary_disabled",
@@ -2567,6 +3932,7 @@ def _expected_process_binding(plan: Mapping[str, Any], phase: str) -> dict[str, 
         "repo_root": plan["active_pointer"]["repo_root"],
         "python_executable": identity["python_executable"],
         "venv_root": identity["venv_root"],
+        "active_release": _empty_active_release_identity(),
     }
 
 
@@ -2577,16 +3943,19 @@ def _validate_actual_process_identity(
     phase: str,
     old_pid: int | None,
     require_fresh: bool = True,
+    active_release_binding: Mapping[str, Any] | None = None,
+    allow_legacy: bool = False,
 ) -> dict[str, Any]:
-    if set(process) != _PROCESS_IDENTITY_FIELDS:
+    legacy = set(process) == _LEGACY_PROCESS_IDENTITY_FIELDS
+    if set(process) != (
+        _LEGACY_PROCESS_IDENTITY_FIELDS if legacy else _PROCESS_IDENTITY_FIELDS
+    ) or (legacy and not allow_legacy):
         raise BuyE3TransactionalDeployError("actual process identity fields drifted")
-    if (
-        process.get("schema_version") != gate_v2.PROCESS_IDENTITY_SCHEMA
-        or process.get("canonical_process_identity_sha256")
-        != gate_v2.document_sha256(process, "canonical_process_identity_sha256")
-    ):
+    if process.get("schema_version") != gate_v2.PROCESS_IDENTITY_SCHEMA or process.get(
+        "canonical_process_identity_sha256"
+    ) != gate_v2.document_sha256(process, "canonical_process_identity_sha256"):
         raise BuyE3TransactionalDeployError("actual process identity hash drifted")
-    expected = _expected_process_binding(plan, phase)
+    expected = _expected_process_binding(plan, phase, active_release_binding)
     try:
         pid = int(process.get("pid", -1))
         start_ticks = int(process.get("pid_start_ticks", -1))
@@ -2618,9 +3987,7 @@ def _validate_actual_process_identity(
         )
         != runtime_identity_file_sha256
     ):
-        raise BuyE3TransactionalDeployError(
-            "actual process runtime identity file hash drifted"
-        )
+        raise BuyE3TransactionalDeployError("actual process runtime identity file hash drifted")
     _require_sha256(
         process.get("startup_attestation_sha256"),
         "process-bound startup attestation hash",
@@ -2637,17 +4004,80 @@ def _validate_actual_process_identity(
         "runtime_code_sha256": expected["runtime_code_sha256"],
     }
     if any(process.get(field) != value for field, value in exact_fields.items()):
-        raise BuyE3TransactionalDeployError("actual process artifact/runtime/config identity drifted")
+        raise BuyE3TransactionalDeployError(
+            "actual process artifact/runtime/config identity drifted"
+        )
     if (
         process.get("buy_e3_enabled") is not expected["enabled"]
         or process.get("owner_override_effective") is not expected["enabled"]
-        or process.get("initial_buy_deadline_identity") != "B0"
-        or process.get("e3_deadline_imported") is not False
     ):
         raise BuyE3TransactionalDeployError("actual process authority/deadline identity drifted")
-    if not str(process.get("captured_utc", "")).strip() or not str(
-        process.get("python_binary_resolved", "")
-    ).strip():
+    if legacy:
+        if (
+            process.get("initial_buy_deadline_identity") != "B0"
+            or process.get("e3_deadline_imported") is not False
+        ):
+            raise BuyE3TransactionalDeployError(
+                "actual process authority/deadline identity drifted"
+            )
+    else:
+        mode = str(process.get("fill_cooldown_restore_mode", ""))
+        identity = str(process.get("initial_buy_deadline_identity", ""))
+        remaining = process.get("initial_buy_remaining_ms")
+        imported = process.get("e3_deadline_imported")
+        if not isinstance(remaining, int) or isinstance(remaining, bool) or remaining < 0:
+            raise BuyE3TransactionalDeployError(
+                "actual process authority/deadline identity drifted"
+            )
+        enabled_modes = {
+            "fresh_b0_no_checkpoint",
+            "expired_to_b0",
+            "b0_checkpoint_resume",
+            "exact_same_artifact_resume",
+            "artifact_identity_changed_to_b0",
+        }
+        disabled_modes = {
+            "fresh_b0_no_checkpoint",
+            "expired_to_b0",
+            "b0_checkpoint_resume",
+            "rollback_to_b0",
+        }
+        if mode not in (enabled_modes if expected["enabled"] else disabled_modes):
+            raise BuyE3TransactionalDeployError(
+                "actual process authority/deadline identity drifted"
+            )
+        if mode == "exact_same_artifact_resume":
+            deadline_valid = (
+                identity == f"BUY_E3:{expected['artifact_sha256']}"
+                and remaining > 0
+                and imported is True
+            )
+        elif mode in {
+            "artifact_identity_changed_to_b0",
+            "rollback_to_b0",
+            "b0_checkpoint_resume",
+        }:
+            deadline_valid = identity == "B0" and imported is False
+        else:
+            deadline_valid = identity == "B0" and remaining == 0 and imported is False
+        expected_release = expected["active_release"]
+        release_fields = {
+            "active_release_path": expected_release["path"],
+            "active_release_file_sha256": expected_release["file_sha256"],
+            "active_release_canonical_sha256": expected_release["file_canonical_sha256"],
+            "active_release_execution_commit": expected_release["execution_commit"],
+            "active_release_execution_tree": expected_release["execution_tree"],
+        }
+        if not deadline_valid or any(
+            process.get(field) != value for field, value in release_fields.items()
+        ):
+            raise BuyE3TransactionalDeployError(
+                "actual process authority/deadline identity drifted"
+            )
+    if (
+        not str(process.get("captured_utc", "")).strip()
+        or not str(process.get("python_binary_resolved", "")).strip()
+    ):
         raise BuyE3TransactionalDeployError("actual process capture identity is incomplete")
     return dict(process)
 
@@ -2670,6 +4100,8 @@ def _parse_process_probe(
     phase: str,
     old_pid: int | None,
     require_fresh: bool = True,
+    active_release_binding: Mapping[str, Any] | None = None,
+    allow_legacy: bool = False,
 ) -> dict[str, Any]:
     try:
         process = json.loads(stdout)
@@ -2683,6 +4115,8 @@ def _parse_process_probe(
         phase=phase,
         old_pid=old_pid,
         require_fresh=require_fresh,
+        active_release_binding=active_release_binding,
+        allow_legacy=allow_legacy,
     )
 
 
@@ -2702,12 +4136,8 @@ def _process_handoff_identity(process: Mapping[str, Any]) -> dict[str, Any]:
         "python_binary_resolved": process["python_binary_resolved"],
         "venv_root": process["venv_root"],
         "runtime_identity_path": runtime_identity["path"],
-        "runtime_identity_file_sha256": process[
-            "runtime_identity_file_sha256"
-        ],
-        "startup_attestation_sha256": process[
-            "startup_attestation_sha256"
-        ],
+        "runtime_identity_file_sha256": process["runtime_identity_file_sha256"],
+        "startup_attestation_sha256": process["startup_attestation_sha256"],
         "execution_commit": process["execution_commit"],
         "execution_tree": process["execution_tree"],
         "artifact_sha256": process["artifact_sha256"],
@@ -2716,12 +4146,17 @@ def _process_handoff_identity(process: Mapping[str, Any]) -> dict[str, Any]:
         "owner_override_effective": process["owner_override_effective"],
         "initial_buy_deadline_identity": process["initial_buy_deadline_identity"],
         "e3_deadline_imported": process["e3_deadline_imported"],
+        "fill_cooldown_restore_mode": process.get("fill_cooldown_restore_mode"),
+        "initial_buy_remaining_ms": process.get("initial_buy_remaining_ms"),
+        "active_release_path": process.get("active_release_path"),
+        "active_release_file_sha256": process.get("active_release_file_sha256"),
+        "active_release_canonical_sha256": process.get("active_release_canonical_sha256"),
+        "active_release_execution_commit": process.get("active_release_execution_commit"),
+        "active_release_execution_tree": process.get("active_release_execution_tree"),
     }
 
 
-def _require_same_disabled_process(
-    prior: Mapping[str, Any], current: Mapping[str, Any]
-) -> None:
+def _require_same_disabled_process(prior: Mapping[str, Any], current: Mapping[str, Any]) -> None:
     if _process_handoff_identity(prior) != _process_handoff_identity(current):
         raise BuyE3TransactionalDeployError("disabled process handoff identity drifted")
 
@@ -2731,23 +4166,15 @@ def _load_disabled_phase_receipt_binding(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     target = receipt_path.expanduser().absolute()
     try:
-        receipt = validate_phase_receipt(
-            target, plan=plan, expected_phase="disabled-deploy"
-        )
+        receipt = validate_phase_receipt(target, plan=plan, expected_phase="disabled-deploy")
     except Exception as exc:
-        raise BuyE3TransactionalDeployError(
-            "activation disabled phase receipt is invalid"
-        ) from exc
+        raise BuyE3TransactionalDeployError("activation disabled phase receipt is invalid") from exc
     if receipt.get("status") != PHASE_COMPLETE:
-        raise BuyE3TransactionalDeployError(
-            "activation disabled phase receipt is not complete"
-        )
+        raise BuyE3TransactionalDeployError("activation disabled phase receipt is not complete")
     process = receipt.get("actual_process_identity")
     startup_binding = receipt.get("actual_startup_attestation")
     if not isinstance(process, Mapping):
-        raise BuyE3TransactionalDeployError(
-            "activation disabled phase receipt lacks a process"
-        )
+        raise BuyE3TransactionalDeployError("activation disabled phase receipt lacks a process")
     if not isinstance(startup_binding, Mapping):
         raise BuyE3TransactionalDeployError(
             "activation disabled phase receipt lacks runtime startup evidence"
@@ -2765,12 +4192,8 @@ def _load_disabled_phase_receipt_binding(
         "runtime_code_sha256": process["runtime_code_sha256"],
         "execution_commit": process["execution_commit"],
         "execution_tree": process["execution_tree"],
-        "runtime_identity_file_sha256": startup_binding[
-            "runtime_identity_file_sha256"
-        ],
-        "startup_attestation_sha256": startup_binding[
-            "startup_attestation_sha256"
-        ],
+        "runtime_identity_file_sha256": startup_binding["runtime_identity_file_sha256"],
+        "startup_attestation_sha256": startup_binding["startup_attestation_sha256"],
     }
     return binding, dict(process)
 
@@ -2781,6 +4204,7 @@ def _validate_runtime_identity_stdout(
     plan: Mapping[str, Any],
     process: Mapping[str, Any],
     process_phase: str,
+    active_release_binding: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     try:
         runtime = json.loads(stdout)
@@ -2791,15 +4215,14 @@ def _validate_runtime_identity_stdout(
         raise BuyE3TransactionalDeployError("runtime identity process binding is malformed")
     file_sha256 = _sha256_text(stdout)
     if (
-        runtime_identity.get("path")
-        != plan["runtime_attestation_contract"]["remote_path"]
+        runtime_identity.get("path") != plan["runtime_attestation_contract"]["remote_path"]
         or runtime_identity.get("file_sha256") != file_sha256
         or process.get("runtime_identity_file_sha256") != file_sha256
     ):
         raise BuyE3TransactionalDeployError(
             "runtime identity stdout differs from process-bound file bytes"
         )
-    expected = _expected_process_binding(plan, process_phase)
+    expected = _expected_process_binding(plan, process_phase, active_release_binding)
     attestation = _validate_runtime_identity_authority(
         runtime,
         expected_pid=int(process["pid"]),
@@ -2812,6 +4235,7 @@ def _validate_runtime_identity_stdout(
         expected_execution_commit=expected["execution_commit"],
         expected_execution_tree=expected["execution_tree"],
         expected_runtime_sources=plan["runtime_sources"],
+        expected_active_release=active_release_binding,
     )
     startup_attestation_sha256 = gate_v2.canonical_sha256(attestation)
     if process.get("startup_attestation_sha256") != startup_attestation_sha256:
@@ -2821,32 +4245,28 @@ def _validate_runtime_identity_stdout(
     binding: dict[str, Any] = {
         "schema_version": RUNTIME_IDENTITY_BINDING_SCHEMA,
         "authority": "runtime_written_startup_attestation",
-        "evidence_classification": (
-            "runtime_identity_file_unsigned_structural_evidence"
-        ),
+        "evidence_classification": ("runtime_identity_file_unsigned_structural_evidence"),
         "cryptographic_signature_present": False,
         "runtime_identity_path": runtime_identity["path"],
         "runtime_identity_file_sha256": file_sha256,
         "runtime_identity_schema_version": runtime["schema_version"],
         "pid": int(process["pid"]),
         "pid_start_ticks": int(process["pid_start_ticks"]),
-        "process_identity_sha256": process[
-            "canonical_process_identity_sha256"
-        ],
+        "process_identity_sha256": process["canonical_process_identity_sha256"],
         "config_path": runtime["config_path"],
         "config_sha256": runtime["config_sha256"],
         "artifact_sha256": process["artifact_sha256"],
         "buy_e3_enabled": runtime["f05_buy_e3_enabled"],
-        "owner_override_effective": runtime[
-            "f05_buy_e3_owner_override_effective"
-        ],
+        "owner_override_effective": runtime["f05_buy_e3_owner_override_effective"],
+        "active_release_file_sha256": process["active_release_file_sha256"],
+        "active_release_canonical_sha256": process["active_release_canonical_sha256"],
+        "active_release_execution_commit": process["active_release_execution_commit"],
+        "active_release_execution_tree": process["active_release_execution_tree"],
         "startup_attestation": attestation,
         "startup_attestation_sha256": startup_attestation_sha256,
     }
-    binding["canonical_runtime_identity_binding_sha256"] = (
-        gate_v2.document_sha256(
-            binding, "canonical_runtime_identity_binding_sha256"
-        )
+    binding["canonical_runtime_identity_binding_sha256"] = gate_v2.document_sha256(
+        binding, "canonical_runtime_identity_binding_sha256"
     )
     return binding
 
@@ -2857,38 +4277,32 @@ def _validate_runtime_identity_binding(
     plan: Mapping[str, Any],
     process: Mapping[str, Any],
     process_phase: str,
+    active_release_binding: Mapping[str, Any] | None = None,
+    allow_legacy: bool = False,
 ) -> dict[str, Any]:
-    if set(raw) != _RUNTIME_IDENTITY_BINDING_FIELDS:
+    legacy = set(raw) == _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS
+    if set(raw) != (
+        _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS if legacy else _RUNTIME_IDENTITY_BINDING_FIELDS
+    ) or (legacy and not allow_legacy):
         raise BuyE3TransactionalDeployError("runtime identity binding fields drifted")
     binding = dict(raw)
     runtime_identity = process.get("runtime_identity")
     if not isinstance(runtime_identity, Mapping):
         raise BuyE3TransactionalDeployError("runtime identity process binding is malformed")
-    if (
-        runtime_identity.get("file_sha256")
-        != process.get("runtime_identity_file_sha256")
-    ):
-        raise BuyE3TransactionalDeployError(
-            "runtime identity process file hashes disagree"
-        )
-    expected = _expected_process_binding(plan, process_phase)
+    if runtime_identity.get("file_sha256") != process.get("runtime_identity_file_sha256"):
+        raise BuyE3TransactionalDeployError("runtime identity process file hashes disagree")
+    expected = _expected_process_binding(plan, process_phase, active_release_binding)
     exact = {
         "schema_version": RUNTIME_IDENTITY_BINDING_SCHEMA,
         "authority": "runtime_written_startup_attestation",
-        "evidence_classification": (
-            "runtime_identity_file_unsigned_structural_evidence"
-        ),
+        "evidence_classification": ("runtime_identity_file_unsigned_structural_evidence"),
         "cryptographic_signature_present": False,
         "runtime_identity_path": plan["runtime_attestation_contract"]["remote_path"],
-        "runtime_identity_file_sha256": process[
-            "runtime_identity_file_sha256"
-        ],
+        "runtime_identity_file_sha256": process["runtime_identity_file_sha256"],
         "runtime_identity_schema_version": RUNTIME_IDENTITY_SCHEMA,
         "pid": int(process["pid"]),
         "pid_start_ticks": int(process["pid_start_ticks"]),
-        "process_identity_sha256": process[
-            "canonical_process_identity_sha256"
-        ],
+        "process_identity_sha256": process["canonical_process_identity_sha256"],
         "config_path": expected["config_path"],
         "config_sha256": expected["config_sha256"],
         "artifact_sha256": expected["artifact_sha256"],
@@ -2897,23 +4311,33 @@ def _validate_runtime_identity_binding(
     }
     if any(binding.get(field) != value for field, value in exact.items()):
         raise BuyE3TransactionalDeployError("runtime identity binding drifted")
+    if not legacy:
+        release = expected["active_release"]
+        expected_release_fields = {
+            "active_release_file_sha256": release["file_sha256"],
+            "active_release_canonical_sha256": release["file_canonical_sha256"],
+            "active_release_execution_commit": release["execution_commit"],
+            "active_release_execution_tree": release["execution_tree"],
+        }
+        if any(binding.get(field) != value for field, value in expected_release_fields.items()):
+            raise BuyE3TransactionalDeployError("runtime identity active release binding drifted")
     attestation = _validate_startup_attestation(
         binding.get("startup_attestation"),
         expected_execution_commit=expected["execution_commit"],
         expected_execution_tree=expected["execution_tree"],
+        expected_artifact_sha256=expected["artifact_sha256"],
         expected_runtime_sources=plan["runtime_sources"],
         expected_python_executable=expected["python_executable"],
         expected_python_binary_resolved=str(process["python_binary_resolved"]),
+        expected_enabled=bool(expected["enabled"]),
+        expected_active_release=active_release_binding,
+        allow_legacy=allow_legacy,
     )
     if (
-        binding.get("startup_attestation_sha256")
-        != gate_v2.canonical_sha256(attestation)
-        or binding.get("startup_attestation_sha256")
-        != process.get("startup_attestation_sha256")
+        binding.get("startup_attestation_sha256") != gate_v2.canonical_sha256(attestation)
+        or binding.get("startup_attestation_sha256") != process.get("startup_attestation_sha256")
         or binding.get("canonical_runtime_identity_binding_sha256")
-        != gate_v2.document_sha256(
-            binding, "canonical_runtime_identity_binding_sha256"
-        )
+        != gate_v2.document_sha256(binding, "canonical_runtime_identity_binding_sha256")
     ):
         raise BuyE3TransactionalDeployError("runtime identity binding hash drifted")
     return binding
@@ -2978,8 +4402,7 @@ def _commit_reserved_receipt(
     try:
         try:
             encoded = (
-                json.dumps(dict(payload), indent=2, sort_keys=True, ensure_ascii=True)
-                + "\n"
+                json.dumps(dict(payload), indent=2, sort_keys=True, ensure_ascii=True) + "\n"
             ).encode("ascii")
             offset = 0
             while offset < len(encoded):
@@ -3021,6 +4444,312 @@ def _release_receipt_reservation(reservation: Mapping[str, Any]) -> None:
         os.close(directory_fd)
 
 
+def _artifact_file_hashes(plan: Mapping[str, Any]) -> dict[str, str]:
+    artifact = plan["artifact"]
+    return {
+        "manifest": str(artifact["manifest_file_sha256"]),
+        "policy": str(artifact["policy_file_sha256"]),
+        "predicate_bundle": str(artifact["predicate_bundle_file_sha256"]),
+    }
+
+
+def _compatible_activation_receipt_binding(
+    *,
+    path: Path,
+    canonical_sha256: str,
+    extra: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    target = path.expanduser().absolute().resolve(strict=True)
+    binding = {
+        "path": str(target),
+        "file_sha256": gate_v2.file_sha256(target),
+        "canonical_sha256": _require_sha256(canonical_sha256, "receipt canonical hash"),
+    }
+    if extra is not None:
+        binding.update(dict(extra))
+    return binding
+
+
+def build_compatible_activation_envelope(
+    *,
+    plan: Mapping[str, Any],
+    disabled_phase_receipt_path: Path,
+    concurrent_resource_receipt_path: Path,
+    runtime_regression_receipt_path: Path,
+    sell_54_case_receipt_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Bind post-disabled safety evidence without changing the research identity."""
+
+    validate_plan(plan)
+    if plan["execution"].get("compatible_attempt_manifest") is None:
+        raise BuyE3TransactionalDeployError(
+            "compatible activation envelope requires a compatible execution plan"
+        )
+    if plan.get("activation_gate") is not None:
+        raise BuyE3TransactionalDeployError(
+            "compatible activation envelope cannot wrap a legacy plan-time gate"
+        )
+    disabled_binding, disabled_process = _load_disabled_phase_receipt_binding(
+        disabled_phase_receipt_path,
+        plan=plan,
+    )
+    execution = plan["execution"]
+    artifact = plan["artifact"]
+    resource = gate_v1.validate_concurrent_resource_receipt(
+        concurrent_resource_receipt_path,
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_execution_commit=str(execution["execution_commit"]),
+        expected_execution_tag=str(execution["annotated_tag"]),
+        expected_disabled_process_identity=disabled_process,
+    )
+    regression = gate_v1.validate_runtime_regression_receipt(
+        runtime_regression_receipt_path,
+        repository_root=Path(str(plan["planner_repository_root"])),
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_execution_commit=str(execution["execution_commit"]),
+        expected_execution_tag=str(execution["annotated_tag"]),
+    )
+    sell = gate_v1.validate_sell_owner_54_case_receipt(
+        sell_54_case_receipt_path,
+        repository_root=Path(str(plan["planner_repository_root"])),
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_artifact_files=_artifact_file_hashes(plan),
+    )
+    external_files = plan["external_tools_and_package"]["files"]
+    validate_b0_config_contract(Path(str(external_files["disabled_config"]["path"])))
+    validate_b0_config_contract(Path(str(external_files["active_config"]["path"])))
+    resource_binding = _compatible_activation_receipt_binding(
+        path=concurrent_resource_receipt_path,
+        canonical_sha256=str(resource["canonical_resource_receipt_sha256"]),
+        extra={
+            "disabled_process_identity_sha256": disabled_binding["process_identity_sha256"],
+            "live_pid": disabled_binding["pid"],
+        },
+    )
+    regression_binding = _compatible_activation_receipt_binding(
+        path=runtime_regression_receipt_path,
+        canonical_sha256=str(regression["canonical_receipt_sha256"]),
+        extra={
+            "nodeid_manifest_sha256": regression["nodeid_manifest_sha256"],
+            "test_source_manifest_sha256": gate_v2.canonical_sha256(
+                {
+                    "test_files": regression["test_files"],
+                    "runtime_sources": regression["runtime_sources"],
+                }
+            ),
+        },
+    )
+    sell_binding = {key: value for key, value in sell.items() if key != "canonical_receipt_sha256"}
+    sell_binding["canonical_sha256"] = sell["canonical_receipt_sha256"]
+    checks = {
+        "disabled_phase_complete_and_same_plan": True,
+        "b0_fill_cooldown_exact_in_both_configs": True,
+        "concurrent_2vcpu_2gib_resource_window_passed": True,
+        "frozen_regression_nodeid_and_sources_passed": True,
+        "real_sell_54_case_and_sources_passed": True,
+        "no_locked_or_economic_evidence_read": True,
+    }
+    envelope: dict[str, Any] = {
+        "schema_version": COMPATIBLE_ACTIVATION_ENVELOPE_SCHEMA,
+        "status": "compatible_activation_evidence_complete",
+        "plan_sha256": plan["canonical_plan_sha256"],
+        "plan_core_sha256": plan["plan_core_sha256"],
+        "transaction_contract_sha256": gate_v2.canonical_sha256(plan["transaction_contract"]),
+        "execution": {
+            "execution_commit": execution["execution_commit"],
+            "execution_tree": execution["execution_tree"],
+            "annotated_tag": execution["annotated_tag"],
+            "annotated_tag_object": execution["annotated_tag_object"],
+        },
+        "artifact": {
+            "artifact_sha256": artifact["artifact_sha256"],
+            "files": _artifact_file_hashes(plan),
+        },
+        "disabled_phase_receipt": disabled_binding,
+        "concurrent_resource_receipt": resource_binding,
+        "runtime_regression_receipt": regression_binding,
+        "sell_54_case_receipt": sell_binding,
+        "checks": checks,
+        "activation_contract": {
+            "restart_only": True,
+            "same_disabled_process_required": True,
+            "phase_token_still_required": True,
+            "envelope_does_not_authorize_remote_mutation_by_itself": True,
+        },
+        "evidence_boundary": dict(ACTIVATION_ENVELOPE_EVIDENCE_BOUNDARY),
+    }
+    envelope["canonical_activation_envelope_sha256"] = gate_v2.document_sha256(
+        envelope, "canonical_activation_envelope_sha256"
+    )
+    reservation = _reserve_receipt_output(output_path)
+    try:
+        _commit_reserved_receipt(
+            reservation,
+            envelope,
+            validator=lambda candidate: validate_compatible_activation_envelope(
+                candidate,
+                plan=plan,
+                disabled_phase_receipt_path=disabled_phase_receipt_path,
+            ),
+        )
+    finally:
+        _release_receipt_reservation(reservation)
+    return envelope
+
+
+def validate_compatible_activation_envelope(
+    path: Path,
+    *,
+    plan: Mapping[str, Any],
+    disabled_phase_receipt_path: Path,
+) -> dict[str, Any]:
+    validate_plan(plan)
+    if plan["execution"].get("compatible_attempt_manifest") is None:
+        raise BuyE3TransactionalDeployError("activation envelope is not valid for this plan")
+    target = path.expanduser().absolute()
+    metadata = target.lstat()
+    if target.is_symlink() or not target.is_file() or stat.S_IMODE(metadata.st_mode) != 0o600:
+        raise BuyE3TransactionalDeployError("activation envelope must be a 0600 regular file")
+    envelope = gate_v2.read_json(target)
+    fields = {
+        "schema_version",
+        "status",
+        "plan_sha256",
+        "plan_core_sha256",
+        "transaction_contract_sha256",
+        "execution",
+        "artifact",
+        "disabled_phase_receipt",
+        "concurrent_resource_receipt",
+        "runtime_regression_receipt",
+        "sell_54_case_receipt",
+        "checks",
+        "activation_contract",
+        "evidence_boundary",
+        "canonical_activation_envelope_sha256",
+    }
+    if set(envelope) != fields:
+        raise BuyE3TransactionalDeployError("activation envelope fields drifted")
+    disabled_binding, disabled_process = _load_disabled_phase_receipt_binding(
+        disabled_phase_receipt_path,
+        plan=plan,
+    )
+    if envelope.get("disabled_phase_receipt") != disabled_binding:
+        raise BuyE3TransactionalDeployError("activation envelope disabled receipt drifted")
+    execution = plan["execution"]
+    artifact = plan["artifact"]
+    expected_execution = {
+        "execution_commit": execution["execution_commit"],
+        "execution_tree": execution["execution_tree"],
+        "annotated_tag": execution["annotated_tag"],
+        "annotated_tag_object": execution["annotated_tag_object"],
+    }
+    expected_artifact = {
+        "artifact_sha256": artifact["artifact_sha256"],
+        "files": _artifact_file_hashes(plan),
+    }
+    resource_binding = envelope.get("concurrent_resource_receipt")
+    regression_binding = envelope.get("runtime_regression_receipt")
+    sell_binding = envelope.get("sell_54_case_receipt")
+    if not all(
+        isinstance(binding, Mapping)
+        for binding in (resource_binding, regression_binding, sell_binding)
+    ):
+        raise BuyE3TransactionalDeployError("activation envelope receipt binding is malformed")
+    resource_path = Path(str(resource_binding["path"]))
+    if gate_v2.file_sha256(resource_path) != resource_binding.get("file_sha256"):
+        raise BuyE3TransactionalDeployError("activation resource receipt bytes drifted")
+    resource = gate_v1.validate_concurrent_resource_receipt(
+        resource_path,
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_execution_commit=str(execution["execution_commit"]),
+        expected_execution_tag=str(execution["annotated_tag"]),
+        expected_disabled_process_identity=disabled_process,
+    )
+    expected_resource_binding = _compatible_activation_receipt_binding(
+        path=resource_path,
+        canonical_sha256=str(resource["canonical_resource_receipt_sha256"]),
+        extra={
+            "disabled_process_identity_sha256": disabled_binding["process_identity_sha256"],
+            "live_pid": disabled_binding["pid"],
+        },
+    )
+    regression_path = Path(str(regression_binding["path"]))
+    if gate_v2.file_sha256(regression_path) != regression_binding.get("file_sha256"):
+        raise BuyE3TransactionalDeployError("activation regression receipt bytes drifted")
+    regression = gate_v1.validate_runtime_regression_receipt(
+        regression_path,
+        repository_root=Path(str(plan["planner_repository_root"])),
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_execution_commit=str(execution["execution_commit"]),
+        expected_execution_tag=str(execution["annotated_tag"]),
+    )
+    expected_regression_binding = _compatible_activation_receipt_binding(
+        path=regression_path,
+        canonical_sha256=str(regression["canonical_receipt_sha256"]),
+        extra={
+            "nodeid_manifest_sha256": regression["nodeid_manifest_sha256"],
+            "test_source_manifest_sha256": gate_v2.canonical_sha256(
+                {
+                    "test_files": regression["test_files"],
+                    "runtime_sources": regression["runtime_sources"],
+                }
+            ),
+        },
+    )
+    sell_path = Path(str(sell_binding["path"]))
+    if gate_v2.file_sha256(sell_path) != sell_binding.get("file_sha256"):
+        raise BuyE3TransactionalDeployError("activation SELL receipt bytes drifted")
+    sell = gate_v1.validate_sell_owner_54_case_receipt(
+        sell_path,
+        repository_root=Path(str(plan["planner_repository_root"])),
+        expected_artifact_sha256=str(artifact["artifact_sha256"]),
+        expected_artifact_files=_artifact_file_hashes(plan),
+    )
+    expected_sell_binding = {
+        key: value for key, value in sell.items() if key != "canonical_receipt_sha256"
+    }
+    expected_sell_binding["canonical_sha256"] = sell["canonical_receipt_sha256"]
+    external_files = plan["external_tools_and_package"]["files"]
+    validate_b0_config_contract(Path(str(external_files["disabled_config"]["path"])))
+    validate_b0_config_contract(Path(str(external_files["active_config"]["path"])))
+    expected_checks = {
+        "disabled_phase_complete_and_same_plan": True,
+        "b0_fill_cooldown_exact_in_both_configs": True,
+        "concurrent_2vcpu_2gib_resource_window_passed": True,
+        "frozen_regression_nodeid_and_sources_passed": True,
+        "real_sell_54_case_and_sources_passed": True,
+        "no_locked_or_economic_evidence_read": True,
+    }
+    expected_contract = {
+        "restart_only": True,
+        "same_disabled_process_required": True,
+        "phase_token_still_required": True,
+        "envelope_does_not_authorize_remote_mutation_by_itself": True,
+    }
+    if (
+        envelope.get("schema_version") != COMPATIBLE_ACTIVATION_ENVELOPE_SCHEMA
+        or envelope.get("status") != "compatible_activation_evidence_complete"
+        or envelope.get("plan_sha256") != plan["canonical_plan_sha256"]
+        or envelope.get("plan_core_sha256") != plan["plan_core_sha256"]
+        or envelope.get("transaction_contract_sha256")
+        != gate_v2.canonical_sha256(plan["transaction_contract"])
+        or envelope.get("execution") != expected_execution
+        or envelope.get("artifact") != expected_artifact
+        or resource_binding != expected_resource_binding
+        or regression_binding != expected_regression_binding
+        or sell_binding != expected_sell_binding
+        or envelope.get("checks") != expected_checks
+        or envelope.get("activation_contract") != expected_contract
+        or envelope.get("evidence_boundary") != ACTIVATION_ENVELOPE_EVIDENCE_BOUNDARY
+        or envelope.get("canonical_activation_envelope_sha256")
+        != gate_v2.document_sha256(envelope, "canonical_activation_envelope_sha256")
+    ):
+        raise BuyE3TransactionalDeployError("activation envelope identity drifted")
+    return envelope
+
+
 def _command_result(
     row: Mapping[str, Any], completed: subprocess.CompletedProcess[str] | None
 ) -> dict[str, Any]:
@@ -3047,7 +4776,10 @@ def _build_phase_receipt(
     phase: str,
     status: str,
     results: Sequence[Mapping[str, Any]],
+    execution_rows: Sequence[Mapping[str, Any]],
     mutation_started: bool,
+    activation_envelope_binding: Mapping[str, Any] | None,
+    active_release_binding: Mapping[str, Any] | None,
     disabled_phase_receipt_binding: Mapping[str, Any] | None,
     pre_stop_disabled_process_identity: Mapping[str, Any] | None,
     pre_stop_disabled_startup_attestation: Mapping[str, Any] | None,
@@ -3068,13 +4800,19 @@ def _build_phase_receipt(
         "status": status,
         "remote_mutation_authorized": True,
         "phase_authorization_token_sha256": plan["phase_token_sha256"][phase],
-        "transaction_contract_sha256": gate_v2.canonical_sha256(
-            plan["transaction_contract"]
-        ),
-        "expected_commands": _expected_commands(plan["phases"][phase]),
+        "transaction_contract_sha256": gate_v2.canonical_sha256(plan["transaction_contract"]),
+        "expected_commands": _expected_commands(execution_rows),
         "expected_automatic_rollback_commands": _expected_commands(rollback_rows),
         "results": [dict(result) for result in results],
         "mutation_started": bool(mutation_started),
+        **(
+            {"activation_envelope_binding": dict(activation_envelope_binding)}
+            if activation_envelope_binding is not None
+            else {}
+        ),
+        "active_release_binding": (
+            dict(active_release_binding) if active_release_binding is not None else None
+        ),
         "disabled_phase_receipt_binding": (
             dict(disabled_phase_receipt_binding)
             if disabled_phase_receipt_binding is not None
@@ -3091,17 +4829,13 @@ def _build_phase_receipt(
             else None
         ),
         "actual_startup_attestation": (
-            dict(actual_startup_attestation)
-            if actual_startup_attestation is not None
-            else None
+            dict(actual_startup_attestation) if actual_startup_attestation is not None else None
         ),
         "actual_process_identity": (
             dict(actual_process_identity) if actual_process_identity is not None else None
         ),
         "stop_failure_probe_result": (
-            dict(stop_failure_probe_result)
-            if stop_failure_probe_result is not None
-            else None
+            dict(stop_failure_probe_result) if stop_failure_probe_result is not None else None
         ),
         "rollback_attempted": bool(rollback_attempted),
         "rollback_status": rollback_status,
@@ -3158,10 +4892,7 @@ def _validate_result_shape(result: Mapping[str, Any]) -> None:
             identity_fields != {"observed_pid"} or int(result["observed_pid"]) <= 0
         ):
             raise BuyE3TransactionalDeployError("old PID result binding is malformed")
-    elif (
-        "process-probe" in bare_label
-        or bare_label == "reprobe-disabled-process-before-stop"
-    ):
+    elif "process-probe" in bare_label or bare_label == "reprobe-disabled-process-before-stop":
         if identity_fields and identity_fields != {
             "observed_pid",
             "process_identity_sha256",
@@ -3180,9 +4911,7 @@ def _validate_result_shape(result: Mapping[str, Any]) -> None:
             "runtime_identity_file_sha256",
             "startup_attestation_sha256",
         }:
-            raise BuyE3TransactionalDeployError(
-                "runtime identity result binding is malformed"
-            )
+            raise BuyE3TransactionalDeployError("runtime identity result binding is malformed")
         if identity_fields:
             _require_sha256(
                 result["runtime_identity_file_sha256"],
@@ -3213,19 +4942,26 @@ def validate_phase_receipt(
     if stat.S_IMODE(target.stat().st_mode) != 0o600:
         raise BuyE3TransactionalDeployError("phase receipt permission drifted from 0600")
     receipt = gate_v2.read_json(target)
-    if set(receipt) != _PHASE_RECEIPT_FIELDS:
-        raise BuyE3TransactionalDeployError("phase receipt fields drifted")
     phase = str(receipt.get("phase", ""))
     if phase not in MUTATING_PHASES or (expected_phase is not None and phase != expected_phase):
         raise BuyE3TransactionalDeployError("phase receipt phase drifted")
+    compatible_activation = (
+        phase == "activate" and plan["execution"].get("compatible_attempt_manifest") is not None
+    )
+    legacy_receipt = receipt.get("schema_version") == LEGACY_RECEIPT_SCHEMA
+    expected_fields = (
+        _LEGACY_PHASE_RECEIPT_FIELDS if legacy_receipt else _PHASE_RECEIPT_FIELDS
+    ) | ({"activation_envelope_binding"} if compatible_activation else set())
+    if set(receipt) != expected_fields:
+        raise BuyE3TransactionalDeployError("phase receipt fields drifted")
     if (
-        receipt.get("schema_version") != RECEIPT_SCHEMA
+        receipt.get("schema_version")
+        != (LEGACY_RECEIPT_SCHEMA if legacy_receipt else RECEIPT_SCHEMA)
         or receipt.get("plan_sha256") != plan["canonical_plan_sha256"]
         or receipt.get("canonical_receipt_sha256")
         != gate_v2.document_sha256(receipt, "canonical_receipt_sha256")
         or receipt.get("remote_mutation_authorized") is not True
-        or receipt.get("phase_authorization_token_sha256")
-        != plan["phase_token_sha256"][phase]
+        or receipt.get("phase_authorization_token_sha256") != plan["phase_token_sha256"][phase]
         or receipt.get("transaction_contract_sha256")
         != gate_v2.canonical_sha256(plan["transaction_contract"])
         or receipt.get("permissions") != RECEIPT_PERMISSIONS
@@ -3233,12 +4969,32 @@ def validate_phase_receipt(
         or receipt.get("evidence_authority") != RECEIPT_AUTHORITY
     ):
         raise BuyE3TransactionalDeployError("phase receipt identity drifted")
-    expected = _expected_commands(plan["phases"][phase])
+    active_release_binding = receipt.get("active_release_binding")
+    if legacy_receipt:
+        if active_release_binding is not None:
+            raise BuyE3TransactionalDeployError(
+                "historical phase receipt carries future active release authority"
+            )
+    elif compatible_activation:
+        if not isinstance(active_release_binding, Mapping):
+            raise BuyE3TransactionalDeployError(
+                "compatible activation receipt lacks active release binding"
+            )
+        active_release_binding = _validate_active_release_phase_binding(
+            active_release_binding,
+            plan=plan,
+        )
+    elif active_release_binding is not None:
+        raise BuyE3TransactionalDeployError(
+            "non-compatible phase receipt carries active release binding"
+        )
+    execution_rows = _execution_rows(plan, phase, active_release_binding)
+    expected = _expected_commands(execution_rows)
     if receipt.get("expected_commands") != expected:
         raise BuyE3TransactionalDeployError("phase receipt expected command binding drifted")
     raw_results = receipt.get("results")
-    if not isinstance(raw_results, list) or not raw_results:
-        raise BuyE3TransactionalDeployError("phase receipt lacks command results")
+    if not isinstance(raw_results, list):
+        raise BuyE3TransactionalDeployError("phase receipt command results are malformed")
     results: list[dict[str, Any]] = []
     for raw in raw_results:
         if not isinstance(raw, Mapping):
@@ -3247,7 +5003,11 @@ def validate_phase_receipt(
         _validate_result_shape(result)
         results.append(result)
     first_rollback = next(
-        (index for index, result in enumerate(results) if result["label"].startswith("automatic-rollback:")),
+        (
+            index
+            for index, result in enumerate(results)
+            if result["label"].startswith("automatic-rollback:")
+        ),
         len(results),
     )
     main_results = results[:first_rollback]
@@ -3264,7 +5024,7 @@ def validate_phase_receipt(
             "command_sha256": result["command_sha256"],
         } != expected[index]:
             raise BuyE3TransactionalDeployError("phase command order/hash drifted")
-    attempted_rows = plan["phases"][phase][: len(main_results)]
+    attempted_rows = execution_rows[: len(main_results)]
     mutation_started = any(bool(row["mutates_remote"]) for row in attempted_rows)
     if receipt.get("mutation_started") is not mutation_started:
         raise BuyE3TransactionalDeployError("phase mutation-start binding drifted")
@@ -3281,15 +5041,22 @@ def validate_phase_receipt(
     elif status == PHASE_FAILED_CLOSED:
         if failure_class not in FAILURE_CLASSES:
             raise BuyE3TransactionalDeployError("failed phase lacks a safe failure class")
+        if not main_results and (
+            failure_class != "phase_timeout"
+            or receipt.get("mutation_started") is not False
+            or rollback_results
+        ):
+            raise BuyE3TransactionalDeployError("empty failed phase is not a pre-mutation timeout")
         if any(result["returncode"] not in {0, None} for result in main_results[:-1]):
             raise BuyE3TransactionalDeployError("phase continued after a failed command")
-        last_returncode = main_results[-1]["returncode"]
-        if failure_class == "command_returncode_nonzero" and (
-            not isinstance(last_returncode, int) or last_returncode == 0
-        ):
-            raise BuyE3TransactionalDeployError("failed command return code was not preserved")
-        if failure_class == "command_runner_exception" and last_returncode is not None:
-            raise BuyE3TransactionalDeployError("runner failure return code was fabricated")
+        if main_results:
+            last_returncode = main_results[-1]["returncode"]
+            if failure_class == "command_returncode_nonzero" and (
+                not isinstance(last_returncode, int) or last_returncode == 0
+            ):
+                raise BuyE3TransactionalDeployError("failed command return code was not preserved")
+            if failure_class == "command_runner_exception" and last_returncode is not None:
+                raise BuyE3TransactionalDeployError("runner failure return code was fabricated")
     else:
         raise BuyE3TransactionalDeployError("phase receipt status drifted")
     old_pid = next(
@@ -3301,6 +5068,7 @@ def validate_phase_receipt(
         None,
     )
     disabled_binding = receipt.get("disabled_phase_receipt_binding")
+    envelope_binding = receipt.get("activation_envelope_binding")
     pre_stop_disabled_process = receipt.get("pre_stop_disabled_process_identity")
     pre_stop_startup = receipt.get("pre_stop_disabled_startup_attestation")
     actual_startup = receipt.get("actual_startup_attestation")
@@ -3311,20 +5079,55 @@ def validate_phase_receipt(
             not isinstance(disabled_binding, Mapping)
             or set(disabled_binding) != _DISABLED_PHASE_BINDING_FIELDS
         ):
-            raise BuyE3TransactionalDeployError(
-                "activation disabled phase receipt binding drifted"
-            )
+            raise BuyE3TransactionalDeployError("activation disabled phase receipt binding drifted")
         rebound, prior_disabled_process = _load_disabled_phase_receipt_binding(
             Path(str(disabled_binding["path"])), plan=plan
         )
         if dict(disabled_binding) != rebound:
-            raise BuyE3TransactionalDeployError(
-                "activation disabled phase receipt bytes drifted"
+            raise BuyE3TransactionalDeployError("activation disabled phase receipt bytes drifted")
+        if compatible_activation:
+            if (
+                not isinstance(envelope_binding, Mapping)
+                or set(envelope_binding) != _ACTIVATION_ENVELOPE_PHASE_BINDING_FIELDS
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "compatible activation envelope binding drifted"
+                )
+            envelope = validate_compatible_activation_envelope(
+                Path(str(envelope_binding["path"])),
+                plan=plan,
+                disabled_phase_receipt_path=Path(str(disabled_binding["path"])),
             )
+            expected_envelope_binding = {
+                "path": str(Path(str(envelope_binding["path"])).resolve(strict=True)),
+                "file_sha256": gate_v2.file_sha256(
+                    Path(str(envelope_binding["path"])).resolve(strict=True)
+                ),
+                "canonical_activation_envelope_sha256": envelope[
+                    "canonical_activation_envelope_sha256"
+                ],
+                "concurrent_resource_receipt_sha256": envelope["concurrent_resource_receipt"][
+                    "canonical_sha256"
+                ],
+                "runtime_regression_receipt_sha256": envelope["runtime_regression_receipt"][
+                    "canonical_sha256"
+                ],
+                "sell_54_case_receipt_sha256": envelope["sell_54_case_receipt"]["canonical_sha256"],
+            }
+            if dict(envelope_binding) != expected_envelope_binding:
+                raise BuyE3TransactionalDeployError("compatible activation envelope bytes drifted")
+            if not legacy_receipt:
+                observed_release_binding = _validate_active_release_for_activation(
+                    Path(str(active_release_binding["local_path"])),
+                    plan=plan,
+                    activation_envelope_binding=expected_envelope_binding,
+                )
+                if dict(active_release_binding) != observed_release_binding:
+                    raise BuyE3TransactionalDeployError(
+                        "active release bytes or activation binding drifted"
+                    )
         if old_pid is not None and old_pid != int(prior_disabled_process["pid"]):
-            raise BuyE3TransactionalDeployError(
-                "activation old PID differs from disabled receipt"
-            )
+            raise BuyE3TransactionalDeployError("activation old PID differs from disabled receipt")
         if pre_stop_disabled_process is not None:
             if not isinstance(pre_stop_disabled_process, Mapping):
                 raise BuyE3TransactionalDeployError(
@@ -3336,6 +5139,7 @@ def validate_phase_receipt(
                 phase="disabled-deploy",
                 old_pid=None,
                 require_fresh=False,
+                allow_legacy=legacy_receipt,
             )
             try:
                 _require_same_disabled_process(prior_disabled_process, validated_pre_stop)
@@ -3354,27 +5158,26 @@ def validate_phase_receipt(
                         "failed handoff receipt does not preserve the mismatch"
                     )
             pre_stop_hash = validated_pre_stop["canonical_process_identity_sha256"]
-            if sum(
-                result["label"] == "reprobe-disabled-process-before-stop"
-                and result.get("process_identity_sha256") == pre_stop_hash
-                for result in main_results
-            ) != 1:
+            if (
+                sum(
+                    result["label"] == "reprobe-disabled-process-before-stop"
+                    and result.get("process_identity_sha256") == pre_stop_hash
+                    for result in main_results
+                )
+                != 1
+            ):
                 raise BuyE3TransactionalDeployError(
                     "pre-stop disabled process probe is not rebound"
                 )
         if pre_stop_startup is not None:
-            if (
-                not isinstance(pre_stop_startup, Mapping)
-                or validated_pre_stop is None
-            ):
-                raise BuyE3TransactionalDeployError(
-                    "pre-stop runtime startup binding is malformed"
-                )
+            if not isinstance(pre_stop_startup, Mapping) or validated_pre_stop is None:
+                raise BuyE3TransactionalDeployError("pre-stop runtime startup binding is malformed")
             validated_pre_stop_startup = _validate_runtime_identity_binding(
                 pre_stop_startup,
                 plan=plan,
                 process=validated_pre_stop,
                 process_phase="disabled-deploy",
+                allow_legacy=legacy_receipt,
             )
             if (
                 validated_pre_stop_startup["runtime_identity_file_sha256"]
@@ -3385,23 +5188,24 @@ def validate_phase_receipt(
                 raise BuyE3TransactionalDeployError(
                     "pre-stop runtime identity differs from disabled receipt"
                 )
-            if sum(
-                result["label"] == "read-pre-stop-disabled-runtime-identity"
-                and result.get("stdout_sha256")
-                == validated_pre_stop_startup["runtime_identity_file_sha256"]
-                and result.get("runtime_identity_file_sha256")
-                == validated_pre_stop_startup["runtime_identity_file_sha256"]
-                and result.get("startup_attestation_sha256")
-                == validated_pre_stop_startup["startup_attestation_sha256"]
-                for result in main_results
-            ) != 1:
+            if (
+                sum(
+                    result["label"] == "read-pre-stop-disabled-runtime-identity"
+                    and result.get("stdout_sha256")
+                    == validated_pre_stop_startup["runtime_identity_file_sha256"]
+                    and result.get("runtime_identity_file_sha256")
+                    == validated_pre_stop_startup["runtime_identity_file_sha256"]
+                    and result.get("startup_attestation_sha256")
+                    == validated_pre_stop_startup["startup_attestation_sha256"]
+                    for result in main_results
+                )
+                != 1
+            ):
                 raise BuyE3TransactionalDeployError(
                     "pre-stop runtime identity result is not rebound"
                 )
         if status == PHASE_COMPLETE and (
-            old_pid is None
-            or pre_stop_disabled_process is None
-            or pre_stop_startup is None
+            old_pid is None or pre_stop_disabled_process is None or pre_stop_startup is None
         ):
             raise BuyE3TransactionalDeployError(
                 "activation completion lacks disabled handoff evidence"
@@ -3418,7 +5222,12 @@ def validate_phase_receipt(
         if not isinstance(process, Mapping):
             raise BuyE3TransactionalDeployError("actual process receipt binding is malformed")
         validated_process = _validate_actual_process_identity(
-            process, plan=plan, phase=phase, old_pid=old_pid
+            process,
+            plan=plan,
+            phase=phase,
+            old_pid=old_pid,
+            active_release_binding=active_release_binding,
+            allow_legacy=legacy_receipt,
         )
         process_hash = validated_process["canonical_process_identity_sha256"]
         matching = [
@@ -3432,9 +5241,7 @@ def validate_phase_receipt(
         raise BuyE3TransactionalDeployError("completed phase lacks actual process identity")
     if actual_startup is not None:
         if not isinstance(actual_startup, Mapping) or not isinstance(process, Mapping):
-            raise BuyE3TransactionalDeployError(
-                "actual runtime startup binding is malformed"
-            )
+            raise BuyE3TransactionalDeployError("actual runtime startup binding is malformed")
         if phase not in {"disabled-deploy", "activate"}:
             raise BuyE3TransactionalDeployError(
                 "rollback receipt carries unsupported runtime startup evidence"
@@ -3444,25 +5251,28 @@ def validate_phase_receipt(
             plan=plan,
             process=process,
             process_phase=phase,
+            active_release_binding=active_release_binding,
+            allow_legacy=legacy_receipt,
         )
         expected_label = (
             "read-disabled-runtime-identity"
             if phase == "disabled-deploy"
             else "read-active-runtime-identity"
         )
-        if sum(
-            result["label"] == expected_label
-            and result.get("stdout_sha256")
-            == validated_actual_startup["runtime_identity_file_sha256"]
-            and result.get("runtime_identity_file_sha256")
-            == validated_actual_startup["runtime_identity_file_sha256"]
-            and result.get("startup_attestation_sha256")
-            == validated_actual_startup["startup_attestation_sha256"]
-            for result in main_results
-        ) != 1:
-            raise BuyE3TransactionalDeployError(
-                "actual runtime identity result is not rebound"
+        if (
+            sum(
+                result["label"] == expected_label
+                and result.get("stdout_sha256")
+                == validated_actual_startup["runtime_identity_file_sha256"]
+                and result.get("runtime_identity_file_sha256")
+                == validated_actual_startup["runtime_identity_file_sha256"]
+                and result.get("startup_attestation_sha256")
+                == validated_actual_startup["startup_attestation_sha256"]
+                for result in main_results
             )
+            != 1
+        ):
+            raise BuyE3TransactionalDeployError("actual runtime identity result is not rebound")
     elif status == PHASE_COMPLETE and phase in {"disabled-deploy", "activate"}:
         raise BuyE3TransactionalDeployError(
             "completed deployment phase lacks runtime-written startup evidence"
@@ -3484,12 +5294,11 @@ def validate_phase_receipt(
             raise BuyE3TransactionalDeployError("stop failure lacks post-stop probe")
         _validate_result_shape(stop_failure_probe)
         expected_probe_row = next(
-            row for row in plan["phases"][phase] if row["label"] == "confirm-quiescent"
+            row for row in execution_rows if row["label"] == "confirm-quiescent"
         )
         if (
             stop_failure_probe.get("label") != "stop-failure-probe:confirm-quiescent"
-            or stop_failure_probe.get("command_sha256")
-            != expected_probe_row["command_sha256"]
+            or stop_failure_probe.get("command_sha256") != expected_probe_row["command_sha256"]
         ):
             raise BuyE3TransactionalDeployError("stop failure probe command drifted")
     expected_rollback_attempt = (
@@ -3538,12 +5347,16 @@ def validate_phase_receipt(
                 plan=plan,
                 phase="rollback-primary",
                 old_pid=old_pid,
+                allow_legacy=legacy_receipt,
             )
             rollback_hash = validated_rollback["canonical_process_identity_sha256"]
-            if sum(
-                result.get("process_identity_sha256") == rollback_hash
-                for result in rollback_results
-            ) != 1:
+            if (
+                sum(
+                    result.get("process_identity_sha256") == rollback_hash
+                    for result in rollback_results
+                )
+                != 1
+            ):
                 raise BuyE3TransactionalDeployError("rollback process probe is not rebound")
         elif rollback_status == "rollback_failed_closed":
             if rollback_failure_class not in FAILURE_CLASSES:
@@ -3558,6 +5371,7 @@ def validate_phase_receipt(
                     plan=plan,
                     phase="rollback-primary",
                     old_pid=old_pid,
+                    allow_legacy=legacy_receipt,
                 )
         else:
             raise BuyE3TransactionalDeployError("automatic rollback status drifted")
@@ -3570,9 +5384,7 @@ def _run_stop_failure_probe(
     phase: str,
     runner: CommandRunner,
 ) -> dict[str, Any]:
-    row = next(
-        row for row in plan["phases"][phase] if row["label"] == "confirm-quiescent"
-    )
+    row = next(row for row in plan["phases"][phase] if row["label"] == "confirm-quiescent")
     probe_row = dict(row)
     probe_row["label"] = "stop-failure-probe:confirm-quiescent"
     try:
@@ -3641,6 +5453,8 @@ def execute_phase(
     runner: CommandRunner = _default_runner,
     output_path: Path | None = None,
     disabled_phase_receipt_path: Path | None = None,
+    activation_envelope_path: Path | None = None,
+    active_release_path: Path | None = None,
 ) -> dict[str, Any]:
     """Execute one explicit transaction phase; default callers cannot mutate."""
 
@@ -3653,8 +5467,39 @@ def execute_phase(
     expected_token = str(plan["phase_token_sha256"][phase])
     if not hmac.compare_digest(phase_authorization_token_sha256(token), expected_token):
         raise PermissionError("phase token does not match the frozen plan")
-    if phase == "activate" and not plan.get("activation_gate_receipt_sha256"):
+    compatible = plan["execution"].get("compatible_attempt_manifest") is not None
+    activation_envelope_binding: dict[str, Any] | None = None
+    if phase == "activate" and compatible:
+        if activation_envelope_path is None or disabled_phase_receipt_path is None:
+            raise PermissionError(
+                "compatible activation requires a post-disabled activation envelope"
+            )
+        envelope = validate_compatible_activation_envelope(
+            activation_envelope_path,
+            plan=plan,
+            disabled_phase_receipt_path=disabled_phase_receipt_path,
+        )
+        envelope_target = activation_envelope_path.expanduser().absolute().resolve(strict=True)
+        activation_envelope_binding = {
+            "path": str(envelope_target),
+            "file_sha256": gate_v2.file_sha256(envelope_target),
+            "canonical_activation_envelope_sha256": envelope[
+                "canonical_activation_envelope_sha256"
+            ],
+            "concurrent_resource_receipt_sha256": envelope["concurrent_resource_receipt"][
+                "canonical_sha256"
+            ],
+            "runtime_regression_receipt_sha256": envelope["runtime_regression_receipt"][
+                "canonical_sha256"
+            ],
+            "sell_54_case_receipt_sha256": envelope["sell_54_case_receipt"]["canonical_sha256"],
+        }
+    elif phase == "activate" and not plan.get("activation_gate_receipt_sha256"):
         raise PermissionError("activation requires a separately bound amended gate receipt")
+    elif activation_envelope_path is not None:
+        raise BuyE3TransactionalDeployError(
+            "activation envelope is accepted only for compatible activation"
+        )
     disabled_phase_receipt_binding: dict[str, Any] | None = None
     prior_disabled_process: dict[str, Any] | None = None
     if phase == "activate":
@@ -3663,18 +5508,29 @@ def execute_phase(
                 "activation requires the same-plan successful disabled phase receipt"
             )
         disabled_phase_receipt_binding, prior_disabled_process = (
-            _load_disabled_phase_receipt_binding(
-                disabled_phase_receipt_path, plan=plan
-            )
+            _load_disabled_phase_receipt_binding(disabled_phase_receipt_path, plan=plan)
         )
     elif disabled_phase_receipt_path is not None:
         raise BuyE3TransactionalDeployError(
             "disabled phase receipt is accepted only for activation"
         )
+    active_release_binding: dict[str, Any] | None = None
+    if phase == "activate" and compatible:
+        if active_release_path is None or activation_envelope_binding is None:
+            raise PermissionError("compatible activation requires a post-envelope active release")
+        active_release_binding = _validate_active_release_for_activation(
+            active_release_path,
+            plan=plan,
+            activation_envelope_binding=activation_envelope_binding,
+        )
+    elif active_release_path is not None:
+        raise BuyE3TransactionalDeployError(
+            "active release is accepted only for compatible activation"
+        )
     if output_path is None:
         raise BuyE3TransactionalDeployError("remote phase requires an immutable receipt output")
     reservation = _reserve_receipt_output(output_path)
-    rows = plan["phases"][phase]
+    rows = _execution_rows(plan, phase, active_release_binding)
     results: list[dict[str, Any]] = []
     mutation_started = False
     rollback_attempted = False
@@ -3690,8 +5546,17 @@ def execute_phase(
     failure_class: str | None = None
     old_pid: int | None = None
     phase_error: BaseException | None = None
+    phase_started = time.monotonic()
+
+    def require_phase_time() -> None:
+        nonlocal failure_class
+        if time.monotonic() - phase_started > PHASE_TIMEOUT_S:
+            failure_class = "phase_timeout"
+            raise TimeoutError(f"remote phase exceeded {int(PHASE_TIMEOUT_S)} seconds")
+
     try:
         for row in rows:
+            require_phase_time()
             if row["mutates_remote"]:
                 mutation_started = True
             try:
@@ -3712,9 +5577,7 @@ def execute_phase(
                     stop_failure_probe_result = _run_stop_failure_probe(
                         plan=plan, phase=phase, runner=runner
                     )
-                raise BuyE3TransactionalDeployError(
-                    f"remote phase failed closed at {row['label']}"
-                )
+                raise BuyE3TransactionalDeployError(f"remote phase failed closed at {row['label']}")
             if completed.returncode == 0 and row["label"] == "capture-old-pid":
                 try:
                     old_pid = int((completed.stdout or "").strip())
@@ -3760,7 +5623,11 @@ def execute_phase(
             elif completed.returncode == 0 and "process-probe" in row["label"]:
                 try:
                     actual_process_identity = _parse_process_probe(
-                        completed.stdout or "", plan=plan, phase=phase, old_pid=old_pid
+                        completed.stdout or "",
+                        plan=plan,
+                        phase=phase,
+                        old_pid=old_pid,
+                        active_release_binding=active_release_binding,
                     )
                 except BuyE3TransactionalDeployError as exc:
                     failure_class = _classify_process_error(exc)
@@ -3790,6 +5657,9 @@ def execute_phase(
                         plan=plan,
                         process=identity_process,
                         process_phase=identity_phase,
+                        active_release_binding=(
+                            active_release_binding if identity_phase == "activate" else None
+                        ),
                     )
                 except BuyE3TransactionalDeployError:
                     failure_class = "runtime_identity_invalid"
@@ -3797,20 +5667,14 @@ def execute_phase(
                 result["runtime_identity_file_sha256"] = startup_binding[
                     "runtime_identity_file_sha256"
                 ]
-                result["startup_attestation_sha256"] = startup_binding[
-                    "startup_attestation_sha256"
-                ]
+                result["startup_attestation_sha256"] = startup_binding["startup_attestation_sha256"]
                 if row["label"] == "read-pre-stop-disabled-runtime-identity":
                     pre_stop_disabled_startup_attestation = startup_binding
                     if disabled_phase_receipt_binding is None or (
                         startup_binding["runtime_identity_file_sha256"]
-                        != disabled_phase_receipt_binding[
-                            "runtime_identity_file_sha256"
-                        ]
+                        != disabled_phase_receipt_binding["runtime_identity_file_sha256"]
                         or startup_binding["startup_attestation_sha256"]
-                        != disabled_phase_receipt_binding[
-                            "startup_attestation_sha256"
-                        ]
+                        != disabled_phase_receipt_binding["startup_attestation_sha256"]
                     ):
                         failure_class = "disabled_process_handoff_mismatch"
                         raise BuyE3TransactionalDeployError(
@@ -3834,6 +5698,7 @@ def execute_phase(
         if len(results) != len(rows) or any(result["returncode"] != 0 for result in results):
             failure_class = "phase_contract_validation_failed"
             raise BuyE3TransactionalDeployError("phase command completion is incomplete")
+        require_phase_time()
         _revalidate_plan_inputs(plan)
         phase_complete = True
     except BaseException as exc:
@@ -3857,12 +5722,13 @@ def execute_phase(
         phase=phase,
         status=PHASE_COMPLETE if phase_complete else PHASE_FAILED_CLOSED,
         results=results,
+        execution_rows=rows,
         mutation_started=mutation_started,
+        activation_envelope_binding=activation_envelope_binding,
+        active_release_binding=active_release_binding,
         disabled_phase_receipt_binding=disabled_phase_receipt_binding,
         pre_stop_disabled_process_identity=pre_stop_disabled_process_identity,
-        pre_stop_disabled_startup_attestation=(
-            pre_stop_disabled_startup_attestation
-        ),
+        pre_stop_disabled_startup_attestation=(pre_stop_disabled_startup_attestation),
         actual_startup_attestation=actual_startup_attestation,
         actual_process_identity=actual_process_identity,
         stop_failure_probe_result=stop_failure_probe_result,
@@ -3876,9 +5742,7 @@ def execute_phase(
         _commit_reserved_receipt(
             reservation,
             receipt,
-            validator=lambda path: validate_phase_receipt(
-                path, plan=plan, expected_phase=phase
-            ),
+            validator=lambda path: validate_phase_receipt(path, plan=plan, expected_phase=phase),
         )
     except Exception as exc:
         receipt_failure_class = (
@@ -3938,6 +5802,13 @@ def _parser() -> argparse.ArgumentParser:
     process.add_argument("--artifact-sha256", default="")
     process.add_argument("--artifact-manifest", type=Path)
     process.add_argument("--runtime-code-sha256", required=True)
+    process.add_argument("--active-release", type=Path)
+    process.add_argument("--active-release-file-sha256", default="")
+    process.add_argument("--active-release-canonical-sha256", default="")
+    install_release = subparsers.add_parser("install-active-release")
+    install_release.add_argument("--source", type=Path, required=True)
+    install_release.add_argument("--destination", type=Path, required=True)
+    install_release.add_argument("--file-sha256", required=True)
     checkpoint = subparsers.add_parser("log-checkpoint")
     checkpoint.add_argument("--log", type=Path, required=True)
     checkpoint.add_argument("--output", type=Path, required=True)
@@ -3945,6 +5816,13 @@ def _parser() -> argparse.ArgumentParser:
     log_validate.add_argument("--log", type=Path, required=True)
     log_validate.add_argument("--checkpoint", type=Path, required=True)
     log_validate.add_argument("--marker", action="append", required=True)
+    bind_activation = subparsers.add_parser("bind-activation")
+    bind_activation.add_argument("--plan", type=Path, required=True)
+    bind_activation.add_argument("--disabled-phase-receipt", type=Path, required=True)
+    bind_activation.add_argument("--concurrent-resource-receipt", type=Path, required=True)
+    bind_activation.add_argument("--runtime-regression-receipt", type=Path, required=True)
+    bind_activation.add_argument("--sell-54-case-receipt", type=Path, required=True)
+    bind_activation.add_argument("--output", type=Path, required=True)
     execute = subparsers.add_parser("execute")
     execute.add_argument("--plan", type=Path, required=True)
     execute.add_argument("--phase", choices=PHASES, required=True)
@@ -3952,6 +5830,8 @@ def _parser() -> argparse.ArgumentParser:
     token_source.add_argument("--token-file", type=Path)
     token_source.add_argument("--token-fd", type=int)
     execute.add_argument("--disabled-phase-receipt", type=Path)
+    execute.add_argument("--activation-envelope", type=Path)
+    execute.add_argument("--active-release", type=Path)
     execute.add_argument("--authorize-remote-mutation", action="store_true")
     execute.add_argument("--output", type=Path, required=True)
     return parser
@@ -3994,6 +5874,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             expected_artifact_sha256=args.artifact_sha256,
             expected_runtime_code_sha256=args.runtime_code_sha256,
             artifact_manifest_path=args.artifact_manifest,
+            active_release_path=args.active_release,
+            expected_active_release_file_sha256=args.active_release_file_sha256,
+            expected_active_release_canonical_sha256=(args.active_release_canonical_sha256),
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if command == "install-active-release":
+        payload = install_private_active_release(
+            source_path=args.source,
+            destination_path=args.destination,
+            expected_file_sha256=args.file_sha256,
         )
         print(json.dumps(payload, sort_keys=True))
         return 0
@@ -4011,6 +5902,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(json.dumps(payload, sort_keys=True))
         return 0
+    if command == "bind-activation":
+        payload = build_compatible_activation_envelope(
+            plan=_read_json(args.plan),
+            disabled_phase_receipt_path=args.disabled_phase_receipt,
+            concurrent_resource_receipt_path=args.concurrent_resource_receipt,
+            runtime_regression_receipt_path=args.runtime_regression_receipt,
+            sell_54_case_receipt_path=args.sell_54_case_receipt,
+            output_path=args.output,
+        )
+        print(
+            json.dumps(
+                {
+                    "status": payload["status"],
+                    "activation_envelope": payload["canonical_activation_envelope_sha256"],
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
     if command == "execute":
         plan = _read_json(args.plan)
         token = _read_phase_token(token_file=args.token_file, token_fd=args.token_fd)
@@ -4021,6 +5931,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             authorize_remote_mutation=args.authorize_remote_mutation,
             output_path=args.output,
             disabled_phase_receipt_path=args.disabled_phase_receipt,
+            activation_envelope_path=args.activation_envelope,
+            active_release_path=args.active_release,
         )
         return 0
     if command != "plan":
@@ -4047,13 +5959,17 @@ __all__ = [
     "PREFLIGHT_SCHEMA",
     "RECEIPT_SCHEMA",
     "bind_known_hosts",
+    "build_compatible_activation_envelope",
     "build_plan",
     "execute_phase",
     "capture_runtime_process_probe",
+    "install_private_active_release",
     "isolated_config_preflight",
     "load_sha_bound_active_pointer",
     "phase_authorization_token_sha256",
     "run_isolated_preflight",
+    "validate_b0_config_contract",
+    "validate_compatible_activation_envelope",
     "validate_phase_receipt",
     "validate_plan",
 ]

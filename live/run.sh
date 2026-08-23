@@ -68,6 +68,35 @@ _load_runtime_environment() {
     # the checked-in, non-secret native/python compute profiles.
     local requested_profile="${NARROWGATE_LIVE_PROFILE:-}"
     local requested_profile_file="${NARROWGATE_LIVE_PROFILE_FILE:-}"
+
+    # BUY E3 activation authority is invocation-only.  Snapshot both value and
+    # presence before sourcing mutable host files so an activation command
+    # cannot be overridden and rollback's ``env -u`` cannot be reintroduced.
+    local f05_buy_e3_owner_override_set=0
+    local f05_buy_e3_owner_override_value=""
+    local f05_buy_e3_release_path_set=0
+    local f05_buy_e3_release_path_value=""
+    local f05_buy_e3_release_file_sha256_set=0
+    local f05_buy_e3_release_file_sha256_value=""
+    local f05_buy_e3_release_canonical_sha256_set=0
+    local f05_buy_e3_release_canonical_sha256_value=""
+    if [[ "${NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY+set}" == "set" ]]; then
+        f05_buy_e3_owner_override_set=1
+        f05_buy_e3_owner_override_value="$NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY"
+    fi
+    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH+set}" == "set" ]]; then
+        f05_buy_e3_release_path_set=1
+        f05_buy_e3_release_path_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH"
+    fi
+    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256+set}" == "set" ]]; then
+        f05_buy_e3_release_file_sha256_set=1
+        f05_buy_e3_release_file_sha256_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256"
+    fi
+    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256+set}" == "set" ]]; then
+        f05_buy_e3_release_canonical_sha256_set=1
+        f05_buy_e3_release_canonical_sha256_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256"
+    fi
+
     if [[ -f "$DIR/live/.env" ]]; then
         set -a
         source "$DIR/live/.env"
@@ -86,6 +115,27 @@ _load_runtime_environment() {
     source "$profile_path"
     set +a
     export NARROWGATE_LIVE_PROFILE_FILE="$profile_path"
+
+    if [[ "$f05_buy_e3_owner_override_set" == "1" ]]; then
+        export NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY="$f05_buy_e3_owner_override_value"
+    else
+        unset NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY
+    fi
+    if [[ "$f05_buy_e3_release_path_set" == "1" ]]; then
+        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH="$f05_buy_e3_release_path_value"
+    else
+        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH
+    fi
+    if [[ "$f05_buy_e3_release_file_sha256_set" == "1" ]]; then
+        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256="$f05_buy_e3_release_file_sha256_value"
+    else
+        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256
+    fi
+    if [[ "$f05_buy_e3_release_canonical_sha256_set" == "1" ]]; then
+        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256="$f05_buy_e3_release_canonical_sha256_value"
+    else
+        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256
+    fi
 }
 
 _run_deploy_preflight() {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from itertools import product
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +44,7 @@ def _canonical_sha(value) -> str:
 
 def _write_json(path: Path, payload: dict) -> str:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(0o600)
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
@@ -348,6 +350,79 @@ def test_warmup_unobserved_and_hash_drift_fail_closed(tmp_path: Path) -> None:
     assert drift.fallback_reason == "runtime_artifact_file_hash_drift"
 
 
+def _runtime_reload_kwargs(paths: dict[str, Path]) -> dict[str, object]:
+    manifest = json.loads(paths["manifest"].read_text(encoding="ascii"))
+    return {
+        "artifact_manifest_path": paths["manifest"],
+        "artifact_manifest_sha256": hashlib.sha256(paths["manifest"].read_bytes()).hexdigest(),
+        "expected_artifact_sha256": manifest["artifact_sha256"],
+        "policy_path": paths["policy"],
+        "policy_sha256": hashlib.sha256(paths["policy"].read_bytes()).hexdigest(),
+        "predicate_bundle_path": paths["bundle"],
+        "predicate_bundle_sha256": hashlib.sha256(paths["bundle"].read_bytes()).hexdigest(),
+        "warmup_s": 2048.0,
+        "max_feature_age_s": 1.0,
+    }
+
+
+def test_artifact_load_rejects_non_private_mode(tmp_path: Path) -> None:
+    _runtime, paths = _artifact(tmp_path)
+    kwargs = _runtime_reload_kwargs(paths)
+    paths["policy"].chmod(0o640)
+
+    with pytest.raises(ValueError, match="mode_not_private"):
+        subject.LiveBuyE3CooldownPolicy.from_files(**kwargs)
+
+
+def test_artifact_load_rejects_additional_hard_link(tmp_path: Path) -> None:
+    _runtime, paths = _artifact(tmp_path)
+    kwargs = _runtime_reload_kwargs(paths)
+    os.link(paths["bundle"], paths["bundle"].with_suffix(".linked"))
+
+    with pytest.raises(ValueError, match="link_count_mismatch"):
+        subject.LiveBuyE3CooldownPolicy.from_files(**kwargs)
+
+
+def test_artifact_load_rejects_path_swap_between_lstat_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _runtime, paths = _artifact(tmp_path)
+    kwargs = _runtime_reload_kwargs(paths)
+    policy_path = paths["policy"]
+    original_open = subject.os.open
+    swapped = False
+
+    def swap_then_open(path, flags, mode=0o777, *, dir_fd=None):
+        nonlocal swapped
+        if Path(path) == policy_path and not swapped:
+            original_bytes = policy_path.read_bytes()
+            policy_path.replace(policy_path.with_suffix(".original"))
+            policy_path.write_bytes(original_bytes)
+            policy_path.chmod(0o600)
+            swapped = True
+        if dir_fd is None:
+            return original_open(path, flags, mode)
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(subject.os, "open", swap_then_open)
+    with pytest.raises(ValueError, match="identity_changed_during_open"):
+        subject.LiveBuyE3CooldownPolicy.from_files(**kwargs)
+
+
+def test_invalid_baseline_is_rejected(tmp_path: Path) -> None:
+    runtime, _paths = _artifact(tmp_path)
+
+    with pytest.raises(ValueError, match="baseline_duration_ms_must_be_positive"):
+        runtime.evaluate(
+            side="BUY",
+            baseline_duration_ms=0,
+            campaign_age_s=0.0,
+            decision_ts_ns=1,
+            snapshot_id="invalid-baseline",
+        )
+
+
 def test_gap_and_out_of_order_reset_receive_time_state() -> None:
     windows = subject.ReceiveTimeFullMidEmaWindows(
         warmup_s=2048.0,
@@ -362,15 +437,17 @@ def test_gap_and_out_of_order_reset_receive_time_state() -> None:
     windows.observe_depth(receive_ts_ns=100_000_001, **event)
     windows.observe_depth(receive_ts_ns=400_000_001, **event)
     assert windows.audit()["gap_windows"] == 2
-    assert windows.audit()["gap_resets"] == 0
+    assert windows.audit()["gap_resets"] == 1
+    assert windows.audit()["resets"] == 1
     windows.observe_depth(receive_ts_ns=300_000_001, **event)
     audit = windows.audit()
     assert audit["out_of_order_updates"] == 1
     assert audit["warmup_time_admitted"] == 0
+    assert audit["resets"] == 2
     windows.observe_depth(receive_ts_ns=1_600_000_001, **event)
     audit = windows.audit()
     assert audit["gap_resets"] == 1
-    assert audit["resets"] == 1
+    assert audit["resets"] == 2
 
 
 def test_research_compiled_parity_writes_bound_receipt(tmp_path: Path) -> None:
@@ -403,8 +480,6 @@ def test_development_snapshot_parity_covers_buy_and_sell(
             "side": ("BUY", "SELL"),
             "decision_ts_ns": (1_000_000_000, 2_000_000_000),
             "baseline_duration_ms": (170_000, 85_000),
-            "campaign_age_s": (200.0, 0.0),
-            ordering: (1, 0),
         },
         index=index,
     )
@@ -417,8 +492,16 @@ def test_development_snapshot_parity_covers_buy_and_sell(
         dtype="int8",
     )
     panel = SimpleNamespace(
-        metadata=pd.DataFrame({"side": ("BUY", "SELL")}, index=index),
+        metadata=pd.DataFrame(
+            {
+                "side": ("BUY", "SELL"),
+                "baseline_duration_ms": (170_000, 85_000),
+                "campaign_age_s": (200.0, 0.0),
+            },
+            index=index,
+        ),
         boolean_features=boolean_features,
+        continuous_features=pd.DataFrame(index=index),
         exact_owner_actions=pd.Series(("CONTROL_85N", "FIXED_166S"), index=index, dtype="object"),
     )
     mechanics = SimpleNamespace(

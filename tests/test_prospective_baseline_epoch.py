@@ -239,6 +239,10 @@ def _engine_for_initial_state_test() -> MakerEngine:
     engine._consec_buy = 1.0
     engine._consec_sell = 0.0
     engine._fill_cooldown_until = {"BUY": 10.0, "SELL": 0.0}
+    engine._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
+    engine._fill_cooldown_restore_mode = "fresh_b0_no_checkpoint"
+    engine._fill_cooldown_checkpoint_loaded = False
+    engine._fill_cooldown_checkpoint_sequence = 0
     engine._last_same_side_fill_epoch_ms = {"BUY": 1, "SELL": 0}
     engine._last_fill_side = "BUY"
     engine._bid_cid = None

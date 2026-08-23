@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import copy
 import json
+import stat
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,7 @@ from live.runtime_policy import (
     require_q90_action_restart,
     write_runtime_identity,
 )
+from strategy.maker_engine import MakerEngine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,26 +70,33 @@ def test_q90_owner_override_is_explicit_in_runtime_identity(tmp_path: Path) -> N
     write_runtime_identity(path, policy)
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
-    assert persisted["q90_action_runtime_authority"] == (
-        "owner_risk_accepted_override"
-    )
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert persisted["q90_action_runtime_authority"] == ("owner_risk_accepted_override")
     assert persisted["q90_owner_override_requested"] is True
     assert persisted["q90_owner_override_effective"] is True
+
+
+def test_runtime_identity_rejects_symlink_destination(tmp_path: Path) -> None:
+    target = tmp_path / "target.json"
+    target.write_text("sentinel\n", encoding="utf-8")
+    destination = tmp_path / "runtime_identity.json"
+    destination.symlink_to(target)
+
+    with pytest.raises(ValueError, match="must not be a symlink"):
+        write_runtime_identity(destination, {"trusted": True})
+
+    assert target.read_text(encoding="utf-8") == "sentinel\n"
 
 
 def test_run_sh_preflights_before_background_launch() -> None:
     script = (ROOT / "live/run.sh").read_text(encoding="utf-8")
     start_body = script.split("start() {", 1)[1].split("\nstop() {", 1)[0]
-    restart_body = script.split("restart() {", 1)[1].split(
-        "\nstatus() {", 1
-    )[0]
+    restart_body = script.split("restart() {", 1)[1].split("\nstatus() {", 1)[0]
 
     assert "_run_deploy_preflight" in start_body
     assert "scripts/preflight_live_deploy.py" in script
     assert start_body.index("_run_deploy_preflight") < start_body.index("nohup ")
-    assert restart_body.index("_run_deploy_preflight") < restart_body.index(
-        "stop 2>/dev/null"
-    )
+    assert restart_body.index("_run_deploy_preflight") < restart_body.index("stop 2>/dev/null")
 
 
 def test_q90_action_state_cannot_change_via_sighup() -> None:
@@ -111,12 +121,8 @@ def test_startup_identity_preserves_its_own_schema(tmp_path: Path) -> None:
 
     assert path == tmp_path / "runtime_identity.json"
     assert identity["schema_version"] == "narrowgate_live_runtime_identity.v1"
-    assert identity["q90_runtime_policy_schema_version"] == (
-        "narrowgate_runtime_policy.v1"
-    )
-    assert identity["q90_action_runtime_authority"] == (
-        "action_suspended_shadow_only"
-    )
+    assert identity["q90_runtime_policy_schema_version"] == ("narrowgate_runtime_policy.v1")
+    assert identity["q90_action_runtime_authority"] == ("action_suspended_shadow_only")
 
 
 def test_f05_boolean_cooldown_requires_permanent_owner_label_and_override() -> None:
@@ -140,9 +146,7 @@ def test_f05_boolean_cooldown_requires_permanent_owner_label_and_override() -> N
     )
     assert policy["f05_boolean_cooldown_hard_gates_passed"] is False
     assert policy["f05_boolean_cooldown_owner_override_effective"] is True
-    assert policy["f05_boolean_cooldown_runtime_authority"] == (
-        "owner_risk_accepted_active"
-    )
+    assert policy["f05_boolean_cooldown_runtime_authority"] == ("owner_risk_accepted_active")
 
 
 def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
@@ -203,3 +207,95 @@ def test_f05_buy_e3_identity_is_restart_only() -> None:
             base,
             {**base, "buy_e3_cooldown_policy_enabled": True},
         )
+
+
+def _maker_engine_reload_fixture(
+    tmp_path: Path,
+    *,
+    enabled: bool,
+) -> tuple[MakerEngine, Config, object | None]:
+    cfg = Config()
+    checkpoint = tmp_path / "fill_cooldown_state.json"
+    cfg.logging.fill_cooldown_checkpoint = str(checkpoint)
+    strategy = cfg.strategy
+    strategy.buy_e3_cooldown_policy_enabled = enabled
+    strategy.buy_e3_cooldown_artifact_manifest_path = str(
+        tmp_path / "artifact_manifest.json"
+    )
+    strategy.buy_e3_cooldown_artifact_manifest_sha256 = "1" * 64
+    strategy.buy_e3_cooldown_artifact_sha256 = "2" * 64
+    strategy.buy_e3_cooldown_policy_path = str(tmp_path / "policy.json")
+    strategy.buy_e3_cooldown_policy_sha256 = "3" * 64
+    strategy.buy_e3_cooldown_predicate_bundle_path = str(
+        tmp_path / "predicates.json"
+    )
+    strategy.buy_e3_cooldown_predicate_bundle_sha256 = "4" * 64
+    strategy.buy_e3_cooldown_ema_warmup_s = 2048.0
+    strategy.buy_e3_cooldown_evidence_route = "owner_risk_accepted_buy_e3_v1"
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = cfg
+    engine._fill_cooldown_checkpoint_path = checkpoint
+    policy = object() if enabled else None
+    engine._buy_e3_cooldown_policy = policy
+    return engine, cfg, policy
+
+
+@pytest.mark.parametrize(
+    ("previous_enabled", "candidate_enabled"),
+    ((True, False), (False, True)),
+)
+def test_maker_engine_reload_rejects_buy_e3_enablement_change_before_mutation(
+    tmp_path: Path,
+    previous_enabled: bool,
+    candidate_enabled: bool,
+) -> None:
+    engine, previous, previous_policy = _maker_engine_reload_fixture(
+        tmp_path,
+        enabled=previous_enabled,
+    )
+    previous_strategy = vars(previous.strategy).copy()
+    candidate = copy.deepcopy(previous)
+    candidate.strategy.buy_e3_cooldown_policy_enabled = candidate_enabled
+
+    with pytest.raises(ValueError, match="F05 BUY E3 cooldown policy is restart-only"):
+        engine.on_config_reload(candidate)
+
+    assert engine.cfg is previous
+    assert vars(engine.cfg.strategy) == previous_strategy
+    assert engine._buy_e3_cooldown_policy is previous_policy
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("buy_e3_cooldown_artifact_manifest_path", "/changed/manifest.json"),
+        ("buy_e3_cooldown_artifact_manifest_sha256", "a" * 64),
+        ("buy_e3_cooldown_artifact_sha256", "b" * 64),
+        ("buy_e3_cooldown_policy_path", "/changed/policy.json"),
+        ("buy_e3_cooldown_policy_sha256", "c" * 64),
+        ("buy_e3_cooldown_predicate_bundle_path", "/changed/predicates.json"),
+        ("buy_e3_cooldown_predicate_bundle_sha256", "d" * 64),
+        ("buy_e3_cooldown_ema_warmup_s", 4096.0),
+        ("buy_e3_cooldown_evidence_route", "changed_owner_route"),
+    ),
+)
+def test_maker_engine_reload_rejects_buy_e3_binding_drift_before_mutation(
+    tmp_path: Path,
+    field: str,
+    replacement: object,
+) -> None:
+    engine, previous, previous_policy = _maker_engine_reload_fixture(
+        tmp_path,
+        enabled=True,
+    )
+    previous_strategy = vars(previous.strategy).copy()
+    candidate = copy.deepcopy(previous)
+    setattr(candidate.strategy, field, replacement)
+
+    with pytest.raises(ValueError, match=field):
+        engine.on_config_reload(candidate)
+
+    assert engine.cfg is previous
+    assert vars(engine.cfg.strategy) == previous_strategy
+    assert engine._buy_e3_cooldown_policy is previous_policy

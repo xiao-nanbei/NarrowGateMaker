@@ -24,10 +24,10 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 
 ## 稳定公开版本
 
-受支持的公开软件快照是 annotated Git tag `v0.1.0`，与 `pyproject.toml` 中的包版本一致。需要可复现环境时应固定该 tag；发布后 `main` 可能继续包含新的受治理改动：
+受支持的公开软件快照是 annotated Git tag `v0.1.1`，与 `pyproject.toml` 中的包版本一致。需要可复现环境时应固定该 tag；发布后 `main` 可能继续包含新的受治理改动：
 
 ```bash
-git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+git clone --branch v0.1.1 --depth 1 <repo-url> narrowgate
 ```
 
 研究重建 tag 和 execution-attempt tag 是证据身份，不是软件 release。软件 release 不包含 owner-side 数据，不授予研究或 live 权限，也不证明任何私有 artifact 的经济价值。参见[源码、研究与执行身份](docs/opensource/identity_and_release.md)。

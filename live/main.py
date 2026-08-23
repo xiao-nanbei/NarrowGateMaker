@@ -30,9 +30,10 @@ import logging.handlers
 import math
 import os
 import signal
+import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add project root to path
@@ -42,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 from live.config import install_reload_handler, load_config, set_engine_ref
 from live.runtime_policy import (
     f05_boolean_cooldown_runtime_policy,
+    f05_buy_e3_active_release_runtime_authority,
     f05_buy_e3_runtime_policy,
     q90_action_runtime_policy,
     write_runtime_identity,
@@ -88,9 +90,7 @@ def _positive_finite_seconds(value: str) -> float:
     except ValueError as exc:
         raise argparse.ArgumentTypeError("timeout must be a number") from exc
     if not math.isfinite(seconds) or seconds <= 0.0:
-        raise argparse.ArgumentTypeError(
-            "timeout must be finite and greater than zero"
-        )
+        raise argparse.ArgumentTypeError("timeout must be finite and greater than zero")
     return seconds
 
 
@@ -114,7 +114,6 @@ def run_formal_dry_run(
 
     if not math.isfinite(timeout_s) or timeout_s <= 0.0:
         raise ValueError("dry-run timeout must be finite and greater than zero")
-
     if output is None:
         output = sys.stdout
     started = time.monotonic()
@@ -152,7 +151,6 @@ def run_formal_dry_run(
         signal.signal(signal.SIGALRM, deadline_exceeded)
         signal.setitimer(signal.ITIMER_REAL, timeout_s)
         deadline_armed = True
-
         resolved_config = Path(config_path).expanduser().resolve()
         cfg = load_config(resolved_config)
 
@@ -167,10 +165,7 @@ def run_formal_dry_run(
         model_metadata = validate_model_bundle(model_dir)
         p3_path = model_dir / "fill_prob_params.json"
         if not p3_path.is_file():
-            raise ValueError(
-                f"model bundle is missing fill_prob_params.json: {p3_path}"
-            )
-
+            raise ValueError(f"model bundle is missing fill_prob_params.json: {p3_path}")
         summary.update(
             {
                 "status": "passed",
@@ -178,9 +173,7 @@ def run_formal_dry_run(
                 "termination": "completed",
                 "config": {
                     "path": str(resolved_config),
-                    "sha256": hashlib.sha256(
-                        resolved_config.read_bytes()
-                    ).hexdigest(),
+                    "sha256": hashlib.sha256(resolved_config.read_bytes()).hexdigest(),
                 },
                 "model_contract": {
                     "model_dir": str(model_dir),
@@ -221,6 +214,408 @@ def run_formal_dry_run(
     )
     return exit_code
 
+STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v4"
+RUNNING_CHECKOUT_SCHEMA = "narrowgate_running_checkout_identity.v2"
+INTERPRETER_IDENTITY_SCHEMA = "narrowgate_interpreter_identity.v1"
+NATIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_native_runtime_identity.v1"
+STARTUP_ATTESTATION_GATE_NAMES = (
+    "fill_cooldown_state_available",
+    "fill_cooldown_state_schema_v2",
+    "fill_cooldown_restore_mode_valid",
+    "fill_cooldown_checkpoint_binding_valid",
+    "fill_cooldown_deadline_contract_valid",
+    "fill_cooldown_artifact_contract_valid",
+    "buy_e3_active_release_contract_valid",
+    "buy_e3_active_release_matches_checkout",
+    "git_toplevel_matches_repo",
+    "git_pre_snapshot_available",
+    "git_pre_snapshot_stable",
+    "git_pre_worktree_clean",
+    "runtime_source_manifest_available",
+    "runtime_files_match_head",
+    "loaded_module_origins_available",
+    "loaded_module_origins_under_repo",
+    "loaded_module_origins_match_runtime_sources",
+    "interpreter_identity_available",
+    "interpreter_identity_stable",
+    "native_runtime_matches_initial_identity",
+    "native_runtime_contract_valid",
+    "native_runtime_identity_available",
+    "native_runtime_identity_stable",
+    "git_post_snapshot_available",
+    "git_post_snapshot_stable",
+    "git_post_worktree_clean",
+    "git_snapshot_stable",
+    "safe_to_start_live_loops",
+)
+KEY_LOADED_RUNTIME_MODULES = {
+    "live_main": ("live.main", "live/main.py"),
+    "live_config": ("live.config", "live/config.py"),
+    "live_runtime_policy": ("live.runtime_policy", "live/runtime_policy.py"),
+    "live_ws_handler": ("live.ws_handler", "live/ws_handler.py"),
+    "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
+    "boolean_cooldown_live": (
+        "strategy.boolean_cooldown_live",
+        "strategy/boolean_cooldown_live.py",
+    ),
+    "boolean_cooldown_buy_e3": (
+        "strategy.boolean_cooldown_buy_e3",
+        "strategy/boolean_cooldown_buy_e3.py",
+    ),
+}
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _git_output(*args: str) -> bytes:
+    completed = subprocess.run(
+        ("git", *args),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        timeout=10.0,
+    )
+    return completed.stdout
+
+
+def _git_snapshot() -> dict:
+    def capture() -> tuple[str, str, bytes]:
+        commit = _git_output("rev-parse", "HEAD").decode("ascii").strip()
+        tree = _git_output("rev-parse", "HEAD^{tree}").decode("ascii").strip()
+        status = _git_output("status", "--porcelain=v1", "--untracked-files=all")
+        return commit, tree, status
+
+    first = capture()
+    second = capture()
+    commit, tree, status = first
+    return {
+        "commit": commit,
+        "tree": tree,
+        "status_porcelain_sha256": _sha256_bytes(status),
+        "status_entry_count": len(status.splitlines()),
+        "worktree_clean": not status,
+        "snapshot_internally_stable": first == second,
+    }
+
+
+def _runtime_source_rows() -> list[dict]:
+    rows = []
+    for relative in sorted({value[1] for value in KEY_LOADED_RUNTIME_MODULES.values()}):
+        path = ROOT / relative
+        working = path.read_bytes()
+        head = _git_output("show", f"HEAD:{relative}")
+        rows.append(
+            {
+                "path": relative,
+                "working_file_sha256": _sha256_bytes(working),
+                "head_blob_sha256": _sha256_bytes(head),
+                "working_size_bytes": len(working),
+                "head_blob_size_bytes": len(head),
+                "matches_head_blob": working == head,
+            }
+        )
+    return rows
+
+
+def _runtime_source_manifest_sha256(rows: list[dict]) -> str:
+    return _sha256_bytes(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+
+
+def _file_byte_identity(path: str | Path) -> dict:
+    reported = Path(path).expanduser().absolute()
+    resolved = reported.resolve(strict=True)
+    payload = resolved.read_bytes()
+    return {
+        "reported_path": str(reported),
+        "resolved_path": str(resolved),
+        "sha256": _sha256_bytes(payload),
+        "size_bytes": len(payload),
+    }
+
+
+def _loaded_module_origins(source_rows: list[dict]) -> dict:
+    source_by_path = {row["path"]: row for row in source_rows}
+    output = {}
+    for role, (module_name, expected_relative) in KEY_LOADED_RUNTIME_MODULES.items():
+        module = importlib.import_module(module_name)
+        origin = Path(str(module.__file__)).resolve(strict=True)
+        relative = origin.relative_to(ROOT).as_posix()
+        if relative != expected_relative:
+            raise RuntimeError(f"loaded module origin drifted: {role}")
+        output[role] = {
+            "module_name": module_name,
+            "origin_path": str(origin),
+            "repository_relative_path": relative,
+            "source_sha256": source_by_path[relative]["working_file_sha256"],
+        }
+    return output
+
+
+def _native_runtime_file_identity(native_runtime: dict) -> dict | None:
+    enabled = any(
+        bool(native_runtime.get(name, False))
+        for name in CPP_RUNTIME_FLAGS
+        if name != "NARROWGATE_CPP_STRICT"
+    )
+    if not enabled:
+        return None
+    module_path = str(native_runtime.get("module", "")).strip()
+    if not module_path or module_path.startswith("unavailable:"):
+        raise RuntimeError("enabled native runtime has no loadable module identity")
+    return _file_byte_identity(module_path)
+
+
+def _empty_startup_attestation() -> dict:
+    return {
+        "schema_version": STARTUP_ATTESTATION_SCHEMA,
+        "status": "rejected",
+        "attested_at_utc": "",
+        "fill_cooldown_state": {},
+        "running_checkout": {},
+        "loaded_module_origins": {},
+        "interpreter_identity": {},
+        "native_runtime_identity": {},
+        "gates": {name: False for name in STARTUP_ATTESTATION_GATE_NAMES},
+        "errors": [],
+    }
+
+
+def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> dict:
+    """Bind the checkout and restored cooldown state before live loops start."""
+
+    git_toplevel = Path(
+        _git_output("rev-parse", "--show-toplevel").decode("utf-8").strip()
+    ).resolve(strict=True)
+    interpreter_before = _file_byte_identity(sys.executable)
+    native_before = _native_runtime_file_identity(native_runtime)
+    pre_snapshot = _git_snapshot()
+    source_rows = _runtime_source_rows()
+    loaded_origins = _loaded_module_origins(source_rows)
+    fill_state = engine.fill_cooldown_state_snapshot()
+    active_release = engine.buy_e3_active_release_identity()
+    post_snapshot = _git_snapshot()
+    interpreter_after = _file_byte_identity(sys.executable)
+    native_after = _native_runtime_file_identity(native_runtime)
+
+    snapshots_equal = pre_snapshot == post_snapshot
+    runtime_files_match = bool(source_rows) and all(row["matches_head_blob"] for row in source_rows)
+    loaded_under_repo = all(
+        Path(row["origin_path"]).is_relative_to(ROOT) for row in loaded_origins.values()
+    )
+    source_by_path = {row["path"]: row for row in source_rows}
+    loaded_match_sources = all(
+        row["source_sha256"]
+        == source_by_path[row["repository_relative_path"]]["working_file_sha256"]
+        for row in loaded_origins.values()
+    )
+    native_enabled = native_before is not None
+    native_identity = {
+        "schema_version": NATIVE_RUNTIME_IDENTITY_SCHEMA,
+        "profile": str(native_runtime.get("profile", "")),
+        "platform": sys.platform,
+        "enabled": native_enabled,
+        "reported_module_path": (
+            str(native_runtime.get("module", "")) if native_enabled else "disabled"
+        ),
+        "loaded_module_origin_path": (
+            native_before["resolved_path"] if native_before is not None else None
+        ),
+        "before": native_before,
+        "after": native_after,
+        "stable": native_before == native_after,
+    }
+    interpreter_identity = {
+        "schema_version": INTERPRETER_IDENTITY_SCHEMA,
+        "version": ".".join(map(str, sys.version_info[:3])),
+        "before": interpreter_before,
+        "after": interpreter_after,
+        "stable": interpreter_before == interpreter_after,
+    }
+    stable_snapshot = {
+        "pre_snapshot_internally_stable": bool(pre_snapshot["snapshot_internally_stable"]),
+        "post_snapshot_internally_stable": bool(post_snapshot["snapshot_internally_stable"]),
+        "commit_identical": pre_snapshot["commit"] == post_snapshot["commit"],
+        "tree_identical": pre_snapshot["tree"] == post_snapshot["tree"],
+        "status_identical": (
+            pre_snapshot["status_porcelain_sha256"] == post_snapshot["status_porcelain_sha256"]
+        ),
+        "runtime_files_match_head": runtime_files_match,
+        "stable": snapshots_equal and runtime_files_match,
+    }
+    checkout = {
+        "schema_version": RUNNING_CHECKOUT_SCHEMA,
+        "git_commit": post_snapshot["commit"],
+        "git_tree": post_snapshot["tree"],
+        "git_worktree_clean": bool(post_snapshot["worktree_clean"]),
+        "pre_snapshot": pre_snapshot,
+        "post_snapshot": post_snapshot,
+        "stable_snapshot": stable_snapshot,
+        "runtime_source_file_count": len(source_rows),
+        "runtime_source_manifest_sha256": _runtime_source_manifest_sha256(source_rows),
+        "runtime_source_files": source_rows,
+    }
+    restore_mode = str(fill_state.get("restore_mode", ""))
+    checkpoint_loaded = fill_state.get("checkpoint_loaded")
+    checkpoint_sequence = fill_state.get("checkpoint_sequence")
+    buy_identity = str(fill_state.get("buy_deadline_identity", ""))
+    buy_remaining_ms = fill_state.get("buy_remaining_ms")
+    active_identity_reader = getattr(engine, "_active_buy_e3_deadline_identity", None)
+    runtime_active_identity = (
+        str(active_identity_reader())
+        if callable(active_identity_reader)
+        else "B0"
+    )
+    release_required = runtime_active_identity.startswith("BUY_E3:")
+    release_available = all(
+        bool(active_release.get(name))
+        for name in (
+            "path",
+            "file_sha256",
+            "file_canonical_sha256",
+            "execution_commit",
+            "execution_tree",
+            "annotated_operational_tag",
+            "annotated_operational_tag_object",
+        )
+    )
+    release_contract_valid = (
+        release_available if release_required else not any(active_release.values())
+    )
+    release_matches_checkout = (
+        (
+            active_release.get("execution_commit") == checkout["git_commit"]
+            and active_release.get("execution_tree") == checkout["git_tree"]
+        )
+        if release_required
+        else True
+    )
+    admitted_restore_modes = {
+        "fresh_b0_no_checkpoint",
+        "exact_same_artifact_resume",
+        "rollback_to_b0",
+        "artifact_identity_changed_to_b0",
+        "b0_checkpoint_resume",
+        "expired_to_b0",
+    }
+    checkpoint_binding_valid = (
+        (
+            restore_mode == "fresh_b0_no_checkpoint"
+            and not release_required
+            and checkpoint_loaded is False
+            and isinstance(checkpoint_sequence, int)
+            and not isinstance(checkpoint_sequence, bool)
+            and checkpoint_sequence == 0
+        )
+        or (
+            restore_mode != "fresh_b0_no_checkpoint"
+            and checkpoint_loaded is True
+            and isinstance(checkpoint_sequence, int)
+            and not isinstance(checkpoint_sequence, bool)
+            and checkpoint_sequence > 0
+        )
+    )
+    remaining_valid = (
+        isinstance(buy_remaining_ms, int)
+        and not isinstance(buy_remaining_ms, bool)
+        and buy_remaining_ms >= 0
+    )
+    if restore_mode == "exact_same_artifact_resume":
+        deadline_contract_valid = (
+            remaining_valid
+            and buy_remaining_ms > 0
+            and buy_identity.startswith("BUY_E3:")
+            and buy_identity == runtime_active_identity
+        )
+    elif restore_mode in {
+        "rollback_to_b0",
+        "artifact_identity_changed_to_b0",
+        "b0_checkpoint_resume",
+    }:
+        deadline_contract_valid = remaining_valid and buy_identity == "B0"
+    elif restore_mode in {"fresh_b0_no_checkpoint", "expired_to_b0"}:
+        deadline_contract_valid = (
+            remaining_valid and buy_remaining_ms == 0 and buy_identity == "B0"
+        )
+    else:
+        deadline_contract_valid = False
+    gates = {
+        "fill_cooldown_state_available": bool(fill_state),
+        "fill_cooldown_state_schema_v2": (
+            fill_state.get("schema_version") == "narrowgate_fill_cooldown_state.v2"
+        ),
+        "fill_cooldown_restore_mode_valid": restore_mode in admitted_restore_modes,
+        "fill_cooldown_checkpoint_binding_valid": checkpoint_binding_valid,
+        "fill_cooldown_deadline_contract_valid": deadline_contract_valid,
+        "fill_cooldown_artifact_contract_valid": (
+            (
+                restore_mode == "exact_same_artifact_resume"
+                and runtime_active_identity.startswith("BUY_E3:")
+                and buy_identity == runtime_active_identity
+            )
+            or (
+                restore_mode == "artifact_identity_changed_to_b0"
+                and runtime_active_identity.startswith("BUY_E3:")
+            )
+            or (
+                restore_mode == "rollback_to_b0"
+                and runtime_active_identity == "B0"
+            )
+            or restore_mode
+            in {
+                "b0_checkpoint_resume",
+                "expired_to_b0",
+            }
+            or (
+                restore_mode == "fresh_b0_no_checkpoint"
+                and runtime_active_identity == "B0"
+            )
+        ),
+        "buy_e3_active_release_contract_valid": release_contract_valid,
+        "buy_e3_active_release_matches_checkout": release_matches_checkout,
+        "git_toplevel_matches_repo": git_toplevel == ROOT,
+        "git_pre_snapshot_available": bool(pre_snapshot),
+        "git_pre_snapshot_stable": bool(pre_snapshot["snapshot_internally_stable"]),
+        "git_pre_worktree_clean": bool(pre_snapshot["worktree_clean"]),
+        "runtime_source_manifest_available": bool(source_rows),
+        "runtime_files_match_head": runtime_files_match,
+        "loaded_module_origins_available": (set(loaded_origins) == set(KEY_LOADED_RUNTIME_MODULES)),
+        "loaded_module_origins_under_repo": loaded_under_repo,
+        "loaded_module_origins_match_runtime_sources": loaded_match_sources,
+        "interpreter_identity_available": bool(interpreter_identity),
+        "interpreter_identity_stable": bool(interpreter_identity["stable"]),
+        "native_runtime_matches_initial_identity": native_before == native_after,
+        "native_runtime_contract_valid": (
+            (not native_enabled and native_runtime.get("module") == "disabled")
+            or (native_enabled and native_before is not None)
+        ),
+        "native_runtime_identity_available": bool(native_identity),
+        "native_runtime_identity_stable": bool(native_identity["stable"]),
+        "git_post_snapshot_available": bool(post_snapshot),
+        "git_post_snapshot_stable": bool(post_snapshot["snapshot_internally_stable"]),
+        "git_post_worktree_clean": bool(post_snapshot["worktree_clean"]),
+        "git_snapshot_stable": bool(stable_snapshot["stable"]),
+        "safe_to_start_live_loops": False,
+    }
+    gates["safe_to_start_live_loops"] = all(
+        value for name, value in gates.items() if name != "safe_to_start_live_loops"
+    )
+    errors = sorted(name for name, passed in gates.items() if not passed)
+    return {
+        "schema_version": STARTUP_ATTESTATION_SCHEMA,
+        "status": "accepted" if not errors else "rejected",
+        "attested_at_utc": datetime.now(UTC).isoformat(),
+        "fill_cooldown_state": fill_state,
+        "buy_e3_active_release": active_release,
+        "running_checkout": checkout,
+        "loaded_module_origins": loaded_origins,
+        "interpreter_identity": interpreter_identity,
+        "native_runtime_identity": native_identity,
+        "gates": gates,
+        "errors": errors,
+    }
+
 
 def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
     """Enumerate the Python runtime surface bound by a prospective epoch."""
@@ -236,8 +631,7 @@ def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
     missing = sorted(relative for relative in paths if not (repo_root / relative).is_file())
     if missing:
         raise RuntimeError(
-            "prospective epoch runtime code identity has missing files: "
-            + ", ".join(missing)
+            "prospective epoch runtime code identity has missing files: " + ", ".join(missing)
         )
     return tuple(sorted(paths))
 
@@ -287,9 +681,7 @@ def audit_native_runtime(logger: logging.Logger) -> dict:
             if enabled["NARROWGATE_CPP_GLOBAL_FLOW"]:
                 aggregator = module.TradeBarAggregator(False)
                 if not hasattr(aggregator, "update_batch"):
-                    raise RuntimeError(
-                        "narrowgate_cpp ABI missing TradeBarAggregator.update_batch"
-                    )
+                    raise RuntimeError("narrowgate_cpp ABI missing TradeBarAggregator.update_batch")
         except Exception as exc:
             if enabled["NARROWGATE_CPP_STRICT"]:
                 raise RuntimeError(
@@ -323,7 +715,8 @@ def setup_logging(cfg):
         log_path = Path(cfg.logging.file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         rotating = logging.handlers.RotatingFileHandler(
-            str(log_path), maxBytes=10_000_000, backupCount=5)
+            str(log_path), maxBytes=10_000_000, backupCount=5
+        )
         handlers.append(rotating)
 
     logging.basicConfig(
@@ -340,33 +733,31 @@ def record_startup_runtime_identity(
     config_path: Path,
     native_runtime: dict,
     dry_run: bool,
+    engine: MakerEngine | None = None,
 ) -> tuple[Path, dict]:
     """Persist and return the identity that actually governs this process."""
     resolved_config = config_path.expanduser().resolve()
-    q90_policy = q90_action_runtime_policy(
-        bool(cfg.strategy.dynamic_fill_hazard_action_enabled)
-    )
-    q90_policy_fields = {
-        key: value
-        for key, value in q90_policy.items()
-        if key != "schema_version"
-    }
+    q90_policy = q90_action_runtime_policy(bool(cfg.strategy.dynamic_fill_hazard_action_enabled))
+    q90_policy_fields = {key: value for key, value in q90_policy.items() if key != "schema_version"}
     f05_policy = f05_boolean_cooldown_runtime_policy(
         bool(cfg.strategy.boolean_cooldown_policy_enabled),
         evidence_route=cfg.strategy.boolean_cooldown_evidence_route,
     )
-    f05_policy_fields = {
-        key: value
-        for key, value in f05_policy.items()
-        if key != "schema_version"
-    }
+    f05_policy_fields = {key: value for key, value in f05_policy.items() if key != "schema_version"}
     f05_buy_e3_policy = f05_buy_e3_runtime_policy(
         bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
         evidence_route=cfg.strategy.buy_e3_cooldown_evidence_route,
     )
     f05_buy_e3_policy_fields = {
+        key: value for key, value in f05_buy_e3_policy.items() if key != "schema_version"
+    }
+    f05_buy_e3_active_release = f05_buy_e3_active_release_runtime_authority(
+        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
+        require_present=engine is not None,
+    )
+    f05_buy_e3_active_release_fields = {
         key: value
-        for key, value in f05_buy_e3_policy.items()
+        for key, value in f05_buy_e3_active_release.items()
         if key != "schema_version"
     }
     model_dir = Path(str(cfg.ml.model_dir)).expanduser()
@@ -380,7 +771,7 @@ def record_startup_runtime_identity(
     )
     identity = {
         "schema_version": "narrowgate_live_runtime_identity.v1",
-        "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
+        "recorded_at_utc": datetime.now(UTC).isoformat(),
         "pid": os.getpid(),
         "python_executable": sys.executable,
         "python_version": ".".join(map(str, sys.version_info[:3])),
@@ -390,67 +781,68 @@ def record_startup_runtime_identity(
         "testnet": bool(cfg.api.testnet),
         "ml_enabled": bool(cfg.ml.enabled),
         "model_dir": str(model_dir.resolve()),
-        "buy_fill_selection_live_enabled": bool(
-            cfg.strategy.buy_fill_selection_live_enabled
-        ),
-        "buy_fill_selection_shadow_enabled": bool(
-            cfg.strategy.buy_fill_selection_shadow_enabled
-        ),
-        "dynamic_fill_hazard_shadow_enabled": bool(
-            cfg.strategy.dynamic_fill_hazard_shadow_enabled
-        ),
-        "order_lifecycle_journal_v2_enabled": bool(
-            cfg.lifecycle_journal_v2.enabled
-        ),
-        "order_lifecycle_journal_v2_storage_profile": str(
-            cfg.lifecycle_journal_v2.storage_profile
-        ),
+        "buy_fill_selection_live_enabled": bool(cfg.strategy.buy_fill_selection_live_enabled),
+        "buy_fill_selection_shadow_enabled": bool(cfg.strategy.buy_fill_selection_shadow_enabled),
+        "dynamic_fill_hazard_shadow_enabled": bool(cfg.strategy.dynamic_fill_hazard_shadow_enabled),
+        "order_lifecycle_journal_v2_enabled": bool(cfg.lifecycle_journal_v2.enabled),
+        "order_lifecycle_journal_v2_storage_profile": str(cfg.lifecycle_journal_v2.storage_profile),
         "native_runtime": native_runtime,
         "q90_runtime_policy_schema_version": q90_policy["schema_version"],
         **q90_policy_fields,
-        "f05_boolean_cooldown_runtime_policy_schema_version": f05_policy[
-            "schema_version"
-        ],
+        "f05_boolean_cooldown_runtime_policy_schema_version": f05_policy["schema_version"],
         **f05_policy_fields,
-        "f05_boolean_cooldown_policy_sha256": str(
-            cfg.strategy.boolean_cooldown_policy_sha256
-        ).strip().lower(),
+        "f05_boolean_cooldown_policy_sha256": str(cfg.strategy.boolean_cooldown_policy_sha256)
+        .strip()
+        .lower(),
         "f05_boolean_cooldown_predicate_bundle_sha256": str(
             cfg.strategy.boolean_cooldown_predicate_bundle_sha256
-        ).strip().lower(),
-        "f05_boolean_cooldown_ema_warmup_s": float(
-            cfg.strategy.boolean_cooldown_ema_warmup_s
-        ),
-        "f05_buy_e3_runtime_policy_schema_version": f05_buy_e3_policy[
-            "schema_version"
-        ],
+        )
+        .strip()
+        .lower(),
+        "f05_boolean_cooldown_ema_warmup_s": float(cfg.strategy.boolean_cooldown_ema_warmup_s),
+        "f05_buy_e3_runtime_policy_schema_version": f05_buy_e3_policy["schema_version"],
         **f05_buy_e3_policy_fields,
+        "f05_buy_e3_active_release_authority_schema_version": (
+            f05_buy_e3_active_release["schema_version"]
+        ),
+        **{
+            f"f05_buy_e3_{key}": value
+            for key, value in f05_buy_e3_active_release_fields.items()
+        },
         "f05_buy_e3_artifact_manifest_sha256": str(
             cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
-        ).strip().lower(),
-        "f05_buy_e3_artifact_sha256": str(
-            cfg.strategy.buy_e3_cooldown_artifact_sha256
-        ).strip().lower(),
-        "f05_buy_e3_policy_sha256": str(
-            cfg.strategy.buy_e3_cooldown_policy_sha256
-        ).strip().lower(),
+        )
+        .strip()
+        .lower(),
+        "f05_buy_e3_artifact_sha256": str(cfg.strategy.buy_e3_cooldown_artifact_sha256)
+        .strip()
+        .lower(),
+        "f05_buy_e3_policy_sha256": str(cfg.strategy.buy_e3_cooldown_policy_sha256).strip().lower(),
         "f05_buy_e3_predicate_bundle_sha256": str(
             cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
-        ).strip().lower(),
-        "f05_buy_e3_ema_warmup_s": float(
-            cfg.strategy.buy_e3_cooldown_ema_warmup_s
-        ),
+        )
+        .strip()
+        .lower(),
+        "f05_buy_e3_ema_warmup_s": float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
     }
+    if engine is not None:
+        attestation = build_startup_attestation(
+            engine=engine,
+            native_runtime=native_runtime,
+        )
+        identity["startup_attestation"] = attestation
     write_runtime_identity(identity_path, identity)
+    if engine is not None and identity["startup_attestation"]["status"] != "accepted":
+        raise RuntimeError(
+            "startup attestation rejected: " + ", ".join(identity["startup_attestation"]["errors"])
+        )
     return identity_path, identity
 
 
 def _initial_exchange_open_orders(rest, *, symbol: str) -> list[dict]:
     get_orders = getattr(rest, "get_orders", None)
     if not callable(get_orders):
-        raise RuntimeError(
-            "enabled lifecycle_journal_v2 requires a get_orders startup audit"
-        )
+        raise RuntimeError("enabled lifecycle_journal_v2 requires a get_orders startup audit")
     rows = get_orders(symbol=symbol)
     normalized = []
     for row in rows or []:
@@ -498,9 +890,7 @@ def initialize_prospective_lifecycle_collection(
         exchange_open_orders=exchange_open_orders,
     )
     if initial_state["order_lifecycle"]["active_local_orders"]:
-        raise RuntimeError(
-            "prospective epoch requires zero active local orders before collection"
-        )
+        raise RuntimeError("prospective epoch requires zero active local orders before collection")
     model_dir = Path(str(cfg.ml.model_dir)).expanduser()
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
@@ -573,9 +963,7 @@ def start_engine_with_prospective_collection(
     engine.start()
     startup_open_orders = _initial_exchange_open_orders(rest, symbol=cfg.symbol)
     if startup_open_orders:
-        raise RuntimeError(
-            "startup open-order ownership did not converge after cancel"
-        )
+        raise RuntimeError("startup open-order ownership did not converge after cancel")
     # The pre-start position sync can become stale if a predecessor order fills
     # while startup cancellation is converging.  Once zero open orders is
     # authoritative, require one more account-position snapshot before the
@@ -604,9 +992,9 @@ def create_rest_client(cfg, dry_run=False):
 
     from binance.um_futures import UMFutures
 
-    base_url = ("https://testnet.binancefuture.com"
-                if cfg.api.testnet
-                else "https://fapi.binance.com")
+    base_url = (
+        "https://testnet.binancefuture.com" if cfg.api.testnet else "https://fapi.binance.com"
+    )
 
     client = UMFutures(
         key=cfg.api.key,
@@ -620,6 +1008,7 @@ def resolve_logging_paths(cfg):
     """Resolve relative logging paths against the project root."""
     for field in (
         "file",
+        "fill_cooldown_checkpoint",
         "trade_log",
         "quote_log",
         "order_outcome_log",
@@ -639,10 +1028,12 @@ def resolve_logging_paths(cfg):
 
 def main():
     parser = argparse.ArgumentParser(description="NarrowGate Maker Engine")
-    parser.add_argument("--live", action="store_true",
-                        help="Use mainnet (override testnet config)")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Validate config/model contract locally, then exit")
+    parser.add_argument("--live", action="store_true", help="Use mainnet (override testnet config)")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate config/model contract locally, then exit",
+    )
     parser.add_argument(
         "--dry-run-timeout-s",
         type=_positive_finite_seconds,
@@ -652,23 +1043,20 @@ def main():
             f"(default: {DEFAULT_DRY_RUN_TIMEOUT_S:g})"
         ),
     )
-    parser.add_argument("--config", type=str, default=None,
-                        help="Path to config.yaml")
+    parser.add_argument("--config", type=str, default=None, help="Path to config.yaml")
     args = parser.parse_args()
 
     if args.dry_run and args.live:
         parser.error("--dry-run and --live are mutually exclusive")
 
-    config_path = (
-        Path(args.config) if args.config else ROOT / "live" / "config.yaml"
-    )
+    config_path = Path(args.config) if args.config else ROOT / "live" / "config.yaml"
     if args.dry_run:
         return run_formal_dry_run(
             config_path,
             timeout_s=args.dry_run_timeout_s,
         )
 
-    # Load config
+    # Load config only after the formal dry-run branch has exited.
     cfg = load_config(config_path)
     resolved_config_path = config_path.expanduser().resolve()
 
@@ -676,18 +1064,59 @@ def main():
         cfg.api.testnet = False
 
     resolve_logging_paths(cfg)
-
     # Setup logging
     setup_logging(cfg)
     logger = logging.getLogger("main")
 
     logger.info("=" * 60)
     native_runtime = audit_native_runtime(logger)
+    project_name = getattr(cfg, "project_name", "NarrowGate")
+    logger.info(f"{project_name} Maker Engine Starting")
+    logger.info(f"  Symbol:    {cfg.symbol}")
+    logger.info(f"  Testnet:   {cfg.api.testnet}")
+    logger.info("  Mode:      live")
+    logger.info(f"  ML:        {cfg.ml.enabled}")
+    logger.info(
+        f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} (P3 κ_eff used when available)"
+    )
+    logger.info(f"  Order size: {cfg.strategy.order_size} BTC")
+    logger.info(f"  Max inv:   {cfg.strategy.max_inventory} BTC")
+    logger.info(f"  Requote:   {cfg.strategy.requote_interval}s")
+    logger.info("=" * 60)
+
+    # Validate API keys
+    if not cfg.api.key or not cfg.api.secret:
+        logger.error(
+            "API key/secret not set. Use env vars BINANCE_API_KEY / "
+            "BINANCE_API_SECRET, or set in config.yaml. On the live host, "
+            "start with ./live/run.sh start|restart so live/.env is sourced."
+        )
+        sys.exit(1)
+
+    # Create REST client
+    rest = create_rest_client(cfg)
+
+    # Create engine
+    engine = MakerEngine(cfg, rest)
+    restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
+    logger.info(
+        "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "
+        "buy_identity=%s buy_remaining_ms=%d",
+        restored_fill_cooldown["restore_mode"],
+        int(restored_fill_cooldown["checkpoint_loaded"]),
+        int(restored_fill_cooldown["checkpoint_sequence"]),
+        restored_fill_cooldown["buy_deadline_identity"],
+        int(restored_fill_cooldown["buy_remaining_ms"]),
+    )
+
+    # Bind the clean checkout, exact artifact, and restored deadline before
+    # WebSockets, exchange synchronization, or live loops can begin.
     runtime_identity_path, runtime_identity = record_startup_runtime_identity(
         cfg=cfg,
         config_path=resolved_config_path,
         native_runtime=native_runtime,
         dry_run=False,
+        engine=engine,
     )
     logger.info(
         "RUNTIME_IDENTITY path=%s identity=%s",
@@ -710,32 +1139,6 @@ def main():
             runtime_identity["f05_buy_e3_runtime_authority"],
             runtime_identity["f05_buy_e3_artifact_sha256"],
         )
-    project_name = getattr(cfg, "project_name", "NarrowGate")
-    logger.info(f"{project_name} Maker Engine Starting")
-    logger.info(f"  Symbol:    {cfg.symbol}")
-    logger.info(f"  Testnet:   {cfg.api.testnet}")
-    logger.info("  Mode:      live")
-    logger.info(f"  ML:        {cfg.ml.enabled}")
-    logger.info(f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} (P3 κ_eff used when available)")
-    logger.info(f"  Order size: {cfg.strategy.order_size} BTC")
-    logger.info(f"  Max inv:   {cfg.strategy.max_inventory} BTC")
-    logger.info(f"  Requote:   {cfg.strategy.requote_interval}s")
-    logger.info("=" * 60)
-
-    # Validate API keys
-    if not cfg.api.key or not cfg.api.secret:
-        logger.error(
-            "API key/secret not set. Use env vars BINANCE_API_KEY / "
-            "BINANCE_API_SECRET, or set in config.yaml. On the live host, "
-            "start with ./live/run.sh start|restart so live/.env is sourced."
-        )
-        sys.exit(1)
-
-    # Create REST client
-    rest = create_rest_client(cfg)
-
-    # Create engine
-    engine = MakerEngine(cfg, rest)
 
     # Create WebSocket handler
     ws = WSHandler(engine, cfg)
@@ -765,74 +1168,75 @@ def main():
         engine.sync_position()
 
         # Check account
-        try:
-            acct = rest.account()
-            balance = float(acct.get("totalWalletBalance", 0))
-            available = float(acct.get("availableBalance", 0))
-            logger.info(
-                f"Account: balance={balance:.2f} USD-equivalent, "
-                f"available={available:.2f} USD-equivalent"
-            )
-        except Exception as e:
-            logger.warning(f"Account check failed: {e}")
+        if not args.dry_run:
+            try:
+                acct = rest.account()
+                balance = float(acct.get("totalWalletBalance", 0))
+                available = float(acct.get("availableBalance", 0))
+                logger.info(
+                    f"Account: balance={balance:.2f} USD-equivalent, "
+                    f"available={available:.2f} USD-equivalent"
+                )
+            except Exception as e:
+                logger.warning(f"Account check failed: {e}")
 
         # Preflight checks (mainnet safety)
-        try:
-            # Check position mode (must be One-way for reduceOnly logic)
-            pos_mode = rest.get_position_mode()
-            dual = pos_mode.get("dualSidePosition", False)
-            if dual:
-                logger.error(
-                    "PREFLIGHT FAILED: Account is in Hedge Mode "
-                    "(dualSidePosition=true). This engine requires "
-                    "One-way Mode. Change via Binance app/web → "
-                    "Preferences → Position Mode → One-way."
-                )
-                sys.exit(1)
-            logger.info("Position mode: One-way (OK)")
-
-            # Check margin type
-            # Try to set CROSSED margin — if already set, this is a no-op
+        if not args.dry_run:
             try:
-                rest.change_margin_type(
-                    symbol=cfg.symbol, marginType="CROSSED"
+                # Check position mode (must be One-way for reduceOnly logic)
+                pos_mode = rest.get_position_mode()
+                dual = pos_mode.get("dualSidePosition", False)
+                if dual:
+                    logger.error(
+                        "PREFLIGHT FAILED: Account is in Hedge Mode "
+                        "(dualSidePosition=true). This engine requires "
+                        "One-way Mode. Change via Binance app/web → "
+                        "Preferences → Position Mode → One-way."
+                    )
+                    sys.exit(1)
+                logger.info("Position mode: One-way (OK)")
+
+                # Check margin type
+                # Try to set CROSSED margin — if already set, this is a no-op
+                try:
+                    rest.change_margin_type(symbol=cfg.symbol, marginType="CROSSED")
+                    logger.info("Margin type: set to CROSSED")
+                except Exception as e:
+                    msg = str(e)
+                    if "No need to change" in msg or "-4046" in msg:
+                        logger.info("Margin type: CROSSED (already set)")
+                    else:
+                        logger.warning(f"Margin type check: {e}")
+
+                # The engine constructor already loads the bundle strictly.
+                # Repeat the lightweight contract here so the preflight log
+                # records the exact head count and P3 identity.
+                from pathlib import Path as _P
+                from strategy.model_contract import validate_model_bundle
+
+                model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
+                if not model_dir.is_absolute():
+                    model_dir = _P(__file__).resolve().parent.parent / model_dir
+                required_models = ["fill_prob_params.json"]
+                # The configured bundle must remain restart-safe even while
+                # inference is disabled.  Validation reads metadata only; it
+                # does not load LightGBM trees into the live process.
+                model_metadata = validate_model_bundle(model_dir)
+                logger.info(
+                    "Models: %d strict LightGBM heads validated in %s (active=%s)",
+                    len(model_metadata),
+                    model_dir,
+                    cfg.ml.enabled,
                 )
-                logger.info("Margin type: set to CROSSED")
+                for mf in required_models:
+                    if not (model_dir / mf).exists():
+                        raise RuntimeError(f"PREFLIGHT: Missing {mf} in {model_dir}")
+
+            except SystemExit:
+                raise
             except Exception as e:
-                msg = str(e)
-                if "No need to change" in msg or "-4046" in msg:
-                    logger.info("Margin type: CROSSED (already set)")
-                else:
-                    logger.warning(f"Margin type check: {e}")
-
-            # The engine constructor already loads the bundle strictly.
-            # Repeat the lightweight contract here so the preflight log
-            # records the exact head count and P3 identity.
-            from pathlib import Path as _P
-            from strategy.model_contract import validate_model_bundle
-            model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
-            if not model_dir.is_absolute():
-                model_dir = _P(__file__).resolve().parent.parent / model_dir
-            required_models = ["fill_prob_params.json"]
-            # The configured bundle must remain restart-safe even while
-            # inference is disabled.  Validation reads metadata only; it
-            # does not load LightGBM trees into the live process.
-            model_metadata = validate_model_bundle(model_dir)
-            logger.info(
-                "Models: %d strict LightGBM heads validated in %s (active=%s)",
-                len(model_metadata),
-                model_dir,
-                cfg.ml.enabled,
-            )
-            for mf in required_models:
-                if not (model_dir / mf).exists():
-                    raise RuntimeError(f"PREFLIGHT: Missing {mf} in {model_dir}")
-
-        except SystemExit:
-            raise
-        except Exception as e:
-            logger.error(f"PREFLIGHT FAILED: {e}")
-            raise
+                logger.error(f"PREFLIGHT FAILED: {e}")
+                raise
 
         # Warm up and cancel startup orders before publishing the epoch.  The
         # writer is attached before any WebSocket can deliver a live event.
@@ -843,7 +1247,7 @@ def main():
             rest=rest,
             config_path=resolved_config_path,
             native_runtime=native_runtime,
-            dry_run=False,
+            dry_run=bool(args.dry_run),
         )
         if prospective_epoch is not None:
             logger.info(
@@ -886,9 +1290,11 @@ def main():
             if now - last_stale >= stale_interval:
                 stale = engine.orders.get_stale_orders(max_age=30.0)
                 for o in stale:
-                    logger.warning(f"STALE order {o.client_order_id} "
-                                   f"stuck in PENDING_NEW for "
-                                   f"{now - o.create_time:.0f}s, reconciling")
+                    logger.warning(
+                        f"STALE order {o.client_order_id} "
+                        f"stuck in PENDING_NEW for "
+                        f"{now - o.create_time:.0f}s, reconciling"
+                    )
                     resolution = engine.reconcile_pending_new_order(o)
                     logger.warning(
                         "STALE_PENDING_NEW_RECONCILE cid=%s resolution=%s",
@@ -923,28 +1329,38 @@ def main():
                 external_sources = ws.external_venue_snapshot()
                 external_enabled = len(external_sources)
                 external_stale = sum(int(source.get("stale", 1)) for source in external_sources)
-                external_trade_stale = sum(int(source.get("trade_stale", 1)) for source in external_sources)
-                external_errors = sum(int(source.get("error_count", 0)) for source in external_sources)
+                external_trade_stale = sum(
+                    int(source.get("trade_stale", 1)) for source in external_sources
+                )
+                external_errors = sum(
+                    int(source.get("error_count", 0)) for source in external_sources
+                )
                 external_record_depth = sum(
                     int(source.get("record_queue_depth", 0)) for source in external_sources
                 )
                 external_record_hwm = max(
-                    (int(source.get("record_queue_high_watermark", 0)) for source in external_sources),
+                    (
+                        int(source.get("record_queue_high_watermark", 0))
+                        for source in external_sources
+                    ),
                     default=0,
                 )
                 external_record_max_age_ms = max(
-                    (float(source.get("record_max_queue_age_ms", 0.0)) for source in external_sources),
+                    (
+                        float(source.get("record_max_queue_age_ms", 0.0))
+                        for source in external_sources
+                    ),
                     default=0.0,
                 )
                 external_record_dropped = sum(
                     int(source.get("record_dropped", 0)) for source in external_sources
                 )
-                external_source_ids = "|".join(
-                    str(source.get("market_id", "unknown")) for source in external_sources
-                ) or "none"
+                external_source_ids = (
+                    "|".join(str(source.get("market_id", "unknown")) for source in external_sources)
+                    or "none"
+                )
                 request_rtts = [
-                    float(source.get("request_rtt_ms", float("nan")))
-                    for source in external_sources
+                    float(source.get("request_rtt_ms", float("nan"))) for source in external_sources
                 ]
                 external_request_rtt_ms = max(
                     (value for value in request_rtts if math.isfinite(value)),
@@ -955,15 +1371,24 @@ def main():
                     default=float("inf"),
                 )
                 external_trade_age_ms = max(
-                    (float(source.get("trade_age_ms", float("inf"))) for source in external_sources),
+                    (
+                        float(source.get("trade_age_ms", float("inf")))
+                        for source in external_sources
+                    ),
                     default=float("inf"),
                 )
                 external_book_event_age_ms = max(
-                    (float(source.get("book_event_age_ms", float("inf"))) for source in external_sources),
+                    (
+                        float(source.get("book_event_age_ms", float("inf")))
+                        for source in external_sources
+                    ),
                     default=float("inf"),
                 )
                 external_trade_event_age_ms = max(
-                    (float(source.get("trade_event_age_ms", float("inf"))) for source in external_sources),
+                    (
+                        float(source.get("trade_event_age_ms", float("inf")))
+                        for source in external_sources
+                    ),
                     default=float("inf"),
                 )
                 try:
@@ -1004,18 +1429,10 @@ def main():
                     flow_perp = flow_100.get("perp", {})
                     global_flow_values = {
                         "valid": int(flow_100.get("valid", 0)),
-                        "pressure": float(
-                            flow_100.get("global_flow_pressure", float("nan"))
-                        ),
-                        "pending": float(
-                            flow_100.get("global_minus_bridge_bps", float("nan"))
-                        ),
-                        "spot_pressure": float(
-                            flow_spot.get("flow_pressure", float("nan"))
-                        ),
-                        "perp_pressure": float(
-                            flow_perp.get("flow_pressure", float("nan"))
-                        ),
+                        "pressure": float(flow_100.get("global_flow_pressure", float("nan"))),
+                        "pending": float(flow_100.get("global_minus_bridge_bps", float("nan"))),
+                        "spot_pressure": float(flow_spot.get("flow_pressure", float("nan"))),
+                        "perp_pressure": float(flow_perp.get("flow_pressure", float("nan"))),
                         "spot_agreement": float(flow_spot.get("venue_agreement", 0.0)),
                         "perp_agreement": float(flow_perp.get("venue_agreement", 0.0)),
                         "fresh_spot": int(flow_spot.get("fresh_venues", 0)),
@@ -1025,21 +1442,15 @@ def main():
                         "native": int(global_flow_backend.get("native", 0)),
                         "market_count": int(global_flow_backend.get("market_count", 0)),
                         "trade_batches": int(global_flow_backend.get("trade_batches", 0)),
-                        "trade_events_seen": int(
-                            global_flow_backend.get("trade_events_seen", 0)
-                        ),
+                        "trade_events_seen": int(global_flow_backend.get("trade_events_seen", 0)),
                         "trade_events_accepted": int(
                             global_flow_backend.get("trade_events_accepted", 0)
                         ),
-                        "book_events_seen": int(
-                            global_flow_backend.get("book_events_seen", 0)
-                        ),
+                        "book_events_seen": int(global_flow_backend.get("book_events_seen", 0)),
                         "out_of_order_events": int(
                             global_flow_backend.get("out_of_order_events", 0)
                         ),
-                        "stale_trade_events": int(
-                            global_flow_backend.get("stale_trade_events", 0)
-                        ),
+                        "stale_trade_events": int(global_flow_backend.get("stale_trade_events", 0)),
                         "trade_overflow_events": int(
                             global_flow_backend.get("trade_overflow_events", 0)
                         ),
@@ -1215,9 +1626,7 @@ def main():
                     f"orders={engine.orders.active_count()} "
                     f"requotes={engine._requote_count}"
                 )
-                lifecycle_v2_health = (
-                    engine.order_lifecycle_live_writer_v2_health_snapshot()
-                )
+                lifecycle_v2_health = engine.order_lifecycle_live_writer_v2_health_snapshot()
                 if lifecycle_v2_health.get("enabled"):
                     logger.info(
                         "ORDER_LIFECYCLE_JOURNAL_V2_HEALTH profile=%s "

@@ -1,10 +1,25 @@
 import time
 from types import SimpleNamespace
 
-from live.config import Config
+import pytest
+
+from live.config import Config, _validate_config
+import strategy.maker_engine as maker_engine_module
 from strategy.maker_engine import MakerEngine, POLICY_REASON_FILL_COOLDOWN
 from strategy.order_manager import Side
 from strategy.signal import Prediction
+
+
+def test_stateful_fill_cooldown_requires_checkpoint_path() -> None:
+    cfg = Config()
+    cfg.strategy.fill_cooldown = 85.0
+    cfg.logging.fill_cooldown_checkpoint = ""
+
+    with pytest.raises(
+        ValueError,
+        match="stateful fill cooldown requires logging.fill_cooldown_checkpoint",
+    ):
+        _validate_config(cfg)
 
 
 def _engine_with_active_fill_cooldowns() -> MakerEngine:
@@ -265,3 +280,292 @@ def test_buy_e3_control_fallback_preserves_exact_b0_duration() -> None:
     )
     assert selected == 255.0004
     assert decision.action_id == "CONTROL_85N"
+
+
+class _FillInventory:
+    def __init__(self, qty: float = 0.0) -> None:
+        self.snapshot = SimpleNamespace(qty=float(qty))
+
+    @property
+    def net_position(self) -> float:
+        return float(self.snapshot.qty)
+
+    def on_fill(self, side, qty, _price, _commission, _trade_time_ms) -> None:
+        signed = float(qty) if side == "BUY" else -float(qty)
+        self.snapshot.qty += signed
+
+    def campaign_snapshot(self):
+        return SimpleNamespace(age_s=500.0)
+
+
+def _fill_callback_engine(
+    *,
+    action_id: str = "FIXED_2048S",
+    duration_ms: int = 2_048_000,
+    initial_qty: float = 0.0,
+    policy_enabled: bool = True,
+):
+    cfg = Config()
+    cfg.strategy.order_size = 0.001
+    cfg.lot_size = 0.0001
+    cfg.strategy.fill_cooldown = 85.0
+    cfg.strategy.fill_cooldown_reducing = 0.0
+    cfg.strategy.markout_ema_span_fills = 0
+    cfg.strategy.markout_spread_scale = 0.0
+    cfg.strategy.max_inventory = 1.0
+    evaluator_calls = []
+    canceled_sides = []
+
+    class StubPolicy:
+        deadline_identity = "BUY_E3:fixture"
+
+        def evaluate(self, **kwargs):
+            evaluator_calls.append(dict(kwargs))
+            return SimpleNamespace(
+                action_id=action_id,
+                duration_ms=duration_ms,
+                support_valid=action_id != "CONTROL_85N",
+                matched_rule_index=0 if action_id != "CONTROL_85N" else None,
+                fallback_reason=None if action_id != "CONTROL_85N" else "no_rule_matched",
+                feature_age_ms=0.0,
+                artifact_sha256="a" * 64,
+                policy_sha256="b" * 64,
+                predicate_bundle_sha256="c" * 64,
+            )
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = cfg
+    engine.inventory = _FillInventory(initial_qty)
+    engine._post_fill_quote_response = SimpleNamespace(record_fill=lambda **_kwargs: None)
+    engine._base_asset = "BTC"
+    engine._quote_asset = "USDC"
+    engine._settlement_asset = "USDC"
+    engine._commission_unit_error = None
+    engine._log_order_outcome = lambda *_args, **_kwargs: None
+    engine._consec_buy = 0.0
+    engine._consec_sell = 0.0
+    engine._fill_cooldown_until = {"BUY": 0.0, "SELL": 0.0}
+    engine._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
+    engine._fill_cooldown_natural_b0_until = {"BUY": 0.0, "SELL": 0.0}
+    engine._last_same_side_fill_epoch_ms = {"BUY": 0, "SELL": 0}
+    engine._last_fill_side = ""
+    engine._adaptive_add_cooldown_multiplier = lambda *_args: 1.0
+    engine._boolean_cooldown_policy = None
+    engine._buy_e3_cooldown_policy = StubPolicy() if policy_enabled else None
+    engine._cancel_cooldown_side_order = canceled_sides.append
+    engine._mo_pending = []
+    engine._bid_cid = None
+    engine._ask_cid = None
+    engine._pop_order_context = lambda _cid: None
+    return engine, evaluator_calls, canceled_sides
+
+
+def _fill_order(side: Side = Side.BUY) -> SimpleNamespace:
+    return SimpleNamespace(
+        side=side,
+        price=70_000.0,
+        client_order_id=f"{side.value.lower()}-fill-fixture",
+        is_terminal=False,
+    )
+
+
+def _fill_event(*, qty: float, trade_id: int = 1) -> dict:
+    return {
+        "_fill_qty": float(qty),
+        "_fill_price": 70_000.0,
+        "_fill_commission": 0.0,
+        "_fill_commission_asset": "USDC",
+        "_local_receive_ts_ns": 1_900_000_000_000_000_000,
+        "T": 1_900_000_000_000,
+        "t": int(trade_id),
+    }
+
+
+@pytest.mark.parametrize(
+    ("action_id", "duration_ms", "expected_seconds", "expected_identity"),
+    (
+        ("FIXED_2048S", 2_048_000, 2_048.0, "BUY_E3:fixture"),
+        ("CONTROL_85N", 255_000, 255.0, "B0"),
+    ),
+)
+def test_real_fill_callback_preserves_total_e3_and_control_units(
+    monkeypatch: pytest.MonkeyPatch,
+    action_id: str,
+    duration_ms: int,
+    expected_seconds: float,
+    expected_identity: str,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, evaluator_calls, canceled_sides = _fill_callback_engine(
+        action_id=action_id,
+        duration_ms=duration_ms,
+    )
+    engine._on_fill(_fill_order(), _fill_event(qty=0.003))
+
+    assert [call["baseline_duration_ms"] for call in evaluator_calls] == [255_000]
+    assert engine._fill_cooldown_until["BUY"] == fixed_now + expected_seconds
+    assert engine._fill_cooldown_deadline_identity["BUY"] == expected_identity
+    assert engine._fill_cooldown_natural_b0_until["BUY"] == fixed_now + 255.0
+    assert canceled_sides == ["BUY"]
+
+
+@pytest.mark.parametrize(
+    (
+        "initial_qty",
+        "fill_qty",
+        "expected_qty",
+        "expected_evaluator_calls",
+        "expected_deadline_s",
+        "expected_identity",
+    ),
+    (
+        (-0.003, 0.001, -0.002, 0, 0.0, "B0"),
+        (-0.003, 0.003, 0.0, 0, 0.0, "B0"),
+        (-0.003, 0.004, 0.001, 0, 0.0, "B0"),
+        (-0.002, 0.004, 0.002, 0, 0.0, "B0"),
+        (-0.001, 0.004, 0.003, 1, 2_048.0, "BUY_E3:fixture"),
+    ),
+    ids=(
+        "reducing_short",
+        "exact_close",
+        "cross_zero_lower_abs",
+        "cross_zero_equal_abs",
+        "cross_zero_higher_abs",
+    ),
+)
+def test_real_buy_fill_callback_uses_campaign_absolute_exposure_role(
+    monkeypatch: pytest.MonkeyPatch,
+    initial_qty: float,
+    fill_qty: float,
+    expected_qty: float,
+    expected_evaluator_calls: int,
+    expected_deadline_s: float,
+    expected_identity: str,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, evaluator_calls, canceled_sides = _fill_callback_engine(
+        initial_qty=initial_qty,
+    )
+
+    engine._on_fill(_fill_order(), _fill_event(qty=fill_qty))
+
+    assert engine.inventory.snapshot.qty == pytest.approx(expected_qty)
+    assert len(evaluator_calls) == expected_evaluator_calls
+    assert engine._fill_cooldown_deadline_identity["BUY"] == expected_identity
+    if expected_evaluator_calls:
+        assert evaluator_calls[0]["baseline_duration_ms"] == int(
+            round(85_000.0 * (fill_qty / engine.cfg.strategy.order_size))
+        )
+        assert engine._fill_cooldown_until["BUY"] == fixed_now + expected_deadline_s
+        assert engine._fill_cooldown_natural_b0_until["BUY"] == fixed_now + (
+            85.0 * (fill_qty / engine.cfg.strategy.order_size)
+        )
+        assert canceled_sides == ["BUY"]
+    else:
+        assert engine._fill_cooldown_until["BUY"] == 0.0
+        assert engine._fill_cooldown_natural_b0_until["BUY"] == 0.0
+        assert canceled_sides == []
+
+
+def test_buy_e3_disabled_real_callback_is_exact_b0(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    disabled, disabled_calls, disabled_cancels = _fill_callback_engine(
+        policy_enabled=False,
+    )
+    control, control_calls, control_cancels = _fill_callback_engine(
+        action_id="CONTROL_85N",
+        duration_ms=255_000,
+    )
+    event = _fill_event(qty=0.003)
+
+    disabled._on_fill(_fill_order(), dict(event))
+    control._on_fill(_fill_order(), dict(event))
+
+    assert disabled_calls == []
+    assert [call["baseline_duration_ms"] for call in control_calls] == [255_000]
+    assert disabled_cancels == control_cancels == ["BUY"]
+    assert disabled.inventory.snapshot.qty == control.inventory.snapshot.qty
+    assert disabled.fill_cooldown_state_snapshot(
+        now_ms=int(fixed_now * 1_000.0)
+    ) == control.fill_cooldown_state_snapshot(now_ms=int(fixed_now * 1_000.0))
+    assert disabled._fill_cooldown_until["BUY"] == fixed_now + 255.0
+    assert disabled._fill_cooldown_deadline_identity["BUY"] == "B0"
+
+
+def test_sell_fill_callback_never_enters_buy_e3_evaluator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, _, canceled_sides = _fill_callback_engine()
+
+    class BuyEvaluatorGuard:
+        deadline_identity = "BUY_E3:must-not-run"
+
+        def evaluate(self, **_kwargs):
+            raise AssertionError("SELL callback entered BUY E3 evaluator")
+
+    engine._buy_e3_cooldown_policy = BuyEvaluatorGuard()
+    engine._on_fill(_fill_order(Side.SELL), _fill_event(qty=0.003))
+
+    assert engine.inventory.snapshot.qty == pytest.approx(-0.003)
+    assert engine._fill_cooldown_until["SELL"] == fixed_now + 255.0
+    assert engine._fill_cooldown_deadline_identity["SELL"] == "B0"
+    assert canceled_sides == ["SELL"]
+
+
+@pytest.mark.parametrize(
+    ("initial_qty", "fill_qty", "expected_identity", "expected_remaining_ms"),
+    (
+        (0.0, 0.003, "BUY_E3:fixture", 2_048_000),
+        (0.0, 0.0005, "BUY_E3:fixture", 2_048_000),
+        (-0.003, 0.001, "B0", 0),
+    ),
+    ids=("e3_consecutive", "e3_partial", "reducing_fill_units_only"),
+)
+def test_every_fill_state_transition_is_checkpointed(
+    monkeypatch: pytest.MonkeyPatch,
+    initial_qty: float,
+    fill_qty: float,
+    expected_identity: str,
+    expected_remaining_ms: int,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, _, _ = _fill_callback_engine(initial_qty=initial_qty)
+    persisted = []
+    engine._persist_fill_cooldown_checkpoint = lambda: persisted.append(
+        engine.fill_cooldown_state_snapshot(now_ms=int(fixed_now * 1_000.0))
+    )
+
+    engine._on_fill(_fill_order(), _fill_event(qty=fill_qty))
+
+    assert len(persisted) == 1
+    assert persisted[0]["consec_buy"] == pytest.approx(fill_qty / 0.001)
+    assert persisted[0]["buy_deadline_identity"] == expected_identity
+    assert persisted[0]["buy_remaining_ms"] == expected_remaining_ms

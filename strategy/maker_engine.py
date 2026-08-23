@@ -19,6 +19,7 @@ import json
 import logging
 import math
 import os
+import stat
 import threading
 import time
 from collections import deque
@@ -151,6 +152,20 @@ except Exception:  # pragma: no cover - live can run without research models on 
 logger = logging.getLogger("maker_engine")
 
 
+FILL_COOLDOWN_CHECKPOINT_SCHEMA = "narrowgate_fill_cooldown_checkpoint.v1"
+FILL_COOLDOWN_CHECKPOINT_MAX_BYTES = 64 * 1024
+FILL_COOLDOWN_CHECKPOINT_MODE = 0o600
+FILL_COOLDOWN_STATE_SCHEMA = "narrowgate_fill_cooldown_state.v2"
+FILL_COOLDOWN_RESTORE_MODES = frozenset(
+    {
+        "fresh_b0_no_checkpoint",
+        "exact_same_artifact_resume",
+        "rollback_to_b0",
+        "artifact_identity_changed_to_b0",
+        "b0_checkpoint_resume",
+        "expired_to_b0",
+    }
+)
 _QUOTE_ASSET_SUFFIXES = ("USDC", "USDT", "BUSD", "FDUSD", "USD")
 _REST_RECONCILE_STATUSES = frozenset(
     {
@@ -1020,6 +1035,9 @@ def _load_boolean_cooldown_live_policy(cfg) -> Optional[LiveBooleanCooldownPolic
 def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
     if not bool(getattr(cfg.strategy, "buy_e3_cooldown_policy_enabled", False)):
         return None
+    from live.runtime_policy import f05_buy_e3_active_release_runtime_authority
+
+    release = f05_buy_e3_active_release_runtime_authority(True)
     return LiveBuyE3CooldownPolicy.from_files(
         artifact_manifest_path=_resolve_repo_runtime_path(
             cfg.strategy.buy_e3_cooldown_artifact_manifest_path
@@ -1040,6 +1058,11 @@ def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
         predicate_bundle_sha256=str(
             cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
         ).strip().lower(),
+        active_release_path=release["active_release_path"],
+        active_release_file_sha256=release["active_release_file_sha256"],
+        active_release_canonical_sha256=release[
+            "active_release_canonical_sha256"
+        ],
         warmup_s=float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
         max_feature_age_s=float(cfg.risk.max_exec_book_visible_age_s),
     )
@@ -1185,6 +1208,18 @@ class MakerEngine:
         self._last_same_side_fill_epoch_ms = {"BUY": 0, "SELL": 0}
         self._last_fill_side: str = ""
         self._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
+        self._fill_cooldown_natural_b0_until = {"BUY": 0.0, "SELL": 0.0}
+        checkpoint_value = str(
+            getattr(cfg.logging, "fill_cooldown_checkpoint", "") or ""
+        ).strip()
+        checkpoint_path = Path(checkpoint_value).expanduser() if checkpoint_value else None
+        if checkpoint_path is not None and not checkpoint_path.is_absolute():
+            checkpoint_path = Path(__file__).resolve().parents[1] / checkpoint_path
+        self._fill_cooldown_checkpoint_path = checkpoint_path
+        self._fill_cooldown_checkpoint_lock = threading.RLock()
+        self._fill_cooldown_checkpoint_sequence = 0
+        self._fill_cooldown_checkpoint_loaded = False
+        self._fill_cooldown_restore_mode = "fresh_b0_no_checkpoint"
         self._last_cooldown_cancel_time: float = 0.0
         self._last_stale_data_block_log: float = 0.0
         self._last_quote_snapshot_block_log: float = 0.0
@@ -1730,6 +1765,10 @@ class MakerEngine:
                     self._last_same_side_fill_epoch_ms
                 ),
                 "last_fill_side": str(self._last_fill_side or ""),
+                "deadline_identity": dict(self._fill_cooldown_deadline_identity),
+                "restore_mode": str(self._fill_cooldown_restore_mode),
+                "checkpoint_loaded": bool(self._fill_cooldown_checkpoint_loaded),
+                "checkpoint_sequence": int(self._fill_cooldown_checkpoint_sequence),
             },
             "order_lifecycle": {
                 "schema_version": PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS[
@@ -1858,11 +1897,33 @@ class MakerEngine:
             raise ValueError(
                 "lifecycle_journal_v2 configuration is restart-only and cannot be hot-reloaded"
             )
-        from live.runtime_policy import require_f05_boolean_cooldown_restart
+        from live.runtime_policy import (
+            require_f05_boolean_cooldown_restart,
+            require_f05_buy_e3_restart,
+        )
 
+        previous_strategy = vars(self.cfg.strategy)
+        candidate_strategy = vars(cfg.strategy)
         require_f05_boolean_cooldown_restart(
-            vars(self.cfg.strategy),
-            vars(cfg.strategy),
+            previous_strategy,
+            candidate_strategy,
+        )
+        require_f05_buy_e3_restart(
+            previous_strategy,
+            candidate_strategy,
+        )
+        checkpoint_value = str(
+            getattr(cfg.logging, "fill_cooldown_checkpoint", "") or ""
+        ).strip()
+        checkpoint_path = Path(checkpoint_value).expanduser() if checkpoint_value else None
+        if checkpoint_path is not None and not checkpoint_path.is_absolute():
+            checkpoint_path = Path(__file__).resolve().parents[1] / checkpoint_path
+        if checkpoint_path != self._fill_cooldown_checkpoint_path:
+            raise ValueError(
+                "logging.fill_cooldown_checkpoint is restart-only and cannot be hot-reloaded"
+            )
+        cfg.logging.fill_cooldown_checkpoint = (
+            str(checkpoint_path) if checkpoint_path is not None else ""
         )
         exact_validation = validate_exact_opportunity_runtime_config(cfg)
         if bool(exact_validation["enabled"]):
@@ -2951,6 +3012,8 @@ class MakerEngine:
                 "decision_latency_samples": 0,
                 "decision_latency_p99_us": 0.0,
                 "artifact_sha256": "",
+                "active_release_file_sha256": "",
+                "active_release_canonical_sha256": "",
                 "binding_error": "",
                 "windows": {
                     "updates": 0,
@@ -2967,6 +3030,18 @@ class MakerEngine:
                 },
             }
         return policy.audit()
+
+    def buy_e3_active_release_identity(self) -> dict[str, str]:
+        policy = self._buy_e3_cooldown_policy
+        return policy.active_release_identity if policy is not None else {
+            "path": "",
+            "file_sha256": "",
+            "file_canonical_sha256": "",
+            "execution_commit": "",
+            "execution_tree": "",
+            "annotated_operational_tag": "",
+            "annotated_operational_tag_object": "",
+        }
 
     def dynamic_fill_hazard_shadow_snapshot(self) -> dict[str, Any]:
         rows = int(self._dynamic_fill_hazard_shadow_rows)
@@ -3880,6 +3955,372 @@ class MakerEngine:
             require_explicit=True,
         )
 
+    def _active_buy_e3_deadline_identity(self) -> str:
+        policy = getattr(self, "_buy_e3_cooldown_policy", None)
+        return str(policy.deadline_identity) if policy is not None else "B0"
+
+    @staticmethod
+    def _fill_cooldown_checkpoint_canonical_bytes(payload: Mapping[str, Any]) -> bytes:
+        return (
+            json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            )
+            + "\n"
+        ).encode("ascii")
+
+    @classmethod
+    def _fill_cooldown_checkpoint_sha256(cls, payload: Mapping[str, Any]) -> str:
+        unsigned = dict(payload)
+        unsigned.pop("canonical_checkpoint_sha256", None)
+        return hashlib.sha256(
+            cls._fill_cooldown_checkpoint_canonical_bytes(unsigned)
+        ).hexdigest()
+
+    @staticmethod
+    def _validate_fill_cooldown_checkpoint_file_stat(file_stat: os.stat_result) -> None:
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise ValueError("fill cooldown checkpoint is not a regular file")
+        if file_stat.st_uid != os.getuid():
+            raise PermissionError("fill cooldown checkpoint owner differs from runtime user")
+        if file_stat.st_nlink != 1:
+            raise PermissionError("fill cooldown checkpoint must have exactly one link")
+        if stat.S_IMODE(file_stat.st_mode) != FILL_COOLDOWN_CHECKPOINT_MODE:
+            raise PermissionError("fill cooldown checkpoint mode must be 0600")
+        if not 0 < file_stat.st_size <= FILL_COOLDOWN_CHECKPOINT_MAX_BYTES:
+            raise ValueError("fill cooldown checkpoint size is outside the admitted range")
+
+    @staticmethod
+    def _fill_cooldown_checkpoint_stat_identity(
+        file_stat: os.stat_result,
+    ) -> tuple[int, ...]:
+        return (
+            file_stat.st_dev,
+            file_stat.st_ino,
+            file_stat.st_mode,
+            file_stat.st_uid,
+            file_stat.st_nlink,
+            file_stat.st_size,
+            file_stat.st_mtime_ns,
+            file_stat.st_ctime_ns,
+        )
+
+    @staticmethod
+    def _reject_fill_cooldown_checkpoint_symlink_components(path: Path) -> None:
+        absolute = path.absolute()
+        current = Path(absolute.anchor)
+        for part in absolute.parts[1:]:
+            current /= part
+            try:
+                component_stat = os.lstat(current)
+            except FileNotFoundError:
+                continue
+            if stat.S_ISLNK(component_stat.st_mode):
+                raise PermissionError(
+                    f"fill cooldown checkpoint path contains a symlink: {current}"
+                )
+
+    def _fill_cooldown_checkpoint_file(self) -> Optional[Path]:
+        configured = getattr(self, "_fill_cooldown_checkpoint_path", None)
+        if configured is None:
+            return None
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            raise ValueError("fill cooldown checkpoint path must be absolute")
+        return path
+
+    def _read_fill_cooldown_checkpoint(self, path: Path) -> Optional[dict[str, Any]]:
+        self._reject_fill_cooldown_checkpoint_symlink_components(path.parent)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            return None
+        try:
+            before = os.fstat(descriptor)
+            self._validate_fill_cooldown_checkpoint_file_stat(before)
+            chunks: list[bytes] = []
+            remaining = FILL_COOLDOWN_CHECKPOINT_MAX_BYTES + 1
+            while remaining > 0:
+                chunk = os.read(descriptor, min(remaining, 16 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            after = os.fstat(descriptor)
+            self._validate_fill_cooldown_checkpoint_file_stat(after)
+            try:
+                directory_entry = os.lstat(path)
+            except OSError as exc:
+                raise RuntimeError(
+                    "fill cooldown checkpoint path changed while being read"
+                ) from exc
+            if (
+                self._fill_cooldown_checkpoint_stat_identity(before)
+                != self._fill_cooldown_checkpoint_stat_identity(after)
+                or directory_entry.st_dev != before.st_dev
+                or directory_entry.st_ino != before.st_ino
+            ):
+                raise RuntimeError("fill cooldown checkpoint changed while being read")
+        finally:
+            os.close(descriptor)
+        if len(raw) != before.st_size:
+            raise ValueError("fill cooldown checkpoint read was incomplete")
+
+        def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"duplicate fill cooldown checkpoint key: {key}")
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("fill cooldown checkpoint is not canonical JSON") from exc
+        expected_fields = {
+            "schema_version",
+            "checkpoint_sequence",
+            "writer_pid",
+            "active_buy_e3_deadline_identity",
+            "buy_natural_b0_deadline_ms",
+            "state",
+            "canonical_checkpoint_sha256",
+        }
+        if not isinstance(payload, dict) or set(payload) != expected_fields:
+            raise ValueError("fill cooldown checkpoint fields drifted")
+        if payload.get("schema_version") != FILL_COOLDOWN_CHECKPOINT_SCHEMA:
+            raise ValueError("unsupported fill cooldown checkpoint schema")
+        sequence = payload.get("checkpoint_sequence")
+        writer_pid = payload.get("writer_pid")
+        if (
+            not isinstance(sequence, int)
+            or isinstance(sequence, bool)
+            or sequence <= 0
+            or not isinstance(writer_pid, int)
+            or isinstance(writer_pid, bool)
+            or writer_pid <= 0
+        ):
+            raise ValueError("fill cooldown checkpoint identity fields are invalid")
+        if payload.get("canonical_checkpoint_sha256") != self._fill_cooldown_checkpoint_sha256(
+            payload
+        ):
+            raise ValueError("fill cooldown checkpoint canonical SHA256 mismatch")
+        if not isinstance(payload.get("state"), dict):
+            raise ValueError("fill cooldown checkpoint state is not an object")
+        if payload["state"].get("checkpoint_sequence") != sequence:
+            raise ValueError("fill cooldown checkpoint sequence fields differ")
+        historical_identity = payload.get("active_buy_e3_deadline_identity")
+        if not isinstance(historical_identity, str) or not historical_identity:
+            raise ValueError("fill cooldown checkpoint artifact identity is invalid")
+        natural_b0_deadline_ms = payload.get("buy_natural_b0_deadline_ms")
+        if (
+            not isinstance(natural_b0_deadline_ms, int)
+            or isinstance(natural_b0_deadline_ms, bool)
+            or natural_b0_deadline_ms < 0
+            or natural_b0_deadline_ms
+            > int(payload["state"].get("snapshot_ts_ms", 0))
+            + 30 * 24 * 60 * 60 * 1_000
+        ):
+            raise ValueError("fill cooldown checkpoint natural B0 deadline is invalid")
+        state_identity = payload["state"].get("buy_deadline_identity")
+        if (
+            isinstance(state_identity, str)
+            and state_identity.startswith("BUY_E3:")
+            and state_identity != historical_identity
+        ):
+            raise ValueError(
+                "fill cooldown checkpoint deadline and artifact identities differ"
+            )
+        if (
+            isinstance(state_identity, str)
+            and state_identity.startswith("BUY_E3:")
+            and natural_b0_deadline_ms == 0
+        ):
+            raise ValueError(
+                "fill cooldown checkpoint E3 deadline lacks its natural B0 reference"
+            )
+        return payload
+
+    def _write_fill_cooldown_checkpoint(
+        self,
+        path: Path,
+        payload: Mapping[str, Any],
+    ) -> None:
+        parent = path.parent
+        self._reject_fill_cooldown_checkpoint_symlink_components(parent)
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self._reject_fill_cooldown_checkpoint_symlink_components(parent)
+        parent_stat = os.lstat(parent)
+        if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != os.getuid():
+            raise PermissionError("fill cooldown checkpoint parent is not an owned directory")
+        try:
+            target_stat = os.lstat(path)
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None:
+            self._validate_fill_cooldown_checkpoint_file_stat(target_stat)
+
+        raw = self._fill_cooldown_checkpoint_canonical_bytes(payload)
+        if len(raw) > FILL_COOLDOWN_CHECKPOINT_MAX_BYTES:
+            raise ValueError("fill cooldown checkpoint exceeds the maximum size")
+        temporary = parent / (
+            f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+        )
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(temporary, flags, FILL_COOLDOWN_CHECKPOINT_MODE)
+        try:
+            os.fchmod(descriptor, FILL_COOLDOWN_CHECKPOINT_MODE)
+            offset = 0
+            while offset < len(raw):
+                written = os.write(descriptor, raw[offset:])
+                if written <= 0:
+                    raise OSError("fill cooldown checkpoint write made no progress")
+                offset += written
+            os.fsync(descriptor)
+            written_stat = os.fstat(descriptor)
+            self._validate_fill_cooldown_checkpoint_file_stat(written_stat)
+        except Exception:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+        finally:
+            os.close(descriptor)
+        try:
+            os.replace(temporary, path)
+            directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory_descriptor = os.open(parent, directory_flags)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+            final_stat = os.lstat(path)
+            self._validate_fill_cooldown_checkpoint_file_stat(final_stat)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+
+    def _persist_fill_cooldown_checkpoint(self) -> None:
+        path = self._fill_cooldown_checkpoint_file()
+        if path is None:
+            return
+        lock = getattr(self, "_fill_cooldown_checkpoint_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._fill_cooldown_checkpoint_lock = lock
+        with lock:
+            previous_sequence = int(
+                getattr(self, "_fill_cooldown_checkpoint_sequence", 0) or 0
+            )
+            next_sequence = previous_sequence + 1
+            self._fill_cooldown_checkpoint_sequence = next_sequence
+            state = self.fill_cooldown_state_snapshot()
+            payload: dict[str, Any] = {
+                "schema_version": FILL_COOLDOWN_CHECKPOINT_SCHEMA,
+                "checkpoint_sequence": next_sequence,
+                "writer_pid": os.getpid(),
+                "active_buy_e3_deadline_identity": (
+                    self._active_buy_e3_deadline_identity()
+                ),
+                "buy_natural_b0_deadline_ms": max(
+                    0,
+                    int(
+                        round(
+                            float(
+                                getattr(
+                                    self,
+                                    "_fill_cooldown_natural_b0_until",
+                                    {"BUY": 0.0},
+                                ).get("BUY", 0.0)
+                            )
+                            * 1_000.0
+                        )
+                    ),
+                ),
+                "state": state,
+            }
+            payload["canonical_checkpoint_sha256"] = (
+                self._fill_cooldown_checkpoint_sha256(payload)
+            )
+            try:
+                self._write_fill_cooldown_checkpoint(path, payload)
+            except Exception:
+                self._fill_cooldown_checkpoint_sequence = previous_sequence
+                raise
+
+    def restore_fill_cooldown_checkpoint(
+        self,
+        *,
+        now_ms: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Restore the durable operational checkpoint before any live loop."""
+
+        path = self._fill_cooldown_checkpoint_file()
+        active_buy_identity = self._active_buy_e3_deadline_identity()
+        buy_e3_active = bool(
+            getattr(
+                getattr(self.cfg, "strategy", None),
+                "buy_e3_cooldown_policy_enabled",
+                False,
+            )
+        ) or active_buy_identity.startswith("BUY_E3:")
+        if path is None:
+            if buy_e3_active:
+                raise RuntimeError(
+                    "active BUY E3 requires an existing fill cooldown "
+                    "checkpoint/epoch marker"
+                )
+            self._fill_cooldown_checkpoint_loaded = False
+            self._fill_cooldown_checkpoint_sequence = 0
+            self._fill_cooldown_restore_mode = "fresh_b0_no_checkpoint"
+            return self.fill_cooldown_state_snapshot(now_ms=now_ms)
+        payload = self._read_fill_cooldown_checkpoint(path)
+        if payload is None:
+            if buy_e3_active:
+                raise RuntimeError(
+                    "active BUY E3 requires an existing fill cooldown "
+                    "checkpoint/epoch marker"
+                )
+            previous_loaded = self._fill_cooldown_checkpoint_loaded
+            previous_mode = self._fill_cooldown_restore_mode
+            self._fill_cooldown_checkpoint_loaded = True
+            self._fill_cooldown_checkpoint_sequence = 0
+            self._fill_cooldown_restore_mode = "b0_checkpoint_resume"
+            try:
+                self._persist_fill_cooldown_checkpoint()
+            except Exception:
+                self._fill_cooldown_checkpoint_loaded = previous_loaded
+                self._fill_cooldown_restore_mode = previous_mode
+                raise
+            return self.fill_cooldown_state_snapshot(now_ms=now_ms)
+        self._fill_cooldown_checkpoint_loaded = True
+        self._fill_cooldown_checkpoint_sequence = int(payload["checkpoint_sequence"])
+        self.restore_fill_cooldown_state(
+            payload["state"],
+            now_ms=now_ms,
+            checkpoint_active_buy_identity=str(
+                payload["active_buy_e3_deadline_identity"]
+            ),
+            buy_natural_b0_deadline_ms=int(payload["buy_natural_b0_deadline_ms"]),
+        )
+        self._persist_fill_cooldown_checkpoint()
+        return self.fill_cooldown_state_snapshot(now_ms=now_ms)
+
     def _expire_fill_cooldown_state(self, side: str, now_s: float) -> None:
         normalized = str(side).upper()
         until = float(self._fill_cooldown_until.get(normalized, 0.0) or 0.0)
@@ -3889,18 +4330,25 @@ class MakerEngine:
         identities = getattr(self, "_fill_cooldown_deadline_identity", None)
         if isinstance(identities, dict):
             identities[normalized] = "B0"
+        natural_deadlines = getattr(self, "_fill_cooldown_natural_b0_until", None)
+        if (
+            isinstance(natural_deadlines, dict)
+            and float(natural_deadlines.get(normalized, 0.0) or 0.0) <= now_s
+        ):
+            natural_deadlines[normalized] = 0.0
         if self._fill_cooldown_reset_policy() == RESET_OPPOSITE_FILL_OR_EXPIRY:
             if normalized == "BUY":
                 self._consec_buy = 0.0
             elif normalized == "SELL":
                 self._consec_sell = 0.0
+        self._persist_fill_cooldown_checkpoint()
 
     def fill_cooldown_state_snapshot(self, *, now_ms: Optional[int] = None) -> dict[str, Any]:
         """Return the restart-safe wall-clock cooldown identity."""
 
         current_ms = int(now_ms if now_ms is not None else time.time() * 1000.0)
         return {
-            "schema_version": "narrowgate_fill_cooldown_state.v2",
+            "schema_version": FILL_COOLDOWN_STATE_SCHEMA,
             "reset_policy": self._fill_cooldown_reset_policy(),
             "consec_buy": float(self._consec_buy),
             "consec_sell": float(self._consec_sell),
@@ -3924,6 +4372,19 @@ class MakerEngine:
                 )
             ),
             "snapshot_ts_ms": current_ms,
+            "restore_mode": str(
+                getattr(
+                    self,
+                    "_fill_cooldown_restore_mode",
+                    "fresh_b0_no_checkpoint",
+                )
+            ),
+            "checkpoint_loaded": bool(
+                getattr(self, "_fill_cooldown_checkpoint_loaded", False)
+            ),
+            "checkpoint_sequence": int(
+                getattr(self, "_fill_cooldown_checkpoint_sequence", 0) or 0
+            ),
         }
 
     def _select_boolean_cooldown_duration(
@@ -3991,49 +4452,178 @@ class MakerEngine:
         payload: dict[str, Any],
         *,
         now_ms: Optional[int] = None,
+        checkpoint_active_buy_identity: Optional[str] = None,
+        buy_natural_b0_deadline_ms: Optional[int] = None,
     ) -> None:
         """Restore a state captured by :meth:`fill_cooldown_state_snapshot`."""
 
         schema = str(payload.get("schema_version", ""))
-        if schema not in {
-            "narrowgate_fill_cooldown_state.v1",
-            "narrowgate_fill_cooldown_state.v2",
-        }:
+        if schema != FILL_COOLDOWN_STATE_SCHEMA:
             raise ValueError("unsupported fill cooldown state schema")
+        expected_fields = {
+            "schema_version",
+            "reset_policy",
+            "consec_buy",
+            "consec_sell",
+            "buy_remaining_ms",
+            "sell_remaining_ms",
+            "last_buy_fill_ts_ms",
+            "last_sell_fill_ts_ms",
+            "last_fill_side",
+            "buy_deadline_identity",
+            "sell_deadline_identity",
+            "snapshot_ts_ms",
+            "restore_mode",
+            "checkpoint_loaded",
+            "checkpoint_sequence",
+        }
+        if set(payload) != expected_fields:
+            raise ValueError("fill cooldown state fields drifted")
         policy = normalize_consecutive_reset_policy(
             payload.get("reset_policy"), require_explicit=True
         )
         if policy != self._fill_cooldown_reset_policy():
             raise ValueError("fill cooldown state reset policy differs from runtime config")
         current_ms = int(now_ms if now_ms is not None else time.time() * 1000.0)
-        self._consec_buy = max(0.0, float(payload.get("consec_buy", 0.0) or 0.0))
-        self._consec_sell = max(0.0, float(payload.get("consec_sell", 0.0) or 0.0))
+        snapshot_ms = payload.get("snapshot_ts_ms")
+        if (
+            not isinstance(snapshot_ms, int)
+            or isinstance(snapshot_ms, bool)
+            or snapshot_ms <= 0
+            or snapshot_ms > current_ms + 300_000
+        ):
+            raise ValueError("fill cooldown state snapshot timestamp is invalid")
+        if not isinstance(payload.get("checkpoint_loaded"), bool):
+            raise ValueError("fill cooldown state checkpoint-loaded flag is invalid")
+        checkpoint_sequence = payload.get("checkpoint_sequence")
+        if (
+            not isinstance(checkpoint_sequence, int)
+            or isinstance(checkpoint_sequence, bool)
+            or checkpoint_sequence < 0
+        ):
+            raise ValueError("fill cooldown state checkpoint sequence is invalid")
+        if payload.get("restore_mode") not in FILL_COOLDOWN_RESTORE_MODES:
+            raise ValueError("fill cooldown state restore mode is invalid")
+        def finite_nonnegative(name: str) -> float:
+            value = payload.get(name)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(float(value))
+                or float(value) < 0.0
+            ):
+                raise ValueError(f"fill cooldown state {name} is invalid")
+            return float(value)
+
+        self._consec_buy = finite_nonnegative("consec_buy")
+        self._consec_sell = finite_nonnegative("consec_sell")
         self._fill_cooldown_deadline_identity = {"BUY": "B0", "SELL": "B0"}
+        natural_b0_deadline_ms = (
+            int(buy_natural_b0_deadline_ms)
+            if buy_natural_b0_deadline_ms is not None
+            else 0
+        )
+        if natural_b0_deadline_ms < 0:
+            raise ValueError("fill cooldown natural B0 deadline is invalid")
+        self._fill_cooldown_natural_b0_until = {
+            "BUY": natural_b0_deadline_ms / 1_000.0,
+            "SELL": 0.0,
+        }
+        active_buy_identity = self._active_buy_e3_deadline_identity()
+        historical_buy_identity = str(checkpoint_active_buy_identity or "B0")
+        if historical_buy_identity != "B0":
+            suffix = historical_buy_identity.removeprefix("BUY_E3:")
+            if (
+                not historical_buy_identity.startswith("BUY_E3:")
+                or len(suffix) != 64
+                or any(char not in "0123456789abcdef" for char in suffix)
+            ):
+                raise ValueError("fill cooldown historical BUY identity is invalid")
+        buy_runtime_identity_changed = (
+            historical_buy_identity.startswith("BUY_E3:")
+            and historical_buy_identity != active_buy_identity
+        )
+        buy_restore_mode = "b0_checkpoint_resume"
         for side in ("BUY", "SELL"):
-            remaining = max(0, int(payload.get(f"{side.lower()}_remaining_ms", 0) or 0))
-            last_fill_ms = int(
-                payload.get(f"last_{side.lower()}_fill_ts_ms", 0) or 0
-            )
+            remaining_value = payload.get(f"{side.lower()}_remaining_ms")
+            last_fill_value = payload.get(f"last_{side.lower()}_fill_ts_ms")
+            if (
+                not isinstance(remaining_value, int)
+                or isinstance(remaining_value, bool)
+                or remaining_value < 0
+                or remaining_value > 30 * 24 * 60 * 60 * 1_000
+                or not isinstance(last_fill_value, int)
+                or isinstance(last_fill_value, bool)
+                or last_fill_value < 0
+                or last_fill_value > current_ms + 300_000
+            ):
+                raise ValueError(f"fill cooldown state {side} timing is invalid")
+            absolute_deadline_ms = snapshot_ms + remaining_value
+            remaining = max(0, absolute_deadline_ms - current_ms)
+            last_fill_ms = last_fill_value
             self._last_same_side_fill_epoch_ms[side] = last_fill_ms
-            source_identity = (
-                str(payload.get(f"{side.lower()}_deadline_identity", "B0") or "B0")
-                if schema.endswith(".v2")
-                else "B0"
-            )
-            if side == "BUY" and source_identity.startswith("BUY_E3:"):
-                active = getattr(self, "_buy_e3_cooldown_policy", None)
-                active_identity = (
-                    active.deadline_identity if active is not None else "B0"
-                )
-                if source_identity != active_identity:
-                    natural_deadline_ms = (
+            source_identity = payload.get(f"{side.lower()}_deadline_identity")
+            if not isinstance(source_identity, str):
+                raise ValueError(f"fill cooldown state {side} identity is invalid")
+            if source_identity != "B0":
+                prefix = "BUY_E3:" if side == "BUY" else "SELL_OWNER:"
+                suffix = source_identity.removeprefix(prefix)
+                if (
+                    not source_identity.startswith(prefix)
+                    or len(suffix) != 64
+                    or any(char not in "0123456789abcdef" for char in suffix)
+                ):
+                    raise ValueError(f"fill cooldown state {side} identity is invalid")
+            if side == "BUY" and buy_runtime_identity_changed:
+                if natural_b0_deadline_ms > 0:
+                    remaining = max(0, natural_b0_deadline_ms - current_ms)
+                elif source_identity.startswith("BUY_E3:"):
+                    fallback_natural_deadline_ms = (
                         last_fill_ms
                         + int(round(85_000.0 * max(1.0, self._consec_buy)))
                         if last_fill_ms > 0
                         else current_ms
                     )
-                    remaining = max(0, natural_deadline_ms - current_ms)
+                    remaining = max(0, fallback_natural_deadline_ms - current_ms)
+                    self._fill_cooldown_natural_b0_until["BUY"] = (
+                        fallback_natural_deadline_ms / 1_000.0
+                    )
+                source_identity = "B0"
+                buy_restore_mode = (
+                    "rollback_to_b0"
+                    if active_buy_identity == "B0"
+                    else "artifact_identity_changed_to_b0"
+                )
+            elif side == "BUY" and source_identity.startswith("BUY_E3:"):
+                if source_identity != active_buy_identity:
+                    fallback_natural_deadline_ms = (
+                        last_fill_ms
+                        + int(round(85_000.0 * max(1.0, self._consec_buy)))
+                        if last_fill_ms > 0
+                        else current_ms
+                    )
+                    remaining = max(0, fallback_natural_deadline_ms - current_ms)
                     source_identity = "B0"
+                    self._fill_cooldown_natural_b0_until["BUY"] = (
+                        fallback_natural_deadline_ms / 1_000.0
+                    )
+                    buy_restore_mode = (
+                        "rollback_to_b0"
+                        if active_buy_identity == "B0"
+                        else "artifact_identity_changed_to_b0"
+                    )
+                elif remaining <= 0:
+                    source_identity = "B0"
+                    buy_restore_mode = "expired_to_b0"
+                else:
+                    buy_restore_mode = "exact_same_artifact_resume"
+            elif side == "BUY" and remaining <= 0:
+                source_identity = "B0"
+                buy_restore_mode = "expired_to_b0"
+            elif side == "BUY":
+                buy_restore_mode = "b0_checkpoint_resume"
+            elif remaining <= 0:
+                source_identity = "B0"
             self._fill_cooldown_until[side] = (current_ms + remaining) / 1000.0
             self._fill_cooldown_deadline_identity[side] = source_identity
             if remaining == 0 and policy == RESET_OPPOSITE_FILL_OR_EXPIRY:
@@ -4042,7 +4632,10 @@ class MakerEngine:
                 else:
                     self._consec_sell = 0.0
         last_side = str(payload.get("last_fill_side", "") or "").upper()
-        self._last_fill_side = last_side if last_side in {"BUY", "SELL"} else ""
+        if last_side not in {"", "BUY", "SELL"}:
+            raise ValueError("fill cooldown state last-fill side is invalid")
+        self._last_fill_side = last_side
+        self._fill_cooldown_restore_mode = buy_restore_mode
 
     def _apply_sync_adjust_degrade_policy(
         self,
@@ -8173,10 +8766,11 @@ class MakerEngine:
         self._log_order_outcome("filled", order, filled_qty=qty, avg_fill_price=price)
         prev_q = float(self.inventory.snapshot.qty)
         self.inventory.on_fill(side, qty, price, commission_quote, trade_time_ms)
+        new_q = float(self.inventory.snapshot.qty)
         self._post_fill_quote_response.record_fill(
             side=side,
             inventory_before=prev_q,
-            inventory_after=float(self.inventory.snapshot.qty),
+            inventory_after=new_q,
             fill_qty=qty,
             order_size=max(self.cfg.strategy.order_size, self.cfg.lot_size),
             ts_ms=int(trade_time_ms or time.time() * 1000.0),
@@ -8195,17 +8789,30 @@ class MakerEngine:
         opposite = "SELL" if side == "BUY" else "BUY"
         self._fill_cooldown_until[opposite] = 0.0
         self._fill_cooldown_deadline_identity[opposite] = "B0"
+        self._fill_cooldown_natural_b0_until[opposite] = 0.0
         self._last_same_side_fill_epoch_ms[side] = int(
             trade_time_ms or time.time() * 1000.0
         )
         self._last_fill_side = side
 
-        exposure_increasing_fill = (
-            (side == "BUY" and prev_q >= 0.0)
-            or (side == "SELL" and prev_q <= 0.0)
-        )
+        if side == "BUY":
+            exposure_increasing_fill = abs(new_q) > abs(prev_q) + 1e-10
+        else:
+            # Preserve the existing SELL routing contract. BUY uses the
+            # campaign ledger's authoritative absolute-exposure rule because
+            # a single BUY fill can cross through zero.
+            exposure_increasing_fill = prev_q <= 0.0
         fc_add = float(getattr(self.cfg.strategy, 'fill_cooldown', 0.0) or 0.0)
         fc_reduce = float(getattr(self.cfg.strategy, 'fill_cooldown_reducing', 0.0) or 0.0)
+        if side == "BUY":
+            natural_b0_duration_s = (
+                fc_add * max(1.0, self._consec_buy)
+                if exposure_increasing_fill and fc_add > 0.0
+                else 0.0
+            )
+            self._fill_cooldown_natural_b0_until["BUY"] = (
+                now + natural_b0_duration_s if natural_b0_duration_s > 0.0 else 0.0
+            )
         raw_fc = fc_add if exposure_increasing_fill else fc_reduce
         effective_fc = raw_fc
         cd_kind = "add" if exposure_increasing_fill else "reduce"
@@ -8335,6 +8942,8 @@ class MakerEngine:
                 f"base={raw_fc:.1f}s effective_base={effective_fc:.1f}s "
                 f"vol_mult={vol_mult:.2f} add_mult={add_mult:.2f} cooldown={cd:.0f}s "
                 f"until={self._fill_cooldown_until[side]:.0f}")
+        self._persist_fill_cooldown_checkpoint()
+        if effective_fc > 0:
             self._cancel_cooldown_side_order(side)
 
         # v1.2: Enqueue fill for delayed markout computation
@@ -8492,6 +9101,12 @@ class MakerEngine:
         """
         self._running = False
         logger.info("MakerEngine stopping...")
+        checkpoint_error: Optional[Exception] = None
+        try:
+            self._persist_fill_cooldown_checkpoint()
+        except Exception as exc:
+            checkpoint_error = exc
+            logger.critical("Fill cooldown checkpoint flush failed during shutdown", exc_info=True)
         self.signal.stop()
         self._cancel_all_orders()
 
@@ -8520,6 +9135,8 @@ class MakerEngine:
             )
             self._exact_opportunity_tape_runtime = None
         logger.info("MakerEngine stopped")
+        if checkpoint_error is not None:
+            raise RuntimeError("fill cooldown checkpoint flush failed") from checkpoint_error
 
     @property
     def is_running(self) -> bool:

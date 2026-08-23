@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 import re
+import stat
 import threading
 import time
 from collections import deque
@@ -21,6 +23,11 @@ OWNER_IDENTITY = "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
 OWNER_POLICY_SCHEMA = f"{OWNER_IDENTITY}.artifact.v1"
 OWNER_BUNDLE_SCHEMA = f"{OWNER_IDENTITY}.selected_predicate_bundle.v1"
 OWNER_MANIFEST_SCHEMA = f"{OWNER_IDENTITY}.full_development_refit.v1"
+ACTIVE_RELEASE_SCHEMA = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_active_release.v1"
+)
+ACTIVE_RELEASE_IDENTITY = ACTIVE_RELEASE_SCHEMA
+ACTIVE_RELEASE_STATUS = "owner_authorized_active_release"
 SELECTED_CANDIDATE = "E3_HIGHER_ORDER_BOOLEAN"
 SELECTED_PROFILE = "e3_high_order_multirule_dnf_v1"
 LIVE_FEATURE_TRANSPORT_IDENTITY = "receive_time_100ms_full_mid_ema_bank_v1"
@@ -40,6 +47,55 @@ DIRECT_CAMPAIGN_AGE = "predicate::m0::campaign_age_gt_control_duration"
 
 _DURATION_RE = re.compile(r"^FIXED_([1-9][0-9]*)S$")
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+
+_ACTIVE_RELEASE_FIELDS = frozenset(
+    {
+        "schema_version",
+        "identity",
+        "status",
+        "generated_utc",
+        "research_supported",
+        "formal_hierarchy_passed",
+        "formal_hard_gates_passed",
+        "owner_risk_accepted",
+        "action_authorized",
+        "live_authorized",
+        "scope",
+        "execution",
+        "exact_artifact",
+        "evidence",
+        "rollback",
+        "evidence_boundary",
+        "canonical_active_release_sha256",
+    }
+)
+_ACTIVE_RELEASE_BINDING_FIELDS = frozenset(
+    {
+        "role",
+        "path",
+        "file_sha256",
+        "size_bytes",
+        "mode",
+        "device",
+        "inode",
+        "schema_version",
+        "identity",
+        "status",
+        "canonical_field",
+        "canonical_sha256",
+    }
+)
+_ACTIVE_RELEASE_EVIDENCE_ROLES = frozenset(
+    {
+        "final_composition",
+        "compatible_attempt_final",
+        "concurrent_resource",
+        "runtime_regression",
+        "sell54",
+        "activation_envelope",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,12 +120,161 @@ class _PairState:
     last_cross_direction: int = 0
 
 
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+@dataclass(frozen=True, slots=True)
+class _FileIdentity:
+    device: int
+    inode: int
+    file_type: int
+    uid: int
+    gid: int
+    mode: int
+    link_count: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+
+
+@dataclass(slots=True)
+class _OpenedBoundJson:
+    path: Path
+    label: str
+    identity: _FileIdentity
+    descriptor: int
+    payload: dict[str, Any]
+
+
+def _absolute_without_resolving(path: str | Path) -> Path:
+    expanded = Path(path).expanduser()
+    absolute = Path(os.path.abspath(os.fspath(expanded)))
+    return absolute.parent.resolve(strict=True) / absolute.name
+
+
+def _reject_symlink_components(path: Path, label: str) -> None:
+    current = Path(path.anchor)
+    for component in path.parts[1:]:
+        current /= component
+        try:
+            metadata = os.lstat(current)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"{label}_path_contains_symlink")
+
+
+def _file_identity(value: os.stat_result) -> _FileIdentity:
+    return _FileIdentity(
+        device=int(value.st_dev),
+        inode=int(value.st_ino),
+        file_type=stat.S_IFMT(value.st_mode),
+        uid=int(value.st_uid),
+        gid=int(value.st_gid),
+        mode=stat.S_IMODE(value.st_mode),
+        link_count=int(value.st_nlink),
+        size=int(value.st_size),
+        mtime_ns=int(value.st_mtime_ns),
+        ctime_ns=int(value.st_ctime_ns),
+    )
+
+
+def _require_private_regular_file(identity: _FileIdentity, label: str) -> None:
+    if identity.file_type != stat.S_IFREG:
+        raise ValueError(f"{label}_not_regular_file")
+    if identity.uid != os.geteuid():
+        raise ValueError(f"{label}_owner_mismatch")
+    if identity.link_count != 1:
+        raise ValueError(f"{label}_link_count_mismatch")
+    if identity.mode != 0o600:
+        raise ValueError(f"{label}_mode_not_private")
+
+
+def _read_descriptor(descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(descriptor, 1 << 20)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _open_bound_json(
+    path: Path,
+    expected_file_sha256: str,
+    label: str,
+) -> _OpenedBoundJson:
+    expected = str(expected_file_sha256).strip().lower()
+    if _SHA256_RE.fullmatch(expected) is None:
+        raise ValueError(f"{label}_file_sha256_mismatch")
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise ValueError(f"{label}_nofollow_unavailable")
+    try:
+        _reject_symlink_components(path, label)
+        before = _file_identity(os.lstat(path))
+        _require_private_regular_file(before, label)
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | os.O_CLOEXEC | nofollow,
+        )
+    except OSError as exc:
+        raise ValueError(f"{label}_unreadable") from exc
+    try:
+        opened = _file_identity(os.fstat(descriptor))
+        _require_private_regular_file(opened, label)
+        if opened != before:
+            raise ValueError(f"{label}_identity_changed_during_open")
+        raw = _read_descriptor(descriptor)
+        after_read = _file_identity(os.fstat(descriptor))
+        after_path = _file_identity(os.lstat(path))
+        if after_read != opened or after_path != opened or len(raw) != opened.size:
+            raise ValueError(f"{label}_identity_changed_during_read")
+        if hashlib.sha256(raw).hexdigest() != expected:
+            raise ValueError(f"{label}_file_sha256_mismatch")
+        def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+            result: dict[str, Any] = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError(f"{label}_duplicate_json_key")
+                result[key] = value
+            return result
+
+        try:
+            payload = json.loads(
+                raw.decode("utf-8"),
+                object_pairs_hook=reject_duplicates,
+                parse_constant=lambda token: (_ for _ in ()).throw(
+                    ValueError(f"{label}_non_finite_json_token_{token}")
+                ),
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError(f"{label}_unreadable") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"{label}_root_not_object")
+        return _OpenedBoundJson(
+            path=path,
+            label=label,
+            identity=opened,
+            descriptor=descriptor,
+            payload=payload,
+        )
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+def _revalidate_opened_file(opened: _OpenedBoundJson) -> None:
+    try:
+        _reject_symlink_components(opened.path, opened.label)
+        descriptor_identity = _file_identity(os.fstat(opened.descriptor))
+        path_identity = _file_identity(os.lstat(opened.path))
+    except OSError as exc:
+        raise ValueError(f"{opened.label}_identity_revalidation_failed") from exc
+    if descriptor_identity != opened.identity or path_identity != opened.identity:
+        raise ValueError(f"{opened.label}_identity_changed_after_load")
+
+
+def _close_opened_files(files: Sequence[_OpenedBoundJson]) -> None:
+    for opened in files:
+        os.close(opened.descriptor)
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -83,25 +288,153 @@ def _canonical_sha256(value: Any) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _load_json(path: Path, expected_file_sha256: str, label: str) -> dict[str, Any]:
-    expected = str(expected_file_sha256).strip().lower()
-    if _SHA256_RE.fullmatch(expected) is None or _file_sha256(path) != expected:
-        raise ValueError(f"{label}_file_sha256_mismatch")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{label}_unreadable") from exc
-    if not isinstance(payload, dict):
-        raise ValueError(f"{label}_root_not_object")
-    return payload
-
-
 def _validate_canonical(payload: Mapping[str, Any], field: str, label: str) -> None:
     observed = str(payload.get(field, ""))
     body = dict(payload)
     body.pop(field, None)
     if _SHA256_RE.fullmatch(observed) is None or _canonical_sha256(body) != observed:
         raise ValueError(f"{label}_canonical_sha256_mismatch")
+
+
+def _exact_mapping(value: Any, fields: frozenset[str], label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or set(value) != set(fields):
+        raise ValueError(f"{label}_fields_drifted")
+    return value
+
+
+def _validate_active_release(
+    payload: Mapping[str, Any],
+    *,
+    expected_canonical_sha256: str,
+    expected_artifact_sha256: str,
+    expected_manifest_file_sha256: str,
+    expected_policy_file_sha256: str,
+    expected_predicate_bundle_file_sha256: str,
+) -> dict[str, str]:
+    if set(payload) != set(_ACTIVE_RELEASE_FIELDS):
+        raise ValueError("buy_e3_active_release_fields_drifted")
+    _validate_canonical(
+        payload,
+        "canonical_active_release_sha256",
+        "buy_e3_active_release",
+    )
+    canonical = str(payload["canonical_active_release_sha256"])
+    if canonical != str(expected_canonical_sha256).strip().lower():
+        raise ValueError("buy_e3_active_release_expected_canonical_sha256_mismatch")
+    if (
+        payload.get("schema_version") != ACTIVE_RELEASE_SCHEMA
+        or payload.get("identity") != ACTIVE_RELEASE_IDENTITY
+        or payload.get("status") != ACTIVE_RELEASE_STATUS
+        or payload.get("research_supported") is not False
+        or payload.get("formal_hierarchy_passed") is not False
+        or payload.get("formal_hard_gates_passed") is not False
+        or payload.get("owner_risk_accepted") is not True
+        or payload.get("action_authorized") is not True
+        or payload.get("live_authorized") is not True
+    ):
+        raise ValueError("buy_e3_active_release_authority_drifted")
+    if payload.get("scope") != {
+        "side": "BUY",
+        "trigger": "exposure_increasing_executed_fill",
+        "output": "total_cooldown",
+        "reducing_buy_unchanged": True,
+        "sell_owner_policy_unchanged": True,
+    }:
+        raise ValueError("buy_e3_active_release_scope_drifted")
+    if payload.get("rollback") != {
+        "buy_e3_enabled": False,
+        "buy_deadline_identity": "B0",
+        "e3_deadline_imported": False,
+        "b0_seconds": 85,
+        "b0_multiplier": "consecutive_fill_units",
+        "b0_contract": "85s_x_consecutive_fill_units",
+    }:
+        raise ValueError("buy_e3_active_release_rollback_drifted")
+    if payload.get("evidence_boundary") != {
+        "old_oof_applies_to_learning_algorithm_only": True,
+        "exact_artifact_oof_available": False,
+        "validation_read": False,
+        "sealed_holdout_read": False,
+        "shadow_created": False,
+        "companion_created": False,
+        "new_economic_arm_run": False,
+    }:
+        raise ValueError("buy_e3_active_release_evidence_boundary_drifted")
+
+    execution = _exact_mapping(
+        payload.get("execution"),
+        frozenset(
+            {
+                "execution_commit",
+                "execution_tree",
+                "annotated_operational_tag",
+                "annotated_operational_tag_object",
+                "tag_peeled_commit",
+            }
+        ),
+        "buy_e3_active_release_execution",
+    )
+    commit = str(execution.get("execution_commit", ""))
+    tree = str(execution.get("execution_tree", ""))
+    tag_object = str(execution.get("annotated_operational_tag_object", ""))
+    if (
+        _GIT_SHA_RE.fullmatch(commit) is None
+        or _GIT_SHA_RE.fullmatch(tree) is None
+        or _GIT_SHA_RE.fullmatch(tag_object) is None
+        or execution.get("tag_peeled_commit") != commit
+        or not str(execution.get("annotated_operational_tag", "")).strip()
+    ):
+        raise ValueError("buy_e3_active_release_execution_identity_drifted")
+
+    exact_artifact = _exact_mapping(
+        payload.get("exact_artifact"),
+        frozenset({"artifact_sha256", "roles"}),
+        "buy_e3_active_release_artifact",
+    )
+    if exact_artifact.get("artifact_sha256") != expected_artifact_sha256:
+        raise ValueError("buy_e3_active_release_artifact_sha256_mismatch")
+    roles = _exact_mapping(
+        exact_artifact.get("roles"),
+        frozenset({"manifest", "policy", "predicate_bundle"}),
+        "buy_e3_active_release_artifact_roles",
+    )
+    expected_files = {
+        "manifest": expected_manifest_file_sha256,
+        "policy": expected_policy_file_sha256,
+        "predicate_bundle": expected_predicate_bundle_file_sha256,
+    }
+    for role, expected in expected_files.items():
+        binding = _exact_mapping(
+            roles.get(role),
+            _ACTIVE_RELEASE_BINDING_FIELDS,
+            f"buy_e3_active_release_{role}",
+        )
+        if (
+            binding.get("role") != role
+            or binding.get("file_sha256") != expected
+            or binding.get("mode") != "0600"
+        ):
+            raise ValueError(f"buy_e3_active_release_{role}_binding_drifted")
+    evidence = _exact_mapping(
+        payload.get("evidence"),
+        _ACTIVE_RELEASE_EVIDENCE_ROLES,
+        "buy_e3_active_release_evidence",
+    )
+    for role in _ACTIVE_RELEASE_EVIDENCE_ROLES:
+        binding = _exact_mapping(
+            evidence.get(role),
+            _ACTIVE_RELEASE_BINDING_FIELDS,
+            f"buy_e3_active_release_evidence_{role}",
+        )
+        if binding.get("role") != role or binding.get("mode") != "0600":
+            raise ValueError(f"buy_e3_active_release_evidence_{role}_binding_drifted")
+    return {
+        "file_canonical_sha256": canonical,
+        "execution_commit": commit,
+        "execution_tree": tree,
+        "annotated_operational_tag": str(execution["annotated_operational_tag"]),
+        "annotated_operational_tag_object": tag_object,
+    }
 
 
 def _label(value: float) -> str:
@@ -393,6 +726,7 @@ class ReceiveTimeFullMidEmaWindows:
                     return
                 if left_ns < pending:
                     self._out_of_order += 1
+                    self._reset_locked("depth_callback_out_of_order")
                     return
                 if left_ns == pending:
                     self._pending_mid = mid
@@ -401,10 +735,10 @@ class ReceiveTimeFullMidEmaWindows:
                     0,
                     (left_ns - pending) // BASE_WINDOW_WIDTH_NS - 1,
                 )
-                gap_s = gap_windows * BASE_WINDOW_WIDTH_NS / 1_000_000_000.0
-                if gap_s > self.max_feature_age_s:
+                if gap_windows > 0:
+                    self._gap_windows += int(gap_windows)
                     self._gap_count += 1
-                    self._reset_locked("depth_gap_exceeded_execution_freshness")
+                    self._reset_locked("depth_callback_gap")
                     self._pending_left_ns = left_ns
                     self._pending_mid = mid
                     return
@@ -414,13 +748,6 @@ class ReceiveTimeFullMidEmaWindows:
                     mid=self._pending_mid,
                     source_gap=False,
                 )
-                for offset in range(1, int(gap_windows) + 1):
-                    self._emit_locked(
-                        left_ns=pending + offset * BASE_WINDOW_WIDTH_NS,
-                        feature_ready_ts_ns=receive_ns,
-                        mid=None,
-                        source_gap=True,
-                    )
                 self._pending_left_ns = left_ns
                 self._pending_mid = mid
         except Exception as exc:
@@ -510,17 +837,46 @@ class LiveBuyE3CooldownPolicy:
         policy_file_sha256: str,
         predicate_bundle_path: Path,
         predicate_bundle_file_sha256: str,
+        active_release_path: Path | None,
+        active_release_file_sha256: str,
+        active_release_identity: Mapping[str, str] | None,
         warmup_s: float,
         max_feature_age_s: float,
+        _bound_file_identities: Mapping[Path, _FileIdentity] | None = None,
     ) -> None:
         self.evaluator = evaluator
         self.definitions = dict(definitions)
         self.direct_predicates = direct_predicates
-        self._bound_files = {
+        expected_files = {
             artifact_manifest_path: artifact_manifest_sha256,
             policy_path: policy_file_sha256,
             predicate_bundle_path: predicate_bundle_file_sha256,
         }
+        if active_release_path is not None:
+            expected_files[active_release_path] = active_release_file_sha256
+        if _bound_file_identities is None:
+            opened_files: list[_OpenedBoundJson] = []
+            try:
+                for index, (path, expected) in enumerate(expected_files.items()):
+                    opened_files.append(
+                        _open_bound_json(path, expected, f"buy_e3_bound_file_{index}")
+                    )
+                for opened in opened_files:
+                    _revalidate_opened_file(opened)
+                identities = {opened.path: opened.identity for opened in opened_files}
+            finally:
+                _close_opened_files(opened_files)
+        else:
+            identities = dict(_bound_file_identities)
+        if set(identities) != set(expected_files):
+            raise ValueError("buy_e3_bound_file_identity_set_mismatch")
+        self._bound_files = {
+            path: str(expected).lower() for path, expected in expected_files.items()
+        }
+        self._bound_file_identities = identities
+        self._active_release_path = active_release_path
+        self._active_release_file_sha256 = str(active_release_file_sha256).lower()
+        self._active_release_identity = dict(active_release_identity or {})
         self.windows = ReceiveTimeFullMidEmaWindows(
             warmup_s=warmup_s,
             max_feature_age_s=max_feature_age_s,
@@ -547,15 +903,84 @@ class LiveBuyE3CooldownPolicy:
         policy_sha256: str,
         predicate_bundle_path: str | Path,
         predicate_bundle_sha256: str,
+        active_release_path: str | Path | None = None,
+        active_release_file_sha256: str = "",
+        active_release_canonical_sha256: str = "",
         warmup_s: float,
         max_feature_age_s: float,
     ) -> LiveBuyE3CooldownPolicy:
-        manifest_path = Path(artifact_manifest_path).expanduser().resolve()
-        policy_file = Path(policy_path).expanduser().resolve()
-        bundle_file = Path(predicate_bundle_path).expanduser().resolve()
-        manifest = _load_json(manifest_path, artifact_manifest_sha256, "buy_e3_manifest")
-        policy = _load_json(policy_file, policy_sha256, "buy_e3_policy")
-        bundle = _load_json(bundle_file, predicate_bundle_sha256, "buy_e3_bundle")
+        manifest_path = _absolute_without_resolving(artifact_manifest_path)
+        policy_file = _absolute_without_resolving(policy_path)
+        bundle_file = _absolute_without_resolving(predicate_bundle_path)
+        release_file = (
+            _absolute_without_resolving(active_release_path)
+            if active_release_path is not None
+            else None
+        )
+        release_values = (
+            str(active_release_file_sha256).strip(),
+            str(active_release_canonical_sha256).strip(),
+        )
+        if (release_file is None) != (not any(release_values)) or (
+            release_file is not None and not all(release_values)
+        ):
+            raise ValueError("buy_e3_active_release_binding_incomplete")
+        opened_files: list[_OpenedBoundJson] = []
+        try:
+            for path, expected, label in (
+                (manifest_path, artifact_manifest_sha256, "buy_e3_manifest"),
+                (policy_file, policy_sha256, "buy_e3_policy"),
+                (bundle_file, predicate_bundle_sha256, "buy_e3_bundle"),
+            ):
+                opened_files.append(_open_bound_json(path, expected, label))
+            if release_file is not None:
+                opened_files.append(
+                    _open_bound_json(
+                        release_file,
+                        active_release_file_sha256,
+                        "buy_e3_active_release",
+                    )
+                )
+            return cls._from_opened_files(
+                opened_files=opened_files,
+                manifest_path=manifest_path,
+                artifact_manifest_sha256=artifact_manifest_sha256,
+                expected_artifact_sha256=expected_artifact_sha256,
+                policy_file=policy_file,
+                policy_sha256=policy_sha256,
+                bundle_file=bundle_file,
+                predicate_bundle_sha256=predicate_bundle_sha256,
+                active_release_path=release_file,
+                active_release_file_sha256=active_release_file_sha256,
+                active_release_canonical_sha256=active_release_canonical_sha256,
+                warmup_s=warmup_s,
+                max_feature_age_s=max_feature_age_s,
+            )
+        finally:
+            _close_opened_files(opened_files)
+
+    @classmethod
+    def _from_opened_files(
+        cls,
+        *,
+        opened_files: Sequence[_OpenedBoundJson],
+        manifest_path: Path,
+        artifact_manifest_sha256: str,
+        expected_artifact_sha256: str,
+        policy_file: Path,
+        policy_sha256: str,
+        bundle_file: Path,
+        predicate_bundle_sha256: str,
+        active_release_path: Path | None,
+        active_release_file_sha256: str,
+        active_release_canonical_sha256: str,
+        warmup_s: float,
+        max_feature_age_s: float,
+    ) -> LiveBuyE3CooldownPolicy:
+        expected_count = 4 if active_release_path is not None else 3
+        if len(opened_files) != expected_count:
+            raise ValueError("buy_e3_bound_file_count_invalid")
+        manifest, policy, bundle = (opened.payload for opened in opened_files[:3])
         _validate_canonical(policy, "canonical_sha256", "buy_e3_policy")
         _validate_canonical(bundle, "canonical_sha256", "buy_e3_bundle")
         manifest_body = dict(manifest)
@@ -669,6 +1094,18 @@ class LiveBuyE3CooldownPolicy:
             predicate_bundle_sha256=str(predicate_bundle_sha256).lower(),
             artifact_sha256=observed_artifact_sha,
         )
+        active_release_identity: dict[str, str] | None = None
+        if active_release_path is not None:
+            active_release_identity = _validate_active_release(
+                opened_files[3].payload,
+                expected_canonical_sha256=active_release_canonical_sha256,
+                expected_artifact_sha256=observed_artifact_sha,
+                expected_manifest_file_sha256=str(artifact_manifest_sha256).lower(),
+                expected_policy_file_sha256=str(policy_sha256).lower(),
+                expected_predicate_bundle_file_sha256=str(predicate_bundle_sha256).lower(),
+            )
+        for opened in opened_files:
+            _revalidate_opened_file(opened)
         return cls(
             evaluator=evaluator,
             definitions=definitions,
@@ -679,8 +1116,12 @@ class LiveBuyE3CooldownPolicy:
             policy_file_sha256=str(policy_sha256).lower(),
             predicate_bundle_path=bundle_file,
             predicate_bundle_file_sha256=str(predicate_bundle_sha256).lower(),
+            active_release_path=active_release_path,
+            active_release_file_sha256=str(active_release_file_sha256).lower(),
+            active_release_identity=active_release_identity,
             warmup_s=warmup_s,
             max_feature_age_s=max_feature_age_s,
+            _bound_file_identities={opened.path: opened.identity for opened in opened_files},
         )
 
     @property
@@ -691,20 +1132,38 @@ class LiveBuyE3CooldownPolicy:
     def deadline_identity(self) -> str:
         return f"BUY_E3:{self.artifact_sha256}"
 
+    @property
+    def active_release_identity(self) -> dict[str, str]:
+        return {
+            "path": str(self._active_release_path or ""),
+            "file_sha256": self._active_release_file_sha256,
+            **self._active_release_identity,
+        }
+
     def observe_depth(self, **kwargs: Any) -> None:
         self.windows.observe_depth(**kwargs)
 
     def _binding_still_valid(self) -> bool:
+        opened_files: list[_OpenedBoundJson] = []
         try:
-            valid = all(
-                _file_sha256(path) == expected for path, expected in self._bound_files.items()
-            )
-        except OSError as exc:
-            self._binding_error = f"{type(exc).__name__}:{exc}"
-            return False
-        if not valid:
+            for index, (path, expected) in enumerate(self._bound_files.items()):
+                opened = _open_bound_json(
+                    path,
+                    expected,
+                    f"buy_e3_runtime_bound_file_{index}",
+                )
+                opened_files.append(opened)
+                if opened.identity != self._bound_file_identities[path]:
+                    raise ValueError("runtime_artifact_file_identity_drift")
+            for opened in opened_files:
+                _revalidate_opened_file(opened)
+        except (OSError, ValueError):
             self._binding_error = "runtime_artifact_file_hash_drift"
-        return valid
+            return False
+        finally:
+            _close_opened_files(opened_files)
+        self._binding_error = ""
+        return True
 
     def evaluate(
         self,
@@ -718,6 +1177,8 @@ class LiveBuyE3CooldownPolicy:
         decision_started_ns = time.perf_counter_ns()
         del snapshot_id
         baseline = int(baseline_duration_ms)
+        if baseline <= 0:
+            raise ValueError("baseline_duration_ms_must_be_positive")
         reason: str | None = None
         support_valid = False
         matched_rule: int | None = None
@@ -727,10 +1188,6 @@ class LiveBuyE3CooldownPolicy:
         feature_age_ms = math.inf
         if str(side).upper() != "BUY":
             reason = "non_buy_control_by_contract"
-        elif baseline <= 0:
-            baseline = 85_000
-            duration = baseline
-            reason = "baseline_duration_invalid"
         elif not self._binding_still_valid():
             reason = self._binding_error or "runtime_artifact_binding_invalid"
         else:
@@ -801,12 +1258,19 @@ class LiveBuyE3CooldownPolicy:
                 "artifact_sha256": self.evaluator.artifact_sha256,
                 "policy_sha256": self.evaluator.policy_sha256,
                 "predicate_bundle_sha256": self.evaluator.predicate_bundle_sha256,
+                "active_release_file_sha256": self._active_release_file_sha256,
+                "active_release_canonical_sha256": self._active_release_identity.get(
+                    "file_canonical_sha256", ""
+                ),
                 "binding_error": self._binding_error,
             }
         return {**policy, "windows": self.windows.audit()}
 
 
 __all__ = [
+    "ACTIVE_RELEASE_IDENTITY",
+    "ACTIVE_RELEASE_SCHEMA",
+    "ACTIVE_RELEASE_STATUS",
     "BUY_ACTIONS",
     "BUY_FIXED_ACTIONS",
     "BuyE3CooldownDecision",

@@ -443,6 +443,39 @@ def _baseline_duration_ms(row: Mapping[str, Any]) -> int:
     return int(numeric)
 
 
+def _snapshot_feature_row(
+    *,
+    snapshot_index: Any,
+    replay_inputs: pd.DataFrame,
+    panel: Any,
+) -> dict[str, Any]:
+    merged: dict[str, Any] = {}
+    sources = (
+        ("metadata", panel.metadata),
+        ("continuous", panel.continuous_features),
+        ("boolean", panel.boolean_features),
+        ("replay", replay_inputs),
+    )
+    for source_name, frame in sources:
+        for name, value in frame.loc[snapshot_index].items():
+            if name not in merged:
+                merged[name] = value
+                continue
+            prior = merged[name]
+            prior_missing = bool(pd.isna(prior))
+            value_missing = bool(pd.isna(value))
+            if prior_missing or value_missing:
+                equal = prior_missing and value_missing
+            else:
+                equal = bool(prior == value)
+            if not equal:
+                raise OwnerBuyE3ParityError(
+                    f"Development snapshot source collision at {snapshot_index}: "
+                    f"{name} ({source_name})"
+                )
+    return merged
+
+
 def run_development_snapshot_parity(
     artifact: LoadedExactArtifact,
     *,
@@ -470,8 +503,12 @@ def run_development_snapshot_parity(
     sell_count = 0
     unobserved_count = 0
     columns = artifact.policy.predicate_columns
-    for snapshot_index, row_series in replay_inputs.iterrows():
-        row = row_series.to_dict()
+    for snapshot_index in replay_inputs.index:
+        row = _snapshot_feature_row(
+            snapshot_index=snapshot_index,
+            replay_inputs=replay_inputs,
+            panel=panel,
+        )
         side = str(row.get("side", "")).upper()
         metadata_side = str(panel.metadata.at[snapshot_index, "side"]).upper()
         if side != metadata_side or side not in {"BUY", "SELL"}:

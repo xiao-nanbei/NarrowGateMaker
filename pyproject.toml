@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "narrowgate"
-version = "0.1.0"
+version = "0.1.1"
 description = "Maker strategy research framework with tick replay, evidence gates, and optional C++ acceleration."
 readme = "README.md"
 requires-python = ">=3.11"

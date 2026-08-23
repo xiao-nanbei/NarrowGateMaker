@@ -307,6 +307,7 @@ class LogConfig:
     level: str = "INFO"
     file: str = "logs/maker.log"          # relative to project root, resolved by main.py
     console: bool = True
+    fill_cooldown_checkpoint: str = "logs/fill_cooldown_state.json"
     trade_log: str = "logs/trades.csv"    # relative to project root, resolved by main.py
     quote_log: str = "logs/quote_decisions.csv"
     order_outcome_log: str = "logs/order_outcomes.csv"
@@ -837,6 +838,21 @@ def _validate_config(cfg: Config) -> None:
             require_explicit=True,
         )
     )
+    checkpoint_path = str(cfg.logging.fill_cooldown_checkpoint or "").strip()
+    cooldown_stateful = any(
+        (
+            float(cfg.strategy.fill_cooldown) > 0.0,
+            float(cfg.strategy.fill_cooldown_reducing) > 0.0,
+            bool(cfg.strategy.boolean_cooldown_policy_enabled),
+            bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
+        )
+    )
+    if cooldown_stateful and not checkpoint_path:
+        raise ValueError(
+            "stateful fill cooldown requires logging.fill_cooldown_checkpoint"
+        )
+    if "\x00" in checkpoint_path:
+        raise ValueError("logging.fill_cooldown_checkpoint contains a NUL byte")
     lifecycle_v2 = cfg.lifecycle_journal_v2
     if int(lifecycle_v2.queue_size) <= 0:
         raise ValueError("lifecycle_journal_v2.queue_size must be positive")

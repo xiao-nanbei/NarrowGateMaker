@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
+import pytest
+
+from research.governance import public_machine_projection as projection_module
 from research.governance.public_machine_projection import (
     PROJECT_ROOT,
     projection_for,
@@ -95,3 +99,97 @@ def test_f05_denominator_binding_names_f10_private_source_and_public_projection(
     assert binding["public_projection_sha256"] == f10_projection.public_projection_sha256
     assert binding["availability"] == "public_repository"
     assert binding["source_private_availability"] == "private_not_distributed"
+
+
+def test_nonpublished_private_source_may_be_materialized_at_runtime_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_bytes = b'{"private_locator":"owner-only"}\n'
+    projection_bytes = b'{"private_locator":"${NARROWGATE_PRIVATE_ROOT}"}\n'
+    runtime_path = tmp_path / "models/saved_bundle/record.json"
+    runtime_path.parent.mkdir(parents=True)
+    runtime_path.write_bytes(source_bytes)
+    index = (
+        tmp_path
+        / "models/private/nonpublished_machine_document_projections.current.local.json"
+    )
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "narrowgate_nonpublished_machine_document_projections_v1"
+                ),
+                "entries": [
+                    {
+                        "availability": (
+                            "private_working_tree_projection_not_distributed"
+                        ),
+                        "public_path": "models/saved_bundle/record.json",
+                        "public_projection_sha256": hashlib.sha256(
+                            projection_bytes
+                        ).hexdigest(),
+                        "source_private_sha256": hashlib.sha256(source_bytes).hexdigest(),
+                        "unit_id": "research/families/f03_causal_13_head",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(projection_module, "PROJECT_ROOT", tmp_path)
+
+    projection = projection_module.projection_for(runtime_path)
+
+    assert projection is not None
+    assert projection.materialized_identity == "private_source"
+    assert projection.require_private_source() == runtime_path
+    assert projection_module.source_document_path(
+        runtime_path, require_private=True
+    ) == runtime_path
+    assert projection_module.source_identity_sha256(runtime_path) == hashlib.sha256(
+        source_bytes
+    ).hexdigest()
+
+
+def test_nonpublished_runtime_path_still_rejects_unregistered_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime_path = tmp_path / "models/saved_bundle/record.json"
+    runtime_path.parent.mkdir(parents=True)
+    runtime_path.write_bytes(b"tampered\n")
+    index = (
+        tmp_path
+        / "models/private/nonpublished_machine_document_projections.current.local.json"
+    )
+    index.parent.mkdir(parents=True)
+    index.write_text(
+        json.dumps(
+            {
+                "schema_version": (
+                    "narrowgate_nonpublished_machine_document_projections_v1"
+                ),
+                "entries": [
+                    {
+                        "availability": (
+                            "private_working_tree_projection_not_distributed"
+                        ),
+                        "public_path": "models/saved_bundle/record.json",
+                        "public_projection_sha256": "1" * 64,
+                        "source_private_sha256": "2" * 64,
+                        "unit_id": "research/families/f03_causal_13_head",
+                    }
+                ],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(projection_module, "PROJECT_ROOT", tmp_path)
+
+    with pytest.raises(
+        projection_module.PublicMachineProjectionError,
+        match="public projection SHA256 mismatch",
+    ):
+        projection_module.projection_for(runtime_path)

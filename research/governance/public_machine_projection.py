@@ -24,6 +24,7 @@ NONPUBLISHED_PROJECTION_INDEX_PATH = Path(
 )
 PROJECTION_SCHEMA = "narrowgate_public_machine_document_projections_v1"
 NONPUBLISHED_PROJECTION_SCHEMA = "narrowgate_nonpublished_machine_document_projections_v1"
+NONPUBLISHED_AVAILABILITY = "private_working_tree_projection_not_distributed"
 
 
 class PublicMachineProjectionError(RuntimeError):
@@ -47,6 +48,7 @@ class PublicMachineProjection:
     public_projection_sha256: str
     source_private_sha256: str
     private_source_path: Path
+    materialized_identity: str
 
     @property
     def private_source_available(self) -> bool:
@@ -140,20 +142,33 @@ def projection_for(
     if not public_path.is_file():
         raise PublicMachineProjectionError(f"public projection is missing: {public_relative}")
     expected_public = str(entry["public_projection_sha256"])
+    expected_source = str(entry["source_private_sha256"])
     observed_public = sha256_file(public_path)
-    if observed_public != expected_public:
+    is_nonpublished = manifest_path == PROJECT_ROOT / NONPUBLISHED_PROJECTION_INDEX_PATH
+    source_materialized_in_place = (
+        is_nonpublished
+        and entry.get("availability") == NONPUBLISHED_AVAILABILITY
+        and observed_public == expected_source
+    )
+    if observed_public != expected_public and not source_materialized_in_place:
         raise PublicMachineProjectionError(
             f"public projection SHA256 mismatch for {public_relative}: "
             f"expected {expected_public}, observed {observed_public}"
         )
+    private_source_path = (
+        public_path if source_materialized_in_place else _private_source_path(entry)
+    )
     projection = PublicMachineProjection(
         public_path=public_path,
         public_relative_path=public_relative,
         manifest_path=manifest_path,
         unit_id=str(entry["unit_id"]),
         public_projection_sha256=expected_public,
-        source_private_sha256=str(entry["source_private_sha256"]),
-        private_source_path=_private_source_path(entry),
+        source_private_sha256=expected_source,
+        private_source_path=private_source_path,
+        materialized_identity=(
+            "private_source" if source_materialized_in_place else "public_projection"
+        ),
     )
     if verify_private_if_available and projection.private_source_available:
         projection.require_private_source()

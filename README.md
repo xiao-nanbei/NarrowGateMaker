@@ -24,10 +24,10 @@ Current operations: the live host is AWS Tokyo `<current-live-host>` (`<current-
 
 ## Stable Public Release
 
-The supported public software snapshot is the annotated Git tag `v0.1.0`, matching the package version in `pyproject.toml`. Pin that tag when reproducibility matters; `main` may contain newer governed work after the release:
+The supported public software snapshot is the annotated Git tag `v0.1.1`, matching the package version in `pyproject.toml`. Pin that tag when reproducibility matters; `main` may contain newer governed work after the release:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 <repo-url> narrowgate
+git clone --branch v0.1.1 --depth 1 <repo-url> narrowgate
 ```
 
 Research reconstruction and execution-attempt tags are evidence identities, not software releases. A release tag does not include owner-side data, grant research or live authority, or certify the economics of any private artifact. See [Source, Research, and Execution Identities](docs/opensource/identity_and_release.md).

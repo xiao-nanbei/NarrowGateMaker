@@ -123,7 +123,9 @@ def test_live_baseline_expiry_preserves_units_and_state_roundtrips() -> None:
     restored._consec_buy = 0.0
     restored.restore_fill_cooldown_state(payload, now_ms=10_000)
     assert restored._consec_buy == pytest.approx(2.5)
-    assert restored._fill_cooldown_until["BUY"] == pytest.approx(12.0)
+    # The 5s wall-clock deadline expired during downtime; restart must not
+    # grant the process another copy of the previously observed 2s residual.
+    assert restored._fill_cooldown_until["BUY"] == pytest.approx(10.0)
     assert restored._last_fill_side == "BUY"
 
 
@@ -164,5 +166,7 @@ def test_same_buy_e3_artifact_may_restore_its_exact_deadline() -> None:
     restored = _bare_engine(RESET_OPPOSITE_FILL_ONLY)
     restored._buy_e3_cooldown_policy = SimpleNamespace(deadline_identity=identity)
     restored.restore_fill_cooldown_state(payload, now_ms=10_000)
-    assert restored._fill_cooldown_until["BUY"] == pytest.approx(2058.0)
+    # Same-artifact restart preserves the original wall-clock deadline rather
+    # than shifting the entire residual forward by restart downtime.
+    assert restored._fill_cooldown_until["BUY"] == pytest.approx(2049.0)
     assert restored._fill_cooldown_deadline_identity["BUY"] == identity
