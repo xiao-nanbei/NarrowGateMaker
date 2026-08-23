@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
+import data_paths
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as gate_v2,
 )
@@ -35,6 +36,9 @@ from scripts import f05_buy_e3_direct_owner_release as direct_release
 
 OWNER: Final = "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
 ARTIFACT_SHA256: Final = direct_release.EXACT_ARTIFACT_SHA256
+HISTORICAL_ARTIFACT_ROOT: Final = Path(
+    "models/private/f05_boolean_cooldown_owner_buy_e3_v1"
+)
 
 DIRECT_COMMIT: Final = "1be0e062fe2c8ac12a34d5fc2193ca166898105a"
 DIRECT_TREE: Final = "ec54a9fbe5a4e476af4d6e58cc323804f0a2f275"
@@ -51,6 +55,27 @@ SPARSE_WINDOW_FIX_COMMIT: Final = DIRECT_COMMIT
 
 ATTEMPT4_COMMIT: Final = "bba4396a9fdc4dff397795c5501cab5bb78ea9b0"
 ATTEMPT4_TAG: Final = "f05-owner-buy-e3-live-attempt4-20260823"
+ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT: Final = (
+    "8411ae4410779e57620117b923dd38826cd07b1d"
+)
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE: Final = (
+    "be22d58bdc39e882fd3b9dedf694271c2e067511"
+)
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG: Final = (
+    "f05-owner-buy-e3-evidence-completion-v6-20260824"
+)
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT: Final = (
+    "d54145a4ab90293c0d41b67b143d2f89875ee83c"
+)
+ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH: Final = (
+    "scripts/f05_buy_e3_attempt4_stability_successor.py"
+)
+ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB: Final = (
+    "51a6f5b6298af6cef028c11e0cf755214706ebc7"
+)
+ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256: Final = (
+    "b0b16438780da7b3b38c528c4cc7ffd9a13860a91771b507fd06ca2370c4cb57"
+)
 
 V5_SCHEMA: Final = "f05_v5_exact_isolated_verify.v1"
 V5_STATUS: Final = "historical_v5_exact_bytes_recovered"
@@ -1400,18 +1425,261 @@ def finalize_active_process_capture(
     return payload, file_sha
 
 
+def _lexical_root_for_suffix(value: Any, suffix: Path, *, label: str) -> Path:
+    candidate = Path(str(value)).expanduser()
+    if not candidate.is_absolute():
+        raise EvidenceCompletionError(f"{label} is not an absolute lexical path")
+    root = candidate
+    for _part in suffix.parts:
+        root = root.parent
+    if candidate != root / suffix:
+        raise EvidenceCompletionError(f"{label} does not have its frozen repository suffix")
+    return root
+
+
+def _historical_portable_root(
+    manifest_path: Path,
+) -> tuple[dict[str, Any], Path, dict[str, Any]]:
+    manifest, manifest_binding = _binding(
+        manifest_path,
+        label="historical Attempt4 manifest",
+        canonical_field="canonical_execution_attempt_sha256",
+        expected_schema=attempt4_successor.MANIFEST_SCHEMA,
+        expected_status=attempt4_successor.MANIFEST_STATUS,
+    )
+    artifact = manifest.get("artifact")
+    files = artifact.get("files") if isinstance(artifact, Mapping) else None
+    if not isinstance(files, Mapping) or set(files) != {
+        "manifest",
+        "policy",
+        "predicate_bundle",
+    }:
+        raise EvidenceCompletionError("historical Attempt4 artifact paths are missing")
+
+    roots: list[Path] = []
+    artifact_projection: dict[str, dict[str, str]] = {}
+    artifact_names = {
+        "manifest": "artifact_manifest.json",
+        "policy": "policy.json",
+        "predicate_bundle": "predicate_bundle.json",
+    }
+    for role, filename in artifact_names.items():
+        row = files.get(role)
+        if not isinstance(row, Mapping):
+            raise EvidenceCompletionError(f"historical Attempt4 {role} binding is missing")
+        suffix = HISTORICAL_ARTIFACT_ROOT / filename
+        lexical_path = Path(str(row.get("path", ""))).expanduser()
+        roots.append(
+            _lexical_root_for_suffix(
+                lexical_path, suffix, label=f"historical Attempt4 {role} path"
+            )
+        )
+        try:
+            opened = release_io._open_document(  # noqa: SLF001
+                lexical_path, f"historical Attempt4 {role} artifact"
+            )
+        except Exception as exc:
+            raise EvidenceCompletionError(
+                f"historical Attempt4 {role} artifact is not safely readable"
+            ) from exc
+        file_sha = hashlib.sha256(opened.raw).hexdigest()
+        if (
+            row.get("file_sha256") != file_sha
+            or row.get("size_bytes") != len(opened.raw)
+            or row.get("device") != opened.metadata.st_dev
+            or row.get("inode") != opened.metadata.st_ino
+            or opened.path != lexical_path
+        ):
+            raise EvidenceCompletionError(
+                f"historical Attempt4 {role} artifact binding drifted"
+            )
+        artifact_projection[role] = {
+            "path": str(lexical_path),
+            "file_sha256": file_sha,
+        }
+
+    equivalence_ref = manifest.get("interpreter_equivalence")
+    if not isinstance(equivalence_ref, Mapping):
+        raise EvidenceCompletionError(
+            "historical Attempt4 interpreter equivalence binding is missing"
+        )
+    equivalence_path = Path(str(equivalence_ref.get("path", ""))).expanduser()
+    equivalence, equivalence_binding = _binding(
+        equivalence_path,
+        label="historical Attempt4 interpreter equivalence",
+        canonical_field=attempt4_successor.INTERPRETER_CANONICAL_FIELD,
+        expected_schema=attempt4_successor.INTERPRETER_SCHEMA,
+        expected_status=attempt4_successor.INTERPRETER_STATUS,
+    )
+    for key in (
+        "path",
+        "file_sha256",
+        "size_bytes",
+        "mode",
+        "schema_version",
+        "status",
+        "canonical_field",
+        "canonical_sha256",
+    ):
+        if equivalence_ref.get(key) != equivalence_binding.get(key):
+            raise EvidenceCompletionError(
+                "historical Attempt4 interpreter equivalence binding drifted"
+            )
+
+    venv = equivalence.get("venv_identity")
+    if not isinstance(venv, Mapping):
+        raise EvidenceCompletionError("historical Attempt4 venv identity is missing")
+    venv_root = Path(str(venv.get("venv_root", ""))).expanduser()
+    roots.append(
+        _lexical_root_for_suffix(
+            venv_root, Path(".venv"), label="historical Attempt4 venv root"
+        )
+    )
+    expected_python = venv_root / "bin/python"
+    expected_cfg = venv_root / "pyvenv.cfg"
+    creation_command = venv.get("creation_command")
+    if (
+        Path(str(venv.get("pyvenv_cfg_path", ""))).expanduser() != expected_cfg
+        or not isinstance(creation_command, list)
+        or not creation_command
+        or Path(str(creation_command[-1])).expanduser() != venv_root
+    ):
+        raise EvidenceCompletionError("historical Attempt4 venv lexical identity drifted")
+    lexical = equivalence.get("lexical_provenance")
+    if not isinstance(lexical, Mapping):
+        raise EvidenceCompletionError("historical Attempt4 lexical provenance is missing")
+    for role in ("runtime_regression", "durability_regression_supplement"):
+        row = lexical.get(role)
+        probe = row.get("probe") if isinstance(row, Mapping) else None
+        if (
+            not isinstance(row, Mapping)
+            or not isinstance(probe, Mapping)
+            or Path(str(row.get("receipt_python_executable", ""))).expanduser()
+            != expected_python
+            or Path(str(row.get("run_command_argv0", ""))).expanduser()
+            != expected_python
+            or Path(str(probe.get("sys_executable", ""))).expanduser()
+            != expected_python
+            or Path(str(probe.get("sys_prefix", ""))).expanduser() != venv_root
+            or Path(str(probe.get("exec_prefix", ""))).expanduser() != venv_root
+        ):
+            raise EvidenceCompletionError(
+                f"historical Attempt4 {role} lexical provenance drifted"
+            )
+
+    historical_root = roots[0]
+    if any(root != historical_root for root in roots[1:]):
+        raise EvidenceCompletionError(
+            "historical Attempt4 artifact and interpreter roots disagree"
+        )
+    try:
+        resolved_root = historical_root.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise EvidenceCompletionError("historical Attempt4 portable root is missing") from exc
+    if not resolved_root.is_dir():
+        raise EvidenceCompletionError("historical Attempt4 portable root is not a directory")
+    return manifest, resolved_root, {
+        "lexical_path": str(historical_root),
+        "realpath": str(resolved_root),
+        "artifact_files": artifact_projection,
+        "interpreter_equivalence": {
+            "path": equivalence_binding["path"],
+            "file_sha256": equivalence_binding["file_sha256"],
+            "canonical_sha256": equivalence_binding["canonical_sha256"],
+            "venv_root": str(venv_root),
+            "pyvenv_cfg_path": str(expected_cfg),
+            "pyvenv_cfg_file_sha256": _require_sha256(
+                venv.get("pyvenv_cfg_file_sha256"),
+                "historical Attempt4 pyvenv.cfg SHA256",
+            ),
+        },
+        "attempt4_manifest_file_sha256": manifest_binding["file_sha256"],
+        "attempt4_manifest_canonical_sha256": manifest_binding["canonical_sha256"],
+    }
+
+
+def _historical_attempt4_collector_execution(annotated_tag: str) -> dict[str, Any]:
+    if annotated_tag != ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG:
+        raise EvidenceCompletionError(
+            "Attempt4 supplement collector tag is not the frozen v6 identity"
+        )
+    root = attempt4_successor._COLLECTOR_ROOT.resolve(strict=True)  # noqa: SLF001
+    legacy = attempt4_successor.legacy_attempt
+    legacy._require_clean_worktree(root)  # noqa: SLF001
+    observed = legacy._annotated_tag_identity(  # noqa: SLF001
+        root, annotated_tag, require_head=False
+    )
+    expected = {
+        "execution_commit": ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
+        "execution_tree": ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE,
+        "annotated_tag": ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG,
+        "annotated_tag_object": ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT,
+        "tag_peeled_commit": ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
+    }
+    if observed != expected:
+        raise EvidenceCompletionError("Attempt4 supplement collector v6 tag drifted")
+    current_head = legacy._git(root, "rev-parse", "HEAD")  # noqa: SLF001
+    if not legacy._git_is_ancestor(  # noqa: SLF001
+        root, ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT, current_head
+    ):
+        raise EvidenceCompletionError(
+            "Attempt4 supplement collector v6 is not a current collector ancestor"
+        )
+    source = Path(attempt4_successor.__file__).resolve(strict=True)
+    try:
+        relative = source.relative_to(root).as_posix()
+    except ValueError as exc:
+        raise EvidenceCompletionError(
+            "Attempt4 supplement successor source escapes the collector"
+        ) from exc
+    blob = legacy._git(  # noqa: SLF001
+        root,
+        "rev-parse",
+        f"{ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT}:{relative}",
+    )
+    source_sha = _file_sha256(source)
+    if (
+        relative != ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH
+        or blob != ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB
+        or source_sha != ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256
+    ):
+        raise EvidenceCompletionError(
+            "Attempt4 supplement collector v6 successor source drifted"
+        )
+    return {
+        "repository_root": str(root),
+        **expected,
+        "successor_source_path": relative,
+        "successor_source_git_blob": blob,
+        "successor_source_file_sha256": source_sha,
+    }
+
+
 def _validate_attempt4_manifest(
     path: Path, *, repository_root: Path
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     repository = repository_root.expanduser().resolve(strict=True)
+    prevalidated, historical_root, portable_root_binding = _historical_portable_root(path)
+    prior_portable_root = data_paths.ROOT
+    prior_collector_execution = attempt4_successor._collector_execution  # noqa: SLF001
     try:
-        payload = attempt4_successor.validate_manifest(
-            path,
-            repository_root=repository,
-            require_current_checkout=True,
+        data_paths.ROOT = historical_root
+        attempt4_successor._collector_execution = (  # noqa: SLF001
+            _historical_attempt4_collector_execution
         )
+        try:
+            payload = attempt4_successor.validate_manifest(
+                path,
+                repository_root=repository,
+                require_current_checkout=True,
+            )
+        finally:
+            data_paths.ROOT = prior_portable_root
+            attempt4_successor._collector_execution = prior_collector_execution  # noqa: SLF001
     except Exception as exc:
         raise EvidenceCompletionError("historical Attempt4 manifest is invalid") from exc
+    if payload != prevalidated:
+        raise EvidenceCompletionError("historical Attempt4 manifest changed during validation")
     runtime = payload.get("runtime_execution")
     evidence = payload.get("pre_admission_evidence")
     if (
@@ -1447,6 +1715,19 @@ def _validate_attempt4_manifest(
             "resource_or_activation_claimed": False,
             "execution_commit": ATTEMPT4_COMMIT,
             "execution_tag": ATTEMPT4_TAG,
+            "historical_portable_root": portable_root_binding,
+            "historical_supplement_collector": {
+                "execution_commit": ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
+                "execution_tree": ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE,
+                "annotated_tag": ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG,
+                "annotated_tag_object": ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT,
+                "successor_source_path": ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH,
+                "successor_source_git_blob": ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB,
+                "successor_source_file_sha256": (
+                    ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256
+                ),
+                "must_be_current_collector_ancestor": True,
+            },
             "wrapper_canonical_sha256": wrappers,
             "layer2_canonical_sha256": wrappers["parity_layer2"],
             "layer4_canonical_sha256": wrappers["parity_layer4"],

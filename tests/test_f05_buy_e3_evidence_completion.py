@@ -92,6 +92,15 @@ def test_attempt4_anchor_requires_interpreter_equivalence_successor(
         "validate_manifest",
         lambda *args, **kwargs: payload,
     )
+    portable_root = {
+        "lexical_path": str(tmp_path),
+        "realpath": str(tmp_path.resolve()),
+    }
+    monkeypatch.setattr(
+        subject,
+        "_historical_portable_root",
+        lambda _path: (payload, tmp_path.resolve(), portable_root),
+    )
     monkeypatch.setattr(subject, "_binding", lambda *args, **kwargs: (payload, binding))
 
     observed, observed_binding = subject._validate_attempt4_manifest(  # noqa: SLF001
@@ -100,6 +109,7 @@ def test_attempt4_anchor_requires_interpreter_equivalence_successor(
 
     assert observed == payload
     assert observed_binding["interpreter_equivalence_canonical_sha256"] == "f" * 64
+    assert observed_binding["historical_portable_root"] == portable_root
 
 
 def _write(path: Path, payload: dict) -> Path:
@@ -128,6 +138,176 @@ def _binding(path: Path, canonical: str = "a" * 64) -> dict:
         "canonical_field": "canonical_receipt_sha256",
         "canonical_sha256": canonical,
     }
+
+
+def _file_binding(path: Path) -> dict:
+    metadata = path.stat()
+    return {
+        "path": str(path),
+        "file_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "size_bytes": metadata.st_size,
+        "device": metadata.st_dev,
+        "inode": metadata.st_ino,
+    }
+
+
+def _portable_root_fixture(
+    tmp_path: Path, *, interpreter_root: Path | None = None
+) -> tuple[Path, Path, dict[str, Path]]:
+    root = tmp_path / "historical-main"
+    artifact_root = root / subject.HISTORICAL_ARTIFACT_ROOT
+    artifacts = {
+        "manifest": _write(artifact_root / "artifact_manifest.json", {"role": "manifest"}),
+        "policy": _write(artifact_root / "policy.json", {"role": "policy"}),
+        "predicate_bundle": _write(
+            artifact_root / "predicate_bundle.json", {"role": "predicate_bundle"}
+        ),
+    }
+    venv_owner = interpreter_root or root
+    venv_root = venv_owner / ".venv"
+    python = venv_root / "bin/python"
+    equivalence = {
+        "schema_version": subject.attempt4_successor.INTERPRETER_SCHEMA,
+        "status": subject.attempt4_successor.INTERPRETER_STATUS,
+        "venv_identity": {
+            "venv_root": str(venv_root),
+            "pyvenv_cfg_path": str(venv_root / "pyvenv.cfg"),
+            "pyvenv_cfg_file_sha256": "1" * 64,
+            "creation_command": ["python", "-m", "venv", str(venv_root)],
+        },
+        "lexical_provenance": {
+            role: {
+                "receipt_python_executable": str(python),
+                "run_command_argv0": str(python),
+                "probe": {
+                    "sys_executable": str(python),
+                    "sys_prefix": str(venv_root),
+                    "exec_prefix": str(venv_root),
+                },
+            }
+            for role in ("runtime_regression", "durability_regression_supplement")
+        },
+    }
+    equivalence = _self_hash(equivalence, subject.attempt4_successor.INTERPRETER_CANONICAL_FIELD)
+    equivalence_path = _write(tmp_path / "interpreter-equivalence.json", equivalence)
+    _equivalence, equivalence_binding = subject._binding(  # noqa: SLF001
+        equivalence_path,
+        label="fixture equivalence",
+        canonical_field=subject.attempt4_successor.INTERPRETER_CANONICAL_FIELD,
+        expected_schema=subject.attempt4_successor.INTERPRETER_SCHEMA,
+        expected_status=subject.attempt4_successor.INTERPRETER_STATUS,
+    )
+    manifest = {
+        "schema_version": subject.attempt4_successor.MANIFEST_SCHEMA,
+        "status": subject.attempt4_successor.MANIFEST_STATUS,
+        "artifact": {"files": {role: _file_binding(path) for role, path in artifacts.items()}},
+        "interpreter_equivalence": equivalence_binding,
+    }
+    manifest = _self_hash(manifest, "canonical_execution_attempt_sha256")
+    return _write(tmp_path / "attempt4-successor.json", manifest), root, artifacts
+
+
+def test_historical_portable_root_is_jointly_bound(tmp_path: Path) -> None:
+    manifest, root, _artifacts = _portable_root_fixture(tmp_path)
+
+    _payload, observed, binding = subject._historical_portable_root(manifest)  # noqa: SLF001
+
+    assert observed == root.resolve()
+    assert binding["lexical_path"] == str(root)
+    assert binding["realpath"] == str(root.resolve())
+    assert set(binding["artifact_files"]) == {"manifest", "policy", "predicate_bundle"}
+
+
+def test_historical_portable_root_rejects_wrong_interpreter_root(tmp_path: Path) -> None:
+    wrong = tmp_path / "wrong-main"
+    wrong.mkdir()
+    manifest, _root, _artifacts = _portable_root_fixture(
+        tmp_path, interpreter_root=wrong
+    )
+
+    with pytest.raises(subject.EvidenceCompletionError, match="roots disagree"):
+        subject._historical_portable_root(manifest)  # noqa: SLF001
+
+
+def test_historical_portable_root_rejects_moved_or_tampered_artifact(
+    tmp_path: Path,
+) -> None:
+    manifest, root, artifacts = _portable_root_fixture(tmp_path)
+    artifacts["policy"].write_text('{"tampered":true}\n', encoding="ascii")
+    artifacts["policy"].chmod(0o600)
+    with pytest.raises(subject.EvidenceCompletionError, match="artifact binding drifted"):
+        subject._historical_portable_root(manifest)  # noqa: SLF001
+
+    manifest, root, _artifacts = _portable_root_fixture(tmp_path / "moved-case")
+    root.rename(root.with_name("historical-main-moved"))
+    with pytest.raises(subject.EvidenceCompletionError, match="not safely readable"):
+        subject._historical_portable_root(manifest)  # noqa: SLF001
+
+
+def _patch_historical_collector(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    ancestor: bool = True,
+    blob: str | None = None,
+) -> None:
+    source = _write(
+        tmp_path / subject.ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH, {"fixture": True}
+    )
+    legacy = subject.attempt4_successor.legacy_attempt
+    expected = {
+        "execution_commit": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
+        "execution_tree": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE,
+        "annotated_tag": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG,
+        "annotated_tag_object": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT,
+        "tag_peeled_commit": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
+    }
+    monkeypatch.setattr(subject.attempt4_successor, "_COLLECTOR_ROOT", tmp_path)
+    monkeypatch.setattr(subject.attempt4_successor, "__file__", str(source))
+    monkeypatch.setattr(legacy, "_require_clean_worktree", lambda _root: None)
+    monkeypatch.setattr(
+        legacy, "_annotated_tag_identity", lambda *args, **kwargs: expected
+    )
+    monkeypatch.setattr(legacy, "_git_is_ancestor", lambda *args: ancestor)
+    monkeypatch.setattr(
+        legacy,
+        "_git",
+        lambda _root, *args: (
+            "f" * 40
+            if args == ("rev-parse", "HEAD")
+            else blob or subject.ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB
+        ),
+    )
+    monkeypatch.setattr(
+        subject,
+        "_file_sha256",
+        lambda _path: subject.ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256,
+    )
+
+
+def test_historical_supplement_collector_rejects_tampered_tag() -> None:
+    with pytest.raises(subject.EvidenceCompletionError, match="frozen v6 identity"):
+        subject._historical_attempt4_collector_execution("tampered-tag")  # noqa: SLF001
+
+
+def test_historical_supplement_collector_rejects_non_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_historical_collector(tmp_path, monkeypatch, ancestor=False)
+    with pytest.raises(subject.EvidenceCompletionError, match="not a current collector ancestor"):
+        subject._historical_attempt4_collector_execution(  # noqa: SLF001
+            subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG
+        )
+
+
+def test_historical_supplement_collector_rejects_source_blob(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_historical_collector(tmp_path, monkeypatch, blob="0" * 40)
+    with pytest.raises(subject.EvidenceCompletionError, match="successor source drifted"):
+        subject._historical_attempt4_collector_execution(  # noqa: SLF001
+            subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG
+        )
 
 
 def _direct_release_payload() -> dict:
