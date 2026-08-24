@@ -184,6 +184,39 @@ def test_release_loader_does_not_change_buy_e3_decision_ast() -> None:
     ) == lifecycle_supplement._semantic_ast_hashes(parent)  # noqa: SLF001
 
 
+def test_direct_script_bootstraps_repo_root_for_lazy_supplement_import(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    script = repository_root / "scripts/f05_buy_e3_direct_owner_release_v3.py"
+    probe = (
+        "import importlib, runpy, sys; "
+        f"namespace = runpy.run_path({str(script)!r}, run_name='direct_release_v3_probe'); "
+        f"assert {str(repository_root)!r} in sys.path; "
+        "module = importlib.import_module("
+        "'scripts.f05_buy_e3_no_shadow_runtime_fix_supplement'); "
+        "assert callable(module.validate_content_receipt)"
+    )
+    completed = subprocess.run(
+        (sys.executable, "-I", "-c", probe),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+    help_result = subprocess.run(
+        (sys.executable, str(script), "finalize", "--help"),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert help_result.returncode == 0, help_result.stderr
+    assert "--runtime-fix-supplement" in help_result.stdout
+
+
 @pytest.mark.parametrize(
     ("field", "mutation"),
     [

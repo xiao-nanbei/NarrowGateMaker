@@ -16,6 +16,7 @@ import math
 import os
 import stat
 import subprocess
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +24,10 @@ from pathlib import Path
 from typing import Any, Final
 
 import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 try:
     from scripts import f05_buy_e3_active_release as legacy_release
