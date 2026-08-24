@@ -4,7 +4,7 @@ Initial audit date: 2026-07-27
 
 Snapshot date: 2026-08-04
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-25
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -81,17 +81,16 @@ There are 70 maintained Markdown files without a material-modification tag and 3
 
 ## Current operational and research authority
 
-The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointer was last reconciled after the 2026-08-19 host-only cutover.
+The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointer was reconciled on 2026-08-25 to separate current live authority from the immutable replay default.
 
-### Operational baseline v12
+### Operational governance v13 and backtest baseline v12
 
-The current pointer resolves to `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json`. The current identities are:
+The mutable pointer `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json` resolves the public v13 governance identity. v13 has two non-substitutable bindings:
 
-- baseline identity SHA256: `af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967`;
-- pointer SHA256: `fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc`;
-- operational config SHA256: `800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85`.
+- `current_live` resolves the ignored private current-host pointer, stable live-config alias, and owner release/evidence chain. The active release is BUY E3 release-v3 with the SELL owner policy unchanged and every shadow or companion surface disabled. Its admitted post-lifecycle receipt is frozen operational evidence, not latest-liveness, action-occurrence, economic, or replay authority.
+- `backtest_default` retains immutable `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json` and its create-only private config as the control until an exact BUY E3 replay baseline exists. The current live alias is forbidden as a fallback.
 
-The declared baseline keeps causal-v12 feature semantics v6, empirical P3 v2, q90 shadow ON/action OFF, BUY fill-selection shadow/action OFF, the v10 observation retirements, active depth imbalance asymmetry, and the v11 SELL Boolean cooldown policy under its permanent `owner_risk_accepted_promotion` label. v12 changes only the host/epoch binding. Its historical hard gates remain failed; BUY and reducing quotes retain predecessor behavior.
+v13 reconciles locators only and grants no new strategy, research, action, live, or economic permission. v12 remains unchanged historical/backtest control evidence: it keeps causal-v12 feature semantics v6, empirical P3 v2, q90 action OFF, BUY fill-selection action/shadow OFF, active depth imbalance asymmetry, and the SELL Boolean cooldown policy under its permanent `owner_risk_accepted_promotion` label. No v12 economic result is reinterpreted as BUY E3 evidence.
 
 ### F02 P3
 
@@ -125,14 +124,14 @@ Frozen documents may keep literal historical paths. Current imports, CLIs, tests
 
 P0 does not mean “oldest”; it means that a mismatch can misidentify the active system. Review these as one identity surface whenever any member changes:
 
-1. `research/registry.json`, the v12 identity and `operational_baseline_current.json`;
+1. `research/registry.json`, the v13 governance identity, immutable v12 backtest identity and `operational_baseline_current.json`;
 2. `live/config.py`, `live/config.yaml`, `live/main.py`, `live/runtime_policy.py` and deploy preflight;
 3. `strategy/maker_engine.py`, `strategy/signal.py`, `strategy/quote_core.py`, `features/feature_dag.py` and `strategy/model_contract.py`;
 4. `models/backtest_config.py` and `models/backtest_tick.py`;
 5. `README.md`, `README.zh-CN.md`, `project.md` and `research/README.md`;
 6. dual-path and direct full-path promotion contracts.
 
-The v12 pointer and identity are the current operational authority. The queue still marks governance files P0 because a future run must not silently attach new code or policy bytes to an old baseline identity.
+The private current-host pointer plus exact owner release/evidence chain is the current live authority; the public v13 pointer records but does not grant it. Immutable v12 is the backtest default only. The queue still marks governance files P0 because a future run must not silently attach live code or policy bytes to a replay identity, or substitute current live config for the frozen replay control.
 
 ## P1 approval-gated deletion group
 
@@ -149,16 +148,16 @@ Canonical evaluator paths are under `research/families/f09_campaign_action_uplif
 
 ## Shadow-surface rationalization
 
-The current direct-promotion contract no longer treats persistent observation- only shadow as a mandatory strategy stage. Current governance is:
+The direct-promotion contract no longer treats persistent observation-only shadow as a mandatory strategy stage. Current live governance is:
 
 - BUY fill-selection shadow was retired after its negative current-stack point estimate, action suspension and feature/estimand audit;
 - retire the cross-venue fair-center candidate shadow after the action closed;
 - freeze the inventory what-if denominator, then retire its continuous writer;
 - retire continuous depth diagnostics while retaining the promoted active imbalance-asymmetry action;
-- retain q90 shadow only as a bounded exception until fresh recovery, lockstep and transport work close;
-- move external receive-time evidence to the independent bounded recorder before removing its live-process inputs.
+- keep q90 action suspended and conduct any further mechanics work offline unless a separately named collection mechanism receives explicit owner authorization;
+- keep external receive-time evidence source-bound and independent of the current live process.
 
-This is a logic/config/logging retirement plan, not permission to delete `maker_engine.py`, global-flow infrastructure or external-venue adapters.
+The active BUY E3 release-v3 has completed the runtime side of this retirement: no research shadow, companion, external recorder, global-flow observer, or global-reference observer is active. This is an operational state statement, not permission to delete `maker_engine.py`, global-flow infrastructure or external-venue adapters.
 
 ## Storage safety
 
@@ -191,4 +190,4 @@ The refreshed CSV is required to satisfy:
 - current canonical migration paths are used;
 - the CSV contains the current audit Markdown and records its 2026-08-04 material-modification tag.
 
-The queue was generated with repository `.venv/bin/python` (Python 3.12.13). No full test suite was run for this update. The BUY fill-selection action and shadow permissions are OFF in v9; no other strategy parameter or frozen research artifact was changed.
+The queue was generated with repository `.venv/bin/python` (Python 3.12.13). Its row ordering remains the 2026-08-04 snapshot; this documentation reconciliation does not claim that the queue was regenerated. The v13 update changes governance locators only, preserves immutable v12 as the backtest default, and does not reinterpret frozen research evidence.

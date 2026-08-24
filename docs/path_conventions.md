@@ -1,6 +1,6 @@
 # Path Conventions
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-25
 
 Status: Current public path and privacy contract.
 
@@ -27,6 +27,9 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `${NARROWGATE_MODEL_DIR}` | Model bundle directory used for a specific run |
 | `${NARROWGATE_MAIN_MODEL_DIR}` | Main quote-model bundle for a specific run |
 | `${NARROWGATE_QUOTE_EV_MODEL_DIR}` | Quote-EV model bundle for a specific run |
+| `${NARROWGATE_LIVE_REMOTE_POINTER}` | Ignored repository-wide current-host pointer; the sole local resolver for current remote authority |
+| `${NARROWGATE_LIVE_CONFIG}` | Stable ignored alias for the exact current live config; never a replay-default alias |
+| `${NARROWGATE_PRIVATE_CONFIG_ROOT}` | Ignored owner-local directory containing create-only versioned live and replay configs |
 | `${NARROWGATE_REMOTE_ROOT}` | Repository root on the current private live host; resolved from the ignored current-host pointer |
 | `${NARROWGATE_REMOTE_HOME}` | Home directory on a private remote host; resolved locally and never published literally |
 | `<current-live-host>` | Logical name for the current private live host; the public repository does not publish its address |
@@ -34,6 +37,8 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `<current-live-ssh-target>` | Private SSH target resolved from the ignored current-host pointer; never a public endpoint |
 | `<current-live-eip-allocation>` | Logical current public-address allocation identity; never publish the allocation ID |
 | `<current-live-epoch>` | Mutable current-epoch locator in current-facing documents; inside a frozen dated contract it means the epoch current when that contract was frozen and must not be rebound |
+| `<current-live-epoch-start>` | Start of the epoch resolved by the current private pointer; never infer it from a public address or an older report |
+| `<admitted-predecessor-epoch>` | One exact prior runtime epoch with its own private receipt and availability boundary; never a current endpoint |
 | `<retired-live-host>` | Logical name for a retired deployment epoch; it is not a reachable endpoint |
 | `<retired-reactivated-aws-host>` | Logical predecessor AWS host retired at the 2026-08-19 cutover |
 | `<retired-reactivated-aws-instance>` | Logical predecessor AWS instance; historical/control-plane cleanup identity only |
@@ -75,14 +80,17 @@ See [the market-data guide](market_data.md) for source provenance, downloads, no
 
 ## Private Runtime Configs
 
-The tracked `live/config.yaml` is a public template. Private live/replay baselines should use an ignored config file and pass it explicitly:
+The tracked `live/config.yaml` is a public template. Resolve live authority through the ignored pointer and pass the stable live alias explicitly:
 
 ```bash
-export NARROWGATE_LIVE_CONFIG="$NARROWGATE_ROOT/docs/private/live_config.current.local.yaml"
+export NARROWGATE_LIVE_REMOTE_POINTER="<owner-local-current-pointer>"
+export NARROWGATE_LIVE_CONFIG="<owner-local-current-live-config>"
 bash live/run.sh start
 ```
 
-`make deploy` refuses to deploy a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` for private deployment.
+`make deploy` refuses to deploy a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` for private deployment. The current stable live alias resolves only the active owner release. It must never be used as a backtest default merely because an older deployment and replay once shared the same bytes.
+
+The public operational pointer separates `current_live` from `backtest_default`. Current live resolution is `${NARROWGATE_LIVE_REMOTE_POINTER}` followed by `${NARROWGATE_LIVE_CONFIG}`. Backtest resolution uses the immutable v12 control and its create-only versioned config below `${NARROWGATE_PRIVATE_CONFIG_ROOT}` until an exact BUY E3 replay baseline is admitted. Missing or mismatched backtest bytes fail closed; a consumer must not fall back to the current live alias. The public v13 governance identity records this split but does not grant live, research, action, latest-liveness, or economic authority.
 
 ## Documentation Rule
 

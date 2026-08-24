@@ -1,35 +1,36 @@
 # Live Host And Historical Data Access
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-25
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Exact endpoints, instance IDs, owner archives, and private receipts are resolved through the ignored private evidence layer and are not distributed with the public repository.
 
 > Publication note: `${NARROWGATE_*}` values, host placeholders, and deployment-epoch names are logical locators. See the [public/private documentation contract](public_private_documentation_contract.md) and [path conventions](path_conventions.md).
 
-Status: `current_operational_pointer_four_epochs_three_gaps`
+Status: `private_current_pointer_v13_live_v12_backtest_split_fail_closed_history`
 
 ## Current and retired hosts
 
-The current NarrowGate BTCUSDC live authority is AWS Tokyo `<current-live-host>` / `<current-live-instance>`, reached only through `<current-live-ssh-target>`. Its repository root is `${NARROWGATE_REMOTE_ROOT}`, its architecture is `x86_64`, and its current bound epoch is `prospective-1787165949278806684-4bc13c4b0f9d`, which began at `2026-08-19T18:59:09.278806684Z`. Operational scripts must resolve `NARROWGATE_LIVE_REMOTE` or `docs/private/live_remote.current.local.json`; they must never copy an address from a dated report.
+The current NarrowGate BTCUSDC live authority is AWS Tokyo `<current-live-host>` / `<current-live-instance>`, reached only through `<current-live-ssh-target>`. Its repository root is `${NARROWGATE_REMOTE_ROOT}` and its current bound epoch is `<current-live-epoch>`. Operational scripts must resolve `${NARROWGATE_LIVE_REMOTE_POINTER}` or an explicitly supplied `NARROWGATE_LIVE_REMOTE`; they must never copy an address, instance identifier, epoch identifier, or repository path from a public or dated report.
 
-Three deployment predecessors are historical: the original AWS Tokyo host, the intermediate Vultr Tokyo host, and the reactivated AWS Tokyo predecessor `<retired-reactivated-aws-host>` / `<retired-reactivated-aws-instance>`. None may be used for current status, deployment, capture, write, delete, or SSH fallback. Routine historical queries use their verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. The terminated misprovisioned address `<never-authoritative-host>` never had live authority and is not a historical live epoch.
+The owner-active BUY E3 release-v3 is resolved only after the private current-host pointer is validated against the stable live-config alias and private release/evidence chain. Its admitted lifecycle and post-lifecycle receipts establish a frozen operational identity and health observation with all shadow and companion surfaces disabled. They do not establish the process's latest status, prove that a nonbaseline action occurred, prove an economic effect, or authorize a replay baseline. Re-check the live process independently before any remote mutation.
 
-The dated [Vultr migration receipt](../research/system_engineering/docs/vultr_tokyo_live_host_migration_v1_20260811.md), [AWS reactivation receipt](../research/system_engineering/docs/aws_tokyo_live_host_reactivation_v1_20260811.md), and [current AWS host-migration receipt](../research/system_engineering/docs/aws_tokyo_live_host_migration_v2_20260820.md) are immutable event records. A dated document's `<current-live-*>` placeholder means the host that was current at that document's effective time; it must not be dynamically reinterpreted as the host current today.
+Historical authority includes earlier admitted epochs on the current cloud instance plus the original AWS Tokyo host, the intermediate Vultr Tokyo host, and the reactivated AWS Tokyo predecessor `<retired-reactivated-aws-host>` / `<retired-reactivated-aws-instance>`. None may be used for current status, deployment, capture, write, delete, or SSH fallback. Routine historical queries use exact epoch-bound evidence from `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` and fail closed across unadmitted intervals. The dated [Vultr migration receipt](../research/system_engineering/docs/vultr_tokyo_live_host_migration_v1_20260811.md), [AWS reactivation receipt](../research/system_engineering/docs/aws_tokyo_live_host_reactivation_v1_20260811.md), and [AWS host-migration receipt](../research/system_engineering/docs/aws_tokyo_live_host_migration_v2_20260820.md) remain immutable event records. A dated document's `<current-live-*>` placeholder means the deployment current when that document became effective; it must not be dynamically reinterpreted as today's host or epoch.
 
 ## Query routing
 
-| Requested interval | Authoritative source |
+| Requested scope | Authoritative source |
 | --- | --- |
-| `[2026-08-19T18:59:09Z, now)` | Current AWS `<current-live-host>` for live status and current logs |
-| `[2026-08-11T15:48:02Z, 2026-08-19T18:55:39Z)` | Reactivated-AWS predecessor archive on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` |
-| `[2026-08-11T11:47:12.288Z, 2026-08-11T15:17:38Z)` | Intermediate-Vultr retirement archive on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` |
-| Before `2026-08-11T11:43:10Z` | Original-AWS retirement archive on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` |
+| `[<current-live-epoch-start>, now)` | Current AWS `<current-live-host>`, after resolving and revalidating `${NARROWGATE_LIVE_REMOTE_POINTER}` |
+| Earlier admitted epochs on `<current-live-instance>` | Exact epoch-bound private receipts and archives; never the current network endpoint as a substitute |
+| Reactivated-AWS predecessor interval | `<retired-reactivated-aws-archive>` and its private manifest |
+| Intermediate-Vultr predecessor interval | Its verified retirement archive in `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` |
+| Original-AWS predecessor interval | Its verified retirement archive in `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` |
 | Historical receive-time capture | Immutable v1 ledger plus source-bound v2 ledger and admitted tape directories |
 | Frozen research conclusion | The report/spec and exact artifact named by the family registry |
 
-For fill or trade queries, normalize to `[start_utc,end_utc)`, split at every host boundary, read each intersecting source, preserve `source_host` and `epoch_key`, preserve gaps, then filter and union. Only the current partition may use SSH. Rows from a neighboring epoch must never substitute for missing rows inside another host epoch.
+For fill or trade queries, normalize to `[start_utc,end_utc)`, resolve the private chronology, split at every host and runtime-epoch boundary, read each intersecting source, preserve `source_host` and `epoch_key`, preserve gaps, then filter and union. Only the currently resolved partition may use SSH. The same address or cloud instance may have hosted multiple incompatible epochs; rows from a neighboring epoch must never substitute for missing rows inside another epoch.
 
-The three planned maintenance gaps are:
+The following early migration gaps remain historical and must still be preserved:
 
 - `[2026-08-11T11:43:10Z, 2026-08-11T11:47:12.288Z)` between original AWS and Vultr;
 - `[2026-08-11T15:17:38Z, 2026-08-11T15:48:02Z)` between Vultr and reactivated AWS;
@@ -47,7 +48,7 @@ Credentials, process environments, SSH material, and secret-bearing rollback tar
 
 ## Evidence reuse after migration
 
-The current host is a smaller `2 vCPU / 2 GiB` resource class than the reactivated-AWS predecessor. Runtime, config, model, P3, and owner-policy bytes were preserved across the latest cutover, but equal application bytes do not make resource pressure, network transport, kernel scheduling, WebSocket stalls, or REST latency identical.
+Do not infer the current host's resource class from an older public migration receipt. Current hardware and process identity are private-pointer facts that must be revalidated before operational work. Equal application bytes across two epochs do not make resource pressure, network transport, kernel scheduling, WebSocket stalls, or REST latency identical.
 
 Historical market, live, fill, and latency evidence may be reused only with its original provider, host/instance or logical host identity, capture/runtime epoch, profile hash, and availability boundary. Original AWS, Vultr, reactivated AWS, and current AWS are four distinct source strata. Historical latency profiles are sensitivities; current-host transport claims require measurements bound to the current host and current runtime/config epoch.
 
@@ -63,6 +64,6 @@ The frozen F04 transport-source amendment v2 used `<current-live-epoch>` to mean
 
 ## Current operational identity
 
-The current operational identity is [`operational_baseline_identity_20260820_v12`](../research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json), resolved through [`operational_baseline_current.json`](../research/families/f10_live_replay_attribution/docs/operational_baseline_current.json). v12 is a host-only successor to immutable v11: strategy/config/model/policy semantics and owner-risk-accepted permissions did not change. Its locally admitted lifecycle evidence is private and does not grant research or new action authority.
+The mutable [`operational_baseline_current.json`](../research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) resolves the public [`operational_baseline_identity_20260825_v13`](../research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json). v13 is a governance locator, not a source of live authority. Its `current_live` binding summarizes the private owner-active BUY E3 release-v3 with BUY E3 enabled, the SELL owner policy unchanged, and no active shadow or companion. Its `backtest_default` binding separately retains immutable [`operational_baseline_identity_20260820_v12`](../research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json) and the create-only v12 private config until an exact BUY E3 replay baseline exists. The current live alias cannot replace that replay control.
 
-The exact current endpoint, instance, host-key pin, archive locators, current health, and lifecycle admission receipt live only in `docs/private/live_remote.current.local.json` and the private catalogs. Public automation and analysis code must resolve that pointer; public prose is never the remote-control authority.
+The exact current endpoint, instance, epoch, host-key pin, archive locators, current process status, and lifecycle admission receipts live only in `${NARROWGATE_LIVE_REMOTE_POINTER}` and the private catalogs. Public automation and analysis code must resolve that pointer; public prose and v13 never grant remote-control authority. The frozen post-lifecycle capture is explicitly not latest-liveness evidence, and neither v13 nor the live E3 chain grants economic or backtest authority.

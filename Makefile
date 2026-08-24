@@ -114,7 +114,8 @@ DEPLOY_FILES := \
 
 DEPLOY_IDENTITY_FILES := \
 	research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json \
-	research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json
+	research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json \
+	research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json
 
 DEPLOY_FILES += $(DEPLOY_IDENTITY_FILES)
 

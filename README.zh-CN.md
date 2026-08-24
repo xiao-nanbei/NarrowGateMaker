@@ -4,7 +4,7 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-23
+Last materially modified: 2026-08-25
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -20,7 +20,7 @@ NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择�
 
 术语约定：仓库中的 `campaign MAE` 始终指 Maximum Adverse Excursion；预测或模型评估语境中的 `prediction MAE` / `model MAE` 才指 Mean Absolute Error（平均绝对误差）。两者不得混用。
 
-当前运营入口：live 主机是 AWS Tokyo `<current-live-host>`（`<current-live-instance>`）。原 AWS、中间 Vultr 与再激活 AWS 前任均为历史主机，只能查询本地 `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` 校验归档。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。成交查询必须按四个 host epoch 和三个维护缺口分段；当前 AWS 与任一前任的数据不得互相补齐相邻 epoch 的缺口。历史行情、live 和延迟证据仍可用于研究、经验分布/敏感度与 source-aware panel，但必须保留原 host/provider 标签。
+当前运营入口：`<current-live-host>`、`<current-live-instance>` 与 `<current-live-epoch>` 只能通过 Git 忽略的私有 current-host pointer 解析，公开说明绝不是远端控制权威。该 pointer 当前绑定 owner-active BUY E3 release-v3，所有 shadow 与 companion surface 均关闭。已准入的 post-lifecycle receipt 是冻结的运营身份与健康证据，不代表最新 liveness、非 baseline 动作实际发生或经济效果；任何远端变更前仍须重新核验 live process。历史查询必须按照私有 catalog 记录的每个 source-labelled host/epoch 边界和显式证据缺口分段，任何 epoch 的行都不得替代另一 epoch 的缺失行。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。
 
 ## 稳定公开版本
 
@@ -314,7 +314,7 @@ Latency profile 是 host assumption，不是 strategy parameter。Instance type�
 
 Python tick replay 现在具备共享 feature-ready multi-tape scheduler，并默认使用 no-op `MultiMarketPolicy`。在修正 event clock、feature-ready contract 和 empirical-P3 baseline 之前生成的历史 stop-add、fixed-rearm、fixed-cooldown 与 one-tick response 结果，已经从公开 evidence surface 移除。它们不能用于选择参数或声称 action uplift。
 
-当前 strategy evidence 从已知 propensity、campaign-level reward attribution 的冻结 randomized action panel 出发。当前 rolling live 身份是 [operational baseline v12](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json)，由 [operational_baseline_current.json](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 解析。它保留 v11 的 13-head semantics-v6 模型、empirical P3、q90 action-OFF、BUY fill-selection action/shadow-OFF，以及 owner-risk-accepted SELL Boolean cooldown。v12 只是 host-only migration identity，不改变策略、模型、配置、action 或 research permission。
+当前 strategy evidence 从已知 propensity 与 campaign-level reward attribution 的冻结 action panel 出发。可变的 [operational pointer](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 现在解析到公开的 [v13 governance identity](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json)，并把两类权限彻底分开：`current_live` 记录 owner-active BUY E3 release-v3 的私有 pointer/稳定 config 绑定，BUY E3 已启用，SELL owner policy 不变，且没有 active shadow 或 companion；`backtest_default` 则继续使用不可变 [v12](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json) 及其 create-only 私有 config，直到存在 exact BUY E3 replay baseline。当前 live alias 绝不能替换 v12 control。v13 只是 locator reconciliation，不授予 research、action、live、最新 liveness、动作发生或经济权限；live E3 evidence 也不是 backtest evidence。
 
 当前 pooled 50 日回测 denominator 是 [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json)。它严格复刻 live BER 时钟：持有最近一个已完成 canonical 10 秒桶的 `trade_intensity_60s`，并在已完成 1 秒 bar 回调上采样。冻结的 daily-fresh-start 前 40 日结果为 terminal MTM `-144.251748 USDC`、closed-campaign `-147.466348 USDC`、`17,118` fills；新增 10 个 Grade-A 日分别贡献 `-21.314331 USDC`、`-21.064631 USDC` 和 `3,029` fills。合并 50 日结果为 terminal MTM `-165.566079 USDC`（`-3.311322/day`）、closed-campaign `-168.530979 USDC`、`20,147` fills。
 
@@ -503,7 +503,7 @@ python -m research.families.f09_campaign_action_uplift.audit.offline_policy_eval
 
 Offline evaluator 要求完整 decision/action panel，在 out-of-fold 中估计 behavior propensity 和 action-specific outcome，并同时报告 DM/IPS/SNIPS/ doubly-robust value，以及 overlap 和 effective-sample-size gate。只包含已下单或只包含成交的 score table，会被明确拒绝，不能用它替代 baseline 从未尝试的 action。参见 [OPE contract](research/families/f09_campaign_action_uplift/docs/offline_policy_evaluation_20260712.md)。
 
-下一代 strategy boundary 已实现为有界、state-conditioned action layer，而不是另一次 global parameter sweep。固定 quote parameter 仍是 safety envelope；冻结 artifact 只能在 exposure-increasing add surface 上选择 baseline、prevent-over-widen、widen one tick 或 re-center one tick。Python replay 与 live shadow 共享同一 action geometry；不支持的 C++ run 会 fail fast；任何 artifact 未取得 promotion evidence 前都不会在 live 启用。当前 action evidence 记录在：
+下一代 strategy boundary 已实现为有界、state-conditioned action layer，而不是另一次 global parameter sweep。固定 quote parameter 仍是 safety envelope；冻结 artifact 只能在 exposure-increasing add surface 上选择 baseline、prevent-over-widen、widen one tick 或 re-center one tick。Python replay 与受治理 runtime 共享同一 action geometry；不支持的 C++ run 会 fail fast；任何 artifact 未取得 promotion evidence 前都不会在 live 启用。当前 live release 不运行 research shadow 或 companion。当前 action evidence 记录在：
 
 - [side-specific randomized audit](research/families/f09_campaign_action_uplift/docs/side_specific_action_uplift_existing_split_20260718.md)
 - [BUY conditional-widen audit](research/families/f09_campaign_action_uplift/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md)

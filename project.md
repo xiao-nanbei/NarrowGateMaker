@@ -2,7 +2,7 @@
 
 > Avellaneda-Stoikov + LightGBM ML增强 — 面向 Binance BTCUSDC 永续合约的做市算法研究与回测项目
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-25
 
 ---
 
@@ -111,8 +111,9 @@ development 中 BUY `widen_1tick` 的 DR reward uplift 为 `+0.01783 USDC/interv
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json`：v10 的历史前身；在 v8 远端代码上通过配置关闭 BUY fill-selection shadow，并清空其模型路径；
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json`：历史 observability-only live identity，冻结保留；
 - `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json`：启用 owner-risk-accepted SELL Boolean cooldown 的冻结历史身份；
-- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json`：当前滚动 live identity；它只把 v11 的相同 runtime/config/model/policy 字节迁移到新 AWS host epoch，不改变策略语义或研究权限；
-- `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json`：指向当前不可变 live identity 和当前默认 replay control 的可变机器入口；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json`：不可变历史身份，也是当前 backtest default；它使用 create-only 的 v12 私有 config，绝不能由 current live alias 替代；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json`：当前公开 governance locator；`current_live` 只总结私有 pointer、稳定 live-config alias 与 owner-active BUY E3 release-v3 的绑定，`backtest_default` 则指向不可变 v12。它本身不授予 live、research、action、latest-liveness、动作发生或经济权限；
+- `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json`：解析 v13 live/backtest split 的可变机器入口；实际 live 权威仍是私有 current-host pointer 与精确 owner release/evidence chain；
 - `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`：当前 pooled 50 日回测 denominator。immutable 前 40 日为 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC`、`17,118` fills；新增 10 日为 `-21.314331 USDC`、`-21.064631 USDC`、`3,029` fills；合并 50 日为 `-165.566079 USDC`、`-168.530979 USDC`、`20,147` fills。当前实现只消费 native-derived top-20/100ms BBO/L2，没有 raw snapshot/delta queue tape、经验 REST 延迟或 AWS receive/feature-ready 可见延迟，因此只承担同模拟器 diagnostic control，不授权订单路径 action，也不冒充连续 live PnL。严格 successor 已完成全部 50 日 source preflight，并在 `2026-06-29` 一日消费 5,086,247 条 native events、完成 19,460 次零 missing queue lookup 和 14,825 次 visibility-delay application；严格 50 日 panel 尚未运行；
 - `research/system_engineering/docs/time_unit_contract_repair_20260726.md`：causal-v7、13-head ML-OFF、empirical-P3-on 历史回滚契约；实际远端仍须以 preflight、`run.sh status` 和启动 hash 核验；
 - `research/system_engineering/docs/replay_time_unit_causality_repair_20260715.md`：量纲与时间因果修复；
@@ -595,7 +596,7 @@ Binance individual `trades` 只能恢复公开逐笔撮合和 aggressor flow，�
 
 ### 6.1 LightGBM 模型（最多 13 个 head）
 
-代码支持 9 个基础 head（dir/ret/vol × 10s/30s/60s）和 4 个可选 toxicity head（bid/ask × 5s/10s）。运行时只加载模型 metadata 中实际声明的 head；公开模板 `ml.enabled=false`；私有 v10 operational baseline 则运行 causal-v12 semantics-v6、13-head ML-ON。causal-v12 在 2025 source-aware 训练与 2026 native transport 中保留部分排序和经济支持，但 research prediction/live authority 仍为 false；owner operational baseline 身份不能倒推成独立 prediction gate 通过。修复前 bundle 的树数、AUC/IC 和策略用途表已经删除，任何预测指标本身都不构成 action uplift。
+代码支持 9 个基础 head（dir/ret/vol × 10s/30s/60s）和 4 个可选 toxicity head（bid/ask × 5s/10s）。运行时只加载模型 metadata 中实际声明的 head；公开模板 `ml.enabled=false`；当前 owner live release 与不可变 v12 backtest default 都绑定 causal-v12 semantics-v6、13-head ML-ON，但使用不同的 config authority。causal-v12 在 2025 source-aware 训练与 2026 native transport 中保留部分排序和经济支持，但 research prediction/live authority 仍为 false；owner operational baseline 身份不能倒推成独立 prediction gate 通过。修复前 bundle 的树数、AUC/IC 和策略用途表已经删除，任何预测指标本身都不构成 action uplift。
 
 ### 6.2 Ret 模型在策略中的利用
 
@@ -603,7 +604,7 @@ Binance individual `trades` 只能恢复公开逐笔撮合和 aggressor flow，�
 
 ### 6.3 Empirical P3 成交校准
 
-旧 SU-Johnson 参数与固定 delta/kappa 数值已删除，不再进入 feature、live 或 replay 真源。当前 10 秒 P3 由 bundle 内显式 empirical-survival artifact 提供；当前 v12 继续绑定与 v10/v11 相同的 causal-v12 artifact，其中记录 `delta_star=13.9990859817 USDC/BTC` 与 `effective_kappa=0.0673564264`。它们绑定 horizon、fill definition、数据和 artifact hash，不是可脱离校准身份单独搜索的固定策略参数。
+旧 SU-Johnson 参数与固定 delta/kappa 数值已删除，不再进入 feature、live 或 replay 真源。当前 10 秒 P3 由 bundle 内显式 empirical-survival artifact 提供；owner live release 与不可变 v12 backtest default 都继续绑定相同的 causal-v12 artifact，其中记录 `delta_star=13.9990859817 USDC/BTC` 与 `effective_kappa=0.0673564264`。它们绑定 horizon、fill definition、数据和 artifact hash，不是可脱离校准身份单独搜索的固定策略参数；共享 P3 字节也不允许跨越 live/backtest config authority。
 
 ### 6.4 历史 Transformer 研究（入口已删除）
 
@@ -1046,9 +1047,15 @@ Python/C++ formal replay 已恢复代表日精确 parity：ML ON/OFF 的 2026-04
 
 ### 2026-08-02 至 2026-08-09 causal-v12 operational baseline promotion
 
-用户先明确接受低成本 live 验证，并在随后将 `causal_v12_expanded_source_aware_semantics_v6` 正式指定为 operational 和 backtest baseline。当前运行使用 Python 3.12.13、v6 Feature DAG 与未改变的 empirical P3；queue、latency、size、inventory limit 和 hard safety gates 保持不变。最初晋级只修改身份；随后 v5 安全处置关闭 q90 action、保留 shadow。v6 暂停 BUY fill-selection action；v7 将 scorer/shadow 与 action 权限拆开；v8 修复 depth/mid 原子性与执行时钟合同；v9 退役无 operational evidence 的 BUY fill-selection shadow；v10 停止已关闭候选的持续 shadow 写入；v11 以 owner-risk-accepted 路径启用 SELL Boolean cooldown；v12 只迁移 host/epoch，不改变 v11 策略语义。处置均通过可回滚变更和受控重启生效。
+用户先明确接受低成本 live 验证，并在随后将 `causal_v12_expanded_source_aware_semantics_v6` 正式指定为 operational 和 backtest baseline。该段记录截至 v12 的历史 promotion lineage：当时运行使用 Python 3.12.13、v6 Feature DAG 与未改变的 empirical P3；queue、latency、size、inventory limit 和 hard safety gates 保持不变。最初晋级只修改身份；随后 v5 安全处置关闭 q90 action、保留 shadow。v6 暂停 BUY fill-selection action；v7 将 scorer/shadow 与 action 权限拆开；v8 修复 depth/mid 原子性与执行时钟合同；v9 退役无 operational evidence 的 BUY fill-selection shadow；v10 停止已关闭候选的持续 shadow 写入；v11 以 owner-risk-accepted 路径启用 SELL Boolean cooldown；v12 只迁移 host/epoch，不改变 v11 策略语义。处置均通过可回滚变更和受控重启生效。
 
-owner-amended v2 以 80%-120% fill band、closed-campaign primary outcome 和 loss/fill selectivity 重新登记 operational 判断：27 日中 19 日 PnL 改善，closed-campaign uplift 为 `+1.1050 USDC/day`，95% 区间 `[+0.4801,+1.7306]`，loss/fill ratio 为 `2.925`。但这些 panel 已经读过，且 campaign q10 区间仍跨零；因此 `ranking_score` 仍为 null，research prediction/live authority 仍为 false。当前 live identity 由 `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json` 解析到 v12；当前 pooled 回测 denominator 见 `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`。它严格使用 live-held BER 时钟；immutable 前 40 日得到 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC` 和 `17,118` fills，合并 50 日得到 `-165.566079 USDC`、`-168.530979 USDC` 和 `20,147` fills。该实现仍是无 raw snapshot/delta tape、无经验 REST/receive-time 延迟的 native-derived diagnostic，strict-native latency successor 完成前不能授权订单路径 action。该 successor 已在 `2026-06-29` 通过一日 raw queue + latency mechanics，但尚无严格 50 日聚合经济结果。旧部署身份只承担不可变 provenance 与回滚，不再承担新实验的默认比较臂。
+owner-amended v2 以 80%-120% fill band、closed-campaign primary outcome 和 loss/fill selectivity 重新登记历史 operational 判断：27 日中 19 日 PnL 改善，closed-campaign uplift 为 `+1.1050 USDC/day`，95% 区间 `[+0.4801,+1.7306]`，loss/fill ratio 为 `2.925`。但这些 panel 已经读过，且 campaign q10 区间仍跨零；因此 `ranking_score` 仍为 null，research prediction/live authority 仍为 false。当前 pooled 回测 denominator 见 `research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json`。它严格使用 live-held BER 时钟；immutable 前 40 日得到 terminal MTM `-144.251748 USDC`、closed-campaign value `-147.466348 USDC` 和 `17,118` fills，合并 50 日得到 `-165.566079 USDC`、`-168.530979 USDC` 和 `20,147` fills。该实现仍是无 raw snapshot/delta tape、无经验 REST/receive-time 延迟的 native-derived diagnostic，strict-native latency successor 完成前不能授权订单路径 action。该 successor 已在 `2026-06-29` 通过一日 raw queue + latency mechanics，但尚无严格 50 日聚合经济结果。不可变 v12 保留这些 backtest 语义；它不再代表当前 live config，也不是 BUY E3 经济证据。
+
+### 2026-08-25 BUY E3 live / v12 backtest authority split
+
+`operational_baseline_current.json` 现在解析到 v13 governance identity。`current_live` 经私有 current-host pointer 与稳定 live-config alias 绑定 owner-active BUY E3 release-v3：BUY E3 开启，SELL owner policy、BUY E1/E2 与 reducing 语义不变，所有 shadow/companion surface 均关闭。已准入的 post-lifecycle receipt 只证明冻结时点的运营身份与健康，不是最新 liveness、非 baseline 动作发生或经济效果。实际 live 权威仍来自私有 pointer 和精确 owner release/evidence chain。
+
+`backtest_default` 继续使用不可变 v12 及其 create-only 私有 config，直到 exact BUY E3 replay baseline 被单独准入。回测 consumer 缺少或校验失败时必须 fail closed，绝不能退回 current live alias。v13 仅修复 locator/governance 歧义，不新增 research、action、live 或经济权限，也不把既有 v12 结果重新解释为 E3 evidence。
 
 ### 2026-08-02 continuous-path action scorecard v2
 
