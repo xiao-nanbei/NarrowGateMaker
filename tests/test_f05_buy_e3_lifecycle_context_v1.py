@@ -347,6 +347,31 @@ def test_runtime_checkout_rejects_wrong_head_or_tag_contract(
         subject.validate_runtime_source_checkout(exact_runtime_root)
 
 
+@pytest.mark.parametrize("mutation", ("head", "status"))
+def test_runtime_checkout_rejects_identity_or_cleanliness_drift_after_source_reads(
+    monkeypatch: pytest.MonkeyPatch,
+    exact_runtime_root: Path,
+    mutation: str,
+) -> None:
+    real_git = subject._git  # noqa: SLF001
+    calls = 0
+
+    def drift_after_first_check(repository: Path, *args: str) -> bytes:
+        nonlocal calls
+        if (mutation == "head" and args == ("rev-parse", "HEAD")) or (
+            mutation == "status" and args == ("status", "--porcelain=v1", "--untracked-files=all")
+        ):
+            calls += 1
+            if calls == 2:
+                return b"0" * 40 + b"\n" if mutation == "head" else b"?? late-drift\n"
+        return real_git(repository, *args)
+
+    monkeypatch.setattr(subject, "_git", drift_after_first_check)
+    with pytest.raises(subject.LifecycleContextError, match="clean exact"):
+        subject.validate_runtime_source_checkout(exact_runtime_root)
+    assert calls == 2
+
+
 @pytest.mark.parametrize(
     ("mutation", "message"),
     (

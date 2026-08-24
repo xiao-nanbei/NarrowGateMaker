@@ -408,6 +408,41 @@ def _regular_file_bytes(path: Path, label: str) -> bytes:
         os.close(descriptor)
 
 
+def _runtime_checkout_identity(repository: Path) -> tuple[str, str, str, str, bytes]:
+    return (
+        _git(repository, "rev-parse", "HEAD").decode().strip(),
+        _git(repository, "rev-parse", "HEAD^{tree}").decode().strip(),
+        _git(
+            repository,
+            "rev-parse",
+            f"{active_capture_v8.DIRECT_SUCCESSOR_ANNOTATED_TAG}^{{tag}}",
+        )
+        .decode()
+        .strip(),
+        _git(
+            repository,
+            "rev-parse",
+            f"{active_capture_v8.DIRECT_SUCCESSOR_ANNOTATED_TAG}^{{}}",
+        )
+        .decode()
+        .strip(),
+        _git(repository, "status", "--porcelain=v1", "--untracked-files=all"),
+    )
+
+
+def _require_exact_runtime_checkout_identity(repository: Path) -> tuple[str, str, str, str, bytes]:
+    identity = _runtime_checkout_identity(repository)
+    if identity != (
+        EXECUTION_COMMIT,
+        EXECUTION_TREE,
+        active_capture_v8.DIRECT_SUCCESSOR_TAG_OBJECT,
+        EXECUTION_COMMIT,
+        b"",
+    ):
+        raise LifecycleContextError("runtime checkout is not clean exact eacb/tag")
+    return identity
+
+
 def validate_runtime_source_checkout(repository_root: Path) -> dict[str, str]:
     lexical_repository = repository_root.expanduser().absolute()
     current = Path(lexical_repository.anchor)
@@ -422,35 +457,7 @@ def validate_runtime_source_checkout(repository_root: Path) -> dict[str, str]:
     if not stat.S_ISDIR(os.lstat(lexical_repository).st_mode):
         raise LifecycleContextError("runtime checkout is not a directory")
     repository = lexical_repository.resolve(strict=True)
-    observed_head = _git(repository, "rev-parse", "HEAD").decode().strip()
-    observed_tree = _git(repository, "rev-parse", "HEAD^{tree}").decode().strip()
-    observed_tag = (
-        _git(
-            repository,
-            "rev-parse",
-            f"{active_capture_v8.DIRECT_SUCCESSOR_ANNOTATED_TAG}^{{tag}}",
-        )
-        .decode()
-        .strip()
-    )
-    observed_peel = (
-        _git(
-            repository,
-            "rev-parse",
-            f"{active_capture_v8.DIRECT_SUCCESSOR_ANNOTATED_TAG}^{{}}",
-        )
-        .decode()
-        .strip()
-    )
-    status = _git(repository, "status", "--porcelain=v1", "--untracked-files=all")
-    if (
-        observed_head != EXECUTION_COMMIT
-        or observed_tree != EXECUTION_TREE
-        or observed_tag != active_capture_v8.DIRECT_SUCCESSOR_TAG_OBJECT
-        or observed_peel != EXECUTION_COMMIT
-        or status
-    ):
-        raise LifecycleContextError("runtime checkout is not clean exact eacb/tag")
+    initial_identity = _require_exact_runtime_checkout_identity(repository)
     observed: dict[str, str] = {}
     for relative, expected_sha in EXPECTED_RUNTIME_SOURCE_SHA256.items():
         pure = PurePosixPath(relative)
@@ -490,6 +497,9 @@ def validate_runtime_source_checkout(repository_root: Path) -> dict[str, str]:
         != RUNTIME_CODE_SHA256
     ):
         raise LifecycleContextError("runtime source exact65 aggregate drifted")
+    final_identity = _require_exact_runtime_checkout_identity(repository)
+    if final_identity != initial_identity:
+        raise LifecycleContextError("runtime checkout changed while sources were read")
     return observed
 
 
