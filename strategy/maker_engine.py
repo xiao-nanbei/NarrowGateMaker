@@ -3065,6 +3065,8 @@ class MakerEngine:
             "execution_tree": "",
             "annotated_operational_tag": "",
             "annotated_operational_tag_object": "",
+            "active_config_file_sha256": "",
+            "disabled_config_file_sha256": "",
         }
 
     def shadow_runtime_snapshot(self) -> dict[str, Any]:

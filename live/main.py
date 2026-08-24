@@ -40,7 +40,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from live.config import install_reload_handler, load_config, set_engine_ref
+from live.config import (
+    install_reload_handler,
+    load_config,
+    revalidate_loaded_config_source,
+    set_engine_ref,
+)
 from live.runtime_policy import (
     f05_boolean_cooldown_runtime_policy,
     f05_buy_e3_active_release_runtime_authority,
@@ -214,7 +219,7 @@ def run_formal_dry_run(
     )
     return exit_code
 
-STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v4"
+STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v5"
 RUNNING_CHECKOUT_SCHEMA = "narrowgate_running_checkout_identity.v2"
 INTERPRETER_IDENTITY_SCHEMA = "narrowgate_interpreter_identity.v1"
 NATIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_native_runtime_identity.v1"
@@ -227,6 +232,7 @@ STARTUP_ATTESTATION_GATE_NAMES = (
     "fill_cooldown_artifact_contract_valid",
     "buy_e3_active_release_contract_valid",
     "buy_e3_active_release_matches_checkout",
+    "buy_e3_active_release_matches_running_config",
     "shadow_config_explicit",
     "global_flow_shadow_backend_contract_valid",
     "global_reference_shadow_state_contract_valid",
@@ -259,6 +265,10 @@ KEY_LOADED_RUNTIME_MODULES = {
     "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
     "signal_engine": ("strategy.signal", "strategy/signal.py"),
     "global_flow": ("strategy.global_flow", "strategy/global_flow.py"),
+    "global_reference": (
+        "strategy.global_reference",
+        "strategy/global_reference.py",
+    ),
     "boolean_cooldown_live": (
         "strategy.boolean_cooldown_live",
         "strategy/boolean_cooldown_live.py",
@@ -388,7 +398,12 @@ def _empty_startup_attestation() -> dict:
     }
 
 
-def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> dict:
+def build_startup_attestation(
+    *,
+    engine: MakerEngine,
+    native_runtime: dict,
+    running_config_sha256: str,
+) -> dict:
     """Bind the checkout and restored cooldown state before live loops start."""
 
     git_toplevel = Path(
@@ -485,6 +500,8 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
             "execution_tree",
             "annotated_operational_tag",
             "annotated_operational_tag_object",
+            "active_config_file_sha256",
+            "disabled_config_file_sha256",
         )
     )
     release_contract_valid = (
@@ -498,10 +515,13 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         if release_required
         else True
     )
-    flow_enabled = bool(shadow_runtime.get("global_flow_shadow_enabled", False))
-    reference_enabled = bool(
-        shadow_runtime.get("global_reference_shadow_enabled", False)
+    release_matches_running_config = (
+        active_release.get("active_config_file_sha256") == running_config_sha256
+        if release_required
+        else True
     )
+    flow_enabled = shadow_runtime.get("global_flow_shadow_enabled")
+    reference_enabled = shadow_runtime.get("global_reference_shadow_enabled")
     flow_backend = shadow_runtime.get("global_flow_backend", {})
     flow_zero_fields = (
         "native",
@@ -521,21 +541,23 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         for name in flow_zero_fields
     )
     shadow_config_explicit = bool(
-        shadow_runtime.get("global_flow_shadow_config_explicit", False)
-        and shadow_runtime.get("global_reference_shadow_config_explicit", False)
+        shadow_runtime.get("global_flow_shadow_config_explicit") is True
+        and shadow_runtime.get("global_reference_shadow_config_explicit") is True
     )
     global_flow_contract_valid = bool(
-        flow_enabled
-        or (
-            flow_backend_zero
-            and not shadow_runtime.get("global_flow_native_effective", False)
-            and shadow_runtime.get("state_restore_contract")
-            == "shadow_state_never_restored"
-        )
+        flow_enabled is False
+        and flow_backend_zero
+        and shadow_runtime.get("global_flow_native_effective") is False
+        and shadow_runtime.get("state_restore_contract")
+        == "shadow_state_never_restored"
+    )
+    basis_sample_count = shadow_runtime.get(
+        "global_reference_bridge_basis_sample_count"
     )
     global_reference_contract_valid = bool(
-        reference_enabled
-        or shadow_runtime.get("global_reference_bridge_basis_sample_count") == 0
+        reference_enabled is False
+        and type(basis_sample_count) is int
+        and basis_sample_count == 0
     )
     admitted_restore_modes = {
         "fresh_b0_no_checkpoint",
@@ -620,6 +642,9 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         ),
         "buy_e3_active_release_contract_valid": release_contract_valid,
         "buy_e3_active_release_matches_checkout": release_matches_checkout,
+        "buy_e3_active_release_matches_running_config": (
+            release_matches_running_config
+        ),
         "shadow_config_explicit": shadow_config_explicit,
         "global_flow_shadow_backend_contract_valid": global_flow_contract_valid,
         "global_reference_shadow_state_contract_valid": (
@@ -1002,6 +1027,17 @@ def record_startup_runtime_identity(
         if str(cfg.logging.file).strip()
         else ROOT / "logs" / "runtime_identity.json"
     )
+    has_loaded_source_identity = bool(
+        getattr(cfg, "_source_file_path", None)
+        or getattr(cfg, "_source_file_sha256", None)
+        or getattr(cfg, "_source_file_identity", None)
+    )
+    if has_loaded_source_identity:
+        config_sha256 = revalidate_loaded_config_source(cfg, resolved_config)
+    elif engine is not None:
+        raise RuntimeError("live engine config lacks its loaded source identity")
+    else:
+        config_sha256 = hashlib.sha256(resolved_config.read_bytes()).hexdigest()
     identity = {
         "schema_version": "narrowgate_live_runtime_identity.v1",
         "recorded_at_utc": datetime.now(UTC).isoformat(),
@@ -1009,7 +1045,7 @@ def record_startup_runtime_identity(
         "python_executable": sys.executable,
         "python_version": ".".join(map(str, sys.version_info[:3])),
         "config_path": str(resolved_config),
-        "config_sha256": hashlib.sha256(resolved_config.read_bytes()).hexdigest(),
+        "config_sha256": config_sha256,
         "dry_run": bool(dry_run),
         "testnet": bool(cfg.api.testnet),
         "ml_enabled": bool(cfg.ml.enabled),
@@ -1082,8 +1118,11 @@ def record_startup_runtime_identity(
         attestation = build_startup_attestation(
             engine=engine,
             native_runtime=native_runtime,
+            running_config_sha256=config_sha256,
         )
         identity["startup_attestation"] = attestation
+    if has_loaded_source_identity:
+        revalidate_loaded_config_source(cfg, resolved_config)
     write_runtime_identity(identity_path, identity)
     if engine is not None and identity["startup_attestation"]["status"] != "accepted":
         raise RuntimeError(

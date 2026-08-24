@@ -3,10 +3,12 @@ Configuration loader — 读取 config.yaml 并暴露为 Python 对象。
 支持 SIGHUP 热重载。
 """
 
+import hashlib
 import logging
 import math
 import os
 import signal
+import stat
 import threading
 from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
@@ -1258,13 +1260,64 @@ def _validate_config(cfg: Config) -> None:
                     raise ValueError("external venue okx:spot requires contract_multiplier=1.0")
 
 
+def _stable_config_bytes(path: Path) -> tuple[bytes, tuple[int, int, int, int]]:
+    """Read one regular config while binding its exact filesystem identity."""
+    candidate = path.expanduser().resolve(strict=True)
+    with candidate.open("rb") as handle:
+        before = os.fstat(handle.fileno())
+        if not stat.S_ISREG(before.st_mode):
+            raise ValueError("config source must be a regular file")
+        raw = handle.read()
+        after = os.fstat(handle.fileno())
+    lexical_after = candidate.stat()
+    before_identity = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+    after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
+    path_identity = (
+        lexical_after.st_dev,
+        lexical_after.st_ino,
+        lexical_after.st_size,
+        lexical_after.st_mtime_ns,
+    )
+    if before_identity != after_identity or before_identity != path_identity:
+        raise ValueError("config source changed during stable read")
+    if len(raw) != before.st_size:
+        raise ValueError("config source size changed during stable read")
+    return raw, before_identity
+
+
+def revalidate_loaded_config_source(cfg: Config, path: Path) -> str:
+    """Prove that ``cfg`` still names the exact bytes parsed at load time."""
+    resolved = path.expanduser().resolve(strict=True)
+    expected_path = getattr(cfg, "_source_file_path", None)
+    expected_sha256 = getattr(cfg, "_source_file_sha256", None)
+    expected_identity = getattr(cfg, "_source_file_identity", None)
+    if (
+        expected_path != str(resolved)
+        or not isinstance(expected_sha256, str)
+        or len(expected_sha256) != 64
+        or not isinstance(expected_identity, tuple)
+        or len(expected_identity) != 4
+    ):
+        raise ValueError("loaded config source identity is unavailable")
+    raw, observed_identity = _stable_config_bytes(resolved)
+    if observed_identity != expected_identity:
+        raise ValueError("loaded config source file identity drifted")
+    observed_sha256 = hashlib.sha256(raw).hexdigest()
+    if observed_sha256 != expected_sha256:
+        raise ValueError("loaded config source SHA256 drifted")
+    return expected_sha256
+
+
 def _load_config_candidate(path: Path) -> Config:
     """Parse and validate one config without changing the active config."""
-    p = path.expanduser().resolve()
-    with open(p, "r") as f:
-        raw = yaml.safe_load(f) or {}
+    p = path.expanduser().resolve(strict=True)
+    source, source_identity = _stable_config_bytes(p)
+    raw = yaml.safe_load(source.decode("utf-8")) or {}
 
     cfg = _parse(raw)
+    cfg._source_file_path = str(p)
+    cfg._source_file_sha256 = hashlib.sha256(source).hexdigest()
+    cfg._source_file_identity = source_identity
 
     # Allow env-var override for secrets (never commit keys)
     if os.environ.get("BINANCE_API_KEY"):
@@ -1341,6 +1394,7 @@ def reload_config(*_args):
                 vars(cfg.strategy),
             )
             require_multi_market_shadow_restart(previous_cfg, cfg)
+        revalidate_loaded_config_source(cfg, active_path)
         if _engine_ref is not None:
             _engine_ref.on_config_reload(cfg)
         with _lock:

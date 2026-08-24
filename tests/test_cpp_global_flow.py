@@ -218,7 +218,10 @@ def test_signal_engine_native_flow_consumes_one_compact_frame(monkeypatch):
     from strategy.signal import SignalEngine
 
     signal = SignalEngine(
-        enable_ml=False, symbol="BTCUSDC", reference_symbol="BTCUSDT"
+        enable_ml=False,
+        symbol="BTCUSDC",
+        reference_symbol="BTCUSDT",
+        global_flow_shadow_enabled=True,
     )
     ts_ms = np.asarray(
         [1_800_000_000_800, 1_800_000_000_900, 1_800_000_001_100],

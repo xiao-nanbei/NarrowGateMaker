@@ -65,6 +65,35 @@ def test_config_loader_records_explicit_false(tmp_path: Path) -> None:
     assert cfg.multi_market.global_reference_shadow_enabled is False
     assert cfg.multi_market._global_flow_shadow_enabled_explicit is True
     assert cfg.multi_market._global_reference_shadow_enabled_explicit is True
+    assert cfg._source_file_path == str(path.resolve())
+    assert cfg._source_file_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert live_config.revalidate_loaded_config_source(cfg, path) == (
+        cfg._source_file_sha256
+    )
+
+
+def test_loaded_config_source_revalidation_rejects_post_load_replacement(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "multi_market:\n"
+        "  global_flow_shadow_enabled: false\n"
+        "  global_reference_shadow_enabled: false\n",
+        encoding="ascii",
+    )
+    cfg = live_config.load_config(path)
+    replacement = tmp_path / "replacement.yaml"
+    replacement.write_text(
+        "multi_market:\n"
+        "  global_flow_shadow_enabled: true\n"
+        "  global_reference_shadow_enabled: true\n",
+        encoding="ascii",
+    )
+    replacement.replace(path)
+
+    with pytest.raises(ValueError, match="source file identity drifted"):
+        live_config.revalidate_loaded_config_source(cfg, path)
 
 
 def test_maker_engine_passes_live_shadow_config_explicitly(

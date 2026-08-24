@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import math
 import os
 import stat
@@ -541,8 +542,8 @@ def _runtime_supplement(
     changed_files: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        from scripts import (  # pylint: disable=import-outside-toplevel
-            f05_buy_e3_no_shadow_runtime_fix_supplement as supplement,
+        supplement = importlib.import_module(
+            "scripts.f05_buy_e3_no_shadow_runtime_fix_supplement"
         )
     except ModuleNotFoundError as exc:
         raise DirectOwnerReleaseV3Error(

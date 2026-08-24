@@ -1134,6 +1134,8 @@ def _validate_direct_owner_active_release_v3(
         "execution_tree": tree,
         "annotated_operational_tag": str(execution["annotated_operational_tag"]),
         "annotated_operational_tag_object": tag_object,
+        "active_config_file_sha256": str(config_pair["active"]["file_sha256"]),
+        "disabled_config_file_sha256": str(config_pair["disabled"]["file_sha256"]),
     }
 
 

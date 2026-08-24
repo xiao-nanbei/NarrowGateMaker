@@ -164,7 +164,12 @@ def test_invalid_single_venue_factor_does_not_enter_global_consensus():
 
 
 def test_signal_engine_routes_public_receive_time_events_into_flow_state():
-    signal = SignalEngine(enable_ml=False, symbol="BTCUSDC", reference_symbol="BTCUSDT")
+    signal = SignalEngine(
+        enable_ml=False,
+        symbol="BTCUSDC",
+        reference_symbol="BTCUSDT",
+        global_flow_shadow_enabled=True,
+    )
     start = 1_700_000_000_000_000_000
     for venue in ("bitget", "bybit"):
         signal.on_book_ticker(

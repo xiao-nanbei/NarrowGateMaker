@@ -50,10 +50,11 @@ def _fixture(
         subject,
         "PARENT_EXECUTION",
         {
-            "git_commit": parent_commit,
-            "git_tree": parent_tree,
+            "execution_commit": parent_commit,
+            "execution_tree": parent_tree,
             "annotated_operational_tag": "parent-tag",
             "annotated_operational_tag_object": parent_tag_object,
+            "tag_peeled_commit": parent_commit,
         },
     )
     monkeypatch.setattr(subject, "AST_BASELINE", {})
@@ -125,6 +126,13 @@ def test_supplement_content_validator_returns_exact7(
         "strategy/maker_engine.py",
         "strategy/signal.py",
     }
+    assert payload["execution"]["tag_peeled_commit"] == commit
+    no_shadow = payload["no_shadow_runtime_contract"]
+    assert no_shadow["signal_constructor_defaults_false"] is True
+    assert no_shadow["startup_attestation_schema"].endswith(".v5")
+    assert no_shadow["loaded_config_sha256_from_same_stable_read"] is True
+    assert no_shadow["config_source_revalidated_before_and_after_attestation"] is True
+    assert no_shadow["startup_release_active_config_sha256_match_required"] is True
 
 
 def test_supplement_validator_rejects_permission_widening(
@@ -143,6 +151,33 @@ def test_supplement_validator_rejects_permission_widening(
     payload["permissions"]["apply_or_deploy_performed"] = True
     payload[subject.CANONICAL_FIELD] = subject._canonical_sha256(payload)  # noqa: SLF001
     output = tmp_path / "tampered.json"
+    output.write_text(json.dumps(payload), encoding="utf-8")
+    os.chmod(output, 0o600)
+    with pytest.raises(ValueError, match="permissions widened"):
+        subject.validate_content_receipt(output)
+
+
+@pytest.mark.parametrize("mutation", ["missing", "extra"])
+def test_supplement_validator_rejects_permission_shape_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    repo, commit, tag, tag_object, disabled, active = _fixture(tmp_path, monkeypatch)
+    payload = subject.build_supplement(
+        repo=repo,
+        execution_commit=commit,
+        execution_tag=tag,
+        execution_tag_object=tag_object,
+        disabled_config=disabled,
+        active_config=active,
+    )
+    if mutation == "missing":
+        payload["permissions"].pop("ssh_performed")
+    else:
+        payload["permissions"]["extra_false"] = False
+    payload[subject.CANONICAL_FIELD] = subject._canonical_sha256(payload)  # noqa: SLF001
+    output = tmp_path / f"tampered-{mutation}.json"
     output.write_text(json.dumps(payload), encoding="utf-8")
     os.chmod(output, 0o600)
     with pytest.raises(ValueError, match="permissions widened"):

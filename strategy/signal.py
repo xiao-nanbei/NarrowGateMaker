@@ -473,8 +473,8 @@ class SignalEngine:
                  symbol: str = "BTCUSDC",
                  reference_symbol: Optional[str] = None,
                  stablecoin_anchor_symbol: Optional[str] = "USDCUSDT",
-                 global_flow_shadow_enabled: bool = True,
-                 global_reference_shadow_enabled: bool = True,
+                 global_flow_shadow_enabled: bool = False,
+                 global_reference_shadow_enabled: bool = False,
                  ret_demean_halflife: int = 360,
                  bad_trade_log_every: int = 100):
         self._lock = Lock()

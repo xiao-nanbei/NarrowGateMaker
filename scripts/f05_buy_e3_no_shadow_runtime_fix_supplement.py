@@ -20,10 +20,11 @@ SCHEMA = "f05_buy_e3_no_global_flow_shadow_runtime_fix_supplement.v1"
 STATUS = "runtime_no_shadow_fix_verified_no_e3_or_sell_semantic_change"
 CANONICAL_FIELD = "canonical_supplement_sha256"
 PARENT_EXECUTION = {
-    "git_commit": "07ef93733a3a685caba945c7761a48473e403072",
-    "git_tree": "ff505cd81a8eb11f2087d2ae27e7986fd99b0444",
+    "execution_commit": "07ef93733a3a685caba945c7761a48473e403072",
+    "execution_tree": "ff505cd81a8eb11f2087d2ae27e7986fd99b0444",
     "annotated_operational_tag": "f05-owner-buy-e3-direct-live-v4-20260824",
     "annotated_operational_tag_object": "da83fa0b4aed00e4d04ea3faa212b2fb27a81f0d",
+    "tag_peeled_commit": "07ef93733a3a685caba945c7761a48473e403072",
 }
 CONFIG_IDENTITIES = {
     "disabled": {
@@ -59,6 +60,17 @@ BACKEND_ZERO_FIELDS = (
     "stale_trade_events",
     "trade_overflow_events",
     "book_overflow_events",
+)
+PERMISSION_FIELDS = frozenset(
+    {
+        "apply_or_deploy_performed",
+        "ssh_performed",
+        "orico_written",
+        "economics_executed_or_read",
+        "validation_or_holdout_read",
+        "new_strategy_arm_created",
+        "authority_widened",
+    }
 )
 
 
@@ -112,7 +124,7 @@ def _changed_files(repo: Path, execution_commit: str) -> dict[str, dict[str, str
             "diff",
             "--name-only",
             "--diff-filter=ACMRT",
-            f"{PARENT_EXECUTION['git_commit']}..{execution_commit}",
+            f"{PARENT_EXECUTION['execution_commit']}..{execution_commit}",
         )
         .decode("utf-8")
         .splitlines()
@@ -176,17 +188,17 @@ def build_supplement(
         raise ValueError("execution annotated tag identity drifted")
     if _git(repo, "cat-file", "-t", execution_tag_object).decode("ascii").strip() != "tag":
         raise ValueError("execution tag is not annotated")
-    if execution_commit == PARENT_EXECUTION["git_commit"]:
+    if execution_commit == PARENT_EXECUTION["execution_commit"]:
         raise ValueError("runtime fix execution must succeed the immutable parent")
     _git(
         repo,
         "merge-base",
         "--is-ancestor",
-        PARENT_EXECUTION["git_commit"],
+        PARENT_EXECUTION["execution_commit"],
         execution_commit,
     )
 
-    parent_ast = _ast_manifest(repo, PARENT_EXECUTION["git_commit"])
+    parent_ast = _ast_manifest(repo, PARENT_EXECUTION["execution_commit"])
     execution_ast = _ast_manifest(repo, execution_commit)
     if parent_ast != AST_BASELINE or execution_ast != AST_BASELINE:
         raise ValueError("BUY E3/SELL/fill decision AST drifted")
@@ -214,10 +226,11 @@ def build_supplement(
         "created_at_utc": datetime.now(UTC).isoformat(),
         "parent_execution": dict(PARENT_EXECUTION),
         "execution": {
-            "git_commit": execution_commit,
-            "git_tree": execution_tree,
+            "execution_commit": execution_commit,
+            "execution_tree": execution_tree,
             "annotated_operational_tag": execution_tag,
             "annotated_operational_tag_object": execution_tag_object,
+            "tag_peeled_commit": execution_commit,
         },
         "changed_repository_files": changed,
         "runtime_semantic_contract": {
@@ -244,7 +257,7 @@ def build_supplement(
             "live_config_dataclass_defaults_false": True,
             "live_config_strict_boolean": True,
             "live_config_requires_explicit_fields_for_startup": True,
-            "signal_constructor_compatibility_default_true_offline_only": True,
+            "signal_constructor_defaults_false": True,
             "maker_engine_passes_live_config_explicitly": True,
             "global_flow_native_requested_is_capability_only": True,
             "global_flow_native_effective": False,
@@ -262,6 +275,12 @@ def build_supplement(
             "health_disabled_reason": "disabled_by_config",
             "health_state_error": 0,
             "startup_attestation_binds_explicit_and_effective_state": True,
+            "startup_attestation_schema": (
+                "narrowgate_buy_e3_startup_attestation.v5"
+            ),
+            "loaded_config_sha256_from_same_stable_read": True,
+            "config_source_revalidated_before_and_after_attestation": True,
+            "startup_release_active_config_sha256_match_required": True,
         },
         "config_pair": config_pair,
         "permissions": {
@@ -316,6 +335,13 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
         raise ValueError("supplement top-level fields drifted")
     if payload["schema_version"] != SCHEMA or payload["status"] != STATUS:
         raise ValueError("supplement schema/status drifted")
+    created_at = payload.get("created_at_utc")
+    try:
+        parsed_created_at = datetime.fromisoformat(str(created_at))
+    except ValueError as exc:
+        raise ValueError("supplement creation timestamp drifted") from exc
+    if parsed_created_at.tzinfo != UTC or not str(created_at).endswith("+00:00"):
+        raise ValueError("supplement creation timestamp is not canonical UTC")
     if payload["parent_execution"] != PARENT_EXECUTION:
         raise ValueError("supplement parent execution drifted")
     if payload[CANONICAL_FIELD] != _canonical_sha256(payload):
@@ -323,9 +349,12 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
     execution = payload["execution"]
     if not isinstance(execution, dict) or set(execution) != set(PARENT_EXECUTION):
         raise ValueError("supplement execution fields drifted")
-    _validate_hex(execution["git_commit"], 40, "execution commit")
-    _validate_hex(execution["git_tree"], 40, "execution tree")
+    _validate_hex(execution["execution_commit"], 40, "execution commit")
+    _validate_hex(execution["execution_tree"], 40, "execution tree")
     _validate_hex(execution["annotated_operational_tag_object"], 40, "execution tag object")
+    _validate_hex(execution["tag_peeled_commit"], 40, "execution peeled commit")
+    if execution["tag_peeled_commit"] != execution["execution_commit"]:
+        raise ValueError("supplement execution tag peeled commit drifted")
     if not str(execution["annotated_operational_tag"]).strip():
         raise ValueError("execution tag is empty")
     changed = payload["changed_repository_files"]
@@ -387,7 +416,7 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
         "live_config_dataclass_defaults_false",
         "live_config_strict_boolean",
         "live_config_requires_explicit_fields_for_startup",
-        "signal_constructor_compatibility_default_true_offline_only",
+        "signal_constructor_defaults_false",
         "maker_engine_passes_live_config_explicitly",
         "global_flow_native_requested_is_capability_only",
         "global_flow_native_effective",
@@ -405,6 +434,10 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
         "health_disabled_reason",
         "health_state_error",
         "startup_attestation_binds_explicit_and_effective_state",
+        "startup_attestation_schema",
+        "loaded_config_sha256_from_same_stable_read",
+        "config_source_revalidated_before_and_after_attestation",
+        "startup_release_active_config_sha256_match_required",
     }
     if not isinstance(no_shadow, dict) or set(no_shadow) != no_shadow_fields:
         raise ValueError("supplement no-shadow fields drifted")
@@ -418,7 +451,7 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
         "live_config_dataclass_defaults_false": True,
         "live_config_strict_boolean": True,
         "live_config_requires_explicit_fields_for_startup": True,
-        "signal_constructor_compatibility_default_true_offline_only": True,
+        "signal_constructor_defaults_false": True,
         "maker_engine_passes_live_config_explicitly": True,
         "global_flow_native_requested_is_capability_only": True,
         "global_flow_native_effective": False,
@@ -435,6 +468,10 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
         "health_disabled_reason": "disabled_by_config",
         "health_state_error": 0,
         "startup_attestation_binds_explicit_and_effective_state": True,
+        "startup_attestation_schema": "narrowgate_buy_e3_startup_attestation.v5",
+        "loaded_config_sha256_from_same_stable_read": True,
+        "config_source_revalidated_before_and_after_attestation": True,
+        "startup_release_active_config_sha256_match_required": True,
     }
     if any(no_shadow.get(key) != value for key, value in expected_no_shadow.items()):
         raise ValueError("supplement no-shadow contract drifted")
@@ -463,6 +500,7 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
             }
             or {key: identity.get(key) for key in ("sha256", "size_bytes", "mode")}
             != CONFIG_IDENTITIES[role]
+            or identity.get("logical_role") != role
         ):
             raise ValueError(f"supplement {role} config identity drifted")
     if any(
@@ -477,8 +515,10 @@ def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]
     ):
         raise ValueError("supplement config pair contract drifted")
     permissions = payload["permissions"]
-    if not isinstance(permissions, dict) or any(
-        value is not False for value in permissions.values()
+    if (
+        not isinstance(permissions, dict)
+        or set(permissions) != PERMISSION_FIELDS
+        or any(value is not False for value in permissions.values())
     ):
         raise ValueError("supplement permissions widened")
     mode = stat.S_IMODE(before.st_mode)

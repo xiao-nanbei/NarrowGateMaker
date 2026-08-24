@@ -59,6 +59,7 @@ def main() -> int:
         symbol=cfg.symbol,
         reference_symbol=multi.reference_symbol,
         stablecoin_anchor_symbol=multi.stablecoin_anchor_symbol,
+        global_flow_shadow_enabled=True,
     )
     clients = []
     for source in cfg.external_venues.sources:
