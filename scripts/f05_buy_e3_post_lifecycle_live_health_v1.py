@@ -31,6 +31,7 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from scripts import f05_buy_e3_active_capture_v8 as active_capture_v8
 from scripts import f05_buy_e3_evidence_completion as lifecycle_io
+from scripts import f05_buy_e3_lifecycle_context_v1 as lifecycle_context_v1
 
 OWNER: Final = active_capture_v8.OWNER
 SCHEMA_VERSION: Final = f"{OWNER}.post_lifecycle_live_health_receipt.v1"
@@ -67,12 +68,7 @@ EXPECTED_STARTUP_SOURCE_SHA256: Final = {
     )
     for role in active_capture_v8.STARTUP_SOURCE_ROLE_MAP.values()
 }
-EXPECTED_LIFECYCLE_SOURCE_SHA256: Final = {
-    str(resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256[role]["path"]): str(
-        resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256[role]["sha256"]
-    )
-    for role in active_capture_v8.REQUIRED_ACTIVE_SOURCE_ROLES
-}
+EXPECTED_LIFECYCLE_SOURCE_SHA256: Final = {**lifecycle_context_v1.EXPECTED_RUNTIME_SOURCE_SHA256}
 EXPECTED_ALL_RUNTIME_SOURCE_SHA256: Final = {
     str(binding["path"]): str(binding["sha256"])
     for binding in resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.values()
@@ -90,21 +86,33 @@ EVIDENCE_BOUNDARY: Final = {
     "shadow_or_companion_collection_enabled": False,
     "hypothetical_live_actions_scored": False,
 }
+LIFECYCLE_PROCESS_CROSS_BINDING: Final = {
+    "activation_capture_to_post_health_same_pid_start": True,
+    "lifecycle_admission_contains_pid_or_pid_start_ticks": False,
+    "direct_lifecycle_admission_to_active_process_binding_claimed": False,
+    "binding_basis": "exact_config_runtime_source_and_post_admission_chronology_only",
+}
 CHECKS: Final = {
     "constructor_eof_boundary_only": True,
     "lexical_regular_non_symlink_log": True,
     "log_device_and_inode_stable": True,
     "first_two_fresh_main_health_rows": True,
     "first_fresh_lifecycle_health_row": True,
-    "pid_and_start_ticks_checked_before_and_after_every_poll": True,
+    "pid_and_start_ticks_checked_before_and_after_every_poll_and_health_row": True,
     "final_full_process_recapture_exact": True,
     "activation_capture_content_exact": True,
     "release_v3_and_runtime_execution_exact": True,
     "startup_runtime_source_exact10": True,
-    "lifecycle_runtime_source_exact5": True,
+    "lifecycle_runtime_source_exact65": True,
     "lifecycle_exact7_bound": True,
     "generated_after_lifecycle_admission": True,
     "buy_e3_and_sell_owner_enabled_both_main_rows": True,
+    "buy_e3_runtime_loaded_and_warmup_admitted_both_main_rows": True,
+    "buy_e3_completed_windows_and_updates_strictly_increase": True,
+    "buy_e3_gap_resets_resets_invalid_absolute_zero": True,
+    "decision_count_and_latency_disclosed_without_promotion_authority": True,
+    "resource_v8_formal_gate_unchanged": True,
+    "economic_outcome_claimed": False,
     "external_sources_and_errors_absolute_zero": True,
     "global_flow_explicit_disabled_error_state_value_backend_absolute_zero": True,
     "global_reference_explicit_disabled_error_state_value_absolute_zero": True,
@@ -117,6 +125,12 @@ PORTABLE_CHECKS: Final = {
     "snapshot_after_lifecycle_admission": True,
     "two_fresh_post_lifecycle_main_health_rows": True,
     "buy_e3_and_sell_owner_enabled": True,
+    "buy_e3_runtime_loaded_and_warmup_time_admitted": True,
+    "buy_e3_completed_windows_and_updates_strictly_increase": True,
+    "buy_e3_gap_resets_resets_invalid_absolute_zero": True,
+    "decision_count_and_latency_disclosed_without_promotion_authority": True,
+    "resource_v8_formal_gate_unchanged": True,
+    "economic_outcome_claimed": False,
     "external_sources_absolute_zero": True,
     "global_flow_explicit_disabled_error_and_backend_zero": True,
     "global_reference_explicit_disabled_error_and_state_zero": True,
@@ -131,6 +145,7 @@ TOP_LEVEL_FIELDS: Final = frozenset(
         "status",
         "generated_utc",
         "activation_capture",
+        "lifecycle_context_receipt",
         "lifecycle_admission",
         "lifecycle_context",
         "runtime_execution",
@@ -140,6 +155,7 @@ TOP_LEVEL_FIELDS: Final = frozenset(
         "main_health_window",
         "lifecycle_health",
         "operational_aggregates",
+        "lifecycle_process_cross_binding",
         "portable_projection",
         "checks",
         "permissions",
@@ -160,6 +176,7 @@ PORTABLE_FIELDS: Final = frozenset(
         "main_health_window",
         "lifecycle_health",
         "operational_aggregates",
+        "lifecycle_process_cross_binding",
         "checks",
         "permissions",
         "evidence_boundary",
@@ -180,12 +197,15 @@ def _now() -> str:
 
 
 def _utc_datetime(value: Any, label: str) -> datetime:
+    normalized = str(value)
+    if not normalized.endswith("Z"):
+        raise PostLifecycleLiveHealthError(f"{label} is not canonical UTC")
     try:
-        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized.removesuffix("Z") + "+00:00")
     except ValueError as exc:
         raise PostLifecycleLiveHealthError(f"{label} is invalid") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise PostLifecycleLiveHealthError(f"{label} is not timezone-aware")
+    if parsed.utcoffset() != UTC.utcoffset(parsed):
+        raise PostLifecycleLiveHealthError(f"{label} is not canonical UTC")
     return parsed.astimezone(UTC)
 
 
@@ -317,30 +337,77 @@ def _activation_context(
     return validated, binding
 
 
-def _lifecycle_context(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _lifecycle_context(
+    path: Path,
+    *,
+    runtime_repository_root: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        payload, binding = lifecycle_io._validate_lifecycle_admission(path)  # noqa: SLF001
+        payload = lifecycle_context_v1.validate_lifecycle_context(
+            path,
+            runtime_repository_root=runtime_repository_root,
+        )
+        _reopened, binding = _private_binding(
+            path,
+            label="portable lifecycle admission context",
+            canonical_field=lifecycle_context_v1.CANONICAL_FIELD,
+            schema=lifecycle_context_v1.SCHEMA_VERSION,
+            status=lifecycle_context_v1.STATUS,
+        )
     except Exception as exc:
-        raise PostLifecycleLiveHealthError("lifecycle admission is invalid") from exc
+        raise PostLifecycleLiveHealthError(
+            "portable lifecycle admission context is invalid"
+        ) from exc
     content = _content_projection(
-        {name: binding.get(name) for name in CONTENT_BINDING_FIELDS},
-        "lifecycle admission",
+        payload.get("lifecycle_admission"),
+        "formal lifecycle admission projection",
         allowed_modes=frozenset({"0644"}),
     )
-    sources = binding.get("runtime_code_files")
+    projection = payload.get("lifecycle_projection")
+    sources = projection.get("runtime_source_files") if isinstance(projection, Mapping) else None
     if (
         content["schema_version"] != lifecycle_io.LIFECYCLE_SCHEMA
         or content["status"] is not None
         or content["canonical_field"] != "admission_identity_sha256"
+        or not isinstance(projection, Mapping)
+        or set(projection) != lifecycle_context_v1.PROJECTION_FIELDS
         or not isinstance(sources, Mapping)
         or dict(sources) != EXPECTED_LIFECYCLE_SOURCE_SHA256
-        or binding.get("config_sha256") != active_capture_v8.ACTIVE_CONFIG_SHA256
-        or not str(binding.get("baseline_epoch_id", "")).startswith("prospective-")
-        or _strict_int(payload.get("admitted_ts_ns"), "lifecycle admitted timestamp", minimum=1)
+        or projection.get("runtime_code_sha256") != lifecycle_context_v1.RUNTIME_CODE_SHA256
+        or projection.get("runtime_source_files_canonical_sha256")
+        != lifecycle_context_v1.RUNTIME_SOURCE_FILES_CANONICAL_SHA256
+        or projection.get("runtime_source_file_count")
+        != lifecycle_context_v1.RUNTIME_SOURCE_FILE_COUNT
+        or projection.get("safe_action_state") != lifecycle_context_v1.SAFE_ACTION_STATE
+        or projection.get("action_shadow_enabled_state")
+        != lifecycle_context_v1.SAFE_ACTION_SHADOW_ENABLED_STATE
+        or projection.get("external_shadow_only_inert") is not True
+        or _require_sha256(
+            projection.get("data_source_identity_sha256"),
+            "lifecycle data source identity",
+        )
+        != projection.get("data_source_identity_sha256")
+        or projection.get("external_source_recording_state")
+        != lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE
+        or projection.get("external_source_count")
+        != len(lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE)
+        or projection.get("source_settings_inert_because_external_master_false") is not True
+        or projection.get("record_trades_inert_because_master_false_and_record_enabled_false")
+        is not True
+        or projection.get("external_effective_stream_and_recording_disabled") is not True
+        or projection.get("config_sha256") != active_capture_v8.ACTIVE_CONFIG_SHA256
+        or not str(projection.get("baseline_epoch_id", "")).startswith("prospective-")
+        or _strict_int(projection.get("admitted_ts_ns"), "lifecycle admitted timestamp", minimum=1)
         <= 0
     ):
-        raise PostLifecycleLiveHealthError("lifecycle admission identity/runtime sources drifted")
-    return payload, {**dict(binding), **content}
+        raise PostLifecycleLiveHealthError(
+            "portable lifecycle admission identity/runtime sources drifted"
+        )
+    return payload, {
+        **dict(projection),
+        "lifecycle_admission": content,
+        "context_receipt": {name: binding[name] for name in CONTENT_BINDING_FIELDS},
+    }
 
 
 def _startup_sources(runtime: Any) -> tuple[str, dict[str, str]]:
@@ -479,8 +546,22 @@ def _same_stable_process(observed: Mapping[str, Any], activation: Mapping[str, A
     ) == active_capture_v8._stable_process_projection(activation)  # noqa: SLF001
 
 
+def _reject_symlink_ancestors(path: Path, label: str) -> None:
+    candidate = path.expanduser().absolute()
+    current = Path(candidate.anchor)
+    for part in candidate.parts[1:-1]:
+        current /= part
+        try:
+            metadata = os.lstat(current)
+        except OSError as exc:
+            raise PostLifecycleLiveHealthError(f"{label} ancestor is missing") from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise PostLifecycleLiveHealthError(f"{label} has a non-directory or symlink ancestor")
+
+
 def _open_regular_log(path: Path) -> tuple[Path, int, os.stat_result]:
     candidate = path.expanduser().absolute()
+    _reject_symlink_ancestors(candidate, "live log")
     try:
         lexical = os.lstat(candidate)
     except OSError as exc:
@@ -511,6 +592,7 @@ def _open_regular_log(path: Path) -> tuple[Path, int, os.stat_result]:
 
 def _assert_log_identity(path: Path, descriptor: int, device: int, inode: int) -> os.stat_result:
     try:
+        _reject_symlink_ancestors(path, "live log")
         lexical = os.lstat(path)
         opened = os.fstat(descriptor)
     except OSError as exc:
@@ -567,8 +649,17 @@ def _main_event(line_bytes: bytes, *, offset: int, generation: int) -> dict[str,
     orders = _integer_token(line, "orders", "main open-order count")
     evaluations = _integer_token(line, "buyE3CooldownEval", "BUY E3 evaluation count")
     decision_p99 = _numeric_token(line, "buyE3CooldownDecisionP99Us", "BUY E3 decision p99")
-    if decision_p99 < 0.0:
-        raise PostLifecycleLiveHealthError("BUY E3 decision p99 is negative")
+    warm = _integer_token(line, "buyE3CooldownWarm", "BUY E3 warmup admission")
+    windows = _integer_token(line, "buyE3CooldownWindows", "BUY E3 completed windows")
+    gap_resets = _integer_token(line, "buyE3CooldownGapResets", "BUY E3 gap resets")
+    resets = _integer_token(line, "buyE3CooldownResets", "BUY E3 resets")
+    invalid = _integer_token(line, "buyE3CooldownInvalid", "BUY E3 invalid updates")
+    if (
+        decision_p99 < 0.0
+        or warm != 1
+        or any(value != 0 for value in (gap_resets, resets, invalid))
+    ):
+        raise PostLifecycleLiveHealthError("BUY E3 post-lifecycle readiness is not exact")
     return {
         "kind": "main",
         "row": {
@@ -578,6 +669,15 @@ def _main_event(line_bytes: bytes, *, offset: int, generation: int) -> dict[str,
             "line_sha256": hashlib.sha256(line_bytes).hexdigest(),
             "main_wall_timestamp_s": parsed["wall_timestamp_s"],
             "projection": projection,
+            "readiness": {
+                "runtime_loaded": True,
+                "warmup_time_admitted": True,
+                "completed_windows": windows,
+                "gap_resets": 0,
+                "resets": 0,
+                "invalid_updates": 0,
+                "economic_outcome_claimed": False,
+            },
         },
         "safe_operational": {
             "position_flat": position == 0.0,
@@ -831,17 +931,20 @@ def _health_aggregates(
             "decision_p99_us": (
                 float(second["buy_e3_decision_p99_us"]) if decision_count > 0 else None
             ),
-            "callback_sample_count": 0,
-            "callback_p99_us": None,
             "lifecycle_enqueue_p99_us": float(lifecycle["enqueue_latency_p99_us"]),
             "lifecycle_write_p99_ms": float(lifecycle["write_latency_p99_ms"]),
             "small_sample_disclosed": True,
             "strategy_result_authority": False,
+            "formal_performance_authority": False,
+            "resource_v8_formal_gate_unchanged": True,
+            "economic_outcome_claimed": False,
         },
         "position": {
-            "position_probe_completed": True,
-            "aggregate_position_flat": bool(first["position_flat"] and second["position_flat"]),
-            "open_order_count": int(second["open_order_count"]),
+            "main_health_position_projection_completed": True,
+            "reported_aggregate_position_flat": bool(
+                first["position_flat"] and second["position_flat"]
+            ),
+            "reported_open_order_count": int(second["open_order_count"]),
             "economic_values_persisted": False,
         },
     }
@@ -883,11 +986,13 @@ def _capture_fresh_health(
         assert_identity()
         samples.append(dict(sample_supplier()))
         for event in new_events:
+            assert_identity()
             observed_events.append(event)
             if event["kind"] == "main" and len(selected_main) < 2:
                 selected_main.append(event)
             elif event["kind"] == "lifecycle" and selected_lifecycle is None:
                 selected_lifecycle = event
+            assert_identity()
         if len(selected_main) < 2 or selected_lifecycle is None:
             sleep(min(poll_interval_s, max(0.0, deadline - monotonic())))
     assert_identity()
@@ -904,6 +1009,8 @@ def _capture_fresh_health(
         or float(second_row["main_wall_timestamp_s"]) <= float(first_row["main_wall_timestamp_s"])
         or int(second_row["projection"]["boolean_cooldown_updates"])
         <= int(first_row["projection"]["boolean_cooldown_updates"])
+        or int(second_row["readiness"]["completed_windows"])
+        <= int(first_row["readiness"]["completed_windows"])
         or selected_lifecycle["row"]["fresh_generation"] != 1
         or selected_lifecycle["row"]["order_lifecycle_v2_drops"] != 0
         or selected_lifecycle["row"]["order_lifecycle_v2_errors"] != 0
@@ -927,7 +1034,7 @@ def _capture_fresh_health(
         "checks": {
             "constructor_boundary_only": True,
             "two_consecutive_fresh_main_health_rows": True,
-            "same_pid_and_start_ticks_before_between_after": True,
+            "same_pid_and_start_ticks_before_after_poll_and_each_health_row": True,
             "sell_owner_enabled_both_rows": True,
             "buy_e3_enabled_both_rows": True,
             "external_sources_absolute_zero_both_rows": True,
@@ -971,7 +1078,7 @@ def _validate_main_window_content(raw: Any, active_process: Mapping[str, Any]) -
     expected_checks = {
         "constructor_boundary_only": True,
         "two_consecutive_fresh_main_health_rows": True,
-        "same_pid_and_start_ticks_before_between_after": True,
+        "same_pid_and_start_ticks_before_after_poll_and_each_health_row": True,
         "sell_owner_enabled_both_rows": True,
         "buy_e3_enabled_both_rows": True,
         "external_sources_absolute_zero_both_rows": True,
@@ -994,6 +1101,7 @@ def _validate_main_window_content(raw: Any, active_process: Mapping[str, Any]) -
         raise PostLifecycleLiveHealthError("post-lifecycle main-health identity drifted")
     previous_wall = float("-inf")
     previous_updates = -1
+    previous_windows = -1
     for index, row in enumerate(rows, start=1):
         if not isinstance(row, Mapping) or set(row) != {
             "fresh_generation",
@@ -1002,6 +1110,7 @@ def _validate_main_window_content(raw: Any, active_process: Mapping[str, Any]) -
             "line_sha256",
             "main_wall_timestamp_s",
             "projection",
+            "readiness",
         }:
             raise PostLifecycleLiveHealthError("post-lifecycle main-health row fields drifted")
         projection = row.get("projection")
@@ -1012,6 +1121,20 @@ def _validate_main_window_content(raw: Any, active_process: Mapping[str, Any]) -
                 "post-lifecycle main-health no-shadow semantics drifted"
             ) from exc
         wall = _finite_nonnegative(row.get("main_wall_timestamp_s"), "main-health wall time")
+        readiness = row.get("readiness")
+        if not isinstance(readiness, Mapping) or set(readiness) != {
+            "runtime_loaded",
+            "warmup_time_admitted",
+            "completed_windows",
+            "gap_resets",
+            "resets",
+            "invalid_updates",
+            "economic_outcome_claimed",
+        }:
+            raise PostLifecycleLiveHealthError("post-lifecycle readiness fields drifted")
+        completed_windows = _strict_int(
+            readiness.get("completed_windows"), "BUY E3 completed windows", minimum=1
+        )
         updates = _strict_int(
             normalized.get("boolean_cooldown_updates"),
             "main-health BUY/SELL update count",
@@ -1024,10 +1147,18 @@ def _validate_main_window_content(raw: Any, active_process: Mapping[str, Any]) -
             or _require_sha256(row.get("line_sha256"), "main-health line") != row.get("line_sha256")
             or wall <= previous_wall
             or updates <= previous_updates
+            or completed_windows <= previous_windows
+            or readiness.get("runtime_loaded") is not True
+            or readiness.get("warmup_time_admitted") is not True
+            or readiness.get("gap_resets") != 0
+            or readiness.get("resets") != 0
+            or readiness.get("invalid_updates") != 0
+            or readiness.get("economic_outcome_claimed") is not False
         ):
             raise PostLifecycleLiveHealthError("post-lifecycle main-health row drifted")
         previous_wall = wall
         previous_updates = updates
+        previous_windows = completed_windows
     return window
 
 
@@ -1091,39 +1222,42 @@ def _validate_operational_aggregates(raw: Any) -> dict[str, Any]:
     if not isinstance(latency, Mapping) or set(latency) != {
         "decision_sample_count",
         "decision_p99_us",
-        "callback_sample_count",
-        "callback_p99_us",
         "lifecycle_enqueue_p99_us",
         "lifecycle_write_p99_ms",
         "small_sample_disclosed",
         "strategy_result_authority",
+        "formal_performance_authority",
+        "resource_v8_formal_gate_unchanged",
+        "economic_outcome_claimed",
     }:
         raise PostLifecycleLiveHealthError("post-lifecycle latency aggregates drifted")
-    for prefix in ("decision", "callback"):
-        count = _strict_int(latency.get(f"{prefix}_sample_count"), f"{prefix} sample count")
-        p99 = latency.get(f"{prefix}_p99_us")
-        if (count == 0 and p99 is not None) or (
-            count > 0 and _finite_nonnegative(p99, f"{prefix} p99") < 0
-        ):
-            raise PostLifecycleLiveHealthError(f"post-lifecycle {prefix} p99 drifted")
+    decision_count = _strict_int(latency.get("decision_sample_count"), "decision sample count")
+    decision_p99 = latency.get("decision_p99_us")
+    if (decision_count == 0 and decision_p99 is not None) or (
+        decision_count > 0 and _finite_nonnegative(decision_p99, "decision p99") < 0
+    ):
+        raise PostLifecycleLiveHealthError("post-lifecycle decision p99 drifted")
     if (
         _finite_nonnegative(latency.get("lifecycle_enqueue_p99_us"), "lifecycle enqueue p99") < 0
         or _finite_nonnegative(latency.get("lifecycle_write_p99_ms"), "lifecycle write p99") < 0
         or latency.get("small_sample_disclosed") is not True
         or latency.get("strategy_result_authority") is not False
+        or latency.get("formal_performance_authority") is not False
+        or latency.get("resource_v8_formal_gate_unchanged") is not True
+        or latency.get("economic_outcome_claimed") is not False
     ):
         raise PostLifecycleLiveHealthError("post-lifecycle latency authority drifted")
     if not isinstance(position, Mapping) or set(position) != {
-        "position_probe_completed",
-        "aggregate_position_flat",
-        "open_order_count",
+        "main_health_position_projection_completed",
+        "reported_aggregate_position_flat",
+        "reported_open_order_count",
         "economic_values_persisted",
     }:
         raise PostLifecycleLiveHealthError("post-lifecycle position safety projection drifted")
     if (
-        position.get("position_probe_completed") is not True
-        or type(position.get("aggregate_position_flat")) is not bool
-        or _strict_int(position.get("open_order_count"), "open-order count") < 0
+        position.get("main_health_position_projection_completed") is not True
+        or type(position.get("reported_aggregate_position_flat")) is not bool
+        or _strict_int(position.get("reported_open_order_count"), "open-order count") < 0
         or position.get("economic_values_persisted") is not False
     ):
         raise PostLifecycleLiveHealthError("post-lifecycle position safety semantics drifted")
@@ -1164,6 +1298,7 @@ def _portable_payload(
             "order_lifecycle_v2_errors": lifecycle_health["order_lifecycle_v2_errors"],
         },
         "operational_aggregates": dict(operational_aggregates),
+        "lifecycle_process_cross_binding": dict(LIFECYCLE_PROCESS_CROSS_BINDING),
         "checks": dict(PORTABLE_CHECKS),
         "permissions": dict(NO_AUTHORITY),
         "evidence_boundary": dict(EVIDENCE_BOUNDARY),
@@ -1271,6 +1406,7 @@ def validate_portable_projection(raw: Any) -> dict[str, Any]:
         or not str(payload.get("lifecycle_epoch_id", "")).startswith("prospective-")
         or lifecycle_health.get("order_lifecycle_v2_drops") != 0
         or lifecycle_health.get("order_lifecycle_v2_errors") != 0
+        or payload.get("lifecycle_process_cross_binding") != LIFECYCLE_PROCESS_CROSS_BINDING
         or payload.get("checks") != PORTABLE_CHECKS
         or payload.get("permissions") != NO_AUTHORITY
         or payload.get("evidence_boundary") != EVIDENCE_BOUNDARY
@@ -1301,19 +1437,18 @@ def validate_content_projection(raw: Any) -> dict[str, Any]:
         "post-lifecycle activation capture",
         allowed_modes=frozenset({"0600"}),
     )
+    lifecycle_context_receipt = _content_projection(
+        payload.get("lifecycle_context_receipt"),
+        "portable lifecycle admission context",
+        allowed_modes=frozenset({"0600"}),
+    )
     lifecycle = _content_projection(
         payload.get("lifecycle_admission"),
         "post-lifecycle lifecycle admission",
         allowed_modes=frozenset({"0644"}),
     )
     context = payload.get("lifecycle_context")
-    if not isinstance(context, Mapping) or set(context) != {
-        "admitted_ts_ns",
-        "baseline_epoch_id",
-        "config_sha256",
-        "runtime_code_sha256",
-        "runtime_source_files",
-    }:
+    if not isinstance(context, Mapping) or set(context) != lifecycle_context_v1.PROJECTION_FIELDS:
         raise PostLifecycleLiveHealthError("post-lifecycle lifecycle context drifted")
     admitted_ns = _strict_int(
         context.get("admitted_ts_ns"), "lifecycle admitted timestamp", minimum=1
@@ -1355,8 +1490,7 @@ def validate_content_projection(raw: Any) -> dict[str, Any]:
     aggregates = _validate_operational_aggregates(payload.get("operational_aggregates"))
     selected_rows = [*main["rows"], lifecycle_health]
     expected_scan_end = max(
-        int(row["line_offset_bytes"]) + int(row["line_size_bytes"])
-        for row in selected_rows
+        int(row["line_offset_bytes"]) + int(row["line_size_bytes"]) for row in selected_rows
     )
     expected_portable = _portable_payload(
         generated_utc=str(payload["generated_utc"]),
@@ -1380,6 +1514,9 @@ def validate_content_projection(raw: Any) -> dict[str, Any]:
         or activation["schema_version"] != active_capture_v8.SCHEMA_VERSION
         or activation["status"] != active_capture_v8.STATUS
         or activation["canonical_field"] != active_capture_v8.CANONICAL_FIELD
+        or lifecycle_context_receipt["schema_version"] != lifecycle_context_v1.SCHEMA_VERSION
+        or lifecycle_context_receipt["status"] != lifecycle_context_v1.STATUS
+        or lifecycle_context_receipt["canonical_field"] != lifecycle_context_v1.CANONICAL_FIELD
         or lifecycle["schema_version"] != lifecycle_io.LIFECYCLE_SCHEMA
         or lifecycle["status"] is not None
         or lifecycle["canonical_field"] != "admission_identity_sha256"
@@ -1389,10 +1526,34 @@ def validate_content_projection(raw: Any) -> dict[str, Any]:
         or context.get("config_sha256") != active_capture_v8.ACTIVE_CONFIG_SHA256
         or _require_sha256(context.get("runtime_code_sha256"), "lifecycle runtime code")
         != context.get("runtime_code_sha256")
+        or context.get("runtime_code_sha256") != lifecycle_context_v1.RUNTIME_CODE_SHA256
+        or context.get("runtime_code_schema_version") != lifecycle_context_v1.RUNTIME_CODE_SCHEMA
+        or context.get("runtime_source_file_count")
+        != lifecycle_context_v1.RUNTIME_SOURCE_FILE_COUNT
+        or context.get("runtime_source_files_canonical_sha256")
+        != lifecycle_context_v1.RUNTIME_SOURCE_FILES_CANONICAL_SHA256
+        or context.get("safe_action_state") != lifecycle_context_v1.SAFE_ACTION_STATE
+        or context.get("action_shadow_enabled_state")
+        != lifecycle_context_v1.SAFE_ACTION_SHADOW_ENABLED_STATE
+        or context.get("external_shadow_only_inert") is not True
+        or _require_sha256(
+            context.get("data_source_identity_sha256"),
+            "lifecycle data source identity",
+        )
+        != context.get("data_source_identity_sha256")
+        or context.get("external_source_recording_state")
+        != lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE
+        or context.get("external_source_count")
+        != len(lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE)
+        or context.get("source_settings_inert_because_external_master_false") is not True
+        or context.get("record_trades_inert_because_master_false_and_record_enabled_false")
+        is not True
+        or context.get("external_effective_stream_and_recording_disabled") is not True
         or process.get("config_sha256") != context.get("config_sha256")
         or not isinstance(context.get("runtime_source_files"), Mapping)
         or dict(context["runtime_source_files"]) != EXPECTED_LIFECYCLE_SOURCE_SHA256
         or observed_portable != expected_portable
+        or payload.get("lifecycle_process_cross_binding") != LIFECYCLE_PROCESS_CROSS_BINDING
         or scan_end != expected_scan_end
         or payload.get("checks") != CHECKS
         or payload.get("permissions") != NO_AUTHORITY
@@ -1507,7 +1668,7 @@ def build_post_lifecycle_live_health(
     resource_receipt_path: Path,
     config_correction_path: Path,
     active_capture_path: Path,
-    lifecycle_admission_path: Path,
+    lifecycle_context_path: Path,
     pid_file: Path,
     config_path: Path,
     python_executable: Path,
@@ -1527,8 +1688,10 @@ def build_post_lifecycle_live_health(
         config_correction_path=config_correction_path,
         live_log_path=live_log_path,
     )
-    lifecycle_payload, lifecycle_binding = _lifecycle_context(lifecycle_admission_path)
-    lifecycle_binding["admitted_ts_ns"] = lifecycle_payload["admitted_ts_ns"]
+    _lifecycle_receipt, lifecycle_binding = _lifecycle_context(
+        lifecycle_context_path,
+        runtime_repository_root=runtime_repository_root,
+    )
     projected_process, runtime_authority = _active_projection(active, lifecycle_binding)
     activation_process = active["active_process"]
     pid = int(projected_process["pid"])
@@ -1568,13 +1731,9 @@ def build_post_lifecycle_live_health(
     if not _same_stable_process(final, activation_process):
         raise PostLifecycleLiveHealthError("active process changed after post-lifecycle capture")
     timestamp = generated_utc or _now()
-    lifecycle_content = {name: lifecycle_binding[name] for name in CONTENT_BINDING_FIELDS}
+    lifecycle_content = dict(lifecycle_binding["lifecycle_admission"])
     lifecycle_context = {
-        "admitted_ts_ns": lifecycle_payload["admitted_ts_ns"],
-        "baseline_epoch_id": lifecycle_binding["baseline_epoch_id"],
-        "config_sha256": lifecycle_binding["config_sha256"],
-        "runtime_code_sha256": lifecycle_binding["runtime_code_sha256"],
-        "runtime_source_files": dict(lifecycle_binding["runtime_code_files"]),
+        name: lifecycle_binding[name] for name in lifecycle_context_v1.PROJECTION_FIELDS
     }
     portable = _portable_payload(
         generated_utc=timestamp,
@@ -1592,6 +1751,7 @@ def build_post_lifecycle_live_health(
         "status": STATUS,
         "generated_utc": timestamp,
         "activation_capture": active_binding,
+        "lifecycle_context_receipt": dict(lifecycle_binding["context_receipt"]),
         "lifecycle_admission": lifecycle_content,
         "lifecycle_context": lifecycle_context,
         "runtime_execution": dict(RUNTIME_EXECUTION),
@@ -1601,6 +1761,7 @@ def build_post_lifecycle_live_health(
         "main_health_window": main_health,
         "lifecycle_health": lifecycle_health,
         "operational_aggregates": aggregates,
+        "lifecycle_process_cross_binding": dict(LIFECYCLE_PROCESS_CROSS_BINDING),
         "portable_projection": portable,
         "checks": dict(CHECKS),
         "permissions": dict(NO_AUTHORITY),
@@ -1618,7 +1779,7 @@ def validate_post_lifecycle_live_health(
     resource_receipt_path: Path,
     config_correction_path: Path,
     active_capture_path: Path,
-    lifecycle_admission_path: Path,
+    lifecycle_context_path: Path,
     pid_file: Path,
     config_path: Path,
     python_executable: Path,
@@ -1643,19 +1804,18 @@ def validate_post_lifecycle_live_health(
         config_correction_path=config_correction_path,
         live_log_path=live_log_path,
     )
-    lifecycle_payload, lifecycle_binding = _lifecycle_context(lifecycle_admission_path)
-    lifecycle_binding["admitted_ts_ns"] = lifecycle_payload["admitted_ts_ns"]
+    _lifecycle_receipt, lifecycle_binding = _lifecycle_context(
+        lifecycle_context_path,
+        runtime_repository_root=runtime_repository_root,
+    )
     expected_process, expected_authority = _active_projection(active, lifecycle_binding)
-    lifecycle_content = {name: lifecycle_binding[name] for name in CONTENT_BINDING_FIELDS}
+    lifecycle_content = dict(lifecycle_binding["lifecycle_admission"])
     expected_lifecycle_context = {
-        "admitted_ts_ns": lifecycle_payload["admitted_ts_ns"],
-        "baseline_epoch_id": lifecycle_binding["baseline_epoch_id"],
-        "config_sha256": lifecycle_binding["config_sha256"],
-        "runtime_code_sha256": lifecycle_binding["runtime_code_sha256"],
-        "runtime_source_files": dict(lifecycle_binding["runtime_code_files"]),
+        name: lifecycle_binding[name] for name in lifecycle_context_v1.PROJECTION_FIELDS
     }
     if (
         observed.get("activation_capture") != active_binding
+        or observed.get("lifecycle_context_receipt") != lifecycle_binding["context_receipt"]
         or observed.get("lifecycle_admission") != lifecycle_content
         or observed.get("lifecycle_context") != expected_lifecycle_context
         or observed.get("active_process") != expected_process
@@ -1722,7 +1882,7 @@ def finalize_post_lifecycle_live_health(
             "resource_receipt_path",
             "config_correction_path",
             "active_capture_path",
-            "lifecycle_admission_path",
+            "lifecycle_context_path",
             "pid_file",
             "config_path",
             "python_executable",
@@ -1744,7 +1904,7 @@ def _source_args(parser: argparse.ArgumentParser, *, include_pid: bool) -> None:
     parser.add_argument("--resource-receipt", type=Path, required=True)
     parser.add_argument("--config-correction", type=Path, required=True)
     parser.add_argument("--active-capture", type=Path, required=True)
-    parser.add_argument("--lifecycle-admission", type=Path, required=True)
+    parser.add_argument("--lifecycle-context", type=Path, required=True)
     if include_pid:
         parser.add_argument("--pid-file", type=Path, required=True)
     parser.add_argument("--config", type=Path, required=True)
@@ -1776,7 +1936,7 @@ def _kwargs(args: argparse.Namespace) -> dict[str, Any]:
         "resource_receipt_path": args.resource_receipt,
         "config_correction_path": args.config_correction,
         "active_capture_path": args.active_capture,
-        "lifecycle_admission_path": args.lifecycle_admission,
+        "lifecycle_context_path": args.lifecycle_context,
         "pid_file": args.pid_file,
         "config_path": args.config,
         "python_executable": args.python_executable,

@@ -27,7 +27,10 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 from scripts import f05_buy_e3_active_capture_v8 as active_capture_v8
 from scripts import f05_buy_e3_cross_host_transport_v6 as transport_v6
 from scripts import f05_buy_e3_evidence_completion as base
+from scripts import f05_buy_e3_failed_activation_attempt_history as failed_history_v1
 from scripts import f05_buy_e3_final_evidence_v4 as historical_final_v4
+from scripts import f05_buy_e3_lifecycle_context_v1 as lifecycle_context_v1
+from scripts import f05_buy_e3_post_lifecycle_live_health_v1 as post_lifecycle_v1
 
 OWNER: Final = base.OWNER
 ATTEMPT_ID: Final = "operational-attempt-no-shadow-release-v3-evidence-v6-20260824"
@@ -38,6 +41,9 @@ RESOURCE_MODULE: Final = (
     "causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v8"
 )
 ACTIVE_CAPTURE_MODULE: Final = "scripts.f05_buy_e3_active_capture_v8"
+FAILED_HISTORY_MODULE: Final = "scripts.f05_buy_e3_failed_activation_attempt_history"
+POST_LIFECYCLE_MODULE: Final = "scripts.f05_buy_e3_post_lifecycle_live_health_v1"
+LIFECYCLE_CONTEXT_MODULE: Final = "scripts.f05_buy_e3_lifecycle_context_v1"
 ACTIVE_CAPTURE_SCHEMA_V7: Final = (
     f"{OWNER}.fresh_all_shadow_evaluators_disabled_active_process_capture.v7"
 )
@@ -73,9 +79,8 @@ EVIDENCE_RELEASE_CANONICAL_FIELD: Final = "canonical_no_shadow_evidence_release_
 CONTENT_BINDING_FIELDS: Final = tuple(transport_v6.CONTENT_BINDING_FIELDS)
 PORTABLE_SOURCE_ROLES: Final = tuple(transport_v6.SOURCE_FILENAMES)
 
-# These actual current-evidence identities do not exist at source-scaffold
-# time.  A later additive source freeze must fill every hash, byte size, and
-# absolute provenance path.  All consumers below reject these empty values.
+# The transport admission is intentionally fail-closed until its durable
+# source freeze fills every hash, byte size, and absolute provenance path.
 FROZEN_CROSS_HOST_ADMISSION_PATH_PROVENANCE: Final = ""
 FROZEN_CROSS_HOST_ADMISSION_CONTENT: Final = {
     "schema_version": transport_v6.ADMISSION_SCHEMA,
@@ -87,63 +92,57 @@ FROZEN_CROSS_HOST_ADMISSION_CONTENT: Final = {
     "mode": "0600",
 }
 
-RESOURCE_ATTEMPT_REJECTION_HISTORY_PATH_PROVENANCE: Final = ""
-FAILED_ACTIVATION_ATTEMPT_HISTORY_SCHEMA: Final = f"{OWNER}.failed_activation_attempt_history.v1"
-FAILED_ACTIVATION_ATTEMPT_HISTORY_STATUS: Final = (
-    "failed_activation_attempts_recorded_as_nonauthoritative_history"
+FAILED_ACTIVATION_HISTORY_DURABLE_ROOT: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
+    "direct_no_shadow_live_evidence_v6_20260824/failed_activation_attempt_history"
 )
+RESOURCE_ATTEMPT_REJECTION_HISTORY_PATH_PROVENANCE: Final = (
+    f"{FAILED_ACTIVATION_HISTORY_DURABLE_ROOT}/failed_activation_attempt_history.json"
+)
+FAILED_ACTIVATION_SOURCE_PATH_PROVENANCE: Final = (
+    f"{FAILED_ACTIVATION_HISTORY_DURABLE_ROOT}/failed_activation_source.json"
+)
+FAILED_V6_BENCHMARK_PATH_PROVENANCE: Final = (
+    f"{FAILED_ACTIVATION_HISTORY_DURABLE_ROOT}/resource_v6_wrong_route_benchmark.json"
+)
+FAILED_V7_ATTEMPT2_BENCHMARK_PATH_PROVENANCE: Final = (
+    f"{FAILED_ACTIVATION_HISTORY_DURABLE_ROOT}/resource_v7_attempt2_benchmark.json"
+)
+FAILED_ACTIVATION_ATTEMPT_HISTORY_SCHEMA: Final = failed_history_v1.SCHEMA_VERSION
+FAILED_ACTIVATION_ATTEMPT_HISTORY_STATUS: Final = failed_history_v1.STATUS
 RESOURCE_ATTEMPT_REJECTION_HISTORY_CONTENT: Final = {
-    "schema_version": "",
-    "status": "",
-    "file_sha256": "",
-    "canonical_field": "",
-    "canonical_sha256": "",
-    "size_bytes": 0,
+    "schema_version": failed_history_v1.SCHEMA_VERSION,
+    "status": failed_history_v1.STATUS,
+    "file_sha256": "165c02da26cb1f32ff6ef8549620dc1c54d1c5082a50ebaabeeee4c2622f73d0",
+    "canonical_field": failed_history_v1.CANONICAL_FIELD,
+    "canonical_sha256": "914b6b3018946fe145e67dd9a0bdd1bbbe38b75b4da53e26521d55fedc7cde5a",
+    "size_bytes": 6_413,
     "mode": "0600",
 }
 
-FROZEN_CURRENT_LIFECYCLE_PATH_PROVENANCE: Final = ""
-FROZEN_CURRENT_LIFECYCLE_EPOCH_ID: Final = ""
+FROZEN_CURRENT_LIFECYCLE_PATH_PROVENANCE: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/formal_collection/"
+    "prospective_lifecycle_journal_v2/"
+    "session-prospective-1787568574639266387-ac669869e7ed/admission_manifest.json"
+)
+FROZEN_CURRENT_LIFECYCLE_EPOCH_ID: Final = "prospective-1787568574639266387-ac669869e7ed"
 FROZEN_CURRENT_LIFECYCLE_CONTENT: Final = {
     "schema_version": base.LIFECYCLE_SCHEMA,
     "status": None,
-    "file_sha256": "",
+    "file_sha256": "8b2c08b49bb2f4c272b958b3f3ed3e7f47c914577267fec45c48fe6052a17aaf",
     "canonical_field": "admission_identity_sha256",
-    "canonical_sha256": "",
-    "size_bytes": 0,
+    "canonical_sha256": "50afb8064a43a81a92388766b5b4c0e31ae8d768e017da11d7ccdcf12507878d",
+    "size_bytes": 2_469,
     "mode": "0644",
 }
-
-# The rejected-attempt aggregate receipt must bind these three actual
-# benchmark files.  They remain deliberately empty until the history producer
-# emits and independently verifies the exact private bytes.
-REJECTED_V6_BENCHMARK_CONTENT: Final = {
-    "schema_version": f"{OWNER}.exact_four_file_host_benchmark.v4",
-    "status": "exact_v4_four_file_aggregate_benchmark_passed",
+FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE: Final = ""
+FROZEN_LIFECYCLE_CONTEXT_CONTENT: Final = {
+    "schema_version": lifecycle_context_v1.SCHEMA_VERSION,
+    "status": lifecycle_context_v1.STATUS,
     "file_sha256": "",
-    "canonical_field": "canonical_benchmark_receipt_sha256",
+    "canonical_field": lifecycle_context_v1.CANONICAL_FIELD,
     "canonical_sha256": "",
     "size_bytes": 0,
-    "mode": "0600",
-}
-REJECTED_V7_ATTEMPT1_BENCHMARK_CONTENT: Final = {
-    "schema_version": f"{OWNER}.exact_four_file_host_benchmark.v5",
-    "status": "external_venues_disabled_four_file_aggregate_benchmark_passed",
-    "file_sha256": "",
-    "canonical_field": "canonical_benchmark_receipt_sha256",
-    "canonical_sha256": "",
-    "size_bytes": 0,
-    "mode": "0600",
-}
-REJECTED_V7_ATTEMPT2_BENCHMARK_CONTENT: Final = dict(REJECTED_V7_ATTEMPT1_BENCHMARK_CONTENT)
-
-MISNAMED_PREDECESSOR_SOURCE_CONTENT: Final = {
-    "schema_version": "f05_buy_e3_rejected_predecessor_epoch_receipt.v1",
-    "status": "rejected_not_admitted",
-    "file_sha256": "c44f3f32ae61635ce683e5711f19fd59863e4235996a9401f48d62bc1af4d80b",
-    "canonical_field": "canonical_rejected_epoch_receipt_sha256",
-    "canonical_sha256": "4a3c01f7f178fa2d3f573a1696c637074fd74b51e846bd785886689ba44613d1",
-    "size_bytes": 7124,
     "mode": "0600",
 }
 
@@ -159,28 +158,38 @@ SUPERSEDED_V4_PROOF_CONTENT: Final = {
     "mode": "0600",
 }
 
-EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256: Final = {
+EXPECTED_RESOURCE_RUNTIME_SOURCE_SHA256: Final = {
     str(binding["path"]): str(binding["sha256"])
     for binding in resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.values()
 }
+EXPECTED_RESOURCE_RUNTIME_SOURCE_MANIFEST_SHA256: Final = (
+    "a486ed94a60b144aec88e23c5bc01e045356ca1143e28a94090746c38a0476f0"
+)
 EXPECTED_ACTIVE_RUNTIME_SOURCE_SHA256: Final = {
     str(resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256[role]["path"]): str(
         resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256[role]["sha256"]
     )
     for role in active_capture_v8.STARTUP_SOURCE_ROLE_MAP.values()
 }
-
-POST_LIFECYCLE_HEALTH_SCHEMA: Final = f"{OWNER}.post_lifecycle_live_health.v1"
-POST_LIFECYCLE_HEALTH_STATUS: Final = (
-    "same_active_process_post_lifecycle_health_and_operational_aggregates_verified"
+EXPECTED_ACTIVE_RUNTIME_SOURCE_MANIFEST_SHA256: Final = (
+    "8fd9babfd5e596b29a662a94ddee36c60d2b1de36504978b913e9d73d1fd3b84"
 )
-POST_LIFECYCLE_HEALTH_CANONICAL_FIELD: Final = "canonical_post_lifecycle_live_health_sha256"
+EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256: Final = {
+    **lifecycle_context_v1.EXPECTED_RUNTIME_SOURCE_SHA256
+}
+
+POST_LIFECYCLE_RECEIPT_SCHEMA: Final = post_lifecycle_v1.SCHEMA_VERSION
+POST_LIFECYCLE_RECEIPT_STATUS: Final = post_lifecycle_v1.STATUS
+POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD: Final = post_lifecycle_v1.CANONICAL_FIELD
+POST_LIFECYCLE_HEALTH_SCHEMA: Final = post_lifecycle_v1.PORTABLE_SCHEMA_VERSION
+POST_LIFECYCLE_HEALTH_STATUS: Final = post_lifecycle_v1.PORTABLE_STATUS
+POST_LIFECYCLE_HEALTH_CANONICAL_FIELD: Final = post_lifecycle_v1.PORTABLE_CANONICAL_FIELD
 FROZEN_POST_LIFECYCLE_HEALTH_PATH_PROVENANCE: Final = ""
 FROZEN_POST_LIFECYCLE_HEALTH_CONTENT: Final = {
-    "schema_version": POST_LIFECYCLE_HEALTH_SCHEMA,
-    "status": POST_LIFECYCLE_HEALTH_STATUS,
+    "schema_version": POST_LIFECYCLE_RECEIPT_SCHEMA,
+    "status": POST_LIFECYCLE_RECEIPT_STATUS,
     "file_sha256": "",
-    "canonical_field": POST_LIFECYCLE_HEALTH_CANONICAL_FIELD,
+    "canonical_field": POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD,
     "canonical_sha256": "",
     "size_bytes": 0,
     "mode": "0600",
@@ -396,8 +405,14 @@ def _module_contract() -> dict[str, str]:
         transport_v6.__name__ != TRANSPORT_MODULE
         or resource_v8.__name__ != RESOURCE_MODULE
         or active_capture_v8.__name__ != ACTIVE_CAPTURE_MODULE
+        or failed_history_v1.__name__ != FAILED_HISTORY_MODULE
+        or lifecycle_context_v1.__name__ != LIFECYCLE_CONTEXT_MODULE
+        or post_lifecycle_v1.__name__ != POST_LIFECYCLE_MODULE
         or getattr(transport_v6, "resource_v8", None) is not resource_v8
         or getattr(transport_v6, "active_capture_v8", None) is not active_capture_v8
+        or getattr(post_lifecycle_v1, "resource_v8", None) is not resource_v8
+        or getattr(post_lifecycle_v1, "active_capture_v8", None) is not active_capture_v8
+        or getattr(post_lifecycle_v1, "lifecycle_context_v1", None) is not lifecycle_context_v1
     ):
         raise FinalEvidenceV6Error("final evidence imported the wrong module route")
     if (
@@ -413,6 +428,23 @@ def _module_contract() -> dict[str, str]:
         or transport_v6.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS != ACTIVE_CAPTURE_STATUS_V7
     ):
         raise FinalEvidenceV6Error("final evidence is not bound to active schema-v7 via module-v8")
+    if (
+        failed_history_v1.SCHEMA_VERSION != FAILED_ACTIVATION_ATTEMPT_HISTORY_SCHEMA
+        or failed_history_v1.STATUS != FAILED_ACTIVATION_ATTEMPT_HISTORY_STATUS
+        or failed_history_v1.CANONICAL_FIELD
+        != RESOURCE_ATTEMPT_REJECTION_HISTORY_CONTENT["canonical_field"]
+        or post_lifecycle_v1.SCHEMA_VERSION != POST_LIFECYCLE_RECEIPT_SCHEMA
+        or post_lifecycle_v1.STATUS != POST_LIFECYCLE_RECEIPT_STATUS
+        or post_lifecycle_v1.CANONICAL_FIELD != POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD
+        or post_lifecycle_v1.PORTABLE_SCHEMA_VERSION != POST_LIFECYCLE_HEALTH_SCHEMA
+        or post_lifecycle_v1.PORTABLE_STATUS != POST_LIFECYCLE_HEALTH_STATUS
+        or post_lifecycle_v1.PORTABLE_CANONICAL_FIELD != POST_LIFECYCLE_HEALTH_CANONICAL_FIELD
+        or lifecycle_context_v1.SCHEMA_VERSION != FROZEN_LIFECYCLE_CONTEXT_CONTENT["schema_version"]
+        or lifecycle_context_v1.STATUS != FROZEN_LIFECYCLE_CONTEXT_CONTENT["status"]
+        or lifecycle_context_v1.CANONICAL_FIELD
+        != FROZEN_LIFECYCLE_CONTEXT_CONTENT["canonical_field"]
+    ):
+        raise FinalEvidenceV6Error("final evidence successor producer contracts drifted")
     expected_execution = {
         "execution_commit": CURRENT_EXECUTION_COMMIT,
         "execution_tree": CURRENT_EXECUTION_TREE,
@@ -432,6 +464,20 @@ def _module_contract() -> dict[str, str]:
         or transport_v6.FROZEN_FINAL_ANNOTATED_TAG != CURRENT_ANNOTATED_TAG
         or transport_v6.FROZEN_FINAL_TAG_OBJECT != CURRENT_TAG_OBJECT
         or transport_v6._frozen_final_execution() != expected_execution  # noqa: SLF001
+        or post_lifecycle_v1.RUNTIME_EXECUTION != expected_execution
+        or post_lifecycle_v1.EXPECTED_ALL_RUNTIME_SOURCE_SHA256
+        != EXPECTED_RESOURCE_RUNTIME_SOURCE_SHA256
+        or post_lifecycle_v1.EXPECTED_STARTUP_SOURCE_SHA256 != EXPECTED_ACTIVE_RUNTIME_SOURCE_SHA256
+        or post_lifecycle_v1.EXPECTED_LIFECYCLE_SOURCE_SHA256
+        != EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256
+        or lifecycle_context_v1.RUNTIME_EXECUTION != expected_execution
+        or lifecycle_context_v1.EXPECTED_RUNTIME_SOURCE_SHA256
+        != EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256
+        or lifecycle_context_v1.RUNTIME_SOURCE_FILE_COUNT != 65
+        or lifecycle_context_v1.RUNTIME_SOURCE_FILES_CANONICAL_SHA256
+        != "ffb3b0a50189b13010b05511ae1b11fe0a785b4f93bedccae620bac85759b20d"
+        or lifecycle_context_v1.RUNTIME_CODE_SHA256
+        != "aaf1dd51ce43db4ec2239901198e3ed6333ca4736bb11395d84f5baa64416b74"
     ):
         raise FinalEvidenceV6Error("transport-v6 runtime execution is not eacb release-v3")
     if (
@@ -593,6 +639,7 @@ def _active_health_window(
     *,
     transition: Mapping[str, Any],
     phase_label: str,
+    post_lifecycle: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         raise FinalEvidenceV6Error(f"portable {phase_label} window is missing")
@@ -612,7 +659,11 @@ def _active_health_window(
     expected_checks = {
         "constructor_boundary_only": True,
         "two_consecutive_fresh_main_health_rows": True,
-        "same_pid_and_start_ticks_before_between_after": True,
+        (
+            "same_pid_and_start_ticks_before_after_poll_and_each_health_row"
+            if post_lifecycle
+            else "same_pid_and_start_ticks_before_between_after"
+        ): True,
         "sell_owner_enabled_both_rows": True,
         "buy_e3_enabled_both_rows": True,
         "external_sources_absolute_zero_both_rows": True,
@@ -635,16 +686,19 @@ def _active_health_window(
         raise FinalEvidenceV6Error(f"portable {phase_label} identity drifted")
     previous_wall = float("-inf")
     previous_updates = -1
+    previous_windows = -1
     normalized_rows: list[dict[str, Any]] = []
     for index, raw in enumerate(rows, start=1):
-        if not isinstance(raw, Mapping) or set(raw) != {
+        expected_row_fields = {
             "fresh_generation",
             "line_offset_bytes",
             "line_size_bytes",
             "line_sha256",
             "main_wall_timestamp_s",
             "projection",
-        }:
+            *({"readiness"} if post_lifecycle else set()),
+        }
+        if not isinstance(raw, Mapping) or set(raw) != expected_row_fields:
             raise FinalEvidenceV6Error(f"portable {phase_label} row is missing")
         projection = raw.get("projection")
         shadow = (
@@ -695,6 +749,31 @@ def _active_health_window(
             )
         ):
             raise FinalEvidenceV6Error(f"portable {phase_label} counters drifted")
+        if post_lifecycle:
+            readiness = raw.get("readiness")
+            if not isinstance(readiness, Mapping) or set(readiness) != {
+                "runtime_loaded",
+                "warmup_time_admitted",
+                "completed_windows",
+                "gap_resets",
+                "resets",
+                "invalid_updates",
+                "economic_outcome_claimed",
+            }:
+                raise FinalEvidenceV6Error(f"portable {phase_label} readiness drifted")
+            completed_windows = readiness.get("completed_windows")
+            if (
+                readiness.get("runtime_loaded") is not True
+                or readiness.get("warmup_time_admitted") is not True
+                or type(completed_windows) is not int
+                or completed_windows <= previous_windows
+                or readiness.get("gap_resets") != 0
+                or readiness.get("resets") != 0
+                or readiness.get("invalid_updates") != 0
+                or readiness.get("economic_outcome_claimed") is not False
+            ):
+                raise FinalEvidenceV6Error(f"portable {phase_label} readiness semantics drifted")
+            previous_windows = completed_windows
         previous_wall = wall
         previous_updates = int(projection["boolean_cooldown_updates"])
         normalized_rows.append(dict(raw))
@@ -848,6 +927,11 @@ def _validate_portable_v6(
     disabled_start = disabled.get("pid_start_ticks")
     active_pid = transition.get("active_pid")
     active_start = transition.get("active_pid_start_ticks")
+    resource_runtime_files = disabled.get("runtime_source_files")
+    resource_runtime_manifest = _require_sha256(
+        disabled.get("runtime_source_manifest_sha256"),
+        "portable resource runtime-source manifest",
+    )
     if (
         type(disabled_pid) is not int
         or disabled_pid <= 0
@@ -857,6 +941,9 @@ def _validate_portable_v6(
         or disabled.get("fresh_pid") is not True
         or disabled.get("fresh_start_ticks") is not True
         or disabled.get("same_pid_pre_post") is not True
+        or not isinstance(resource_runtime_files, Mapping)
+        or dict(resource_runtime_files) != EXPECTED_RESOURCE_RUNTIME_SOURCE_SHA256
+        or resource_runtime_manifest != EXPECTED_RESOURCE_RUNTIME_SOURCE_MANIFEST_SHA256
         or transition.get("disabled_pid") != disabled_pid
         or transition.get("disabled_pid_start_ticks") != disabled_start
         or type(active_pid) is not int
@@ -870,6 +957,10 @@ def _validate_portable_v6(
 
     runtime_files = active.get("runtime_source_files")
     startup = active.get("startup_semantics")
+    active_runtime_manifest = _require_sha256(
+        active.get("runtime_source_manifest_sha256"),
+        "portable active runtime-source manifest",
+    )
     if (
         active.get("config_sha256") != transport_v6.FROZEN_FINAL_ACTIVE_CONFIG_SHA256
         or active.get("artifact_sha256") != transport_v6.FROZEN_FINAL_ARTIFACT_SHA256
@@ -877,6 +968,7 @@ def _validate_portable_v6(
         or active.get("owner_override_effective") is not True
         or not isinstance(runtime_files, Mapping)
         or dict(runtime_files) != EXPECTED_ACTIVE_RUNTIME_SOURCE_SHA256
+        or active_runtime_manifest != EXPECTED_ACTIVE_RUNTIME_SOURCE_MANIFEST_SHA256
         or not isinstance(startup, Mapping)
         or startup.get("startup_status") != "accepted"
         or startup.get("running_checkout_commit") != CURRENT_EXECUTION_COMMIT
@@ -989,170 +1081,60 @@ def _admission_context(
     return admission, {**binding, **exact_binding}, portable, no_shadow
 
 
-def _expected_rejected_benchmark_content(attempt_id: str) -> dict[str, Any]:
-    candidates = {
-        "resource-v6": REJECTED_V6_BENCHMARK_CONTENT,
-        "resource-v7-attempt1": REJECTED_V7_ATTEMPT1_BENCHMARK_CONTENT,
-        "resource-v7-attempt2": REJECTED_V7_ATTEMPT2_BENCHMARK_CONTENT,
-    }
-    try:
-        return _frozen_content(candidates[attempt_id], f"{attempt_id} rejected benchmark")
-    except KeyError as exc:  # pragma: no cover - guarded by fixed rows below
-        raise FinalEvidenceV6Error("unknown rejected resource attempt") from exc
-
-
 def _validate_resource_attempt_rejection_history_payload(payload: Any) -> dict[str, Any]:
-    frozen = _frozen_content(
-        RESOURCE_ATTEMPT_REJECTION_HISTORY_CONTENT,
-        "resource attempt rejection history",
+    """Reassert the producer-owned historical-only authority boundary."""
+
+    if not isinstance(payload, Mapping):
+        raise FinalEvidenceV6Error("resource rejection-history payload is missing")
+    projection = payload.get("failed_activation_projection")
+    rejection = projection.get("rejection") if isinstance(projection, Mapping) else None
+    attempts = payload.get("resource_gate_attempts")
+    summary = payload.get("summary")
+    expected_attempts = failed_history_v1._attempts(  # noqa: SLF001
+        v6_binding=failed_history_v1.V6_WRONG_ROUTE_BENCHMARK,
+        v7_attempt2_binding=failed_history_v1.V7_ATTEMPT2_BENCHMARK,
     )
-    fields = {
-        "schema_version",
-        "status",
-        "generated_utc",
-        "misnamed_predecessor_source",
-        "attempts",
-        "authority_boundary",
-        "permissions",
-        "evidence_boundary",
-        frozen["canonical_field"],
-    }
-    if not isinstance(payload, Mapping) or set(payload) != fields:
-        raise FinalEvidenceV6Error("resource rejection-history fields drifted")
-    _timestamp(payload.get("generated_utc"), "resource rejection-history timestamp")
     if (
-        frozen["schema_version"] != FAILED_ACTIVATION_ATTEMPT_HISTORY_SCHEMA
-        or frozen["status"] != FAILED_ACTIVATION_ATTEMPT_HISTORY_STATUS
-        or payload.get("schema_version") != FAILED_ACTIVATION_ATTEMPT_HISTORY_SCHEMA
-        or payload.get("status") != FAILED_ACTIVATION_ATTEMPT_HISTORY_STATUS
-        or payload.get(frozen["canonical_field"])
-        != _document_sha256(payload, frozen["canonical_field"])
+        payload.get("schema_version") != failed_history_v1.SCHEMA_VERSION
+        or payload.get("status") != failed_history_v1.STATUS
+        or payload.get("failed_activation_source") != failed_history_v1.FAILED_ACTIVATION_SOURCE
+        or not isinstance(projection, Mapping)
+        or projection.get("source_reported_unadmitted_session_token")
+        != failed_history_v1.FAILED_SESSION_TOKEN
+        or not isinstance(rejection, Mapping)
+        or rejection.get("exchange_error_code") != -5022
+        or rejection.get("formal_collection_valid") is not False
+        or rejection.get("formal_admission_allowed") is not False
+        or any(
+            projection.get(name) is not False
+            for name in (
+                "epoch_established",
+                "runtime_authority",
+                "evidence_authority",
+                "reusable_for_current",
+            )
+        )
+        or not isinstance(attempts, Mapping)
+        or attempts != expected_attempts
+        or any(
+            not isinstance(attempt, Mapping)
+            or attempt.get("formal_resource_receipt_created") is not False
+            or attempt.get("active_process_started") is not False
+            for attempt in attempts.values()
+        )
+        or attempts["resource_v7_attempt1"].get("benchmark", {}).get("exact7_binding_claimed")
+        is not False
+        or not isinstance(summary, Mapping)
+        or summary.get("admitted_epoch_count") != 0
+        or summary.get("resource_receipt_count") != 0
+        or summary.get("active_process_started_in_resource_attempts") is not False
+        or summary.get("current_runtime_authority_derived_from_history") is not False
+        or payload.get("authority_design") != failed_history_v1.AUTHORITY_DESIGN
+        or payload.get("permissions") != failed_history_v1.PERMISSIONS
+        or payload.get("evidence_boundary") != failed_history_v1.EVIDENCE_BOUNDARY
     ):
-        raise FinalEvidenceV6Error("resource rejection-history identity drifted")
-    _exact_content(
-        payload.get("misnamed_predecessor_source"),
-        MISNAMED_PREDECESSOR_SOURCE_CONTENT,
-        "misnamed predecessor source provenance",
-    )
-    rows = payload.get("attempts")
-    if not isinstance(rows, list) or len(rows) != 5:
-        raise FinalEvidenceV6Error("resource rejection-history rows drifted")
-    expected_ids = (
-        "preactivation-gtx-5022",
-        "resource-v5",
-        "resource-v6",
-        "resource-v7-attempt1",
-        "resource-v7-attempt2",
-    )
-    expected_modules = {
-        "preactivation-gtx-5022": "preactivation_exchange_exposure_attempt",
-        "resource-v5": (
-            "research.families.f05_fill_quality_quote_ev.audit."
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_"
-            "resource_gate_v5"
-        ),
-        "resource-v6": (
-            "research.families.f05_fill_quality_quote_ev.audit."
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_"
-            "resource_gate_v6"
-        ),
-        "resource-v7-attempt1": (
-            "research.families.f05_fill_quality_quote_ev.audit."
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_"
-            "resource_gate_v7"
-        ),
-        "resource-v7-attempt2": (
-            "research.families.f05_fill_quality_quote_ev.audit."
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_"
-            "resource_gate_v7"
-        ),
-    }
-    expected_reasons = {
-        "preactivation-gtx-5022": ["gtx_exchange_exposure_mismatch_error_minus_5022"],
-        "resource-v5": [
-            "fresh_process_window_elapsed_before_formal_capture",
-            "stale_previous_pid_health_tail_counter_reset",
-        ],
-        "resource-v6": ["wrong_benchmark_producer_route"],
-        "resource-v7-attempt1": ["out_of_order_counter_advanced_29_to_31"],
-        "resource-v7-attempt2": ["out_of_order_counter_advanced_35_to_37"],
-    }
-    expected_counters = {
-        "preactivation-gtx-5022": None,
-        "resource-v5": None,
-        "resource-v6": None,
-        "resource-v7-attempt1": {
-            "counter": "globalFlowOOO",
-            "absolute_before": 29,
-            "absolute_after": 31,
-            "window_delta": 2,
-        },
-        "resource-v7-attempt2": {
-            "counter": "globalFlowOOO",
-            "absolute_before": 35,
-            "absolute_after": 37,
-            "window_delta": 2,
-        },
-    }
-    normalized: list[dict[str, Any]] = []
-    for row, attempt_id in zip(rows, expected_ids, strict=True):
-        if not isinstance(row, Mapping) or set(row) != {
-            "attempt_id",
-            "producer_route",
-            "failure_reasons",
-            "source_receipts",
-            "counter_failure",
-            "formal_resource_receipt_absent",
-            "active_process_admitted",
-            "epoch_established",
-            "runtime_authority",
-            "evidence_authority",
-            "current_evidence",
-            "reusable",
-        }:
-            raise FinalEvidenceV6Error("resource rejection-history row fields drifted")
-        if attempt_id == "preactivation-gtx-5022":
-            expected_sources = [dict(MISNAMED_PREDECESSOR_SOURCE_CONTENT)]
-        elif attempt_id == "resource-v5":
-            expected_sources = []
-        else:
-            expected_sources = [_expected_rejected_benchmark_content(attempt_id)]
-        if (
-            row.get("attempt_id") != attempt_id
-            or row.get("producer_route") != expected_modules[attempt_id]
-            or row.get("failure_reasons") != expected_reasons[attempt_id]
-            or row.get("source_receipts") != expected_sources
-            or row.get("counter_failure") != expected_counters[attempt_id]
-            or row.get("formal_resource_receipt_absent") is not True
-            or row.get("active_process_admitted") is not False
-            or row.get("epoch_established") is not False
-            or row.get("runtime_authority") is not False
-            or row.get("evidence_authority") is not False
-            or row.get("current_evidence") is not False
-            or row.get("reusable") is not False
-        ):
-            raise FinalEvidenceV6Error("resource rejection-history nonauthority semantics drifted")
-        normalized.append(dict(row))
-    boundary = payload.get("authority_boundary")
-    if boundary != {
-        "aggregate_history_only": True,
-        "formal_resource_receipts_created": False,
-        "active_processes_admitted": False,
-        "epochs_established": False,
-        "runtime_authority": False,
-        "evidence_authority": False,
-        "current_evidence": False,
-        "reusable": False,
-    }:
-        raise FinalEvidenceV6Error("resource rejection-history authority boundary drifted")
-    if (
-        payload.get("permissions") != NO_NEW_AUTHORITY
-        or payload.get("evidence_boundary") != EVIDENCE_BOUNDARY
-    ):
-        raise FinalEvidenceV6Error("resource rejection-history exceeded evidence authority")
-    result = dict(payload)
-    result["attempts"] = normalized
-    return result
+        raise FinalEvidenceV6Error("resource rejection-history nonauthority semantics drifted")
+    return dict(payload)
 
 
 def _resource_attempt_rejection_history_context(
@@ -1167,13 +1149,34 @@ def _resource_attempt_rejection_history_context(
         RESOURCE_ATTEMPT_REJECTION_HISTORY_CONTENT,
         "resource attempt rejection history",
     )
+    failed_source = _require_exact_path(
+        Path(FAILED_ACTIVATION_SOURCE_PATH_PROVENANCE),
+        FAILED_ACTIVATION_SOURCE_PATH_PROVENANCE,
+        "failed activation source",
+    )
+    v6_benchmark = _require_exact_path(
+        Path(FAILED_V6_BENCHMARK_PATH_PROVENANCE),
+        FAILED_V6_BENCHMARK_PATH_PROVENANCE,
+        "failed resource-v6 benchmark",
+    )
+    v7_attempt2_benchmark = _require_exact_path(
+        Path(FAILED_V7_ATTEMPT2_BENCHMARK_PATH_PROVENANCE),
+        FAILED_V7_ATTEMPT2_BENCHMARK_PATH_PROVENANCE,
+        "failed resource-v7 attempt2 benchmark",
+    )
     try:
-        payload, binding = base._binding(  # noqa: SLF001
+        payload = failed_history_v1.validate_failed_activation_attempt_history(
+            path,
+            failed_activation_source_path=failed_source,
+            v6_wrong_route_benchmark_path=v6_benchmark,
+            v7_attempt2_benchmark_path=v7_attempt2_benchmark,
+        )
+        binding = _receipt_binding(
             path,
             label="resource attempt rejection history",
-            canonical_field=str(frozen["canonical_field"]),
-            expected_schema=str(frozen["schema_version"]),
-            expected_status=frozen["status"],
+            canonical_field=failed_history_v1.CANONICAL_FIELD,
+            schema=failed_history_v1.SCHEMA_VERSION,
+            status=failed_history_v1.STATUS,
         )
     except Exception as exc:
         raise FinalEvidenceV6Error("resource attempt rejection history is invalid") from exc
@@ -1299,8 +1302,10 @@ def _superseded_v4_proof_context(
 def _lifecycle_context(
     path: Path,
     *,
+    lifecycle_context_path: Path,
+    current_runtime_root: Path,
     active_runtime: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     _require_exact_path(
         path,
         FROZEN_CURRENT_LIFECYCLE_PATH_PROVENANCE,
@@ -1311,9 +1316,30 @@ def _lifecycle_context(
         "current lifecycle admission",
         allowed_modes=frozenset({"0644"}),
     )
+    _require_exact_path(
+        lifecycle_context_path,
+        FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE,
+        "portable lifecycle admission context",
+    )
+    frozen_context = _frozen_content(
+        FROZEN_LIFECYCLE_CONTEXT_CONTENT,
+        "portable lifecycle admission context",
+    )
     if not FROZEN_CURRENT_LIFECYCLE_EPOCH_ID.startswith("prospective-"):
         raise FinalEvidenceV6Error("current lifecycle epoch is not source-frozen")
     try:
+        context = lifecycle_context_v1.validate_lifecycle_context_against_admission(
+            lifecycle_context_path,
+            lifecycle_admission_path=path,
+            runtime_repository_root=current_runtime_root,
+        )
+        context_binding = _receipt_binding(
+            lifecycle_context_path,
+            label="portable lifecycle admission context",
+            canonical_field=lifecycle_context_v1.CANONICAL_FIELD,
+            schema=lifecycle_context_v1.SCHEMA_VERSION,
+            status=lifecycle_context_v1.STATUS,
+        )
         payload, binding = base._validate_lifecycle_admission(path)  # noqa: SLF001
     except Exception as exc:
         raise FinalEvidenceV6Error("current release-v3 lifecycle admission is invalid") from exc
@@ -1323,8 +1349,14 @@ def _lifecycle_context(
         "current lifecycle admission",
         allowed_modes=frozenset({"0644"}),
     )
+    exact_context = _exact_content(
+        {field: context_binding.get(field) for field in CONTENT_BINDING_FIELDS},
+        frozen_context,
+        "portable lifecycle admission context",
+    )
     active_files = active_runtime.get("runtime_source_files")
     admitted_files = binding.get("runtime_code_files")
+    context_projection = context.get("lifecycle_projection")
     baseline_epoch = str(binding.get("baseline_epoch_id", ""))
     health = active_runtime.get("active_health_window")
     rows = health.get("rows") if isinstance(health, Mapping) else None
@@ -1342,10 +1374,47 @@ def _lifecycle_context(
         or not isinstance(active_files, Mapping)
         or not isinstance(admitted_files, Mapping)
         or dict(active_files) != EXPECTED_ACTIVE_RUNTIME_SOURCE_SHA256
-        or any(
-            admitted_files.get(path) != digest
-            for path, digest in EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256.items()
+        or dict(admitted_files) != EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256
+        or any(admitted_files.get(name) != digest for name, digest in active_files.items())
+        or not isinstance(context_projection, Mapping)
+        or context.get("lifecycle_admission") != exact
+        or context_projection.get("admitted_ts_ns") != payload.get("admitted_ts_ns")
+        or context_projection.get("session_id") != binding.get("session_id")
+        or context_projection.get("baseline_epoch_id") != baseline_epoch
+        or context_projection.get("config_sha256") != binding.get("config_sha256")
+        or context_projection.get("runtime_code_sha256") != lifecycle_context_v1.RUNTIME_CODE_SHA256
+        or context_projection.get("runtime_code_schema_version")
+        != lifecycle_context_v1.RUNTIME_CODE_SCHEMA
+        or context_projection.get("runtime_source_files")
+        != EXPECTED_LIFECYCLE_RUNTIME_SOURCE_SHA256
+        or context_projection.get("runtime_source_file_count") != 65
+        or context_projection.get("runtime_source_files_canonical_sha256")
+        != lifecycle_context_v1.RUNTIME_SOURCE_FILES_CANONICAL_SHA256
+        or context_projection.get("action_enablement_sha256")
+        != binding.get("action_enablement_sha256")
+        or context_projection.get("epoch_start_ts_ns") != binding.get("epoch_start_ts_ns")
+        or context_projection.get("writer_runtime_identity_sha256")
+        != binding.get("writer_runtime_identity_sha256")
+        or context_projection.get("writer_identity_file_sha256")
+        != binding.get("writer_identity_file_sha256")
+        or context_projection.get("epoch_manifest_file_sha256")
+        != binding.get("epoch_manifest_file_sha256")
+        or context_projection.get("identity_evidence_file_sha256")
+        != binding.get("identity_evidence_file_sha256")
+        or context_projection.get("safe_action_state") != lifecycle_context_v1.SAFE_ACTION_STATE
+        or context_projection.get("action_shadow_enabled_state")
+        != lifecycle_context_v1.SAFE_ACTION_SHADOW_ENABLED_STATE
+        or context_projection.get("external_shadow_only_inert") is not True
+        or context_projection.get("external_source_recording_state")
+        != lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE
+        or context_projection.get("external_source_count")
+        != len(lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE)
+        or context_projection.get("source_settings_inert_because_external_master_false") is not True
+        or context_projection.get(
+            "record_trades_inert_because_master_false_and_record_enabled_false"
         )
+        is not True
+        or context_projection.get("external_effective_stream_and_recording_disabled") is not True
         or not (0.0 < epoch_start_s <= first_health_s < second_health_s < admitted_s)
     ):
         raise FinalEvidenceV6Error(
@@ -1364,7 +1433,12 @@ def _lifecycle_context(
         }.items()
     ):
         raise FinalEvidenceV6Error("current lifecycle action/shadow state drifted")
-    return payload, {**binding, **exact}
+    return (
+        payload,
+        {**binding, **exact},
+        context,
+        {**context_binding, **exact_context},
+    )
 
 
 def _finite_nonnegative(value: Any, label: str) -> float:
@@ -1407,38 +1481,48 @@ def _post_lifecycle_aggregates(value: Any) -> dict[str, Any]:
     if not isinstance(latency, Mapping) or set(latency) != {
         "decision_sample_count",
         "decision_p99_us",
-        "callback_sample_count",
-        "callback_p99_us",
+        "lifecycle_enqueue_p99_us",
+        "lifecycle_write_p99_ms",
         "small_sample_disclosed",
         "strategy_result_authority",
+        "formal_performance_authority",
+        "resource_v8_formal_gate_unchanged",
+        "economic_outcome_claimed",
     }:
         raise FinalEvidenceV6Error("post-lifecycle latency aggregates drifted")
-    for prefix in ("decision", "callback"):
-        count = latency.get(f"{prefix}_sample_count")
-        p99 = latency.get(f"{prefix}_p99_us")
-        if type(count) is not int or count < 0:
-            raise FinalEvidenceV6Error(f"post-lifecycle {prefix} count drifted")
-        if (count == 0 and p99 is not None) or (
-            count > 0 and _finite_nonnegative(p99, f"post-lifecycle {prefix} p99") < 0.0
-        ):
-            raise FinalEvidenceV6Error(f"post-lifecycle {prefix} p99 drifted")
+    decision_count = latency.get("decision_sample_count")
+    decision_p99 = latency.get("decision_p99_us")
+    if type(decision_count) is not int or decision_count < 0:
+        raise FinalEvidenceV6Error("post-lifecycle decision_sample_count drifted")
+    if (decision_count == 0 and decision_p99 is not None) or (
+        decision_count > 0
+        and _finite_nonnegative(decision_p99, "post-lifecycle decision p99") < 0.0
+    ):
+        raise FinalEvidenceV6Error("post-lifecycle decision p99 drifted")
     if (
-        latency.get("small_sample_disclosed") is not True
+        _finite_nonnegative(latency.get("lifecycle_enqueue_p99_us"), "post-lifecycle enqueue p99")
+        < 0.0
+        or _finite_nonnegative(latency.get("lifecycle_write_p99_ms"), "post-lifecycle write p99")
+        < 0.0
+        or latency.get("small_sample_disclosed") is not True
         or latency.get("strategy_result_authority") is not False
+        or latency.get("formal_performance_authority") is not False
+        or latency.get("resource_v8_formal_gate_unchanged") is not True
+        or latency.get("economic_outcome_claimed") is not False
     ):
         raise FinalEvidenceV6Error("post-lifecycle latency authority drifted")
     if not isinstance(position, Mapping) or set(position) != {
-        "position_probe_completed",
-        "aggregate_position_flat",
-        "open_order_count",
+        "main_health_position_projection_completed",
+        "reported_aggregate_position_flat",
+        "reported_open_order_count",
         "economic_values_persisted",
     }:
         raise FinalEvidenceV6Error("post-lifecycle position safety projection drifted")
     if (
-        position.get("position_probe_completed") is not True
-        or type(position.get("aggregate_position_flat")) is not bool
-        or type(position.get("open_order_count")) is not int
-        or position["open_order_count"] < 0
+        position.get("main_health_position_projection_completed") is not True
+        or type(position.get("reported_aggregate_position_flat")) is not bool
+        or type(position.get("reported_open_order_count")) is not int
+        or position["reported_open_order_count"] < 0
         or position.get("economic_values_persisted") is not False
     ):
         raise FinalEvidenceV6Error("post-lifecycle position safety semantics drifted")
@@ -1459,6 +1543,10 @@ def _validate_post_lifecycle_health_payload(
     transition: Mapping[str, Any],
     active_runtime: Mapping[str, Any],
 ) -> dict[str, Any]:
+    try:
+        payload = post_lifecycle_v1.validate_portable_projection(payload)
+    except Exception as exc:
+        raise FinalEvidenceV6Error("post-lifecycle producer projection is invalid") from exc
     fields = {
         "schema_version",
         "status",
@@ -1471,6 +1559,7 @@ def _validate_post_lifecycle_health_payload(
         "main_health_window",
         "lifecycle_health",
         "operational_aggregates",
+        "lifecycle_process_cross_binding",
         "checks",
         "permissions",
         "evidence_boundary",
@@ -1487,6 +1576,8 @@ def _validate_post_lifecycle_health_payload(
         or payload.get("runtime_execution") != runtime_execution
         or payload.get("runtime_authority") != runtime_authority
         or payload.get("lifecycle_epoch_id") != lifecycle_binding.get("baseline_epoch_id")
+        or payload.get("lifecycle_process_cross_binding")
+        != post_lifecycle_v1.LIFECYCLE_PROCESS_CROSS_BINDING
     ):
         raise FinalEvidenceV6Error("post-lifecycle live-health authority drifted")
     lifecycle_content = {field: lifecycle_binding.get(field) for field in CONTENT_BINDING_FIELDS}
@@ -1507,6 +1598,8 @@ def _validate_post_lifecycle_health_payload(
         "config_sha256": active_runtime.get("config_sha256"),
         "runtime_identity_file_sha256": runtime_identity.get("file_sha256"),
         "runtime_identity_canonical_sha256": runtime_identity.get("canonical_sha256"),
+        "runtime_source_manifest_sha256": active_runtime.get("runtime_source_manifest_sha256"),
+        "runtime_source_files": active_runtime.get("runtime_source_files"),
         "release_file_sha256": runtime_authority.get("file_sha256"),
         "release_canonical_sha256": runtime_authority.get("canonical_sha256"),
     }
@@ -1516,6 +1609,7 @@ def _validate_post_lifecycle_health_payload(
         "config_sha256",
         "runtime_identity_file_sha256",
         "runtime_identity_canonical_sha256",
+        "runtime_source_manifest_sha256",
         "release_file_sha256",
         "release_canonical_sha256",
     ):
@@ -1526,6 +1620,7 @@ def _validate_post_lifecycle_health_payload(
         payload.get("main_health_window"),
         transition=transition,
         phase_label="post-lifecycle health",
+        post_lifecycle=True,
     )
     lifecycle_health = payload.get("lifecycle_health")
     if not isinstance(lifecycle_health, Mapping) or set(lifecycle_health) != {
@@ -1561,6 +1656,12 @@ def _validate_post_lifecycle_health_payload(
         "snapshot_after_lifecycle_admission": True,
         "two_fresh_post_lifecycle_main_health_rows": True,
         "buy_e3_and_sell_owner_enabled": True,
+        "buy_e3_runtime_loaded_and_warmup_time_admitted": True,
+        "buy_e3_completed_windows_and_updates_strictly_increase": True,
+        "buy_e3_gap_resets_resets_invalid_absolute_zero": True,
+        "decision_count_and_latency_disclosed_without_promotion_authority": True,
+        "resource_v8_formal_gate_unchanged": True,
+        "economic_outcome_claimed": False,
         "external_sources_absolute_zero": True,
         "global_flow_explicit_disabled_error_and_backend_zero": True,
         "global_reference_explicit_disabled_error_and_state_zero": True,
@@ -1585,6 +1686,8 @@ def _post_lifecycle_health_context(
     *,
     lifecycle_payload: Mapping[str, Any],
     lifecycle_binding: Mapping[str, Any],
+    lifecycle_context_payload: Mapping[str, Any],
+    lifecycle_context_binding: Mapping[str, Any],
     runtime_execution: Mapping[str, Any],
     runtime_authority: Mapping[str, Any],
     transition: Mapping[str, Any],
@@ -1603,9 +1706,9 @@ def _post_lifecycle_health_context(
         payload, binding = base._binding(  # noqa: SLF001
             path,
             label="post-lifecycle live health",
-            canonical_field=POST_LIFECYCLE_HEALTH_CANONICAL_FIELD,
-            expected_schema=POST_LIFECYCLE_HEALTH_SCHEMA,
-            expected_status=POST_LIFECYCLE_HEALTH_STATUS,
+            canonical_field=POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD,
+            expected_schema=POST_LIFECYCLE_RECEIPT_SCHEMA,
+            expected_status=POST_LIFECYCLE_RECEIPT_STATUS,
         )
     except Exception as exc:
         raise FinalEvidenceV6Error("post-lifecycle live-health receipt is invalid") from exc
@@ -1614,8 +1717,26 @@ def _post_lifecycle_health_context(
         frozen,
         "post-lifecycle live health",
     )
+    try:
+        raw = post_lifecycle_v1.validate_content_projection(payload)
+        portable = post_lifecycle_v1.portable_projection(raw)
+    except Exception as exc:
+        raise FinalEvidenceV6Error(
+            "post-lifecycle source-frozen content projection is invalid"
+        ) from exc
+    expected_context_content = {
+        field: lifecycle_context_binding.get(field) for field in CONTENT_BINDING_FIELDS
+    }
+    if (
+        raw.get("lifecycle_context_receipt") != expected_context_content
+        or raw.get("lifecycle_context") != lifecycle_context_payload.get("lifecycle_projection")
+        or raw.get("lifecycle_admission") != lifecycle_context_payload.get("lifecycle_admission")
+    ):
+        raise FinalEvidenceV6Error(
+            "post-lifecycle receipt lost durable lifecycle-context cross-binding"
+        )
     observed = _validate_post_lifecycle_health_payload(
-        payload,
+        portable,
         lifecycle_payload=lifecycle_payload,
         lifecycle_binding=lifecycle_binding,
         runtime_execution=runtime_execution,
@@ -1692,6 +1813,11 @@ def build_activation_envelope(
             "shadow_or_companion_collection_enabled": False,
             "superseded_v4_proof_history_only": True,
             "rejected_resource_attempts_history_only": True,
+            "all_failed_resource_receipts_absent_claim_scope": (
+                "historical_operational_report_only"
+            ),
+            "failed_resource_receipt_absence_is_formal_or_current_authority": False,
+            "persistent_absence_witness_for_v5_or_v7_claimed": False,
             "remote_inode_reinterpreted_locally": False,
         },
         "formal_research_state": dict(FORMAL_RESEARCH_STATE),
@@ -1765,6 +1891,7 @@ def build_completion(
     *,
     activation_envelope_path: Path,
     lifecycle_admission_path: Path,
+    lifecycle_context_path: Path,
     post_lifecycle_health_path: Path,
     current_runtime_root: Path,
     current_release_v3: Path,
@@ -1779,14 +1906,23 @@ def build_completion(
         "historical_v4_release_v2": historical_v4_release_v2,
     }
     envelope, envelope_binding = _activation_context(activation_envelope_path, **roots)
-    lifecycle, lifecycle_binding = _lifecycle_context(
+    (
+        lifecycle,
+        lifecycle_binding,
+        lifecycle_context,
+        lifecycle_context_binding,
+    ) = _lifecycle_context(
         lifecycle_admission_path,
+        lifecycle_context_path=lifecycle_context_path,
+        current_runtime_root=current_runtime_root,
         active_runtime=envelope["active_runtime"],
     )
     post_health, post_health_binding = _post_lifecycle_health_context(
         post_lifecycle_health_path,
         lifecycle_payload=lifecycle,
         lifecycle_binding=lifecycle_binding,
+        lifecycle_context_payload=lifecycle_context,
+        lifecycle_context_binding=lifecycle_context_binding,
         runtime_execution=envelope["runtime_execution"],
         runtime_authority=envelope["runtime_authority"],
         transition=envelope["transition"],
@@ -1814,14 +1950,17 @@ def build_completion(
         "remote_active_attestation": dict(envelope["source_receipts"]["remote_active_attestation"]),
         "current_no_shadow_evidence": dict(envelope["current_no_shadow_evidence"]),
         "current_lifecycle_admission": lifecycle_binding,
+        "current_lifecycle_context": lifecycle_context_binding,
         "post_lifecycle_live_health": post_health_binding,
         "post_lifecycle_no_shadow_evidence": {
             "main_health_window": dict(post_health["main_health_window"]),
             "lifecycle_health": dict(post_health["lifecycle_health"]),
             "operational_aggregates": dict(post_health["operational_aggregates"]),
+            "lifecycle_process_cross_binding": dict(post_health["lifecycle_process_cross_binding"]),
             "checks": dict(post_health["checks"]),
         },
         "current_lifecycle_observed_payload_sha256": _canonical_sha256(lifecycle),
+        "current_lifecycle_context_observed_payload_sha256": _canonical_sha256(lifecycle_context),
         "lifecycle_cross_binding": {
             "baseline_epoch_id": lifecycle_binding["baseline_epoch_id"],
             "superseded_v4_epoch_id": SUPERSEDED_V4_EPOCH_ID,
@@ -1829,6 +1968,10 @@ def build_completion(
             "config_sha256": lifecycle_binding["config_sha256"],
             "active_config_sha256": transport_v6.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
             "runtime_code_sha256": lifecycle_binding["runtime_code_sha256"],
+            "runtime_source_file_count": 65,
+            "runtime_source_files_canonical_sha256": (
+                lifecycle_context_v1.RUNTIME_SOURCE_FILES_CANONICAL_SHA256
+            ),
             "active_runtime_source_files": dict(envelope["active_runtime"]["runtime_source_files"]),
             "admitted_runtime_code_files": dict(lifecycle_binding["runtime_code_files"]),
             "no_shadow_config_binding": {
@@ -1836,11 +1979,27 @@ def build_completion(
                 "global_flow_shadow_disabled_bound_by_exact_config": True,
                 "global_reference_shadow_disabled_bound_by_exact_config": True,
             },
+            "safe_action_state": dict(lifecycle_context_v1.SAFE_ACTION_STATE),
+            "action_shadow_enabled_state": dict(
+                lifecycle_context_v1.SAFE_ACTION_SHADOW_ENABLED_STATE
+            ),
+            "external_source_recording_state": [
+                dict(row) for row in lifecycle_context_v1.SAFE_EXTERNAL_SOURCE_RECORDING_STATE
+            ],
+            "external_shadow_only_inert_because_master_disabled": True,
+            "external_source_settings_inert_because_master_disabled": True,
+            "record_trades_true_but_inert_because_master_and_record_enabled_false": True,
+            "external_stream_and_recording_effectively_disabled": True,
             "runtime_source_binding": {
                 "active_startup_source_map_exact": True,
-                "lifecycle_source_map_exactly_covered": True,
+                "lifecycle_source_map_exact65": True,
             },
-            "action_enablement_projection_claims_global_shadow_fields": False,
+            "action_enablement_and_data_source_projection_reopened": True,
+            "lifecycle_admission_contains_pid_or_pid_start_ticks": False,
+            "direct_lifecycle_admission_to_active_process_binding_claimed": False,
+            "lifecycle_to_active_process_binding_basis": (
+                "exact_config_runtime_source_and_post_admission_chronology_only"
+            ),
             "activation_health_window": dict(envelope["active_runtime"]["active_health_window"]),
             "post_lifecycle_health": post_health_binding,
             "health_drop_count": 0,
@@ -1860,8 +2019,10 @@ def build_completion(
                 "passed"
             ),
             "new_lifecycle_error0_drop0": "passed",
+            "portable_lifecycle_context_reopened_against_orico": "passed",
             "superseded_v4_proof_history_only": "passed",
             "failed_5022_and_v5_v6_v7_attempts_history_only": "passed",
+            "failed_resource_receipt_absence_current_authority": "not_claimed",
         },
         "formal_research_state": dict(FORMAL_RESEARCH_STATE),
         "authority_design": dict(AUTHORITY_DESIGN),
@@ -1884,6 +2045,9 @@ def validate_completion(path: Path, **roots: Any) -> dict[str, Any]:
         activation_envelope_path=Path(str(payload.get("activation_envelope", {}).get("path", ""))),
         lifecycle_admission_path=Path(
             str(payload.get("current_lifecycle_admission", {}).get("path", ""))
+        ),
+        lifecycle_context_path=Path(
+            str(payload.get("current_lifecycle_context", {}).get("path", ""))
         ),
         post_lifecycle_health_path=Path(
             str(payload.get("post_lifecycle_live_health", {}).get("path", ""))
@@ -1957,6 +2121,7 @@ def build_composition(
         "current_cross_host_admission_transport_v6": dict(completion["cross_host_admission"]),
         "current_activation_no_shadow_health": dict(completion["current_no_shadow_evidence"]),
         "current_lifecycle_admission": dict(completion["current_lifecycle_admission"]),
+        "current_lifecycle_context": dict(completion["current_lifecycle_context"]),
         "current_post_lifecycle_live_health": dict(completion["post_lifecycle_live_health"]),
         "current_post_lifecycle_no_shadow_health": dict(
             completion["post_lifecycle_no_shadow_evidence"]
@@ -1987,9 +2152,15 @@ def build_composition(
             "activation_and_post_lifecycle_health_are_distinct": True,
             "no_shadow_claim_uses_only_current_explicit_disabled_error0_absolute0": True,
             "new_lifecycle_only": True,
+            "portable_lifecycle_context_is_transport_only": True,
+            "portable_lifecycle_context_reopened_against_orico": True,
+            "direct_lifecycle_admission_to_active_pid_binding_claimed": False,
+            "lifecycle_process_cross_binding_basis_is_limited_and_explicit": True,
             "old_lifecycle_reused": False,
             "superseded_v4_proof_used_as_current_authority": False,
             "failed_activation_attempts_used_as_current_authority": False,
+            "failed_resource_receipt_absence_used_as_current_authority": False,
+            "failed_resource_receipt_absence_scope": "historical_operational_report_only",
             "post_release_evidence_additive": True,
         },
         "formal_research_state": dict(FORMAL_RESEARCH_STATE),
@@ -2081,6 +2252,7 @@ def build_attempt_final(
             evidence["current_remote_attestation_transport_v6"]
         ),
         "current_lifecycle_admission": dict(evidence["current_lifecycle_admission"]),
+        "current_lifecycle_context": dict(evidence["current_lifecycle_context"]),
         "current_activation_no_shadow_evidence": dict(
             evidence["current_activation_no_shadow_health"]
         ),
@@ -2094,6 +2266,7 @@ def build_attempt_final(
             "operational_evidence_complete": True,
             "cross_host_evidence_admitted": True,
             "lifecycle_evidence_admitted": True,
+            "lifecycle_context_reopened_against_orico": True,
             "activation_health_evidence_admitted": True,
             "post_lifecycle_health_evidence_admitted": True,
             "no_shadow_or_companion_current_evidence": True,
@@ -2223,6 +2396,7 @@ def build_evidence_release(
             attempt["current_remote_attestation_transport_v6"]
         ),
         "current_lifecycle_admission": dict(attempt["current_lifecycle_admission"]),
+        "current_lifecycle_context": dict(attempt["current_lifecycle_context"]),
         "current_activation_no_shadow_evidence": dict(
             attempt["current_activation_no_shadow_evidence"]
         ),
@@ -2236,6 +2410,7 @@ def build_evidence_release(
             "post_release_evidence_complete": True,
             "cross_host_evidence_admitted": True,
             "lifecycle_evidence_admitted": True,
+            "lifecycle_context_reopened_against_orico": True,
             "activation_health_evidence_admitted": True,
             "post_lifecycle_health_evidence_admitted": True,
             "two_explicit_disabled_evaluators_error0_absolute0": True,
@@ -2329,6 +2504,7 @@ def _parser() -> argparse.ArgumentParser:
     _roots(completion)
     completion.add_argument("--activation-envelope", type=Path, required=True)
     completion.add_argument("--lifecycle-admission", type=Path, required=True)
+    completion.add_argument("--lifecycle-context", type=Path, required=True)
     completion.add_argument("--post-lifecycle-live-health", type=Path, required=True)
     completion.add_argument("--output", type=Path, required=True)
 
@@ -2405,6 +2581,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload, file_sha = finalize_completion(
             activation_envelope_path=args.activation_envelope,
             lifecycle_admission_path=args.lifecycle_admission,
+            lifecycle_context_path=args.lifecycle_context,
             post_lifecycle_health_path=args.post_lifecycle_live_health,
             output_path=args.output,
             **roots,
