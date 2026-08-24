@@ -109,6 +109,10 @@ V5_ENVELOPE_SHA256: Final = {
     "mechanics_manifest_canonical": "c90930f9bdb51996af33efaeb9ef4d5386716f3ba911fcf2e1e935a65a0c8cab",
 }
 V5_ROW_KEY_SHA256: Final = "e481d8a61eecb71a36e6e3c8f2be1630c483a466a5418adc583d6398c29330ec"
+V5_REPLAY_FRAME_BINDING: Final = {
+    "commit": "36bf8078588c8bef67f70ab1894ca8103b4e792b",
+    "file_sha256": "4fdc4fff355feeffb9213790b60d84e0126e3c25a9a7598c6be277483aa4a6db",
+}
 V5_MECHANICS_MANIFEST: Final = (
     "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
     "f05_full_multiscale_offline_mechanics_v5/canonical_offline_v5/"
@@ -498,6 +502,7 @@ def _validate_v5_exact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
         "frame_sha256",
         "envelope_sha256",
         "row_key_sha256",
+        "replay_frame_binding",
         "opportunity_count",
         "mechanics_manifest",
         "canonical_receipt_sha256",
@@ -544,6 +549,9 @@ def _validate_v5_exact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     row_key = _require_sha256(payload.get("row_key_sha256"), "exact V5 row-key SHA256")
     if row_key != V5_ROW_KEY_SHA256:
         raise EvidenceCompletionError("exact V5 row-key identity drifted")
+    replay_frame = payload.get("replay_frame_binding")
+    if not isinstance(replay_frame, Mapping) or dict(replay_frame) != V5_REPLAY_FRAME_BINDING:
+        raise EvidenceCompletionError("exact V5 replay-frame binding drifted")
     mechanics = payload.get("mechanics_manifest")
     if mechanics != V5_MECHANICS_MANIFEST:
         raise EvidenceCompletionError("exact V5 mechanics manifest path drifted")
@@ -556,6 +564,7 @@ def _validate_v5_exact(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     binding["frame_sha256"] = dict(V5_FRAME_SHA256)
     binding["envelope_sha256"] = dict(V5_ENVELOPE_SHA256)
     binding["row_key_sha256"] = row_key
+    binding["replay_frame_binding"] = dict(V5_REPLAY_FRAME_BINDING)
     binding["mechanics_manifest"] = mechanics
     return payload, binding
 

@@ -420,6 +420,7 @@ def _v5_payload() -> dict:
         "frame_sha256": dict(subject.V5_FRAME_SHA256),
         "envelope_sha256": dict(subject.V5_ENVELOPE_SHA256),
         "row_key_sha256": subject.V5_ROW_KEY_SHA256,
+        "replay_frame_binding": dict(subject.V5_REPLAY_FRAME_BINDING),
         "opportunity_count": 3516,
         "mechanics_manifest": subject.V5_MECHANICS_MANIFEST,
     }
@@ -445,6 +446,15 @@ def test_exact_v5_accepts_only_isolated_outcome_blind_recovery(tmp_path: Path) -
     with pytest.raises(subject.EvidenceCompletionError, match="aggregate raw_sha256"):
         subject._validate_v5_exact(  # noqa: SLF001
             _write(tmp_path / "wrong-v5-bytes.json", wrong_bytes)
+        )
+
+    wrong_replay = _v5_payload()
+    wrong_replay["replay_frame_binding"] = dict(subject.V5_REPLAY_FRAME_BINDING)
+    wrong_replay["replay_frame_binding"]["file_sha256"] = "0" * 64
+    wrong_replay = _self_hash(wrong_replay, "canonical_receipt_sha256")
+    with pytest.raises(subject.EvidenceCompletionError, match="replay-frame binding"):
+        subject._validate_v5_exact(  # noqa: SLF001
+            _write(tmp_path / "wrong-v5-replay-frame.json", wrong_replay)
         )
 
 
