@@ -117,6 +117,21 @@ def _release_bundle() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], d
     return release, binding, execution, artifact
 
 
+def test_content_projection_accepts_exact_artifact_field_only() -> None:
+    artifact = _content(
+        "fixture.artifact.v1",
+        "frozen",
+        "1",
+        "2",
+        canonical_field="artifact_sha256",
+    )
+    assert subject._content_projection(artifact, "artifact") == artifact  # noqa: SLF001
+
+    artifact["canonical_field"] = "arbitrary_nonempty_field"
+    with pytest.raises(subject.FinalEvidenceV4Error, match="malformed"):
+        subject._content_projection(artifact, "artifact")  # noqa: SLF001
+
+
 def _portable() -> dict[str, Any]:
     release, binding, execution, artifact = _release_bundle()
     del release
@@ -577,10 +592,7 @@ def test_proof_release_revalidates_v4_and_never_calls_base_direct_helpers(
     )
     assert payload["evidence_state"]["failed_predecessor_reused"] is False
     assert payload["evidence_state"]["runtime_consumed"] is True
-    assert (
-        payload["evidence_state"]["runtime_consumed_authority"]
-        == "direct_v4_owner_release_v2"
-    )
+    assert payload["evidence_state"]["runtime_consumed_authority"] == "direct_v4_owner_release_v2"
     assert payload["authority_design"]["runtime_consumed"] is True
     assert len(file_sha) == 64
     assert stat.S_IMODE(output.stat().st_mode) == 0o600

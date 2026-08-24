@@ -157,7 +157,13 @@ def _content_projection(value: Any, label: str) -> dict[str, Any]:
         or not projected["schema_version"]
         or not isinstance(projected["status"], (str, type(None)))
         or not isinstance(projected["canonical_field"], str)
-        or not projected["canonical_field"]
+        or not (
+            projected["canonical_field"] == "artifact_sha256"
+            or (
+                projected["canonical_field"].startswith("canonical_")
+                and projected["canonical_field"].endswith("sha256")
+            )
+        )
         or not isinstance(projected["size_bytes"], int)
         or isinstance(projected["size_bytes"], bool)
         or projected["size_bytes"] <= 0
