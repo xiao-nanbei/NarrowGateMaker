@@ -44,7 +44,9 @@ OUTPUT = ROOT / (
     "multiscale_ema_boolean_cooldown_duration_policy_v1_"
     "outcome_blind_inputs_20260809.json"
 )
-CONFIG = ROOT / "docs/private/live_config.current.local.yaml"
+FROZEN_CONFIG_SHA256 = (
+    "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18"
+)
 
 
 class FreezeError(RuntimeError):
@@ -57,6 +59,19 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _require_frozen_config(path: Path, *, expected_sha256: str) -> Path:
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise FreezeError(f"frozen operational config is missing: {resolved}")
+    observed = _sha256(resolved)
+    if observed != expected_sha256:
+        raise FreezeError(
+            "frozen operational config identity drifted: "
+            f"expected={expected_sha256} actual={observed}"
+        )
+    return resolved
 
 
 def _atomic_json(path: Path, payload: Any) -> None:
@@ -279,7 +294,11 @@ def _clock_quantiles(frame: pd.DataFrame, *, side: str, column: str) -> dict[str
     }
 
 
-def freeze(*, output: Path = OUTPUT) -> dict[str, Any]:
+def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
+    config = _require_frozen_config(
+        config,
+        expected_sha256=FROZEN_CONFIG_SHA256,
+    )
     baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
     if baseline.get("baseline_id") != (
         "btc_usdc_current_live_held_ber_replay_baseline_40d_20260809"
@@ -288,7 +307,7 @@ def freeze(*, output: Path = OUTPUT) -> dict[str, Any]:
     fills_path = Path(str(baseline["source"]["fills_path"]))
     if _sha256(fills_path) != baseline["source"]["fills_sha256"]:
         raise FreezeError("authoritative fill path hash drifted")
-    raw_config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    raw_config = yaml.safe_load(config.read_text(encoding="utf-8"))
     if not isinstance(raw_config, dict) or not isinstance(
         raw_config.get("strategy"), dict
     ):
@@ -298,8 +317,8 @@ def freeze(*, output: Path = OUTPUT) -> dict[str, Any]:
     lot_size = float(raw_config["lot_size"])
     cooldown_s = float(strategy["fill_cooldown"])
     cooldown_semantics = {
-        "config_path": str(CONFIG),
-        "config_sha256": _sha256(CONFIG),
+        "config_path": str(config),
+        "config_sha256": _sha256(config),
         "order_size_btc": order_size,
         "lot_size_btc": lot_size,
         "quantity_unit_btc": max(order_size, lot_size),
@@ -489,11 +508,21 @@ def freeze(*, output: Path = OUTPUT) -> dict[str, Any]:
     return payload
 
 
-def main() -> None:
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Exact frozen config bytes; the mutable current-live alias is not a default.",
+    )
     parser.add_argument("--output", type=Path, default=OUTPUT)
-    args = parser.parse_args()
-    payload = freeze(output=args.output)
+    return parser.parse_args(argv)
+
+
+def main() -> None:
+    args = _parse_args()
+    payload = freeze(config=args.config, output=args.output)
     print(
         json.dumps(
             {

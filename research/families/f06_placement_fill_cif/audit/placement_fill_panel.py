@@ -61,7 +61,6 @@ ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = data_root(ROOT)
 DEFAULT_SPEC = FAMILY_DOCS / "placement_fill_cif_v1_spec_20260726.json"
 DEFAULT_OUTPUT = DATA_ROOT / "reports" / "placement_fill_cif_v1_development_20260726"
-DEFAULT_CONFIG = ROOT / "docs" / "private" / "live_config.current.local.yaml"
 DEFAULT_NORMALIZED = (
     DATA_ROOT / "normalized_l2_100ms_v2_minimal141_20260727"
 )
@@ -216,7 +215,7 @@ def _require_selected_path(selected: Path, frozen: Path, label: str) -> None:
         )
 
 
-def _validate_spec(spec_path: Path) -> dict[str, Any]:
+def _validate_spec(spec_path: Path, *, selected_config: Path) -> dict[str, Any]:
     spec = load_placement_fill_spec(spec_path)
     if not str(spec.get("research_status", "")).startswith("frozen_before"):
         raise RuntimeError("placement spec is not frozen before panel access")
@@ -239,6 +238,9 @@ def _validate_spec(spec_path: Path) -> dict[str, Any]:
         ("latency_telemetry", "latency_telemetry_sha256"),
         ("book_visibility_profile", "book_visibility_profile_sha256"),
     ):
+        if path_key == "config":
+            _require_identity(selected_config, str(sources[hash_key]), path_key)
+            continue
         path = Path(str(sources[path_key]))
         if not path.is_absolute():
             path = ROOT / path
@@ -979,7 +981,12 @@ def _preflight_manifest(
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spec", type=Path, default=DEFAULT_SPEC)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Exact config bytes frozen by --spec; no mutable current-live default.",
+    )
     parser.add_argument("--normalized-root", type=Path, default=DEFAULT_NORMALIZED)
     parser.add_argument(
         "--feature-context-dir",
@@ -1054,7 +1061,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         int(args.max_cohorts_per_day),
     ) <= 0:
         raise SystemExit("trace and cohort limits must be positive")
-    spec = _validate_spec(args.spec)
+    spec = _validate_spec(args.spec, selected_config=args.config)
     source_identity = spec["source_identity"]
     args.strict_day_manifest = Path(
         str(source_identity["strict_day_manifest"])
@@ -1064,11 +1071,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args.feature_context_manifest_sha256 = str(
         source_identity["feature_context_manifest_sha256"]
-    )
-    _require_selected_path(
-        args.config,
-        _frozen_source_path(source_identity, "config"),
-        "config",
     )
     _require_selected_path(
         args.queue_calibration,

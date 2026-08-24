@@ -30,6 +30,10 @@ from typing import Any, Protocol
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from data_paths import (
+    IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR,
+    immutable_backtest_v12_config_path,
+)
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_mechanics_v1 as mechanics,
 )
@@ -827,7 +831,7 @@ def _portable_bound_path(path: Path, *, inputs: ValidatedPanelInputs) -> str:
     resolved = path.expanduser().resolve()
     repository_root = Path(__file__).resolve().parents[4]
     if resolved == inputs.owner_artifacts.private_config.expanduser().resolve():
-        return "${NARROWGATE_LIVE_CONFIG}"
+        return IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR
     try:
         return offline._portable_path(
             resolved,
@@ -2401,7 +2405,7 @@ def _default_cli_paths() -> dict[str, Path]:
         "owner_policy": root / "models/private/f05_boolean_cooldown_owner_v1/policy.json",
         "owner_predicate_bundle": root
         / "models/private/f05_boolean_cooldown_owner_v1/predicate_bundle.json",
-        "owner_config": root / "docs/private/live_config.current.local.yaml",
+        "owner_config": immutable_backtest_v12_config_path(root=root),
         "output_root": data
         / "cache/replay_dag/f05_full_multiscale_successor_offline_sequential_panel_v2",
     }

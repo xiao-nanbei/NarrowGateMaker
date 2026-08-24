@@ -29,7 +29,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import data_root
+from data_paths import (
+    IMMUTABLE_BACKTEST_V12_CONFIG_SHA256,
+    data_root,
+    immutable_backtest_v12_config_path,
+)
+from models.backtest_config import load_operational_baseline_binding
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = data_root(ROOT)
@@ -189,15 +194,33 @@ def load_panel() -> tuple[list[str], set[str], set[str]]:
 
 
 def validate_current_baseline() -> dict[str, Any]:
-    pointer = json.loads(BASELINE_POINTER.read_text(encoding="utf-8"))
+    binding = load_operational_baseline_binding(
+        root=ROOT,
+        pointer_path=BASELINE_POINTER,
+    )
+    if binding is None or not bool(binding.get("config_exists")):
+        raise ValueError("immutable v12 backtest config is unavailable")
+    pointer = dict(binding["pointer"])
+    if str(pointer.get("live_config_sha256", "")) != (
+        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256
+    ):
+        raise ValueError("normalized backtest pointer does not bind immutable v12")
     identity_path = require_file(
-        ROOT / str(pointer["identity_path"]),
-        str(pointer["identity_sha256"]),
+        Path(binding["identity_path"]),
+        str(binding["identity_sha256"]),
     )
     config_path = require_file(
-        ROOT / str(pointer["live_config_path"]),
-        str(pointer["live_config_sha256"]),
+        Path(binding["config_path"]),
+        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256,
     )
+    governance_pointer = binding.get("governance_pointer") or pointer
+    if governance_pointer.get("schema_version") == (
+        "narrowgate_operational_baseline_pointer.v2"
+    ) and (
+        binding.get("config_scope") != "immutable_v12_backtest_default"
+        or config_path != immutable_backtest_v12_config_path(root=ROOT)
+    ):
+        raise ValueError("v13 governance did not resolve the immutable v12 replay config")
     require_file(MODEL_DIR / "bundle_meta.json", str(pointer["bundle_meta_sha256"]))
     expected = {
         "ml_enabled": True,

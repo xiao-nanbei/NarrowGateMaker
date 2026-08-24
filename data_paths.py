@@ -23,6 +23,16 @@ ENV_LIVE_CONFIG = "NARROWGATE_LIVE_CONFIG"
 ENV_LIVE_REMOTE_POINTER = "NARROWGATE_LIVE_REMOTE_POINTER"
 ENV_LIVE_ENV = "NARROWGATE_LIVE_ENV"
 ENV_PRIVATE_CONFIG_ROOT = "NARROWGATE_PRIVATE_CONFIG_ROOT"
+IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME = (
+    "live_config.backtest_v12.800f4c025663.local.yaml"
+)
+IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR = (
+    "${NARROWGATE_PRIVATE_CONFIG_ROOT}/"
+    f"{IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME}"
+)
+IMMUTABLE_BACKTEST_V12_CONFIG_SHA256 = (
+    "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
+)
 LEGACY_ENV_DATA_ROOT = "MM_DATA_ROOT"
 PRIVATE_STORAGE_ROOTS_PATH = (
     Path(__file__).resolve().parent / "data/private/storage_roots.current.local.json"
@@ -220,6 +230,20 @@ def resolve_portable_path(path: Path | str, *, root: Path | None = None) -> Path
     if suffix:
         resolved = resolved / suffix
     return resolved.resolve(strict=False)
+
+
+def immutable_backtest_v12_config_path(*, root: Path | None = None) -> Path:
+    """Resolve the versioned v12 replay config, never the mutable live alias.
+
+    This helper is a locator only. Current replay governance validates the
+    bytes and owner/private-checkout availability in ``models.backtest_config``;
+    frozen consumers additionally enforce their own exact SHA256 contract.
+    """
+
+    return resolve_portable_path(
+        IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR,
+        root=root,
+    )
 
 
 def relocate_marketdata_path(path: Path | str) -> Path:

@@ -382,11 +382,20 @@ def test_execute_day_is_atomic_resume_safe_and_dual_ml_on(
     day = "2026-04-17"
     window_path = tmp_path / "window.pkl"
     window_path.write_bytes(b"window")
-    config_path = tmp_path / "config.yaml"
+    config_path = tmp_path / "frozen-control-config.yaml"
     config_path.write_text("execution:\n  order_size: 0.001\n", encoding="utf-8")
+    mutable_alias = tmp_path / "mutable-live-alias.yaml"
+    mutable_alias.write_text("execution:\n  order_size: 9.999\n", encoding="utf-8")
     precommit_path = tmp_path / "precommit.json"
     precommit_path.write_text(
-        '{"baseline":{"config_path":"' + str(config_path) + '"}}',
+        json.dumps(
+            {
+                "baseline": {
+                    "config_path": str(mutable_alias),
+                    "config_sha256": _sha(config_path),
+                }
+            }
+        ),
         encoding="utf-8",
     )
     output = tmp_path / "output"
@@ -404,6 +413,11 @@ def test_execute_day_is_atomic_resume_safe_and_dual_ml_on(
             "sha256": "a" * 64,
             "panel_identity_sha256": "f" * 64,
             "v9_model_bundle_identity_sha256": "a" * 64,
+            "operational_config": {
+                "path": str(config_path),
+                "sha256": _sha(config_path),
+                "size_bytes": config_path.stat().st_size,
+            },
         },
         "days": [
             {
@@ -454,15 +468,21 @@ def test_execute_day_is_atomic_resume_safe_and_dual_ml_on(
         }
 
     monkeypatch.setattr(panel.dual_abi, "run_dual_overlay_tick_replay", dual_run)
+    loaded_configs: list[Path] = []
+
+    def load_params(path: Path) -> dict[str, object]:
+        loaded_configs.append(path)
+        return {
+            "order_size": 0.001,
+            "ml_enabled": True,
+            "trace_campaign_repair_max": panel.CAMPAIGN_MAE_TRACE_MAX,
+        }
+
     first = panel.execute_day(
         tmp_path / "plan.json",
         day=day,
         execution_amendment_path=tmp_path / "amendment.json",
-        base_params_loader=lambda _: {
-            "order_size": 0.001,
-            "ml_enabled": True,
-            "trace_campaign_repair_max": panel.CAMPAIGN_MAE_TRACE_MAX,
-        },
+        base_params_loader=load_params,
         window_loader=lambda _: window,
         simulate=lambda *_, **__: _empty_result(),
         allow_test_only_candidate=True,
@@ -482,6 +502,8 @@ def test_execute_day_is_atomic_resume_safe_and_dual_ml_on(
     assert first["reused"] is False
     assert second["reused"] is True
     assert len(calls) == 1
+    assert loaded_configs == [config_path.resolve()]
+    assert mutable_alias.resolve() not in loaded_configs
     assert (output / "days" / day / panel.DAY_SUCCESS).is_file()
     assert not any((output / ".staging").glob("*"))
 

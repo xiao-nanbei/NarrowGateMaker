@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from data_paths import immutable_backtest_v12_config_path
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as builder,
 )
@@ -417,7 +418,7 @@ def _inputs_fixture(
         policy=root / "models/private/f05_boolean_cooldown_owner_v1/policy.json",
         predicate_bundle=root
         / "models/private/f05_boolean_cooldown_owner_v1/predicate_bundle.json",
-        private_config=root / "docs/private/live_config.current.local.yaml",
+        private_config=immutable_backtest_v12_config_path(root=root),
     )
     inputs = builder.validate_inputs(
         source_manifest_path=source_path,

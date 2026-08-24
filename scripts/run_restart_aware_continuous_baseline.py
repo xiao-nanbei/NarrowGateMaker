@@ -25,7 +25,13 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from data_paths import data_root, window_cache_root  # noqa: E402
+from data_paths import (  # noqa: E402
+    IMMUTABLE_BACKTEST_V12_CONFIG_SHA256,
+    data_root,
+    immutable_backtest_v12_config_path,
+    window_cache_root,
+)
+from models.backtest_config import load_operational_baseline_binding  # noqa: E402
 
 DATA_ROOT = data_root(ROOT)
 CALENDAR_MANIFEST = (
@@ -197,11 +203,38 @@ class CausalMarkStore:
 
 
 def validate_identities() -> dict[str, Any]:
-    pointer = json.loads(BASELINE_POINTER.read_text(encoding="utf-8"))
-    identity_path = ROOT / str(pointer["identity_path"])
-    config_path = ROOT / str(pointer["live_config_path"])
-    require_sha256(identity_path, str(pointer["identity_sha256"]), "baseline identity")
-    require_sha256(config_path, str(pointer["live_config_sha256"]), "baseline config")
+    binding = load_operational_baseline_binding(
+        root=ROOT,
+        pointer_path=BASELINE_POINTER,
+    )
+    if binding is None or not bool(binding.get("config_exists")):
+        raise RuntimeError("immutable v12 backtest config is unavailable")
+    pointer = dict(binding["pointer"])
+    identity_path = Path(binding["identity_path"]).expanduser().resolve()
+    config_path = Path(binding["config_path"]).expanduser().resolve()
+    if str(pointer.get("live_config_sha256", "")) != (
+        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256
+    ):
+        raise RuntimeError("normalized backtest pointer does not bind immutable v12")
+    governance_pointer = binding.get("governance_pointer") or pointer
+    if governance_pointer.get("schema_version") == (
+        "narrowgate_operational_baseline_pointer.v2"
+    ):
+        if (
+            binding.get("config_scope") != "immutable_v12_backtest_default"
+            or config_path != immutable_backtest_v12_config_path(root=ROOT)
+        ):
+            raise RuntimeError("v13 governance did not resolve the immutable v12 replay config")
+    require_sha256(
+        identity_path,
+        str(binding["identity_sha256"]),
+        "baseline identity",
+    )
+    require_sha256(
+        config_path,
+        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256,
+        "baseline config",
+    )
     require_sha256(
         MODEL_DIR / "bundle_meta.json",
         str(pointer["bundle_meta_sha256"]),
@@ -214,14 +247,14 @@ def validate_identities() -> dict[str, Any]:
     )
     require_sha256(COVERAGE_REPORT, COVERAGE_REPORT_SHA256, "normalized coverage report")
     if pointer.get("backtest_control_arm") != (
-        "causal_v12_ml_on_q90_action_off_buy_fill_selection_action_off"
+        "causal_multichannel_window_boolean_cooldown_owner_policy_v1"
     ):
         raise RuntimeError("operational pointer does not select the expected control arm")
     expected_flags = {
         "ml_enabled": True,
         "dynamic_fill_hazard_shadow_enabled": True,
         "dynamic_fill_hazard_action_enabled": False,
-        "buy_fill_selection_shadow_enabled": True,
+        "buy_fill_selection_shadow_enabled": False,
         "buy_fill_selection_live_enabled": False,
     }
     for name, expected in expected_flags.items():

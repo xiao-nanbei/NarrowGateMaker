@@ -1009,15 +1009,24 @@ def execute_day(
             raise NativeFullPathABError("model-free window drifted after prepare")
         loader = _load_bound_window if window_loader is None else window_loader
         window = loader(window_path)
-        config_path = Path(payload["precommit"]["path"])
-        precommit = _load_json(config_path, role="frozen precommit")
-        operational_config = Path((precommit.get("baseline") or {})["config_path"]).expanduser()
-        if not operational_config.is_absolute():
-            operational_config = ROOT / operational_config
+        precommit = _load_json(
+            Path(payload["precommit"]["path"]),
+            role="frozen precommit",
+        )
+        operational_config = _artifact_row(
+            payload["control_sources"]["operational_config"],
+            role="frozen control operational config",
+        )
+        if operational_config["sha256"] != (precommit.get("baseline") or {}).get(
+            "config_sha256"
+        ):
+            raise NativeFullPathABError(
+                "plan control config differs from the frozen precommit"
+            )
         params_loader = (
             _load_formal_base_params if base_params_loader is None else base_params_loader
         )
-        base_params = dict(params_loader(operational_config.resolve()))
+        base_params = dict(params_loader(Path(operational_config["path"])))
         expected_trace_max = int(payload["execution_amendment"]["trace_campaign_repair_max"])
         _validate_campaign_mae_trace_capacity(base_params, expected=expected_trace_max)
         replay_simulator = _simulate_cpp_with_campaign_mae_trace if simulate is None else simulate
