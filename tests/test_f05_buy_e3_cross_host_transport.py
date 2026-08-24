@@ -533,6 +533,8 @@ def test_cross_host_admission_round_trip_and_portable_projection(
     assert portable["runtime_authority"]["runtime_authority"] is True
     assert portable["host"]["instance_id"] == subject.CURRENT_INSTANCE_ID
     assert portable["host"]["public_ipv4_role"].endswith("not_host_authority")
+    assert payload["checks"]["active_capture_v2_content_exact"] is True
+    assert "active_capture_v1_content_exact" not in payload["checks"]
     for role, row in portable["source_receipts"].items():
         assert set(row) == {*subject.CONTENT_BINDING_FIELDS, "local_filename"}
         assert row["local_filename"] == subject.SOURCE_FILENAMES[role]

@@ -1662,7 +1662,7 @@ def _admission_payload(
             "duplicate_sources_rejected": True,
             "current_host_resource_receipt_semantically_valid": True,
             "remote_attestation_v2_semantically_valid": True,
-            "active_capture_v1_content_exact": True,
+            "active_capture_v2_content_exact": True,
             "frozen_final_runtime_authority_exact_and_unchanged": True,
             "portable_projection_has_no_path_or_inode_authority": True,
         },
