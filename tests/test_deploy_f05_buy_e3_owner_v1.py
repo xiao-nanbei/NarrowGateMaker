@@ -150,6 +150,8 @@ def _runtime_identity_payload(
     for extra_path in (
         "live/ws_handler.py",
         "strategy/boolean_cooldown_live.py",
+        "strategy/signal.py",
+        "strategy/global_flow.py",
     ):
         source_hashes[extra_path] = hashlib.sha256(extra_path.encode()).hexdigest()
     source_rows = [
@@ -197,6 +199,8 @@ def _runtime_identity_payload(
         "live_runtime_policy": ("live.runtime_policy", "live/runtime_policy.py"),
         "live_ws_handler": ("live.ws_handler", "live/ws_handler.py"),
         "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
+        "signal_engine": ("strategy.signal", "strategy/signal.py"),
+        "global_flow": ("strategy.global_flow", "strategy/global_flow.py"),
         "boolean_cooldown_live": (
             "strategy.boolean_cooldown_live",
             "strategy/boolean_cooldown_live.py",
@@ -279,6 +283,30 @@ def _runtime_identity_payload(
                 "snapshot_ts_ms": 1,
             },
             "buy_e3_active_release": startup_release,
+            "shadow_runtime_identity": {
+                "schema_version": "narrowgate_shadow_runtime_identity.v1",
+                "global_flow_shadow_enabled": False,
+                "global_reference_shadow_enabled": False,
+                "global_flow_native_requested": False,
+                "global_flow_native_effective": False,
+                "global_flow_backend": {
+                    "native": 0,
+                    "market_count": 0,
+                    "trade_batches": 0,
+                    "trade_events_seen": 0,
+                    "trade_events_accepted": 0,
+                    "book_events_seen": 0,
+                    "book_events_accepted": 0,
+                    "out_of_order_events": 0,
+                    "stale_trade_events": 0,
+                    "trade_overflow_events": 0,
+                    "book_overflow_events": 0,
+                },
+                "global_reference_bridge_basis_sample_count": 0,
+                "state_restore_contract": "shadow_state_never_restored",
+                "global_flow_shadow_config_explicit": True,
+                "global_reference_shadow_config_explicit": True,
+            },
             "gates": {name: True for name in subject._STARTUP_GATE_FIELDS},
             "running_checkout": checkout,
             "loaded_module_origins": loaded_module_origins,
@@ -4196,6 +4224,7 @@ def _as_legacy_v3_disabled_receipt(receipt: dict) -> dict:
     startup = startup_binding["startup_attestation"]
     startup["schema_version"] = subject.LEGACY_STARTUP_ATTESTATION_SCHEMA
     startup.pop("buy_e3_active_release")
+    startup.pop("shadow_runtime_identity")
     for field in subject._STARTUP_GATE_FIELDS - subject._LEGACY_STARTUP_GATE_FIELDS:
         startup["gates"].pop(field)
     startup_sha256 = gate_v2.canonical_sha256(startup)

@@ -473,6 +473,8 @@ class SignalEngine:
                  symbol: str = "BTCUSDC",
                  reference_symbol: Optional[str] = None,
                  stablecoin_anchor_symbol: Optional[str] = "USDCUSDT",
+                 global_flow_shadow_enabled: bool = True,
+                 global_reference_shadow_enabled: bool = True,
                  ret_demean_halflife: int = 360,
                  bad_trade_log_every: int = 100):
         self._lock = Lock()
@@ -484,6 +486,12 @@ class SignalEngine:
         self._stablecoin_anchor_symbol = normalize_symbol(
             stablecoin_anchor_symbol, "USDCUSDT"
         )
+        if type(global_flow_shadow_enabled) is not bool:
+            raise TypeError("global_flow_shadow_enabled must be a boolean")
+        if type(global_reference_shadow_enabled) is not bool:
+            raise TypeError("global_reference_shadow_enabled must be a boolean")
+        self._global_flow_shadow_enabled = global_flow_shadow_enabled
+        self._global_reference_shadow_enabled = global_reference_shadow_enabled
 
         # 1s bar ring buffer (last N seconds)
         self._bar_buffer: deque = deque(maxlen=bar_buffer_size)
@@ -593,8 +601,11 @@ class SignalEngine:
         self._cpp_signal_features_enabled = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
         )
-        self._cpp_global_flow_enabled = bool(
+        self._cpp_global_flow_requested = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
+        )
+        self._cpp_global_flow_enabled = bool(
+            self._global_flow_shadow_enabled and self._cpp_global_flow_requested
         )
         if self._cpp_global_flow_enabled:
             native_flow_cls = getattr(self._cpp_signal, "NativeGlobalFlowEngine", None)
@@ -618,17 +629,19 @@ class SignalEngine:
         self._cpp_cross_current_dirty = set()
         self._cpp_cross_batch_enabled = bool(
             self._cpp_signal is not None
-            and self._cpp_global_flow_enabled
+            and self._cpp_global_flow_requested
             and hasattr(self._cpp_signal.TradeBarAggregator, "update_batch")
         )
         if (
             self._cpp_signal_features_enabled
-            or self._cpp_global_flow_enabled
+            or self._cpp_global_flow_requested
         ):
             logger.info(
-                "SignalEngine C++ path: features=%s global_flow=%s "
+                "SignalEngine C++ path: features=%s global_flow_requested=%s "
+                "global_flow_effective=%s "
                 "cross_batch=%s module=%s",
                 self._cpp_signal_features_enabled,
+                self._cpp_global_flow_requested,
                 self._cpp_global_flow_enabled,
                 self._cpp_cross_batch_enabled,
                 getattr(self._cpp_signal, "__file__", "<unknown>") if self._cpp_signal else None,
@@ -1075,7 +1088,8 @@ class SignalEngine:
 
         bucket = (ts_ms // 1000) * 1000  # floor to second
         key = self._market_key(PERP_MARKET, symbol, venue=BINANCE_VENUE)
-        native_flow = self._global_flow.native_enabled
+        flow_enabled = self._global_flow_shadow_enabled
+        native_flow = flow_enabled and self._global_flow.native_enabled
         if native_flow:
             self._global_flow.on_trade(
                 key,
@@ -1098,7 +1112,7 @@ class SignalEngine:
                 qty=qty,
                 sequence_number=sequence_number,
             )
-            if not native_flow:
+            if flow_enabled and not native_flow:
                 self._global_flow.on_trade(
                     key,
                     receive_ts_ns=receive_ns,
@@ -1248,7 +1262,8 @@ class SignalEngine:
         )
         receive_ns = int(receive_ts_ns or time.time_ns())
         exchange_ns = np.ascontiguousarray(ts_values * 1_000_000, dtype=np.int64)
-        native_flow = self._global_flow.native_enabled
+        flow_enabled = self._global_flow_shadow_enabled
+        native_flow = flow_enabled and self._global_flow.native_enabled
         if native_flow:
             self._global_flow.on_trade_batch(
                 key,
@@ -1274,7 +1289,7 @@ class SignalEngine:
                 qty=float(qty_values[last]),
                 sequence_number=last_sequence,
             )
-            if not native_flow:
+            if flow_enabled and not native_flow:
                 self._global_flow.on_trade_batch(
                     key,
                     receive_ts_ns=receive_ns,
@@ -1800,7 +1815,8 @@ class SignalEngine:
                 key = self._market_key(
                     market_type, symbol, venue=normalized_venue
                 )
-                native_flow = self._global_flow.native_enabled
+                flow_enabled = self._global_flow_shadow_enabled
+                native_flow = flow_enabled and self._global_flow.native_enabled
                 if native_flow:
                     try:
                         self._global_flow.on_book(
@@ -1845,7 +1861,7 @@ class SignalEngine:
                     ):
                         self._quote_market_generation += 1
                         self._book_ticker_generation += 1
-                    if not native_flow:
+                    if flow_enabled and not native_flow:
                         self._global_flow.on_book(
                             key,
                             receive_ts_ns=receive_ns,
@@ -1857,7 +1873,10 @@ class SignalEngine:
                     self._market_source_state[key][
                         "last_book_feature_ready_ts_ns"
                     ] = time.time_ns()
-                    if normalized_venue == BINANCE_VENUE:
+                    if (
+                        self._global_reference_shadow_enabled
+                        and normalized_venue == BINANCE_VENUE
+                    ):
                         self._update_global_bridge_basis_locked(receive_time_ms)
                     if market_type == PERP_MARKET and normalized_venue == BINANCE_VENUE:
                         symbol_latest = self._book_tickers.get(symbol)
@@ -1957,6 +1976,8 @@ class SignalEngine:
 
     def global_flow_state(self, *, now_ns: Optional[int] = None):
         """Return receive-time cross-venue flow state for shadow diagnostics."""
+        if not self._global_flow_shadow_enabled:
+            raise RuntimeError("global-flow shadow disabled by config")
         current_ns = int(now_ns or time.time_ns())
         with self._lock:
             self._global_flow.set_symbols(
@@ -1968,9 +1989,42 @@ class SignalEngine:
     def global_flow_backend_snapshot(self) -> dict:
         """Return native/fallback counters for live HEALTH and soak gates."""
         if self._global_flow.native_enabled:
-            return self._global_flow.backend_stats()
-        with self._lock:
-            return self._global_flow.backend_stats()
+            raw = self._global_flow.backend_stats()
+        else:
+            with self._lock:
+                raw = self._global_flow.backend_stats()
+        fields = (
+            "market_count",
+            "trade_batches",
+            "trade_events_seen",
+            "trade_events_accepted",
+            "book_events_seen",
+            "book_events_accepted",
+            "out_of_order_events",
+            "stale_trade_events",
+            "trade_overflow_events",
+            "book_overflow_events",
+        )
+        return {
+            "native": int(raw.get("native", 0)),
+            **{name: int(raw.get(name, 0)) for name in fields},
+        }
+
+    def shadow_runtime_snapshot(self) -> dict:
+        """Return fail-closed diagnostic evaluator identity for attestation."""
+        backend = self.global_flow_backend_snapshot()
+        return {
+            "schema_version": "narrowgate_shadow_runtime_identity.v1",
+            "global_flow_shadow_enabled": self._global_flow_shadow_enabled,
+            "global_reference_shadow_enabled": self._global_reference_shadow_enabled,
+            "global_flow_native_requested": self._cpp_global_flow_requested,
+            "global_flow_native_effective": self._cpp_global_flow_enabled,
+            "global_flow_backend": backend,
+            "global_reference_bridge_basis_sample_count": len(
+                self._global_bridge_basis_history
+            ),
+            "state_restore_contract": "shadow_state_never_restored",
+        }
 
     def global_reference_state(
         self,
@@ -1982,6 +2036,8 @@ class SignalEngine:
         tick_size: float = 0.1,
     ):
         """Build the six-tape global reference for HEALTH/shadow only."""
+        if not self._global_reference_shadow_enabled:
+            raise RuntimeError("global-reference shadow disabled by config")
         target_ms = float(now_ms if now_ms is not None else time.time() * 1000.0)
         prior_ms = target_ms - max(0.1, float(horizon_s)) * 1000.0
 
