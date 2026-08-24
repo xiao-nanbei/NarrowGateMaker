@@ -72,8 +72,12 @@ FROZEN_FINAL_ACTIVE_CAPTURE_STATUS: Final = (
 )
 FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = ""
 FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = ""
-FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = ""
+FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = (
+    "62769b16e55d53bbe92c4f1a4ccf4dd2aa2d049d6ed2b6dd917ddb775c2e4ee4"
+)
+FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = (
+    "eb4f4005695effe4e97160e0360474d89925821dc72c3b44f9a5ecebf0c03887"
+)
 FROZEN_FINAL_DISABLED_CONFIG_SHA256: Final = (
     "10158a92177cd87b77fdb24a2a477dcab4b41cfb29208cf96c19953edafe166f"
 )
@@ -90,8 +94,8 @@ FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
     "active_process_capture_v3.json"
 )
 FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v5-no-external-20260824/attempt1/"
-    "config_correction.json"
+    "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-20260824/receipts/"
+    "config_correction_v2.json"
 )
 # Filled only after the lifecycle-repair supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.

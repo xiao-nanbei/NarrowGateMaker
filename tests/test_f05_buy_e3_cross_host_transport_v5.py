@@ -37,6 +37,7 @@ SOURCE_FROZEN_FINAL = {
     "active_config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
     "resource_path": subject.FROZEN_FINAL_RESOURCE_PATH_PROVENANCE,
     "active_path": subject.FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE,
+    "config_correction_path": subject.FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE,
 }
 
 
@@ -274,8 +275,12 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
         ),
         "active_file_sha256": "",
         "active_canonical_sha256": "",
-        "config_correction_file_sha256": "",
-        "config_correction_canonical_sha256": "",
+        "config_correction_file_sha256": (
+            "62769b16e55d53bbe92c4f1a4ccf4dd2aa2d049d6ed2b6dd917ddb775c2e4ee4"
+        ),
+        "config_correction_canonical_sha256": (
+            "eb4f4005695effe4e97160e0360474d89925821dc72c3b44f9a5ecebf0c03887"
+        ),
         "disabled_config_sha256": (
             "10158a92177cd87b77fdb24a2a477dcab4b41cfb29208cf96c19953edafe166f"
         ),
@@ -289,6 +294,10 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
         "active_path": (
             "/home/ec2-user/f05-buy-e3-active-capture-v5-no-external-20260824/"
             "active_process_capture_v3.json"
+        ),
+        "config_correction_path": (
+            "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-20260824/receipts/"
+            "config_correction_v2.json"
         ),
     }
 
