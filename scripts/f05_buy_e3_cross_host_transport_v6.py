@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import stat
 from collections.abc import Mapping, Sequence
@@ -33,6 +34,7 @@ from scripts import f05_buy_e3_direct_owner_release_v3 as direct_release_v3
 from scripts import f05_buy_e3_evidence_completion as completion
 
 OWNER: Final = completion.OWNER
+FORMAL_MODULE_ROUTE: Final = "scripts.f05_buy_e3_cross_host_transport_v6"
 
 # Final operational authority is deliberately source-frozen, never supplied by
 # a permissive CLI manifest.  These values remain empty until the no-shadow
@@ -134,6 +136,7 @@ REMOTE_REFERENCE_ROLES: Final = (
     "direct_active_release",
 )
 _PROCESS_STABLE_FIELDS: Final = (
+    "schema_version",
     "pid",
     "pid_start_ticks",
     "cmdline",
@@ -178,6 +181,38 @@ _LIVE_PROCESS_ATTESTATION_FIELDS: Final = {
     "runtime_identity_file_sha256",
     "alive_at_attestation",
     "stable_identity_equal",
+}
+_ACTIVE_HEALTH_WINDOW_FIELDS: Final = {
+    "schema_version",
+    "status",
+    "log_path_provenance",
+    "boundary_offset_bytes",
+    "active_pid",
+    "active_pid_start_ticks",
+    "active_process_stable_identity_sha256",
+    "rows",
+    "checks",
+}
+_PORTABLE_ACTIVE_HEALTH_WINDOW_FIELDS: Final = _ACTIVE_HEALTH_WINDOW_FIELDS - {
+    "log_path_provenance"
+}
+_ACTIVE_HEALTH_ROW_FIELDS: Final = {
+    "fresh_generation",
+    "line_offset_bytes",
+    "line_size_bytes",
+    "line_sha256",
+    "main_wall_timestamp_s",
+    "projection",
+}
+_ACTIVE_HEALTH_WINDOW_CHECKS: Final = {
+    "constructor_boundary_only": True,
+    "two_consecutive_fresh_main_health_rows": True,
+    "same_pid_and_start_ticks_before_between_after": True,
+    "sell_owner_enabled_both_rows": True,
+    "buy_e3_enabled_both_rows": True,
+    "external_sources_absolute_zero_both_rows": True,
+    "global_flow_explicit_disabled_error_and_backend_zero_both_rows": True,
+    "global_reference_explicit_disabled_error_and_state_zero_both_rows": True,
 }
 _ADMISSION_FIELDS: Final = {
     "schema_version",
@@ -400,8 +435,8 @@ def _content_binding(
 
 
 def _content_from_mapping(value: Any, label: str) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        raise CrossHostTransportError(f"{label} content binding is missing")
+    if not isinstance(value, Mapping) or set(value) != set(CONTENT_BINDING_FIELDS):
+        raise CrossHostTransportError(f"{label} content binding fields drifted")
     result = {field: value.get(field) for field in CONTENT_BINDING_FIELDS}
     if set(result) != set(CONTENT_BINDING_FIELDS):
         raise CrossHostTransportError(f"{label} content binding fields drifted")
@@ -504,8 +539,9 @@ def validate_runtime_authority(root: Path, release: Path) -> tuple[dict[str, Any
             "mode": "0600",
         },
     }
-    if disabled_config != expected_config_binding["disabled"] or active_config != (
-        expected_config_binding["active"]
+    if (
+        disabled_config != expected_config_binding["disabled"]
+        or active_config != (expected_config_binding["active"])
     ):
         raise CrossHostTransportError("final owner release config bytes drifted")
     if (
@@ -527,10 +563,8 @@ def validate_runtime_authority(root: Path, release: Path) -> tuple[dict[str, Any
         or payload.get("pending_current_runtime_evidence")
         != direct_release_v3.PENDING_CURRENT_RUNTIME_EVIDENCE
         or payload.get("runtime_fix_contract") != direct_release_v3.RUNTIME_FIX_CONTRACT
-        or payload.get("runtime_fix_supplement")
-        != FROZEN_FINAL_NO_SHADOW_RUNTIME_SUPPLEMENT
-        or payload.get("no_shadow_runtime_contract")
-        != direct_release_v3.NO_SHADOW_RUNTIME_CONTRACT
+        or payload.get("runtime_fix_supplement") != FROZEN_FINAL_NO_SHADOW_RUNTIME_SUPPLEMENT
+        or payload.get("no_shadow_runtime_contract") != direct_release_v3.NO_SHADOW_RUNTIME_CONTRACT
         or payload.get("evidence_boundary") != direct_release_v3.EVIDENCE_BOUNDARY
         or _contains_mapping_key(payload, "incomplete_evidence")
         or _contains_mapping_key(payload, "panel_rebuild_continues")
@@ -623,6 +657,41 @@ def _disabled_process(resource: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resource_runtime_sources(resource: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
+    authority = resource.get("runtime_sources")
+    rows = authority.get("files") if isinstance(authority, Mapping) else None
+    manifest = (
+        authority.get("runtime_source_manifest_sha256") if isinstance(authority, Mapping) else None
+    )
+    if not isinstance(rows, Mapping) or set(rows) != set(
+        resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256
+    ):
+        raise CrossHostTransportError("resource runtime-source authority fields drifted")
+    projected: dict[str, str] = {}
+    for role, frozen in resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.items():
+        row = rows.get(role)
+        if (
+            not isinstance(row, Mapping)
+            or row.get("role") != role
+            or row.get("repository_relative_path") != frozen["path"]
+            or row.get("sha256") != frozen["sha256"]
+            or any(
+                row.get(name) is not True
+                for name in (
+                    "runtime_working_matches_direct_successor",
+                    "collector_working_matches_direct_successor",
+                    "collector_head_matches_direct_successor",
+                )
+            )
+            or frozen["path"] in projected
+        ):
+            raise CrossHostTransportError(f"resource runtime source drifted: {role}")
+        projected[str(frozen["path"])] = _require_sha256(
+            frozen["sha256"], f"resource runtime source {role}"
+        )
+    return _require_sha256(manifest, "resource runtime-source manifest"), projected
+
+
 def _validate_resource_execution(value: Any) -> None:
     if not isinstance(value, Mapping):
         raise CrossHostTransportError("resource runtime execution is missing")
@@ -654,8 +723,7 @@ def _validate_config_correction(path: Path) -> tuple[dict[str, Any], dict[str, A
         raise CrossHostTransportError("config correction bytes changed during validation")
     if (
         binding["file_sha256"] != FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256
-        or binding["canonical_sha256"]
-        != FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
+        or binding["canonical_sha256"] != FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
     ):
         raise CrossHostTransportError("config correction frozen identity drifted")
     return payload, binding, opened.raw
@@ -802,10 +870,8 @@ def _active_runtime_semantics(
         != expected_execution["annotated_operational_tag"]
         or startup_release.get("annotated_operational_tag_object")
         != expected_execution["annotated_operational_tag_object"]
-        or startup_release.get("active_config_file_sha256")
-        != FROZEN_FINAL_ACTIVE_CONFIG_SHA256
-        or startup_release.get("disabled_config_file_sha256")
-        != FROZEN_FINAL_DISABLED_CONFIG_SHA256
+        or startup_release.get("active_config_file_sha256") != FROZEN_FINAL_ACTIVE_CONFIG_SHA256
+        or startup_release.get("disabled_config_file_sha256") != FROZEN_FINAL_DISABLED_CONFIG_SHA256
         or gates.get("buy_e3_active_release_matches_running_config") is not True
         or not isinstance(state, Mapping)
     ):
@@ -838,6 +904,87 @@ def _active_runtime_semantics(
     }
 
 
+def _validate_active_health_window_content(
+    raw: Any,
+    *,
+    process: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Validate the path-free semantics available after cross-host transfer.
+
+    The remote attestation separately proves that the exact source receipt was
+    revalidated against the live log while that log was still available.  A
+    local admission never pretends it can reopen that remote inode.
+    """
+
+    if not isinstance(raw, Mapping) or set(raw) != _ACTIVE_HEALTH_WINDOW_FIELDS:
+        raise CrossHostTransportError("active HEALTH window fields drifted")
+    window = dict(raw)
+    remote_log = str(window.get("log_path_provenance", ""))
+    boundary = window.get("boundary_offset_bytes")
+    rows = window.get("rows")
+    stable_sha = _canonical_sha256(_stable_process_projection(process))
+    if (
+        window.get("schema_version") != active_capture_v8.HEALTH_WINDOW_SCHEMA
+        or window.get("status") != active_capture_v8.HEALTH_WINDOW_STATUS
+        or not PurePosixPath(remote_log).is_absolute()
+        or type(boundary) is not int
+        or boundary < 0
+        or window.get("active_pid") != process.get("pid")
+        or window.get("active_pid_start_ticks") != process.get("pid_start_ticks")
+        or window.get("active_process_stable_identity_sha256") != stable_sha
+        or not isinstance(rows, list)
+        or len(rows) != 2
+        or window.get("checks") != _ACTIVE_HEALTH_WINDOW_CHECKS
+    ):
+        raise CrossHostTransportError("active HEALTH window identity drifted")
+
+    projected_rows: list[dict[str, Any]] = []
+    previous_end = boundary
+    previous_timestamp = -math.inf
+    previous_updates = -1
+    for generation, raw_row in enumerate(rows, start=1):
+        if not isinstance(raw_row, Mapping) or set(raw_row) != _ACTIVE_HEALTH_ROW_FIELDS:
+            raise CrossHostTransportError("active HEALTH row fields drifted")
+        row = dict(raw_row)
+        offset = row.get("line_offset_bytes")
+        size = row.get("line_size_bytes")
+        timestamp = row.get("main_wall_timestamp_s")
+        if (
+            row.get("fresh_generation") != generation
+            or type(offset) is not int
+            or offset < previous_end
+            or type(size) is not int
+            or size <= 0
+            or isinstance(timestamp, bool)
+            or not isinstance(timestamp, (int, float))
+            or not math.isfinite(float(timestamp))
+            or float(timestamp) <= previous_timestamp
+        ):
+            raise CrossHostTransportError("active HEALTH row chronology drifted")
+        _require_sha256(row.get("line_sha256"), "active HEALTH line")
+        try:
+            projection = active_capture_v8._validate_health_projection(  # noqa: SLF001
+                row.get("projection")
+            )
+        except Exception as exc:
+            raise CrossHostTransportError("active HEALTH no-shadow projection drifted") from exc
+        updates = projection["boolean_cooldown_updates"]
+        if updates <= previous_updates:
+            raise CrossHostTransportError("active HEALTH callback progress drifted")
+        row["projection"] = projection
+        projected_rows.append(row)
+        previous_end = offset + size
+        previous_timestamp = float(timestamp)
+        previous_updates = updates
+
+    portable = {key: value for key, value in window.items() if key != "log_path_provenance"}
+    portable["rows"] = projected_rows
+    if set(portable) != _PORTABLE_ACTIVE_HEALTH_WINDOW_FIELDS:
+        raise CrossHostTransportError("portable active HEALTH fields drifted")
+    _assert_portable(portable, location="active_runtime.active_health_window")
+    return portable
+
+
 def _validate_active_payload(
     payload: Mapping[str, Any],
     *,
@@ -860,6 +1007,7 @@ def _validate_active_payload(
         "runtime_identity",
         "runtime_identity_file_sha256",
         "startup_semantics",
+        "active_health_window",
         "checks",
         "authority_design",
         "permissions",
@@ -916,12 +1064,14 @@ def _validate_active_payload(
     )
     if process_canonical != _canonical_sha256(process_body):
         raise CrossHostTransportError("active process canonical identity drifted")
+    health_window = _validate_active_health_window_content(
+        payload.get("active_health_window"),
+        process=process,
+    )
     checks = payload.get("checks")
     authority_design = payload.get("authority_design")
     if not isinstance(checks, Mapping) or not isinstance(authority_design, Mapping):
         raise CrossHostTransportError("active capture checks/authority design are missing")
-    false_checks = {name for name, value in checks.items() if value is False}
-    invalid_checks = {name for name, value in checks.items() if value not in (True, False)}
     if (
         payload.get("host") != resource.get("host")
         or predecessor != expected_predecessor
@@ -934,15 +1084,19 @@ def _validate_active_payload(
         or process.get("owner_override_effective") is not True
         or process.get("startup_attestation_sha256") != semantics["startup_attestation_sha256"]
         or payload.get("startup_semantics") != semantics
-        or false_checks != {"retroactive_signature"}
-        or invalid_checks
-        or authority_design.get("runtime_authority_replaced") is not False
-        or authority_design.get("does_not_replace_runtime_active_release") is not True
-        or payload.get("permissions") != NO_AUTHORITY
+        or checks != active_capture_v8.CHECKS
+        or authority_design != active_capture_v8.AUTHORITY_DESIGN
+        or payload.get("permissions") != active_capture_v8.NO_AUTHORITY
+        or payload.get("evidence_boundary") != active_capture_v8.EVIDENCE_BOUNDARY
     ):
         raise CrossHostTransportError("active capture semantic identity drifted")
-    _reject_forbidden_evidence(payload.get("evidence_boundary"), "active capture")
-    _timestamp(payload.get("generated_utc"), "active capture timestamp")
+    generated = _utc_datetime(payload.get("generated_utc"), "active capture timestamp")
+    health_observed = datetime.fromtimestamp(
+        float(health_window["rows"][1]["main_wall_timestamp_s"]),
+        tz=UTC,
+    )
+    if generated < health_observed:
+        raise CrossHostTransportError("active capture predates its portable HEALTH window")
     return semantics
 
 
@@ -977,6 +1131,30 @@ def _validate_active(
     return payload, binding, opened.raw, semantics
 
 
+def _validate_active_against_remote_log(
+    path: Path,
+    *,
+    live_log_path: Path,
+    direct_repository_root: Path,
+    direct_release_path: Path,
+    resource_receipt_path: Path,
+    config_correction_path: Path,
+) -> dict[str, Any]:
+    try:
+        return active_capture_v8.validate_active_capture(
+            path,
+            runtime_repository_root=direct_repository_root,
+            direct_release_path=direct_release_path,
+            resource_receipt_path=resource_receipt_path,
+            config_correction_path=config_correction_path,
+            live_log_path=live_log_path,
+        )
+    except Exception as exc:
+        raise CrossHostTransportError(
+            "active capture failed remote live-log semantic validation"
+        ) from exc
+
+
 def _runtime_projection(active: Mapping[str, Any], semantics: Mapping[str, Any]) -> dict[str, Any]:
     runtime = active["runtime_identity"]
     runtime_source_manifest, runtime_source_files = _startup_runtime_sources(runtime)
@@ -1001,6 +1179,10 @@ def _runtime_projection(active: Mapping[str, Any], semantics: Mapping[str, Any])
         "buy_e3_enabled": True,
         "owner_override_effective": True,
         "startup_semantics": dict(semantics),
+        "active_health_window": _validate_active_health_window_content(
+            active.get("active_health_window"),
+            process=active["active_process"],
+        ),
     }
 
 
@@ -1013,6 +1195,7 @@ def _portable_components(
     semantics: Mapping[str, Any],
 ) -> dict[str, Any]:
     disabled = _disabled_process(resource)
+    resource_source_manifest, resource_source_files = _resource_runtime_sources(resource)
     process = active["active_process"]
     return {
         "host": {
@@ -1043,6 +1226,8 @@ def _portable_components(
             "fresh_start_ticks": True,
             "same_pid_pre_post": True,
             "shadow_runtime": dict(resource["shadow_runtime"]),
+            "runtime_source_manifest_sha256": resource_source_manifest,
+            "runtime_source_files": resource_source_files,
         },
         "transition": {
             "disabled_pid": int(disabled["pid"]),
@@ -1116,6 +1301,7 @@ def build_remote_active_attestation(
     config_correction_path: Path,
     resource_receipt_path: Path,
     active_capture_path: Path,
+    live_log_path: Path,
     proc_root: Path = Path("/proc"),
     dmi_root: Path = Path("/sys/devices/virtual/dmi/id"),
     generated_utc: str | None = None,
@@ -1147,6 +1333,14 @@ def build_remote_active_attestation(
     )
     if resource.get("config_correction") != correction_binding:
         raise CrossHostTransportError("resource/config correction cross-binding drifted")
+    semantically_validated_active = _validate_active_against_remote_log(
+        active_capture_path,
+        live_log_path=live_log_path,
+        direct_repository_root=direct_repository_root,
+        direct_release_path=direct_release_path,
+        resource_receipt_path=resource_receipt_path,
+        config_correction_path=config_correction_path,
+    )
     active, active_binding, _active_raw, semantics = _validate_active(
         active_capture_path,
         release=release,
@@ -1154,6 +1348,8 @@ def build_remote_active_attestation(
         resource=resource,
         resource_binding=resource_binding,
     )
+    if semantically_validated_active != active:
+        raise CrossHostTransportError("active capture changed after remote log validation")
     _validate_remote_content_at_path(
         active.get("resource_receipt"), resource_receipt_path, "resource receipt"
     )
@@ -1259,6 +1455,7 @@ def build_remote_active_attestation(
             "current_instance_and_type_exact": True,
             "startup_runtime_artifact_release_exact": True,
             "active_pid_alive_and_stable": True,
+            "active_health_window_revalidated_against_remote_log": True,
             "captured_live_not_retroactive": True,
             "project_references_content_only": True,
             "remote_path_provenance_not_authority": True,
@@ -1281,6 +1478,7 @@ def validate_remote_active_attestation(
     config_correction_path: Path,
     resource_receipt_path: Path,
     active_capture_path: Path,
+    live_log_path: Path | None = None,
 ) -> dict[str, Any]:
     release, release_binding = _direct_authority(
         direct_release_path, direct_repository_root=direct_repository_root
@@ -1294,6 +1492,18 @@ def validate_remote_active_attestation(
     )
     if resource.get("config_correction") != correction_binding:
         raise CrossHostTransportError("resource/config correction cross-binding drifted")
+    semantically_validated_active = (
+        _validate_active_against_remote_log(
+            active_capture_path,
+            live_log_path=live_log_path,
+            direct_repository_root=direct_repository_root,
+            direct_release_path=direct_release_path,
+            resource_receipt_path=resource_receipt_path,
+            config_correction_path=config_correction_path,
+        )
+        if live_log_path is not None
+        else None
+    )
     active, active_binding, _active_raw, semantics = _validate_active(
         active_capture_path,
         release=release,
@@ -1301,6 +1511,8 @@ def validate_remote_active_attestation(
         resource=resource,
         resource_binding=resource_binding,
     )
+    if semantically_validated_active is not None and semantically_validated_active != active:
+        raise CrossHostTransportError("active capture changed after remote log validation")
     opened = _open_private_json(path, "remote active attestation")
     binding = _content_binding(
         opened,
@@ -1330,7 +1542,8 @@ def validate_remote_active_attestation(
     for role, expected in expected_reference_content.items():
         if set(references[role]) != {*CONTENT_BINDING_FIELDS, "remote_path_provenance"}:
             raise CrossHostTransportError(f"remote project reference fields drifted: {role}")
-        if _content_from_mapping(references[role], role) != expected:
+        content = {field: references[role][field] for field in CONTENT_BINDING_FIELDS}
+        if _content_from_mapping(content, role) != expected:
             raise CrossHostTransportError(f"remote project reference content drifted: {role}")
         provenance = str(references[role].get("remote_path_provenance", ""))
         if not PurePosixPath(provenance).is_absolute():
@@ -1392,6 +1605,7 @@ def validate_remote_active_attestation(
             "current_instance_and_type_exact": True,
             "startup_runtime_artifact_release_exact": True,
             "active_pid_alive_and_stable": True,
+            "active_health_window_revalidated_against_remote_log": True,
             "captured_live_not_retroactive": True,
             "project_references_content_only": True,
             "remote_path_provenance_not_authority": True,
@@ -1424,6 +1638,7 @@ def finalize_remote_active_attestation(
                 "config_correction_path",
                 "resource_receipt_path",
                 "active_capture_path",
+                "live_log_path",
             )
         },
     )
@@ -1479,25 +1694,13 @@ def _validate_source_set(
     release, release_binding = _direct_authority(
         direct_release_path, direct_repository_root=direct_repository_root
     )
-    correction, correction_binding, _correction_raw = _validate_config_correction(
-        correction_path
-    )
+    correction, correction_binding, _correction_raw = _validate_config_correction(correction_path)
     resource, resource_binding, _resource_raw = _validate_resource(
         resource_path,
         config_correction_path=correction_path,
     )
     if resource.get("config_correction") != correction_binding:
         raise CrossHostTransportError("resource/config correction cross-binding drifted")
-    try:
-        semantically_validated_active = active_capture_v8.validate_active_capture(
-            active_path,
-            runtime_repository_root=direct_repository_root,
-            direct_release_path=direct_release_path,
-            resource_receipt_path=resource_path,
-            config_correction_path=correction_path,
-        )
-    except Exception as exc:
-        raise CrossHostTransportError("active-capture-v6 semantic validation failed") from exc
     active, active_binding, _active_raw, _semantics = _validate_active(
         active_path,
         release=release,
@@ -1505,8 +1708,6 @@ def _validate_source_set(
         resource=resource,
         resource_binding=resource_binding,
     )
-    if semantically_validated_active != active:
-        raise CrossHostTransportError("active-capture-v6 bytes changed during validation")
     attestation = validate_remote_active_attestation(
         attestation_path,
         direct_repository_root=direct_repository_root,
@@ -1689,7 +1890,8 @@ def _admission_payload(
             "duplicate_sources_rejected": True,
             "current_host_resource_receipt_semantically_valid": True,
             "remote_attestation_v4_semantically_valid": True,
-            "active_capture_v6_content_exact": True,
+            "active_capture_v7_content_and_health_projection_exact": True,
+            "remote_log_not_required_for_local_admission": True,
             "frozen_final_runtime_authority_exact_and_unchanged": True,
             "portable_projection_has_no_path_or_inode_authority": True,
         },
@@ -1814,6 +2016,7 @@ def _parser() -> argparse.ArgumentParser:
         "--resource-receipt", dest="resource_receipt_path", type=Path, required=True
     )
     remote.add_argument("--active-capture", dest="active_capture_path", type=Path, required=True)
+    remote.add_argument("--live-log", dest="live_log_path", type=Path, required=True)
     remote.add_argument("--output", type=Path, required=True)
     admit = commands.add_parser("admit")
     admit.add_argument("--incoming-root", type=Path, required=True)
@@ -1852,6 +2055,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             config_correction_path=args.config_correction_path,
             resource_receipt_path=args.resource_receipt_path,
             active_capture_path=args.active_capture_path,
+            live_log_path=args.live_log_path,
             output_path=args.output,
         )
     elif args.command == "admit":

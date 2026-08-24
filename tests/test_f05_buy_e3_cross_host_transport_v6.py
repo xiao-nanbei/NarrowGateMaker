@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,12 +29,8 @@ SOURCE_FROZEN_FINAL = {
     "active_status": subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
     "active_file_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256,
     "active_canonical_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256,
-    "config_correction_file_sha256": (
-        subject.FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256
-    ),
-    "config_correction_canonical_sha256": (
-        subject.FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
-    ),
+    "config_correction_file_sha256": (subject.FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256),
+    "config_correction_canonical_sha256": (subject.FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256),
     "disabled_config_sha256": subject.FROZEN_FINAL_DISABLED_CONFIG_SHA256,
     "active_config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
     "resource_path": subject.FROZEN_FINAL_RESOURCE_PATH_PROVENANCE,
@@ -167,6 +165,11 @@ def _portable_components(direct_binding: dict[str, Any]) -> dict[str, Any]:
             "fresh_pid": True,
             "fresh_start_ticks": True,
             "same_pid_pre_post": True,
+            "runtime_source_manifest_sha256": "5" * 64,
+            "runtime_source_files": {
+                row["path"]: row["sha256"]
+                for row in subject.resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.values()
+            },
         },
         "transition": {
             "disabled_pid": 10,
@@ -194,6 +197,16 @@ def _portable_components(direct_binding: dict[str, Any]) -> dict[str, Any]:
             "buy_e3_enabled": True,
             "owner_override_effective": True,
             "startup_semantics": {"startup_status": "accepted"},
+            "active_health_window": {
+                "schema_version": subject.active_capture_v8.HEALTH_WINDOW_SCHEMA,
+                "status": subject.active_capture_v8.HEALTH_WINDOW_STATUS,
+                "boundary_offset_bytes": 100,
+                "active_pid": 20,
+                "active_pid_start_ticks": 200,
+                "active_process_stable_identity_sha256": "4" * 64,
+                "rows": [],
+                "checks": dict(subject._ACTIVE_HEALTH_WINDOW_CHECKS),  # noqa: SLF001
+            },
         },
     }
 
@@ -245,6 +258,37 @@ def test_final_authority_fails_closed_until_new_epoch_is_source_frozen(
         subject._frozen_final_execution()  # noqa: SLF001
 
 
+def test_formal_transport_route_is_module_only_and_requires_remote_live_log() -> None:
+    assert subject.FORMAL_MODULE_ROUTE == "scripts.f05_buy_e3_cross_host_transport_v6"
+    repository = Path(__file__).resolve().parents[1]
+    completed = subprocess.run(
+        [sys.executable, "-m", subject.FORMAL_MODULE_ROUTE, "--help"],
+        cwd=repository,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    with pytest.raises(SystemExit):
+        subject._parser().parse_args(  # noqa: SLF001
+            [
+                "remote-attest",
+                "--direct-repository-root",
+                "/runtime",
+                "--direct-release",
+                "/runtime/release.json",
+                "--config-correction",
+                "/remote/config.json",
+                "--resource-receipt",
+                "/remote/resource.json",
+                "--active-capture",
+                "/remote/active.json",
+                "--output",
+                "/remote/attestation.json",
+            ]
+        )
+
+
 def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending() -> None:
     assert SOURCE_FROZEN_FINAL["release_schema"] == subject.direct_release_v3.SCHEMA_VERSION
     assert SOURCE_FROZEN_FINAL["release_status"] == subject.direct_release_v3.STATUS
@@ -258,18 +302,12 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
     assert SOURCE_FROZEN_FINAL["active_config_sha256"] == (
         "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e"
     )
-    assert SOURCE_FROZEN_FINAL["execution_commit"] == (
-        "eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de"
-    )
-    assert SOURCE_FROZEN_FINAL["execution_tree"] == (
-        "0343bd5586b337385cf2aa0d7a643f5c32b0da77"
-    )
+    assert SOURCE_FROZEN_FINAL["execution_commit"] == ("eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de")
+    assert SOURCE_FROZEN_FINAL["execution_tree"] == ("0343bd5586b337385cf2aa0d7a643f5c32b0da77")
     assert SOURCE_FROZEN_FINAL["annotated_tag"] == (
         "f05-owner-buy-e3-no-shadow-runtime-v3-20260824"
     )
-    assert SOURCE_FROZEN_FINAL["tag_object"] == (
-        "3878ea05252ef8f274b6f74ee7a984431c53b892"
-    )
+    assert SOURCE_FROZEN_FINAL["tag_object"] == ("3878ea05252ef8f274b6f74ee7a984431c53b892")
     assert SOURCE_FROZEN_FINAL["release_file_sha256"] == (
         "310d86d30bd875a7029b3e2f784877c6802ab7b05b0f639383e68bb81a458f49"
     )
@@ -398,7 +436,9 @@ def test_validate_runtime_authority_binds_release_v3_and_no_shadow_contract(
         "config_pair": config_pair,
         "runtime_fix_contract": dict(subject.direct_release_v3.RUNTIME_FIX_CONTRACT),
         "runtime_fix_supplement": subject.FROZEN_FINAL_NO_SHADOW_RUNTIME_SUPPLEMENT,
-        "changed_repository_files": {"live/main.py": {"git_blob_sha1": "1" * 40, "file_sha256": "2" * 64}},
+        "changed_repository_files": {
+            "live/main.py": {"git_blob_sha1": "1" * 40, "file_sha256": "2" * 64}
+        },
         "no_shadow_runtime_contract": dict(subject.direct_release_v3.NO_SHADOW_RUNTIME_CONTRACT),
         "pending_current_runtime_evidence": dict(
             subject.direct_release_v3.PENDING_CURRENT_RUNTIME_EVIDENCE
@@ -565,8 +605,8 @@ def test_cross_host_admission_round_trip_and_portable_projection(
     assert portable["runtime_authority"]["runtime_authority"] is True
     assert portable["host"]["instance_id"] == subject.CURRENT_INSTANCE_ID
     assert portable["host"]["public_ipv4_role"].endswith("not_host_authority")
-    assert payload["checks"]["active_capture_v6_content_exact"] is True
-    assert "active_capture_v1_content_exact" not in payload["checks"]
+    assert payload["checks"]["active_capture_v7_content_and_health_projection_exact"] is True
+    assert payload["checks"]["remote_log_not_required_for_local_admission"] is True
     for role, row in portable["source_receipts"].items():
         assert set(row) == {*subject.CONTENT_BINDING_FIELDS, "local_filename"}
         assert row["local_filename"] == subject.SOURCE_FILENAMES[role]
@@ -713,6 +753,218 @@ def test_active_v2_content_only_binding_is_reopened_at_frozen_path(tmp_path: Pat
         subject._validate_remote_content_at_path(binding, path, "active capture")  # noqa: SLF001
 
 
+def _active_health_projection(*, updates: int) -> dict[str, Any]:
+    shadow = {
+        name: 0
+        for name in {
+            "externalSources",
+            *subject.resource_v8.GLOBAL_FLOW_STATE_ZERO_FIELDS,
+            *subject.resource_v8.GLOBAL_FLOW_VALUE_ZERO_FIELDS,
+            *subject.resource_v8.GLOBAL_REFERENCE_ZERO_FIELDS,
+            *subject.resource_v8.GLOBAL_REFERENCE_VALUE_ZERO_FIELDS,
+            *subject.resource_v8.GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS,
+        }
+    }
+    shadow.update(
+        {
+            "globalFlowReason": subject.resource_v8.SHADOW_DISABLED_REASON,
+            "globalRefReason": subject.resource_v8.SHADOW_DISABLED_REASON,
+        }
+    )
+    return {
+        "boolean_cooldown_enabled": 1,
+        "boolean_cooldown_updates": updates,
+        "buy_e3_enabled": 1,
+        "deep_book_buffer": 0,
+        "shadow_disabled_state": shadow,
+        "counter_values": {name: 0 for name in subject.resource_v8.WINDOW_ZERO_COUNTERS[:-2]},
+    }
+
+
+def _active_health_window(process: dict[str, Any], log_path: Path) -> dict[str, Any]:
+    stable_sha = subject._canonical_sha256(  # noqa: SLF001
+        subject._stable_process_projection(process)  # noqa: SLF001
+    )
+    return {
+        "schema_version": subject.active_capture_v8.HEALTH_WINDOW_SCHEMA,
+        "status": subject.active_capture_v8.HEALTH_WINDOW_STATUS,
+        "log_path_provenance": str(log_path),
+        "boundary_offset_bytes": 100,
+        "active_pid": process["pid"],
+        "active_pid_start_ticks": process["pid_start_ticks"],
+        "active_process_stable_identity_sha256": stable_sha,
+        "rows": [
+            {
+                "fresh_generation": 1,
+                "line_offset_bytes": 110,
+                "line_size_bytes": 20,
+                "line_sha256": "5" * 64,
+                "main_wall_timestamp_s": 1_000.0,
+                "projection": _active_health_projection(updates=2_000),
+            },
+            {
+                "fresh_generation": 2,
+                "line_offset_bytes": 140,
+                "line_size_bytes": 20,
+                "line_sha256": "6" * 64,
+                "main_wall_timestamp_s": 1_060.0,
+                "projection": _active_health_projection(updates=2_500),
+            },
+        ],
+        "checks": dict(subject._ACTIVE_HEALTH_WINDOW_CHECKS),  # noqa: SLF001
+    }
+
+
+def test_active_health_content_projection_is_exact_and_path_free(tmp_path: Path) -> None:
+    process = {
+        "schema_version": "process.v1",
+        "pid": 20,
+        "pid_start_ticks": 200,
+        "cmdline": ["python", "live/main.py"],
+        "cmdline_sha256": "1" * 64,
+        "cwd": "/runtime",
+        "config_path": "/runtime/active.yaml",
+        "config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
+        "python_executable": "/runtime/.venv/bin/python",
+        "python_binary_resolved": "/usr/bin/python",
+        "venv_root": "/runtime/.venv",
+        "runtime_identity": {"present": True},
+    }
+    window = _active_health_window(process, Path("/remote/live.log"))
+    portable = subject._validate_active_health_window_content(  # noqa: SLF001
+        window, process=process
+    )
+    assert set(portable) == subject._PORTABLE_ACTIVE_HEALTH_WINDOW_FIELDS  # noqa: SLF001
+    assert "log_path_provenance" not in portable
+    assert portable["rows"][1]["projection"]["boolean_cooldown_updates"] == 2_500
+
+    tampered = json.loads(json.dumps(window))
+    tampered["rows"][1]["projection"]["counter_values"]["externalErrors"] = 1
+    with pytest.raises(subject.CrossHostTransportError, match="projection drifted"):
+        subject._validate_active_health_window_content(tampered, process=process)  # noqa: SLF001
+
+
+def test_active_payload_requires_exact_v7_health_and_control_contracts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binding = {
+        "schema_version": subject.FROZEN_FINAL_RELEASE_SCHEMA,
+        "status": subject.FROZEN_FINAL_RELEASE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_RELEASE_FILE_SHA256,
+        "canonical_field": "canonical_active_release_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_RELEASE_CANONICAL_SHA256,
+        "size_bytes": 100,
+        "mode": "0600",
+    }
+    resource_binding = {
+        **binding,
+        "schema_version": subject.FROZEN_FINAL_RESOURCE_SCHEMA,
+        "status": subject.FROZEN_FINAL_RESOURCE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_RESOURCE_FILE_SHA256,
+        "canonical_field": "canonical_resource_receipt_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_RESOURCE_CANONICAL_SHA256,
+    }
+    correction_binding = {
+        **binding,
+        "schema_version": subject.resource_v8.config_successor.SCHEMA_VERSION,
+        "status": subject.resource_v8.config_successor.STATUS,
+        "file_sha256": subject.FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256,
+        "canonical_field": subject.resource_v8.config_successor.CANONICAL_FIELD,
+        "canonical_sha256": subject.FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256,
+    }
+    semantics = {"startup_attestation_sha256": "7" * 64, "startup_status": "accepted"}
+    monkeypatch.setattr(subject, "_active_runtime_semantics", lambda *_a, **_k: semantics)
+    process = {
+        "schema_version": "process.v1",
+        "pid": 20,
+        "pid_start_ticks": 200,
+        "cmdline": ["python", "live/main.py"],
+        "cmdline_sha256": "1" * 64,
+        "cwd": "/runtime",
+        "config_path": "/runtime/active.yaml",
+        "config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
+        "python_executable": "/runtime/.venv/bin/python",
+        "python_binary_resolved": "/usr/bin/python",
+        "venv_root": "/runtime/.venv",
+        "runtime_identity": {
+            "present": True,
+            "path": "/runtime/runtime_identity.json",
+            "file_sha256": "2" * 64,
+        },
+        "captured_utc": "2026-08-24T00:00:00Z",
+        "runtime_identity_file_sha256": "2" * 64,
+        "execution_commit": subject.FROZEN_FINAL_EXECUTION_COMMIT,
+        "execution_tree": subject.FROZEN_FINAL_EXECUTION_TREE,
+        "artifact_sha256": subject.FROZEN_FINAL_ARTIFACT_SHA256,
+        "buy_e3_enabled": True,
+        "owner_override_effective": True,
+        "startup_attestation_sha256": semantics["startup_attestation_sha256"],
+    }
+    process["canonical_process_identity_sha256"] = subject._canonical_sha256(  # noqa: SLF001
+        process
+    )
+    resource = {
+        "host": {"instance_id": "fixture"},
+        "config_correction": correction_binding,
+        "fresh_disabled_process": {
+            "pid": 10,
+            "pid_start_ticks": 100,
+            "canonical_process_identity_sha256": "3" * 64,
+            "config_sha256": subject.FROZEN_FINAL_DISABLED_CONFIG_SHA256,
+            "fresh_pid": True,
+            "fresh_start_ticks": True,
+            "same_pid_pre_post": True,
+        },
+    }
+    payload = {
+        "schema_version": subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+        "identity": subject.OWNER,
+        "status": subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+        "generated_utc": "2026-08-24T00:01:00Z",
+        "runtime_authority": binding,
+        "resource_receipt": resource_binding,
+        "config_correction": correction_binding,
+        "host": resource["host"],
+        "disabled_predecessor": {
+            "pid": 10,
+            "pid_start_ticks": 100,
+            "process_identity_sha256": "3" * 64,
+            "quiescent_before_active_capture": True,
+        },
+        "active_process": process,
+        "runtime_identity": {},
+        "runtime_identity_file_sha256": "2" * 64,
+        "startup_semantics": semantics,
+        "active_health_window": _active_health_window(process, Path("/remote/live.log")),
+        "checks": dict(subject.active_capture_v8.CHECKS),
+        "authority_design": dict(subject.active_capture_v8.AUTHORITY_DESIGN),
+        "permissions": dict(subject.active_capture_v8.NO_AUTHORITY),
+        "evidence_boundary": dict(subject.active_capture_v8.EVIDENCE_BOUNDARY),
+        "canonical_active_capture_sha256": "4" * 64,
+    }
+    assert (
+        subject._validate_active_payload(  # noqa: SLF001
+            payload,
+            release={},
+            release_binding=binding,
+            resource=resource,
+            resource_binding=resource_binding,
+        )
+        == semantics
+    )
+
+    tampered = json.loads(json.dumps(payload))
+    del tampered["checks"]["active_health_line_bytes_revalidated"]
+    with pytest.raises(subject.CrossHostTransportError, match="semantic identity drifted"):
+        subject._validate_active_payload(  # noqa: SLF001
+            tampered,
+            release={},
+            release_binding=binding,
+            resource=resource,
+            resource_binding=resource_binding,
+        )
+
+
 def _remote_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
@@ -765,6 +1017,7 @@ def _remote_fixture(
         "instance_type": subject.CURRENT_INSTANCE_TYPE,
     }
     stable = {
+        "schema_version": "process.v1",
         "pid": 20,
         "pid_start_ticks": 200,
         "cmdline": ["python", "live/main.py"],
@@ -800,7 +1053,9 @@ def _remote_fixture(
         "resource_receipt": resource_binding,
         "config_correction": correction_binding,
         "runtime_authority": direct_binding,
+        "active_health_window": _active_health_window(process, tmp_path / "live.log"),
     }
+    (tmp_path / "live.log").write_text("fixture\n", encoding="ascii")
     components = _portable_components(direct_binding)
     monkeypatch.setattr(subject, "_direct_authority", lambda *_a, **_k: ({}, direct_binding))
     monkeypatch.setattr(
@@ -818,8 +1073,17 @@ def _remote_fixture(
         "_validate_active",
         lambda *_a, **_k: (active, active_binding, b"active", {}),
     )
+    monkeypatch.setattr(
+        subject,
+        "_validate_active_against_remote_log",
+        lambda *_a, **_k: active,
+    )
     monkeypatch.setattr(subject, "_validate_remote_content_at_path", lambda *_a, **_k: None)
-    monkeypatch.setattr(subject, "_portable_components", lambda **_k: components)
+    monkeypatch.setattr(
+        subject,
+        "_portable_components",
+        lambda **_k: json.loads(json.dumps(components)),
+    )
     monkeypatch.setattr(subject.resource_v8, "host_identity", lambda **_k: host)
     recaptured = {
         **stable,
@@ -853,6 +1117,7 @@ def test_remote_attestation_captures_live_not_retroactive(
         config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
         resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
         active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
         generated_utc="2026-08-24T00:00:01Z",
     )
     assert payload["live_process_attestation"]["pid"] == active["active_process"]["pid"]
@@ -862,6 +1127,62 @@ def test_remote_attestation_captures_live_not_retroactive(
     )
     assert payload["checks"]["captured_live_not_retroactive"] is True
     assert payload["checks"]["frozen_final_runtime_authority_exact"] is True
+    assert payload["checks"]["active_health_window_revalidated_against_remote_log"] is True
+
+
+def test_remote_attestation_calls_full_active_validator_with_live_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active, _components, _bindings = _remote_fixture(tmp_path, monkeypatch)
+    observed: dict[str, Any] = {}
+
+    def validate(path: Path, **kwargs: Any) -> dict[str, Any]:
+        observed["path"] = path
+        observed.update(kwargs)
+        return active
+
+    monkeypatch.setattr(subject, "_validate_active_against_remote_log", validate)
+    subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    assert observed["path"] == tmp_path / subject.ACTIVE_CAPTURE_FILENAME
+    assert observed["live_log_path"] == tmp_path / "live.log"
+
+
+def test_local_source_validation_does_not_reopen_remote_live_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    payload = subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    attestation = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
+    monkeypatch.setattr(
+        subject,
+        "_validate_active_against_remote_log",
+        lambda *_a, **_k: pytest.fail("local admission reopened the remote log"),
+    )
+    sources = subject._validate_source_set(  # noqa: SLF001
+        correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
+        resource_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        attestation_path=attestation,
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+    )
+    assert sources.attestation == payload
 
 
 def test_remote_attestation_rejects_resource_path_provenance_drift(
@@ -880,6 +1201,7 @@ def test_remote_attestation_rejects_resource_path_provenance_drift(
             config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+            live_log_path=tmp_path / "live.log",
         )
 
 
@@ -894,6 +1216,7 @@ def test_remote_attestation_release_provenance_is_portable_and_cross_bound(
         config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
         resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
         active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
         generated_utc="2026-08-24T00:00:01Z",
     )
     attestation = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
@@ -906,6 +1229,7 @@ def test_remote_attestation_release_provenance_is_portable_and_cross_bound(
         config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
         resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
         active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
     )
     assert validated["project_references"]["direct_active_release"][
         "remote_path_provenance"
@@ -926,6 +1250,7 @@ def test_remote_attestation_release_provenance_is_portable_and_cross_bound(
             config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+            live_log_path=tmp_path / "live.log",
         )
 
     payload["project_references"]["direct_active_release"]["remote_path_provenance"] = str(
@@ -946,6 +1271,7 @@ def test_remote_attestation_release_provenance_is_portable_and_cross_bound(
             config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+            live_log_path=tmp_path / "live.log",
         )
 
 
@@ -965,6 +1291,7 @@ def test_remote_attestation_rejects_wrong_host(
             config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+            live_log_path=tmp_path / "live.log",
         )
 
 
@@ -990,6 +1317,7 @@ def test_remote_attestation_rejects_process_identity_change(
             config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+            live_log_path=tmp_path / "live.log",
         )
 
 
@@ -1003,6 +1331,7 @@ def test_remote_attestation_validator_rejects_stable_identity_or_chronology_tamp
         config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
         resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
         active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
         generated_utc="2026-08-24T00:00:01Z",
     )
     path = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
@@ -1026,6 +1355,36 @@ def test_remote_attestation_validator_rejects_stable_identity_or_chronology_tamp
         "live_process_attestation"
     ]["active_capture_stable_identity_sha256"]
     payload["live_process_attestation"]["recaptured_utc"] = "2026-08-24T00:00:02Z"
+    payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
+    )
+    _write(path, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="identity drifted"):
+        subject.validate_remote_active_attestation(
+            path,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+
+def test_remote_attestation_rejects_recanonicalized_portable_health_tamper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    payload = subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        config_correction_path=tmp_path / subject.CONFIG_CORRECTION_FILENAME,
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        live_log_path=tmp_path / "live.log",
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    path = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
+    payload["active_runtime"]["active_health_window"]["status"] = "tampered"
     payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
         payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
     )
