@@ -54,15 +54,27 @@ FROZEN_FINAL_RELEASE_CANONICAL_SHA256: Final = (
 )
 FROZEN_FINAL_RESOURCE_SCHEMA: Final = resource_v8.RESOURCE_SCHEMA
 FROZEN_FINAL_RESOURCE_STATUS: Final = resource_v8.RESOURCE_STATUS
-# Frozen in a second additive commit after the fresh remote gate is complete.
-FROZEN_FINAL_RESOURCE_FILE_SHA256: Final = ""
-FROZEN_FINAL_RESOURCE_CANONICAL_SHA256: Final = ""
+# Frozen only after the fresh no-shadow remote gate completed.
+FROZEN_FINAL_RESOURCE_FILE_SHA256: Final = (
+    "158c9e8345645174b441ca1ec3bc907b2a9eb05a4ddfc149a7373ac123f514db"
+)
+FROZEN_FINAL_RESOURCE_CANONICAL_SHA256: Final = (
+    "f84320d0658e0d30b99f79e4f60707ce85bb2fd1dbaf2d29a04dec2fc2dbfee6"
+)
 FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA: Final = active_capture_v8.SCHEMA_VERSION
 FROZEN_FINAL_ACTIVE_CAPTURE_STATUS: Final = active_capture_v8.STATUS
-FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = ""
-FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = ""
+FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = (
+    "6647d2667747e988c28108a3a95e2ced512a017236b8d2a909f6d9b4729be3d7"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = (
+    "7d31830797e071912265ac2f1803b7812757f8b5c8bd64a9209a0d6541dd3861"
+)
+FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = (
+    "486fe6d6d8b8d5667488b3916f1917a93ebead65284151f81ee3829330964c24"
+)
+FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = (
+    "55f4e703849b1852aabafa00e5a08d5ba15da06dabc42bcdd8bc76d12aa6dd35"
+)
 FROZEN_FINAL_DISABLED_CONFIG_SHA256: Final = (
     "d92fdec7ce89586f56fb1a6c80a6bc6fbe96b50023bd8c481cae730606c75204"
 )
@@ -70,9 +82,16 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
     "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e"
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
-FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = ""
-FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = ""
+FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
+    "/home/ec2-user/f05-buy-e3-resource-gate-v8-no-shadow-20260824/attempt1/"
+    "current_host_resource_gate.json"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
+    "/home/ec2-user/f05-buy-e3-active-capture-v8-no-shadow-20260824/active_process_capture_v7.json"
+)
+FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = (
+    "/home/ec2-user/f05-buy-e3-source-stage-v9-20260824/receipts/config_correction.json"
+)
 # Filled only after the no-shadow runtime supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
 FROZEN_FINAL_NO_SHADOW_RUNTIME_SUPPLEMENT: Final[dict[str, Any] | None] = {

@@ -314,18 +314,31 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
     assert SOURCE_FROZEN_FINAL["release_canonical_sha256"] == (
         "81d4449301d29828162a7fb57f52c855803682a697639b6d9cfa2d38a2846b8f"
     )
-    for key in (
-        "resource_file_sha256",
-        "resource_canonical_sha256",
-        "active_file_sha256",
-        "active_canonical_sha256",
-        "config_correction_file_sha256",
-        "config_correction_canonical_sha256",
-        "resource_path",
-        "active_path",
-        "config_correction_path",
-    ):
-        assert SOURCE_FROZEN_FINAL[key] == ""
+    assert SOURCE_FROZEN_FINAL["resource_file_sha256"] == (
+        "158c9e8345645174b441ca1ec3bc907b2a9eb05a4ddfc149a7373ac123f514db"
+    )
+    assert SOURCE_FROZEN_FINAL["resource_canonical_sha256"] == (
+        "f84320d0658e0d30b99f79e4f60707ce85bb2fd1dbaf2d29a04dec2fc2dbfee6"
+    )
+    assert SOURCE_FROZEN_FINAL["active_file_sha256"] == (
+        "6647d2667747e988c28108a3a95e2ced512a017236b8d2a909f6d9b4729be3d7"
+    )
+    assert SOURCE_FROZEN_FINAL["active_canonical_sha256"] == (
+        "7d31830797e071912265ac2f1803b7812757f8b5c8bd64a9209a0d6541dd3861"
+    )
+    assert SOURCE_FROZEN_FINAL["config_correction_file_sha256"] == (
+        "486fe6d6d8b8d5667488b3916f1917a93ebead65284151f81ee3829330964c24"
+    )
+    assert SOURCE_FROZEN_FINAL["config_correction_canonical_sha256"] == (
+        "55f4e703849b1852aabafa00e5a08d5ba15da06dabc42bcdd8bc76d12aa6dd35"
+    )
+    assert SOURCE_FROZEN_FINAL["resource_path"].endswith(
+        "/attempt1/current_host_resource_gate.json"
+    )
+    assert SOURCE_FROZEN_FINAL["active_path"].endswith("/active_process_capture_v7.json")
+    assert SOURCE_FROZEN_FINAL["config_correction_path"].endswith(
+        "/receipts/config_correction.json"
+    )
 
 
 def test_final_authority_rejects_stale_direct_owner_v1(
