@@ -29,13 +29,18 @@ _RUNTIME_SOURCE_PATHS = {
     "live_config": "live/config.py",
     "live_runtime_policy": "live/runtime_policy.py",
     "live_main": "live/main.py",
+    "live_ws_handler": "live/ws_handler.py",
+    "sell_owner_runtime": "strategy/boolean_cooldown_live.py",
+    "signal_engine": "strategy/signal.py",
+    "global_flow": "strategy/global_flow.py",
+    "global_reference": "strategy/global_reference.py",
 }
 _RUNTIME_SOURCE_FILES = {
     role: {
         "repository_relative_path": path,
-        "artifact_manifest_sha256": hashlib.sha256(path.encode()).hexdigest(),
         "execution_commit_blob_sha256": hashlib.sha256(path.encode()).hexdigest(),
         "working_file_sha256": hashlib.sha256(path.encode()).hexdigest(),
+        "authority_basis": subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS,
     }
     for role, path in _RUNTIME_SOURCE_PATHS.items()
 }
@@ -152,14 +157,7 @@ def _runtime_identity_payload(
         binding["repository_relative_path"]: binding["working_file_sha256"]
         for binding in plan["runtime_sources"]["files"].values()
     }
-    for extra_path in (
-        "live/ws_handler.py",
-        "strategy/boolean_cooldown_live.py",
-        "strategy/signal.py",
-        "strategy/global_flow.py",
-        "strategy/global_reference.py",
-    ):
-        source_hashes[extra_path] = hashlib.sha256(extra_path.encode()).hexdigest()
+    assert set(source_hashes) == set(subject._CURRENT_RUNTIME_SOURCE_PATHS.values())
     source_rows = [
         {
             "path": path,
@@ -710,8 +708,8 @@ def _patch_plan_dependencies(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sp
         },
     )
     monkeypatch.setattr(
-        gate_v2,
-        "verify_runtime_sources",
+        subject,
+        "_current_runtime_sources",
         lambda **_: {
             "files": copy.deepcopy(_RUNTIME_SOURCE_FILES),
             "runtime_code_sha256": _RUNTIME_CODE_SHA256,
@@ -899,7 +897,7 @@ def test_runtime_source_authority_validates_actual_git_checkout_and_tamper(
 ) -> None:
     repo = tmp_path / "runtime-repo"
     repo.mkdir()
-    for index, relative in enumerate(gate_v2.REQUIRED_RUNTIME_PATHS.values()):
+    for index, relative in enumerate(subject._CURRENT_RUNTIME_SOURCE_PATHS.values()):
         path = repo / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"runtime-source-{index}\n", encoding="ascii")
@@ -926,14 +924,39 @@ def test_runtime_source_authority_validates_actual_git_checkout_and_tamper(
         capture_output=True,
         text=True,
     ).stdout.strip()
+    built = subject._current_runtime_sources(
+        repository_root=repo,
+        execution_commit=commit,
+    )
+    assert set(built["files"]) == set(subject._CURRENT_RUNTIME_SOURCE_PATHS)
+    assert all(
+        row["authority_basis"]
+        == subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+        for row in built["files"].values()
+    )
+    attempt_sources = {
+        role: {
+            "repository_relative_path": relative,
+            "file_sha256": gate_v2.file_sha256(repo / relative),
+        }
+        for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items()
+    }
+    compatible = subject._compatible_runtime_sources(
+        {
+            "runtime_execution": {"execution_commit": commit},
+            "runtime_sources": {"files": attempt_sources},
+        },
+        repository_root=repo,
+    )
+    assert compatible == built
     files = {}
-    for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items():
+    for role, relative in subject._CURRENT_RUNTIME_SOURCE_PATHS.items():
         sha256 = gate_v2.file_sha256(repo / relative)
         files[role] = {
             "repository_relative_path": relative,
-            "artifact_manifest_sha256": sha256,
             "execution_commit_blob_sha256": sha256,
             "working_file_sha256": sha256,
+            "authority_basis": subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS,
         }
     aggregate = gate_v2.canonical_sha256(files)
     authority = {"files": files, "runtime_code_sha256": aggregate}
@@ -943,14 +966,22 @@ def test_runtime_source_authority_validates_actual_git_checkout_and_tamper(
         execution_commit=commit,
         runtime_sources=authority,
         expected_runtime_code_sha256=aggregate,
+        expected_startup_attestation_schema_version=subject.STARTUP_ATTESTATION_SCHEMA,
     ) == authority
     encoded = subject._encode_runtime_source_authority(authority)
     assert subject._decode_runtime_source_authority(encoded) == authority
 
     for mutate in (
         lambda value: value["files"].__setitem__("unexpected", {}),
+        lambda value: value["files"].pop("global_reference"),
         lambda value: value["files"]["live_main"].__setitem__(
             "working_file_sha256", "0" * 64
+        ),
+        lambda value: value["files"]["global_flow"].__setitem__(
+            "authority_basis", "artifact_manifest"
+        ),
+        lambda value: value["files"]["signal_engine"].__setitem__(
+            "artifact_manifest_sha256", "0" * 64
         ),
     ):
         tampered = copy.deepcopy(authority)
@@ -964,9 +995,115 @@ def test_runtime_source_authority_validates_actual_git_checkout_and_tamper(
                 execution_commit=commit,
                 runtime_sources=tampered,
                 expected_runtime_code_sha256=aggregate,
+                expected_startup_attestation_schema_version=(
+                    subject.STARTUP_ATTESTATION_SCHEMA
+                ),
             )
     with pytest.raises(subject.BuyE3TransactionalDeployError, match="base64"):
         subject._decode_runtime_source_authority("not-base64!")
+
+    rollback = subject._frozen_07ef_runtime_sources()
+    assert set(rollback["files"]) == set(gate_v2.REQUIRED_RUNTIME_PATHS)
+    assert all(
+        set(row)
+        == {
+            "repository_relative_path",
+            "artifact_manifest_sha256",
+            "execution_commit_blob_sha256",
+            "working_file_sha256",
+        }
+        for row in rollback["files"].values()
+    )
+    assert rollback["runtime_code_sha256"] == subject.FROZEN_07EF_RUNTIME_CODE_SHA256
+
+
+def test_current_plan_and_startup_require_the_same_exact_ten_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    assert set(plan["runtime_sources"]["files"]) == set(
+        subject._CURRENT_RUNTIME_SOURCE_PATHS
+    )
+    assert {
+        row["repository_relative_path"]
+        for row in plan["runtime_sources"]["files"].values()
+    } == set(subject._CURRENT_RUNTIME_SOURCE_PATHS.values())
+    assert all(
+        row["authority_basis"]
+        == subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+        and "artifact_manifest_sha256" not in row
+        for row in plan["runtime_sources"]["files"].values()
+    )
+    subject._revalidate_plan_inputs(plan)
+
+    runtime = _runtime_identity_payload(plan, "disabled-deploy", pid=318)
+    expected = subject._expected_process_binding(plan, "disabled-deploy")
+
+    def validate(candidate: dict) -> dict:
+        return subject._validate_runtime_identity_authority(
+            candidate,
+            expected_pid=318,
+            expected_config_path=expected["config_path"],
+            expected_config_sha256=expected["config_sha256"],
+            expected_python_executable=expected["python_executable"],
+            expected_python_binary_resolved=expected["python_executable"],
+            expected_enabled=False,
+            expected_artifact_sha256=expected["artifact_sha256"],
+            expected_execution_commit=expected["execution_commit"],
+            expected_execution_tree=expected["execution_tree"],
+            expected_runtime_sources=plan["runtime_sources"],
+            expected_repository_root=expected["repo_root"],
+            expected_startup_attestation_schema_version=(
+                subject.STARTUP_ATTESTATION_SCHEMA
+            ),
+            expected_active_release=None,
+        )
+
+    assert validate(runtime) == runtime["startup_attestation"]
+    for path in (
+        "strategy/signal.py",
+        "strategy/global_flow.py",
+        "strategy/global_reference.py",
+    ):
+        tampered = copy.deepcopy(runtime)
+        checkout = tampered["startup_attestation"]["running_checkout"]
+        checkout["runtime_source_files"] = [
+            row for row in checkout["runtime_source_files"] if row["path"] != path
+        ]
+        checkout["runtime_source_file_count"] = len(checkout["runtime_source_files"])
+        checkout["runtime_source_manifest_sha256"] = (
+            subject._runtime_source_manifest_sha256(
+                checkout["runtime_source_files"]
+            )
+        )
+        with pytest.raises(
+            subject.BuyE3TransactionalDeployError,
+            match="source manifest path set",
+        ):
+            validate(tampered)
+    tampered = copy.deepcopy(runtime)
+    checkout = tampered["startup_attestation"]["running_checkout"]
+    checkout["runtime_source_files"].append(
+        {
+            "path": "strategy/unexpected.py",
+            "working_file_sha256": "0" * 64,
+            "head_blob_sha256": "0" * 64,
+            "working_size_bytes": 1,
+            "head_blob_size_bytes": 1,
+            "matches_head_blob": True,
+        }
+    )
+    checkout["runtime_source_files"].sort(key=lambda row: row["path"])
+    checkout["runtime_source_file_count"] = len(checkout["runtime_source_files"])
+    checkout["runtime_source_manifest_sha256"] = subject._runtime_source_manifest_sha256(
+        checkout["runtime_source_files"]
+    )
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="source manifest path set",
+    ):
+        validate(tampered)
 
 
 def test_generated_process_probe_cli_roundtrips_parser_and_main(
@@ -2581,7 +2718,10 @@ def _compatible_attempt(
         "annotated_tag": runtime_tag,
         "annotated_tag_object": runtime_tag_object,
     }
-    runtime_sources = subject._compatible_runtime_sources(attempt_payload)
+    runtime_sources = {
+        "files": copy.deepcopy(_RUNTIME_SOURCE_FILES),
+        "runtime_code_sha256": _RUNTIME_CODE_SHA256,
+    }
     spec["rollback_identities"]["primary_disabled"].update(
         {
             "execution_commit": runtime_commit,
@@ -2600,6 +2740,11 @@ def _compatible_attempt(
         subject.execution_attempt,
         "validate_manifest",
         lambda *_args, **_kwargs: copy.deepcopy(attempt_payload),
+    )
+    monkeypatch.setattr(
+        subject,
+        "_compatible_runtime_sources",
+        lambda *_args, **_kwargs: copy.deepcopy(runtime_sources),
     )
     return attempt_payload, runtime_sources
 
@@ -2628,6 +2773,14 @@ def test_compatible_attempt_plan_separates_artifact_producer_and_runtime(
         != attempt_payload["artifact_producer_execution"]["execution_commit"]
     )
     assert plan["runtime_sources"] == runtime_sources
+    assert set(plan["runtime_sources"]["files"]) == set(
+        subject._CURRENT_RUNTIME_SOURCE_PATHS
+    )
+    assert all(
+        row["authority_basis"]
+        == subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+        for row in plan["runtime_sources"]["files"].values()
+    )
     disabled_labels = [row["label"] for row in plan["phases"]["disabled-deploy"]]
     assert disabled_labels.index("fetch-and-prepare-isolated-runtime") < disabled_labels.index(
         "isolated-disabled-preflight"
@@ -4031,6 +4184,25 @@ def _validate_fixture_startup(
         "activate" if expected_enabled else "disabled-deploy",
         active_release_binding,
     )
+    expected_runtime_sources = plan["runtime_sources"]
+    if allow_legacy:
+        current_by_path = {
+            row["repository_relative_path"]: row["working_file_sha256"]
+            for row in plan["runtime_sources"]["files"].values()
+        }
+        historical_files = {
+            role: {
+                "repository_relative_path": relative,
+                "artifact_manifest_sha256": current_by_path[relative],
+                "execution_commit_blob_sha256": current_by_path[relative],
+                "working_file_sha256": current_by_path[relative],
+            }
+            for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items()
+        }
+        expected_runtime_sources = {
+            "files": historical_files,
+            "runtime_code_sha256": gate_v2.canonical_sha256(historical_files),
+        }
     return subject._validate_startup_attestation(
         attestation,
         expected_schema_version=(
@@ -4041,7 +4213,7 @@ def _validate_fixture_startup(
         expected_execution_commit=expected["execution_commit"],
         expected_execution_tree=expected["execution_tree"],
         expected_artifact_sha256=expected["artifact_sha256"],
-        expected_runtime_sources=plan["runtime_sources"],
+        expected_runtime_sources=expected_runtime_sources,
         expected_repository_root=expected["repo_root"],
         expected_python_executable=expected["python_executable"],
         expected_python_binary_resolved=expected["python_executable"],
@@ -4064,6 +4236,22 @@ def _as_frozen_07ef_startup_v4(attestation: dict) -> dict:
         subject._HISTORICAL_LOADED_RUNTIME_MODULE_ROLES
     ):
         historical["loaded_module_origins"].pop(role)
+    historical_paths = {
+        relative
+        for _module, relative in (
+            subject._HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES.values()
+        )
+    }
+    source_rows = [
+        row
+        for row in historical["running_checkout"]["runtime_source_files"]
+        if row["path"] in historical_paths
+    ]
+    historical["running_checkout"]["runtime_source_files"] = source_rows
+    historical["running_checkout"]["runtime_source_file_count"] = len(source_rows)
+    historical["running_checkout"]["runtime_source_manifest_sha256"] = (
+        subject._runtime_source_manifest_sha256(source_rows)
+    )
     assert set(historical) == subject._HISTORICAL_STARTUP_ATTESTATION_FIELDS
     assert set(historical["gates"]) == subject._HISTORICAL_STARTUP_GATE_FIELDS
     return historical
@@ -4776,6 +4964,22 @@ def _as_legacy_v3_disabled_receipt(receipt: dict) -> dict:
         subject._HISTORICAL_LOADED_RUNTIME_MODULE_ROLES
     ):
         startup["loaded_module_origins"].pop(role)
+    historical_paths = {
+        relative
+        for _module, relative in (
+            subject._HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES.values()
+        )
+    }
+    source_rows = [
+        row
+        for row in startup["running_checkout"]["runtime_source_files"]
+        if row["path"] in historical_paths
+    ]
+    startup["running_checkout"]["runtime_source_files"] = source_rows
+    startup["running_checkout"]["runtime_source_file_count"] = len(source_rows)
+    startup["running_checkout"]["runtime_source_manifest_sha256"] = (
+        subject._runtime_source_manifest_sha256(source_rows)
+    )
     startup_sha256 = gate_v2.canonical_sha256(startup)
     process["startup_attestation_sha256"] = startup_sha256
     process["canonical_process_identity_sha256"] = gate_v2.document_sha256(
