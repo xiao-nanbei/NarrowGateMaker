@@ -209,6 +209,40 @@ def _portable_authority_projection(attempt: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
+def _portable_artifact_projection(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    artifact = attempt.get("exact_artifact")
+    roles = artifact.get("roles") if isinstance(artifact, Mapping) else None
+    if (
+        not isinstance(artifact, Mapping)
+        or artifact.get("artifact_sha256") != base.ARTIFACT_SHA256
+        or not isinstance(roles, Mapping)
+        or set(roles) != {"manifest", "policy", "predicate_bundle"}
+    ):
+        raise CrossHostCompletionError("operational attempt exact artifact is malformed")
+    projected: dict[str, Any] = {}
+    for role in ("manifest", "policy", "predicate_bundle"):
+        row = roles[role]
+        if not isinstance(row, Mapping):
+            raise CrossHostCompletionError(f"operational artifact role is malformed: {role}")
+        projected[role] = {
+            field: row.get(field)
+            for field in (
+                "schema_version",
+                "status",
+                "file_sha256",
+                "canonical_field",
+                "canonical_sha256",
+                "size_bytes",
+                "mode",
+            )
+        }
+        _content_binding(
+            {**projected[role], "local_filename": f"{role}.json"},
+            f"operational artifact {role}",
+        )
+    return {"artifact_sha256": base.ARTIFACT_SHA256, "roles": projected}
+
+
 def _validate_portable_evidence(
     value: Any, *, attempt: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -232,7 +266,7 @@ def _validate_portable_evidence(
         raise CrossHostCompletionError("portable runtime execution drifted")
     if portable["runtime_authority"] != _portable_authority_projection(attempt):
         raise CrossHostCompletionError("portable runtime authority drifted")
-    if portable["exact_artifact"] != attempt.get("exact_artifact"):
+    if portable["exact_artifact"] != _portable_artifact_projection(attempt):
         raise CrossHostCompletionError("portable exact artifact drifted")
 
     receipts = portable["source_receipts"]
@@ -284,21 +318,32 @@ def _validate_portable_evidence(
         or not isinstance(active_start, int)
         or isinstance(active_start, bool)
         or active_start <= disabled_start
-        or transition.get("disabled_same_pid_resource_gate") is not True
-        or transition.get("disabled_predecessor_quiescent") is not True
-        or transition.get("fresh_active_restart") is not True
-        or transition.get("activation_via_sighup") is not False
-        or transition.get("runtime_checkout_changed") is not False
+        or transition.get("fresh_disabled_to_active_restart") is not True
     ):
         raise CrossHostCompletionError("portable disabled-to-active transition drifted")
     if not isinstance(active, Mapping):
         raise CrossHostCompletionError("portable active runtime is missing")
     source_files = active.get("runtime_source_files")
     mandatory = {"strategy/maker_engine.py", "strategy/boolean_cooldown_buy_e3.py"}
+    runtime_identity = active.get("runtime_identity")
+    startup_attestation = active.get("startup_attestation")
+    startup_semantics = active.get("startup_semantics")
     if (
-        active.get("execution") != base._direct_execution()  # noqa: SLF001
-        or active.get("artifact_sha256") != base.ARTIFACT_SHA256
-        or active.get("startup_status") != "accepted"
+        active.get("artifact_sha256") != base.ARTIFACT_SHA256
+        or active.get("buy_e3_enabled") is not True
+        or active.get("owner_override_effective") is not True
+        or not isinstance(runtime_identity, Mapping)
+        or re.fullmatch(r"[0-9a-f]{64}", str(runtime_identity.get("file_sha256"))) is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(runtime_identity.get("canonical_sha256"))) is None
+        or not isinstance(startup_attestation, Mapping)
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(startup_attestation.get("canonical_sha256"))
+        )
+        is None
+        or not isinstance(startup_semantics, Mapping)
+        or startup_semantics.get("startup_status") != "accepted"
+        or startup_semantics.get("running_checkout_commit") != base.DIRECT_COMMIT
+        or startup_semantics.get("running_checkout_tree") != base.DIRECT_TREE
         or not isinstance(active.get("config_sha256"), str)
         or re.fullmatch(r"[0-9a-f]{64}", active["config_sha256"]) is None
         or not isinstance(active.get("runtime_source_manifest_sha256"), str)

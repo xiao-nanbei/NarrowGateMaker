@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +26,21 @@ def _attempt() -> dict:
         "runtime_authority": authority,
         "exact_artifact": {
             "artifact_sha256": subject.base.ARTIFACT_SHA256,
-            "roles": {"manifest": {}, "policy": {}, "predicate_bundle": {}},
+            "roles": {
+                role: {
+                    "path": f"/local/{role}.json",
+                    "schema_version": f"fixture.{role}.v1",
+                    "status": "frozen",
+                    "file_sha256": f"{index + 1:064x}",
+                    "canonical_field": f"canonical_{role}_sha256",
+                    "canonical_sha256": f"{index + 4:064x}",
+                    "size_bytes": 100 + index,
+                    "mode": "0600",
+                    "device": 7,
+                    "inode": 20 + index,
+                }
+                for index, role in enumerate(("manifest", "policy", "predicate_bundle"))
+            },
         },
     }
 
@@ -63,7 +76,7 @@ def _portable() -> dict:
         "host": dict(subject.EXPECTED_HOST),
         "runtime_execution": subject.base._direct_execution(),  # noqa: SLF001
         "runtime_authority": subject._portable_authority_projection(attempt),  # noqa: SLF001
-        "exact_artifact": deepcopy(attempt["exact_artifact"]),
+        "exact_artifact": subject._portable_artifact_projection(attempt),  # noqa: SLF001
         "resource_disabled_process": {
             "pid": disabled_pid,
             "pid_start_ticks": disabled_start,
@@ -73,18 +86,28 @@ def _portable() -> dict:
             "disabled_pid_start_ticks": disabled_start,
             "active_pid": 52,
             "active_pid_start_ticks": 200,
-            "disabled_same_pid_resource_gate": True,
-            "disabled_predecessor_quiescent": True,
-            "fresh_active_restart": True,
-            "activation_via_sighup": False,
-            "runtime_checkout_changed": False,
+            "active_process_identity_sha256": "9" * 64,
+            "fresh_disabled_to_active_restart": True,
         },
         "active_runtime": {
-            "execution": subject.base._direct_execution(),  # noqa: SLF001
             "artifact_sha256": subject.base.ARTIFACT_SHA256,
-            "runtime_identity_file_sha256": "3" * 64,
-            "startup_attestation_sha256": "4" * 64,
-            "startup_status": "accepted",
+            "buy_e3_enabled": True,
+            "owner_override_effective": True,
+            "runtime_identity": {
+                "schema_version": "runtime.v1",
+                "file_sha256": "3" * 64,
+                "canonical_sha256": "4" * 64,
+            },
+            "startup_attestation": {
+                "schema_version": "startup.v1",
+                "status": "accepted",
+                "canonical_sha256": "a" * 64,
+            },
+            "startup_semantics": {
+                "startup_status": "accepted",
+                "running_checkout_commit": subject.base.DIRECT_COMMIT,
+                "running_checkout_tree": subject.base.DIRECT_TREE,
+            },
             "config_sha256": "5" * 64,
             "runtime_source_manifest_sha256": "6" * 64,
             "runtime_source_files": {
@@ -145,7 +168,9 @@ def test_portable_projection_accepts_content_only_without_remote_inode() -> None
             "transition",
         ),
         (
-            lambda row: row["active_runtime"].__setitem__("startup_status", "rejected"),
+            lambda row: row["active_runtime"]["startup_semantics"].__setitem__(
+                "startup_status", "rejected"
+            ),
             "active runtime",
         ),
         (
