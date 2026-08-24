@@ -137,8 +137,11 @@ def _portable() -> dict[str, Any]:
     del release
     runtime_files = {
         name: f"{index + 1:x}" * 64
-        for index, name in enumerate(sorted(subject.REQUIRED_V4_RUNTIME_SOURCES))
+        for index, name in enumerate(sorted(subject.REQUIRED_ACTIVE_RUNTIME_SOURCES))
     }
+    runtime_files["strategy/boolean_cooldown_buy_e3.py"] = (
+        subject.V4_LIFECYCLE_RUNTIME_SOURCE_SHA256["strategy/boolean_cooldown_buy_e3.py"]
+    )
     receipts = {
         "current_host_resource_gate": {
             **_content(
@@ -292,6 +295,10 @@ def _supplement_payload() -> dict[str, Any]:
             "verified": True,
             "artifact_sha256": subject.transport.FROZEN_FINAL_ARTIFACT_SHA256,
             "action_vocabulary_seconds": [79, 173, 223, 356, 640, 709, 2048],
+        },
+        "changed_runtime_files": {
+            path: {"file_sha256": digest, "git_blob_sha1": "1" * 40}
+            for path, digest in subject.V4_LIFECYCLE_RUNTIME_SOURCE_SHA256.items()
         },
         "permissions": {"research": False, "action": False, "live": False},
         "focused_regression": {"passed": 12, "failed": 0},
@@ -468,6 +475,7 @@ def test_lifecycle_admission_requires_new_epoch_and_exact_active_files(
         "runtime_code_sha256": "d" * 64,
         "runtime_code_files": dict(active["runtime_source_files"]),
     }
+    binding["runtime_code_files"].update(subject.V4_LIFECYCLE_RUNTIME_SOURCE_SHA256)
     monkeypatch.setattr(
         subject.base,
         "_validate_lifecycle_admission",

@@ -48,7 +48,32 @@ EVIDENCE_RELEASE_CANONICAL_FIELD: Final = "canonical_direct_v4_evidence_release_
 
 CONTENT_BINDING_FIELDS: Final = tuple(transport.CONTENT_BINDING_FIELDS)
 PORTABLE_SOURCE_ROLES: Final = tuple(transport.SOURCE_FILENAMES)
-REQUIRED_V4_RUNTIME_SOURCES: Final = frozenset(
+REQUIRED_ACTIVE_RUNTIME_SOURCES: Final = frozenset(
+    {
+        "live/config.py",
+        "live/main.py",
+        "strategy/boolean_cooldown_buy_e3.py",
+        "strategy/maker_engine.py",
+    }
+)
+V4_LIFECYCLE_RUNTIME_SOURCE_SHA256: Final = {
+    "execution/order_lifecycle.py": (
+        "9d97b7178fa64af0878d5c21efba6c334490d6cfdd8c4d1badf77d708a456817"
+    ),
+    "execution/order_lifecycle_journal_v2.py": (
+        "b8536b3bce6fba34f4fdebc3063a967668b3254174eb3c46d1d33a604436b46b"
+    ),
+    "execution/order_lifecycle_journal_v2_strict_native.py": (
+        "f97e47a2fd753116381bab807a9b96cfdcbda97646992f239bfd50c015a6c1a1"
+    ),
+    "execution/order_lifecycle_live_writer_v2.py": (
+        "bf5382ebf0922653f9edf85728ee1eaee41f35070de9b6f7101f3cce12fdd4ae"
+    ),
+    "strategy/boolean_cooldown_buy_e3.py": (
+        "643423fd04ff44aada8cbc1967a96df6180af87a1d8a02130acb8ab3a85c0cfa"
+    ),
+}
+REQUIRED_V4_LIFECYCLE_SOURCES: Final = frozenset(
     {
         "strategy/boolean_cooldown_buy_e3.py",
         "execution/order_lifecycle.py",
@@ -323,6 +348,7 @@ def _validate_supplement_payload(payload: Any) -> None:
     permissions = payload.get("permissions")
     focused = payload.get("focused_regression")
     full = payload.get("full_regression")
+    changed_runtime = payload.get("changed_runtime_files")
     expected_execution = transport._frozen_final_execution()  # noqa: SLF001
     if (
         payload.get("schema_version") != LIFECYCLE_FIX_SUPPLEMENT_CONTENT["schema_version"]
@@ -332,6 +358,13 @@ def _validate_supplement_payload(payload: Any) -> None:
         or unchanged.get("verified") is not True
         or unchanged.get("artifact_sha256") != transport.FROZEN_FINAL_ARTIFACT_SHA256
         or unchanged.get("action_vocabulary_seconds") != [79, 173, 223, 356, 640, 709, 2048]
+        or not isinstance(changed_runtime, Mapping)
+        or set(changed_runtime) != REQUIRED_V4_LIFECYCLE_SOURCES
+        or any(
+            not isinstance(changed_runtime.get(path), Mapping)
+            or changed_runtime[path].get("file_sha256") != digest
+            for path, digest in V4_LIFECYCLE_RUNTIME_SOURCE_SHA256.items()
+        )
         or not isinstance(permissions, Mapping)
         or any(value is not False for value in permissions.values())
         or not isinstance(focused, Mapping)
@@ -515,7 +548,7 @@ def _validate_portable_v4(
         or active.get("buy_e3_enabled") is not True
         or active.get("owner_override_effective") is not True
         or not isinstance(runtime_files, Mapping)
-        or not REQUIRED_V4_RUNTIME_SOURCES.issubset(runtime_files)
+        or not REQUIRED_ACTIVE_RUNTIME_SOURCES.issubset(runtime_files)
         or any(_SHA256_RE.fullmatch(str(digest)) is None for digest in runtime_files.values())
         or not isinstance(startup, Mapping)
         or startup.get("startup_status") != "accepted"
@@ -780,8 +813,12 @@ def _lifecycle_context(
         or not isinstance(active_files, Mapping)
         or not isinstance(admitted_files, Mapping)
         or any(admitted_files.get(path) != digest for path, digest in active_files.items())
-        or not REQUIRED_V4_RUNTIME_SOURCES.issubset(active_files)
-        or not REQUIRED_V4_RUNTIME_SOURCES.issubset(admitted_files)
+        or not REQUIRED_ACTIVE_RUNTIME_SOURCES.issubset(active_files)
+        or not REQUIRED_V4_LIFECYCLE_SOURCES.issubset(admitted_files)
+        or any(
+            admitted_files.get(path) != digest
+            for path, digest in V4_LIFECYCLE_RUNTIME_SOURCE_SHA256.items()
+        )
     ):
         raise FinalEvidenceV4Error(
             "lifecycle admission epoch/config/runtime files do not match active direct-v4"
