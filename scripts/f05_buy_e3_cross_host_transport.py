@@ -82,11 +82,16 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
     "2f61532126cbe633424476cb093c6c978bab1f935f69a30e06677d677008cae6"
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
-FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v4-20260824/attempt1/current_host_resource_gate.json"
+_FROZEN_REMOTE_HOME: Final = PurePosixPath(
+    os.environ.get("NARROWGATE_F05_BUY_E3_REMOTE_HOME")
+    or "/__narrowgate_remote_home_unconfigured__"
 )
-FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
+FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-resource-gate-v4-20260824/attempt1/current_host_resource_gate.json"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME / "f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
 )
 # Filled only after the lifecycle-repair supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
@@ -119,8 +124,12 @@ SOURCE_FILENAMES: Final = {
 
 CURRENT_PROVIDER: Final = "aws"
 CURRENT_REGION: Final = "ap-northeast-1"
-CURRENT_PUBLIC_IPV4_PROVENANCE: Final = "13.158.101.253"
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_PUBLIC_IPV4_PROVENANCE: Final = os.environ.get(
+    "NARROWGATE_CURRENT_PUBLIC_IPV4", "<current-live-host>"
+)
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 
 PARENT_DIRECT_OWNER_RELEASE: Final = {

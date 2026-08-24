@@ -266,14 +266,15 @@ def test_final_v4_resource_and_active_identities_are_source_frozen_exact() -> No
         "active_config_sha256": (
             "2f61532126cbe633424476cb093c6c978bab1f935f69a30e06677d677008cae6"
         ),
-        "resource_path": (
-            "/home/ec2-user/f05-buy-e3-resource-gate-v4-20260824/attempt1/"
-            "current_host_resource_gate.json"
-        ),
-        "active_path": (
-            "/home/ec2-user/f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
-        ),
+        "resource_path": SOURCE_FROZEN_FINAL["resource_path"],
+        "active_path": SOURCE_FROZEN_FINAL["active_path"],
     }
+    assert str(SOURCE_FROZEN_FINAL["resource_path"]).endswith(
+        "/f05-buy-e3-resource-gate-v4-20260824/attempt1/current_host_resource_gate.json"
+    )
+    assert str(SOURCE_FROZEN_FINAL["active_path"]).endswith(
+        "/f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
+    )
 
 
 def test_final_authority_rejects_stale_direct_owner_v1(

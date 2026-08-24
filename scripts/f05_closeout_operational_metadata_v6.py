@@ -95,8 +95,8 @@ MANIFEST_MAX_CLOCK_SKEW_SECONDS: Final = 5
 CURRENT_HOST_CORE: Final = {
     "provider": "aws",
     "region": "ap-northeast-1",
-    "public_ipv4": "13.158.101.253",
-    "instance_id": "i-00fe03a8b2fb49a31",
+    "public_ipv4": os.environ.get("NARROWGATE_CURRENT_PUBLIC_IPV4", "<current-live-host>"),
+    "instance_id": os.environ.get("NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"),
     "instance_type": "c7i-flex.large",
 }
 
@@ -168,13 +168,18 @@ FROZEN_PREDECESSOR: Final = {
     },
 }
 
-EVIDENCE_ROOT: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
-    "direct_no_shadow_live_evidence_v6_20260824"
+_PRIVATE_EVIDENCE_ROOT: Final = Path(
+    os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT")
+    or "/__narrowgate_private_evidence_root_unconfigured__"
 )
-LIFECYCLE_ADMISSION_PATH: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/formal_collection/"
-    "prospective_lifecycle_journal_v2/"
+_DATA_ROOT: Final = Path(
+    os.environ.get("NARROWGATE_DATA_ROOT") or "/__narrowgate_data_root_unconfigured__"
+)
+EVIDENCE_ROOT: Final = str(
+    _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824"
+)
+LIFECYCLE_ADMISSION_PATH: Final = str(
+    _DATA_ROOT / "formal_collection/prospective_lifecycle_journal_v2/"
     "session-prospective-1787568574639266387-ac669869e7ed/admission_manifest.json"
 )
 FORMAL_MANIFEST_PATH: Final = f"{EVIDENCE_ROOT}/operational_metadata/activation_manifest_v6.json"
@@ -340,9 +345,10 @@ FROZEN_SOURCES: Final = {
         7_757,
     ),
     "historical_v4_proof": _source(
-        "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
-        "direct_v4_live_evidence_20260824/final_evidence_chain/"
-        "proof_evidence_release_v4.json",
+        str(
+            _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_v4_live_evidence_20260824/"
+            "final_evidence_chain/proof_evidence_release_v4.json"
+        ),
         historical_final_v4.EVIDENCE_RELEASE_SCHEMA,
         historical_final_v4.EVIDENCE_RELEASE_STATUS,
         "0f85849289cb9e42de7333117c7719e1a95a1561cf42e8a00366e0e8500df28f",

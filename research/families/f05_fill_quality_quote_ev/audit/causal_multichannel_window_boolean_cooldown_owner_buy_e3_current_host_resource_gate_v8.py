@@ -58,7 +58,9 @@ BENCHMARK_PRODUCER_MODULE: Final = (
     "current_host_resource_gate_v8"
 )
 
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 CURRENT_LOGICAL_CPU_COUNT: Final = 2
 MIN_HOST_MEM_TOTAL_MIB: Final = 3_500.0

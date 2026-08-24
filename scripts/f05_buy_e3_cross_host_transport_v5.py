@@ -81,17 +81,21 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
     "ad153012b14e725a3ac24f0ddbe02bc353168a13ec827b777cc94761020524ec"
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
-FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/"
-    "current_host_resource_gate.json"
+_FROZEN_REMOTE_HOME: Final = PurePosixPath(
+    os.environ.get("NARROWGATE_F05_BUY_E3_REMOTE_HOME")
+    or "/__narrowgate_remote_home_unconfigured__"
 )
-FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-active-capture-v7-no-external-20260824/"
-    "active_process_capture_v5.json"
+FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/current_host_resource_gate.json"
 )
-FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-v4-20260824/receipts/"
-    "config_correction_v4.json"
+FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-active-capture-v7-no-external-20260824/active_process_capture_v5.json"
+)
+FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-no-external-shadow-phase1-v4-20260824/receipts/config_correction_v4.json"
 )
 # Filled only after the lifecycle-repair supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
@@ -126,8 +130,12 @@ SOURCE_FILENAMES: Final = {
 
 CURRENT_PROVIDER: Final = "aws"
 CURRENT_REGION: Final = "ap-northeast-1"
-CURRENT_PUBLIC_IPV4_PROVENANCE: Final = "13.158.101.253"
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_PUBLIC_IPV4_PROVENANCE: Final = os.environ.get(
+    "NARROWGATE_CURRENT_PUBLIC_IPV4", "<current-live-host>"
+)
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 
 PARENT_DIRECT_OWNER_RELEASE: Final = {
@@ -752,8 +760,7 @@ def _validate_config_correction(path: Path) -> tuple[dict[str, Any], dict[str, A
         raise CrossHostTransportError("config correction bytes changed during validation")
     if (
         binding["file_sha256"] != FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256
-        or binding["canonical_sha256"]
-        != FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
+        or binding["canonical_sha256"] != FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
     ):
         raise CrossHostTransportError("config correction frozen identity drifted")
     return payload, binding, opened.raw
@@ -1566,9 +1573,7 @@ def _validate_source_set(
     release, release_binding = _direct_authority(
         direct_release_path, direct_repository_root=direct_repository_root
     )
-    correction, correction_binding, _correction_raw = _validate_config_correction(
-        correction_path
-    )
+    correction, correction_binding, _correction_raw = _validate_config_correction(correction_path)
     resource, resource_binding, _resource_raw = _validate_resource(
         resource_path,
         config_correction_path=correction_path,

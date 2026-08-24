@@ -53,7 +53,9 @@ RESOURCE_SCHEMA: Final = f"{OWNER_IDENTITY}.current_host_concurrent_resource_gat
 RESOURCE_STATUS: Final = "fresh_external_venues_disabled_same_pid_concurrent_gate_passed"
 RESOURCE_CANONICAL_FIELD: Final = "canonical_resource_receipt_sha256"
 
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 CURRENT_LOGICAL_CPU_COUNT: Final = 2
 MIN_HOST_MEM_TOTAL_MIB: Final = 3_500.0

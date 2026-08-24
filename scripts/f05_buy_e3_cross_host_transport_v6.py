@@ -82,15 +82,20 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
     "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e"
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
-FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v8-no-shadow-20260824/attempt1/"
-    "current_host_resource_gate.json"
+_FROZEN_REMOTE_HOME: Final = PurePosixPath(
+    os.environ.get("NARROWGATE_F05_BUY_E3_REMOTE_HOME")
+    or "/__narrowgate_remote_home_unconfigured__"
 )
-FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-active-capture-v8-no-shadow-20260824/active_process_capture_v7.json"
+FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-resource-gate-v8-no-shadow-20260824/attempt1/current_host_resource_gate.json"
 )
-FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-source-stage-v9-20260824/receipts/config_correction.json"
+FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME
+    / "f05-buy-e3-active-capture-v8-no-shadow-20260824/active_process_capture_v7.json"
+)
+FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = str(
+    _FROZEN_REMOTE_HOME / "f05-buy-e3-source-stage-v9-20260824/receipts/config_correction.json"
 )
 # Filled only after the no-shadow runtime supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
@@ -125,8 +130,12 @@ SOURCE_FILENAMES: Final = {
 
 CURRENT_PROVIDER: Final = "aws"
 CURRENT_REGION: Final = "ap-northeast-1"
-CURRENT_PUBLIC_IPV4_PROVENANCE: Final = "13.158.101.253"
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_PUBLIC_IPV4_PROVENANCE: Final = os.environ.get(
+    "NARROWGATE_CURRENT_PUBLIC_IPV4", "<current-live-host>"
+)
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 
 CONTENT_BINDING_FIELDS: Final = (

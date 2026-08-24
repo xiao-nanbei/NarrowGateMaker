@@ -55,7 +55,9 @@ RESOURCE_STATUS: Final = (
 )
 RESOURCE_CANONICAL_FIELD: Final = "canonical_resource_receipt_sha256"
 
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 CURRENT_LOGICAL_CPU_COUNT: Final = 2
 MIN_HOST_MEM_TOTAL_MIB: Final = 3_500.0
@@ -2429,22 +2431,18 @@ def capture_concurrent_resource_gate(
             "capture host identity is not current c7i-flex.large"
         )
     health_tail = _health_tail_factory(live_log_path)
-    rate_boundary, first_rate, second_rate, observed_rate = (
-        _capture_current_process_rate_window(
-            health_tail=health_tail,
-            disabled_process=disabled,
-            runtime_repository_root=runtime_root,
-            disabled_config_path=disabled_config_path,
-            proc_root=proc_root,
-            sample_interval_s=interval,
-            timeout_s=rate_window_timeout_s,
-            sleep=_sleep,
-            monotonic_ns=_monotonic_ns,
-        )
+    rate_boundary, first_rate, second_rate, observed_rate = _capture_current_process_rate_window(
+        health_tail=health_tail,
+        disabled_process=disabled,
+        runtime_repository_root=runtime_root,
+        disabled_config_path=disabled_config_path,
+        proc_root=proc_root,
+        sample_interval_s=interval,
+        timeout_s=rate_window_timeout_s,
+        sleep=_sleep,
+        monotonic_ns=_monotonic_ns,
     )
-    update_delta = (
-        second_rate["boolean_cooldown_updates"] - first_rate["boolean_cooldown_updates"]
-    )
+    update_delta = second_rate["boolean_cooldown_updates"] - first_rate["boolean_cooldown_updates"]
     rate_elapsed_s = second_rate["main_wall_timestamp_s"] - first_rate["main_wall_timestamp_s"]
     baseline_health = second_rate
     benchmark_output = benchmark_output_path.expanduser().absolute()

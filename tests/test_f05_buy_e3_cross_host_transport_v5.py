@@ -27,12 +27,8 @@ SOURCE_FROZEN_FINAL = {
     "active_status": subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
     "active_file_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256,
     "active_canonical_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256,
-    "config_correction_file_sha256": (
-        subject.FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256
-    ),
-    "config_correction_canonical_sha256": (
-        subject.FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256
-    ),
+    "config_correction_file_sha256": (subject.FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256),
+    "config_correction_canonical_sha256": (subject.FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256),
     "disabled_config_sha256": subject.FROZEN_FINAL_DISABLED_CONFIG_SHA256,
     "active_config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
     "resource_path": subject.FROZEN_FINAL_RESOURCE_PATH_PROVENANCE,
@@ -283,19 +279,19 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
         "active_config_sha256": (
             "ad153012b14e725a3ac24f0ddbe02bc353168a13ec827b777cc94761020524ec"
         ),
-        "resource_path": (
-            "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/"
-            "current_host_resource_gate.json"
-        ),
-        "active_path": (
-            "/home/ec2-user/f05-buy-e3-active-capture-v7-no-external-20260824/"
-            "active_process_capture_v5.json"
-        ),
-        "config_correction_path": (
-            "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-v4-20260824/receipts/"
-            "config_correction_v4.json"
-        ),
+        "resource_path": SOURCE_FROZEN_FINAL["resource_path"],
+        "active_path": SOURCE_FROZEN_FINAL["active_path"],
+        "config_correction_path": SOURCE_FROZEN_FINAL["config_correction_path"],
     }
+    assert str(SOURCE_FROZEN_FINAL["resource_path"]).endswith(
+        "/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/current_host_resource_gate.json"
+    )
+    assert str(SOURCE_FROZEN_FINAL["active_path"]).endswith(
+        "/f05-buy-e3-active-capture-v7-no-external-20260824/active_process_capture_v5.json"
+    )
+    assert str(SOURCE_FROZEN_FINAL["config_correction_path"]).endswith(
+        "/f05-buy-e3-no-external-shadow-phase1-v4-20260824/receipts/config_correction_v4.json"
+    )
 
 
 def test_final_authority_rejects_stale_direct_owner_v1(

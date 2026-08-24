@@ -51,7 +51,9 @@ RESOURCE_SCHEMA: Final = f"{OWNER_IDENTITY}.current_host_concurrent_resource_gat
 RESOURCE_STATUS: Final = "fresh_disabled_same_pid_concurrent_gate_passed"
 RESOURCE_CANONICAL_FIELD: Final = "canonical_resource_receipt_sha256"
 
-CURRENT_INSTANCE_ID: Final = "i-00fe03a8b2fb49a31"
+CURRENT_INSTANCE_ID: Final = os.environ.get(
+    "NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"
+)
 CURRENT_INSTANCE_TYPE: Final = "c7i-flex.large"
 CURRENT_LOGICAL_CPU_COUNT: Final = 2
 MIN_HOST_MEM_TOTAL_MIB: Final = 3_500.0
@@ -703,9 +705,7 @@ def _validate_disabled_config(path: Path) -> str:
         "inventory_campaign_shadow_enabled": False,
         "market_tape_enabled": False,
     }
-    if any(
-        logging.get(name) is not value for name, value in expected_logging_flags.items()
-    ):
+    if any(logging.get(name) is not value for name, value in expected_logging_flags.items()):
         raise BuyE3CurrentHostResourceGateError("disabled/no-shadow config flags drifted")
     exact_values = {
         "buy_e3_cooldown_artifact_manifest_sha256": EXACT_DEPLOYED_FILE_SHA256["manifest"],

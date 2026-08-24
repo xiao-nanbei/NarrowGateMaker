@@ -66,7 +66,7 @@ def _resource() -> dict[str, Any]:
     }
     return {
         "host": {
-            "instance_id": "i-00fe03a8b2fb49a31",
+            "instance_id": subject.resource_v4.CURRENT_INSTANCE_ID,
             "instance_type": "c7i-flex.large",
         },
         "fresh_disabled_process": {

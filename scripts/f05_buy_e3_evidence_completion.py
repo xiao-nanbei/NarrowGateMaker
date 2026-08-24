@@ -36,9 +36,7 @@ from scripts import f05_buy_e3_direct_owner_release as direct_release
 
 OWNER: Final = "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
 ARTIFACT_SHA256: Final = direct_release.EXACT_ARTIFACT_SHA256
-HISTORICAL_ARTIFACT_ROOT: Final = Path(
-    "models/private/f05_boolean_cooldown_owner_buy_e3_v1"
-)
+HISTORICAL_ARTIFACT_ROOT: Final = Path("models/private/f05_boolean_cooldown_owner_buy_e3_v1")
 
 DIRECT_COMMIT: Final = "1be0e062fe2c8ac12a34d5fc2193ca166898105a"
 DIRECT_TREE: Final = "ec54a9fbe5a4e476af4d6e58cc323804f0a2f275"
@@ -55,24 +53,12 @@ SPARSE_WINDOW_FIX_COMMIT: Final = DIRECT_COMMIT
 
 ATTEMPT4_COMMIT: Final = "bba4396a9fdc4dff397795c5501cab5bb78ea9b0"
 ATTEMPT4_TAG: Final = "f05-owner-buy-e3-live-attempt4-20260823"
-ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT: Final = (
-    "8411ae4410779e57620117b923dd38826cd07b1d"
-)
-ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE: Final = (
-    "be22d58bdc39e882fd3b9dedf694271c2e067511"
-)
-ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG: Final = (
-    "f05-owner-buy-e3-evidence-completion-v6-20260824"
-)
-ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT: Final = (
-    "d54145a4ab90293c0d41b67b143d2f89875ee83c"
-)
-ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH: Final = (
-    "scripts/f05_buy_e3_attempt4_stability_successor.py"
-)
-ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB: Final = (
-    "51a6f5b6298af6cef028c11e0cf755214706ebc7"
-)
+ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT: Final = "8411ae4410779e57620117b923dd38826cd07b1d"
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TREE: Final = "be22d58bdc39e882fd3b9dedf694271c2e067511"
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG: Final = "f05-owner-buy-e3-evidence-completion-v6-20260824"
+ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT: Final = "d54145a4ab90293c0d41b67b143d2f89875ee83c"
+ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH: Final = "scripts/f05_buy_e3_attempt4_stability_successor.py"
+ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB: Final = "51a6f5b6298af6cef028c11e0cf755214706ebc7"
 ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256: Final = (
     "b0b16438780da7b3b38c528c4cc7ffd9a13860a91771b507fd06ca2370c4cb57"
 )
@@ -113,10 +99,13 @@ V5_REPLAY_FRAME_BINDING: Final = {
     "commit": "36bf8078588c8bef67f70ab1894ca8103b4e792b",
     "file_sha256": "4fdc4fff355feeffb9213790b60d84e0126e3c25a9a7598c6be277483aa4a6db",
 }
-V5_MECHANICS_MANIFEST: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
-    "f05_full_multiscale_offline_mechanics_v5/canonical_offline_v5/"
-    "mechanics_panel_manifest.json"
+_PRIVATE_EVIDENCE_ROOT: Final = Path(
+    os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT")
+    or "/__narrowgate_private_evidence_root_unconfigured__"
+)
+V5_MECHANICS_MANIFEST: Final = str(
+    _PRIVATE_EVIDENCE_ROOT
+    / "f05_full_multiscale_offline_mechanics_v5/canonical_offline_v5/mechanics_panel_manifest.json"
 )
 
 FOCUSED_SCHEMA: Final = f"{OWNER}.direct_v3_runtime_successor_regression.v1"
@@ -980,9 +969,7 @@ def validate_focused_runtime_regression(
         "evidence_boundary",
         "canonical_receipt_sha256",
     }
-    executable = _lexical_python_executable(
-        Path(str(payload.get("python_executable", "")))
-    )
+    executable = _lexical_python_executable(Path(str(payload.get("python_executable", ""))))
     sources = {relative: _file_sha256(repository / relative) for relative in FOCUSED_SOURCES}
     counts = payload.get("counts")
     if (
@@ -1479,9 +1466,7 @@ def _historical_portable_root(
         suffix = HISTORICAL_ARTIFACT_ROOT / filename
         lexical_path = Path(str(row.get("path", ""))).expanduser()
         roots.append(
-            _lexical_root_for_suffix(
-                lexical_path, suffix, label=f"historical Attempt4 {role} path"
-            )
+            _lexical_root_for_suffix(lexical_path, suffix, label=f"historical Attempt4 {role} path")
         )
         try:
             opened = release_io._open_document(  # noqa: SLF001
@@ -1499,9 +1484,7 @@ def _historical_portable_root(
             or row.get("inode") != opened.metadata.st_ino
             or opened.path != lexical_path
         ):
-            raise EvidenceCompletionError(
-                f"historical Attempt4 {role} artifact binding drifted"
-            )
+            raise EvidenceCompletionError(f"historical Attempt4 {role} artifact binding drifted")
         artifact_projection[role] = {
             "path": str(lexical_path),
             "file_sha256": file_sha,
@@ -1540,9 +1523,7 @@ def _historical_portable_root(
         raise EvidenceCompletionError("historical Attempt4 venv identity is missing")
     venv_root = Path(str(venv.get("venv_root", ""))).expanduser()
     roots.append(
-        _lexical_root_for_suffix(
-            venv_root, Path(".venv"), label="historical Attempt4 venv root"
-        )
+        _lexical_root_for_suffix(venv_root, Path(".venv"), label="historical Attempt4 venv root")
     )
     expected_python = venv_root / "bin/python"
     expected_cfg = venv_root / "pyvenv.cfg"
@@ -1563,48 +1544,45 @@ def _historical_portable_root(
         if (
             not isinstance(row, Mapping)
             or not isinstance(probe, Mapping)
-            or Path(str(row.get("receipt_python_executable", ""))).expanduser()
-            != expected_python
-            or Path(str(row.get("run_command_argv0", ""))).expanduser()
-            != expected_python
-            or Path(str(probe.get("sys_executable", ""))).expanduser()
-            != expected_python
+            or Path(str(row.get("receipt_python_executable", ""))).expanduser() != expected_python
+            or Path(str(row.get("run_command_argv0", ""))).expanduser() != expected_python
+            or Path(str(probe.get("sys_executable", ""))).expanduser() != expected_python
             or Path(str(probe.get("sys_prefix", ""))).expanduser() != venv_root
             or Path(str(probe.get("exec_prefix", ""))).expanduser() != venv_root
         ):
-            raise EvidenceCompletionError(
-                f"historical Attempt4 {role} lexical provenance drifted"
-            )
+            raise EvidenceCompletionError(f"historical Attempt4 {role} lexical provenance drifted")
 
     historical_root = roots[0]
     if any(root != historical_root for root in roots[1:]):
-        raise EvidenceCompletionError(
-            "historical Attempt4 artifact and interpreter roots disagree"
-        )
+        raise EvidenceCompletionError("historical Attempt4 artifact and interpreter roots disagree")
     try:
         resolved_root = historical_root.resolve(strict=True)
     except FileNotFoundError as exc:
         raise EvidenceCompletionError("historical Attempt4 portable root is missing") from exc
     if not resolved_root.is_dir():
         raise EvidenceCompletionError("historical Attempt4 portable root is not a directory")
-    return manifest, resolved_root, {
-        "lexical_path": str(historical_root),
-        "realpath": str(resolved_root),
-        "artifact_files": artifact_projection,
-        "interpreter_equivalence": {
-            "path": equivalence_binding["path"],
-            "file_sha256": equivalence_binding["file_sha256"],
-            "canonical_sha256": equivalence_binding["canonical_sha256"],
-            "venv_root": str(venv_root),
-            "pyvenv_cfg_path": str(expected_cfg),
-            "pyvenv_cfg_file_sha256": _require_sha256(
-                venv.get("pyvenv_cfg_file_sha256"),
-                "historical Attempt4 pyvenv.cfg SHA256",
-            ),
+    return (
+        manifest,
+        resolved_root,
+        {
+            "lexical_path": str(historical_root),
+            "realpath": str(resolved_root),
+            "artifact_files": artifact_projection,
+            "interpreter_equivalence": {
+                "path": equivalence_binding["path"],
+                "file_sha256": equivalence_binding["file_sha256"],
+                "canonical_sha256": equivalence_binding["canonical_sha256"],
+                "venv_root": str(venv_root),
+                "pyvenv_cfg_path": str(expected_cfg),
+                "pyvenv_cfg_file_sha256": _require_sha256(
+                    venv.get("pyvenv_cfg_file_sha256"),
+                    "historical Attempt4 pyvenv.cfg SHA256",
+                ),
+            },
+            "attempt4_manifest_file_sha256": manifest_binding["file_sha256"],
+            "attempt4_manifest_canonical_sha256": manifest_binding["canonical_sha256"],
         },
-        "attempt4_manifest_file_sha256": manifest_binding["file_sha256"],
-        "attempt4_manifest_canonical_sha256": manifest_binding["canonical_sha256"],
-    }
+    )
 
 
 def _historical_attempt4_collector_execution(annotated_tag: str) -> dict[str, Any]:
@@ -1652,9 +1630,7 @@ def _historical_attempt4_collector_execution(annotated_tag: str) -> dict[str, An
         or blob != ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB
         or source_sha != ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256
     ):
-        raise EvidenceCompletionError(
-            "Attempt4 supplement collector v6 successor source drifted"
-        )
+        raise EvidenceCompletionError("Attempt4 supplement collector v6 successor source drifted")
     return {
         "repository_root": str(root),
         **expected,
@@ -1732,9 +1708,7 @@ def _validate_attempt4_manifest(
                 "annotated_tag_object": ATTEMPT4_SUPPLEMENT_COLLECTOR_TAG_OBJECT,
                 "successor_source_path": ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH,
                 "successor_source_git_blob": ATTEMPT4_SUPPLEMENT_SUCCESSOR_BLOB,
-                "successor_source_file_sha256": (
-                    ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256
-                ),
+                "successor_source_file_sha256": (ATTEMPT4_SUPPLEMENT_SUCCESSOR_FILE_SHA256),
                 "must_be_current_collector_ancestor": True,
             },
             "wrapper_canonical_sha256": wrappers,
@@ -1810,8 +1784,7 @@ def _validate_sell54(
     if (
         validated_projection.get("path") != binding["path"]
         or validated_projection.get("file_sha256") != binding["file_sha256"]
-        or validated_projection.get("canonical_receipt_sha256")
-        != binding["canonical_sha256"]
+        or validated_projection.get("canonical_receipt_sha256") != binding["canonical_sha256"]
     ):
         raise EvidenceCompletionError("SELL 54-case parity changed during validation")
     return rebound, binding

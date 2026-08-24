@@ -151,7 +151,7 @@ def _source_context(publisher: dict[str, Any]) -> dict[str, Any]:
             "active_capture_utc": subject.ACTIVE_CAPTURED_UTC,
             "post_lifecycle_health_utc": subject.POST_LIFECYCLE_RECEIPT_GENERATED_UTC,
             "active_release_remote_path": (
-                "/home/ec2-user/NarrowGate_BTCUSDC/live/private/"
+                "${NARROWGATE_REMOTE_ROOT}/live/private/"
                 "f05_boolean_cooldown_owner_buy_e3_v1/active_release.direct_owner.v3.json"
             ),
         },
@@ -208,11 +208,11 @@ def _fixture(tmp_path: Path, *, secret_in_catalog: bool = False) -> dict[str, An
         "provider": "AWS",
         "region": subject.CURRENT_HOST_CORE["region"],
         "city": "Tokyo",
-        "ssh_target": "ec2-user@13.158.101.253",
+        "ssh_target": "<current-live-ssh-target>",
         "public_ipv4": subject.CURRENT_HOST_CORE["public_ipv4"],
         "instance_id": subject.CURRENT_HOST_CORE["instance_id"],
         "instance_type": subject.CURRENT_HOST_CORE["instance_type"],
-        "repo_root": "/home/ec2-user/NarrowGate_BTCUSDC",
+        "repo_root": "${NARROWGATE_REMOTE_ROOT}",
     }
     old_epoch = "prospective-1787540000000000000-old-v4"
     pointer = {
@@ -473,7 +473,7 @@ def test_pointer_preserves_host_presentation_and_historical_policy(
     pointer = json.loads(fixture["pointer"].read_text())
 
     assert pointer["provider"] == "AWS"
-    assert pointer["ssh_target"] == "ec2-user@13.158.101.253"
+    assert pointer["ssh_target"] == "<current-live-ssh-target>"
     old_row = next(
         row for row in pointer["host_epochs"] if row["prospective_epoch_id"] == fixture["old_epoch"]
     )
@@ -1340,6 +1340,7 @@ def test_wrong_pointer_or_catalog_pending_is_rejected(
 
 
 def test_mixed_direct_and_transitive_module_origins_fail_closed(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = Path(subject.__file__).resolve().parents[1]
@@ -1358,14 +1359,14 @@ def test_mixed_direct_and_transitive_module_origins_fail_closed(
         return "1" * 40
 
     monkeypatch.setattr(subject, "_git", fake_git)
-    monkeypatch.setattr(subject.final_v6, "__file__", "/private/tmp/mixed/final_v6.py")
+    monkeypatch.setattr(subject.final_v6, "__file__", str(tmp_path / "mixed/final_v6.py"))
     with pytest.raises(subject.OperationalMetadataV6Error, match="module origin drifted"):
         subject._observe_publisher_checkout(root)  # noqa: SLF001
     monkeypatch.setattr(subject.final_v6, "__file__", original_final_origin)
     monkeypatch.setattr(
         subject.transport_v6.resource_v8,
         "__file__",
-        "/private/tmp/mixed/resource_v8.py",
+        str(tmp_path / "mixed/resource_v8.py"),
     )
     with pytest.raises(
         subject.OperationalMetadataV6Error,
@@ -1413,10 +1414,13 @@ def test_two_root_sandbox_dry_run_and_apply_never_mutate_publisher(
 def test_actual_durable_sources_validate_with_only_unfrozen_publisher_stub(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    metadata_root_value = os.environ.get("NARROWGATE_METADATA_REPOSITORY_ROOT")
+    if not metadata_root_value:
+        pytest.skip("NARROWGATE_METADATA_REPOSITORY_ROOT is not configured")
     checkout_root = Path(subject.EVIDENCE_ROOT) / "authority_sources" / "checkouts"
     runtime_root = checkout_root / "runtime_v3"
     historical_root = checkout_root / "historical_v4"
-    metadata_root = Path("/Users/xuantan/Projects/NarrowGate_BTCUSDC")
+    metadata_root = Path(metadata_root_value)
     if not all(path.exists() for path in (runtime_root, historical_root, metadata_root)):
         pytest.skip("durable current/historical validation roots are unavailable")
     publisher_root = Path(subject.__file__).resolve().parents[1]

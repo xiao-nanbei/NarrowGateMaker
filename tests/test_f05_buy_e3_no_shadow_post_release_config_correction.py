@@ -190,17 +190,15 @@ def _write(path: Path, payload: dict[str, Any]) -> Path:
 
 
 def test_real_frozen_config_pair_is_exact() -> None:
+    ephemeral_root = os.environ.get("NARROWGATE_EPHEMERAL_ROOT")
+    if not ephemeral_root:
+        pytest.skip("NARROWGATE_EPHEMERAL_ROOT is not configured")
+    root = Path(ephemeral_root)
     paths = (
-        Path(
-            "/private/tmp/f05-buy-e3-no-external-v4-20260824/"
-            "config.direct_owner_disabled.no_external.yaml"
-        ),
-        Path(
-            "/private/tmp/f05-buy-e3-no-external-v4-20260824/"
-            "config.direct_owner_active.no_external.yaml"
-        ),
-        Path("/private/tmp/config.direct_owner_disabled.no_shadow.v2.yaml"),
-        Path("/private/tmp/config.direct_owner_active.no_shadow.v2.yaml"),
+        root / "f05-buy-e3-no-external-v4-20260824/config.direct_owner_disabled.no_external.yaml",
+        root / "f05-buy-e3-no-external-v4-20260824/config.direct_owner_active.no_external.yaml",
+        root / "config.direct_owner_disabled.no_shadow.v2.yaml",
+        root / "config.direct_owner_active.no_shadow.v2.yaml",
     )
     if not all(path.is_file() for path in paths):
         pytest.skip("local frozen config fixtures are unavailable")

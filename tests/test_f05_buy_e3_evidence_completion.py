@@ -81,8 +81,7 @@ def test_attempt4_anchor_requires_interpreter_equivalence_successor(
             "annotated_tag": subject.ATTEMPT4_TAG,
         },
         "pre_admission_evidence": {
-            role: {"canonical_sha256": f"{index + 1:064x}"}
-            for index, role in enumerate(roles)
+            role: {"canonical_sha256": f"{index + 1:064x}"} for index, role in enumerate(roles)
         },
         "interpreter_equivalence": {"canonical_sha256": "f" * 64},
     }
@@ -267,9 +266,7 @@ def test_historical_portable_root_is_jointly_bound(tmp_path: Path) -> None:
 def test_historical_portable_root_rejects_wrong_interpreter_root(tmp_path: Path) -> None:
     wrong = tmp_path / "wrong-main"
     wrong.mkdir()
-    manifest, _root, _artifacts = _portable_root_fixture(
-        tmp_path, interpreter_root=wrong
-    )
+    manifest, _root, _artifacts = _portable_root_fixture(tmp_path, interpreter_root=wrong)
 
     with pytest.raises(subject.EvidenceCompletionError, match="roots disagree"):
         subject._historical_portable_root(manifest)  # noqa: SLF001
@@ -297,9 +294,7 @@ def _patch_historical_collector(
     ancestor: bool = True,
     blob: str | None = None,
 ) -> None:
-    source = _write(
-        tmp_path / subject.ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH, {"fixture": True}
-    )
+    source = _write(tmp_path / subject.ATTEMPT4_SUPPLEMENT_SUCCESSOR_PATH, {"fixture": True})
     legacy = subject.attempt4_successor.legacy_attempt
     expected = {
         "execution_commit": subject.ATTEMPT4_SUPPLEMENT_COLLECTOR_COMMIT,
@@ -311,9 +306,7 @@ def _patch_historical_collector(
     monkeypatch.setattr(subject.attempt4_successor, "_COLLECTOR_ROOT", tmp_path)
     monkeypatch.setattr(subject.attempt4_successor, "__file__", str(source))
     monkeypatch.setattr(legacy, "_require_clean_worktree", lambda _root: None)
-    monkeypatch.setattr(
-        legacy, "_annotated_tag_identity", lambda *args, **kwargs: expected
-    )
+    monkeypatch.setattr(legacy, "_annotated_tag_identity", lambda *args, **kwargs: expected)
     monkeypatch.setattr(legacy, "_git_is_ancestor", lambda *args: ancestor)
     monkeypatch.setattr(
         legacy,
@@ -400,8 +393,8 @@ def _v5_payload() -> dict:
         "python": "/venv/bin/python",
         "isolated": True,
         "safe_path": True,
-        "cwd": "/private/tmp/isolated",
-        "sys_path": ["/private/tmp/isolated"],
+        "cwd": "${NARROWGATE_EPHEMERAL_ROOT}/isolated",
+        "sys_path": ["${NARROWGATE_EPHEMERAL_ROOT}/isolated"],
         "git_commit": "1" * 40,
         "git_tree": "2" * 40,
         "tracked_worktree_clean": True,
@@ -410,7 +403,7 @@ def _v5_payload() -> dict:
         "model_bundle_census_sha256": subject.V5_MODEL_CENSUS_SHA256,
         "input_binding_sha256": subject.V5_INPUT_SHA256,
         "selected_day_count": 30,
-        "output_root": "/private/tmp/exact",
+        "output_root": "${NARROWGATE_EPHEMERAL_ROOT}/exact",
         "economic_outcomes_read": False,
         "labels_read": False,
         "candidate_actions_generated": False,
@@ -480,9 +473,9 @@ def _lifecycle_payload(runtime_sha: str = "4" * 64) -> dict:
     payload = {
         "schema_version": subject.LIFECYCLE_SCHEMA,
         "admitted_ts_ns": 1,
-        "remote": "ec2-user@13.158.101.253",
-        "remote_repo_root": "/home/ec2-user/NarrowGate_BTCUSDC",
-        "remote_allowlisted_root": "/home/ec2-user/NarrowGate_BTCUSDC/live/private",
+        "remote": "<current-live-ssh-target>",
+        "remote_repo_root": "${NARROWGATE_REMOTE_ROOT}",
+        "remote_allowlisted_root": "${NARROWGATE_REMOTE_ROOT}/live/private",
         "remote_session_root": "/remote/session",
         "remote_epoch_root": "/remote/epoch",
         "remote_seal_path": "/remote/seal.json",
@@ -597,7 +590,7 @@ def _runtime_identity(release_binding: dict, release: dict, *, pid: int = 22) ->
     return {
         "schema_version": subject.RUNTIME_IDENTITY_SCHEMA,
         "pid": pid,
-        "config_path": "/home/ec2-user/NarrowGate_BTCUSDC/live/config.yaml",
+        "config_path": "/srv/narrowgate-test/live/config.yaml",
         "config_sha256": "7" * 64,
         "f05_buy_e3_enabled": True,
         "f05_buy_e3_owner_override_effective": True,

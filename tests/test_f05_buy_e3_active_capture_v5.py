@@ -75,7 +75,7 @@ def _resource() -> dict[str, Any]:
     return {
         "config_correction": _config_correction_binding(),
         "host": {
-            "instance_id": "i-00fe03a8b2fb49a31",
+            "instance_id": subject.resource_v5.CURRENT_INSTANCE_ID,
             "instance_type": "c7i-flex.large",
         },
         "fresh_disabled_process": {

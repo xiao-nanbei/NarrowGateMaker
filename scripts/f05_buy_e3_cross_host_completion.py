@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import os
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -46,9 +47,9 @@ EVIDENCE_RELEASE_CANONICAL_FIELD: Final = "canonical_cross_host_evidence_release
 EXPECTED_HOST: Final = {
     "provider": "aws",
     "region": "ap-northeast-1",
-    "instance_id": "i-00fe03a8b2fb49a31",
+    "instance_id": os.environ.get("NARROWGATE_CURRENT_INSTANCE_ID", "<current-live-instance>"),
     "instance_type": "c7i-flex.large",
-    "public_ipv4": "13.158.101.253",
+    "public_ipv4": os.environ.get("NARROWGATE_CURRENT_PUBLIC_IPV4", "<current-live-host>"),
 }
 
 PORTABLE_ROLES: Final = {
@@ -243,9 +244,7 @@ def _portable_artifact_projection(attempt: Mapping[str, Any]) -> dict[str, Any]:
     return {"artifact_sha256": base.ARTIFACT_SHA256, "roles": projected}
 
 
-def _validate_portable_evidence(
-    value: Any, *, attempt: Mapping[str, Any]
-) -> dict[str, Any]:
+def _validate_portable_evidence(value: Any, *, attempt: Mapping[str, Any]) -> dict[str, Any]:
     fields = {
         "host",
         "runtime_execution",
@@ -336,10 +335,7 @@ def _validate_portable_evidence(
         or re.fullmatch(r"[0-9a-f]{64}", str(runtime_identity.get("file_sha256"))) is None
         or re.fullmatch(r"[0-9a-f]{64}", str(runtime_identity.get("canonical_sha256"))) is None
         or not isinstance(startup_attestation, Mapping)
-        or re.fullmatch(
-            r"[0-9a-f]{64}", str(startup_attestation.get("canonical_sha256"))
-        )
-        is None
+        or re.fullmatch(r"[0-9a-f]{64}", str(startup_attestation.get("canonical_sha256"))) is None
         or not isinstance(startup_semantics, Mapping)
         or startup_semantics.get("startup_status") != "accepted"
         or startup_semantics.get("running_checkout_commit") != base.DIRECT_COMMIT
@@ -595,7 +591,9 @@ def validate_completion(
     expected = build_completion(
         operational_attempt_path=Path(str(payload.get("operational_attempt", {}).get("path", ""))),
         activation_envelope_path=Path(str(payload.get("activation_envelope", {}).get("path", ""))),
-        lifecycle_admission_path=Path(str(payload.get("lifecycle_orico_admission", {}).get("path", ""))),
+        lifecycle_admission_path=Path(
+            str(payload.get("lifecycle_orico_admission", {}).get("path", ""))
+        ),
         collector_repository_root=collector_repository_root,
         direct_repository_root=direct_repository_root,
         attempt4_repository_root=attempt4_repository_root,
@@ -743,7 +741,9 @@ def validate_composition(
     expected = build_composition(
         operational_attempt_path=Path(str(evidence.get("operational_attempt", {}).get("path", ""))),
         activation_envelope_path=Path(str(evidence.get("fresh_activation", {}).get("path", ""))),
-        operational_completion_path=Path(str(evidence.get("operational_completion", {}).get("path", ""))),
+        operational_completion_path=Path(
+            str(evidence.get("operational_completion", {}).get("path", ""))
+        ),
         collector_repository_root=collector_repository_root,
         direct_repository_root=direct_repository_root,
         attempt4_repository_root=attempt4_repository_root,
@@ -1021,7 +1021,13 @@ def _parser() -> argparse.ArgumentParser:
     _roots(validate)
     validate.add_argument(
         "--kind",
-        choices=("activation-envelope", "completion", "composition", "attempt-final", "evidence-release"),
+        choices=(
+            "activation-envelope",
+            "completion",
+            "composition",
+            "attempt-final",
+            "evidence-release",
+        ),
         required=True,
     )
     validate.add_argument("--receipt", type=Path, required=True)

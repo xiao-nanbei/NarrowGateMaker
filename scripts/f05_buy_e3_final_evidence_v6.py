@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -79,10 +80,16 @@ EVIDENCE_RELEASE_CANONICAL_FIELD: Final = "canonical_no_shadow_evidence_release_
 CONTENT_BINDING_FIELDS: Final = tuple(transport_v6.CONTENT_BINDING_FIELDS)
 PORTABLE_SOURCE_ROLES: Final = tuple(transport_v6.SOURCE_FILENAMES)
 
-FROZEN_CROSS_HOST_ADMISSION_PATH_PROVENANCE: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
-    "direct_no_shadow_live_evidence_v6_20260824/cross_host_admission/"
-    "cross_host_admission.json"
+_PRIVATE_EVIDENCE_ROOT: Final = Path(
+    os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT")
+    or "/__narrowgate_private_evidence_root_unconfigured__"
+)
+_DATA_ROOT: Final = Path(
+    os.environ.get("NARROWGATE_DATA_ROOT") or "/__narrowgate_data_root_unconfigured__"
+)
+FROZEN_CROSS_HOST_ADMISSION_PATH_PROVENANCE: Final = str(
+    _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+    "cross_host_admission/cross_host_admission.json"
 )
 FROZEN_CROSS_HOST_ADMISSION_CONTENT: Final = {
     "schema_version": transport_v6.ADMISSION_SCHEMA,
@@ -94,9 +101,9 @@ FROZEN_CROSS_HOST_ADMISSION_CONTENT: Final = {
     "mode": "0600",
 }
 
-FAILED_ACTIVATION_HISTORY_DURABLE_ROOT: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
-    "direct_no_shadow_live_evidence_v6_20260824/failed_activation_attempt_history"
+FAILED_ACTIVATION_HISTORY_DURABLE_ROOT: Final = str(
+    _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+    "failed_activation_attempt_history"
 )
 RESOURCE_ATTEMPT_REJECTION_HISTORY_PATH_PROVENANCE: Final = (
     f"{FAILED_ACTIVATION_HISTORY_DURABLE_ROOT}/failed_activation_attempt_history.json"
@@ -122,9 +129,8 @@ RESOURCE_ATTEMPT_REJECTION_HISTORY_CONTENT: Final = {
     "mode": "0600",
 }
 
-FROZEN_CURRENT_LIFECYCLE_PATH_PROVENANCE: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/formal_collection/"
-    "prospective_lifecycle_journal_v2/"
+FROZEN_CURRENT_LIFECYCLE_PATH_PROVENANCE: Final = str(
+    _DATA_ROOT / "formal_collection/prospective_lifecycle_journal_v2/"
     "session-prospective-1787568574639266387-ac669869e7ed/admission_manifest.json"
 )
 FROZEN_CURRENT_LIFECYCLE_EPOCH_ID: Final = "prospective-1787568574639266387-ac669869e7ed"
@@ -137,9 +143,8 @@ FROZEN_CURRENT_LIFECYCLE_CONTENT: Final = {
     "size_bytes": 2_469,
     "mode": "0644",
 }
-FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
-    "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE: Final = str(
+    _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
     "lifecycle_context/lifecycle_admission_context.json"
 )
 FROZEN_LIFECYCLE_CONTEXT_CONTENT: Final = {
@@ -192,9 +197,8 @@ POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD: Final = post_lifecycle_v1.CANONICAL_FIEL
 POST_LIFECYCLE_HEALTH_SCHEMA: Final = post_lifecycle_v1.PORTABLE_SCHEMA_VERSION
 POST_LIFECYCLE_HEALTH_STATUS: Final = post_lifecycle_v1.PORTABLE_STATUS
 POST_LIFECYCLE_HEALTH_CANONICAL_FIELD: Final = post_lifecycle_v1.PORTABLE_CANONICAL_FIELD
-FROZEN_POST_LIFECYCLE_HEALTH_PATH_PROVENANCE: Final = (
-    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
-    "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+FROZEN_POST_LIFECYCLE_HEALTH_PATH_PROVENANCE: Final = str(
+    _PRIVATE_EVIDENCE_ROOT / "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
     "post_lifecycle_health/post_lifecycle_live_health.json"
 )
 FROZEN_POST_LIFECYCLE_HEALTH_CONTENT: Final = {
