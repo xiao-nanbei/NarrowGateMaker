@@ -524,6 +524,25 @@ _HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES = {
 _HISTORICAL_LOADED_RUNTIME_MODULE_ROLES = frozenset(
     _HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES
 )
+_CURRENT_RUNTIME_SOURCE_PATHS = {
+    "live_buy_runtime": "strategy/boolean_cooldown_buy_e3.py",
+    "maker_engine": "strategy/maker_engine.py",
+    "live_config": "live/config.py",
+    "live_runtime_policy": "live/runtime_policy.py",
+    "live_main": "live/main.py",
+    "live_ws_handler": "live/ws_handler.py",
+    "sell_owner_runtime": "strategy/boolean_cooldown_live.py",
+    "signal_engine": "strategy/signal.py",
+    "global_flow": "strategy/global_flow.py",
+    "global_reference": "strategy/global_reference.py",
+}
+if set(_CURRENT_RUNTIME_SOURCE_PATHS.values()) != {
+    relative for _module, relative in _LOADED_RUNTIME_MODULE_IDENTITIES.values()
+}:  # pragma: no cover - import-time invariant
+    raise RuntimeError("current runtime source roles differ from startup loaded modules")
+_CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS = (
+    "validated_current_execution_commit_and_working_tree"
+)
 _LOADED_RUNTIME_MODULE_FIELDS = frozenset(
     {
         "module_name",
@@ -667,6 +686,13 @@ def _require_sha256(value: Any, label: str) -> str:
     return normalized
 
 
+def _require_git_sha(value: Any, label: str) -> str:
+    normalized = str(value).strip().lower()
+    if len(normalized) != 40 or any(char not in "0123456789abcdef" for char in normalized):
+        raise BuyE3TransactionalDeployError(f"{label} is not a Git SHA")
+    return normalized
+
+
 def _remote_active_release_path(repo_root: str, file_sha256: str) -> str:
     digest = _require_sha256(file_sha256, "active release file hash")
     return str(
@@ -781,41 +807,111 @@ def _compatible_execution_identity(
     }
 
 
-def _compatible_runtime_sources(attempt_payload: Mapping[str, Any]) -> dict[str, Any]:
-    runtime_sources = attempt_payload.get("runtime_sources")
-    files = runtime_sources.get("files") if isinstance(runtime_sources, Mapping) else None
-    if not isinstance(files, Mapping):
-        raise BuyE3TransactionalDeployError(
-            "compatible execution attempt lacks runtime source bindings"
-        )
+def _current_runtime_sources(
+    *,
+    repository_root: Path,
+    execution_commit: str,
+    attempt_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    execution_commit = _require_git_sha(
+        execution_commit,
+        "current runtime execution commit",
+    )
     by_path: dict[str, Mapping[str, Any]] = {}
-    for raw in files.values():
-        if not isinstance(raw, Mapping):
-            raise BuyE3TransactionalDeployError("compatible runtime source binding is malformed")
-        relative = str(raw.get("repository_relative_path", "")).strip()
-        if not relative or relative in by_path:
+    if attempt_payload is not None:
+        runtime_sources = attempt_payload.get("runtime_sources")
+        files = runtime_sources.get("files") if isinstance(runtime_sources, Mapping) else None
+        if not isinstance(files, Mapping):
             raise BuyE3TransactionalDeployError(
-                "compatible runtime source paths are incomplete or duplicated"
+                "compatible execution attempt lacks runtime source bindings"
             )
-        by_path[relative] = raw
+        for raw in files.values():
+            if not isinstance(raw, Mapping):
+                raise BuyE3TransactionalDeployError(
+                    "compatible runtime source binding is malformed"
+                )
+            relative = str(raw.get("repository_relative_path", "")).strip()
+            if not relative or relative in by_path:
+                raise BuyE3TransactionalDeployError(
+                    "compatible runtime source paths are incomplete or duplicated"
+                )
+            by_path[relative] = raw
+        runtime = attempt_payload.get("runtime_execution")
+        if (
+            not isinstance(runtime, Mapping)
+            or _require_git_sha(
+                runtime.get("execution_commit"),
+                "compatible runtime execution commit",
+            )
+            != execution_commit
+        ):
+            raise BuyE3TransactionalDeployError(
+                "compatible execution attempt runtime identity drifted"
+            )
+    root = repository_root.expanduser().resolve(strict=True)
     bindings: dict[str, Any] = {}
-    for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items():
-        source = by_path.get(relative)
-        if source is None:
+    for role, relative in _CURRENT_RUNTIME_SOURCE_PATHS.items():
+        candidate = root / relative
+        if candidate.is_symlink() or not candidate.is_file():
             raise BuyE3TransactionalDeployError(
-                f"compatible attempt lacks deployed runtime source: {relative}"
+                f"current runtime source is unavailable: {relative}"
             )
-        sha256 = _require_sha256(source.get("file_sha256"), f"compatible runtime source {role}")
+        try:
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(root)
+            committed = subprocess.run(
+                ("git", "show", f"{execution_commit}:{relative}"),
+                cwd=root,
+                check=True,
+                capture_output=True,
+                timeout=20.0,
+            ).stdout
+        except (ValueError, OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
+            raise BuyE3TransactionalDeployError(
+                f"cannot bind current runtime source: {relative}"
+            ) from exc
+        working = resolved.read_bytes()
+        if working != committed:
+            raise BuyE3TransactionalDeployError(
+                f"current runtime source differs from validated execution: {relative}"
+            )
+        sha256 = hashlib.sha256(working).hexdigest()
+        source = by_path.get(relative)
+        if source is not None and _require_sha256(
+            source.get("file_sha256"), f"compatible runtime source {role}"
+        ) != sha256:
+            raise BuyE3TransactionalDeployError(
+                f"compatible attempt runtime source drifted: {relative}"
+            )
         bindings[role] = {
             "repository_relative_path": relative,
-            "artifact_manifest_sha256": sha256,
             "execution_commit_blob_sha256": sha256,
             "working_file_sha256": sha256,
+            "authority_basis": _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS,
         }
     return {
         "files": bindings,
         "runtime_code_sha256": gate_v2.canonical_sha256(bindings),
     }
+
+
+def _compatible_runtime_sources(
+    attempt_payload: Mapping[str, Any],
+    *,
+    repository_root: Path,
+) -> dict[str, Any]:
+    runtime = attempt_payload.get("runtime_execution")
+    if not isinstance(runtime, Mapping):
+        raise BuyE3TransactionalDeployError(
+            "compatible execution attempt lacks runtime identity"
+        )
+    return _current_runtime_sources(
+        repository_root=repository_root,
+        execution_commit=_require_git_sha(
+            runtime.get("execution_commit"), "compatible runtime execution commit"
+        ),
+        attempt_payload=attempt_payload,
+    )
 
 
 def _revalidate_compatible_execution(
@@ -835,7 +931,10 @@ def _revalidate_compatible_execution(
     }
     if dict(execution) != expected:
         raise BuyE3TransactionalDeployError("compatible deployment execution identity drifted")
-    return payload, _compatible_runtime_sources(payload)
+    return payload, _compatible_runtime_sources(
+        payload,
+        repository_root=repository_root,
+    )
 
 
 def _reject_remote_environment_override() -> None:
@@ -1231,23 +1330,43 @@ def _validate_checkout_runtime_source_authority(
     execution_commit: str,
     runtime_sources: Mapping[str, Any],
     expected_runtime_code_sha256: str,
+    expected_startup_attestation_schema_version: str,
 ) -> dict[str, Any]:
     files = runtime_sources.get("files") if isinstance(runtime_sources, Mapping) else None
+    if expected_startup_attestation_schema_version not in {
+        STARTUP_ATTESTATION_SCHEMA,
+        HISTORICAL_STARTUP_ATTESTATION_SCHEMA,
+        LEGACY_STARTUP_ATTESTATION_SCHEMA,
+    }:
+        raise BuyE3TransactionalDeployError("runtime source startup schema is unsupported")
+    current = expected_startup_attestation_schema_version == STARTUP_ATTESTATION_SCHEMA
+    expected_paths = (
+        _CURRENT_RUNTIME_SOURCE_PATHS if current else gate_v2.REQUIRED_RUNTIME_PATHS
+    )
     if (
         not isinstance(files, Mapping)
-        or set(files) != set(gate_v2.REQUIRED_RUNTIME_PATHS)
+        or set(files) != set(expected_paths)
         or set(runtime_sources) != {"files", "runtime_code_sha256"}
     ):
         raise BuyE3TransactionalDeployError("runtime source authority role set drifted")
     root = repository_root.expanduser().resolve(strict=True)
     normalized: dict[str, Any] = {}
-    expected_fields = {
-        "repository_relative_path",
-        "artifact_manifest_sha256",
-        "execution_commit_blob_sha256",
-        "working_file_sha256",
-    }
-    for role, expected_relative in gate_v2.REQUIRED_RUNTIME_PATHS.items():
+    expected_fields = (
+        {
+            "repository_relative_path",
+            "execution_commit_blob_sha256",
+            "working_file_sha256",
+            "authority_basis",
+        }
+        if current
+        else {
+            "repository_relative_path",
+            "artifact_manifest_sha256",
+            "execution_commit_blob_sha256",
+            "working_file_sha256",
+        }
+    )
+    for role, expected_relative in expected_paths.items():
         raw = files.get(role)
         if not isinstance(raw, Mapping) or set(raw) != expected_fields:
             raise BuyE3TransactionalDeployError(
@@ -1259,8 +1378,13 @@ def _validate_checkout_runtime_source_authority(
         )
         if (
             relative != expected_relative
-            or raw.get("artifact_manifest_sha256") != expected_sha
             or raw.get("execution_commit_blob_sha256") != expected_sha
+            or (
+                current
+                and raw.get("authority_basis")
+                != _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+            )
+            or (not current and raw.get("artifact_manifest_sha256") != expected_sha)
         ):
             raise BuyE3TransactionalDeployError(
                 f"runtime source authority identity drifted: {role}"
@@ -1309,23 +1433,59 @@ def _validated_expected_runtime_source_hashes(
         raise BuyE3TransactionalDeployError("runtime source bindings are malformed")
     if runtime_sources.get("runtime_code_sha256") != gate_v2.canonical_sha256(files):
         raise BuyE3TransactionalDeployError("runtime source aggregate is malformed")
+    current = set(files) == set(_CURRENT_RUNTIME_SOURCE_PATHS)
+    historical = set(files) == set(gate_v2.REQUIRED_RUNTIME_PATHS)
+    if not current and not historical:
+        raise BuyE3TransactionalDeployError("runtime source role set is malformed")
+    expected_paths = (
+        _CURRENT_RUNTIME_SOURCE_PATHS if current else gate_v2.REQUIRED_RUNTIME_PATHS
+    )
+    expected_fields = (
+        {
+            "repository_relative_path",
+            "execution_commit_blob_sha256",
+            "working_file_sha256",
+            "authority_basis",
+        }
+        if current
+        else {
+            "repository_relative_path",
+            "artifact_manifest_sha256",
+            "execution_commit_blob_sha256",
+            "working_file_sha256",
+        }
+    )
     expected: dict[str, str] = {}
     for role, raw in files.items():
-        if not isinstance(raw, Mapping):
+        if not isinstance(raw, Mapping) or set(raw) != expected_fields:
             raise BuyE3TransactionalDeployError(f"runtime source binding is malformed: {role}")
         path = str(raw.get("repository_relative_path", "")).strip()
         relative = PurePosixPath(path)
         if not path or relative.is_absolute() or ".." in relative.parts:
             raise BuyE3TransactionalDeployError(f"runtime source path is unsafe: {role}")
-        hashes = {
-            _require_sha256(raw.get(field), f"runtime source {role} {field}")
-            for field in (
+        hash_fields = (
+            ("execution_commit_blob_sha256", "working_file_sha256")
+            if current
+            else (
                 "artifact_manifest_sha256",
                 "execution_commit_blob_sha256",
                 "working_file_sha256",
             )
+        )
+        hashes = {
+            _require_sha256(raw.get(field), f"runtime source {role} {field}")
+            for field in hash_fields
         }
-        if len(hashes) != 1 or path in expected:
+        if (
+            len(hashes) != 1
+            or path in expected
+            or path != expected_paths[role]
+            or (
+                current
+                and raw.get("authority_basis")
+                != _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+            )
+        ):
             raise BuyE3TransactionalDeployError(f"runtime source binding disagrees: {role}")
         expected[path] = hashes.pop()
     return expected
@@ -1756,17 +1916,39 @@ def _validate_startup_attestation(
         "runtime_source_manifest_sha256"
     ) != _runtime_source_manifest_sha256(normalized_rows):
         raise BuyE3TransactionalDeployError("runtime startup source manifest aggregate drifted")
-    expected_sources = _validated_expected_runtime_source_hashes(expected_runtime_sources)
-    if any(observed.get(path) != sha256 for path, sha256 in expected_sources.items()):
-        raise BuyE3TransactionalDeployError(
-            "runtime startup source bytes differ from the frozen plan"
-        )
-    loaded_origins = attestation.get("loaded_module_origins")
     expected_loaded_modules = (
         _HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES
         if historical
         else _LOADED_RUNTIME_MODULE_IDENTITIES
     )
+    expected_loaded_paths = {
+        relative for _module, relative in expected_loaded_modules.values()
+    }
+    if set(observed) != expected_loaded_paths:
+        raise BuyE3TransactionalDeployError(
+            "runtime startup source manifest path set drifted"
+        )
+    expected_sources = _validated_expected_runtime_source_hashes(expected_runtime_sources)
+    if historical:
+        historical_required_paths = set(gate_v2.REQUIRED_RUNTIME_PATHS.values())
+        if not historical_required_paths.issubset(expected_sources):
+            raise BuyE3TransactionalDeployError(
+                "historical runtime source authority is incomplete"
+            )
+        expected_sources = {
+            path: sha256
+            for path, sha256 in expected_sources.items()
+            if path in expected_loaded_paths
+        }
+    elif set(expected_sources) != expected_loaded_paths:
+        raise BuyE3TransactionalDeployError(
+            "current runtime source authority does not cover every loaded module"
+        )
+    if any(observed.get(path) != sha256 for path, sha256 in expected_sources.items()):
+        raise BuyE3TransactionalDeployError(
+            "runtime startup source bytes differ from the frozen plan"
+        )
+    loaded_origins = attestation.get("loaded_module_origins")
     if (
         not isinstance(loaded_origins, Mapping)
         or set(loaded_origins) != set(expected_loaded_modules)
@@ -2186,6 +2368,9 @@ def capture_runtime_process_probe(
         execution_commit=completed_commit,
         runtime_sources=_decode_runtime_source_authority(runtime_source_authority_base64),
         expected_runtime_code_sha256=runtime_code_sha,
+        expected_startup_attestation_schema_version=(
+            expected_startup_attestation_schema_version
+        ),
     )
     if artifact_sha:
         exact_artifact_paths = {
@@ -3386,11 +3571,14 @@ def build_plan(
             attempt_payload=attempt_payload,
             attempt_binding=attempt_binding,
         )
-        runtime_sources_from_attempt = _compatible_runtime_sources(attempt_payload)
+        runtime_sources_from_attempt = _compatible_runtime_sources(
+            attempt_payload,
+            repository_root=root,
+        )
     manifest_path = Path(str(artifact_raw["manifest_path"])).expanduser().resolve(strict=True)
     policy_path = Path(str(artifact_raw["policy_path"])).expanduser().resolve(strict=True)
     bundle_path = Path(str(artifact_raw["predicate_bundle_path"])).expanduser().resolve(strict=True)
-    artifact_manifest = _read_json(manifest_path)
+    _read_json(manifest_path)
     policy_payload = _read_json(policy_path)
     expected_producer_commit = (
         execution["execution_commit"]
@@ -3400,10 +3588,9 @@ def build_plan(
     if policy_payload.get("bindings", {}).get("owner_execution_commit") != expected_producer_commit:
         raise BuyE3TransactionalDeployError("policy artifact binds another execution commit")
     runtime_sources = (
-        gate_v2.verify_runtime_sources(
+        _current_runtime_sources(
             repository_root=root,
             execution_commit=execution["execution_commit"],
-            artifact_manifest=artifact_manifest,
         )
         if runtime_sources_from_attempt is None
         else runtime_sources_from_attempt
@@ -3896,11 +4083,9 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
             annotated_tag=str(execution["annotated_tag"]),
             expected_tag_object=str(execution["annotated_tag_object"]),
         )
-        manifest = _read_json(Path(str(plan["artifact"]["manifest_path"])))
-        runtime = gate_v2.verify_runtime_sources(
+        runtime = _current_runtime_sources(
             repository_root=root,
             execution_commit=str(execution["execution_commit"]),
-            artifact_manifest=manifest,
         )
     else:
         compatible_payload, runtime = _revalidate_compatible_execution(
