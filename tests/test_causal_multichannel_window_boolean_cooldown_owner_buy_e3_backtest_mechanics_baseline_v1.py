@@ -1180,6 +1180,169 @@ def test_public_publisher_does_not_accept_a_caller_supplied_baseline(
         )
 
 
+def test_cold_subprocess_capability_smoke_routes_internal_stdout_to_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cold_root = tmp_path / "cold-root"
+    audit_root = cold_root / "research/families/f05_fill_quality_quote_ev/audit"
+    audit_root.mkdir(parents=True)
+    for package in (
+        cold_root / "research",
+        cold_root / "research/families",
+        cold_root / "research/families/f05_fill_quality_quote_ev",
+        audit_root,
+    ):
+        (package / "__init__.py").write_text("", encoding="ascii")
+
+    stub_baseline = audit_root / (
+        "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1.py"
+    )
+    stub_baseline.write_text(
+        """
+import hashlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+print("baseline-import diagnostic ×")
+FORMAL_E3_MECHANICS_DAYS = ("2026-06-27",)
+
+def canonical_sha256(value):
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
+    return hashlib.sha256(raw).hexdigest()
+
+class Loaded:
+    _staged_b0_policy = Path("b0-policy")
+    _staged_b0_bundle = Path("b0-bundle")
+    _staged_predecessor_source_config = Path("v12-config")
+
+    def build_day_overlay(self, day_request, replay, *, utc_day):
+        print("build-overlay diagnostic ×")
+        emitter = object()
+        evaluator = object()
+        return SimpleNamespace(
+            snapshot_emitter=emitter,
+            compiled_evaluator=evaluator,
+            params={
+                "cooldown_v2_snapshot_emitter": emitter,
+                "cooldown_duration_policy_evaluator": evaluator,
+            },
+            receipt={
+                "artifact_sha256": "a" * 64,
+                "canonical_day_overlay_sha256": "b" * 64,
+                "sell_delegates_exact_b0": True,
+                "d_plus_1_exact_b0_washout": True,
+            },
+        )
+
+    def close(self):
+        print("close diagnostic ×")
+
+def load_owner_buy_e3_default_from_private_inputs(**kwargs):
+    print("load-owner diagnostic ×")
+    return Loaded(), {"contract": True}, {"capability": True}
+""".lstrip(),
+        encoding="utf-8",
+    )
+    (
+        audit_root
+        / (
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_"
+            "successor_offline_panel_builder_v1.py"
+        )
+    ).write_text(
+        """
+from pathlib import Path
+
+print("panel-import diagnostic ×")
+
+class OwnerArtifactPaths:
+    def __init__(self, **kwargs):
+        self.values = kwargs
+
+def _default_cli_paths():
+    return {
+        name: Path(name)
+        for name in (
+            "source_manifest",
+            "book_view_root",
+            "native_observation_manifest",
+            "native_observation_root",
+            "features_manifest",
+        )
+    }
+
+def validate_inputs(**kwargs):
+    print("validate-inputs diagnostic ×")
+    return object()
+
+def _day_request(inputs, smoke_day):
+    return object()
+""".lstrip(),
+        encoding="utf-8",
+    )
+    (
+        audit_root
+        / (
+            "causal_multichannel_window_boolean_cooldown_full_multiscale_"
+            "successor_offline_b0_mechanics_adapter_v1.py"
+        )
+    ).write_text(
+        """
+print("b0-import diagnostic ×")
+
+def _materialize_replay_inputs(day_request):
+    print("materialize diagnostic ×")
+    return object()
+""".lstrip(),
+        encoding="utf-8",
+    )
+
+    real_run = subprocess.run
+    completed_processes: list[subprocess.CompletedProcess[bytes]] = []
+
+    def recording_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        completed = real_run(*args, **kwargs)
+        completed_processes.append(completed)
+        return completed
+
+    monkeypatch.setattr(baseline.subprocess, "run", recording_run)
+    result = baseline._cold_subprocess_capability_smoke(
+        runtime_repository_root=cold_root,
+        durable_evidence_root=tmp_path / "private",
+        metadata_repository_root=tmp_path / "metadata",
+        relative_locators={},
+    )
+
+    assert len(completed_processes) == 1
+    completed = completed_processes[0]
+    assert completed.stdout.decode("ascii").startswith("{")
+    assert baseline._parse_strict_json(completed.stdout, label="fixture") == dict(result)
+    for marker in (
+        "baseline-import diagnostic ×",
+        "panel-import diagnostic ×",
+        "b0-import diagnostic ×",
+        "load-owner diagnostic ×",
+        "validate-inputs diagnostic ×",
+        "materialize diagnostic ×",
+        "build-overlay diagnostic ×",
+        "close diagnostic ×",
+    ):
+        assert marker.encode("utf-8") not in completed.stdout
+        assert marker.encode("utf-8") in completed.stderr
+    assert result["loaded_repo_module_count"] > 0
+    assert len(result["loaded_repo_module_origins_sha256"]) == 64
+    assert result["day_overlay_smoke"] == {
+        "utc_day": "2026-06-27",
+        "artifact_sha256": "a" * 64,
+        "canonical_day_overlay_sha256": "b" * 64,
+        "buy_e3_installed": True,
+        "sell_delegates_exact_b0": True,
+        "d_plus_1_exact_b0_washout": True,
+    }
+
+
 def test_formal_backtest_entry_uses_isolated_default_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

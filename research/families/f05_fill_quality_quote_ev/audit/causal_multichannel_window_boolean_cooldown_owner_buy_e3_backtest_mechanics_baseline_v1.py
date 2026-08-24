@@ -69,10 +69,10 @@ METADATA_REPOSITORY_ROOT_ENV: Final = "NARROWGATE_METADATA_REPOSITORY_ROOT"
 FORMAL_PRIVATE_BUNDLE_RELATIVE: Final = PurePosixPath(
     "direct_no_shadow_live_evidence_v6_20260824/backtest_mechanics_default_v1"
 )
-V14_COLD_PUBLISHER_TAG: Final = "f05-owner-buy-e3-no-shadow-governance-source-v1-final-20260825"
+V14_COLD_PUBLISHER_TAG: Final = "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
 V14_EFFECTIVE_AT_UTC: Final = "2026-08-25T00:00:01Z"
 V14_PUBLIC_CONTRACT_FILE_SHA256: Final = (
-    "2ad627f6f17c2c9b5caacbb5a65d7d4faa45ad78acae8143737db71f0c821580"
+    "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699"
 )
 V13_PREDECESSOR_FILE_SHA256: Final = (
     "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079"
@@ -2254,79 +2254,83 @@ def _cold_subprocess_capability_smoke(
     """Re-load the capability in a sanitized, isolated Python interpreter."""
 
     bootstrap = """
+import contextlib
 import json
 import sys
 from pathlib import Path
 sys.path.insert(0, sys.argv[1])
-from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as baseline
-from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_b0_mechanics_adapter_v1 as b0_projection
-from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder
 request = json.load(sys.stdin)
-loaded, contract, capability = baseline.load_owner_buy_e3_default_from_private_inputs(
-    runtime_repository_root=Path(request["runtime_repository_root"]),
-    durable_evidence_root=Path(request["durable_evidence_root"]),
-    metadata_repository_root=Path(request["metadata_repository_root"]),
-    relative_locators=request["relative_locators"],
-)
-try:
-    defaults = panel_builder._default_cli_paths()
-    inputs = panel_builder.validate_inputs(
-        source_manifest_path=defaults["source_manifest"],
-        book_view_root=defaults["book_view_root"],
-        native_observation_manifest_path=defaults["native_observation_manifest"],
-        native_observation_root=defaults["native_observation_root"],
-        features_manifest_path=defaults["features_manifest"],
-        owner_artifacts=panel_builder.OwnerArtifactPaths(
-            policy=loaded._staged_b0_policy,
-            predicate_bundle=loaded._staged_b0_bundle,
-            private_config=loaded._staged_predecessor_source_config,
-        ),
+def execute():
+    from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as baseline
+    from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_b0_mechanics_adapter_v1 as b0_projection
+    from research.families.f05_fill_quality_quote_ev.audit import causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder
+    loaded, contract, capability = baseline.load_owner_buy_e3_default_from_private_inputs(
+        runtime_repository_root=Path(request["runtime_repository_root"]),
+        durable_evidence_root=Path(request["durable_evidence_root"]),
+        metadata_repository_root=Path(request["metadata_repository_root"]),
+        relative_locators=request["relative_locators"],
     )
-    smoke_day = baseline.FORMAL_E3_MECHANICS_DAYS[0]
-    day_request = panel_builder._day_request(inputs, smoke_day)
-    replay = b0_projection._materialize_replay_inputs(day_request)
-    overlay = loaded.build_day_overlay(day_request, replay, utc_day=smoke_day)
-    if (
-        overlay.params.get("cooldown_v2_snapshot_emitter") is not overlay.snapshot_emitter
-        or overlay.params.get("cooldown_duration_policy_evaluator") is not overlay.compiled_evaluator
-        or overlay.receipt.get("sell_delegates_exact_b0") is not True
-        or overlay.receipt.get("d_plus_1_exact_b0_washout") is not True
-    ):
-        raise RuntimeError("cold day-overlay execution smoke drifted")
-    root = Path(request["runtime_repository_root"]).absolute()
-    origins = {}
-    for name, module in tuple(sys.modules.items()):
-        if not name.startswith(("live", "models", "research", "strategy", "data_paths")):
-            continue
-        raw = getattr(module, "__file__", None)
-        if raw is None:
-            continue
-        origin = Path(raw).absolute()
-        try:
-            relative = origin.relative_to(root).as_posix()
-        except ValueError as exc:
-            raise RuntimeError(f"repo module escaped cold checkout: {name}") from exc
-        origins[name] = relative
-    output = {
-        "capability": dict(capability),
-        "owner_private_inputs": dict(contract),
-        "loaded_repo_module_count": len(origins),
-        "loaded_repo_module_origins_sha256": baseline.canonical_sha256(origins),
-        "all_loaded_repo_modules_within_cold_root": True,
-        "day_overlay_smoke": {
-            "utc_day": smoke_day,
-            "artifact_sha256": overlay.receipt["artifact_sha256"],
-            "canonical_day_overlay_sha256": overlay.receipt[
-                "canonical_day_overlay_sha256"
-            ],
-            "buy_e3_installed": True,
-            "sell_delegates_exact_b0": True,
-            "d_plus_1_exact_b0_washout": True,
-        },
-    }
-    print(json.dumps(output, sort_keys=True, separators=(",", ":"), allow_nan=False))
-finally:
-    loaded.close()
+    try:
+        defaults = panel_builder._default_cli_paths()
+        inputs = panel_builder.validate_inputs(
+            source_manifest_path=defaults["source_manifest"],
+            book_view_root=defaults["book_view_root"],
+            native_observation_manifest_path=defaults["native_observation_manifest"],
+            native_observation_root=defaults["native_observation_root"],
+            features_manifest_path=defaults["features_manifest"],
+            owner_artifacts=panel_builder.OwnerArtifactPaths(
+                policy=loaded._staged_b0_policy,
+                predicate_bundle=loaded._staged_b0_bundle,
+                private_config=loaded._staged_predecessor_source_config,
+            ),
+        )
+        smoke_day = baseline.FORMAL_E3_MECHANICS_DAYS[0]
+        day_request = panel_builder._day_request(inputs, smoke_day)
+        replay = b0_projection._materialize_replay_inputs(day_request)
+        overlay = loaded.build_day_overlay(day_request, replay, utc_day=smoke_day)
+        if (
+            overlay.params.get("cooldown_v2_snapshot_emitter") is not overlay.snapshot_emitter
+            or overlay.params.get("cooldown_duration_policy_evaluator") is not overlay.compiled_evaluator
+            or overlay.receipt.get("sell_delegates_exact_b0") is not True
+            or overlay.receipt.get("d_plus_1_exact_b0_washout") is not True
+        ):
+            raise RuntimeError("cold day-overlay execution smoke drifted")
+        root = Path(request["runtime_repository_root"]).absolute()
+        origins = {}
+        for name, module in tuple(sys.modules.items()):
+            if not name.startswith(("live", "models", "research", "strategy", "data_paths")):
+                continue
+            raw = getattr(module, "__file__", None)
+            if raw is None:
+                continue
+            origin = Path(raw).absolute()
+            try:
+                relative = origin.relative_to(root).as_posix()
+            except ValueError as exc:
+                raise RuntimeError(f"repo module escaped cold checkout: {name}") from exc
+            origins[name] = relative
+        return {
+            "capability": dict(capability),
+            "owner_private_inputs": dict(contract),
+            "loaded_repo_module_count": len(origins),
+            "loaded_repo_module_origins_sha256": baseline.canonical_sha256(origins),
+            "all_loaded_repo_modules_within_cold_root": True,
+            "day_overlay_smoke": {
+                "utc_day": smoke_day,
+                "artifact_sha256": overlay.receipt["artifact_sha256"],
+                "canonical_day_overlay_sha256": overlay.receipt[
+                    "canonical_day_overlay_sha256"
+                ],
+                "buy_e3_installed": True,
+                "sell_delegates_exact_b0": True,
+                "d_plus_1_exact_b0_washout": True,
+            },
+        }
+    finally:
+        loaded.close()
+with contextlib.redirect_stdout(sys.stderr):
+    output = execute()
+print(json.dumps(output, sort_keys=True, separators=(",", ":"), allow_nan=False))
 """
     request = {
         "runtime_repository_root": str(Path(runtime_repository_root).absolute()),
