@@ -555,6 +555,7 @@ def _formal_lifecycle_context(
     )
     if (
         hashlib.sha256(evidence_raw).hexdigest() != binding.get("identity_evidence_file_sha256")
+        or hashlib.sha256(_epoch_raw).hexdigest() != binding.get("epoch_manifest_file_sha256")
         or not isinstance(action, Mapping)
         or action.get("schema_version") != "narrowgate_action_enablement_identity.v1"
         or safe != SAFE_ACTION_STATE

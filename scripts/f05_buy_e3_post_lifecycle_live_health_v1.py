@@ -358,6 +358,10 @@ def _lifecycle_context(
         raise PostLifecycleLiveHealthError(
             "portable lifecycle admission context is invalid"
         ) from exc
+    if _reopened != payload:
+        raise PostLifecycleLiveHealthError(
+            "portable lifecycle admission context changed during validation"
+        )
     content = _content_projection(
         payload.get("lifecycle_admission"),
         "formal lifecycle admission projection",

@@ -284,6 +284,32 @@ def test_context_rejects_generated_time_before_admission(
         subject.validate_content_projection(payload)
 
 
+def test_formal_context_rejects_epoch_bytes_changed_between_base_and_reopen(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    admission = _actual_formal_tree(tmp_path / "formal-epoch-race")
+    base_payload, base_binding = subject.lifecycle_io._validate_lifecycle_admission(  # noqa: SLF001
+        admission
+    )
+    real_read = subject.lifecycle_io._read_admitted_json  # noqa: SLF001
+
+    def drift_epoch_bytes(path: Path, **kwargs: Any) -> tuple[dict[str, Any], bytes]:
+        payload, raw = real_read(path, **kwargs)
+        if path.name == "epoch_manifest.json":
+            raw += b" "
+        return payload, raw
+
+    monkeypatch.setattr(
+        subject.lifecycle_io,
+        "_validate_lifecycle_admission",
+        lambda _path: (base_payload, base_binding),
+    )
+    monkeypatch.setattr(subject.lifecycle_io, "_read_admitted_json", drift_epoch_bytes)
+    with pytest.raises(subject.LifecycleContextError, match="safe action state drifted"):
+        subject._formal_lifecycle_context(admission)  # noqa: SLF001
+
+
 def test_runtime_checkout_rejects_dirty_and_symlink_components(
     exact_runtime_root: Path,
     tmp_path: Path,

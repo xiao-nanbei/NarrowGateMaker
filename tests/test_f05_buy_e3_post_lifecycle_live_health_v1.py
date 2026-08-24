@@ -581,6 +581,33 @@ def test_lifecycle_context_requires_exact_65_source_map_and_0644(
         )
 
 
+def test_lifecycle_context_rejects_bytes_changed_between_validation_and_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    receipt, _log = _receipt(tmp_path)
+    payload = {
+        "lifecycle_admission": receipt["lifecycle_admission"],
+        "lifecycle_projection": receipt["lifecycle_context"],
+    }
+    reopened = {**payload, "changed_after_validation": True}
+    monkeypatch.setattr(
+        subject.lifecycle_context_v1,
+        "validate_lifecycle_context",
+        lambda _path, **_kwargs: payload,
+    )
+    monkeypatch.setattr(
+        subject,
+        "_private_binding",
+        lambda *_args, **_kwargs: (reopened, receipt["lifecycle_context_receipt"]),
+    )
+    with pytest.raises(subject.PostLifecycleLiveHealthError, match="changed during validation"):
+        subject._lifecycle_context(  # noqa: SLF001
+            Path("/fixture/context.json"),
+            runtime_repository_root=Path.cwd(),
+        )
+
+
 def test_proc_safety_sampler_and_zero_delta_aggregate(tmp_path: Path) -> None:
     proc = tmp_path / "proc"
     (proc / "202").mkdir(parents=True)
