@@ -10,6 +10,29 @@ import pytest
 
 from scripts import f05_buy_e3_cross_host_transport as subject
 
+SOURCE_FROZEN_FINAL = {
+    "execution_commit": subject.FROZEN_FINAL_EXECUTION_COMMIT,
+    "execution_tree": subject.FROZEN_FINAL_EXECUTION_TREE,
+    "annotated_tag": subject.FROZEN_FINAL_ANNOTATED_TAG,
+    "tag_object": subject.FROZEN_FINAL_TAG_OBJECT,
+    "release_schema": subject.FROZEN_FINAL_RELEASE_SCHEMA,
+    "release_status": subject.FROZEN_FINAL_RELEASE_STATUS,
+    "release_file_sha256": subject.FROZEN_FINAL_RELEASE_FILE_SHA256,
+    "release_canonical_sha256": subject.FROZEN_FINAL_RELEASE_CANONICAL_SHA256,
+    "resource_schema": subject.FROZEN_FINAL_RESOURCE_SCHEMA,
+    "resource_status": subject.FROZEN_FINAL_RESOURCE_STATUS,
+    "resource_file_sha256": subject.FROZEN_FINAL_RESOURCE_FILE_SHA256,
+    "resource_canonical_sha256": subject.FROZEN_FINAL_RESOURCE_CANONICAL_SHA256,
+    "active_schema": subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+    "active_status": subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+    "active_file_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256,
+    "active_canonical_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256,
+    "disabled_config_sha256": subject.FROZEN_FINAL_DISABLED_CONFIG_SHA256,
+    "active_config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
+    "resource_path": subject.FROZEN_FINAL_RESOURCE_PATH_PROVENANCE,
+    "active_path": subject.FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE,
+}
+
 
 def _write(path: Path, payload: dict[str, Any], *, mode: int = 0o600) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -42,7 +65,7 @@ def _freeze_final(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "FROZEN_FINAL_RESOURCE_STATUS": "fixture_resource_passed",
         "FROZEN_FINAL_RESOURCE_FILE_SHA256": "6" * 64,
         "FROZEN_FINAL_RESOURCE_CANONICAL_SHA256": "7" * 64,
-        "FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA": "fixture.active.v1",
+        "FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA": "fixture.active.v2",
         "FROZEN_FINAL_ACTIVE_CAPTURE_STATUS": "fixture_active_captured",
         "FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256": "8" * 64,
         "FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256": "9" * 64,
@@ -200,6 +223,57 @@ def test_final_authority_fails_closed_until_v4_is_source_frozen(
     monkeypatch.setattr(subject, "FROZEN_FINAL_RELEASE_FILE_SHA256", "")
     with pytest.raises(subject.CrossHostTransportError, match="not a lowercase SHA256"):
         subject._frozen_final_execution()  # noqa: SLF001
+
+
+def test_final_v4_resource_and_active_identities_are_source_frozen_exact() -> None:
+    assert SOURCE_FROZEN_FINAL == {
+        "execution_commit": "07ef93733a3a685caba945c7761a48473e403072",
+        "execution_tree": "ff505cd81a8eb11f2087d2ae27e7986fd99b0444",
+        "annotated_tag": "f05-owner-buy-e3-direct-live-v4-20260824",
+        "tag_object": "da83fa0b4aed00e4d04ea3faa212b2fb27a81f0d",
+        "release_schema": (
+            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+            "direct_owner_active_release.v2"
+        ),
+        "release_status": "owner_authorized_direct_live_lifecycle_repair_pending_evidence",
+        "release_file_sha256": ("ff888f4b5973563275c2b97e1554d45c9d686ef15d686440bf096521aab17fc2"),
+        "release_canonical_sha256": (
+            "823ca1e4d53e968eb0afc53c4d2cad99cc17aac696548baa1700e800a4579702"
+        ),
+        "resource_schema": (
+            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
+            "current_host_concurrent_resource_gate.v4"
+        ),
+        "resource_status": "fresh_v4_disabled_same_pid_concurrent_gate_passed",
+        "resource_file_sha256": (
+            "94ec4fb7eff48eeb446e001c961e68cec43588391cfe4cac952ef5ce119841ba"
+        ),
+        "resource_canonical_sha256": (
+            "fc859c062131909404263a80c59d289e3b5a6e9854f7d0a09e9564790d93970d"
+        ),
+        "active_schema": (
+            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
+            "fresh_direct_v4_active_process_capture.v2"
+        ),
+        "active_status": "fresh_v4_active_process_captured",
+        "active_file_sha256": ("08a32ab1400ca31671d7dd8ce595341de1e877fa5ac4199e390782f30767953a"),
+        "active_canonical_sha256": (
+            "7c295fcd2ffce4a4598e3e9fc63a0c65d9f9a20f006906a36b8cb5356152a5cf"
+        ),
+        "disabled_config_sha256": (
+            "d08df3958f4243109036555ba60d58c2599d88560990305f176744d62959c7ef"
+        ),
+        "active_config_sha256": (
+            "2f61532126cbe633424476cb093c6c978bab1f935f69a30e06677d677008cae6"
+        ),
+        "resource_path": (
+            "/home/ec2-user/f05-buy-e3-resource-gate-v4-20260824/attempt1/"
+            "current_host_resource_gate.json"
+        ),
+        "active_path": (
+            "/home/ec2-user/f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
+        ),
+    }
 
 
 def test_final_authority_rejects_stale_direct_owner_v1(
@@ -651,7 +725,7 @@ def _remote_fixture(
     )
     monkeypatch.setattr(subject, "_validate_remote_location_binding", lambda *_a, **_k: None)
     monkeypatch.setattr(subject, "_portable_components", lambda **_k: components)
-    monkeypatch.setattr(subject.resource_v3, "host_identity", lambda **_k: host)
+    monkeypatch.setattr(subject.resource_v4, "host_identity", lambda **_k: host)
     recaptured = {
         **stable,
         "captured_utc": "2026-08-24T00:00:00Z",
@@ -698,7 +772,7 @@ def test_remote_attestation_rejects_wrong_host(
 ) -> None:
     _remote_fixture(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        subject.resource_v3,
+        subject.resource_v4,
         "host_identity",
         lambda **_k: {"instance_id": "i-wrong", "instance_type": subject.CURRENT_INSTANCE_TYPE},
     )

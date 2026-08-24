@@ -22,11 +22,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v3 as resource_v3,
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v4 as resource_v4,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as gate_v2,
 )
+from scripts import f05_buy_e3_active_capture_v4 as active_capture_v4
 from scripts import f05_buy_e3_active_release as release_io
 from scripts import f05_buy_e3_evidence_completion as completion
 
@@ -36,34 +37,68 @@ OWNER: Final = completion.OWNER
 # a permissive CLI manifest.  These values remain empty until the direct-v4
 # release/resource/active epoch is complete.  Every authority validator fails
 # closed while any required value is empty.
-FROZEN_FINAL_EXECUTION_COMMIT: Final = ""
-FROZEN_FINAL_EXECUTION_TREE: Final = ""
-FROZEN_FINAL_ANNOTATED_TAG: Final = ""
-FROZEN_FINAL_TAG_OBJECT: Final = ""
+FROZEN_FINAL_EXECUTION_COMMIT: Final = "07ef93733a3a685caba945c7761a48473e403072"
+FROZEN_FINAL_EXECUTION_TREE: Final = "ff505cd81a8eb11f2087d2ae27e7986fd99b0444"
+FROZEN_FINAL_ANNOTATED_TAG: Final = "f05-owner-buy-e3-direct-live-v4-20260824"
+FROZEN_FINAL_TAG_OBJECT: Final = "da83fa0b4aed00e4d04ea3faa212b2fb27a81f0d"
 FROZEN_FINAL_RELEASE_SCHEMA: Final = (
     "causal_multichannel_window_boolean_cooldown_owner_buy_e3_direct_owner_active_release.v2"
 )
 FROZEN_FINAL_RELEASE_STATUS: Final = (
     "owner_authorized_direct_live_lifecycle_repair_pending_evidence"
 )
-FROZEN_FINAL_RELEASE_FILE_SHA256: Final = ""
-FROZEN_FINAL_RELEASE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_RESOURCE_SCHEMA: Final = ""
-FROZEN_FINAL_RESOURCE_STATUS: Final = ""
-FROZEN_FINAL_RESOURCE_FILE_SHA256: Final = ""
-FROZEN_FINAL_RESOURCE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_STATUS: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_DISABLED_CONFIG_SHA256: Final = ""
-FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = ""
+FROZEN_FINAL_RELEASE_FILE_SHA256: Final = (
+    "ff888f4b5973563275c2b97e1554d45c9d686ef15d686440bf096521aab17fc2"
+)
+FROZEN_FINAL_RELEASE_CANONICAL_SHA256: Final = (
+    "823ca1e4d53e968eb0afc53c4d2cad99cc17aac696548baa1700e800a4579702"
+)
+FROZEN_FINAL_RESOURCE_SCHEMA: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
+    "current_host_concurrent_resource_gate.v4"
+)
+FROZEN_FINAL_RESOURCE_STATUS: Final = "fresh_v4_disabled_same_pid_concurrent_gate_passed"
+FROZEN_FINAL_RESOURCE_FILE_SHA256: Final = (
+    "94ec4fb7eff48eeb446e001c961e68cec43588391cfe4cac952ef5ce119841ba"
+)
+FROZEN_FINAL_RESOURCE_CANONICAL_SHA256: Final = (
+    "fc859c062131909404263a80c59d289e3b5a6e9854f7d0a09e9564790d93970d"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
+    "fresh_direct_v4_active_process_capture.v2"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_STATUS: Final = "fresh_v4_active_process_captured"
+FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = (
+    "08a32ab1400ca31671d7dd8ce595341de1e877fa5ac4199e390782f30767953a"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = (
+    "7c295fcd2ffce4a4598e3e9fc63a0c65d9f9a20f006906a36b8cb5356152a5cf"
+)
+FROZEN_FINAL_DISABLED_CONFIG_SHA256: Final = (
+    "d08df3958f4243109036555ba60d58c2599d88560990305f176744d62959c7ef"
+)
+FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
+    "2f61532126cbe633424476cb093c6c978bab1f935f69a30e06677d677008cae6"
+)
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
-FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = ""
-FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = ""
+FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
+    "/home/ec2-user/f05-buy-e3-resource-gate-v4-20260824/attempt1/current_host_resource_gate.json"
+)
+FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
+    "/home/ec2-user/f05-buy-e3-active-capture-v4-20260824/active_process_capture_v2.json"
+)
 # Filled only after the lifecycle-repair supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
-FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT: Final[dict[str, Any] | None] = None
+FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT: Final[dict[str, Any] | None] = {
+    "schema_version": "f05_buy_e3_lifecycle_reject_fix_supplement.v1",
+    "status": "lifecycle_only_runtime_fix_verified_no_economic_change",
+    "file_sha256": "c7a83f37f679ab94f7c0c670d53a43d894295d94cc74927e3a83fd3313336e87",
+    "canonical_field": "canonical_supplement_sha256",
+    "canonical_sha256": "e69c4edb2025937a8569cbedd3163f3ec3b953a17fc904218e4df332dc1f221d",
+    "size_bytes": 43428,
+    "mode": "0600",
+}
 
 REMOTE_ATTESTATION_SCHEMA: Final = f"{OWNER}.remote_active_attestation.v2"
 REMOTE_ATTESTATION_STATUS: Final = "remote_active_process_attested_for_cross_host_transport"
@@ -695,6 +730,14 @@ def _validate_resource(path: Path) -> tuple[dict[str, Any], dict[str, Any], byte
         expected_status=FROZEN_FINAL_RESOURCE_STATUS,
     )
     resource = dict(opened.payload)
+    try:
+        semantically_validated = resource_v4.validate_resource_receipt(path)
+    except Exception as exc:
+        raise CrossHostTransportError(
+            "current-host resource-v4 semantic validation failed"
+        ) from exc
+    if semantically_validated != resource:
+        raise CrossHostTransportError("current-host resource-v4 bytes changed during validation")
     host = resource.get("host")
     authority = resource.get("authority_design")
     deployed = resource.get("exact_deployed_files")
@@ -805,7 +848,23 @@ def _active_runtime_semantics(
         raise CrossHostTransportError("active startup imported an unknown BUY deadline")
     if state.get("e3_deadline_imported") is True and buy_identity == "B0":
         raise CrossHostTransportError("active startup relabeled an E3 deadline as B0")
-    _startup_runtime_sources(runtime)
+    _runtime_source_manifest, runtime_source_files = _startup_runtime_sources(runtime)
+    expected_startup_sources = {
+        str(binding["path"]): str(binding["sha256"])
+        for role, binding in resource_v4.CURRENT_V4_RUNTIME_SOURCE_SHA256.items()
+        if role
+        in {
+            "live_main",
+            "live_config",
+            "live_runtime_policy",
+            "live_ws_handler",
+            "maker_engine",
+            "sell_runtime",
+            "buy_e3_runtime",
+        }
+    }
+    if runtime_source_files != expected_startup_sources:
+        raise CrossHostTransportError("active startup runtime-source bytes drifted from direct-v4")
     return {
         "startup_attestation_sha256": _canonical_sha256(startup),
         "startup_status": "accepted",
@@ -1106,7 +1165,7 @@ def build_remote_active_attestation(
     _validate_remote_location_binding(
         active.get("runtime_authority"), direct_release_path, "final runtime authority"
     )
-    observed_host = resource_v3.host_identity(
+    observed_host = resource_v4.host_identity(
         instance_id=CURRENT_INSTANCE_ID,
         instance_type=CURRENT_INSTANCE_TYPE,
         proc_root=proc_root,
@@ -1402,6 +1461,15 @@ def _validate_source_set(
         direct_release_path, direct_repository_root=direct_repository_root
     )
     resource, resource_binding, _resource_raw = _validate_resource(resource_path)
+    try:
+        semantically_validated_active = active_capture_v4.validate_active_capture(
+            active_path,
+            runtime_repository_root=direct_repository_root,
+            direct_release_path=direct_release_path,
+            resource_receipt_path=resource_path,
+        )
+    except Exception as exc:
+        raise CrossHostTransportError("active-capture-v4 semantic validation failed") from exc
     active, active_binding, _active_raw, _semantics = _validate_active(
         active_path,
         release=release,
@@ -1409,6 +1477,8 @@ def _validate_source_set(
         resource=resource,
         resource_binding=resource_binding,
     )
+    if semantically_validated_active != active:
+        raise CrossHostTransportError("active-capture-v4 bytes changed during validation")
     attestation = validate_remote_active_attestation(
         attestation_path,
         direct_repository_root=direct_repository_root,
