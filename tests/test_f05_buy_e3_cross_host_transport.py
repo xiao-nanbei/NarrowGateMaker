@@ -59,6 +59,8 @@ def _freeze_final(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             "file_sha256": "d" * 64,
             "canonical_field": "canonical_lifecycle_fix_supplement_sha256",
             "canonical_sha256": "e" * 64,
+            "size_bytes": 456,
+            "mode": "0600",
         },
     }
     for name, value in values.items():
@@ -209,6 +211,30 @@ def test_final_authority_rejects_stale_direct_owner_v1(
         "causal_multichannel_window_boolean_cooldown_owner_buy_e3_direct_owner_active_release.v1",
     )
     with pytest.raises(subject.CrossHostTransportError, match="stale direct-owner release v1"):
+        subject._frozen_final_execution()  # noqa: SLF001
+
+
+def test_final_authority_requires_exact_content_only_supplement_binding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subject, "FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT", None)
+    with pytest.raises(subject.CrossHostTransportError, match="supplement is not source-frozen"):
+        subject._frozen_final_execution()  # noqa: SLF001
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT",
+        {
+            "schema_version": "fixture.supplement.v1",
+            "status": "verified",
+            "file_sha256": "a" * 64,
+            "canonical_field": "canonical_sha256",
+            "canonical_sha256": "b" * 64,
+            "size_bytes": 10,
+            "mode": "0600",
+            "path": "/remote/not-content-authority",
+        },
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="supplement is not source-frozen"):
         subject._frozen_final_execution()  # noqa: SLF001
 
 

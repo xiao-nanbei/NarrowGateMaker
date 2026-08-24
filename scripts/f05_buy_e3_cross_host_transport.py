@@ -397,8 +397,14 @@ def _frozen_final_execution() -> dict[str, str]:
         raise CrossHostTransportError("final direct-v4 authority is not source-frozen")
     if FROZEN_FINAL_RELEASE_SCHEMA.endswith(".v1"):
         raise CrossHostTransportError("stale direct-owner release v1 cannot be final authority")
-    if not isinstance(FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT, Mapping) or not dict(
-        FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT
+    if (
+        not isinstance(FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT, Mapping)
+        or set(FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT) != set(CONTENT_BINDING_FIELDS)
+        or _content_from_mapping(
+            FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT,
+            "final lifecycle fix supplement",
+        )
+        != dict(FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT)
     ):
         raise CrossHostTransportError("final lifecycle fix supplement is not source-frozen")
     for value, label in (
