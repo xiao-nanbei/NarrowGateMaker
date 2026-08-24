@@ -80,6 +80,17 @@ V13_PREDECESSOR_FILE_SHA256: Final = (
 V13_RECONCILIATION_VALIDATOR_SHA256: Final = (
     "f93d8215b8c55f5128b136a900c38e47a17092b6c94b00784668f495619bc59b"
 )
+V13_RECONCILIATION_VALIDATOR_RELATIVE: Final = "scripts/f05_reconcile_live_config_locator_v1.py"
+V13_RECONCILIATION_PUBLISHER_SOURCE: Final = MappingProxyType(
+    {
+        "module_route": "scripts.f05_reconcile_live_config_locator_v1",
+        "annotated_tag": "f05-owner-buy-e3-no-shadow-governance-source-v1-final-20260825",
+        "annotated_tag_object": "c320af0903fd595fae46ca51f70a1d042a7569b4",
+        "commit": "214974c0a4a58b45e341c96e7eb8915115b1dfb8",
+        "tree": "8714e665ff591c11ae641c534b1217a595d269f6",
+        "script_sha256": V13_RECONCILIATION_VALIDATOR_SHA256,
+    }
+)
 
 PREDECESSOR_V12_CONFIG_FILE_SHA256: Final = (
     "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
@@ -1923,6 +1934,145 @@ def _resolve_owner_private_inputs(
     )
 
 
+def _capture_v13_reconciliation_publisher(
+    *,
+    publisher_root: Path,
+    publisher_source: Mapping[str, Any],
+    mechanics_runtime_root: Path,
+) -> Mapping[str, Any]:
+    """Bind the old v13 checkout before it can execute any imported code."""
+
+    if dict(publisher_source) != dict(V13_RECONCILIATION_PUBLISHER_SOURCE):
+        raise OwnerBuyE3MechanicsBaselineError("v13 manifest publisher source identity drifted")
+    publisher_root = Path(publisher_root)
+    mechanics_runtime_root = Path(mechanics_runtime_root)
+    _lexical_parts(publisher_root, label="v13 manifest publisher root")
+    _lexical_parts(mechanics_runtime_root, label="mechanics runtime repository root")
+    publisher_fd = _open_trusted_directory(
+        publisher_root,
+        label="v13 manifest publisher root",
+        exact_mode=0o700,
+    )
+    mechanics_fd = _open_trusted_directory(
+        mechanics_runtime_root,
+        label="mechanics runtime repository root",
+        exact_mode=None,
+    )
+    try:
+        publisher_identity = _identity(os.fstat(publisher_fd))
+        mechanics_identity = _identity(os.fstat(mechanics_fd))
+    finally:
+        os.close(mechanics_fd)
+        os.close(publisher_fd)
+    if publisher_identity[:2] == mechanics_identity[:2]:
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 publisher and mechanics runtime roots must be distinct"
+        )
+
+    git_environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("GIT_")
+        and key
+        not in {
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        }
+    }
+    git_environment["GIT_NO_REPLACE_OBJECTS"] = "1"
+    git_environment["GIT_OPTIONAL_LOCKS"] = "0"
+
+    def git_bytes(*arguments: str) -> bytes:
+        try:
+            completed = subprocess.run(
+                ("git", "--no-optional-locks", "-C", str(publisher_root), *arguments),
+                check=True,
+                capture_output=True,
+                env=git_environment,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise OwnerBuyE3MechanicsBaselineError(
+                "v13 publisher Git identity check failed"
+            ) from exc
+        return completed.stdout
+
+    def git_text(*arguments: str) -> str:
+        return git_bytes(*arguments).decode("utf-8").strip()
+
+    expected = V13_RECONCILIATION_PUBLISHER_SOURCE
+    tag_ref = f"refs/tags/{expected['annotated_tag']}"
+
+    def git_binding() -> Mapping[str, Any]:
+        return {
+            "show_toplevel": git_text("rev-parse", "--show-toplevel"),
+            "status": git_text("status", "--porcelain=v1", "--untracked-files=all"),
+            "head": git_text("rev-parse", "HEAD"),
+            "head_tree": git_text("rev-parse", "HEAD^{tree}"),
+            "tag_type": git_text("cat-file", "-t", tag_ref),
+            "tag_object": git_text("rev-parse", tag_ref),
+            "tag_commit": git_text("rev-parse", f"{tag_ref}^{{commit}}"),
+            "tag_tree": git_text("rev-parse", f"{tag_ref}^{{tree}}"),
+            "tagged_validator": git_bytes(
+                "show",
+                f"{expected['tree']}:{V13_RECONCILIATION_VALIDATOR_RELATIVE}",
+            ),
+        }
+
+    git_before = git_binding()
+    if (
+        Path(str(git_before["show_toplevel"])) != publisher_root
+        or git_before["status"]
+        or git_before["head"] != expected["commit"]
+        or git_before["head_tree"] != expected["tree"]
+        or git_before["tag_type"] != "tag"
+        or git_before["tag_object"] != expected["annotated_tag_object"]
+        or git_before["tag_commit"] != expected["commit"]
+        or git_before["tag_tree"] != expected["tree"]
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 publisher Git identity drifted")
+    script = publisher_root / V13_RECONCILIATION_VALIDATOR_RELATIVE
+    script_snapshot = _secure_snapshot(
+        script,
+        expected_sha256=V13_RECONCILIATION_VALIDATOR_SHA256,
+        label="v13 reconciliation validator source",
+        require_mode_0600=False,
+        require_trusted_parent=True,
+        expected_mode=0o644,
+    )
+    tagged_script = git_before["tagged_validator"]
+    if (
+        not isinstance(tagged_script, bytes)
+        or hashlib.sha256(tagged_script).hexdigest() != V13_RECONCILIATION_VALIDATOR_SHA256
+        or tagged_script != script_snapshot.data
+    ):
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 publisher validator worktree/tag binding drifted"
+        )
+    git_after = git_binding()
+    publisher_after_fd = _open_trusted_directory(
+        publisher_root,
+        label="v13 manifest publisher root post-capture",
+        exact_mode=0o700,
+    )
+    try:
+        publisher_after_identity = _identity(os.fstat(publisher_after_fd))
+    finally:
+        os.close(publisher_after_fd)
+    if git_after != git_before or publisher_after_identity != publisher_identity:
+        raise OwnerBuyE3MechanicsBaselineError("v13 publisher changed during capture")
+    return MappingProxyType(
+        {
+            "publisher_root_identity": publisher_identity,
+            "publisher_source": dict(expected),
+            "validator_source_sha256": script_snapshot.sha256,
+            "validator_source_size_bytes": script_snapshot.size_bytes,
+        }
+    )
+
+
 def _validate_committed_v13_reconciliation(
     *,
     runtime_repository_root: Path,
@@ -1958,15 +2108,21 @@ def _validate_committed_v13_reconciliation(
         raise OwnerBuyE3MechanicsBaselineError(
             "v13 reconciliation does not cross-bind the exact v12/active config pair"
         )
-    repository_root = Path(runtime_repository_root).absolute()
-    script = repository_root / "scripts/f05_reconcile_live_config_locator_v1.py"
-    script_snapshot = _secure_snapshot(
-        script,
-        expected_sha256=V13_RECONCILIATION_VALIDATOR_SHA256,
-        label="v13 reconciliation validator source",
-        require_mode_0600=False,
-        expected_mode=0o644,
+    publisher_root_value = manifest.get("publisher_root")
+    publisher_source = manifest.get("publisher_source")
+    if (
+        not isinstance(publisher_root_value, str)
+        or not isinstance(publisher_source, Mapping)
+        or os.fspath(Path(publisher_root_value)) != publisher_root_value
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 manifest publisher source identity drifted")
+    publisher_root = Path(publisher_root_value)
+    publisher_before = _capture_v13_reconciliation_publisher(
+        publisher_root=publisher_root,
+        publisher_source=publisher_source,
+        mechanics_runtime_root=runtime_repository_root,
     )
+    script = publisher_root / V13_RECONCILIATION_VALIDATOR_RELATIVE
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         # The v13 transaction is rooted one level above the owner-private f05
@@ -1995,13 +2151,13 @@ def _validate_committed_v13_reconciliation(
                     f"pycache_prefix={cache}",
                     "-c",
                     bootstrap,
-                    str(repository_root),
+                    str(publisher_root),
                     str(script),
                     "run",
                     "--manifest",
                     str(inputs.v13_reconciliation_manifest),
                 ),
-                cwd=repository_root,
+                cwd=publisher_root,
                 env=environment,
                 check=True,
                 capture_output=True,
@@ -2047,15 +2203,14 @@ def _validate_committed_v13_reconciliation(
         expected_size=manifest_snapshot.size_bytes,
         label="committed v13 reconciliation manifest post-validation",
     )
-    script_after = _secure_snapshot(
-        script,
-        expected_sha256=script_snapshot.sha256,
-        expected_size=script_snapshot.size_bytes,
-        label="v13 reconciliation validator source post-validation",
-        require_mode_0600=False,
-        expected_mode=0o644,
+    publisher_after = _capture_v13_reconciliation_publisher(
+        publisher_root=publisher_root,
+        publisher_source=publisher_source,
+        mechanics_runtime_root=runtime_repository_root,
     )
-    if manifest_after.data != manifest_snapshot.data or script_after.data != script_snapshot.data:
+    if manifest_after.data != manifest_snapshot.data or dict(publisher_after) != dict(
+        publisher_before
+    ):
         raise OwnerBuyE3MechanicsBaselineError(
             "v13 reconciliation authority changed during committed-state validation"
         )
@@ -2070,7 +2225,7 @@ def _validate_committed_v13_reconciliation(
             "receipt_canonical_sha256": _require_sha(
                 receipt.get("canonical_sha256"), "v13 committed receipt canonical SHA256"
             ),
-            "validator_source_sha256": script_snapshot.sha256,
+            "validator_source_sha256": publisher_before["validator_source_sha256"],
             "transaction_committed": True,
         }
     )

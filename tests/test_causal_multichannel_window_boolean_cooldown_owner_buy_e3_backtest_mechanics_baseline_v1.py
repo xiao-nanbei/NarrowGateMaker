@@ -495,20 +495,25 @@ def test_replay_param_projection_never_mutates_process_owner_authority(
     )
 
 
-def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
+@pytest.mark.parametrize("drift_after_child", (False, True))
+def test_v13_committed_gate_uses_manifest_publisher_root_not_mechanics_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    drift_after_child: bool,
 ) -> None:
-    runtime_root = tmp_path / "runtime"
-    script = runtime_root / "scripts" / "f05_reconcile_live_config_locator_v1.py"
+    mechanics_runtime_root = tmp_path / "mechanics-runtime"
+    mechanics_runtime_root.mkdir(mode=0o700)
+    publisher_root = tmp_path / "v13-publisher"
+    publisher_root.mkdir(mode=0o700)
+    script = publisher_root / "scripts" / "f05_reconcile_live_config_locator_v1.py"
     script.parent.mkdir(mode=0o700, parents=True)
-    script.write_bytes(b"# frozen validator\n")
+    frozen_script = (
+        Path(__file__).absolute().parents[1] / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
+    ).read_bytes()
+    script.write_bytes(frozen_script)
     script.chmod(0o644)
-    monkeypatch.setattr(
-        baseline,
-        "V13_RECONCILIATION_VALIDATOR_SHA256",
-        _sha(script.read_bytes()),
-    )
+    script_sha = _sha(script.read_bytes())
+    assert script_sha == baseline.V13_RECONCILIATION_VALIDATOR_SHA256
     durable_root = tmp_path / "durable"
     durable_root.mkdir(mode=0o700)
     v12 = tmp_path / "metadata" / "v12.yaml"
@@ -517,13 +522,15 @@ def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
     v12.parent.mkdir(mode=0o700)
     active.parent.mkdir(mode=0o700)
     manifest_document = {
+        "publisher_root": str(publisher_root.absolute()),
+        "publisher_source": dict(baseline.V13_RECONCILIATION_PUBLISHER_SOURCE),
         "transaction": {
             "outputs": {"backtest_v12_archive": str(v12.absolute())},
             "active_config_source": {
                 "path": str(active.absolute()),
                 "sha256": baseline.ACTIVE_SOURCE_CONFIG_FILE_SHA256,
             },
-        }
+        },
     }
     _private_file(
         manifest,
@@ -533,8 +540,42 @@ def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
     recorded: dict[str, object] = {}
 
     def isolated_run(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        command_tuple = tuple(command)  # type: ignore[arg-type]
+        if command_tuple[0] == "git":
+            git_arguments = command_tuple[4:]
+            tag_ref = f"refs/tags/{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['annotated_tag']}"
+            outputs = {
+                ("rev-parse", "--show-toplevel"): f"{publisher_root}\n".encode("ascii"),
+                ("status", "--porcelain=v1", "--untracked-files=all"): b"",
+                ("rev-parse", "HEAD"): (
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['commit']}\n".encode("ascii")
+                ),
+                ("rev-parse", "HEAD^{tree}"): (
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}\n".encode("ascii")
+                ),
+                ("cat-file", "-t", tag_ref): b"tag\n",
+                ("rev-parse", tag_ref): (
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['annotated_tag_object']}\n".encode(
+                        "ascii"
+                    )
+                ),
+                ("rev-parse", f"{tag_ref}^{{commit}}"): (
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['commit']}\n".encode("ascii")
+                ),
+                ("rev-parse", f"{tag_ref}^{{tree}}"): (
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}\n".encode("ascii")
+                ),
+                (
+                    "show",
+                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}:"
+                    f"{baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE}",
+                ): frozen_script,
+            }
+            assert git_arguments in outputs
+            return subprocess.CompletedProcess(command_tuple, 0, stdout=outputs[git_arguments])
         recorded["command"] = tuple(command)  # type: ignore[arg-type]
         recorded["environment"] = dict(kwargs["env"])  # type: ignore[arg-type]
+        recorded["cwd"] = kwargs["cwd"]
         result = {
             "writes_performed": False,
             "state_before": {
@@ -554,6 +595,9 @@ def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
                 "canonical_sha256": "2" * 64,
             },
         }
+        if drift_after_child:
+            script.write_bytes(b"changed after child execution\n")
+            script.chmod(0o644)
         return subprocess.CompletedProcess(
             command,
             0,
@@ -571,8 +615,17 @@ def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
         parity_evidence_paths=baseline.ParityEvidencePaths(v12, v12, v12, v12, v12, v12),
         relative_locators=MappingProxyType({}),
     )
+    if drift_after_child:
+        with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match="SHA256 drifted"):
+            baseline._validate_committed_v13_reconciliation(
+                runtime_repository_root=mechanics_runtime_root,
+                durable_evidence_root=durable_root,
+                inputs=inputs,
+            )
+        assert recorded["cwd"] == publisher_root
+        return
     observed = baseline._validate_committed_v13_reconciliation(
-        runtime_repository_root=runtime_root,
+        runtime_repository_root=mechanics_runtime_root,
         durable_evidence_root=durable_root,
         inputs=inputs,
     )
@@ -581,7 +634,163 @@ def test_v13_committed_gate_uses_isolated_no_pythonpath_child(
     assert "-I" in command and "-B" in command and "-X" in command
     assert any(str(item).startswith("pycache_prefix=") for item in command)
     assert "PYTHONPATH" not in environment
+    assert recorded["cwd"] == publisher_root
+    assert str(publisher_root) in command
+    assert str(script) in command
+    assert str(mechanics_runtime_root) not in command
     assert observed["transaction_committed"] is True
+
+
+@pytest.mark.parametrize(
+    ("drift", "error"),
+    (
+        ("publisher_source_tag", "publisher source identity drifted"),
+        ("publisher_source_tree", "publisher source identity drifted"),
+        ("publisher_source_sha", "publisher source identity drifted"),
+        ("publisher_root_symlink", "symlink"),
+    ),
+)
+def test_v13_committed_gate_rejects_manifest_publisher_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    error: str,
+) -> None:
+    mechanics_runtime_root = tmp_path / "mechanics-runtime"
+    mechanics_runtime_root.mkdir(mode=0o700)
+    publisher_root = tmp_path / "v13-publisher"
+    publisher_root.mkdir(mode=0o700)
+    script = publisher_root / "scripts/f05_reconcile_live_config_locator_v1.py"
+    script.parent.mkdir(mode=0o700)
+    script.write_bytes(
+        (
+            Path(__file__).absolute().parents[1] / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
+        ).read_bytes()
+    )
+    script.chmod(0o644)
+    script_sha = _sha(script.read_bytes())
+    assert script_sha == baseline.V13_RECONCILIATION_VALIDATOR_SHA256
+
+    publisher_locator = publisher_root
+    if drift == "publisher_root_symlink":
+        publisher_locator = tmp_path / "v13-publisher-link"
+        publisher_locator.symlink_to(publisher_root, target_is_directory=True)
+    publisher_source = dict(baseline.V13_RECONCILIATION_PUBLISHER_SOURCE)
+    if drift == "publisher_source_tag":
+        publisher_source["annotated_tag"] = "wrong-v13-tag"
+    elif drift == "publisher_source_tree":
+        publisher_source["tree"] = "0" * 40
+    elif drift == "publisher_source_sha":
+        publisher_source["script_sha256"] = "0" * 64
+    durable_root = tmp_path / "durable"
+    durable_root.mkdir(mode=0o700)
+    v12 = tmp_path / "metadata/v12.yaml"
+    active = durable_root / "inputs/active.yaml"
+    manifest = durable_root / "inputs/v13-manifest.json"
+    manifest_document = {
+        "publisher_root": str(publisher_locator.absolute()),
+        "publisher_source": publisher_source,
+        "transaction": {
+            "outputs": {"backtest_v12_archive": str(v12.absolute())},
+            "active_config_source": {
+                "path": str(active.absolute()),
+                "sha256": baseline.ACTIVE_SOURCE_CONFIG_FILE_SHA256,
+            },
+        },
+    }
+    _private_file(manifest, json.dumps(manifest_document, sort_keys=True).encode("ascii"))
+    inputs = baseline.OwnerPrivateInputs(
+        v13_reconciliation_manifest=manifest,
+        predecessor_v12_config=v12,
+        active_source_config=active,
+        e3_artifact_paths=baseline.ExactE3ArtifactPaths(active, active, active),
+        b0_artifact_paths=baseline.ExactB0ArtifactPaths(v12, v12),
+        parity_evidence_paths=baseline.ParityEvidencePaths(v12, v12, v12, v12, v12, v12),
+        relative_locators=MappingProxyType({}),
+    )
+    monkeypatch.setattr(
+        baseline.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("publisher drift must fail before child execution"),
+    )
+    with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match=error):
+        baseline._validate_committed_v13_reconciliation(
+            runtime_repository_root=mechanics_runtime_root,
+            durable_evidence_root=durable_root,
+            inputs=inputs,
+        )
+
+
+def test_v13_publisher_capture_rejects_mechanics_root_same_inode(tmp_path: Path) -> None:
+    publisher_root = tmp_path / "publisher"
+    publisher_root.mkdir(mode=0o700)
+    with pytest.raises(
+        baseline.OwnerBuyE3MechanicsBaselineError,
+        match="must be distinct",
+    ):
+        baseline._capture_v13_reconciliation_publisher(
+            publisher_root=publisher_root,
+            publisher_source=baseline.V13_RECONCILIATION_PUBLISHER_SOURCE,
+            mechanics_runtime_root=publisher_root,
+        )
+
+
+@pytest.mark.parametrize("drift", ("dirty", "head_tree", "tag_tree", "tagged_blob"))
+def test_v13_publisher_capture_rejects_git_or_tagged_source_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    mechanics_root = tmp_path / "mechanics"
+    mechanics_root.mkdir(mode=0o700)
+    publisher_root = tmp_path / "publisher"
+    publisher_root.mkdir(mode=0o700)
+    script = publisher_root / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
+    script.parent.mkdir(mode=0o700)
+    frozen_script = (
+        Path(__file__).absolute().parents[1] / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
+    ).read_bytes()
+    script.write_bytes(frozen_script)
+    script.chmod(0o644)
+    source = baseline.V13_RECONCILIATION_PUBLISHER_SOURCE
+    tag_ref = f"refs/tags/{source['annotated_tag']}"
+
+    def git_run(command: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        command_tuple = tuple(command)  # type: ignore[arg-type]
+        git_arguments = command_tuple[4:]
+        outputs = {
+            ("rev-parse", "--show-toplevel"): f"{publisher_root}\n".encode("ascii"),
+            ("status", "--porcelain=v1", "--untracked-files=all"): (
+                b"?? unexpected.py\n" if drift == "dirty" else b""
+            ),
+            ("rev-parse", "HEAD"): f"{source['commit']}\n".encode("ascii"),
+            ("rev-parse", "HEAD^{tree}"): (
+                f"{'0' * 40 if drift == 'head_tree' else source['tree']}\n".encode("ascii")
+            ),
+            ("cat-file", "-t", tag_ref): b"tag\n",
+            ("rev-parse", tag_ref): f"{source['annotated_tag_object']}\n".encode("ascii"),
+            ("rev-parse", f"{tag_ref}^{{commit}}"): f"{source['commit']}\n".encode("ascii"),
+            ("rev-parse", f"{tag_ref}^{{tree}}"): (
+                f"{'0' * 40 if drift == 'tag_tree' else source['tree']}\n".encode("ascii")
+            ),
+            (
+                "show",
+                f"{source['tree']}:{baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE}",
+            ): b"wrong tagged bytes\n" if drift == "tagged_blob" else frozen_script,
+        }
+        assert git_arguments in outputs
+        return subprocess.CompletedProcess(command_tuple, 0, stdout=outputs[git_arguments])
+
+    monkeypatch.setattr(baseline.subprocess, "run", git_run)
+    with pytest.raises(
+        baseline.OwnerBuyE3MechanicsBaselineError,
+        match="Git identity drifted|worktree/tag binding drifted",
+    ):
+        baseline._capture_v13_reconciliation_publisher(
+            publisher_root=publisher_root,
+            publisher_source=source,
+            mechanics_runtime_root=mechanics_root,
+        )
 
 
 def _fake_factory(
