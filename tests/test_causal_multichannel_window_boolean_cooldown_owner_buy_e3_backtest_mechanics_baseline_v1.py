@@ -495,118 +495,24 @@ def test_replay_param_projection_never_mutates_process_owner_authority(
     )
 
 
-@pytest.mark.parametrize("drift_after_child", (False, True))
-def test_v13_committed_gate_uses_manifest_publisher_root_not_mechanics_root(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    drift_after_child: bool,
-) -> None:
-    mechanics_runtime_root = tmp_path / "mechanics-runtime"
-    mechanics_runtime_root.mkdir(mode=0o700)
-    publisher_root = tmp_path / "v13-publisher"
-    publisher_root.mkdir(mode=0o700)
-    script = publisher_root / "scripts" / "f05_reconcile_live_config_locator_v1.py"
-    script.parent.mkdir(mode=0o700, parents=True)
-    frozen_script = (
-        Path(__file__).absolute().parents[1] / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
-    ).read_bytes()
-    script.write_bytes(frozen_script)
-    script.chmod(0o644)
-    script_sha = _sha(script.read_bytes())
-    assert script_sha == baseline.V13_RECONCILIATION_VALIDATOR_SHA256
-    durable_root = tmp_path / "durable"
-    durable_root.mkdir(mode=0o700)
-    v12 = tmp_path / "metadata" / "v12.yaml"
-    active = durable_root / "inputs" / "active.yaml"
-    manifest = durable_root / "inputs" / "v13-manifest.json"
-    v12.parent.mkdir(mode=0o700)
-    active.parent.mkdir(mode=0o700)
-    manifest_document = {
-        "publisher_root": str(publisher_root.absolute()),
-        "publisher_source": dict(baseline.V13_RECONCILIATION_PUBLISHER_SOURCE),
-        "transaction": {
-            "outputs": {"backtest_v12_archive": str(v12.absolute())},
-            "active_config_source": {
-                "path": str(active.absolute()),
-                "sha256": baseline.ACTIVE_SOURCE_CONFIG_FILE_SHA256,
-            },
-        },
-    }
-    _private_file(
-        manifest,
-        json.dumps(manifest_document, sort_keys=True).encode("ascii"),
-    )
-    manifest_raw = manifest.read_bytes()
-    recorded: dict[str, object] = {}
-
-    def isolated_run(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-        command_tuple = tuple(command)  # type: ignore[arg-type]
-        if command_tuple[0] == "git":
-            git_arguments = command_tuple[4:]
-            tag_ref = f"refs/tags/{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['annotated_tag']}"
-            outputs = {
-                ("rev-parse", "--show-toplevel"): f"{publisher_root}\n".encode("ascii"),
-                ("status", "--porcelain=v1", "--untracked-files=all"): b"",
-                ("rev-parse", "HEAD"): (
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['commit']}\n".encode("ascii")
-                ),
-                ("rev-parse", "HEAD^{tree}"): (
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}\n".encode("ascii")
-                ),
-                ("cat-file", "-t", tag_ref): b"tag\n",
-                ("rev-parse", tag_ref): (
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['annotated_tag_object']}\n".encode(
-                        "ascii"
-                    )
-                ),
-                ("rev-parse", f"{tag_ref}^{{commit}}"): (
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['commit']}\n".encode("ascii")
-                ),
-                ("rev-parse", f"{tag_ref}^{{tree}}"): (
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}\n".encode("ascii")
-                ),
-                (
-                    "show",
-                    f"{baseline.V13_RECONCILIATION_PUBLISHER_SOURCE['tree']}:"
-                    f"{baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE}",
-                ): frozen_script,
-            }
-            assert git_arguments in outputs
-            return subprocess.CompletedProcess(command_tuple, 0, stdout=outputs[git_arguments])
-        recorded["command"] = tuple(command)  # type: ignore[arg-type]
-        recorded["environment"] = dict(kwargs["env"])  # type: ignore[arg-type]
-        recorded["cwd"] = kwargs["cwd"]
-        result = {
-            "writes_performed": False,
-            "state_before": {
-                "immutable": {"archive": "published_nlink1"},
-                "receipt": "published_nlink1",
-                "stable_alias": "successor",
-                "pointer": "successor",
-                "catalog": "successor",
-                "pending": {"archive": "absent"},
-            },
-            "manifest": {
-                "file_sha256": _sha(manifest_raw),
-                "size_bytes": len(manifest_raw),
-            },
-            "receipt": {
-                "file_sha256": "1" * 64,
-                "canonical_sha256": "2" * 64,
-            },
-        }
-        if drift_after_child:
-            script.write_bytes(b"changed after child execution\n")
-            script.chmod(0o644)
-        return subprocess.CompletedProcess(
-            command,
-            0,
-            stdout=json.dumps(result, sort_keys=True).encode("ascii"),
-            stderr=b"",
-        )
-
-    monkeypatch.setattr(baseline.subprocess, "run", isolated_run)
-    inputs = baseline.OwnerPrivateInputs(
+def _formal_v13_owner_inputs() -> tuple[Path, baseline.OwnerPrivateInputs]:
+    root_value = os.environ.get(baseline.PRIVATE_EVIDENCE_ROOT_ENV, "").strip()
+    if not root_value:
+        pytest.skip("formal owner-private evidence root is not configured")
+    root = Path(root_value)
+    matches = [
+        path
+        for path in root.rglob("reconciliation_manifest_v1_final.json")
+        if path.is_file() and _sha(path.read_bytes()) == baseline.V13_COMMITTED_MANIFEST_FILE_SHA256
+    ]
+    if len(matches) != 1:
+        pytest.skip("exact formal v13 reconciliation manifest is unavailable")
+    manifest = matches[0]
+    document = json.loads(manifest.read_text(encoding="ascii"))
+    outputs = document["transaction"]["outputs"]
+    active = Path(document["transaction"]["active_config_source"]["path"])
+    v12 = Path(outputs["backtest_v12_archive"])
+    return root, baseline.OwnerPrivateInputs(
         v13_reconciliation_manifest=manifest,
         predecessor_v12_config=v12,
         active_source_config=active,
@@ -615,110 +521,214 @@ def test_v13_committed_gate_uses_manifest_publisher_root_not_mechanics_root(
         parity_evidence_paths=baseline.ParityEvidencePaths(v12, v12, v12, v12, v12, v12),
         relative_locators=MappingProxyType({}),
     )
-    if drift_after_child:
-        with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match="SHA256 drifted"):
-            baseline._validate_committed_v13_reconciliation(
-                runtime_repository_root=mechanics_runtime_root,
-                durable_evidence_root=durable_root,
-                inputs=inputs,
-            )
-        assert recorded["cwd"] == publisher_root
-        return
+
+
+def test_v13_committed_gate_accepts_exact_outputs_on_successor_metadata_head(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    durable_root, inputs = _formal_v13_owner_inputs()
+    runtime_root = Path(__file__).absolute().parents[1]
+    manifest = json.loads(inputs.v13_reconciliation_manifest.read_text(encoding="ascii"))
+    metadata_root = Path(manifest["metadata_repository_root"])
+    real_run = subprocess.run
+    head = real_run(
+        ("git", "-C", str(metadata_root), "rev-parse", "HEAD"),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    assert head != baseline.V13_RECONCILIATION_PUBLISHER_SOURCE["commit"]
+    commands: list[tuple[object, ...]] = []
+
+    def record_run(command: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
+        command_tuple = tuple(command)  # type: ignore[arg-type]
+        commands.append(command_tuple)
+        return real_run(command, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(baseline.subprocess, "run", record_run)
     observed = baseline._validate_committed_v13_reconciliation(
-        runtime_repository_root=mechanics_runtime_root,
+        runtime_repository_root=runtime_root,
         durable_evidence_root=durable_root,
         inputs=inputs,
     )
-    command = recorded["command"]
-    environment = recorded["environment"]
-    assert "-I" in command and "-B" in command and "-X" in command
-    assert any(str(item).startswith("pycache_prefix=") for item in command)
-    assert "PYTHONPATH" not in environment
-    assert recorded["cwd"] == publisher_root
-    assert str(publisher_root) in command
-    assert str(script) in command
-    assert str(mechanics_runtime_root) not in command
-    assert observed["transaction_committed"] is True
-
-
-@pytest.mark.parametrize(
-    ("drift", "error"),
-    (
-        ("publisher_source_tag", "publisher source identity drifted"),
-        ("publisher_source_tree", "publisher source identity drifted"),
-        ("publisher_source_sha", "publisher source identity drifted"),
-        ("publisher_root_symlink", "symlink"),
-    ),
-)
-def test_v13_committed_gate_rejects_manifest_publisher_drift(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    drift: str,
-    error: str,
-) -> None:
-    mechanics_runtime_root = tmp_path / "mechanics-runtime"
-    mechanics_runtime_root.mkdir(mode=0o700)
-    publisher_root = tmp_path / "v13-publisher"
-    publisher_root.mkdir(mode=0o700)
-    script = publisher_root / "scripts/f05_reconcile_live_config_locator_v1.py"
-    script.parent.mkdir(mode=0o700)
-    script.write_bytes(
-        (
-            Path(__file__).absolute().parents[1] / baseline.V13_RECONCILIATION_VALIDATOR_RELATIVE
-        ).read_bytes()
-    )
-    script.chmod(0o644)
-    script_sha = _sha(script.read_bytes())
-    assert script_sha == baseline.V13_RECONCILIATION_VALIDATOR_SHA256
-
-    publisher_locator = publisher_root
-    if drift == "publisher_root_symlink":
-        publisher_locator = tmp_path / "v13-publisher-link"
-        publisher_locator.symlink_to(publisher_root, target_is_directory=True)
-    publisher_source = dict(baseline.V13_RECONCILIATION_PUBLISHER_SOURCE)
-    if drift == "publisher_source_tag":
-        publisher_source["annotated_tag"] = "wrong-v13-tag"
-    elif drift == "publisher_source_tree":
-        publisher_source["tree"] = "0" * 40
-    elif drift == "publisher_source_sha":
-        publisher_source["script_sha256"] = "0" * 64
-    durable_root = tmp_path / "durable"
-    durable_root.mkdir(mode=0o700)
-    v12 = tmp_path / "metadata/v12.yaml"
-    active = durable_root / "inputs/active.yaml"
-    manifest = durable_root / "inputs/v13-manifest.json"
-    manifest_document = {
-        "publisher_root": str(publisher_locator.absolute()),
-        "publisher_source": publisher_source,
-        "transaction": {
-            "outputs": {"backtest_v12_archive": str(v12.absolute())},
-            "active_config_source": {
-                "path": str(active.absolute()),
-                "sha256": baseline.ACTIVE_SOURCE_CONFIG_FILE_SHA256,
-            },
-        },
+    assert observed == {
+        "manifest_file_sha256": baseline.V13_COMMITTED_MANIFEST_FILE_SHA256,
+        "manifest_size_bytes": baseline.V13_COMMITTED_MANIFEST_SIZE_BYTES,
+        "manifest_canonical_sha256": baseline.V13_COMMITTED_MANIFEST_MAPPING_SHA256,
+        "receipt_file_sha256": baseline.V13_COMMITTED_RECEIPT_FILE_SHA256,
+        "receipt_canonical_sha256": baseline.V13_COMMITTED_RECEIPT_DOCUMENT_SHA256,
+        "validator_source_sha256": baseline.V13_RECONCILIATION_VALIDATOR_SHA256,
+        "transaction_committed": True,
     }
-    _private_file(manifest, json.dumps(manifest_document, sort_keys=True).encode("ascii"))
-    inputs = baseline.OwnerPrivateInputs(
-        v13_reconciliation_manifest=manifest,
-        predecessor_v12_config=v12,
-        active_source_config=active,
-        e3_artifact_paths=baseline.ExactE3ArtifactPaths(active, active, active),
-        b0_artifact_paths=baseline.ExactB0ArtifactPaths(v12, v12),
-        parity_evidence_paths=baseline.ParityEvidencePaths(v12, v12, v12, v12, v12, v12),
-        relative_locators=MappingProxyType({}),
-    )
-    monkeypatch.setattr(
-        baseline.subprocess,
-        "run",
-        lambda *_args, **_kwargs: pytest.fail("publisher drift must fail before child execution"),
-    )
-    with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match=error):
+    assert commands
+    assert all(command[0] == "git" for command in commands)
+    assert all(str(metadata_root) not in command for command in commands)
+
+
+@pytest.mark.parametrize("role", tuple(baseline.V13_COMMITTED_OUTPUT_BINDINGS))
+def test_v13_committed_gate_rejects_each_output_drift_without_writing(
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+) -> None:
+    durable_root, inputs = _formal_v13_owner_inputs()
+    runtime_root = Path(__file__).absolute().parents[1]
+    secure_snapshot = baseline._secure_snapshot
+
+    def drift_snapshot(path: Path, **kwargs: object) -> object:
+        if kwargs.get("label") == f"v13 committed output {role}":
+            raise baseline.OwnerBuyE3MechanicsBaselineError(
+                f"v13 committed output {role} SHA256 drifted"
+            )
+        return secure_snapshot(path, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(baseline, "_secure_snapshot", drift_snapshot)
+    with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match="SHA256 drifted"):
         baseline._validate_committed_v13_reconciliation(
-            runtime_repository_root=mechanics_runtime_root,
+            runtime_repository_root=runtime_root,
             durable_evidence_root=durable_root,
             inputs=inputs,
         )
+
+
+@pytest.mark.parametrize(
+    ("target", "error"),
+    (
+        ("reconciliation_receipt", "receipt cross-binding drifted"),
+        ("current_remote_pointer", "pointer successor identity drifted"),
+        ("current_catalog", "unchanged predecessor row drifted"),
+    ),
+)
+def test_v13_committed_gate_rejects_rehashed_structural_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    error: str,
+) -> None:
+    durable_root, inputs = _formal_v13_owner_inputs()
+    runtime_root = Path(__file__).absolute().parents[1]
+    manifest = json.loads(inputs.v13_reconciliation_manifest.read_text(encoding="ascii"))
+    target_path = Path(manifest["transaction"]["outputs"][target])
+    document = json.loads(target_path.read_text(encoding="ascii"))
+    if target == "reconciliation_receipt":
+        document["permissions"]["research"] = True
+        canonical_field = baseline.V13_COMMITTED_RECEIPT_CANONICAL_FIELD
+        document[canonical_field] = baseline.document_sha256(document, canonical_field)
+    elif target == "current_remote_pointer":
+        document["current_activation_receipt"]["tampered"] = True
+    else:
+        current_ids = {
+            manifest["transaction"]["artifact_ids"]["current_config"],
+            manifest["transaction"]["artifact_ids"]["current_pointer"],
+        }
+        unchanged = next(
+            row for row in document["entries"] if row["artifact_id"] not in current_ids
+        )
+        unchanged["notes"] = "rehashed structural drift"
+    raw = (json.dumps(document, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode(
+        "ascii"
+    )
+    digest = _sha(raw)
+    bindings = dict(baseline.V13_COMMITTED_OUTPUT_BINDINGS)
+    bindings[target] = (digest, len(raw))
+    monkeypatch.setattr(baseline, "V13_COMMITTED_OUTPUT_BINDINGS", bindings)
+    if target == "reconciliation_receipt":
+        monkeypatch.setattr(baseline, "V13_COMMITTED_RECEIPT_FILE_SHA256", digest)
+        monkeypatch.setattr(baseline, "V13_COMMITTED_RECEIPT_SIZE_BYTES", len(raw))
+        monkeypatch.setattr(
+            baseline,
+            "V13_COMMITTED_RECEIPT_DOCUMENT_SHA256",
+            document[baseline.V13_COMMITTED_RECEIPT_CANONICAL_FIELD],
+        )
+        monkeypatch.setattr(
+            baseline, "V13_COMMITTED_RECEIPT_MAPPING_SHA256", baseline.canonical_sha256(document)
+        )
+    elif target == "current_remote_pointer":
+        monkeypatch.setattr(
+            baseline, "V13_SUCCESSOR_POINTER_MAPPING_SHA256", baseline.canonical_sha256(document)
+        )
+    else:
+        monkeypatch.setattr(
+            baseline, "V13_SUCCESSOR_CATALOG_MAPPING_SHA256", baseline.canonical_sha256(document)
+        )
+    secure_snapshot = baseline._secure_snapshot
+
+    def substituted_snapshot(path: Path, **kwargs: object) -> object:
+        if kwargs.get("label") == f"v13 committed output {target}":
+            return baseline._Snapshot(
+                data=raw,
+                sha256=digest,
+                size_bytes=len(raw),
+                identity=baseline._identity(target_path.stat()),
+            )
+        return secure_snapshot(path, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(baseline, "_secure_snapshot", substituted_snapshot)
+    with pytest.raises(baseline.OwnerBuyE3MechanicsBaselineError, match=error):
+        baseline._validate_committed_v13_reconciliation(
+            runtime_repository_root=runtime_root,
+            durable_evidence_root=durable_root,
+            inputs=inputs,
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "kind"),
+    (
+        ("backtest_v12_archive", "create"),
+        ("release_v3_versioned_config", "create"),
+        ("predecessor_pointer_snapshot", "create"),
+        ("predecessor_catalog_snapshot", "create"),
+        ("reconciliation_receipt", "create"),
+        ("stable_live_config_alias", "alias"),
+        ("current_remote_pointer", "pointer"),
+        ("current_catalog", "catalog"),
+    ),
+)
+@pytest.mark.parametrize("residue", ("pending", "staging"))
+def test_v13_committed_gate_rejects_each_transaction_residue(
+    tmp_path: Path,
+    role: str,
+    kind: str,
+    residue: str,
+) -> None:
+    private = tmp_path / "metadata/docs/private"
+    private.mkdir(mode=0o700, parents=True)
+    roles = {
+        output_role: private / f"{output_role}.json"
+        for output_role in baseline.V13_COMMITTED_OUTPUT_BINDINGS
+    }
+    final = roles[role]
+    if residue == "pending":
+        name = f".{final.name}.{kind}-pending-config-reconciliation-v1"
+    else:
+        name = f".{final.name}.{kind}-staging-{'a' * 32}-uncommitted-config-reconciliation-v1"
+    _private_file(private / name, b"uncommitted")
+    descriptor = os.open(private, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        with pytest.raises(
+            baseline.OwnerBuyE3MechanicsBaselineError,
+            match="pending or staging residue",
+        ):
+            baseline._v13_reject_transaction_residue(descriptor, roles)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize("residue", ("pending", "staging"))
+def test_v13_committed_gate_rejects_manifest_residue(
+    tmp_path: Path,
+    residue: str,
+) -> None:
+    manifest = _private_file(tmp_path / "formal/manifest.json", b"{}\n")
+    if residue == "pending":
+        name = ".manifest.json.create-pending-config-reconciliation-v1"
+    else:
+        name = f".manifest.json.manifest-staging-{'a' * 32}-uncommitted-config-reconciliation-v1"
+    _private_file(manifest.parent / name, b"uncommitted")
+    with pytest.raises(
+        baseline.OwnerBuyE3MechanicsBaselineError,
+        match="manifest has pending or staging residue",
+    ):
+        baseline._v13_reject_manifest_residue(manifest)
 
 
 def test_v13_publisher_capture_rejects_mechanics_root_same_inode(tmp_path: Path) -> None:

@@ -91,6 +91,90 @@ V13_RECONCILIATION_PUBLISHER_SOURCE: Final = MappingProxyType(
         "script_sha256": V13_RECONCILIATION_VALIDATOR_SHA256,
     }
 )
+V13_COMMITTED_MANIFEST_SCHEMA: Final = (
+    "f05_buy_e3_current_config_locator_reconciliation_manifest.v1"
+)
+V13_COMMITTED_MANIFEST_STATUS: Final = "release_v3_no_shadow_config_locator_inputs_frozen"
+V13_COMMITTED_MANIFEST_CANONICAL_FIELD: Final = (
+    "canonical_config_locator_reconciliation_manifest_sha256"
+)
+V13_COMMITTED_MANIFEST_FILE_SHA256: Final = (
+    "34b5d05241409bc4962da3d2928a05546c67df46ee863d15f596375742f264ee"
+)
+V13_COMMITTED_MANIFEST_SIZE_BYTES: Final = 497_382
+V13_COMMITTED_MANIFEST_DOCUMENT_SHA256: Final = (
+    "0d3453402f53b6c1b8d541d05707bf1977435a76e1c4046a8924aff289df48be"
+)
+V13_COMMITTED_MANIFEST_MAPPING_SHA256: Final = (
+    "37b97bed150e1ca8d7b36ce2473cf0fc2a1079c299f832b8ec8288932a97e992"
+)
+V13_COMMITTED_RECEIPT_SCHEMA: Final = (
+    "narrowgate.current_live_config_locator_reconciliation_receipt.v1"
+)
+V13_COMMITTED_RECEIPT_STATUS: Final = (
+    "completed_release_v3_no_shadow_current_config_locator_reconciled"
+)
+V13_COMMITTED_RECEIPT_CANONICAL_FIELD: Final = (
+    "canonical_current_live_config_locator_reconciliation_receipt_sha256"
+)
+V13_COMMITTED_RECEIPT_FILE_SHA256: Final = (
+    "9e1686f6f024ef0f1bd1892813d87baeb619f0ad44840b7f6872f513dcebc3b0"
+)
+V13_COMMITTED_RECEIPT_SIZE_BYTES: Final = 500_530
+V13_COMMITTED_RECEIPT_DOCUMENT_SHA256: Final = (
+    "aaebc245cf33005d9eaabb1d7fffc5d8da949ce978d681310bb75aa793ab0313"
+)
+V13_COMMITTED_RECEIPT_MAPPING_SHA256: Final = (
+    "84c01fc195f2e49973d7108c93edeb2d89041d63f0f5f5470b06fc7be45d76e6"
+)
+V13_PREDECESSOR_POINTER_MAPPING_SHA256: Final = (
+    "8680269077d5bdb308223cbfaa568e8d4a217848f2d6828b0aec49837133b6b9"
+)
+V13_PREDECESSOR_CATALOG_MAPPING_SHA256: Final = (
+    "3238914fa790c3fa457ef09a4b81d4244c32c623bbbd191545d6c6bb03a77aa7"
+)
+V13_SUCCESSOR_POINTER_MAPPING_SHA256: Final = (
+    "0d3fcc8abc13b84fcf222bf0f799a42a71790226c5cb09042965d5a24fbe0e20"
+)
+V13_SUCCESSOR_CATALOG_MAPPING_SHA256: Final = (
+    "8e4492f08105a1555f0222313d6eac30f6cd57ab3b52151b51eb8482e8e531e7"
+)
+V13_COMMITTED_OUTPUT_BINDINGS: Final = MappingProxyType(
+    {
+        "backtest_v12_archive": (
+            "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85",
+            26_443,
+        ),
+        "release_v3_versioned_config": (
+            "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e",
+            27_443,
+        ),
+        "predecessor_pointer_snapshot": (
+            "26b1d8bfe44e03fd511023e8cea2563861b369f1f04c1df8d8d39a16e4ac0906",
+            44_813,
+        ),
+        "predecessor_catalog_snapshot": (
+            "0b9c9d930681ad677afa3cd8de03d7582afcb4456f2013841df7fa40c777e4a7",
+            1_389_789,
+        ),
+        "reconciliation_receipt": (
+            V13_COMMITTED_RECEIPT_FILE_SHA256,
+            V13_COMMITTED_RECEIPT_SIZE_BYTES,
+        ),
+        "stable_live_config_alias": (
+            "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e",
+            27_443,
+        ),
+        "current_remote_pointer": (
+            "4da90f776e845856b2b7eca300bad37d83aeabdc2c4542b30f9acd41a4981fef",
+            47_743,
+        ),
+        "current_catalog": (
+            "d42d6bbea212c8b156ac89ce468350258c81888f1a61a9a3ae33d006c533fd00",
+            1_394_826,
+        ),
+    }
+)
 
 PREDECESSOR_V12_CONFIG_FILE_SHA256: Final = (
     "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
@@ -532,6 +616,7 @@ class _Snapshot:
     sha256: str
     size_bytes: int
     document: Mapping[str, Any] | None = None
+    identity: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -746,7 +831,12 @@ def _secure_snapshot(
         digest = hashlib.sha256(data).hexdigest()
         if expected is not None and digest != expected:
             raise OwnerBuyE3MechanicsBaselineError(f"{label} SHA256 drifted")
-        return _Snapshot(data=data, sha256=digest, size_bytes=len(data))
+        return _Snapshot(
+            data=data,
+            sha256=digest,
+            size_bytes=len(data),
+            identity=_identity(before),
+        )
     finally:
         for descriptor in reversed(descriptors):
             try:
@@ -1939,6 +2029,7 @@ def _capture_v13_reconciliation_publisher(
     publisher_root: Path,
     publisher_source: Mapping[str, Any],
     mechanics_runtime_root: Path,
+    tracked_successor_files: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any]:
     """Bind the old v13 checkout before it can execute any imported code."""
 
@@ -2004,6 +2095,24 @@ def _capture_v13_reconciliation_publisher(
 
     expected = V13_RECONCILIATION_PUBLISHER_SOURCE
     tag_ref = f"refs/tags/{expected['annotated_tag']}"
+    tracked: dict[str, str] = {}
+    if tracked_successor_files is not None:
+        for relative, digest in tracked_successor_files.items():
+            if (
+                not isinstance(relative, str)
+                or not relative
+                or PurePosixPath(relative).is_absolute()
+                or PurePosixPath(relative).as_posix() != relative
+                or any(part in {"", ".", "..", ".git"} for part in PurePosixPath(relative).parts)
+            ):
+                raise OwnerBuyE3MechanicsBaselineError(
+                    "v13 tracked successor source locator is unsafe"
+                )
+            tracked[relative] = _require_sha(digest, f"v13 tracked successor {relative}")
+        if not tracked:
+            raise OwnerBuyE3MechanicsBaselineError(
+                "v13 tracked successor source binding is missing"
+            )
 
     def git_binding() -> Mapping[str, Any]:
         return {
@@ -2019,6 +2128,12 @@ def _capture_v13_reconciliation_publisher(
                 "show",
                 f"{expected['tree']}:{V13_RECONCILIATION_VALIDATOR_RELATIVE}",
             ),
+            "tracked_successor_sha256": {
+                relative: hashlib.sha256(
+                    git_bytes("show", f"{expected['tree']}:{relative}")
+                ).hexdigest()
+                for relative in sorted(tracked)
+            },
         }
 
     git_before = git_binding()
@@ -2031,6 +2146,7 @@ def _capture_v13_reconciliation_publisher(
         or git_before["tag_object"] != expected["annotated_tag_object"]
         or git_before["tag_commit"] != expected["commit"]
         or git_before["tag_tree"] != expected["tree"]
+        or git_before["tracked_successor_sha256"] != tracked
     ):
         raise OwnerBuyE3MechanicsBaselineError("v13 publisher Git identity drifted")
     script = publisher_root / V13_RECONCILIATION_VALIDATOR_RELATIVE
@@ -2073,158 +2189,673 @@ def _capture_v13_reconciliation_publisher(
     )
 
 
+def _v13_rendered_json(value: Mapping[str, Any]) -> bytes:
+    try:
+        return (json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode(
+            "ascii"
+        )
+    except (TypeError, ValueError, UnicodeError) as exc:
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 committed JSON is not exact rendered ASCII"
+        ) from exc
+
+
+def _v13_canonical_binding(
+    path: Path,
+    document: Mapping[str, Any],
+    snapshot: _Snapshot,
+    canonical_field: str,
+) -> Mapping[str, Any]:
+    canonical = _require_sha(
+        document.get(canonical_field), f"v13 {path.name} document canonical SHA256"
+    )
+    if canonical != document_sha256(document, canonical_field):
+        raise OwnerBuyE3MechanicsBaselineError(
+            f"v13 committed canonical binding drifted: {path.name}"
+        )
+    return MappingProxyType(
+        {
+            "path": str(path.absolute()),
+            "schema_version": document.get("schema_version"),
+            "status": document.get("status"),
+            "file_sha256": snapshot.sha256,
+            "canonical_field": canonical_field,
+            "canonical_sha256": canonical,
+            "size_bytes": snapshot.size_bytes,
+            "mode": "0600",
+        }
+    )
+
+
+def _v13_bound_json_snapshot(
+    binding: Mapping[str, Any], *, label: str
+) -> tuple[_Snapshot, Mapping[str, Any]]:
+    required = {
+        "path",
+        "schema_version",
+        "status",
+        "file_sha256",
+        "canonical_field",
+        "canonical_sha256",
+        "size_bytes",
+        "mode",
+    }
+    if (
+        set(binding) != required
+        or binding.get("mode") != "0600"
+        or not isinstance(binding.get("path"), str)
+        or not isinstance(binding.get("size_bytes"), int)
+        or binding.get("size_bytes", 0) <= 0
+        or not isinstance(binding.get("canonical_field"), str)
+    ):
+        raise OwnerBuyE3MechanicsBaselineError(f"{label} binding drifted")
+    snapshot = _secure_snapshot(
+        Path(binding["path"]),
+        expected_sha256=_require_sha(binding.get("file_sha256"), f"{label} file SHA256"),
+        expected_size=int(binding["size_bytes"]),
+        label=label,
+    )
+    document = _parse_strict_json(snapshot.data, label=label)
+    if snapshot.data != _v13_rendered_json(document):
+        raise OwnerBuyE3MechanicsBaselineError(f"{label} rendered bytes drifted")
+    observed = _v13_canonical_binding(
+        Path(binding["path"]), document, snapshot, str(binding["canonical_field"])
+    )
+    if dict(observed) != dict(binding):
+        raise OwnerBuyE3MechanicsBaselineError(f"{label} recursive binding drifted")
+    return snapshot, document
+
+
+def _v13_output_binding(path: Path, role: str) -> Mapping[str, Any]:
+    digest, size = V13_COMMITTED_OUTPUT_BINDINGS[role]
+    return MappingProxyType(
+        {
+            "path": str(path.absolute()),
+            "sha256": digest,
+            "bytes": size,
+            "mode": "0600",
+        }
+    )
+
+
+def _v13_reject_transaction_residue(
+    directory_fd: int,
+    roles: Mapping[str, Path],
+) -> None:
+    names = set(os.listdir(directory_fd))
+    kinds = {
+        "backtest_v12_archive": "create",
+        "release_v3_versioned_config": "create",
+        "predecessor_pointer_snapshot": "create",
+        "predecessor_catalog_snapshot": "create",
+        "reconciliation_receipt": "create",
+        "stable_live_config_alias": "alias",
+        "current_remote_pointer": "pointer",
+        "current_catalog": "catalog",
+    }
+    for role, path in roles.items():
+        kind = kinds[role]
+        pending = f".{path.name}.{kind}-pending-config-reconciliation-v1"
+        staging = re.compile(
+            rf"^\.{re.escape(path.name)}\.{kind}-staging-[0-9a-f]{{32}}"
+            r"-uncommitted-config-reconciliation-v1$"
+        )
+        if pending in names or any(staging.fullmatch(name) for name in names):
+            raise OwnerBuyE3MechanicsBaselineError(
+                f"v13 committed {role} has pending or staging residue"
+            )
+
+
+def _v13_reject_manifest_residue(path: Path) -> None:
+    descriptor = _open_trusted_directory(
+        path.parent, label="v13 committed manifest parent", exact_mode=0o700
+    )
+    try:
+        names = set(os.listdir(descriptor))
+    finally:
+        os.close(descriptor)
+    pending = f".{path.name}.create-pending-config-reconciliation-v1"
+    staging = re.compile(
+        rf"^\.{re.escape(path.name)}\.manifest-staging-[0-9a-f]{{32}}"
+        r"-uncommitted-config-reconciliation-v1$"
+    )
+    if pending in names or any(staging.fullmatch(name) for name in names):
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 committed manifest has pending or staging residue"
+        )
+
+
+def _v13_rebind_locked_directory(
+    path: Path,
+    descriptor: int,
+    expected_identity: tuple[int, ...],
+) -> None:
+    observed_fd = _identity(os.fstat(descriptor))
+    reopened = _open_trusted_directory(
+        path, label="v13 metadata private transaction root rebind", exact_mode=0o700
+    )
+    try:
+        observed_path = _identity(os.fstat(reopened))
+    finally:
+        os.close(reopened)
+    if observed_fd != expected_identity or observed_path != expected_identity:
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 metadata private transaction root changed during validation"
+        )
+
+
+def _v13_require_snapshot_unchanged(
+    path: Path,
+    before: _Snapshot,
+    *,
+    label: str,
+) -> None:
+    after = _secure_snapshot(
+        path,
+        expected_sha256=before.sha256,
+        expected_size=before.size_bytes,
+        label=label,
+    )
+    if after.data != before.data or after.identity != before.identity:
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 reconciliation authority changed during committed-state validation"
+        )
+
+
+def _validate_v13_committed_documents(
+    *,
+    manifest_path: Path,
+    manifest: Mapping[str, Any],
+    manifest_snapshot: _Snapshot,
+    outputs: Mapping[str, Path],
+) -> tuple[Mapping[str, Any], Mapping[str, tuple[Path, _Snapshot]]]:
+    transaction = manifest["transaction"]
+    generated_utc = manifest.get("generated_utc")
+    snapshots: dict[str, tuple[Path, _Snapshot]] = {}
+    for role, path in outputs.items():
+        digest, size = V13_COMMITTED_OUTPUT_BINDINGS[role]
+        snapshots[role] = (
+            path,
+            _secure_snapshot(
+                path,
+                expected_sha256=digest,
+                expected_size=size,
+                label=f"v13 committed output {role}",
+            ),
+        )
+
+    active_source = transaction["active_config_source"]
+    active_snapshot = _secure_snapshot(
+        Path(active_source["path"]),
+        expected_sha256=ACTIVE_SOURCE_CONFIG_FILE_SHA256,
+        expected_size=V13_COMMITTED_OUTPUT_BINDINGS["release_v3_versioned_config"][1],
+        label="v13 committed active config source",
+    )
+    snapshots["active_config_source"] = (Path(active_source["path"]), active_snapshot)
+    if (
+        snapshots["release_v3_versioned_config"][1].data != active_snapshot.data
+        or snapshots["stable_live_config_alias"][1].data != active_snapshot.data
+    ):
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 live alias/release/active source byte binding drifted"
+        )
+
+    predecessor = transaction.get("predecessor")
+    activation_binding = (
+        predecessor.get("v6_activation_receipt") if isinstance(predecessor, Mapping) else None
+    )
+    if not isinstance(activation_binding, Mapping):
+        raise OwnerBuyE3MechanicsBaselineError("v13 activation receipt binding is missing")
+    activation_snapshot, _activation = _v13_bound_json_snapshot(
+        activation_binding, label="v13 immutable v6 activation receipt"
+    )
+    snapshots["v6_activation_receipt"] = (
+        Path(str(activation_binding["path"])),
+        activation_snapshot,
+    )
+    failed_attempt = manifest.get("predecessor_failed_attempt")
+    failure_binding = (
+        failed_attempt.get("failure_receipt") if isinstance(failed_attempt, Mapping) else None
+    )
+    if not isinstance(failure_binding, Mapping):
+        raise OwnerBuyE3MechanicsBaselineError("v13 failed-attempt receipt binding is missing")
+    failure_snapshot, _failure = _v13_bound_json_snapshot(
+        failure_binding, label="v13 immutable attempt1 failure receipt"
+    )
+    snapshots["attempt1_failure_receipt"] = (
+        Path(str(failure_binding["path"])),
+        failure_snapshot,
+    )
+
+    manifest_binding = _v13_canonical_binding(
+        manifest_path,
+        manifest,
+        manifest_snapshot,
+        V13_COMMITTED_MANIFEST_CANONICAL_FIELD,
+    )
+    immutable_bindings = {
+        role: dict(_v13_output_binding(outputs[role], role))
+        for role in (
+            "backtest_v12_archive",
+            "release_v3_versioned_config",
+            "predecessor_pointer_snapshot",
+            "predecessor_catalog_snapshot",
+        )
+    }
+
+    receipt_snapshot = snapshots["reconciliation_receipt"][1]
+    receipt = _parse_strict_json(receipt_snapshot.data, label="v13 committed receipt")
+    if (
+        receipt_snapshot.data != _v13_rendered_json(receipt)
+        or canonical_sha256(receipt) != V13_COMMITTED_RECEIPT_MAPPING_SHA256
+        or receipt.get("schema_version") != V13_COMMITTED_RECEIPT_SCHEMA
+        or receipt.get("status") != V13_COMMITTED_RECEIPT_STATUS
+        or receipt.get("generated_utc") != generated_utc
+        or receipt.get("manifest") != manifest_binding
+        or receipt.get("publisher_source") != manifest.get("publisher_source")
+        or receipt.get("tracked_successor_files") != manifest.get("tracked_successor_files")
+        or receipt.get("predecessor") != predecessor
+        or receipt.get("immutable_outputs") != immutable_bindings
+        or receipt.get("metadata_audit_baseline") != manifest.get("metadata_audit_baseline")
+        or receipt.get("ordered_publication") != transaction.get("ordered_publication")
+        or receipt.get("permissions")
+        != {"research": False, "action": False, "live": False, "backtest_economic": False}
+        or receipt.get("evidence_boundary") != manifest.get("evidence_boundary")
+        or receipt.get("receipt_is_release_authority") is not False
+        or receipt.get("receipt_is_backtest_economic_authority") is not False
+        or receipt.get(V13_COMMITTED_RECEIPT_CANONICAL_FIELD)
+        != V13_COMMITTED_RECEIPT_DOCUMENT_SHA256
+        or document_sha256(receipt, V13_COMMITTED_RECEIPT_CANONICAL_FIELD)
+        != V13_COMMITTED_RECEIPT_DOCUMENT_SHA256
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 committed receipt cross-binding drifted")
+    stable = receipt.get("stable_live_config_alias")
+    stable_expected = {
+        **dict(
+            _v13_output_binding(outputs["stable_live_config_alias"], "stable_live_config_alias")
+        ),
+        "semantics": "mutable_compatibility_projection_of_versioned_release_v3_config",
+    }
+    current_live = receipt.get("current_live")
+    backtest_default = receipt.get("backtest_default")
+    if (
+        stable != stable_expected
+        or not isinstance(current_live, Mapping)
+        or current_live.get("config") != immutable_bindings["release_v3_versioned_config"]
+        or current_live.get("stable_alias_sha256") != ACTIVE_SOURCE_CONFIG_FILE_SHA256
+        or any(
+            current_live.get(field) is not False
+            for field in (
+                "economic_outcomes_read",
+                "economic_values_persisted",
+                "nonbaseline_action_occurrence_proven",
+                "economic_effect_proven",
+            )
+        )
+        or not isinstance(backtest_default, Mapping)
+        or backtest_default.get("config") != immutable_bindings["backtest_v12_archive"]
+        or backtest_default.get("config_sha256") != PREDECESSOR_V12_CONFIG_FILE_SHA256
+        or backtest_default.get("current_live_alias_allowed") is not False
+        or backtest_default.get("buy_e3_economic_authority") is not False
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 committed authority split drifted")
+    receipt_binding = _v13_canonical_binding(
+        outputs["reconciliation_receipt"],
+        receipt,
+        receipt_snapshot,
+        V13_COMMITTED_RECEIPT_CANONICAL_FIELD,
+    )
+
+    predecessor_pointer_snapshot = snapshots["predecessor_pointer_snapshot"][1]
+    predecessor_pointer = _parse_strict_json(
+        predecessor_pointer_snapshot.data, label="v13 predecessor pointer snapshot"
+    )
+    pointer_snapshot = snapshots["current_remote_pointer"][1]
+    pointer = _parse_strict_json(pointer_snapshot.data, label="v13 current pointer successor")
+    if (
+        predecessor_pointer_snapshot.data != _v13_rendered_json(predecessor_pointer)
+        or pointer_snapshot.data != _v13_rendered_json(pointer)
+        or canonical_sha256(predecessor_pointer) != V13_PREDECESSOR_POINTER_MAPPING_SHA256
+        or canonical_sha256(pointer) != V13_SUCCESSOR_POINTER_MAPPING_SHA256
+        or pointer.get("schema_version") != predecessor_pointer.get("schema_version")
+        or pointer.get("current_activation_receipt")
+        != predecessor_pointer.get("current_activation_receipt")
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 pointer successor identity drifted")
+    reconciliation = pointer.get("current_config_locator_reconciliation")
+    if not isinstance(reconciliation, Mapping):
+        raise OwnerBuyE3MechanicsBaselineError("v13 pointer reconciliation binding is missing")
+    pointer_receipt = {
+        "path": receipt_binding["path"],
+        "sha256": receipt_binding["file_sha256"],
+        "canonical_sha256": receipt_binding["canonical_sha256"],
+        "bytes": receipt_binding["size_bytes"],
+    }
+    if (
+        reconciliation.get("receipt") != pointer_receipt
+        or reconciliation.get("stable_live_config_alias")
+        != {
+            "path": str(outputs["stable_live_config_alias"]),
+            "sha256": ACTIVE_SOURCE_CONFIG_FILE_SHA256,
+            "bytes": V13_COMMITTED_OUTPUT_BINDINGS["stable_live_config_alias"][1],
+        }
+        or reconciliation.get("release_v3_versioned_config")
+        != immutable_bindings["release_v3_versioned_config"]
+        or reconciliation.get("backtest_v12_config_archive")
+        != immutable_bindings["backtest_v12_archive"]
+        or reconciliation.get("predecessor_pointer_snapshot")
+        != immutable_bindings["predecessor_pointer_snapshot"]
+        or reconciliation.get("predecessor_catalog_snapshot")
+        != immutable_bindings["predecessor_catalog_snapshot"]
+        or reconciliation.get("publisher_commit") != V13_RECONCILIATION_PUBLISHER_SOURCE["commit"]
+        or reconciliation.get("publisher_tree") != V13_RECONCILIATION_PUBLISHER_SOURCE["tree"]
+        or reconciliation.get("immutable_v6_activation_receipt_preserved") is not True
+        or reconciliation.get("backtest_v12_config_may_resolve_to_live_alias") is not False
+        or reconciliation.get("economic_outcomes_read") is not False
+        or reconciliation.get("economic_values_persisted") is not False
+        or reconciliation.get("new_authority_granted") is not False
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 pointer recursive binding drifted")
+    projected_pointer = copy.deepcopy(dict(pointer))
+    projected_pointer.pop("current_config_locator_reconciliation", None)
+    query = projected_pointer.get("current_query_policy")
+    if not isinstance(query, dict):
+        raise OwnerBuyE3MechanicsBaselineError("v13 pointer query policy drifted")
+    for field in (
+        "backtest_default_config_resolution",
+        "config_locator_reconciliation_updated_utc",
+        "current_live_config_resolution",
+    ):
+        query.pop(field, None)
+    projected_pointer["pointer_publication_status"] = predecessor_pointer.get(
+        "pointer_publication_status"
+    )
+    if projected_pointer != predecessor_pointer:
+        raise OwnerBuyE3MechanicsBaselineError("v13 pointer predecessor fields drifted")
+
+    predecessor_catalog_snapshot = snapshots["predecessor_catalog_snapshot"][1]
+    predecessor_catalog = _parse_strict_json(
+        predecessor_catalog_snapshot.data, label="v13 predecessor catalog snapshot"
+    )
+    catalog_snapshot = snapshots["current_catalog"][1]
+    catalog = _parse_strict_json(catalog_snapshot.data, label="v13 current catalog successor")
+    if (
+        predecessor_catalog_snapshot.data != _v13_rendered_json(predecessor_catalog)
+        or catalog_snapshot.data != _v13_rendered_json(catalog)
+        or canonical_sha256(predecessor_catalog) != V13_PREDECESSOR_CATALOG_MAPPING_SHA256
+        or canonical_sha256(catalog) != V13_SUCCESSOR_CATALOG_MAPPING_SHA256
+        or catalog.get("schema_version") != predecessor_catalog.get("schema_version")
+        or catalog.get("generated_at_utc") != generated_utc
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog successor identity drifted")
+    for key, value in predecessor_catalog.items():
+        if key not in {"entries", "generated_at_utc"} and catalog.get(key) != value:
+            raise OwnerBuyE3MechanicsBaselineError("v13 catalog predecessor fields drifted")
+    predecessor_entries = predecessor_catalog.get("entries")
+    entries = catalog.get("entries")
+    if not isinstance(predecessor_entries, list) or not isinstance(entries, list):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog entries are malformed")
+    predecessor_ids = [
+        row.get("artifact_id") for row in predecessor_entries if isinstance(row, Mapping)
+    ]
+    entry_ids = [row.get("artifact_id") for row in entries if isinstance(row, Mapping)]
+    if (
+        len(predecessor_ids) != len(predecessor_entries)
+        or len(entry_ids) != len(entries)
+        or len(set(predecessor_ids)) != len(predecessor_ids)
+        or len(set(entry_ids)) != len(entry_ids)
+        or entry_ids[: len(predecessor_ids)] != predecessor_ids
+        or len(entry_ids) != len(predecessor_ids) + 5
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog entry delta drifted")
+    predecessor_by_id = dict(zip(predecessor_ids, predecessor_entries, strict=True))
+    by_id = dict(zip(entry_ids, entries, strict=True))
+    artifact_ids = transaction.get("artifact_ids")
+    if not isinstance(artifact_ids, Mapping):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog artifact ids are missing")
+    current_config_id = artifact_ids.get("current_config")
+    current_pointer_id = artifact_ids.get("current_pointer")
+    for artifact_id, predecessor_row in predecessor_by_id.items():
+        if (
+            artifact_id not in {current_config_id, current_pointer_id}
+            and by_id[artifact_id] != predecessor_row
+        ):
+            raise OwnerBuyE3MechanicsBaselineError("v13 catalog unchanged predecessor row drifted")
+    current_config = by_id.get(current_config_id)
+    current_pointer = by_id.get(current_pointer_id)
+    if not isinstance(current_config, Mapping) or not isinstance(current_pointer, Mapping):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog current rows are missing")
+    if (
+        {
+            key
+            for key in set(predecessor_by_id[current_config_id]) | set(current_config)
+            if predecessor_by_id[current_config_id].get(key) != current_config.get(key)
+        }
+        != {"role", "notes", "sha256", "read_gate", "bytes", "last_verified_utc"}
+        or current_config.get("local_path") != str(outputs["stable_live_config_alias"])
+        or current_config.get("sha256") != ACTIVE_SOURCE_CONFIG_FILE_SHA256
+        or current_config.get("bytes")
+        != V13_COMMITTED_OUTPUT_BINDINGS["stable_live_config_alias"][1]
+        or {
+            key
+            for key in set(predecessor_by_id[current_pointer_id]) | set(current_pointer)
+            if predecessor_by_id[current_pointer_id].get(key) != current_pointer.get(key)
+        }
+        != {"notes", "sha256", "bytes", "last_verified_utc"}
+        or current_pointer.get("local_path") != str(outputs["current_remote_pointer"])
+        or current_pointer.get("sha256") != pointer_snapshot.sha256
+        or current_pointer.get("bytes") != pointer_snapshot.size_bytes
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog current row binding drifted")
+    new_roles = {
+        "backtest_archive": immutable_bindings["backtest_v12_archive"],
+        "release_v3_config": immutable_bindings["release_v3_versioned_config"],
+        "pointer_snapshot": immutable_bindings["predecessor_pointer_snapshot"],
+        "catalog_snapshot": immutable_bindings["predecessor_catalog_snapshot"],
+        "reconciliation_receipt": {
+            "path": receipt_binding["path"],
+            "sha256": receipt_binding["file_sha256"],
+            "bytes": receipt_binding["size_bytes"],
+        },
+    }
+    new_ids = [artifact_ids.get(role) for role in new_roles]
+    if entry_ids[len(predecessor_ids) :] != new_ids or len(set(new_ids)) != 5:
+        raise OwnerBuyE3MechanicsBaselineError("v13 catalog new-row order drifted")
+    for role, binding in new_roles.items():
+        row = by_id.get(artifact_ids[role])
+        if (
+            not isinstance(row, Mapping)
+            or row.get("local_path") != binding["path"]
+            or row.get("sha256") != binding["sha256"]
+            or row.get("bytes") != binding["bytes"]
+            or row.get("availability") != "private_not_distributed"
+            or row.get("panel_role") != "operational"
+            or row.get("read_gate") != "owner_only"
+            or row.get("last_verified_utc") != generated_utc
+            or row.get("source_document") is not None
+            or row.get("public_projection") is not None
+        ):
+            raise OwnerBuyE3MechanicsBaselineError("v13 catalog new-row binding drifted")
+
+    return receipt_binding, MappingProxyType(snapshots)
+
+
 def _validate_committed_v13_reconciliation(
     *,
     runtime_repository_root: Path,
     durable_evidence_root: Path,
     inputs: OwnerPrivateInputs,
 ) -> Mapping[str, Any]:
-    """Validate that the exact v13 private transaction is already committed.
+    """Validate the immutable committed v13 state without pinning metadata HEAD."""
 
-    The v13 validator is run in a child process so its environment-scoped owner
-    authority can never become visible to another thread in this process.
-    """
-
+    del durable_evidence_root  # locators and trust roots were already resolved securely.
     manifest_snapshot = _secure_snapshot(
         inputs.v13_reconciliation_manifest,
-        expected_sha256=None,
+        expected_sha256=V13_COMMITTED_MANIFEST_FILE_SHA256,
+        expected_size=V13_COMMITTED_MANIFEST_SIZE_BYTES,
         label="committed v13 reconciliation manifest",
     )
     manifest = _parse_strict_json(
         manifest_snapshot.data, label="committed v13 reconciliation manifest"
     )
+    expected_manifest_keys = {
+        "schema_version",
+        "status",
+        "generated_utc",
+        "receipt_id",
+        "publisher_root",
+        "metadata_repository_root",
+        "publisher_source",
+        "tracked_successor_files",
+        "private_evidence_trust_boundary",
+        "predecessor_failed_attempt",
+        "metadata_audit_baseline",
+        "transaction",
+        "permissions",
+        "evidence_boundary",
+        V13_COMMITTED_MANIFEST_CANONICAL_FIELD,
+    }
+    if (
+        manifest_snapshot.data != _v13_rendered_json(manifest)
+        or set(manifest) != expected_manifest_keys
+        or manifest.get("schema_version") != V13_COMMITTED_MANIFEST_SCHEMA
+        or manifest.get("status") != V13_COMMITTED_MANIFEST_STATUS
+        or manifest.get(V13_COMMITTED_MANIFEST_CANONICAL_FIELD)
+        != V13_COMMITTED_MANIFEST_DOCUMENT_SHA256
+        or document_sha256(manifest, V13_COMMITTED_MANIFEST_CANONICAL_FIELD)
+        != V13_COMMITTED_MANIFEST_DOCUMENT_SHA256
+        or canonical_sha256(manifest) != V13_COMMITTED_MANIFEST_MAPPING_SHA256
+        or manifest.get("permissions")
+        != {"research": False, "action": False, "live": False, "backtest_economic": False}
+        or not isinstance(manifest.get("evidence_boundary"), Mapping)
+        or any(value is not False for value in manifest["evidence_boundary"].values())
+    ):
+        raise OwnerBuyE3MechanicsBaselineError("v13 committed manifest identity drifted")
     transaction = manifest.get("transaction")
-    outputs = transaction.get("outputs") if isinstance(transaction, Mapping) else None
+    outputs_value = transaction.get("outputs") if isinstance(transaction, Mapping) else None
     active_source = (
         transaction.get("active_config_source") if isinstance(transaction, Mapping) else None
     )
+    metadata_root_value = manifest.get("metadata_repository_root")
     if (
-        not isinstance(outputs, Mapping)
-        or outputs.get("backtest_v12_archive") != str(inputs.predecessor_v12_config.absolute())
+        not isinstance(outputs_value, Mapping)
+        or set(outputs_value) != set(V13_COMMITTED_OUTPUT_BINDINGS)
         or not isinstance(active_source, Mapping)
+        or set(active_source) != {"path", "sha256", "bytes", "mode"}
         or active_source.get("path") != str(inputs.active_source_config.absolute())
         or active_source.get("sha256") != ACTIVE_SOURCE_CONFIG_FILE_SHA256
+        or active_source.get("bytes")
+        != V13_COMMITTED_OUTPUT_BINDINGS["release_v3_versioned_config"][1]
+        or active_source.get("mode") != "0600"
+        or not isinstance(metadata_root_value, str)
     ):
         raise OwnerBuyE3MechanicsBaselineError(
-            "v13 reconciliation does not cross-bind the exact v12/active config pair"
+            "v13 reconciliation does not cross-bind the exact committed transaction"
         )
+    metadata_root = Path(metadata_root_value)
+    _lexical_parts(metadata_root, label="v13 metadata repository root")
+    private_root = metadata_root / "docs" / "private"
+    outputs: dict[str, Path] = {}
+    for role, value in outputs_value.items():
+        if not isinstance(value, str):
+            raise OwnerBuyE3MechanicsBaselineError("v13 committed output locator drifted")
+        path = Path(value)
+        _lexical_parts(path, label=f"v13 committed output {role}")
+        if path.parent != private_root:
+            raise OwnerBuyE3MechanicsBaselineError("v13 committed output escaped docs/private")
+        outputs[role] = path
+    if outputs["backtest_v12_archive"] != inputs.predecessor_v12_config.absolute():
+        raise OwnerBuyE3MechanicsBaselineError(
+            "v13 reconciliation does not cross-bind the exact v12 archive"
+        )
+
     publisher_root_value = manifest.get("publisher_root")
     publisher_source = manifest.get("publisher_source")
+    tracked_successors = manifest.get("tracked_successor_files")
     if (
         not isinstance(publisher_root_value, str)
         or not isinstance(publisher_source, Mapping)
+        or not isinstance(tracked_successors, Mapping)
         or os.fspath(Path(publisher_root_value)) != publisher_root_value
     ):
         raise OwnerBuyE3MechanicsBaselineError("v13 manifest publisher source identity drifted")
     publisher_root = Path(publisher_root_value)
+    _v13_reject_manifest_residue(inputs.v13_reconciliation_manifest)
     publisher_before = _capture_v13_reconciliation_publisher(
         publisher_root=publisher_root,
         publisher_source=publisher_source,
         mechanics_runtime_root=runtime_repository_root,
+        tracked_successor_files=tracked_successors,
     )
-    script = publisher_root / V13_RECONCILIATION_VALIDATOR_RELATIVE
-    environment = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        # The v13 transaction is rooted one level above the owner-private f05
-        # trust root.  Its exact manifest still cross-binds every absolute
-        # output; this split avoids copying or symlinking the canonical v12
-        # archive into durable evidence.
-        PRIVATE_EVIDENCE_ROOT_ENV: str(Path(durable_evidence_root).absolute().parent),
-        "GIT_NO_REPLACE_OBJECTS": "1",
-    }
-    bootstrap = (
-        "import runpy,sys;"
-        "sys.path.insert(0,sys.argv[1]);"
-        "script=sys.argv[2];"
-        "sys.argv=[script,*sys.argv[3:]];"
-        "runpy.run_path(script,run_name='__main__')"
+
+    private_fd = _open_trusted_directory(
+        private_root, label="v13 metadata private transaction root", exact_mode=0o700
     )
+    private_identity = _identity(os.fstat(private_fd))
     try:
-        with tempfile.TemporaryDirectory(prefix="narrowgate-v13-gate-pycache-") as cache:
-            os.chmod(cache, 0o700)
-            completed = subprocess.run(
-                (
-                    sys.executable,
-                    "-I",
-                    "-B",
-                    "-X",
-                    f"pycache_prefix={cache}",
-                    "-c",
-                    bootstrap,
-                    str(publisher_root),
-                    str(script),
-                    "run",
-                    "--manifest",
-                    str(inputs.v13_reconciliation_manifest),
-                ),
-                cwd=publisher_root,
-                env=environment,
-                check=True,
-                capture_output=True,
+        fcntl.flock(private_fd, fcntl.LOCK_EX)
+        _v13_rebind_locked_directory(private_root, private_fd, private_identity)
+        manifest_locked = _secure_snapshot(
+            inputs.v13_reconciliation_manifest,
+            expected_sha256=manifest_snapshot.sha256,
+            expected_size=manifest_snapshot.size_bytes,
+            label="committed v13 reconciliation manifest under transaction lock",
+        )
+        if (
+            manifest_locked.data != manifest_snapshot.data
+            or manifest_locked.identity != manifest_snapshot.identity
+        ):
+            raise OwnerBuyE3MechanicsBaselineError(
+                "v13 reconciliation authority changed before committed-state validation"
             )
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise OwnerBuyE3MechanicsBaselineError(
-            "v13 reconciliation is not recursively committed"
-        ) from exc
-    result = _parse_strict_json(completed.stdout, label="v13 reconciliation committed-state result")
-    child_manifest = result.get("manifest")
-    if (
-        not isinstance(child_manifest, Mapping)
-        or child_manifest.get("file_sha256") != manifest_snapshot.sha256
-        or child_manifest.get("size_bytes") != manifest_snapshot.size_bytes
-    ):
-        raise OwnerBuyE3MechanicsBaselineError(
-            "v13 child validation used a different reconciliation manifest snapshot"
+        _v13_reject_transaction_residue(private_fd, outputs)
+        receipt_binding, snapshots = _validate_v13_committed_documents(
+            manifest_path=inputs.v13_reconciliation_manifest,
+            manifest=manifest,
+            manifest_snapshot=manifest_snapshot,
+            outputs=outputs,
         )
-    state = result.get("state_before")
-    immutable = state.get("immutable") if isinstance(state, Mapping) else None
-    pending = state.get("pending") if isinstance(state, Mapping) else None
-    if (
-        result.get("writes_performed") is not False
-        or not isinstance(immutable, Mapping)
-        or not immutable
-        or set(immutable.values()) != {"published_nlink1"}
-        or state.get("receipt") != "published_nlink1"
-        or state.get("stable_alias") != "successor"
-        or state.get("pointer") != "successor"
-        or state.get("catalog") != "successor"
-        or not isinstance(pending, Mapping)
-        or set(pending.values()) != {"absent"}
-    ):
-        raise OwnerBuyE3MechanicsBaselineError(
-            "v13 reconciliation transaction is not fully committed"
+        for role, (path, snapshot) in snapshots.items():
+            _v13_require_snapshot_unchanged(
+                path,
+                snapshot,
+                label=f"v13 committed {role} post-validation",
+            )
+        _v13_reject_transaction_residue(private_fd, outputs)
+        _v13_reject_manifest_residue(inputs.v13_reconciliation_manifest)
+        _v13_rebind_locked_directory(private_root, private_fd, private_identity)
+        manifest_after = _secure_snapshot(
+            inputs.v13_reconciliation_manifest,
+            expected_sha256=manifest_snapshot.sha256,
+            expected_size=manifest_snapshot.size_bytes,
+            label="committed v13 reconciliation manifest post-validation",
         )
-    receipt = result.get("receipt")
-    if not isinstance(receipt, Mapping):
-        raise OwnerBuyE3MechanicsBaselineError("v13 committed receipt binding is missing")
-    manifest_after = _secure_snapshot(
-        inputs.v13_reconciliation_manifest,
-        expected_sha256=manifest_snapshot.sha256,
-        expected_size=manifest_snapshot.size_bytes,
-        label="committed v13 reconciliation manifest post-validation",
-    )
-    publisher_after = _capture_v13_reconciliation_publisher(
-        publisher_root=publisher_root,
-        publisher_source=publisher_source,
-        mechanics_runtime_root=runtime_repository_root,
-    )
-    if manifest_after.data != manifest_snapshot.data or dict(publisher_after) != dict(
-        publisher_before
-    ):
-        raise OwnerBuyE3MechanicsBaselineError(
-            "v13 reconciliation authority changed during committed-state validation"
+        publisher_after = _capture_v13_reconciliation_publisher(
+            publisher_root=publisher_root,
+            publisher_source=publisher_source,
+            mechanics_runtime_root=runtime_repository_root,
+            tracked_successor_files=tracked_successors,
         )
+        if (
+            manifest_after.data != manifest_snapshot.data
+            or manifest_after.identity != manifest_snapshot.identity
+            or dict(publisher_after) != dict(publisher_before)
+        ):
+            raise OwnerBuyE3MechanicsBaselineError(
+                "v13 reconciliation authority changed during committed-state validation"
+            )
+        _v13_rebind_locked_directory(private_root, private_fd, private_identity)
+    finally:
+        fcntl.flock(private_fd, fcntl.LOCK_UN)
+        os.close(private_fd)
+
     return MappingProxyType(
         {
             "manifest_file_sha256": manifest_snapshot.sha256,
             "manifest_size_bytes": manifest_snapshot.size_bytes,
             "manifest_canonical_sha256": canonical_sha256(manifest),
-            "receipt_file_sha256": _require_sha(
-                receipt.get("file_sha256"), "v13 committed receipt file SHA256"
-            ),
-            "receipt_canonical_sha256": _require_sha(
-                receipt.get("canonical_sha256"), "v13 committed receipt canonical SHA256"
-            ),
+            "receipt_file_sha256": receipt_binding["file_sha256"],
+            "receipt_canonical_sha256": receipt_binding["canonical_sha256"],
             "validator_source_sha256": publisher_before["validator_source_sha256"],
             "transaction_committed": True,
         }
