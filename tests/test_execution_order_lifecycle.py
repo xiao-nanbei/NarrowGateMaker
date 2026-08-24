@@ -24,6 +24,24 @@ def test_journal_snapshot_detaches_event_history_from_live_lifecycle() -> None:
     assert lifecycle.phase == OrderLifecyclePhase.ACTIVE
 
 
+def test_preactivation_rejection_records_complete_zero_exchange_exposure() -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(0.001, 1_000_000_000)
+
+    lifecycle.exchange_terminal(2_000_000_000, reason="rejected")
+
+    terminal_event = lifecycle.events()[-1]
+    snapshot = lifecycle.snapshot()
+    assert lifecycle.activation_exchange_ts_ns == 0
+    assert lifecycle.exchange_exposure_btc_s() == 0.0
+    assert terminal_event["quantity_time_exposure_exchange_btc_s"] == 0.0
+    assert terminal_event["exchange_exposure_valid"] is True
+    assert terminal_event["exchange_exposure_complete"] is True
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == 0.0
+    assert snapshot["exchange_exposure_valid"] is True
+    assert snapshot["exchange_exposure_complete"] is True
+    assert snapshot["terminal_policy_route"] == "BASELINE_RESUBMIT"
+
+
 def test_quantity_weighted_exposure_tracks_partial_fill_and_terminal() -> None:
     lifecycle = QuantityWeightedOrderLifecycle(
         initial_quantity=0.001,

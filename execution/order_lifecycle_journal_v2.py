@@ -364,6 +364,50 @@ def _float_equal(left: object, right: object) -> bool:
     )
 
 
+def _is_finite_nonnegative(value: object) -> bool:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(number) and number >= 0.0
+
+
+def _is_positive_preactivation_rejection_without_exchange_id(
+    *,
+    event_name: object,
+    reason: object,
+    phase_before: object,
+    phase_after: object,
+    event_exchange_ts_ns: object,
+    callback_exchange_ts_ns: object,
+    remaining_before: object,
+    remaining_after: object,
+    visible_exposure: object,
+    visible_valid: object,
+    visible_complete: object,
+    exchange_exposure: object,
+    exchange_valid: object,
+    exchange_complete: object,
+) -> bool:
+    """Identify an exact pre-activation exchange rejection with no order id."""
+
+    return bool(
+        str(event_name) == "exchange_terminal"
+        and str(reason) == "rejected"
+        and str(phase_before) == "SUBMITTED"
+        and str(phase_after) == "EXCHANGE_TERMINAL"
+        and event_exchange_ts_ns is None
+        and callback_exchange_ts_ns is None
+        and _float_equal(remaining_before, remaining_after)
+        and _is_finite_nonnegative(visible_exposure)
+        and visible_valid is True
+        and visible_complete is True
+        and _float_equal(exchange_exposure, 0.0)
+        and exchange_valid is True
+        and exchange_complete is True
+    )
+
+
 def _stable_event_id(
     *,
     lifecycle_id: str,
@@ -749,11 +793,36 @@ def validate_order_lifecycle_journal_v2_payload(
             raise ValueError("event and callback exchange clocks disagree")
 
     exchange_order_id = payload["exchange_order_id"]
+    exchange_order_id_optional = (
+        exchange_order_id is None
+        and _is_positive_preactivation_rejection_without_exchange_id(
+            event_name=event_name,
+            reason=reason,
+            phase_before=payload["phase_before"],
+            phase_after=payload["phase_after"],
+            event_exchange_ts_ns=payload["event_exchange_ts_ns"],
+            callback_exchange_ts_ns=payload["source_callback_exchange_ts_ns"],
+            remaining_before=payload["remaining_quantity_before"],
+            remaining_after=payload["remaining_quantity_after"],
+            visible_exposure=payload[
+                "quantity_time_exposure_visible_btc_s"
+            ],
+            visible_valid=payload["visible_exposure_valid"],
+            visible_complete=payload["visible_exposure_complete"],
+            exchange_exposure=payload[
+                "quantity_time_exposure_exchange_btc_s"
+            ],
+            exchange_valid=payload["exchange_exposure_valid"],
+            exchange_complete=payload["exchange_exposure_complete"],
+        )
+    )
     if event_name not in {
         "submit",
         "submit_ack_unknown",
         "submit_ack_unknown_censored",
-    }:
+    } and not exchange_order_id_optional:
+        if exchange_order_id is None:
+            raise ValueError("non-submit lifecycle event lacks exchange order id")
         _require_id("exchange order id", exchange_order_id)
     elif exchange_order_id is not None:
         _require_id("exchange order id", exchange_order_id)
@@ -1009,12 +1078,6 @@ class OrderLifecycleJournalV2BatchEmitter:
             sequence = int(event["sequence"])
             state = derived[sequence - 1]
             exchange_ts = _optional_exchange_ts(event["exchange_ts_ns"])
-            if self.exchange_order_id is None and str(event["event"]) not in {
-                "submit",
-                "submit_ack_unknown",
-                "submit_ack_unknown_censored",
-            }:
-                raise ValueError("non-submit lifecycle event lacks exchange order id")
             row = OrderLifecycleJournalV2Row(
                 schema_version=ORDER_LIFECYCLE_JOURNAL_V2_SCHEMA_VERSION,
                 event_id=_stable_event_id(

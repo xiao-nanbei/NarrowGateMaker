@@ -376,12 +376,7 @@ class QuantityWeightedOrderLifecycle:
                     self.visible_exposure_invalid_reason
                 ),
                 quantity_time_exposure_exchange_btc_s=(
-                    float(
-                        self.quantity_time_exposure_exchange_accumulated_btc_s
-                    )
-                    if self.exchange_exposure_valid
-                    and self.activation_exchange_ts_ns > 0
-                    else None
+                    self.exchange_exposure_btc_s()
                 ),
                 exchange_exposure_valid=bool(self.exchange_exposure_valid),
                 exchange_exposure_complete=bool(self.exchange_exposure_complete),
