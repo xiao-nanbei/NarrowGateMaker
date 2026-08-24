@@ -87,6 +87,69 @@ def test_live_adapter_commits_callbacks_off_thread_and_reports_latency(
     assert final["formal_collection_valid"] is True
 
 
+def test_preactivation_gtx_reject_commits_complete_zero_exchange_exposure(
+    tmp_path: Path,
+) -> None:
+    order = _order()
+    runtime = OrderLifecycleLiveWriterV2(
+        tmp_path,
+        session_id="epoch-gtx-reject",
+        baseline_epoch_id="epoch-gtx-reject",
+        runtime_identity={
+            "baseline_epoch_id": "epoch-gtx-reject",
+            "hash": "9" * 64,
+        },
+        queue_size=8,
+        storage_format="jsonl",
+        heartbeat_interval_s=0.05,
+    )
+    assert runtime.enqueue_order_event(order, "submit") is True
+    _wait_for(runtime, 1)
+
+    order.lifecycle.exchange_terminal(2_000_000_000, reason="rejected")
+    assert order.order_id == 0
+    assert runtime.enqueue_order_event(
+        order,
+        "rejected",
+        {
+            "_local_receive_ts_ns": 2_000_000_000,
+            "_reason": "APIError(code=-5022): Post Only order will be rejected",
+        },
+    )
+    health = _wait_for(runtime, 2)
+    assert health["drop_count"] == 0
+    assert health["error_count"] == 0
+    assert health["rows_committed"] == 2
+    final = runtime.close(drain_timeout_s=1.0)
+    assert final["formal_collection_valid"] is True
+
+    rows = [
+        json.loads(line)
+        for path in (
+            tmp_path / "session-epoch-gtx-reject" / "parts"
+        ).glob("*.jsonl")
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    rows.sort(key=lambda row: int(row["lifecycle_sequence"]))
+    assert [row["lifecycle_event"] for row in rows] == [
+        "submit",
+        "exchange_terminal",
+    ]
+    terminal = rows[-1]
+    assert terminal["exchange_order_id"] is None
+    assert terminal["event_exchange_ts_ns"] is None
+    assert terminal["phase_before"] == "SUBMITTED"
+    assert terminal["phase_after"] == "EXCHANGE_TERMINAL"
+    assert terminal["exchange_terminal_reason"] == "rejected"
+    assert terminal["quantity_time_exposure_visible_btc_s"] == 0.0
+    assert terminal["visible_exposure_valid"] is True
+    assert terminal["visible_exposure_complete"] is True
+    assert terminal["quantity_time_exposure_exchange_btc_s"] == 0.0
+    assert terminal["exchange_exposure_valid"] is True
+    assert terminal["exchange_exposure_complete"] is True
+
+
 def test_submit_ack_unknown_is_durable_without_quarantine_or_writer_error(
     tmp_path: Path,
 ) -> None:

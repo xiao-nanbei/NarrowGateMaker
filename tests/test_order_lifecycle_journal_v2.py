@@ -10,6 +10,15 @@ from execution.order_lifecycle_journal_v2 import (
     OrderLifecycleJournalV2SourceCallback,
     validate_order_lifecycle_journal_v2_payload,
 )
+from execution.order_lifecycle_journal_v2_strict_native import (
+    OrderLifecycleJournalV2BatchEmitter as StrictNativeBatchEmitter,
+)
+from execution.order_lifecycle_journal_v2_strict_native import (
+    OrderLifecycleJournalV2SourceCallback as StrictNativeSourceCallback,
+)
+from execution.order_lifecycle_journal_v2_strict_native import (
+    validate_order_lifecycle_journal_v2_payload as validate_strict_native_payload,
+)
 
 
 def _emitter(**kwargs: object) -> OrderLifecycleJournalV2BatchEmitter:
@@ -379,6 +388,64 @@ def test_non_submit_event_requires_exchange_order_id() -> None:
             callback=_callback("callback-activate", 2_000_000_000, 2_000_000_000),
         )
     assert emitter.cursor.checkpoint() == checkpoint
+
+
+@pytest.mark.parametrize(
+    ("emitter_type", "callback_type", "validator"),
+    [
+        (
+            OrderLifecycleJournalV2BatchEmitter,
+            OrderLifecycleJournalV2SourceCallback,
+            validate_order_lifecycle_journal_v2_payload,
+        ),
+        (
+            StrictNativeBatchEmitter,
+            StrictNativeSourceCallback,
+            validate_strict_native_payload,
+        ),
+    ],
+)
+def test_null_exchange_id_exception_requires_complete_valid_visible_exposure(
+    emitter_type,
+    callback_type,
+    validator,
+) -> None:
+    lifecycle = QuantityWeightedOrderLifecycle(0.001, 1_000_000_000)
+    emitter = emitter_type(
+        lifecycle_id="epoch-1:client-17",
+        runtime_source="replay",
+        client_order_id="client-17",
+        exchange_order_id=None,
+        symbol="BTCUSDC",
+        side="BUY",
+    )
+    emitter.emit_unseen(
+        lifecycle=lifecycle,
+        callback=callback_type(
+            callback_id="callback-submit",
+            callback_type="execution_report",
+            received_ts_ns=1_000_000_000,
+        ),
+    )
+    lifecycle.exchange_terminal(2_000_000_000, reason="rejected")
+    terminal = emitter.emit_unseen(
+        lifecycle=lifecycle,
+        callback=callback_type(
+            callback_id="callback-rejected",
+            callback_type="execution_report",
+            received_ts_ns=2_000_000_000,
+        ),
+    ).payloads()[0]
+    assert terminal["visible_exposure_valid"] is True
+    assert terminal["visible_exposure_complete"] is True
+    validator(terminal)
+
+    invalid = dict(terminal)
+    invalid["visible_exposure_valid"] = False
+    invalid["visible_exposure_complete"] = False
+    invalid["visible_exposure_invalid_reason"] = "unknown_visibility"
+    with pytest.raises(ValueError, match="lacks exchange order id"):
+        validator(invalid)
 
 
 def test_inconsistent_final_snapshot_fails_closed(

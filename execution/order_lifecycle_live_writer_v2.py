@@ -193,15 +193,15 @@ def _snapshot_inconsistency_reason(
         return "visible_invalid_reason_mismatch"
     if bool(lifecycle.exchange_exposure_valid) != bool(latest.exchange_exposure_valid):
         return "exchange_valid_mismatch"
-    if lifecycle.exchange_exposure_valid and lifecycle.activation_exchange_ts_ns > 0:
-        if (
-            latest.quantity_time_exposure_exchange_btc_s is None
-            or lifecycle.quantity_time_exposure_exchange_accumulated_btc_s
-            != latest.quantity_time_exposure_exchange_btc_s
-        ):
-            return "exchange_exposure_mismatch"
-    elif latest.quantity_time_exposure_exchange_btc_s is not None:
-        return "exchange_exposure_availability_mismatch"
+    exchange_exposure = lifecycle.exchange_exposure_btc_s()
+    if exchange_exposure is None:
+        if latest.quantity_time_exposure_exchange_btc_s is not None:
+            return "exchange_exposure_availability_mismatch"
+    elif (
+        latest.quantity_time_exposure_exchange_btc_s is None
+        or exchange_exposure != latest.quantity_time_exposure_exchange_btc_s
+    ):
+        return "exchange_exposure_mismatch"
     if bool(lifecycle.exchange_exposure_complete) != bool(
         latest.exchange_exposure_complete
     ):
