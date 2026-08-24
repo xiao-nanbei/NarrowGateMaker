@@ -87,6 +87,8 @@ def test_attempt4_anchor_requires_interpreter_equivalence_successor(
         "interpreter_equivalence": {"canonical_sha256": "f" * 64},
     }
     binding = _binding(manifest_path)
+    prior_portable_root = subject.data_paths.ROOT
+    prior_collector_execution = subject.attempt4_successor._collector_execution  # noqa: SLF001
     monkeypatch.setattr(
         subject.attempt4_successor,
         "validate_manifest",
@@ -110,6 +112,50 @@ def test_attempt4_anchor_requires_interpreter_equivalence_successor(
     assert observed == payload
     assert observed_binding["interpreter_equivalence_canonical_sha256"] == "f" * 64
     assert observed_binding["historical_portable_root"] == portable_root
+    assert subject.data_paths.ROOT == prior_portable_root
+    assert (
+        subject.attempt4_successor._collector_execution  # noqa: SLF001
+        is prior_collector_execution
+    )
+
+
+def test_attempt4_anchor_restores_scoped_globals_after_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest_path = tmp_path / "attempt4-successor.json"
+    manifest_path.write_text("{}\n", encoding="ascii")
+    payload = {"fixture": True}
+    portable_root = {
+        "lexical_path": str(tmp_path),
+        "realpath": str(tmp_path.resolve()),
+    }
+    prior_portable_root = subject.data_paths.ROOT
+    prior_collector_execution = subject.attempt4_successor._collector_execution  # noqa: SLF001
+    monkeypatch.setattr(
+        subject,
+        "_historical_portable_root",
+        lambda _path: (payload, tmp_path.resolve(), portable_root),
+    )
+
+    def reject(*args: object, **kwargs: object) -> dict:
+        assert subject.data_paths.ROOT == tmp_path.resolve()
+        assert (
+            subject.attempt4_successor._collector_execution  # noqa: SLF001
+            is subject._historical_attempt4_collector_execution  # noqa: SLF001
+        )
+        raise RuntimeError("fixture rejection")
+
+    monkeypatch.setattr(subject.attempt4_successor, "validate_manifest", reject)
+
+    with pytest.raises(subject.EvidenceCompletionError, match="manifest is invalid"):
+        subject._validate_attempt4_manifest(  # noqa: SLF001
+            manifest_path, repository_root=tmp_path
+        )
+    assert subject.data_paths.ROOT == prior_portable_root
+    assert (
+        subject.attempt4_successor._collector_execution  # noqa: SLF001
+        is prior_collector_execution
+    )
 
 
 def _write(path: Path, payload: dict) -> Path:
