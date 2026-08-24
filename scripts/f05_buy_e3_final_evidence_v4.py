@@ -69,6 +69,7 @@ LIFECYCLE_FIX_SUPPLEMENT_CONTENT: Final = {
 }
 
 REJECTED_PREDECESSOR_EPOCH_ID: Final = "prospective-1787532118813602859-5382e2bcdaeb"
+HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID: Final = "operational-attempt-direct-v3-evidence-v10-20260824"
 REJECTED_PREDECESSOR_CONTENT: Final = {
     "schema_version": "f05_buy_e3_rejected_predecessor_epoch_receipt.v1",
     "status": "rejected_not_admitted",
@@ -271,7 +272,7 @@ def _historical_attempt_context(
         schema=base.OPERATIONAL_ATTEMPT_SCHEMA,
         status=base.OPERATIONAL_ATTEMPT_STATUS,
     )
-    if attempt.get("attempt_id") != "operational-attempt-v10":
+    if attempt.get("attempt_id") != HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID:
         raise FinalEvidenceV4Error("historical operational attempt is not v10")
     current = attempt.get("current_runtime_evidence")
     if not isinstance(current, Mapping) or set(current) != {

@@ -219,7 +219,7 @@ def _history() -> dict[str, Any]:
     _release, _binding, _execution, artifact = _release_bundle()
     return {
         "role": "historical_mechanics_and_regression_anchor_only",
-        "attempt_id": "operational-attempt-v10",
+        "attempt_id": subject.HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID,
         "operational_attempt": {"canonical_sha256": "1" * 64},
         "attempt4_mechanics_anchor": _content("attempt4.v2", "historical", "1", "2"),
         "exact_v5_mechanics_recovery": _content("v5.v1", "historical", "2", "3"),
@@ -359,7 +359,7 @@ def test_activation_keeps_v3_attempt_as_history_while_v4_is_final(
         subject,
         "_historical_attempt_context",
         lambda *_args, **_kwargs: (
-            {"attempt_id": "operational-attempt-v10"},
+            {"attempt_id": subject.HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID},
             attempt_binding,
             history,
         ),
@@ -484,7 +484,7 @@ def _write_attempt_final_fixture(
     composition = {
         "schema_version": subject.COMPOSITION_SCHEMA,
         "identity": subject.OWNER,
-        "attempt_id": "operational-attempt-v10",
+        "attempt_id": subject.HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID,
         "status": subject.COMPOSITION_STATUS,
         "generated_utc": "2026-08-24T00:00:00Z",
         "runtime_execution": execution,
@@ -507,7 +507,7 @@ def _write_attempt_final_fixture(
     attempt = {
         "schema_version": subject.ATTEMPT_FINAL_SCHEMA,
         "identity": subject.OWNER,
-        "attempt_id": "operational-attempt-v10",
+        "attempt_id": subject.HISTORICAL_OPERATIONAL_ATTEMPT_V10_ID,
         "status": subject.ATTEMPT_FINAL_STATUS,
         "generated_utc": "2026-08-24T00:01:00Z",
         "runtime_execution": execution,
