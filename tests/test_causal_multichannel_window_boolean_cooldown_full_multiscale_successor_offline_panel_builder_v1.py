@@ -439,6 +439,41 @@ def test_contract_keeps_thirty_day_identity_and_default_adapter_is_available() -
     assert preflight["economic_outcomes_read"] is False
 
 
+def test_owner_artifact_validation_reports_missing_file_separately(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing.json"
+    paths = builder.OwnerArtifactPaths(
+        policy=missing,
+        predicate_bundle=missing,
+        private_config=missing,
+    )
+
+    with pytest.raises(
+        builder.OfflinePanelBuilderError,
+        match="exact current owner policy file is missing",
+    ):
+        builder._validate_owner_artifacts(paths)
+
+
+def test_owner_artifact_validation_reports_hash_drift_separately(
+    tmp_path: Path,
+) -> None:
+    drifted = tmp_path / "drifted.json"
+    drifted.write_text("{}\n", encoding="utf-8")
+    paths = builder.OwnerArtifactPaths(
+        policy=drifted,
+        predicate_bundle=drifted,
+        private_config=drifted,
+    )
+
+    with pytest.raises(
+        builder.OfflinePanelBuilderError,
+        match="exact current owner policy hash drifted",
+    ):
+        builder._validate_owner_artifacts(paths)
+
+
 def test_builds_atomic_outcome_blind_rows_with_exact_owner_action(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

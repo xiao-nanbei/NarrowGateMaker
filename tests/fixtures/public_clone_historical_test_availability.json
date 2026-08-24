@@ -57,6 +57,10 @@
       "reason": "requires an exact owner-private source projection, live config, or generated historical execution plan that is deliberately not distributed",
       "modules": [],
       "nodeids": [
+        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_adapter_cannot_generate_candidate_actions_or_leave_partial_day",
+        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_builds_atomic_outcome_blind_rows_with_exact_owner_action",
+        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_interrupted_build_reuses_valid_day_and_publishes_progress",
+        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_post_publish_validation_failure_removes_day_admission",
         "tests/test_causal_v12_1s_economic_precommit.py::test_precommit_binds_current_v9_and_exact_native_40_days",
         "tests/test_causal_v12_1s_economic_precommit.py::test_direct_canary_requires_runtime_safety_and_no_long_shadow",
         "tests/test_causal_v12_1s_restart_aware_continuous_execution_v1_3.py::test_v13_plan_is_outcome_blind_and_cli_adapter_is_not_injection_only",

@@ -352,7 +352,9 @@ def _validate_owner_artifacts(paths: OwnerArtifactPaths) -> None:
         ("private_config", paths.private_config),
     ):
         resolved = path.expanduser().resolve()
-        if not resolved.is_file() or _file_sha256(resolved) != expected[role]:
+        if not resolved.is_file():
+            raise OfflinePanelBuilderError(f"exact current owner {role} file is missing")
+        if _file_sha256(resolved) != expected[role]:
             raise OfflinePanelBuilderError(f"exact current owner {role} hash drifted")
     evaluator = runtime_policy.load_runtime_policy(
         policy_path=paths.policy,
