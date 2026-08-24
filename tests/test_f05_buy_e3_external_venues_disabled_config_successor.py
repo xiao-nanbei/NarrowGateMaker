@@ -66,11 +66,14 @@ def _inputs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
         subject,
         "_git_execution",
         lambda _root, tag: {
+            "repository_root": str(tmp_path),
             "execution_commit": "a" * 40,
             "execution_tree": "b" * 40,
             "annotated_tag_object": "c" * 40,
             "tag_peeled_commit": "a" * 40,
-            "annotated_operational_tag": tag,
+            "annotated_tag": tag,
+            "direct_v4_commit_is_ancestor": False,
+            "runtime_authority_checkout": False,
         },
     )
     return paths

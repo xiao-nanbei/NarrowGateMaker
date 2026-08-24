@@ -55,6 +55,14 @@ def _resource_binding() -> dict[str, Any]:
     )
 
 
+def _config_correction_binding() -> dict[str, Any]:
+    return _content_binding(
+        subject.resource_v5.config_successor.SCHEMA_VERSION,
+        subject.resource_v5.config_successor.STATUS,
+        subject.resource_v5.config_successor.CANONICAL_FIELD,
+    )
+
+
 def _resource() -> dict[str, Any]:
     files = {
         role: {
@@ -65,6 +73,7 @@ def _resource() -> dict[str, Any]:
         for role, frozen in subject.resource_v5.CURRENT_V4_RUNTIME_SOURCE_SHA256.items()
     }
     return {
+        "config_correction": _config_correction_binding(),
         "host": {
             "instance_id": "i-00fe03a8b2fb49a31",
             "instance_type": "c7i-flex.large",
@@ -227,7 +236,9 @@ def _patch_build_dependencies(
         subject, "_validate_release", lambda _path: (_release(), _release_binding())
     )
     monkeypatch.setattr(
-        subject, "_validate_resource", lambda _path: (_resource(), _resource_binding())
+        subject,
+        "_validate_resource",
+        lambda _path, **_kwargs: (_resource(), _resource_binding()),
     )
     monkeypatch.setattr(
         subject,
@@ -261,6 +272,7 @@ def _build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, **kwargs: Any) -> di
         runtime_repository_root=tmp_path,
         direct_release_path=release_path,
         resource_receipt_path=tmp_path / "resource.json",
+        config_correction_path=tmp_path / "config-correction.json",
         pid_file=tmp_path / "maker.pid",
         config_path=config,
         python_executable=tmp_path / ".venv/bin/python",
@@ -455,6 +467,7 @@ def test_validate_rejects_tamper_even_with_recomputed_document_hash(
             runtime_repository_root=tmp_path,
             direct_release_path=tmp_path / "release.v2.json",
             resource_receipt_path=tmp_path / "resource.json",
+            config_correction_path=tmp_path / "config-correction.json",
         )
 
 

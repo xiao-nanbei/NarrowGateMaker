@@ -42,6 +42,18 @@ def _collector_execution() -> dict[str, Any]:
     }
 
 
+def _config_correction_binding() -> dict[str, Any]:
+    return {
+        "schema_version": subject.config_successor.SCHEMA_VERSION,
+        "status": subject.config_successor.STATUS,
+        "file_sha256": "d" * 64,
+        "canonical_field": subject.config_successor.CANONICAL_FIELD,
+        "canonical_sha256": "e" * 64,
+        "size_bytes": 3_000,
+        "mode": "0600",
+    }
+
+
 def _runtime_sources() -> dict[str, Any]:
     files = {
         role: {
@@ -269,6 +281,7 @@ def _resource_payload(
         },
         runtime_execution=_runtime_execution(),
         collector_execution=_collector_execution(),
+        config_correction=_config_correction_binding(),
         runtime_sources=_runtime_sources(),
         exact_deployed_files=_deployed_files(),
         prior_process=prior or _prior_process(),
@@ -289,10 +302,72 @@ def _write_receipt(path: Path, payload: dict[str, Any]) -> None:
     path.chmod(0o600)
 
 
+def _write_config_correction(
+    path: Path,
+    *,
+    collector_execution: dict[str, Any] | None = None,
+    extra: bool = False,
+) -> Path:
+    module = subject.config_successor
+    payload: dict[str, Any] = {
+        "schema_version": module.SCHEMA_VERSION,
+        "identity": module.OWNER,
+        "status": module.STATUS,
+        "generated_utc": "2026-08-24T00:00:00Z",
+        "collector_execution": collector_execution or _collector_execution(),
+        "runtime_authority": dict(module.RELEASE_V2_BINDING),
+        "predecessor_config_pair": {
+            "disabled_sha256": module.OLD_DISABLED_CONFIG_SHA256,
+            "active_sha256": module.OLD_ACTIVE_CONFIG_SHA256,
+            "external_venues_enabled": True,
+            "historical_only": True,
+        },
+        "corrected_config_pair": {
+            "disabled_sha256": module.NEW_DISABLED_CONFIG_SHA256,
+            "active_sha256": module.NEW_ACTIVE_CONFIG_SHA256,
+            "external_venues_enabled": False,
+            "active_disabled_only_difference": module.EXPECTED_PAIR_DIFFERENCE,
+        },
+        "semantic_diff": {
+            "changed_paths": [module.EXPECTED_CHANGED_PATH],
+            "old_value": True,
+            "new_value": False,
+            "source_entries_retained_but_not_started": True,
+            "external_network_shadow_disabled": True,
+            "e3_artifact_and_decision_semantics_unchanged": True,
+        },
+        "required_successor_evidence": {
+            "fresh_disabled_resource_gate": True,
+            "fresh_active_process_capture": True,
+            "fresh_cross_host_admission": True,
+            "fresh_3600s_lifecycle_admission": True,
+            "fresh_final_evidence_chain": True,
+            "fresh_pointer_catalog_epoch": True,
+        },
+        "authority_design": dict(module.AUTHORITY_DESIGN),
+        "permissions": dict(module.PERMISSIONS),
+        "evidence_boundary": dict(module.EVIDENCE_BOUNDARY),
+    }
+    if extra:
+        payload["unexpected"] = True
+    payload[module.CANONICAL_FIELD] = module.document_sha256(payload, module.CANONICAL_FIELD)
+    _write_receipt(path, payload)
+    return path
+
+
 def _recanonicalize_resource(payload: dict[str, Any]) -> None:
     payload[subject.RESOURCE_CANONICAL_FIELD] = subject.document_sha256(
         payload, subject.RESOURCE_CANONICAL_FIELD
     )
+
+
+def _resource_with_correction(tmp_path: Path) -> tuple[dict[str, Any], Path]:
+    correction = _write_config_correction(tmp_path / "config_correction.json")
+    _correction_payload, binding = subject.config_successor.validate_content_receipt(correction)
+    payload = _resource_payload()
+    payload["config_correction"] = binding
+    _recanonicalize_resource(payload)
+    return payload, correction
 
 
 def _health_line(timestamp: str, *, book_overflow: int = 1_662) -> str:
@@ -562,11 +637,12 @@ def test_counter_window_requires_delta_zero_not_absolute_zero() -> None:
 
 
 def test_resource_receipt_round_trip_and_collector_cross_binding(tmp_path: Path) -> None:
-    payload = _resource_payload()
+    payload, correction = _resource_with_correction(tmp_path)
     path = tmp_path / "resource.json"
     _write_receipt(path, payload)
     validated = subject.validate_resource_receipt(
         path,
+        config_correction_path=correction,
         expected_collector_execution=_collector_execution(),
     )
     assert validated == payload
@@ -577,7 +653,49 @@ def test_resource_receipt_round_trip_and_collector_cross_binding(tmp_path: Path)
     changed = _collector_execution()
     changed["execution_commit"] = "d" * 40
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="cross-binding"):
-        subject.validate_resource_receipt(path, expected_collector_execution=changed)
+        subject.validate_resource_receipt(
+            path,
+            config_correction_path=correction,
+            expected_collector_execution=changed,
+        )
+
+
+def test_resource_rejects_missing_or_wrong_config_correction(tmp_path: Path) -> None:
+    payload, correction = _resource_with_correction(tmp_path)
+    resource = tmp_path / "resource.json"
+    _write_receipt(resource, payload)
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="config correction"):
+        subject.validate_resource_receipt(
+            resource,
+            config_correction_path=tmp_path / "missing.json",
+        )
+
+    wrong_execution = _collector_execution()
+    wrong_execution["execution_commit"] = "f" * 40
+    wrong_execution["tag_peeled_commit"] = "f" * 40
+    wrong = _write_config_correction(
+        tmp_path / "wrong-collector.json",
+        collector_execution=wrong_execution,
+    )
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="collector execution"):
+        subject.validate_resource_receipt(resource, config_correction_path=wrong)
+
+    old_payload = json.loads(correction.read_text(encoding="ascii"))
+    old_payload["schema_version"] = "historical.config.correction.v0"
+    old_payload[subject.config_successor.CANONICAL_FIELD] = (
+        subject.config_successor.document_sha256(
+            old_payload,
+            subject.config_successor.CANONICAL_FIELD,
+        )
+    )
+    old = tmp_path / "old-correction.json"
+    _write_receipt(old, old_payload)
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="config correction"):
+        subject.validate_resource_receipt(resource, config_correction_path=old)
+
+    extra = _write_config_correction(tmp_path / "extra-correction.json", extra=True)
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="config correction"):
+        subject.validate_resource_receipt(resource, config_correction_path=extra)
 
 
 @pytest.mark.parametrize(
@@ -643,7 +761,7 @@ def test_resource_builder_requires_fresh_disabled_pid_and_start_ticks() -> None:
 def test_resource_validator_rejects_tampered_counter_even_when_recanonicalized(
     tmp_path: Path,
 ) -> None:
-    payload = _resource_payload()
+    payload, correction = _resource_with_correction(tmp_path)
     window = payload["counter_window"]
     window["absolute_final"]["globalFlowBookOverflow"] += 1
     window["window_delta"]["globalFlowBookOverflow"] = 1
@@ -653,20 +771,20 @@ def test_resource_validator_rejects_tampered_counter_even_when_recanonicalized(
     path = tmp_path / "tampered.json"
     _write_receipt(path, payload)
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="counter window"):
-        subject.validate_resource_receipt(path)
+        subject.validate_resource_receipt(path, config_correction_path=correction)
 
 
 def test_resource_validator_rejects_extra_field_and_non_0600(tmp_path: Path) -> None:
-    payload = _resource_payload()
+    payload, correction = _resource_with_correction(tmp_path)
     payload["unexpected"] = True
     _recanonicalize_resource(payload)
     path = tmp_path / "extra.json"
     _write_receipt(path, payload)
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="identity drifted"):
-        subject.validate_resource_receipt(path)
+        subject.validate_resource_receipt(path, config_correction_path=correction)
     path.chmod(0o644)
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="mode"):
-        subject.validate_resource_receipt(path)
+        subject.validate_resource_receipt(path, config_correction_path=correction)
 
 
 def test_disabled_config_requires_no_shadow_and_exact_artifact(
@@ -919,6 +1037,11 @@ def test_exact_four_file_benchmark_is_aggregate_only_and_exact_1000(
         lambda **_kwargs: runtime_sources,
     )
     monkeypatch.setattr(
+        subject,
+        "_validate_config_correction",
+        lambda _path, *, collector_execution: _config_correction_binding(),
+    )
+    monkeypatch.setattr(
         subject.LiveBuyE3CooldownPolicy,
         "from_files",
         lambda **_kwargs: fake_policy,
@@ -1012,6 +1135,11 @@ def test_concurrent_capture_orchestrates_fresh_disabled_same_pid_window(
         "bind_current_v4_runtime_sources",
         lambda **_kwargs: runtime_sources,
     )
+    monkeypatch.setattr(
+        subject,
+        "_validate_config_correction",
+        lambda _path, *, collector_execution: _config_correction_binding(),
+    )
     monkeypatch.setattr(subject, "capture_process_snapshot", lambda **_kwargs: disabled)
     monkeypatch.setattr(
         subject,
@@ -1090,6 +1218,7 @@ def test_concurrent_capture_orchestrates_fresh_disabled_same_pid_window(
         runtime_repository_root=runtime_root,
         pid_file=tmp_path / "maker.pid",
         disabled_config_path=Path(disabled["config_path"]),
+        config_correction_path=tmp_path / "config-correction.json",
         prior_process_receipt_path=prior_path,
         live_log_path=tmp_path / "maker.log",
         manifest_path=tmp_path / "manifest",

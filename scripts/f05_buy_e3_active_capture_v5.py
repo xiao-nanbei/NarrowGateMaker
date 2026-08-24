@@ -132,6 +132,7 @@ TOP_LEVEL_FIELDS: Final = frozenset(
         "generated_utc",
         "runtime_authority",
         "resource_receipt",
+        "config_correction",
         "host",
         "disabled_predecessor",
         "active_process",
@@ -309,9 +310,16 @@ def _validate_release(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     return dict(opened.payload), binding
 
 
-def _validate_resource(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _validate_resource(
+    path: Path,
+    *,
+    config_correction_path: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        validated = resource_v5.validate_resource_receipt(path)
+        validated = resource_v5.validate_resource_receipt(
+            path,
+            config_correction_path=config_correction_path,
+        )
     except Exception as exc:
         raise ActiveCaptureV5Error("resource-v4 receipt is invalid") from exc
     opened = _open_private_json(path, "resource-v4 receipt")
@@ -612,6 +620,7 @@ def build_active_capture(
     runtime_repository_root: Path,
     direct_release_path: Path,
     resource_receipt_path: Path,
+    config_correction_path: Path,
     pid_file: Path,
     config_path: Path,
     python_executable: Path,
@@ -622,7 +631,10 @@ def build_active_capture(
 ) -> dict[str, Any]:
     repository, _execution = _validate_runtime_repository(runtime_repository_root)
     release, release_binding = _validate_release(direct_release_path)
-    resource, resource_binding = _validate_resource(resource_receipt_path)
+    resource, resource_binding = _validate_resource(
+        resource_receipt_path,
+        config_correction_path=config_correction_path,
+    )
     disabled = _disabled_process(resource)
     disabled_pid = int(disabled["pid"])
     if not _predecessor_is_quiescent(disabled_pid, proc_root=proc_root):
@@ -713,6 +725,7 @@ def build_active_capture(
         "generated_utc": timestamp,
         "runtime_authority": release_binding,
         "resource_receipt": resource_binding,
+        "config_correction": dict(resource["config_correction"]),
         "host": dict(resource["host"]),
         "disabled_predecessor": {
             "pid": disabled_pid,
@@ -739,10 +752,14 @@ def validate_active_capture(
     runtime_repository_root: Path,
     direct_release_path: Path,
     resource_receipt_path: Path,
+    config_correction_path: Path,
 ) -> dict[str, Any]:
     repository, _execution = _validate_runtime_repository(runtime_repository_root)
     release, release_binding = _validate_release(direct_release_path)
-    resource, resource_binding = _validate_resource(resource_receipt_path)
+    resource, resource_binding = _validate_resource(
+        resource_receipt_path,
+        config_correction_path=config_correction_path,
+    )
     active_sources = _capture_active_runtime_sources(repository, resource)
     disabled = _disabled_process(resource)
     opened = _open_private_json(path, "active-capture-v4 receipt")
@@ -760,12 +777,14 @@ def validate_active_capture(
         or not isinstance(runtime, Mapping)
         or payload.get("runtime_authority") != release_binding
         or payload.get("resource_receipt") != resource_binding
+        or payload.get("config_correction") != resource.get("config_correction")
         or payload.get("host") != resource.get("host")
     ):
         raise ActiveCaptureV5Error("active-capture-v4 structure or content binding drifted")
     if (
         set(payload["runtime_authority"]) != CONTENT_BINDING_FIELDS
         or set(payload["resource_receipt"]) != CONTENT_BINDING_FIELDS
+        or set(payload["config_correction"]) != CONTENT_BINDING_FIELDS
     ):
         raise ActiveCaptureV5Error("active capture contains non-content authority bindings")
     expected_predecessor = {
@@ -835,6 +854,7 @@ def finalize_active_capture(
     runtime_repository_root: Path,
     direct_release_path: Path,
     resource_receipt_path: Path,
+    config_correction_path: Path,
     pid_file: Path,
     config_path: Path,
     python_executable: Path,
@@ -848,6 +868,7 @@ def finalize_active_capture(
         runtime_repository_root=runtime_repository_root,
         direct_release_path=direct_release_path,
         resource_receipt_path=resource_receipt_path,
+        config_correction_path=config_correction_path,
         pid_file=pid_file,
         config_path=config_path,
         python_executable=python_executable,
@@ -865,6 +886,7 @@ def finalize_active_capture(
         runtime_repository_root=runtime_repository_root,
         direct_release_path=direct_release_path,
         resource_receipt_path=resource_receipt_path,
+        config_correction_path=config_correction_path,
     )
     if observed != payload:
         raise ActiveCaptureV5Error("active capture changed after write")
@@ -878,6 +900,7 @@ def _parser() -> argparse.ArgumentParser:
     capture.add_argument("--runtime-repository-root", type=Path, required=True)
     capture.add_argument("--direct-release", type=Path, required=True)
     capture.add_argument("--resource-receipt", type=Path, required=True)
+    capture.add_argument("--config-correction", type=Path, required=True)
     capture.add_argument("--pid-file", type=Path, required=True)
     capture.add_argument("--config", type=Path, required=True)
     capture.add_argument("--python", type=Path, required=True)
@@ -889,6 +912,7 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--runtime-repository-root", type=Path, required=True)
     validate.add_argument("--direct-release", type=Path, required=True)
     validate.add_argument("--resource-receipt", type=Path, required=True)
+    validate.add_argument("--config-correction", type=Path, required=True)
     return parser
 
 
@@ -899,6 +923,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_repository_root=args.runtime_repository_root,
             direct_release_path=args.direct_release,
             resource_receipt_path=args.resource_receipt,
+            config_correction_path=args.config_correction,
             pid_file=args.pid_file,
             config_path=args.config,
             python_executable=args.python,
@@ -912,6 +937,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_repository_root=args.runtime_repository_root,
             direct_release_path=args.direct_release,
             resource_receipt_path=args.resource_receipt,
+            config_correction_path=args.config_correction,
         )
         file_sha = resource_v5.file_sha256(args.receipt)
     print(

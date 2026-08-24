@@ -54,6 +54,18 @@ RELEASE_V2_BINDING: Final = {
 }
 EXPECTED_CHANGED_PATH: Final = "external_venues.enabled"
 EXPECTED_PAIR_DIFFERENCE: Final = "strategy.buy_e3_cooldown_policy_enabled"
+DIRECT_V4_EXECUTION_COMMIT: Final = "07ef93733a3a685caba945c7761a48473e403072"
+CONTENT_BINDING_FIELDS: Final = frozenset(
+    {
+        "schema_version",
+        "status",
+        "file_sha256",
+        "canonical_field",
+        "canonical_sha256",
+        "size_bytes",
+        "mode",
+    }
+)
 
 PERMISSIONS: Final = {"research": False, "action": False, "live": False}
 EVIDENCE_BOUNDARY: Final = {
@@ -228,7 +240,7 @@ def _release_binding(path: Path) -> dict[str, Any]:
     return observed
 
 
-def _git_execution(repository_root: Path, annotated_tag: str) -> dict[str, str]:
+def _git_execution(repository_root: Path, annotated_tag: str) -> dict[str, Any]:
     root = repository_root.resolve(strict=True)
     commands = {
         "execution_commit": ["git", "rev-parse", "HEAD"],
@@ -238,7 +250,7 @@ def _git_execution(repository_root: Path, annotated_tag: str) -> dict[str, str]:
         "status": ["git", "status", "--porcelain", "--untracked-files=all"],
         "tag_type": ["git", "cat-file", "-t", annotated_tag],
     }
-    values: dict[str, str] = {}
+    values: dict[str, Any] = {}
     for key, command in commands.items():
         result = subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
         values[key] = result.stdout.strip()
@@ -246,8 +258,120 @@ def _git_execution(repository_root: Path, annotated_tag: str) -> dict[str, str]:
         raise ConfigSuccessorError("collector checkout is not clean at an annotated tag")
     if values["execution_commit"] != values["tag_peeled_commit"]:
         raise ConfigSuccessorError("collector tag does not peel to HEAD")
-    values["annotated_operational_tag"] = annotated_tag
+    ancestor = (
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", DIRECT_V4_EXECUTION_COMMIT, "HEAD"],
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+        ).returncode
+        == 0
+    )
+    if ancestor:
+        raise ConfigSuccessorError("collector must remain independent from direct-v4 authority")
+    values["repository_root"] = str(root)
+    values["annotated_tag"] = annotated_tag
+    values["direct_v4_commit_is_ancestor"] = False
+    values["runtime_authority_checkout"] = False
     return values
+
+
+def _content_binding(path: Path, payload: Mapping[str, Any], info: os.stat_result) -> dict[str, Any]:
+    return {
+        "schema_version": payload.get("schema_version"),
+        "status": payload.get("status"),
+        "file_sha256": file_sha256(path),
+        "canonical_field": CANONICAL_FIELD,
+        "canonical_sha256": payload.get(CANONICAL_FIELD),
+        "size_bytes": info.st_size,
+        "mode": format(stat.S_IMODE(info.st_mode), "04o"),
+    }
+
+
+def validate_content_receipt(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Validate the complete portable receipt without reopening config paths."""
+
+    payload, info = _load_json(path, "config successor receipt")
+    expected_fields = {
+        "schema_version",
+        "identity",
+        "status",
+        "generated_utc",
+        "collector_execution",
+        "runtime_authority",
+        "predecessor_config_pair",
+        "corrected_config_pair",
+        "semantic_diff",
+        "required_successor_evidence",
+        "authority_design",
+        "permissions",
+        "evidence_boundary",
+        CANONICAL_FIELD,
+    }
+    execution = payload.get("collector_execution")
+    if not isinstance(execution, Mapping) or set(execution) != {
+        "repository_root",
+        "execution_commit",
+        "execution_tree",
+        "annotated_tag",
+        "annotated_tag_object",
+        "tag_peeled_commit",
+        "direct_v4_commit_is_ancestor",
+        "runtime_authority_checkout",
+    }:
+        raise ConfigSuccessorError("config successor collector execution fields drifted")
+    if (
+        set(payload) != expected_fields
+        or payload.get("schema_version") != SCHEMA_VERSION
+        or payload.get("identity") != OWNER
+        or payload.get("status") != STATUS
+        or payload.get("runtime_authority") != RELEASE_V2_BINDING
+        or payload.get("predecessor_config_pair")
+        != {
+            "disabled_sha256": OLD_DISABLED_CONFIG_SHA256,
+            "active_sha256": OLD_ACTIVE_CONFIG_SHA256,
+            "external_venues_enabled": True,
+            "historical_only": True,
+        }
+        or payload.get("corrected_config_pair")
+        != {
+            "disabled_sha256": NEW_DISABLED_CONFIG_SHA256,
+            "active_sha256": NEW_ACTIVE_CONFIG_SHA256,
+            "external_venues_enabled": False,
+            "active_disabled_only_difference": EXPECTED_PAIR_DIFFERENCE,
+        }
+        or payload.get("semantic_diff")
+        != {
+            "changed_paths": [EXPECTED_CHANGED_PATH],
+            "old_value": True,
+            "new_value": False,
+            "source_entries_retained_but_not_started": True,
+            "external_network_shadow_disabled": True,
+            "e3_artifact_and_decision_semantics_unchanged": True,
+        }
+        or payload.get("required_successor_evidence")
+        != {
+            "fresh_disabled_resource_gate": True,
+            "fresh_active_process_capture": True,
+            "fresh_cross_host_admission": True,
+            "fresh_3600s_lifecycle_admission": True,
+            "fresh_final_evidence_chain": True,
+            "fresh_pointer_catalog_epoch": True,
+        }
+        or payload.get("authority_design") != AUTHORITY_DESIGN
+        or payload.get("permissions") != PERMISSIONS
+        or payload.get("evidence_boundary") != EVIDENCE_BOUNDARY
+        or execution.get("tag_peeled_commit") != execution.get("execution_commit")
+        or execution.get("direct_v4_commit_is_ancestor") is not False
+        or execution.get("runtime_authority_checkout") is not False
+        or payload.get(CANONICAL_FIELD) != document_sha256(payload, CANONICAL_FIELD)
+    ):
+        raise ConfigSuccessorError("config successor receipt semantic identity drifted")
+    binding = _content_binding(path, payload, info)
+    if set(binding) != CONTENT_BINDING_FIELDS:
+        raise ConfigSuccessorError("config successor content binding fields drifted")
+    return dict(payload), binding
 
 
 def build_receipt(
@@ -339,6 +463,7 @@ def validate_receipt(
     direct_release: Path,
 ) -> dict[str, Any]:
     payload, _info = _load_json(path, "config successor receipt")
+    validate_content_receipt(path)
     expected = build_receipt(
         repository_root=repository_root,
         annotated_tag=annotated_tag,

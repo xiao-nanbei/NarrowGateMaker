@@ -35,6 +35,7 @@ from typing import Any, Final
 import yaml
 
 from scripts import f05_buy_e3_direct_owner_release_v2 as direct_release_v2
+from scripts import f05_buy_e3_external_venues_disabled_config_successor as config_successor
 from strategy.boolean_cooldown_buy_e3 import (
     BASE_WINDOW_WIDTH_NS,
     CONTROL_ACTION,
@@ -770,6 +771,32 @@ def _validate_disabled_config(path: Path) -> str:
     if any(strategy.get(name) != value for name, value in exact_values.items()):
         raise BuyE3CurrentHostResourceGateError("disabled config artifact binding drifted")
     return observed
+
+
+def _validate_config_correction(
+    path: Path,
+    *,
+    collector_execution: Mapping[str, Any],
+) -> dict[str, Any]:
+    try:
+        payload, binding = config_successor.validate_content_receipt(path)
+    except Exception as exc:
+        raise BuyE3CurrentHostResourceGateError("config correction receipt is invalid") from exc
+    if payload.get("collector_execution") != dict(collector_execution):
+        raise BuyE3CurrentHostResourceGateError(
+            "config correction collector execution does not match resource collector"
+        )
+    predecessor = _mapping(payload.get("predecessor_config_pair"), "predecessor config pair")
+    corrected = _mapping(payload.get("corrected_config_pair"), "corrected config pair")
+    if (
+        predecessor.get("disabled_sha256") != config_successor.OLD_DISABLED_CONFIG_SHA256
+        or predecessor.get("active_sha256") != config_successor.OLD_ACTIVE_CONFIG_SHA256
+        or corrected.get("disabled_sha256") != EXPECTED_DISABLED_CONFIG_SHA256
+        or corrected.get("active_sha256") != config_successor.NEW_ACTIVE_CONFIG_SHA256
+        or corrected.get("external_venues_enabled") is not False
+    ):
+        raise BuyE3CurrentHostResourceGateError("config correction hash transition drifted")
+    return dict(binding)
 
 
 def _proc_stat_fields(proc_root: Path, pid: int) -> list[str]:
@@ -1657,6 +1684,7 @@ def build_resource_receipt(
     host: Mapping[str, Any],
     runtime_execution: Mapping[str, Any],
     collector_execution: Mapping[str, Any],
+    config_correction: Mapping[str, Any],
     runtime_sources: Mapping[str, Any],
     exact_deployed_files: Mapping[str, Any],
     prior_process: Mapping[str, Any],
@@ -1674,6 +1702,11 @@ def build_resource_receipt(
         raise BuyE3CurrentHostResourceGateError("concurrent sample window is too short")
     runtime_execution_row = _validate_execution_shape(runtime_execution, runtime=True)
     collector_execution_row = _validate_execution_shape(collector_execution, runtime=False)
+    config_correction_row = _exact_mapping(
+        config_correction,
+        tuple(config_successor.CONTENT_BINDING_FIELDS),
+        "config correction binding",
+    )
     runtime_source_binding = _validate_runtime_source_binding(runtime_sources)
     deployed_file_binding = _validate_exact_deployed_binding(exact_deployed_files)
     host_row = dict(host)
@@ -1812,6 +1845,7 @@ def build_resource_receipt(
         "host": host_row,
         "runtime_execution": runtime_execution_row,
         "collector_execution": collector_execution_row,
+        "config_correction": config_correction_row,
         "runtime_sources": runtime_source_binding,
         "exact_deployed_files": deployed_file_binding,
         "fresh_disabled_process": {
@@ -1904,6 +1938,7 @@ def _validate_execution_shape(raw: Any, *, runtime: bool) -> dict[str, Any]:
 def validate_resource_receipt(
     path: Path,
     *,
+    config_correction_path: Path,
     expected_collector_execution: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate an immutable aggregate receipt for later evidence completion."""
@@ -1918,6 +1953,7 @@ def validate_resource_receipt(
         "host",
         "runtime_execution",
         "collector_execution",
+        "config_correction",
         "runtime_sources",
         "exact_deployed_files",
         "fresh_disabled_process",
@@ -1953,6 +1989,10 @@ def validate_resource_receipt(
         expected_collector_execution
     ):
         raise BuyE3CurrentHostResourceGateError("collector execution cross-binding drifted")
+    config_correction = _validate_config_correction(
+        config_correction_path,
+        collector_execution=collector_execution,
+    )
     runtime_sources = _validate_runtime_source_binding(payload.get("runtime_sources"))
     deployed = _validate_exact_deployed_binding(payload.get("exact_deployed_files"))
     process = _exact_mapping(
@@ -2036,6 +2076,7 @@ def validate_resource_receipt(
         or payload.get("identity") != OWNER_IDENTITY
         or payload.get("status") != RESOURCE_STATUS
         or payload.get("authority_design") != AUTHORITY_DESIGN
+        or payload.get("config_correction") != config_correction
         or host.get("instance_id") != CURRENT_INSTANCE_ID
         or host.get("instance_type") != CURRENT_INSTANCE_TYPE
         or host.get("logical_cpu_count") != CURRENT_LOGICAL_CPU_COUNT
@@ -2139,6 +2180,7 @@ def capture_concurrent_resource_gate(
     runtime_repository_root: Path,
     pid_file: Path,
     disabled_config_path: Path,
+    config_correction_path: Path,
     prior_process_receipt_path: Path,
     live_log_path: Path,
     manifest_path: Path,
@@ -2171,6 +2213,10 @@ def capture_concurrent_resource_gate(
         collector_root,
         annotated_tag=collector_annotated_tag,
         runtime_authority=False,
+    )
+    config_correction = _validate_config_correction(
+        config_correction_path,
+        collector_execution=collector_execution,
     )
     runtime_execution = capture_git_execution(
         runtime_root,
@@ -2374,6 +2420,7 @@ def capture_concurrent_resource_gate(
             host=host,
             runtime_execution=runtime_execution,
             collector_execution=collector_execution,
+            config_correction=config_correction,
             runtime_sources=runtime_sources,
             exact_deployed_files=deployed,
             prior_process=prior,
@@ -2389,6 +2436,7 @@ def capture_concurrent_resource_gate(
         atomic_write_receipt(resource_output, payload)
         validate_resource_receipt(
             resource_output,
+            config_correction_path=config_correction_path,
             expected_collector_execution=collector_execution,
         )
         return payload
@@ -2436,6 +2484,7 @@ def _parser() -> argparse.ArgumentParser:
     capture.add_argument("--collector-annotated-tag", required=True)
     capture.add_argument("--pid-file", type=Path, required=True)
     capture.add_argument("--disabled-config", type=Path, required=True)
+    capture.add_argument("--config-correction", type=Path, required=True)
     capture.add_argument("--prior-process-receipt", type=Path, required=True)
     capture.add_argument("--live-log", type=Path, required=True)
     capture.add_argument("--instance-id", required=True)
@@ -2450,6 +2499,7 @@ def _parser() -> argparse.ArgumentParser:
 
     validate = subparsers.add_parser("validate")
     validate.add_argument("--receipt", type=Path, required=True)
+    validate.add_argument("--config-correction", type=Path)
     validate.add_argument(
         "--kind", choices=("process", "benchmark", "resource"), default="resource"
     )
@@ -2490,6 +2540,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             runtime_repository_root=args.runtime_repository_root,
             pid_file=args.pid_file,
             disabled_config_path=args.disabled_config,
+            config_correction_path=args.config_correction,
             prior_process_receipt_path=args.prior_process_receipt,
             live_log_path=args.live_log,
             manifest_path=args.artifact_manifest,
@@ -2513,7 +2564,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.kind == "benchmark":
         payload = validate_benchmark_receipt(args.receipt)
     else:
-        payload = validate_resource_receipt(args.receipt)
+        if args.config_correction is None:
+            raise BuyE3CurrentHostResourceGateError(
+                "resource validation requires --config-correction"
+            )
+        payload = validate_resource_receipt(
+            args.receipt,
+            config_correction_path=args.config_correction,
+        )
     canonical_field = {
         "process": PROCESS_CANONICAL_FIELD,
         "benchmark": BENCHMARK_CANONICAL_FIELD,
