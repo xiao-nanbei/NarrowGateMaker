@@ -79,16 +79,18 @@ EVIDENCE_RELEASE_CANONICAL_FIELD: Final = "canonical_no_shadow_evidence_release_
 CONTENT_BINDING_FIELDS: Final = tuple(transport_v6.CONTENT_BINDING_FIELDS)
 PORTABLE_SOURCE_ROLES: Final = tuple(transport_v6.SOURCE_FILENAMES)
 
-# The transport admission is intentionally fail-closed until its durable
-# source freeze fills every hash, byte size, and absolute provenance path.
-FROZEN_CROSS_HOST_ADMISSION_PATH_PROVENANCE: Final = ""
+FROZEN_CROSS_HOST_ADMISSION_PATH_PROVENANCE: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/f05_owner_buy_e3_v1/"
+    "direct_no_shadow_live_evidence_v6_20260824/cross_host_admission/"
+    "cross_host_admission.json"
+)
 FROZEN_CROSS_HOST_ADMISSION_CONTENT: Final = {
     "schema_version": transport_v6.ADMISSION_SCHEMA,
     "status": transport_v6.ADMISSION_STATUS,
-    "file_sha256": "",
+    "file_sha256": "78cff62bab68ead22fcc21ba40b4a69d96c9f3d452db4f1a6f7dc24bdaba00fd",
     "canonical_field": transport_v6.ADMISSION_CANONICAL_FIELD,
-    "canonical_sha256": "",
-    "size_bytes": 0,
+    "canonical_sha256": "24f9e2e7f92f29e35fc86692e53a1dd0e899ecd5b78d5e160e7ccb5a2bdfdb64",
+    "size_bytes": 27_860,
     "mode": "0600",
 }
 
