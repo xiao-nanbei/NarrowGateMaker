@@ -879,6 +879,59 @@ def test_manifest_slow_recursive_validation_refreshes_time_before_first_write(
     assert abs(formal.stat().st_mtime_ns - real_now_ns) <= 5_000_000_000
 
 
+def test_manifest_delayed_directory_setup_precedes_final_time_freeze(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(tmp_path)
+    monkeypatch.setattr(subject, "FROZEN_PREDECESSOR", fixture["predecessor_contract"])
+    monkeypatch.setattr(
+        subject,
+        "_observe_publisher_checkout",
+        lambda _root: deepcopy(fixture["manifest_payload"]["publisher_source"]),
+    )
+    monkeypatch.setattr(
+        subject,
+        "_validate_sources",
+        lambda _manifest: (
+            deepcopy(fixture["source_context"]),
+            deepcopy(fixture["bindings"]),
+        ),
+    )
+    evidence = tmp_path / "durable-evidence"
+    evidence.mkdir(mode=0o700)
+    formal = evidence / "operational_metadata" / "activation_manifest_v6.json"
+    monkeypatch.setattr(subject, "FORMAL_MANIFEST_PATH", str(formal))
+    real_now_ns = subject._now_utc_ns()  # noqa: SLF001
+    simulated = {"now_ns": real_now_ns - 10_000_000_000}
+    monkeypatch.setattr(subject, "_now_utc_ns", lambda: simulated["now_ns"])
+    real_ensure = subject._ensure_private_directory  # noqa: SLF001
+
+    def delayed_ensure(path: Path) -> None:
+        real_ensure(path)
+        simulated["now_ns"] = real_now_ns
+
+    monkeypatch.setattr(subject, "_ensure_private_directory", delayed_ensure)
+    result = subject.prepare_activation_manifest(
+        publisher_root=Path(fixture["manifest_payload"]["publisher_root"]),
+        metadata_repository_root=fixture["root"],
+        current_runtime_root=Path(
+            fixture["manifest_payload"]["validation_roots"]["current_runtime_root"]
+        ),
+        historical_v4_root=Path(
+            fixture["manifest_payload"]["validation_roots"]["historical_v4_root"]
+        ),
+        receipt_id=subject.FORMAL_RECEIPT_ID,
+        output_path=formal,
+    )
+
+    payload = json.loads(formal.read_text())
+    assert result["recursive_validation_passed"] is True
+    assert payload["generated_utc"] == subject._nanosecond_utc(  # noqa: SLF001
+        real_now_ns, "expected post-directory-setup clock"
+    )
+    assert abs(formal.stat().st_mtime_ns - real_now_ns) <= 5_000_000_000
+
+
 def test_manifest_recursive_failure_leaves_no_final_or_pending(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -912,6 +965,79 @@ def test_manifest_recursive_failure_leaves_no_final_or_pending(
             output_path=formal,
         )
     assert not formal.exists()
+    assert not subject._pending(formal, "create").exists()  # noqa: SLF001
+
+
+def test_manifest_publication_apis_reject_nonrecursive_bypass_before_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(tmp_path)
+    evidence = tmp_path / "durable-evidence"
+    evidence.mkdir(mode=0o700)
+    formal = evidence / "operational_metadata" / "activation_manifest_v6.json"
+    monkeypatch.setattr(subject, "FORMAL_MANIFEST_PATH", str(formal))
+    with pytest.raises(subject.OperationalMetadataV6Error, match="requires recursive"):
+        subject.prepare_activation_manifest(
+            publisher_root=Path(fixture["manifest_payload"]["publisher_root"]),
+            metadata_repository_root=fixture["root"],
+            current_runtime_root=Path(
+                fixture["manifest_payload"]["validation_roots"]["current_runtime_root"]
+            ),
+            historical_v4_root=Path(
+                fixture["manifest_payload"]["validation_roots"]["historical_v4_root"]
+            ),
+            receipt_id=subject.FORMAL_RECEIPT_ID,
+            output_path=formal,
+            recursive=False,
+        )
+    with pytest.raises(subject.OperationalMetadataV6Error, match="requires recursive"):
+        subject.finalize_activation_manifest(
+            fixture["manifest_payload"],
+            output_path=formal,
+            recursive=False,
+        )
+    assert not formal.exists()
+    assert not formal.parent.exists()
+    assert not subject._pending(formal, "create").exists()  # noqa: SLF001
+
+
+def test_manifest_predecessor_drift_during_slow_validation_blocks_first_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = _fixture(tmp_path)
+    monkeypatch.setattr(subject, "FROZEN_PREDECESSOR", fixture["predecessor_contract"])
+    monkeypatch.setattr(
+        subject,
+        "_observe_publisher_checkout",
+        lambda _root: deepcopy(fixture["manifest_payload"]["publisher_source"]),
+    )
+    evidence = tmp_path / "durable-evidence"
+    evidence.mkdir(mode=0o700)
+    formal = evidence / "operational_metadata" / "activation_manifest_v6.json"
+    monkeypatch.setattr(subject, "FORMAL_MANIFEST_PATH", str(formal))
+
+    def mutate_predecessor(_manifest: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        pointer = json.loads(fixture["pointer"].read_text())
+        pointer["concurrent_drift"] = True
+        _write_private(fixture["pointer"], pointer)
+        return deepcopy(fixture["source_context"]), deepcopy(fixture["bindings"])
+
+    monkeypatch.setattr(subject, "_validate_sources", mutate_predecessor)
+    with pytest.raises(subject.OperationalMetadataV6Error, match="predecessor state drifted"):
+        subject.prepare_activation_manifest(
+            publisher_root=Path(fixture["manifest_payload"]["publisher_root"]),
+            metadata_repository_root=fixture["root"],
+            current_runtime_root=Path(
+                fixture["manifest_payload"]["validation_roots"]["current_runtime_root"]
+            ),
+            historical_v4_root=Path(
+                fixture["manifest_payload"]["validation_roots"]["historical_v4_root"]
+            ),
+            receipt_id=subject.FORMAL_RECEIPT_ID,
+            output_path=formal,
+        )
+    assert not formal.exists()
+    assert not formal.parent.exists()
     assert not subject._pending(formal, "create").exists()  # noqa: SLF001
 
 
@@ -967,6 +1093,20 @@ def test_manifest_prepare_recovers_pending_and_hardlink_crash_points(
     assert formal.read_bytes() == exact
     assert formal.stat().st_nlink == 1
     assert not pending.exists()
+
+    os.link(formal, pending)
+    manifest_payload = json.loads(formal.read_text())
+    pointer_exact = fixture["pointer"].read_bytes()
+    pointer = json.loads(pointer_exact)
+    pointer["concurrent_drift_before_finalize_repair"] = True
+    _write_private(fixture["pointer"], pointer)
+    with pytest.raises(subject.OperationalMetadataV6Error, match="predecessor state drifted"):
+        subject.finalize_activation_manifest(manifest_payload, output_path=formal)
+    assert formal.stat().st_nlink == 2
+    assert pending.stat().st_nlink == 2
+    pending.unlink()
+    fixture["pointer"].write_bytes(pointer_exact)
+    fixture["pointer"].chmod(0o600)
 
     pending.write_bytes(exact)
     pending.chmod(0o600)
@@ -1273,8 +1413,9 @@ def test_two_root_sandbox_dry_run_and_apply_never_mutate_publisher(
 def test_actual_durable_sources_validate_with_only_unfrozen_publisher_stub(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime_root = Path("/private/tmp/f05-buy-e3-eacb-runtime-for-context-v1")
-    historical_root = Path("/private/tmp/f05-buy-e3-direct-live-v4-lifecycle-20260824")
+    checkout_root = Path(subject.EVIDENCE_ROOT) / "authority_sources" / "checkouts"
+    runtime_root = checkout_root / "runtime_v3"
+    historical_root = checkout_root / "historical_v4"
     metadata_root = Path("/Users/xuantan/Projects/NarrowGate_BTCUSDC")
     if not all(path.exists() for path in (runtime_root, historical_root, metadata_root)):
         pytest.skip("durable current/historical validation roots are unavailable")

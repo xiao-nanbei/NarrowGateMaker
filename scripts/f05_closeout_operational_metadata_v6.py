@@ -1086,6 +1086,64 @@ def _ensure_private_directory(path: Path) -> None:
         raise OperationalMetadataV6Error("created manifest directory identity drifted")
 
 
+def _open_metadata_transaction_lock(metadata_repository_root: Path) -> int:
+    private_root = (
+        Path(os.path.abspath(os.fspath(Path(metadata_repository_root).expanduser())))
+        / "docs"
+        / "private"
+    )
+    before = private_root.lstat()
+    if not stat.S_ISDIR(before.st_mode) or before.st_uid != os.getuid() or before.st_mode & 0o077:
+        raise OperationalMetadataV6Error("metadata transaction directory is unsafe")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(private_root, flags)
+    opened = os.fstat(descriptor)
+    if (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
+        os.close(descriptor)
+        raise OperationalMetadataV6Error("metadata transaction directory changed while opening")
+    fcntl.flock(descriptor, fcntl.LOCK_EX)
+    return descriptor
+
+
+def _close_metadata_transaction_lock(descriptor: int) -> None:
+    fcntl.flock(descriptor, fcntl.LOCK_UN)
+    os.close(descriptor)
+
+
+def _validate_manifest_predecessor_state(manifest: Mapping[str, Any]) -> None:
+    metadata_root = Path(str(manifest["metadata_repository_root"]))
+    transaction = manifest["transaction"]
+    pointer_path = metadata_root / "docs" / "private" / "live_remote.current.local.json"
+    catalog_path = metadata_root / "docs" / "private" / "catalog.current.local.json"
+    predecessor_path = Path(str(transaction["predecessor_activation"]["path"]))
+    pointer, pointer_raw, _pointer_meta = _load_json(pointer_path, mode=0o600)
+    catalog, catalog_raw, _catalog_meta = _load_json(catalog_path, mode=0o600)
+    predecessor, predecessor_raw, _predecessor_meta = _load_json(predecessor_path, mode=0o600)
+    predecessor_binding = _content(predecessor, predecessor_path, predecessor_raw, 0o600)
+    if (
+        {
+            "file_sha256": _sha(pointer_raw),
+            "size_bytes": len(pointer_raw),
+        }
+        != transaction["predecessor_pointer"]
+        or {
+            "file_sha256": _sha(catalog_raw),
+            "size_bytes": len(catalog_raw),
+        }
+        != transaction["predecessor_catalog"]
+        or predecessor_binding != transaction["predecessor_activation"]
+        or pointer.get("current_activation_receipt")
+        != {
+            "path": predecessor_binding["path"],
+            "sha256": predecessor_binding["file_sha256"],
+            "canonical_sha256": predecessor_binding["canonical_sha256"],
+            "bytes": predecessor_binding["size_bytes"],
+        }
+    ):
+        raise OperationalMetadataV6Error("formal manifest predecessor state drifted")
+    _catalog_context(catalog, transaction)
+
+
 def validate_activation_manifest(path: Path, *, recursive: bool = True) -> dict[str, Any]:
     payload, binding = _validate_manifest(path)
     source_count = 0
@@ -1106,6 +1164,25 @@ def finalize_activation_manifest(
     output_path: Path | None = None,
     recursive: bool = True,
 ) -> dict[str, Any]:
+    if recursive is not True:
+        raise OperationalMetadataV6Error(
+            "formal manifest publication requires recursive validation"
+        )
+    metadata_root = payload.get("metadata_repository_root")
+    if not isinstance(metadata_root, str) or not Path(metadata_root).expanduser().is_absolute():
+        raise OperationalMetadataV6Error("manifest metadata repository root is invalid")
+    descriptor = _open_metadata_transaction_lock(Path(metadata_root))
+    try:
+        return _finalize_activation_manifest_locked(payload, output_path=output_path)
+    finally:
+        _close_metadata_transaction_lock(descriptor)
+
+
+def _finalize_activation_manifest_locked(
+    payload: Mapping[str, Any],
+    *,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
     path = Path(FORMAL_MANIFEST_PATH if output_path is None else output_path)
     path = Path(os.path.abspath(os.fspath(path.expanduser())))
     expected = Path(os.path.abspath(os.fspath(Path(FORMAL_MANIFEST_PATH).expanduser())))
@@ -1115,9 +1192,14 @@ def finalize_activation_manifest(
     final_payload = deepcopy(dict(payload))
     raw = _render(final_payload)
     _validate_manifest_payload(final_payload, path, raw)
-    if recursive:
-        _validate_sources(final_payload)
-    if not path.exists() and not pending.exists():
+    _validate_sources(final_payload)
+    publication_state = (path.exists(), pending.exists())
+    if publication_state[0] is False or publication_state[1] is True:
+        _validate_manifest_predecessor_state(final_payload)
+    _ensure_private_directory(path.parent)
+    if (path.exists(), pending.exists()) != publication_state:
+        raise OperationalMetadataV6Error("formal manifest publication state changed during setup")
+    if publication_state == (False, False):
         final_payload["generated_utc"] = _nanosecond_utc(
             _now_utc_ns(), "manifest finalization clock"
         )
@@ -1127,9 +1209,8 @@ def finalize_activation_manifest(
         raw = _render(final_payload)
         _validate_manifest_payload(final_payload, path, raw)
         _validate_manifest_creation_utc(final_payload["generated_utc"])
-    _ensure_private_directory(path.parent)
     _publish_create_only(path, raw)
-    result = validate_activation_manifest(path, recursive=recursive)
+    result = validate_activation_manifest(path, recursive=True)
     result["write_semantics"] = "create_only_idempotent_exact_conflict_rejected"
     return result
 
@@ -1143,6 +1224,33 @@ def prepare_activation_manifest(
     receipt_id: str,
     output_path: Path | None = None,
     recursive: bool = True,
+) -> dict[str, Any]:
+    if recursive is not True:
+        raise OperationalMetadataV6Error(
+            "formal manifest publication requires recursive validation"
+        )
+    descriptor = _open_metadata_transaction_lock(metadata_repository_root)
+    try:
+        return _prepare_activation_manifest_locked(
+            publisher_root=publisher_root,
+            metadata_repository_root=metadata_repository_root,
+            current_runtime_root=current_runtime_root,
+            historical_v4_root=historical_v4_root,
+            receipt_id=receipt_id,
+            output_path=output_path,
+        )
+    finally:
+        _close_metadata_transaction_lock(descriptor)
+
+
+def _prepare_activation_manifest_locked(
+    *,
+    publisher_root: Path,
+    metadata_repository_root: Path,
+    current_runtime_root: Path,
+    historical_v4_root: Path,
+    receipt_id: str,
+    output_path: Path | None = None,
 ) -> dict[str, Any]:
     path = Path(FORMAL_MANIFEST_PATH if output_path is None else output_path)
     path = Path(os.path.abspath(os.fspath(path.expanduser())))
@@ -1166,14 +1274,15 @@ def prepare_activation_manifest(
             historical_v4_root=historical_v4_root,
             receipt_id=receipt_id,
         )
-        if recursive:
-            _validate_sources(existing)
+        _validate_sources(existing)
+        if metadata.st_nlink == 2:
+            _validate_manifest_predecessor_state(existing)
         if metadata.st_nlink == 2:
             _publish_create_only(path, raw)
             semantics = "create_only_hardlink_crash_recovered"
         else:
             semantics = "create_only_idempotent_existing_exact_reused"
-        result = validate_activation_manifest(path, recursive=recursive)
+        result = validate_activation_manifest(path, recursive=True)
         result["write_semantics"] = semantics
         return result
     if pending.exists():
@@ -1190,10 +1299,10 @@ def prepare_activation_manifest(
             historical_v4_root=historical_v4_root,
             receipt_id=receipt_id,
         )
-        if recursive:
-            _validate_sources(existing)
+        _validate_sources(existing)
+        _validate_manifest_predecessor_state(existing)
         _publish_create_only(path, raw)
-        result = validate_activation_manifest(path, recursive=recursive)
+        result = validate_activation_manifest(path, recursive=True)
         result["write_semantics"] = "create_only_pending_crash_recovered"
         return result
     generated_utc = _nanosecond_utc(_now_utc_ns(), "manifest generation clock")
@@ -1205,7 +1314,7 @@ def prepare_activation_manifest(
         generated_utc=generated_utc,
         receipt_id=receipt_id,
     )
-    return finalize_activation_manifest(payload, output_path=output_path, recursive=recursive)
+    return _finalize_activation_manifest_locked(payload, output_path=output_path)
 
 
 def _validate_sources(manifest: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -2710,24 +2819,8 @@ def execute(
     if not pointer_path.parent.is_dir():
         raise OperationalMetadataV6Error("metadata transaction directory is unavailable")
 
-    private_before = pointer_path.parent.lstat()
-    if (
-        not stat.S_ISDIR(private_before.st_mode)
-        or private_before.st_uid != os.getuid()
-        or private_before.st_mode & 0o077
-    ):
-        raise OperationalMetadataV6Error("metadata transaction directory is unsafe")
-    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    lock_descriptor = os.open(pointer_path.parent, directory_flags)
-    private_opened = os.fstat(lock_descriptor)
-    if (private_before.st_dev, private_before.st_ino) != (
-        private_opened.st_dev,
-        private_opened.st_ino,
-    ):
-        os.close(lock_descriptor)
-        raise OperationalMetadataV6Error("metadata transaction directory changed while opening")
+    lock_descriptor = _open_metadata_transaction_lock(metadata_repository_root)
     try:
-        fcntl.flock(lock_descriptor, fcntl.LOCK_EX)
         source_context, bindings = _validate_sources(manifest)
 
         pointer_payload, pointer_raw, _pointer_meta = _load_json(pointer_path, mode=0o600)
@@ -2989,8 +3082,7 @@ def execute(
         }
         return result
     finally:
-        fcntl.flock(lock_descriptor, fcntl.LOCK_UN)
-        os.close(lock_descriptor)
+        _close_metadata_transaction_lock(lock_descriptor)
 
 
 def _parser() -> argparse.ArgumentParser:
