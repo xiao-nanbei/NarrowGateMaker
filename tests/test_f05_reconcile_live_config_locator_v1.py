@@ -203,6 +203,11 @@ def _transaction_fixture(
     )
     monkeypatch.setattr(
         subject,
+        "_load_manifest_for_staging_preflight",
+        lambda _path: manifest,
+    )
+    monkeypatch.setattr(
+        subject,
         "_full_candidate_owner_root_audit",
         lambda **_kwargs: {
             "status": "full_metadata_only_candidate_owner_root_audit_passed",
@@ -470,6 +475,117 @@ def test_manifest_crash_states_resume_same_bytes(
     assert not fixture["pending"].exists()
 
 
+def test_manifest_short_staging_residue_is_discarded_before_fresh_first_writer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _manifest_fixture(tmp_path, monkeypatch)
+    original_write_new = subject._write_new
+    interrupted_data: bytes | None = None
+    base_ns = subject._now_utc_ns()
+    clock_tick = 0
+
+    def advancing_clock() -> int:
+        nonlocal clock_tick
+        clock_tick += 1
+        return base_ns + clock_tick
+
+    def interrupt_staging(path: Path, data: bytes) -> None:
+        nonlocal interrupted_data
+        if subject._is_manifest_staging_path(path, fixture["formal"]):
+            interrupted_data = data
+            original_write_new(path, data[: len(data) // 2])
+            raise RuntimeError("interrupted-manifest-staging-write")
+        original_write_new(path, data)
+
+    monkeypatch.setattr(subject, "_now_utc_ns", advancing_clock)
+    monkeypatch.setattr(subject, "_write_new", interrupt_staging)
+    with pytest.raises(RuntimeError, match="interrupted-manifest-staging-write"):
+        _prepare_manifest(fixture)
+    monkeypatch.setattr(subject, "_write_new", original_write_new)
+
+    assert interrupted_data is not None
+    staging = subject._manifest_staging_paths(fixture["formal"])
+    assert len(staging) == 1
+    residue = staging[0].read_bytes()
+    assert len(residue) < len(interrupted_data)
+    assert interrupted_data.startswith(residue)
+    assert not fixture["formal"].exists()
+    assert not fixture["pending"].exists()
+    tracked_calls_before_resume = len(fixture["calls"])
+
+    resumed = _prepare_manifest(fixture)
+
+    assert resumed["write_semantics"] == "create_only_first_writer"
+    assert len(fixture["calls"]) > tracked_calls_before_resume
+    assert not subject._manifest_staging_paths(fixture["formal"])
+    assert not fixture["pending"].exists()
+    interrupted_payload = json.loads(interrupted_data)
+    resumed_payload = json.loads(fixture["formal"].read_bytes())
+    assert resumed_payload["generated_utc"] != interrupted_payload["generated_utc"]
+
+
+@pytest.mark.parametrize("unsafe", ["mode", "hardlink"])
+def test_manifest_unsafe_orphan_staging_is_preserved_failclosed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsafe: str,
+) -> None:
+    fixture = _manifest_fixture(tmp_path, monkeypatch)
+    subject._ensure_private_directory(fixture["formal"].parent)
+    staging = subject._manifest_staging_path(fixture["formal"], "0" * 32)
+    _private_write(staging, b"partial-manifest")
+    if unsafe == "mode":
+        staging.chmod(0o640)
+    else:
+        os.link(staging, staging.with_name("attacker-second-link"))
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="unsafe file"):
+        _prepare_manifest(fixture)
+
+    assert not fixture["formal"].exists()
+    assert not fixture["pending"].exists()
+    assert staging.read_bytes() == b"partial-manifest"
+
+
+def test_existing_manifest_never_cleans_orphan_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _manifest_fixture(tmp_path, monkeypatch)
+    _prepare_manifest(fixture)
+    published = fixture["formal"].read_bytes()
+    staging = subject._manifest_staging_path(fixture["formal"], "1" * 32)
+    _private_write(staging, b"partial-manifest")
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="ambiguous"):
+        _prepare_manifest(fixture)
+
+    assert fixture["formal"].read_bytes() == published
+    assert staging.read_bytes() == b"partial-manifest"
+
+
+def test_manifest_completed_staging_link_transfer_resumes_exact_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _manifest_fixture(tmp_path, monkeypatch)
+    _prepare_manifest(fixture)
+    published = fixture["formal"].read_bytes()
+    staging = subject._manifest_staging_path(fixture["formal"], "2" * 32)
+    fixture["formal"].replace(staging)
+    os.link(staging, fixture["pending"])
+    assert staging.stat().st_nlink == 2
+
+    resumed = _prepare_manifest(fixture)
+
+    assert resumed["write_semantics"] == "create_only_pending_recovered"
+    assert fixture["formal"].read_bytes() == published
+    assert fixture["formal"].stat().st_nlink == 1
+    assert not staging.exists()
+    assert not fixture["pending"].exists()
+
+
 @pytest.mark.parametrize("state", ["existing", "pending_only"])
 def test_manifest_rejects_self_consistent_superset_audit_baseline(
     tmp_path: Path,
@@ -653,6 +769,362 @@ def test_create_only_pending_and_nlink2_recovery_and_wrong_pending(
     assert pending.read_bytes() == b"wrong\n"
 
 
+@pytest.mark.parametrize("residue", [b"", b"expected-"])
+def test_create_only_uncommitted_staging_recovers_only_under_lock(
+    tmp_path: Path,
+    residue: bytes,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "immutable.json"
+    pending = subject._pending(path, "create")
+    staging = subject._staging_path(path, "create", "0" * 32)
+    expected = b"expected-create-only-bytes\n"
+    _private_write(staging, residue)
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="transaction lock"):
+        subject._validate_create_state(path, expected)
+    assert staging.read_bytes() == residue
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        assert subject._validate_create_state(path, expected) == "staging_recoverable_uncommitted"
+        assert staging.read_bytes() == residue
+        subject._cleanup_uncommitted_staging(
+            path,
+            expected,
+            pending_kind="create",
+            staging_kind="create",
+            expected_current=None,
+        )
+        subject._publish_create_only(path, expected)
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert path.read_bytes() == expected
+    assert path.stat().st_nlink == 1
+    assert not pending.exists()
+    assert not staging.exists()
+
+
+@pytest.mark.parametrize(
+    "residue",
+    [
+        b"",
+        b"expected-",
+        b"wrong-short-prefix",
+        b"x" * len(b"expected-create-only-bytes\n"),
+        b"expected-create-only-bytes\nextra",
+    ],
+)
+def test_create_only_incomplete_deterministic_pending_remains_failclosed(
+    tmp_path: Path,
+    residue: bytes,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "immutable.json"
+    pending = subject._pending(path, "create")
+    expected = b"expected-create-only-bytes\n"
+    _private_write(pending, residue)
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        with pytest.raises(subject.ConfigLocatorReconciliationError, match="bytes drifted"):
+            subject._publish_create_only(path, expected)
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert not path.exists()
+    assert pending.read_bytes() == residue
+
+
+@pytest.mark.parametrize(
+    "residue",
+    [
+        b"wrong-short-prefix",
+        b"x" * len(b"expected-create-only-bytes\n"),
+        b"expected-create-only-bytes\nextra",
+    ],
+)
+def test_create_only_mismatched_staging_remains_failclosed(
+    tmp_path: Path,
+    residue: bytes,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "immutable.json"
+    staging = subject._staging_path(path, "create", "1" * 32)
+    expected = b"expected-create-only-bytes\n"
+    _private_write(staging, residue)
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        with pytest.raises(subject.ConfigLocatorReconciliationError, match="staging bytes drifted"):
+            subject._publish_create_only(path, expected)
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert not path.exists()
+    assert not subject._pending(path, "create").exists()
+    assert staging.read_bytes() == residue
+
+
+@pytest.mark.parametrize("unsafe", ["mode", "hardlink"])
+def test_create_only_unsafe_staging_is_never_recovered(
+    tmp_path: Path,
+    unsafe: str,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "immutable.json"
+    staging = subject._staging_path(path, "create", "2" * 32)
+    residue = b"expected-"
+    expected = b"expected-create-only-bytes\n"
+    _private_write(staging, residue)
+    if unsafe == "mode":
+        staging.chmod(0o644)
+    else:
+        os.link(staging, private / "attacker-second-link")
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        with pytest.raises(subject.ConfigLocatorReconciliationError, match="unsafe file"):
+            subject._publish_create_only(path, expected)
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert not path.exists()
+    assert staging.read_bytes() == residue
+
+
+def test_existing_create_only_final_never_cleans_uncommitted_staging(
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "immutable.json"
+    staging = subject._staging_path(path, "create", "3" * 32)
+    expected = b"expected-create-only-bytes\n"
+    residue = expected[:9]
+    _private_write(path, expected)
+    _private_write(staging, residue)
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        with pytest.raises(subject.ConfigLocatorReconciliationError, match="ambiguous staging"):
+            subject._publish_create_only(path, expected)
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert path.read_bytes() == expected
+    assert staging.read_bytes() == residue
+
+
+def test_mutable_replace_uncommitted_staging_recovers_exact_predecessor(
+    tmp_path: Path,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "mutable.json"
+    pending = subject._pending(path, "alias")
+    staging = subject._staging_path(path, "alias", "4" * 32)
+    predecessor = b"predecessor\n"
+    successor = b"successor-release-v3\n"
+    residue = successor[:7]
+    _private_write(path, predecessor)
+    _private_write(staging, residue)
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        assert (
+            subject._validate_replace_pending(
+                path,
+                successor,
+                "alias",
+                target_new=False,
+            )
+            == "staging_recoverable_uncommitted"
+        )
+        assert staging.read_bytes() == residue
+        subject._cleanup_uncommitted_staging(
+            path,
+            successor,
+            pending_kind="alias",
+            staging_kind="alias",
+            expected_current=predecessor,
+        )
+        subject._atomic_replace(
+            path,
+            successor,
+            kind="alias",
+            expected_current=predecessor,
+        )
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert path.read_bytes() == successor
+    assert path.stat().st_nlink == 1
+    assert not pending.exists()
+    assert not staging.exists()
+
+
+@pytest.mark.parametrize("publication", ["create", "replace"])
+def test_completed_staging_link_transfer_resumes_without_rewriting_pending(
+    tmp_path: Path,
+    publication: str,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "target.json"
+    kind = "create" if publication == "create" else "alias"
+    pending = subject._pending(path, kind)
+    staging = subject._staging_path(path, kind, "6" * 32)
+    predecessor = b"predecessor\n"
+    successor = b"successor-release-v3\n"
+    if publication == "replace":
+        _private_write(path, predecessor)
+    _private_write(staging, successor)
+    os.link(staging, pending)
+    assert staging.stat().st_nlink == 2
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        if publication == "create":
+            assert (
+                subject._validate_create_state(path, successor) == "pending_staging_transfer_nlink2"
+            )
+            with pytest.raises(
+                subject.ConfigLocatorReconciliationError,
+                match="fresh transaction restart",
+            ):
+                subject._publish_create_only(path, successor)
+            assert staging.stat().st_nlink == 2
+            subject._recover_staging_transfer(
+                path,
+                successor,
+                pending_kind="create",
+                staging_kind="create",
+                expected_current=None,
+            )
+            subject._publish_create_only(path, successor)
+        else:
+            assert (
+                subject._validate_replace_pending(
+                    path,
+                    successor,
+                    "alias",
+                    target_new=False,
+                )
+                == "pending_staging_transfer_nlink2"
+            )
+            with pytest.raises(
+                subject.ConfigLocatorReconciliationError,
+                match="fresh transaction restart",
+            ):
+                subject._atomic_replace(
+                    path,
+                    successor,
+                    kind="alias",
+                    expected_current=predecessor,
+                )
+            assert staging.stat().st_nlink == 2
+            subject._recover_staging_transfer(
+                path,
+                successor,
+                pending_kind="alias",
+                staging_kind="alias",
+                expected_current=predecessor,
+            )
+            subject._atomic_replace(
+                path,
+                successor,
+                kind="alias",
+                expected_current=predecessor,
+            )
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert path.read_bytes() == successor
+    assert path.stat().st_nlink == 1
+    assert not pending.exists()
+    assert not staging.exists()
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["unsafe_mode", "hardlink", "successor_final", "deterministic_partial"],
+)
+def test_mutable_replace_unsafe_or_published_state_preserves_uncommitted_bytes(
+    tmp_path: Path,
+    state: str,
+) -> None:
+    metadata = tmp_path / "metadata"
+    private = metadata / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    path = private / "mutable.json"
+    pending = subject._pending(path, "alias")
+    staging = subject._staging_path(path, "alias", "5" * 32)
+    predecessor = b"predecessor\n"
+    successor = b"successor-release-v3\n"
+    target = successor if state == "successor_final" else predecessor
+    residue = successor[:7]
+    _private_write(path, target)
+    candidate = pending if state == "deterministic_partial" else staging
+    _private_write(candidate, residue)
+    if state == "unsafe_mode":
+        staging.chmod(0o640)
+    elif state == "hardlink":
+        os.link(staging, private / "attacker-second-link")
+
+    locked = subject._open_transaction_lock(metadata)
+    try:
+        if state == "successor_final":
+            with pytest.raises(subject.ConfigLocatorReconciliationError, match="after publication"):
+                subject._validate_replace_pending(
+                    path,
+                    successor,
+                    "alias",
+                    target_new=True,
+                )
+            with pytest.raises(subject.ConfigLocatorReconciliationError, match="bytes drifted"):
+                subject._atomic_replace(
+                    path,
+                    successor,
+                    kind="alias",
+                    expected_current=predecessor,
+                )
+        else:
+            message = "bytes drifted" if state == "deterministic_partial" else "unsafe file"
+            with pytest.raises(subject.ConfigLocatorReconciliationError, match=message):
+                subject._atomic_replace(
+                    path,
+                    successor,
+                    kind="alias",
+                    expected_current=predecessor,
+                )
+    finally:
+        subject._close_transaction_lock(locked)
+
+    assert path.read_bytes() == target
+    assert candidate.read_bytes() == residue
+
+
 def test_secure_reader_rejects_mode_hardlink_and_symlink_components(
     tmp_path: Path,
 ) -> None:
@@ -754,6 +1226,178 @@ def test_dry_run_is_write_free_and_apply_is_exact_and_idempotent(
     assert repeated["status"] == "completed_exact_transaction"
     assert repeated["state_before"]["stable_alias"] == "successor"
     assert not list(private.glob(".*pending-config-reconciliation-v1"))
+    assert not list(private.glob(".*-staging-*-uncommitted-config-reconciliation-v1"))
+
+
+@pytest.mark.parametrize(
+    ("role", "kind"),
+    [
+        ("backtest_archive", "create"),
+        ("receipt", "create"),
+        ("alias", "alias"),
+        ("pointer", "pointer"),
+        ("catalog", "catalog"),
+    ],
+)
+def test_interrupted_staging_write_resumes_full_transaction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    kind: str,
+) -> None:
+    fixture = _transaction_fixture(tmp_path, monkeypatch)
+    paths = subject._paths(fixture["metadata_root"])
+    pending = subject._pending(paths[role], kind)
+    original_write_new = subject._write_new
+    interrupted_data: bytes | None = None
+    interrupted_path: Path | None = None
+
+    def interrupt_selected_pending(path: Path, data: bytes) -> None:
+        nonlocal interrupted_data, interrupted_path
+        if subject._is_staging_path(path, paths[role], kind) and interrupted_data is None:
+            interrupted_data = data
+            interrupted_path = path
+            original_write_new(path, data[: len(data) // 2])
+            raise RuntimeError(f"interrupted-write-{role}")
+        original_write_new(path, data)
+
+    monkeypatch.setattr(subject, "_write_new", interrupt_selected_pending)
+    with pytest.raises(RuntimeError, match=f"interrupted-write-{role}"):
+        subject.execute(
+            fixture["manifest_path"],
+            apply=True,
+            audit_fn=fixture["audit"],
+        )
+    monkeypatch.setattr(subject, "_write_new", original_write_new)
+
+    assert interrupted_data is not None
+    assert interrupted_path is not None
+    assert not pending.exists()
+    residue = interrupted_path.read_bytes()
+    assert len(residue) < len(interrupted_data)
+    assert interrupted_data.startswith(residue)
+    if kind == "create":
+        assert not paths[role].exists()
+    else:
+        assert paths[role].exists()
+
+    pending_metadata = interrupted_path.stat()
+    before_dry_run = (
+        residue,
+        pending_metadata.st_dev,
+        pending_metadata.st_ino,
+        pending_metadata.st_mode,
+        pending_metadata.st_uid,
+        pending_metadata.st_nlink,
+        pending_metadata.st_size,
+        pending_metadata.st_mtime_ns,
+        pending_metadata.st_ctime_ns,
+    )
+    planned = subject.execute(
+        fixture["manifest_path"],
+        audit_fn=fixture["audit"],
+    )
+    if role in {
+        "backtest_archive",
+        "release_v3_config",
+        "pointer_snapshot",
+        "catalog_snapshot",
+    }:
+        observed_state = planned["state_before"]["immutable"][role]
+    elif role == "receipt":
+        observed_state = planned["state_before"]["receipt"]
+    else:
+        observed_state = planned["state_before"]["pending"][role]
+    assert observed_state == "staging_recoverable_uncommitted"
+    pending_metadata = interrupted_path.stat()
+    after_dry_run = (
+        interrupted_path.read_bytes(),
+        pending_metadata.st_dev,
+        pending_metadata.st_ino,
+        pending_metadata.st_mode,
+        pending_metadata.st_uid,
+        pending_metadata.st_nlink,
+        pending_metadata.st_size,
+        pending_metadata.st_mtime_ns,
+        pending_metadata.st_ctime_ns,
+    )
+    assert after_dry_run == before_dry_run
+
+    resumed = subject.execute(
+        fixture["manifest_path"],
+        apply=True,
+        audit_fn=fixture["audit"],
+    )
+    assert resumed["transaction_committed"] is True
+    assert not pending.exists()
+    assert not interrupted_path.exists()
+
+
+@pytest.mark.parametrize(("role", "kind"), [("backtest_archive", "create"), ("alias", "alias")])
+def test_staging_cleanup_forces_fresh_source_gate_before_any_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    role: str,
+    kind: str,
+) -> None:
+    fixture = _transaction_fixture(tmp_path, monkeypatch)
+    paths = subject._paths(fixture["metadata_root"])
+    original_write_new = subject._write_new
+    interrupted_path: Path | None = None
+
+    def interrupt_selected_staging(path: Path, data: bytes) -> None:
+        nonlocal interrupted_path
+        if subject._is_staging_path(path, paths[role], kind) and interrupted_path is None:
+            interrupted_path = path
+            original_write_new(path, data[: len(data) // 2])
+            raise RuntimeError(f"interrupted-write-{role}")
+        original_write_new(path, data)
+
+    monkeypatch.setattr(subject, "_write_new", interrupt_selected_staging)
+    with pytest.raises(RuntimeError, match=f"interrupted-write-{role}"):
+        subject.execute(
+            fixture["manifest_path"],
+            apply=True,
+            audit_fn=fixture["audit"],
+        )
+    monkeypatch.setattr(subject, "_write_new", original_write_new)
+    assert interrupted_path is not None
+    official_before = {
+        path.name: path.read_bytes()
+        for path in fixture["private"].iterdir()
+        if path.is_file() and path != interrupted_path
+    }
+
+    original_preflight = subject._cleanup_execution_staging_preflight
+    source_drifted = False
+
+    def cleanup_then_drift_source(manifest_path: Path) -> bool:
+        nonlocal source_drifted
+        cleaned = original_preflight(manifest_path)
+        if cleaned and not source_drifted:
+            source_drifted = True
+            _private_write(subject._active_config_source_path(), b"drift-after-cleanup\n")
+        return cleaned
+
+    monkeypatch.setattr(
+        subject,
+        "_cleanup_execution_staging_preflight",
+        cleanup_then_drift_source,
+    )
+    with pytest.raises(
+        subject.ConfigLocatorReconciliationError, match="frozen source bytes drifted"
+    ):
+        subject.execute(
+            fixture["manifest_path"],
+            apply=True,
+            audit_fn=fixture["audit"],
+        )
+
+    assert source_drifted is True
+    assert not interrupted_path.exists()
+    assert official_before == {
+        path.name: path.read_bytes() for path in fixture["private"].iterdir() if path.is_file()
+    }
 
 
 @pytest.mark.parametrize(

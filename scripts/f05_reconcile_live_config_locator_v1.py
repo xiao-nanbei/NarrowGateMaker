@@ -163,6 +163,8 @@ TRACKED_SUCCESSOR_FILES: Final = (
 
 MAX_FILE_BYTES: Final = 64 << 20
 MANIFEST_MAX_CLOCK_SKEW_SECONDS: Final = 5
+STAGING_TOKEN_HEX_LENGTH: Final = 32
+STAGING_SUFFIX: Final = "-uncommitted-config-reconciliation-v1"
 _SHA256_RE: Final = re.compile(r"^[0-9a-f]{64}$")
 _GIT_OID_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _LOCKED_PRIVATE_CONTEXT: contextvars.ContextVar[tuple[Path, tuple[int, int]] | None] = (
@@ -696,6 +698,53 @@ def _pending(path: Path, kind: str) -> Path:
     return path.with_name(f".{path.name}.{kind}-pending-config-reconciliation-v1")
 
 
+def _staging_path(path: Path, kind: str, token: str) -> Path:
+    if re.fullmatch(r"[a-z][a-z0-9_-]*", kind) is None:
+        raise ConfigLocatorReconciliationError("staging kind is malformed")
+    if re.fullmatch(rf"[0-9a-f]{{{STAGING_TOKEN_HEX_LENGTH}}}", token) is None:
+        raise ConfigLocatorReconciliationError("staging token is malformed")
+    return path.with_name(f".{path.name}.{kind}-staging-{token}{STAGING_SUFFIX}")
+
+
+def _is_staging_path(path: Path, final_path: Path, kind: str) -> bool:
+    prefix = f".{final_path.name}.{kind}-staging-"
+    name = path.name
+    if not name.startswith(prefix) or not name.endswith(STAGING_SUFFIX):
+        return False
+    token = name[len(prefix) : -len(STAGING_SUFFIX)]
+    return re.fullmatch(rf"[0-9a-f]{{{STAGING_TOKEN_HEX_LENGTH}}}", token) is not None
+
+
+def _staging_paths(path: Path, kind: str) -> tuple[Path, ...]:
+    target, directory_fd = _open_parent_nofollow(path)
+    try:
+        names = os.listdir(directory_fd)
+        _revalidate_parent(target, directory_fd)
+    except OSError as exc:
+        raise ConfigLocatorReconciliationError(
+            f"staging directory is unavailable: {target.parent}"
+        ) from exc
+    finally:
+        os.close(directory_fd)
+    return tuple(
+        target.parent / name
+        for name in sorted(names)
+        if _is_staging_path(target.parent / name, target, kind)
+    )
+
+
+def _manifest_staging_path(path: Path, token: str) -> Path:
+    return _staging_path(path, "manifest", token)
+
+
+def _is_manifest_staging_path(path: Path, formal_path: Path) -> bool:
+    return _is_staging_path(path, formal_path, "manifest")
+
+
+def _manifest_staging_paths(path: Path) -> tuple[Path, ...]:
+    return _staging_paths(path, "manifest")
+
+
 def _secure_exists(path: Path) -> bool:
     target, directory_fd = _open_parent_nofollow(path)
     try:
@@ -798,9 +847,306 @@ def _read_exact_any_link(path: Path, data: bytes, links: frozenset[int]) -> os.s
     return metadata
 
 
+def _require_transaction_lock() -> None:
+    locked = _LOCKED_PRIVATE_CONTEXT.get()
+    if locked is None:
+        raise ConfigLocatorReconciliationError(
+            "transaction lock is required for uncommitted staging recovery"
+        )
+    _locked_path, descriptor = _open_directory_nofollow(locked[0])
+    os.close(descriptor)
+
+
+def _is_strict_prefix(observed: bytes, expected: bytes) -> bool:
+    return len(observed) < len(expected) and expected.startswith(observed)
+
+
+def _recovery_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _secure_unlink_bound(path: Path, expected: os.stat_result) -> None:
+    target, directory_fd = _open_parent_nofollow(path)
+    try:
+        observed = os.stat(target.name, dir_fd=directory_fd, follow_symlinks=False)
+        if _recovery_identity(observed) != _recovery_identity(expected):
+            raise ConfigLocatorReconciliationError(
+                f"file changed before identity-bound unlink: {target}"
+            )
+        os.unlink(target.name, dir_fd=directory_fd)
+        os.fsync(directory_fd)
+        _revalidate_parent(target, directory_fd)
+    except OSError as exc:
+        raise ConfigLocatorReconciliationError(f"identity-bound unlink failed: {target}") from exc
+    finally:
+        os.close(directory_fd)
+
+
+def _expected_current_metadata(
+    path: Path,
+    expected_current: bytes | None,
+) -> os.stat_result | None:
+    if expected_current is None:
+        if _secure_exists(path):
+            raise ConfigLocatorReconciliationError(
+                "published final forbids uncommitted staging recovery"
+            )
+        return None
+    return _read_exact_any_link(path, expected_current, frozenset({1}))
+
+
+def _validate_staging_state(
+    path: Path,
+    data: bytes | None,
+    *,
+    pending_kind: str,
+    staging_kind: str,
+) -> str:
+    staging = _staging_paths(path, staging_kind)
+    if not staging:
+        return "absent"
+    _require_transaction_lock()
+    pending = _pending(path, pending_kind)
+    if _secure_exists(pending):
+        if data is None or len(staging) != 1:
+            raise ConfigLocatorReconciliationError("staging transfer is ambiguous")
+        pending_metadata = _read_exact_any_link(pending, data, frozenset({2}))
+        staging_metadata = _read_exact_any_link(staging[0], data, frozenset({2}))
+        if (pending_metadata.st_dev, pending_metadata.st_ino) != (
+            staging_metadata.st_dev,
+            staging_metadata.st_ino,
+        ):
+            raise ConfigLocatorReconciliationError("staging transfer inode drifted")
+        return "pending_staging_transfer_nlink2"
+    for candidate in staging:
+        observed, _metadata = _read_regular(candidate, allowed_nlinks=frozenset({1}))
+        if data is not None and observed != data and not _is_strict_prefix(observed, data):
+            raise ConfigLocatorReconciliationError(
+                f"uncommitted staging bytes drifted: {candidate}"
+            )
+    return "staging_recoverable_uncommitted"
+
+
+def _cleanup_uncommitted_staging(
+    path: Path,
+    data: bytes | None,
+    *,
+    pending_kind: str,
+    staging_kind: str,
+    expected_current: bytes | None,
+) -> None:
+    _require_transaction_lock()
+    final_metadata = _expected_current_metadata(path, expected_current)
+    pending = _pending(path, pending_kind)
+    if _secure_exists(pending):
+        raise ConfigLocatorReconciliationError(
+            "deterministic pending forbids uncommitted staging cleanup"
+        )
+    if (
+        _validate_staging_state(
+            path,
+            data,
+            pending_kind=pending_kind,
+            staging_kind=staging_kind,
+        )
+        != "staging_recoverable_uncommitted"
+    ):
+        raise ConfigLocatorReconciliationError("uncommitted staging is unavailable")
+    bound: list[tuple[Path, os.stat_result]] = []
+    for candidate in _staging_paths(path, staging_kind):
+        observed, metadata = _read_regular(candidate, allowed_nlinks=frozenset({1}))
+        if data is not None and observed != data and not _is_strict_prefix(observed, data):
+            raise ConfigLocatorReconciliationError(
+                f"uncommitted staging bytes drifted: {candidate}"
+            )
+        bound.append((candidate, metadata))
+    if final_metadata is None:
+        _expected_current_metadata(path, None)
+    else:
+        current = _expected_current_metadata(path, expected_current)
+        if current is None or _recovery_identity(current) != _recovery_identity(final_metadata):
+            raise ConfigLocatorReconciliationError(
+                "mutable predecessor changed before staging cleanup"
+            )
+    if _secure_exists(pending):
+        raise ConfigLocatorReconciliationError(
+            "deterministic pending appeared before staging cleanup"
+        )
+    for candidate, metadata in bound:
+        _secure_unlink_bound(candidate, metadata)
+    if _staging_paths(path, staging_kind) or _secure_exists(pending):
+        raise ConfigLocatorReconciliationError("publication state changed during staging cleanup")
+    if final_metadata is None:
+        _expected_current_metadata(path, None)
+    else:
+        current = _expected_current_metadata(path, expected_current)
+        if current is None or _recovery_identity(current) != _recovery_identity(final_metadata):
+            raise ConfigLocatorReconciliationError(
+                "mutable predecessor changed during staging cleanup"
+            )
+
+
+def _recover_staging_transfer(
+    path: Path,
+    data: bytes,
+    *,
+    pending_kind: str,
+    staging_kind: str,
+    expected_current: bytes | None,
+) -> None:
+    _require_transaction_lock()
+    final_metadata = _expected_current_metadata(path, expected_current)
+    if (
+        _validate_staging_state(
+            path,
+            data,
+            pending_kind=pending_kind,
+            staging_kind=staging_kind,
+        )
+        != "pending_staging_transfer_nlink2"
+    ):
+        raise ConfigLocatorReconciliationError("staging transfer is unavailable")
+    staging = _staging_paths(path, staging_kind)
+    staging_metadata = _read_exact_any_link(staging[0], data, frozenset({2}))
+    _secure_unlink_bound(staging[0], staging_metadata)
+    _read_exact_any_link(_pending(path, pending_kind), data, frozenset({1}))
+    if final_metadata is None:
+        _expected_current_metadata(path, None)
+    else:
+        current = _expected_current_metadata(path, expected_current)
+        if current is None or _recovery_identity(current) != _recovery_identity(final_metadata):
+            raise ConfigLocatorReconciliationError(
+                "mutable predecessor changed during staging transfer recovery"
+            )
+
+
+def _stage_deterministic_pending(
+    path: Path,
+    data: bytes,
+    *,
+    pending_kind: str,
+    staging_kind: str,
+    expected_current: bytes | None,
+) -> None:
+    _require_transaction_lock()
+    final_metadata = _expected_current_metadata(path, expected_current)
+    pending = _pending(path, pending_kind)
+    if _secure_exists(pending) or _staging_paths(path, staging_kind):
+        raise ConfigLocatorReconciliationError("publication state changed before staged write")
+    staging: Path | None = None
+    for _attempt in range(16):
+        candidate = _staging_path(path, staging_kind, os.urandom(16).hex())
+        try:
+            _write_new(candidate, data)
+        except FileExistsError:
+            continue
+        staging = candidate
+        break
+    if staging is None:
+        raise ConfigLocatorReconciliationError("unique staging path is unavailable")
+    _fsync_dir(path.parent)
+    _read_exact_any_link(staging, data, frozenset({1}))
+    if final_metadata is None:
+        _expected_current_metadata(path, None)
+    else:
+        current = _expected_current_metadata(path, expected_current)
+        if current is None or _recovery_identity(current) != _recovery_identity(final_metadata):
+            raise ConfigLocatorReconciliationError(
+                "mutable predecessor changed before staging transfer"
+            )
+    if _secure_exists(pending):
+        raise ConfigLocatorReconciliationError(
+            "deterministic pending appeared before staging transfer"
+        )
+    _secure_link(staging, pending)
+    staging_metadata = _read_exact_any_link(staging, data, frozenset({2}))
+    pending_metadata = _read_exact_any_link(pending, data, frozenset({2}))
+    if (staging_metadata.st_dev, staging_metadata.st_ino) != (
+        pending_metadata.st_dev,
+        pending_metadata.st_ino,
+    ):
+        raise ConfigLocatorReconciliationError("staging hardlink identity drifted")
+    _secure_unlink_bound(staging, staging_metadata)
+    _read_exact_any_link(pending, data, frozenset({1}))
+
+
+def _discard_orphan_manifest_staging(path: Path, staging: Sequence[Path]) -> None:
+    if tuple(staging) != _manifest_staging_paths(path):
+        raise ConfigLocatorReconciliationError("manifest staging paths drifted")
+    _cleanup_uncommitted_staging(
+        path,
+        None,
+        pending_kind="create",
+        staging_kind="manifest",
+        expected_current=None,
+    )
+
+
+def _recover_manifest_staging_transfer(
+    path: Path,
+    pending: Path,
+    staging: Sequence[Path],
+) -> None:
+    _require_transaction_lock()
+    if _secure_exists(path) or len(staging) != 1:
+        raise ConfigLocatorReconciliationError("manifest staging transfer is ambiguous")
+    candidate = staging[0]
+    if not _is_manifest_staging_path(candidate, path):
+        raise ConfigLocatorReconciliationError("manifest staging path drifted")
+    pending_payload, pending_raw, pending_metadata = _manifest_candidate(
+        pending,
+        formal_path=path,
+        allowed_nlinks=frozenset({2}),
+    )
+    staging_payload, staging_raw, staging_metadata = _manifest_candidate(
+        candidate,
+        formal_path=path,
+        allowed_nlinks=frozenset({2}),
+    )
+    if (
+        staging_payload != pending_payload
+        or staging_raw != pending_raw
+        or (staging_metadata.st_dev, staging_metadata.st_ino)
+        != (pending_metadata.st_dev, pending_metadata.st_ino)
+    ):
+        raise ConfigLocatorReconciliationError("manifest staging transfer identity drifted")
+    _secure_unlink_bound(candidate, staging_metadata)
+    _read_exact_any_link(pending, pending_raw, frozenset({1}))
+
+
+def _stage_manifest_pending(path: Path, data: bytes) -> None:
+    _stage_deterministic_pending(
+        path,
+        data,
+        pending_kind="create",
+        staging_kind="manifest",
+        expected_current=None,
+    )
+
+
 def _publish_create_only(path: Path, data: bytes) -> None:
     pending = _pending(path, "create")
+    staging_state = _validate_staging_state(
+        path,
+        data,
+        pending_kind="create",
+        staging_kind="create",
+    )
     if _secure_exists(path):
+        if staging_state != "absent":
+            raise ConfigLocatorReconciliationError(
+                "published create-only final has ambiguous staging"
+            )
         metadata = _read_exact_any_link(path, data, frozenset({1, 2}))
         if metadata.st_nlink == 2:
             if not _secure_exists(pending):
@@ -818,22 +1164,66 @@ def _publish_create_only(path: Path, data: bytes) -> None:
             raise ConfigLocatorReconciliationError("orphan create-only pending path")
         return
     if _secure_exists(pending):
+        if staging_state != "absent":
+            raise ConfigLocatorReconciliationError(
+                "create-only staging transfer requires a fresh transaction restart"
+            )
         _read_exact_any_link(pending, data, frozenset({1}))
     else:
-        _write_new(pending, data)
-        _fsync_dir(path.parent)
+        if staging_state == "staging_recoverable_uncommitted":
+            raise ConfigLocatorReconciliationError(
+                "uncommitted create-only staging requires a fresh transaction restart"
+            )
+        elif staging_state != "absent":
+            raise ConfigLocatorReconciliationError("create-only staging state drifted")
+        _stage_deterministic_pending(
+            path,
+            data,
+            pending_kind="create",
+            staging_kind="create",
+            expected_current=None,
+        )
     _secure_link(pending, path)
     _secure_unlink(pending)
     _read_exact_any_link(path, data, frozenset({1}))
 
 
-def _atomic_replace(path: Path, data: bytes, *, kind: str) -> None:
+def _atomic_replace(
+    path: Path,
+    data: bytes,
+    *,
+    kind: str,
+    expected_current: bytes,
+) -> None:
     pending = _pending(path, kind)
+    _read_exact_any_link(path, expected_current, frozenset({1}))
+    staging_state = _validate_staging_state(
+        path,
+        data,
+        pending_kind=kind,
+        staging_kind=kind,
+    )
     if _secure_exists(pending):
+        if staging_state != "absent":
+            raise ConfigLocatorReconciliationError(
+                f"{kind} staging transfer requires a fresh transaction restart"
+            )
         _read_exact_any_link(pending, data, frozenset({1}))
     else:
-        _write_new(pending, data)
-        _fsync_dir(path.parent)
+        if staging_state == "staging_recoverable_uncommitted":
+            raise ConfigLocatorReconciliationError(
+                f"uncommitted {kind} staging requires a fresh transaction restart"
+            )
+        elif staging_state != "absent":
+            raise ConfigLocatorReconciliationError(f"{kind} staging state drifted")
+        _stage_deterministic_pending(
+            path,
+            data,
+            pending_kind=kind,
+            staging_kind=kind,
+            expected_current=expected_current,
+        )
+    _read_exact_any_link(path, expected_current, frozenset({1}))
     _secure_replace(pending, path)
     _read_exact_any_link(path, data, frozenset({1}))
 
@@ -842,11 +1232,23 @@ def _validate_create_state(path: Path, data: bytes) -> str:
     pending = _pending(path, "create")
     exists = _secure_exists(path)
     pending_exists = _secure_exists(pending)
+    staging_state = _validate_staging_state(
+        path,
+        data,
+        pending_kind="create",
+        staging_kind="create",
+    )
     if not exists and not pending_exists:
-        return "missing"
+        return "missing" if staging_state == "absent" else staging_state
     if not exists:
+        if staging_state == "pending_staging_transfer_nlink2":
+            return staging_state
+        if staging_state != "absent":
+            raise ConfigLocatorReconciliationError("create-only pending has ambiguous staging")
         _read_exact_any_link(pending, data, frozenset({1}))
         return "pending_create_only"
+    if staging_state != "absent":
+        raise ConfigLocatorReconciliationError("published create-only final has ambiguous staging")
     metadata = _read_exact_any_link(path, data, frozenset({1, 2}))
     if metadata.st_nlink == 2:
         if not pending_exists:
@@ -862,11 +1264,28 @@ def _validate_create_state(path: Path, data: bytes) -> str:
 
 def _validate_replace_pending(path: Path, data: bytes, kind: str, *, target_new: bool) -> str:
     pending = _pending(path, kind)
-    if _secure_exists(pending):
+    pending_exists = _secure_exists(pending)
+    staging_state = _validate_staging_state(
+        path,
+        data,
+        pending_kind=kind,
+        staging_kind=kind,
+    )
+    if pending_exists or staging_state != "absent":
         if target_new:
-            raise ConfigLocatorReconciliationError(f"orphan {kind} pending after publication")
-        _read_exact_any_link(pending, data, frozenset({1}))
-        return "pending_exact"
+            raise ConfigLocatorReconciliationError(
+                f"orphan {kind} pending/staging after publication"
+            )
+        if staging_state == "pending_staging_transfer_nlink2":
+            return staging_state
+        if pending_exists:
+            if staging_state != "absent":
+                raise ConfigLocatorReconciliationError(f"{kind} pending has ambiguous staging")
+            _read_exact_any_link(pending, data, frozenset({1}))
+            return "pending_exact"
+        if staging_state != "staging_recoverable_uncommitted":
+            raise ConfigLocatorReconciliationError(f"{kind} staging state drifted")
+        return staging_state
     return "absent"
 
 
@@ -887,7 +1306,12 @@ def _validate_transaction_prefix(
         receipt_state,
     ]
     final_state = "published_nlink1"
-    recoverable_states = {"pending_create_only", "published_recoverable_nlink2"}
+    recoverable_states = {
+        "pending_create_only",
+        "pending_staging_transfer_nlink2",
+        "published_recoverable_nlink2",
+        "staging_recoverable_uncommitted",
+    }
     incomplete_seen = False
     recoverable_count = 0
     for state in ordered_create_states:
@@ -1479,6 +1903,18 @@ def prepare_manifest(
         # created, before publication-state probes that require its parent.
         _ensure_private_directory(path.parent)
         pending = _pending(path, "create")
+        path_exists = _secure_exists(path)
+        pending_exists = _secure_exists(pending)
+        staging = _manifest_staging_paths(path)
+        if staging:
+            if not path_exists and not pending_exists:
+                _discard_orphan_manifest_staging(path, staging)
+            elif not path_exists and pending_exists:
+                _recover_manifest_staging_transfer(path, pending, staging)
+            else:
+                raise ConfigLocatorReconciliationError(
+                    "manifest staging is ambiguous with published state"
+                )
         if _secure_exists(path):
             payload, raw, metadata = _manifest_candidate(
                 path,
@@ -1556,7 +1992,7 @@ def prepare_manifest(
             publisher=publisher,
             expected_tracked=tree_tracked,
         )
-        if _secure_exists(path) or _secure_exists(pending):
+        if _secure_exists(path) or _secure_exists(pending) or _manifest_staging_paths(path):
             raise ConfigLocatorReconciliationError(
                 "manifest publication state changed during validation"
             )
@@ -1579,7 +2015,7 @@ def prepare_manifest(
             expected_tracked=tree_tracked,
         )
         predecessor = _validate_predecessor(metadata_root)
-        if _secure_exists(path) or _secure_exists(pending):
+        if _secure_exists(path) or _secure_exists(pending) or _manifest_staging_paths(path):
             raise ConfigLocatorReconciliationError(
                 "manifest publication state changed before first writer"
             )
@@ -1596,6 +2032,7 @@ def prepare_manifest(
         )
         raw = _render(payload)
         _validate_manifest_payload(payload, path, raw, recursive=False)
+        _stage_manifest_pending(path, raw)
         _publish_create_only(path, raw)
         result = validate_manifest(path, recursive=True)
         result["write_semantics"] = "create_only_first_writer"
@@ -2475,6 +2912,15 @@ AuditFn = Callable[[Path], Mapping[str, Any]]
 FailureFn = Callable[[str], None]
 
 
+def _load_manifest_for_staging_preflight(path: Path) -> dict[str, Any]:
+    payload, raw, metadata = _load_json(path)
+    validated = _validate_manifest_payload(payload, path, raw, recursive=False)
+    generated_ns = _timestamp_ns(payload["generated_utc"], "manifest generated_utc")
+    if abs(metadata.st_mtime_ns - generated_ns) > MANIFEST_MAX_CLOCK_SKEW_SECONDS * 1_000_000_000:
+        raise ConfigLocatorReconciliationError("manifest mtime drifted")
+    return validated["payload"]
+
+
 def _load_manifest_for_execute(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     payload, raw, metadata = _load_json(path)
     validated = _validate_manifest_payload(payload, path, raw, recursive=True)
@@ -2639,6 +3085,122 @@ def _validate_frozen_predecessor_material(
     return pointer, catalog, activation_binding
 
 
+def _cleanup_execution_staging_preflight(manifest_path: Path) -> bool:
+    manifest = _load_manifest_for_staging_preflight(manifest_path)
+    metadata_root = Path(str(manifest["metadata_repository_root"]))
+    paths = _paths(metadata_root)
+    roles: tuple[tuple[Path, str, tuple[str, int] | None], ...] = (
+        (paths["backtest_archive"], "create", None),
+        (paths["release_v3_config"], "create", None),
+        (paths["pointer_snapshot"], "create", None),
+        (paths["catalog_snapshot"], "create", None),
+        (paths["receipt"], "create", None),
+        (paths["alias"], "alias", (OLD_CONFIG_SHA256, OLD_CONFIG_SIZE)),
+        (
+            paths["pointer"],
+            "pointer",
+            (PREDECESSOR_POINTER_SHA256, PREDECESSOR_POINTER_SIZE),
+        ),
+        (
+            paths["catalog"],
+            "catalog",
+            (PREDECESSOR_CATALOG_SHA256, PREDECESSOR_CATALOG_SIZE),
+        ),
+    )
+    descriptor = _open_transaction_lock(metadata_root)
+    try:
+        if _load_manifest_for_staging_preflight(manifest_path) != manifest:
+            raise ConfigLocatorReconciliationError(
+                "manifest changed before staging preflight cleanup"
+            )
+        actions: list[dict[str, Any]] = []
+        for path, kind, predecessor_identity in roles:
+            staging = _staging_paths(path, kind)
+            if not staging:
+                continue
+            if predecessor_identity is None:
+                if _secure_exists(path):
+                    raise ConfigLocatorReconciliationError(
+                        f"published create-only final forbids staging cleanup: {path}"
+                    )
+            else:
+                predecessor_raw, _predecessor_metadata = _read_regular(path)
+                if (_sha(predecessor_raw), len(predecessor_raw)) != predecessor_identity:
+                    raise ConfigLocatorReconciliationError(
+                        f"published or drifted mutable final forbids staging cleanup: {path}"
+                    )
+            pending = _pending(path, kind)
+            if _secure_exists(pending):
+                if len(staging) != 1:
+                    raise ConfigLocatorReconciliationError(
+                        f"deterministic pending has ambiguous staging: {pending}"
+                    )
+                pending_raw, pending_metadata = _read_regular(
+                    pending,
+                    allowed_nlinks=frozenset({2}),
+                )
+                staging_raw, staging_metadata = _read_regular(
+                    staging[0],
+                    allowed_nlinks=frozenset({2}),
+                )
+                if staging_raw != pending_raw or (
+                    staging_metadata.st_dev,
+                    staging_metadata.st_ino,
+                ) != (pending_metadata.st_dev, pending_metadata.st_ino):
+                    raise ConfigLocatorReconciliationError(
+                        f"deterministic pending staging transfer drifted: {pending}"
+                    )
+                actions.append(
+                    {
+                        "kind": "transfer",
+                        "pending": pending,
+                        "pending_raw": pending_raw,
+                        "staging": ((staging[0], staging_metadata),),
+                    }
+                )
+                continue
+            bound: list[tuple[Path, os.stat_result]] = []
+            for candidate in staging:
+                _candidate_raw, candidate_metadata = _read_regular(
+                    candidate,
+                    allowed_nlinks=frozenset({1}),
+                )
+                bound.append((candidate, candidate_metadata))
+            actions.append(
+                {
+                    "kind": "orphan",
+                    "pending": pending,
+                    "pending_raw": None,
+                    "staging": tuple(bound),
+                }
+            )
+
+        for action in actions:
+            for candidate, candidate_metadata in action["staging"]:
+                _secure_unlink_bound(candidate, candidate_metadata)
+            pending = action["pending"]
+            if action["kind"] == "transfer":
+                _read_exact_any_link(
+                    pending,
+                    action["pending_raw"],
+                    frozenset({1}),
+                )
+            elif _secure_exists(pending):
+                raise ConfigLocatorReconciliationError(
+                    f"deterministic pending appeared during staging cleanup: {pending}"
+                )
+        for path, kind, _predecessor_identity in roles:
+            if _staging_paths(path, kind):
+                raise ConfigLocatorReconciliationError(f"staging reappeared during cleanup: {path}")
+        if _load_manifest_for_staging_preflight(manifest_path) != manifest:
+            raise ConfigLocatorReconciliationError(
+                "manifest changed during staging preflight cleanup"
+            )
+        return bool(actions)
+    finally:
+        _close_transaction_lock(descriptor)
+
+
 def execute(
     manifest_path: Path,
     *,
@@ -2648,6 +3210,23 @@ def execute(
 ) -> dict[str, Any]:
     if os.environ.get("NARROWGATE_LIVE_REMOTE") or os.environ.get("NARROWGATE_LIVE_REMOTE_POINTER"):
         raise ConfigLocatorReconciliationError("live resolver overrides are forbidden")
+    if apply:
+        _cleanup_execution_staging_preflight(manifest_path)
+    return _execute_once(
+        manifest_path,
+        apply=apply,
+        audit_fn=audit_fn,
+        failure_hook=failure_hook,
+    )
+
+
+def _execute_once(
+    manifest_path: Path,
+    *,
+    apply: bool,
+    audit_fn: AuditFn,
+    failure_hook: FailureFn | None,
+) -> dict[str, Any]:
     manifest, manifest_binding = _load_manifest_for_execute(manifest_path)
     metadata_root = Path(str(manifest["metadata_repository_root"]))
     frozen_audit_baseline = manifest.get("metadata_audit_baseline")
@@ -2770,54 +3349,28 @@ def execute(
             key: _validate_create_state(paths[key], immutable_data[key]) for key in immutable_data
         }
 
-        receipt_pending = _pending(paths["receipt"], "create")
-        receipt_exists = _secure_exists(paths["receipt"])
-        receipt_pending_exists = _secure_exists(receipt_pending)
-        if receipt_exists or receipt_pending_exists:
-            candidate = paths["receipt"] if receipt_exists else receipt_pending
-            allowed_links = frozenset({1, 2}) if receipt_exists else frozenset({1})
-            receipt, receipt_data, receipt_meta = _load_json(
-                candidate, allowed_nlinks=allowed_links
+        audit_baseline = frozen_audit_baseline
+        audit_contract = _candidate_audit_contract(
+            manifest=manifest,
+            immutable_bindings=immutable_bindings,
+            audit_baseline=audit_baseline,
+        )
+        receipt = _receipt_payload(
+            manifest=manifest,
+            manifest_binding=manifest_binding,
+            immutable_bindings=immutable_bindings,
+            audit_baseline=audit_baseline,
+            candidate_audit_contract=audit_contract,
+        )
+        receipt_data = _render(receipt)
+        receipt_state = _validate_create_state(paths["receipt"], receipt_data)
+        if receipt_state not in {
+            "published_nlink1",
+            "published_recoverable_nlink2",
+        } and (not alias_old or not pointer_old or not catalog_old):
+            raise ConfigLocatorReconciliationError(
+                "mutable targets advanced before reconciliation receipt"
             )
-            if receipt_exists and receipt_meta.st_nlink == 2:
-                if not receipt_pending_exists:
-                    raise ConfigLocatorReconciliationError("nlink=2 receipt lacks recovery pending")
-                pending_meta = _read_exact_any_link(receipt_pending, receipt_data, frozenset({2}))
-                if (receipt_meta.st_dev, receipt_meta.st_ino) != (
-                    pending_meta.st_dev,
-                    pending_meta.st_ino,
-                ):
-                    raise ConfigLocatorReconciliationError("receipt recovery hardlink drifted")
-                receipt_state = "published_recoverable_nlink2"
-            elif receipt_exists and receipt_pending_exists:
-                raise ConfigLocatorReconciliationError("orphan receipt pending is ambiguous")
-            else:
-                receipt_state = "published_nlink1" if receipt_exists else "pending_create_only"
-            audit_baseline = receipt.get("metadata_audit_baseline")
-            if not isinstance(audit_baseline, Mapping) or dict(audit_baseline) != dict(
-                frozen_audit_baseline
-            ):
-                raise ConfigLocatorReconciliationError("receipt audit baseline is missing")
-        else:
-            if not alias_old or not pointer_old or not catalog_old:
-                raise ConfigLocatorReconciliationError(
-                    "mutable targets advanced before reconciliation receipt"
-                )
-            audit_baseline = frozen_audit_baseline
-            audit_contract = _candidate_audit_contract(
-                manifest=manifest,
-                immutable_bindings=immutable_bindings,
-                audit_baseline=audit_baseline,
-            )
-            receipt = _receipt_payload(
-                manifest=manifest,
-                manifest_binding=manifest_binding,
-                immutable_bindings=immutable_bindings,
-                audit_baseline=audit_baseline,
-                candidate_audit_contract=audit_contract,
-            )
-            receipt_data = _render(receipt)
-            receipt_state = "missing"
         receipt_binding = _validate_receipt(
             receipt,
             receipt_data,
@@ -2877,6 +3430,18 @@ def execute(
             catalog_new=catalog_new,
             replace_pending=pending_states,
         )
+        restart_states = {
+            "pending_staging_transfer_nlink2",
+            "staging_recoverable_uncommitted",
+        }
+        if apply and (
+            any(state in restart_states for state in immutable_states.values())
+            or receipt_state in restart_states
+            or any(state in restart_states for state in pending_states.values())
+        ):
+            raise ConfigLocatorReconciliationError(
+                "staging appeared after execution preflight cleanup"
+            )
         transaction_already_completed = (
             all(state == "published_nlink1" for state in immutable_states.values())
             and receipt_state == "published_nlink1"
@@ -3009,15 +3574,30 @@ def execute(
         if failure_hook is not None:
             failure_hook("receipt")
         if not alias_new:
-            _atomic_replace(paths["alias"], active_config_raw, kind="alias")
+            _atomic_replace(
+                paths["alias"],
+                active_config_raw,
+                kind="alias",
+                expected_current=old_config_raw,
+            )
         if failure_hook is not None:
             failure_hook("alias")
         if not pointer_new:
-            _atomic_replace(paths["pointer"], planned_pointer_data, kind="pointer")
+            _atomic_replace(
+                paths["pointer"],
+                planned_pointer_data,
+                kind="pointer",
+                expected_current=pointer_snapshot_expected,
+            )
         if failure_hook is not None:
             failure_hook("pointer")
         if not catalog_new:
-            _atomic_replace(paths["catalog"], planned_catalog_data, kind="catalog")
+            _atomic_replace(
+                paths["catalog"],
+                planned_catalog_data,
+                kind="catalog",
+                expected_current=catalog_snapshot_expected,
+            )
         if failure_hook is not None:
             failure_hook("catalog")
 
