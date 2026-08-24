@@ -22,7 +22,7 @@ import os
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -43,51 +43,39 @@ SCHEMA_VERSION = "narrowgate_causal_v12_toxicity_conditional_p3_reach_gate.v1"
 CREATED_DATE = "2026-08-04"
 
 BASELINE_POINTER = (
-    ROOT
-    / "research/families/f10_live_replay_attribution/docs/"
-    "operational_baseline_current.json"
+    ROOT / "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json"
 )
 PANEL_SPEC = (
-    ROOT
-    / "research/families/f09_campaign_action_uplift/docs/"
+    ROOT / "research/families/f09_campaign_action_uplift/docs/"
     "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_spec_20260803.json"
 )
 P3_TRANSPORT_SPEC = (
-    ROOT
-    / "research/families/f02_empirical_p3_touch/docs/"
+    ROOT / "research/families/f02_empirical_p3_touch/docs/"
     "p3_touch_policy_visible_decision_cadence_transport_v1_spec_20260803.json"
 )
 MODEL_DIR = (
-    ROOT
-    / "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
+    ROOT / "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
 )
-FEATURE_DIR = (
-    DATA_ROOT / "features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802"
-)
+FEATURE_DIR = DATA_ROOT / "features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802"
 BOOK_ROOT = DATA_ROOT / "normalized_l2_100ms_v2_20260727"
 QUEUE_PATH = (
-    DATA_ROOT
-    / "reports/formal_recalibration_20260715/"
+    DATA_ROOT / "reports/formal_recalibration_20260715/"
     "BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json"
 )
 LATENCY_PATH = (
-    DATA_ROOT
-    / "reports/formal_recalibration_20260715/"
+    DATA_ROOT / "reports/formal_recalibration_20260715/"
     "ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz"
 )
 TRADE_MANIFEST = DATA_ROOT / "trade_features_causal_v3_20260727/manifest.json"
 TRADE_QUALITY = (
-    DATA_ROOT
-    / "reports/causal_v9_through_20260725_20260727/execution_trade_quality.csv"
+    DATA_ROOT / "reports/causal_v9_through_20260725_20260727/execution_trade_quality.csv"
 )
 CACHE_DIR = DATA_ROOT / "cache/action_bound_p3_v1/window_cache"
 OUTPUT_ROOT = (
-    DATA_ROOT
-    / "reports/causal_v12_toxicity_outward_16tick_conditional_p3_reach_gate_v1_20260804"
+    DATA_ROOT / "reports/causal_v12_toxicity_outward_16tick_conditional_p3_reach_gate_v1_20260804"
 )
 SPEC_PATH = (
-    ROOT
-    / "research/families/f09_campaign_action_uplift/docs/"
+    ROOT / "research/families/f09_campaign_action_uplift/docs/"
     "causal_v12_toxicity_outward_16tick_conditional_p3_reach_gate_v1_spec_20260804.json"
 )
 
@@ -201,9 +189,7 @@ def validate_current_baseline() -> dict[str, Any]:
     if binding is None or not bool(binding.get("config_exists")):
         raise ValueError("immutable v12 backtest config is unavailable")
     pointer = dict(binding["pointer"])
-    if str(pointer.get("live_config_sha256", "")) != (
-        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256
-    ):
+    if str(pointer.get("live_config_sha256", "")) != (IMMUTABLE_BACKTEST_V12_CONFIG_SHA256):
         raise ValueError("normalized backtest pointer does not bind immutable v12")
     identity_path = require_file(
         Path(binding["identity_path"]),
@@ -296,9 +282,7 @@ def build_params(day: str, config_path: Path) -> dict[str, Any]:
     )
     samples = bt._load_live_perf_latency_samples(LATENCY_PATH, mode="avg")
     params["_new_order_latency_samples_ms"] = samples["new_order_latency_samples_ms"]
-    params["_cancel_order_latency_samples_ms"] = samples[
-        "cancel_order_latency_samples_ms"
-    ]
+    params["_cancel_order_latency_samples_ms"] = samples["cancel_order_latency_samples_ms"]
     configure_fixed_latency_distribution(
         params,
         scenario="baseline",
@@ -412,10 +396,7 @@ def build_threshold_schedule(days: Sequence[str], trace_dir: Path) -> pd.DataFra
                 if past
                 else np.asarray([], dtype=np.float64)
             )
-            ready = (
-                prior_days >= MINIMUM_PRIOR_DAYS
-                and len(prior_scores) >= MINIMUM_PRIOR_BUCKETS
-            )
+            ready = prior_days >= MINIMUM_PRIOR_DAYS and len(prior_scores) >= MINIMUM_PRIOR_BUCKETS
             threshold = (
                 float(np.quantile(prior_scores, TOXICITY_QUANTILE, method="higher"))
                 if ready
@@ -477,9 +458,7 @@ def prepare_baseline(*, workers: int) -> None:
             int(manifest["minimum_distance_ticks"].min()),
             int(manifest["maximum_distance_ticks"].max()),
         ],
-        "threshold_ready_days": int(
-            schedule.groupby("day")["ready"].all().sum()
-        ),
+        "threshold_ready_days": int(schedule.groupby("day")["ready"].all().sum()),
         "trace_manifest": {
             "path": str(OUTPUT_ROOT / "baseline_mechanics_manifest.parquet"),
             "sha256": sha256_file(OUTPUT_ROOT / "baseline_mechanics_manifest.parquet"),
@@ -522,13 +501,10 @@ def p3_band_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError(f"{day} lacks the two frozen strict-future trade tapes")
     placement_ref = by_kind["placement"][0]
     bbo_ref = by_kind["bbo"][0]
-    placement_path = require_file(
-        Path(str(placement_ref["path"])), str(placement_ref["sha256"])
-    )
+    placement_path = require_file(Path(str(placement_ref["path"])), str(placement_ref["sha256"]))
     bbo_path = require_file(Path(str(bbo_ref["path"])), str(bbo_ref["sha256"]))
     trade_paths = [
-        require_file(Path(str(ref["path"])), str(ref["sha256"]))
-        for ref in by_kind["label_trade"]
+        require_file(Path(str(ref["path"])), str(ref["sha256"])) for ref in by_kind["label_trade"]
     ]
 
     inputs = p3_spec["input_identities"]
@@ -574,16 +550,10 @@ def p3_band_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         row_reach = reach[side_mask]
         if rows.empty:
             continue
-        bid_ticks = np.rint(rows["best_bid"].to_numpy(dtype=float) / 0.1).astype(
-            np.int64
-        )
-        ask_ticks = np.rint(rows["best_ask"].to_numpy(dtype=float) / 0.1).astype(
-            np.int64
-        )
+        bid_ticks = np.rint(rows["best_bid"].to_numpy(dtype=float) / 0.1).astype(np.int64)
+        ask_ticks = np.rint(rows["best_ask"].to_numpy(dtype=float) / 0.1).astype(np.int64)
         quote_ticks = rows["baseline_price_tick"].to_numpy(dtype=np.int64)
-        current_ticks = (
-            bid_ticks - quote_ticks if side == "BUY" else quote_ticks - ask_ticks
-        )
+        current_ticks = bid_ticks - quote_ticks if side == "BUY" else quote_ticks - ask_ticks
         valid = (
             rows["inventory_role"].astype(str).isin(ROLES).to_numpy()
             & (current_ticks >= P3_DISTANCE_MIN_TICKS)
@@ -592,8 +562,7 @@ def p3_band_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         if not np.any(valid):
             continue
         context = {
-            field: rows.loc[valid, field].to_numpy(copy=True)
-            for field in DECISION_CONTEXT_FIELDS
+            field: rows.loc[valid, field].to_numpy(copy=True) for field in DECISION_CONTEXT_FIELDS
         }
         d0 = current_ticks[valid].astype(np.float64) * 0.1
         d1 = d0 + OUTWARD_TICKS * 0.1
@@ -671,9 +640,9 @@ def build_simultaneous_band(rows: pd.DataFrame) -> dict[str, Any]:
     cell_index = {cell: index for index, cell in enumerate(cells)}
     sums = np.zeros((len(days), len(cells)), dtype=np.float64)
     counts = np.zeros((len(days), len(cells)), dtype=np.int64)
-    grouped = frame.groupby(["day", "cell_id"], observed=True)[
-        "observed_delta_reach"
-    ].agg(["sum", "count"])
+    grouped = frame.groupby(["day", "cell_id"], observed=True)["observed_delta_reach"].agg(
+        ["sum", "count"]
+    )
     for (day, cell), row in grouped.iterrows():
         sums[day_index[str(day)], cell_index[str(cell)]] = float(row["sum"])
         counts[day_index[str(day)], cell_index[str(cell)]] = int(row["count"])
@@ -701,9 +670,7 @@ def build_simultaneous_band(rows: pd.DataFrame) -> dict[str, Any]:
         supported_days = int(frame.loc[mask, "day"].nunique())
         supported = rows_count >= 500 and supported_days >= 20
         gate_pass = bool(
-            supported
-            and lcb[index] >= -REACH_CHANGE_MAX
-            and ucb[index] <= -REACH_CHANGE_MIN
+            supported and lcb[index] >= -REACH_CHANGE_MAX and ucb[index] <= -REACH_CHANGE_MIN
         )
         cells_payload.append(
             {
@@ -713,9 +680,7 @@ def build_simultaneous_band(rows: pd.DataFrame) -> dict[str, Any]:
                 "bin_id": bin_id,
                 "rows": rows_count,
                 "days": supported_days,
-                "predicted_delta_mean": float(
-                    frame.loc[mask, "predicted_delta_reach"].mean()
-                ),
+                "predicted_delta_mean": float(frame.loc[mask, "predicted_delta_reach"].mean()),
                 "observed_delta_mean": float(point[index]),
                 "cluster_standard_error": float(standard_error[index]),
                 "simultaneous_lcb": float(lcb[index]),
@@ -754,10 +719,7 @@ def prepare_band(*, workers: int) -> None:
     manifest_path = Path(str(p3_spec["output_directory"])) / "input_manifest.json"
     refs = json.loads(require_file(manifest_path).read_text(encoding="utf-8"))
     days = [str(day) for day in p3_spec["days"]]
-    rows_by_day = {
-        day: [dict(row) for row in refs if str(row["day"]) == day]
-        for day in days
-    }
+    rows_by_day = {day: [dict(row) for row in refs if str(row["day"]) == day] for day in days}
     output_dir = OUTPUT_ROOT / "p3_band_rows"
     output_dir.mkdir(parents=True, exist_ok=True)
     tasks = [
@@ -860,9 +822,7 @@ def _policy_visible_source(
     bbo_ref = bbo_refs[0]
     bbo_path = require_file(Path(str(bbo_ref["path"])), str(bbo_ref["sha256"]))
     visibility = dict(p3_spec["input_identities"]["book_visibility_profile"])
-    visibility_path = require_file(
-        Path(str(visibility["path"])), str(visibility["sha256"])
-    )
+    visibility_path = require_file(Path(str(visibility["path"])), str(visibility["sha256"]))
     clocks = dict(p3_spec["source_clock_boundary"])
     return FrozenPolicyVisibleBboSource(
         path=bbo_path,
@@ -920,20 +880,16 @@ def _canonical_prediction_decisions(
     submit_ns = timestamps * np.int64(1_000_000)
     frames: list[pd.DataFrame] = []
     for side in SIDES:
-        baseline_ticks = np.rint(
-            (visible_bid if side == "BUY" else visible_ask) / 0.1
-        ).astype(np.int64)
+        baseline_ticks = np.rint((visible_bid if side == "BUY" else visible_ask) / 0.1).astype(
+            np.int64
+        )
         frame = pd.DataFrame(
             {
-                "decision_id": [
-                    f"{IDENTITY}:{day}:{side}:{int(ts)}" for ts in timestamps
-                ],
+                "decision_id": [f"{IDENTITY}:{day}:{side}:{int(ts)}" for ts in timestamps],
                 "day": day,
                 "side": side,
                 "inventory_role": "opener",
-                "campaign_id": [
-                    f"{IDENTITY}:{day}:canonical:{int(ts)}" for ts in timestamps
-                ],
+                "campaign_id": [f"{IDENTITY}:{day}:canonical:{int(ts)}" for ts in timestamps],
                 "submit_ts_ns": submit_ns,
                 "feature_ready_ts_ns": submit_ns,
                 "best_bid": visible_bid,
@@ -963,10 +919,7 @@ def _band_lookup(
     expected = {(side, role) for side in SIDES for role in ROLES}
     if set(edges) != expected:
         raise ValueError("P3 band lacks a side/role bin specification")
-    gate_by_cell = {
-        str(row["cell_id"]): bool(row["gate_pass"])
-        for row in band["cells"]
-    }
+    gate_by_cell = {str(row["cell_id"]): bool(row["gate_pass"]) for row in band["cells"]}
     return edges, gate_by_cell
 
 
@@ -1030,12 +983,9 @@ def p3_gate_matrix_task(payload: Mapping[str, Any]) -> dict[str, Any]:
 
         for side in SIDES:
             side_rows = batch.frame.loc[
-                batch.frame["supported"].astype(bool)
-                & batch.frame["side"].astype(str).eq(side)
+                batch.frame["supported"].astype(bool) & batch.frame["side"].astype(str).eq(side)
             ].reset_index(drop=True)
-            for lower in range(
-                0, len(side_rows), P3_PREDICTION_CONTEXT_CHUNK_ROWS
-            ):
+            for lower in range(0, len(side_rows), P3_PREDICTION_CONTEXT_CHUNK_ROWS):
                 upper = min(
                     lower + P3_PREDICTION_CONTEXT_CHUNK_ROWS,
                     len(side_rows),
@@ -1073,11 +1023,7 @@ def p3_gate_matrix_task(payload: Mapping[str, Any]) -> dict[str, Any]:
                     bins = _assign_bin(delta.reshape(-1), edges).reshape(delta.shape)
                     bin_status = np.asarray(
                         [
-                            2
-                            if gate_by_cell.get(
-                                f"{side}|{role}|B{bin_id}", False
-                            )
-                            else 1
+                            2 if gate_by_cell.get(f"{side}|{role}|B{bin_id}", False) else 1
                             for bin_id in range(len(edges) - 1)
                         ],
                         dtype=np.uint8,
@@ -1102,9 +1048,7 @@ def p3_gate_matrix_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         "grid_size": grid_size,
         "context_rows": context_rows,
         "context_supported_rows": supported_rows,
-        "context_coverage": (
-            float(supported_rows / context_rows) if context_rows else 0.0
-        ),
+        "context_coverage": (float(supported_rows / context_rows) if context_rows else 0.0),
         "status_supported_cells": int(np.sum(status > 0)),
         "status_gate_pass_cells": int(np.sum(status == 2)),
         "monotonicity_violations": monotonicity_violations,
@@ -1147,13 +1091,8 @@ def prepare_gates(*, workers: int) -> None:
     ]
     generated: dict[str, dict[str, Any]] = {}
     if tasks:
-        with concurrent.futures.ProcessPoolExecutor(
-            max_workers=max(1, workers)
-        ) as pool:
-            futures = {
-                pool.submit(p3_gate_matrix_task, task): task["day"]
-                for task in tasks
-            }
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max(1, workers)) as pool:
+            futures = {pool.submit(p3_gate_matrix_task, task): task["day"] for task in tasks}
             for future in concurrent.futures.as_completed(futures):
                 row = future.result()
                 generated[str(row["day"])] = row
@@ -1166,10 +1105,7 @@ def prepare_gates(*, workers: int) -> None:
 
     prior_path = OUTPUT_ROOT / "gate_matrix_manifest.parquet"
     prior_rows = (
-        {
-            str(row["day"]): dict(row)
-            for row in pd.read_parquet(prior_path).to_dict("records")
-        }
+        {str(row["day"]): dict(row) for row in pd.read_parquet(prior_path).to_dict("records")}
         if prior_path.is_file()
         else {}
     )
@@ -1276,14 +1212,14 @@ def freeze_spec() -> None:
         ROOT / "cpp/narrowgate_cpp/bindings.cpp",
         ROOT / "tests/test_conditional_p3_reach_gate_cpp.py",
         ROOT / "models/audit/action_bound_full_path_promotion.py",
-        ROOT
-        / "research/shared/experiment_governance/docs/"
+        ROOT / "research/shared/experiment_governance/docs/"
         "action_bound_full_path_direct_promotion_contract_v1.md",
         Path(str(narrowgate_cpp.__file__)).resolve(),
     )
     implementation = {
-        path.name if path.name not in {"tick_replay.cpp", "tick_replay.hpp"} else str(path.relative_to(ROOT)):
-        _artifact(path)
+        path.name
+        if path.name not in {"tick_replay.cpp", "tick_replay.hpp"}
+        else str(path.relative_to(ROOT)): _artifact(path)
         for path in implementation_paths
     }
     matrix_report = json.loads(
@@ -1297,12 +1233,10 @@ def freeze_spec() -> None:
     payload: dict[str, Any] = {
         "schema_version": f"{SCHEMA_VERSION}.spec",
         "identity": IDENTITY,
-        "frozen_at_utc": datetime.now(timezone.utc).isoformat(),
+        "frozen_at_utc": datetime.now(UTC).isoformat(),
         "status": "frozen_before_cpp_economic_screen",
         "research_family": "F09_campaign_action_uplift",
-        "promotion_route_if_all_downstream_gates_pass": (
-            "owner_risk_accepted_promotion"
-        ),
+        "promotion_route_if_all_downstream_gates_pass": ("owner_risk_accepted_promotion"),
         "owner_risk_reason": (
             "conditional P3 v4.1 used an outcome-informed 95% context-coverage override"
         ),
@@ -1318,9 +1252,7 @@ def freeze_spec() -> None:
             "buy_fill_selection_action_enabled": False,
         },
         "action": {
-            "candidate_source_identity": (
-                "causal_v12_side_specific_toxicity_past_only_p90"
-            ),
+            "candidate_source_identity": ("causal_v12_side_specific_toxicity_past_only_p90"),
             "candidate_action": "exposure_quote_outward_16_ticks",
             "intervention_axis": "quote_price",
             "sides": list(SIDES),
@@ -1362,15 +1294,9 @@ def freeze_spec() -> None:
                 "minimum_absolute_decrease": REACH_CHANGE_MIN,
                 "maximum_absolute_decrease": REACH_CHANGE_MAX,
             },
-            "simultaneous_band": _artifact(
-                OUTPUT_ROOT / "p3_reach_simultaneous_band.json"
-            ),
-            "gate_matrix_manifest": _artifact(
-                OUTPUT_ROOT / "gate_matrix_manifest.parquet"
-            ),
-            "gate_matrix_report": _artifact(
-                OUTPUT_ROOT / "gate_matrix_report.json"
-            ),
+            "simultaneous_band": _artifact(OUTPUT_ROOT / "p3_reach_simultaneous_band.json"),
+            "gate_matrix_manifest": _artifact(OUTPUT_ROOT / "gate_matrix_manifest.parquet"),
+            "gate_matrix_report": _artifact(OUTPUT_ROOT / "gate_matrix_report.json"),
             "supported_days": list(matrix_report["p3_supported_days"]),
             "unsupported_days_fallback_baseline": list(
                 matrix_report["p3_unsupported_fallback_days"]
@@ -1441,9 +1367,7 @@ def freeze_spec() -> None:
             "automatic_rollback": True,
         },
         "score_profile": score_profile_contract("action_execution_selective_v2"),
-        "outcome_blind_artifacts": {
-            path.name: _artifact(path) for path in required_outcome_blind
-        },
+        "outcome_blind_artifacts": {path.name: _artifact(path) for path in required_outcome_blind},
         "implementation_identities": implementation,
         "implementation_identity_sha256": canonical_sha256(implementation),
         "permissions_before_result": {
@@ -1524,10 +1448,7 @@ def cpp_screen_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         expected_ts_ms=ml_ts,
         manifest_row=dict(payload["gate_manifest_row"]),
     )
-    thresholds = {
-        str(row["side"]): dict(row)
-        for row in payload["threshold_rows"]
-    }
+    thresholds = {str(row["side"]): dict(row) for row in payload["threshold_rows"]}
     if set(thresholds) != set(SIDES):
         raise ValueError(f"{day} threshold schedule lacks BUY/SELL")
 
@@ -1576,8 +1497,7 @@ def cpp_screen_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         fill_trace = list(result.get("_fill_trace") or [])
         if len(fill_trace) != int(result["fills_total"]):
             raise RuntimeError(
-                f"{day} {arm} fill trace truncated: "
-                f"{len(fill_trace)} != {result['fills_total']}"
+                f"{day} {arm} fill trace truncated: {len(fill_trace)} != {result['fills_total']}"
             )
         campaigns = reconstruct_campaigns(
             fill_trace,
@@ -1589,14 +1509,11 @@ def cpp_screen_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
         )
         campaign_frame = pd.DataFrame(campaigns)
         campaign_metrics = _campaign_day_metrics(campaign_frame)
-        accounting_error = (
-            float(campaign_metrics["campaign_terminal_value_usdc"])
-            - float(result["terminal_mtm_pnl"])
+        accounting_error = float(campaign_metrics["campaign_terminal_value_usdc"]) - float(
+            result["terminal_mtm_pnl"]
         )
         if abs(accounting_error) > 1e-6:
-            raise RuntimeError(
-                f"{day} {arm} campaign accounting mismatch: {accounting_error}"
-            )
+            raise RuntimeError(f"{day} {arm} campaign accounting mismatch: {accounting_error}")
         buy = _side_trace_metrics(fill_trace, "BUY")
         sell = _side_trace_metrics(fill_trace, "SELL")
         daily_rows.append(
@@ -1621,12 +1538,8 @@ def cpp_screen_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
                 "p3_toxicity_trigger_count": int(
                     result["conditional_p3_reach_gate_toxicity_trigger_count"]
                 ),
-                "p3_supported_count": int(
-                    result["conditional_p3_reach_gate_supported_count"]
-                ),
-                "p3_gate_pass_count": int(
-                    result["conditional_p3_reach_gate_pass_count"]
-                ),
+                "p3_supported_count": int(result["conditional_p3_reach_gate_supported_count"]),
+                "p3_gate_pass_count": int(result["conditional_p3_reach_gate_pass_count"]),
                 "p3_price_change_count": int(
                     result["conditional_p3_reach_gate_price_change_count"]
                 ),
@@ -1704,16 +1617,11 @@ def screen_cpp(*, workers: int) -> None:
         raise FileExistsError(f"C++ economic screen already exists: {report_path}")
     baseline = validate_current_baseline()
     days, grade_a, grade_b = load_panel()
-    matrix_manifest = pd.read_parquet(
-        OUTPUT_ROOT / "gate_matrix_manifest.parquet"
-    )
-    matrix_rows = {
-        str(row["day"]): dict(row) for row in matrix_manifest.to_dict("records")
-    }
+    matrix_manifest = pd.read_parquet(OUTPUT_ROOT / "gate_matrix_manifest.parquet")
+    matrix_rows = {str(row["day"]): dict(row) for row in matrix_manifest.to_dict("records")}
     schedule = pd.read_parquet(OUTPUT_ROOT / "toxicity_p90_schedule.parquet")
     threshold_rows = {
-        day: schedule.loc[schedule["day"].astype(str).eq(day)].to_dict("records")
-        for day in days
+        day: schedule.loc[schedule["day"].astype(str).eq(day)].to_dict("records") for day in days
     }
     day_dir = OUTPUT_ROOT / "cpp_screen_days"
     day_dir.mkdir(parents=True, exist_ok=True)
@@ -1746,13 +1654,12 @@ def screen_cpp(*, workers: int) -> None:
                     - daily["control"]["terminal_mtm_pnl_usdc"]
                 )
                 print(
-                    f"C++ screen {len(results)}/{len(tasks)} {row['day']} "
-                    f"delta={delta:+.6f}",
+                    f"C++ screen {len(results)}/{len(tasks)} {row['day']} delta={delta:+.6f}",
                     flush=True,
                 )
-    daily = pd.DataFrame(
-        [item for result in results for item in result["daily"]]
-    ).sort_values(["day", "arm"])
+    daily = pd.DataFrame([item for result in results for item in result["daily"]]).sort_values(
+        ["day", "arm"]
+    )
     campaigns = pd.concat(
         [pd.read_parquet(result["campaigns_path"]) for result in results],
         ignore_index=True,
@@ -1772,8 +1679,7 @@ def screen_cpp(*, workers: int) -> None:
         / max(float(totals.loc["control", "abs_inventory_time_btc_s"]), 1e-12)
     )
     campaign_summary = {
-        arm: _campaign_tail_summary(campaigns.loc[campaigns["arm"].eq(arm)])
-        for arm in ARMS
+        arm: _campaign_tail_summary(campaigns.loc[campaigns["arm"].eq(arm)]) for arm in ARMS
     }
     candidate = daily.loc[daily["arm"].eq("candidate")]
     action_eval = int(candidate["p3_eval_count"].sum())
@@ -1786,15 +1692,12 @@ def screen_cpp(*, workers: int) -> None:
         "terminal_mtm_pnl_lcb_positive": bool(
             pnl["ci95_day_cluster_bootstrap_usdc_per_day"][0] > 0.0
         ),
-        "fill_retention_within_bounds": bool(
-            fill_bounds[0] <= fill_retention <= fill_bounds[1]
-        ),
+        "fill_retention_within_bounds": bool(fill_bounds[0] <= fill_retention <= fill_bounds[1]),
         "candidate_price_change_rate_within_bounds": bool(
             rate_bounds[0] <= action_rate <= rate_bounds[1]
         ),
         "campaign_q10_noninferior": bool(
-            campaign_summary["candidate"]["q10_usdc"]
-            >= campaign_summary["control"]["q10_usdc"]
+            campaign_summary["candidate"]["q10_usdc"] >= campaign_summary["control"]["q10_usdc"]
         ),
         "campaign_cvar10_noninferior": bool(
             campaign_summary["candidate"]["cvar10_usdc"]
@@ -1827,20 +1730,16 @@ def screen_cpp(*, workers: int) -> None:
     report = {
         "schema_version": f"{SCHEMA_VERSION}.cpp_screen",
         "identity": IDENTITY,
-        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "created_at_utc": datetime.now(UTC).isoformat(),
         "spec": _artifact(SPEC_PATH),
         "comparison": "candidate_minus_current_v9_control",
         "control_totals": {
-            "terminal_mtm_pnl_usdc": float(
-                totals.loc["control", "terminal_mtm_pnl_usdc"]
-            ),
+            "terminal_mtm_pnl_usdc": float(totals.loc["control", "terminal_mtm_pnl_usdc"]),
             "pnl_usdc": float(totals.loc["control", "pnl_usdc"]),
             "fills_total": int(totals.loc["control", "fills_total"]),
         },
         "candidate_totals": {
-            "terminal_mtm_pnl_usdc": float(
-                totals.loc["candidate", "terminal_mtm_pnl_usdc"]
-            ),
+            "terminal_mtm_pnl_usdc": float(totals.loc["candidate", "terminal_mtm_pnl_usdc"]),
             "pnl_usdc": float(totals.loc["candidate", "pnl_usdc"]),
             "fills_total": int(totals.loc["candidate", "fills_total"]),
         },

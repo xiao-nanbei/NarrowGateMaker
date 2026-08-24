@@ -44,9 +44,7 @@ OUTPUT = ROOT / (
     "multiscale_ema_boolean_cooldown_duration_policy_v1_"
     "outcome_blind_inputs_20260809.json"
 )
-FROZEN_CONFIG_SHA256 = (
-    "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18"
-)
+FROZEN_CONFIG_SHA256 = "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f6118b04e18"
 
 
 class FreezeError(RuntimeError):
@@ -135,15 +133,14 @@ def _duration_rows(
         fills["fill_ts"].gt(0) & fills["fill_qty"].gt(0),
         sorted(required),
     ].copy()
-    frame = frame.sort_values(
-        ["day", "fill_ts", "order_id", "side"], kind="stable"
-    ).reset_index(drop=True)
+    frame = frame.sort_values(["day", "fill_ts", "order_id", "side"], kind="stable").reset_index(
+        drop=True
+    )
     rows: list[dict[str, Any]] = []
     for day, day_frame in frame.groupby("day", sort=True, observed=True):
         day_frame = day_frame.reset_index(drop=True)
         day_end_ts_ms = int(
-            (pd.Timestamp(str(day), tz="UTC") + pd.Timedelta(days=1)).timestamp()
-            * 1_000
+            (pd.Timestamp(str(day), tz="UTC") + pd.Timedelta(days=1)).timestamp() * 1_000
         )
         consecutive = {"BUY": 0.0, "SELL": 0.0}
         records = day_frame.to_dict("records")
@@ -153,10 +150,7 @@ def _duration_rows(
             consecutive[side] += float(row["fill_qty"]) / float(unit_qty_btc)
             consecutive[opposite] = 0.0
             before = float(row["inventory_before_fill"])
-            exposure = (
-                (side == "BUY" and before >= 0.0)
-                or (side == "SELL" and before <= 0.0)
-            )
+            exposure = (side == "BUY" and before >= 0.0) or (side == "SELL" and before <= 0.0)
             if not exposure:
                 continue
             fill_ts_ms = int(row["fill_ts"])
@@ -167,11 +161,7 @@ def _duration_rows(
             if index + 1 < len(records):
                 next_state_change_s = max(
                     0.0,
-                    float(
-                        int(records[index + 1]["fill_ts"])
-                        - int(row["fill_ts"])
-                    )
-                    / 1_000.0,
+                    float(int(records[index + 1]["fill_ts"]) - int(row["fill_ts"])) / 1_000.0,
                 )
                 next_state_change_observed = True
             undo_add_s = float(day_end_ts_ms - fill_ts_ms) / 1_000.0
@@ -181,8 +171,7 @@ def _duration_rows(
                 if abs(future_inventory) <= abs(before) + 1e-10:
                     undo_add_s = max(
                         0.0,
-                        float(int(future["fill_ts"]) - int(row["fill_ts"]))
-                        / 1_000.0,
+                        float(int(future["fill_ts"]) - int(row["fill_ts"])) / 1_000.0,
                     )
                     undo_add_observed = True
                     break
@@ -194,9 +183,7 @@ def _duration_rows(
                     "fill_ts_ms": int(row["fill_ts"]),
                     "control_85n_s": cooldown_s * max(1.0, consecutive[side]),
                     "next_inventory_state_change_s": next_state_change_s,
-                    "next_inventory_state_change_observed": (
-                        next_state_change_observed
-                    ),
+                    "next_inventory_state_change_observed": (next_state_change_observed),
                     "undo_incremental_inventory_s": undo_add_s,
                     "undo_incremental_inventory_observed": undo_add_observed,
                 }
@@ -308,9 +295,7 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
     if _sha256(fills_path) != baseline["source"]["fills_sha256"]:
         raise FreezeError("authoritative fill path hash drifted")
     raw_config = yaml.safe_load(config.read_text(encoding="utf-8"))
-    if not isinstance(raw_config, dict) or not isinstance(
-        raw_config.get("strategy"), dict
-    ):
+    if not isinstance(raw_config, dict) or not isinstance(raw_config.get("strategy"), dict):
         raise FreezeError("operational config schema drifted")
     strategy = raw_config["strategy"]
     order_size = float(strategy["order_size"])
@@ -330,18 +315,12 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
                 "expiry_or_opposite_fill",
             )
         ),
-        "adaptive_add_cooldown_enabled": bool(
-            strategy.get("adaptive_add_cooldown_enabled", False)
-        ),
-        "reducing_cooldown_s": float(
-            strategy.get("fill_cooldown_reducing", 0.0)
-        ),
+        "adaptive_add_cooldown_enabled": bool(strategy.get("adaptive_add_cooldown_enabled", False)),
+        "reducing_cooldown_s": float(strategy.get("fill_cooldown_reducing", 0.0)),
         "buy_fill_selection_live_enabled": bool(
             strategy.get("buy_fill_selection_live_enabled", False)
         ),
-        "q90_action_enabled": bool(
-            strategy.get("dynamic_fill_hazard_action_enabled", False)
-        ),
+        "q90_action_enabled": bool(strategy.get("dynamic_fill_hazard_action_enabled", False)),
     }
     expected_semantics = {
         "clock_mode": "wall_time",
@@ -391,17 +370,13 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
             {
                 int(value)
                 for column in clock_columns
-                for value in source_rows[column][
-                    "day_equal_weighted_quantiles_s"
-                ].values()
+                for value in source_rows[column]["day_equal_weighted_quantiles_s"].values()
             }
         )
         candidate_actions[side] = [
             {
                 "policy_id": "CONTROL_85N",
-                "duration_semantics": (
-                    "current 85 seconds times same-side filled-quantity units"
-                ),
+                "duration_semantics": ("current 85 seconds times same-side filled-quantity units"),
                 "duration_s": None,
             },
             *(
@@ -414,14 +389,11 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
             ),
         ]
 
-    encoder_manifest = json.loads(
-        PROVIDER_ENCODER_MANIFEST.read_text(encoding="utf-8")
-    )
+    encoder_manifest = json.loads(PROVIDER_ENCODER_MANIFEST.read_text(encoding="utf-8"))
     if (
         _sha256(PROVIDER_ENCODER) != encoder_manifest.get("artifact_sha256")
         or encoder_manifest.get("training_day_count") != 66
-        or encoder_manifest.get("sampling_stride")
-        != "none_all_admitted_source_rows"
+        or encoder_manifest.get("sampling_stride") != "none_all_admitted_source_rows"
     ):
         raise FreezeError("2025 provider source-grid encoder identity drifted")
     with np.load(PROVIDER_ENCODER, allow_pickle=False) as values:
@@ -442,12 +414,8 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
         "baseline_projection": {
             "baseline_id": baseline["baseline_id"],
             "baseline_identity_sha256": _sha256(BASELINE),
-            "operational_identity_path": baseline["operational_baseline"][
-                "identity_path"
-            ],
-            "operational_identity_sha256": baseline["operational_baseline"][
-                "identity_sha256"
-            ],
+            "operational_identity_path": baseline["operational_baseline"]["identity_path"],
+            "operational_identity_sha256": baseline["operational_baseline"]["identity_sha256"],
             "ordered_utc_days": baseline["panel"]["ordered_utc_days"],
             "daily_fresh_start": True,
             "economic_fields_present_in_source_identity_but_unused": True,
@@ -475,13 +443,9 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
             "provider_encoder_path": str(PROVIDER_ENCODER),
             "provider_encoder_sha256": _sha256(PROVIDER_ENCODER),
             "provider_encoder_manifest_path": str(PROVIDER_ENCODER_MANIFEST),
-            "provider_encoder_manifest_sha256": _sha256(
-                PROVIDER_ENCODER_MANIFEST
-            ),
+            "provider_encoder_manifest_sha256": _sha256(PROVIDER_ENCODER_MANIFEST),
             "provider_training_days": 66,
-            "provider_training_rows": int(
-                encoder_manifest["training_rows_both_sides"]
-            ),
+            "provider_training_rows": int(encoder_manifest["training_rows_both_sides"]),
             "provider_sampling_stride": "none_all_admitted_source_rows",
             "provider_economic_outcomes_read": False,
             "pair_distance_scale_bps": pair_scales,
@@ -528,9 +492,7 @@ def main() -> None:
             {
                 "output": str(args.output),
                 "sha256": _sha256(args.output),
-                "candidate_actions": payload["duration_source"][
-                    "candidate_actions"
-                ],
+                "candidate_actions": payload["duration_source"]["candidate_actions"],
             },
             indent=2,
             sort_keys=True,

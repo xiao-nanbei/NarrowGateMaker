@@ -35,42 +35,30 @@ from models.backtest_config import load_operational_baseline_binding  # noqa: E4
 
 DATA_ROOT = data_root(ROOT)
 CALENDAR_MANIFEST = (
-    ROOT
-    / "research/shared/replay_lifecycle/docs/"
+    ROOT / "research/shared/replay_lifecycle/docs/"
     "calendar_continuity_manifest_20260417_20260730_v1.json"
 )
 BASELINE_POINTER = (
-    ROOT
-    / "research/families/f10_live_replay_attribution/docs/"
-    "operational_baseline_current.json"
+    ROOT / "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json"
 )
 MODEL_DIR = (
-    ROOT
-    / "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
+    ROOT / "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
 )
-FEATURE_DIR = (
-    DATA_ROOT
-    / "features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802"
-)
+FEATURE_DIR = DATA_ROOT / "features_btcusdc_causal_v12_ranked_toxicity_f09_40d_20260802"
 BOOK_ROOT = DATA_ROOT / "normalized_l2_100ms_v2_20260727"
 QUEUE_PATH = (
-    DATA_ROOT
-    / "reports/formal_recalibration_20260715/"
+    DATA_ROOT / "reports/formal_recalibration_20260715/"
     "BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json"
 )
 LATENCY_PATH = (
-    DATA_ROOT
-    / "reports/formal_recalibration_20260715/"
+    DATA_ROOT / "reports/formal_recalibration_20260715/"
     "ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz"
 )
 COVERAGE_REPORT = (
-    DATA_ROOT
-    / "reports/continuous_calendar_substrate_v1_20260803/"
-    "normalized_coverage_final.json"
+    DATA_ROOT / "reports/continuous_calendar_substrate_v1_20260803/normalized_coverage_final.json"
 )
 FRESH_BASELINE_REPORT = (
-    ROOT
-    / "research/families/f10_live_replay_attribution/docs/"
+    ROOT / "research/families/f10_live_replay_attribution/docs/"
     "current_live_held_ber_replay_baseline_40d_20260809.json"
 )
 CACHE_DIR = window_cache_root(ROOT)
@@ -78,12 +66,8 @@ DEFAULT_OUTPUT = (
     DATA_ROOT
     / "reports/current_live_held_ber_baseline_restart_aware_continuous_40anchor_v1_20260809"
 )
-FEATURE_MANIFEST_SHA256 = (
-    "1e21d6a8aee511d1ebed8db04d76c5b6d8803724999c284b2256bd83f5d36a90"
-)
-COVERAGE_REPORT_SHA256 = (
-    "2f927c1ee3be75087585c5e6ddd73c9bc2f91a97c86990a6e0943af45ed7981e"
-)
+FEATURE_MANIFEST_SHA256 = "1e21d6a8aee511d1ebed8db04d76c5b6d8803724999c284b2256bd83f5d36a90"
+COVERAGE_REPORT_SHA256 = "2f927c1ee3be75087585c5e6ddd73c9bc2f91a97c86990a6e0943af45ed7981e"
 DAY_MS = 86_400_000
 EPS = 1e-10
 
@@ -196,10 +180,7 @@ class CausalMarkStore:
         raise RuntimeError(f"no official BTCUSDC mark at or before {ts_ms}")
 
     def source_manifest(self) -> list[dict[str, Any]]:
-        return [
-            {"day": day, **source}
-            for day, source in sorted(self._used_sources.items())
-        ]
+        return [{"day": day, **source} for day, source in sorted(self._used_sources.items())]
 
 
 def validate_identities() -> dict[str, Any]:
@@ -212,17 +193,14 @@ def validate_identities() -> dict[str, Any]:
     pointer = dict(binding["pointer"])
     identity_path = Path(binding["identity_path"]).expanduser().resolve()
     config_path = Path(binding["config_path"]).expanduser().resolve()
-    if str(pointer.get("live_config_sha256", "")) != (
-        IMMUTABLE_BACKTEST_V12_CONFIG_SHA256
-    ):
+    if str(pointer.get("live_config_sha256", "")) != (IMMUTABLE_BACKTEST_V12_CONFIG_SHA256):
         raise RuntimeError("normalized backtest pointer does not bind immutable v12")
     governance_pointer = binding.get("governance_pointer") or pointer
-    if governance_pointer.get("schema_version") == (
-        "narrowgate_operational_baseline_pointer.v2"
-    ):
-        if (
-            binding.get("config_scope") != "immutable_v12_backtest_default"
-            or config_path != immutable_backtest_v12_config_path(root=ROOT)
+    if governance_pointer.get("schema_version") == ("narrowgate_operational_baseline_pointer.v2"):
+        if binding.get(
+            "config_scope"
+        ) != "immutable_v12_backtest_default" or config_path != immutable_backtest_v12_config_path(
+            root=ROOT
         ):
             raise RuntimeError("v13 governance did not resolve the immutable v12 replay config")
     require_sha256(
@@ -321,9 +299,7 @@ def build_params(day: str, config_path: Path) -> dict[str, Any]:
     )
     samples = bt._load_live_perf_latency_samples(LATENCY_PATH, mode="avg")
     params["_new_order_latency_samples_ms"] = samples["new_order_latency_samples_ms"]
-    params["_cancel_order_latency_samples_ms"] = samples[
-        "cancel_order_latency_samples_ms"
-    ]
+    params["_cancel_order_latency_samples_ms"] = samples["cancel_order_latency_samples_ms"]
     configure_fixed_latency_distribution(
         params,
         scenario="baseline",
@@ -382,11 +358,7 @@ def main() -> int:
     )
     cancel_drain_ms = int(calendar_payload["cancel_drain_ms"])
     all_segments = build_active_segments(plan, cancel_drain_ms=cancel_drain_ms)
-    segments = (
-        all_segments[: args.max_segments]
-        if args.max_segments
-        else all_segments
-    )
+    segments = all_segments[: args.max_segments] if args.max_segments else all_segments
     complete_run = len(segments) == len(all_segments)
     day_rows = {
         str(row["day"]): row
@@ -468,13 +440,10 @@ def main() -> int:
                 refresh_cache=False,
             )
             if window.book_source_authority != "native_formal_lifecycle":
-                raise RuntimeError(
-                    f"{current_day} source authority={window.book_source_authority}"
-                )
+                raise RuntimeError(f"{current_day} source authority={window.book_source_authority}")
         assert window is not None and params is not None
-        mask = (
-            (window.trades["transact_time"] >= segment.start_ts_ms)
-            & (window.trades["transact_time"] < segment.end_ts_ms)
+        mask = (window.trades["transact_time"] >= segment.start_ts_ms) & (
+            window.trades["transact_time"] < segment.end_ts_ms
         )
         segment_trades = window.trades.loc[mask].copy()
         if segment_trades.empty:
@@ -487,9 +456,7 @@ def main() -> int:
                 sentinel = segment_trades.iloc[[-1]].copy()
                 sentinel.loc[:, "transact_time"] = sentinel_ts
                 sentinel.loc[:, "price"] = marks.at_or_before(sentinel_ts)
-                quantity_column = (
-                    "quantity" if "quantity" in sentinel.columns else "qty"
-                )
+                quantity_column = "quantity" if "quantity" in sentinel.columns else "qty"
                 sentinel.loc[:, quantity_column] = 0.0
                 sentinel.loc[:, "is_buyer_maker"] = False
                 segment_trades = pd.concat(
@@ -535,9 +502,7 @@ def main() -> int:
         run_params = dict(params)
         run_params["initial_inventory"] = initial_inventory
         run_params["initial_entry_price"] = initial_entry
-        run_params["planned_quote_stop_ts_ms"] = int(
-            segment.planned_quote_stop_ts_ms
-        )
+        run_params["planned_quote_stop_ts_ms"] = int(segment.planned_quote_stop_ts_ms)
         simulated_at = time.perf_counter()
         result = bt._simulate_tick_with_engine(
             "cpp",
@@ -639,17 +604,11 @@ def main() -> int:
             "fills_total": int(result["fills_total"]),
             "initial_inventory_btc": initial_inventory,
             "final_inventory_btc": float(result["final_inventory"]),
-            "active_abs_inventory_time_btc_s": float(
-                result["abs_inventory_time_s"]
-            ),
+            "active_abs_inventory_time_btc_s": float(result["abs_inventory_time_s"]),
             "active_pnl_delta_usdc": observed_delta,
             "accounting_error_usdc": accounting_error,
-            "planned_quote_stop_trigger_ts_ms": int(
-                result["planned_quote_stop_trigger_ts_ms"]
-            ),
-            "planned_shutdown_orders_at_trigger": int(
-                result["planned_shutdown_orders_at_trigger"]
-            ),
+            "planned_quote_stop_trigger_ts_ms": int(result["planned_quote_stop_trigger_ts_ms"]),
+            "planned_shutdown_orders_at_trigger": int(result["planned_shutdown_orders_at_trigger"]),
             "planned_shutdown_remaining_order_count": int(
                 result["planned_shutdown_open_order_count"]
                 + result["planned_shutdown_pending_new_order_count"]
@@ -675,9 +634,7 @@ def main() -> int:
             raise RuntimeError("complete run lost its final maintenance boundary")
         calendar_end = (
             int(
-                datetime.fromisoformat(plan.calendar_end_day)
-                .replace(tzinfo=UTC)
-                .timestamp()
+                datetime.fromisoformat(plan.calendar_end_day).replace(tzinfo=UTC).timestamp()
                 * 1_000
             )
             + DAY_MS
@@ -720,9 +677,7 @@ def main() -> int:
         if not campaign_frame.empty
         else np.empty(0, dtype=np.float64)
     )
-    active_inventory_time = float(
-        segment_frame["active_abs_inventory_time_btc_s"].sum()
-    )
+    active_inventory_time = float(segment_frame["active_abs_inventory_time_btc_s"].sum())
     gap_inventory_time = float(
         sum(
             abs(row.position_btc) * (row.end_ts_ms - row.start_ts_ms) / 1_000.0
@@ -774,9 +729,7 @@ def main() -> int:
             "non_cache_output_root": str(output_root),
         },
         "result": {
-            "continuous_terminal_mtm_pnl_usdc": float(
-                ledger.state.cumulative_pnl_usdc
-            ),
+            "continuous_terminal_mtm_pnl_usdc": float(ledger.state.cumulative_pnl_usdc),
             "pnl_per_anchor_active_day_usdc": float(
                 ledger.state.cumulative_pnl_usdc / len(plan.active_days)
             ),
@@ -794,17 +747,13 @@ def main() -> int:
             "final_inventory_btc": float(ledger.state.position_btc),
             "active_abs_inventory_time_btc_s": active_inventory_time,
             "gap_abs_inventory_time_btc_s": gap_inventory_time,
-            "continuous_abs_inventory_time_btc_s": (
-                active_inventory_time + gap_inventory_time
-            ),
+            "continuous_abs_inventory_time_btc_s": (active_inventory_time + gap_inventory_time),
             "gap_inventory_pnl_usdc": float(audit["gap_inventory_pnl_usdc"]),
             "closed_campaigns": int(len(campaign_frame)),
             "closed_campaign_value_usdc": float(campaign_values.sum()),
             "campaign_q10_usdc": q10,
             "campaign_cvar10_usdc": float(
-                campaign_values[campaign_values <= q10].mean()
-                if campaign_values.size
-                else 0.0
+                campaign_values[campaign_values <= q10].mean() if campaign_values.size else 0.0
             ),
             "multi_level_campaigns": int(len(multi)),
             "multi_level_terminal_value_usdc": float(
@@ -816,21 +765,14 @@ def main() -> int:
             "planned_shutdown_failures": int(
                 (
                     (~segment_frame["terminal_censor"])
-                    & (
-                        segment_frame["planned_shutdown_remaining_order_count"]
-                        != 0
-                    )
+                    & (segment_frame["planned_shutdown_remaining_order_count"] != 0)
                 ).sum()
             ),
-            "daily_additivity_error_usdc": float(
-                audit["closed_daily_additivity_error_usdc"]
-            ),
+            "daily_additivity_error_usdc": float(audit["closed_daily_additivity_error_usdc"]),
         },
         "fresh_start_comparison": {
             "fresh_40_day_current_baseline_pnl_usdc": fresh_pnl,
-            "continuous_minus_fresh_usdc": float(
-                ledger.state.cumulative_pnl_usdc - fresh_pnl
-            ),
+            "continuous_minus_fresh_usdc": float(ledger.state.cumulative_pnl_usdc - fresh_pnl),
             "comparison_is_causal_tail_governance_evidence": False,
             "interpretation": (
                 "calendar availability, planned restart state transport, and continuous "

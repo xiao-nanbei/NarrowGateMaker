@@ -96,9 +96,7 @@ EXPECTED_CONTINUATION_ONLY_DAYS = (
 FORMAL_DAY_REPLAY_WORKERS = 6
 FORMAL_OPPORTUNITY_COUNT = 3_516
 PORTABLE_BINDING_FILENAME = "portable_replay_binding_v2.json"
-SEQUENTIAL_CACHE_DIRECTORY = (
-    "f05_full_multiscale_successor_offline_sequential_replay_cache_v2"
-)
+SEQUENTIAL_CACHE_DIRECTORY = "f05_full_multiscale_successor_offline_sequential_replay_cache_v2"
 
 PANEL_ROLES = mechanics.PANEL_FILE_ROLES
 OWNER_ACTIONS = mechanics.OWNER_ACTION_VOCABULARY
@@ -859,18 +857,14 @@ def _canonical_day_projection(
         "utc_day": day,
         "panel_role": request.panel_role,
         "queue_identity": request.queue_identity,
-        "same_millisecond_ambiguity_policy": (
-            request.same_millisecond_ambiguity_policy
-        ),
+        "same_millisecond_ambiguity_policy": (request.same_millisecond_ambiguity_policy),
         "bbo_path": _portable_bound_path(request.bbo_path, inputs=inputs),
         "bbo_sha256": _file_sha256(request.bbo_path),
         "l2_path": _portable_bound_path(request.l2_path, inputs=inputs),
         "l2_sha256": _file_sha256(request.l2_path),
         "features_path": _portable_bound_path(request.features_path, inputs=inputs),
         "features_sha256": _file_sha256(request.features_path),
-        "source_manifest_path": _portable_bound_path(
-            request.source_manifest_path, inputs=inputs
-        ),
+        "source_manifest_path": _portable_bound_path(request.source_manifest_path, inputs=inputs),
         "source_manifest_sha256": _file_sha256(request.source_manifest_path),
         "book_view_manifest_path": _portable_bound_path(
             request.book_view_manifest_path, inputs=inputs
@@ -880,9 +874,7 @@ def _canonical_day_projection(
             request.features_manifest_path, inputs=inputs
         ),
         "features_manifest_sha256": _file_sha256(request.features_manifest_path),
-        "private_config_path": _portable_bound_path(
-            request.private_config_path, inputs=inputs
-        ),
+        "private_config_path": _portable_bound_path(request.private_config_path, inputs=inputs),
         "private_config_sha256": _file_sha256(request.private_config_path),
         "native_observation_root": _portable_bound_path(
             request.native_observation_root, inputs=inputs
@@ -907,18 +899,13 @@ def _ensure_portable_replay_binding(
     root = output_root.expanduser().resolve()
     binding_path = root / "_bindings" / PORTABLE_BINDING_FILENAME
     cache_root = (
-        inputs.project_data_root
-        / "cache"
-        / "replay_dag"
-        / SEQUENTIAL_CACHE_DIRECTORY
+        inputs.project_data_root / "cache" / "replay_dag" / SEQUENTIAL_CACHE_DIRECTORY
     ).resolve()
     try:
         cache_root.relative_to((inputs.project_data_root / "cache" / "replay_dag").resolve())
     except ValueError as exc:
         raise OfflinePanelBuilderError("sequential replay cache escaped its governed root") from exc
-    projections = {
-        day: _canonical_day_projection(inputs, day) for day in inputs.selected_days
-    }
+    projections = {day: _canonical_day_projection(inputs, day) for day in inputs.selected_days}
     binding: dict[str, Any] = {
         "schema_version": f"{replay_adapter.IDENTITY}.portable_replay_binding.v1",
         "identity": SEQUENTIAL_REPLAY_INPUT_IDENTITY,
@@ -929,13 +916,9 @@ def _ensure_portable_replay_binding(
         "target_day_end_terminalized": False,
         "d_plus_1_new_target_assignments_allowed": False,
         "assignment_to_common_washout_required": True,
-        "observation_end_semantics": (
-            "outcome_blind_common_D_plus_1_administrative_bound_v1"
-        ),
+        "observation_end_semantics": ("outcome_blind_common_D_plus_1_administrative_bound_v1"),
         "native_observation_batch_manifest": {
-            "path": _portable_bound_path(
-                inputs.native_observation_manifest_path, inputs=inputs
-            ),
+            "path": _portable_bound_path(inputs.native_observation_manifest_path, inputs=inputs),
             "file_sha256": _file_sha256(inputs.native_observation_manifest_path),
             "canonical_manifest_sha256": _require_sha(
                 inputs.native_observation_manifest.get("canonical_manifest_sha256"),
@@ -1139,9 +1122,7 @@ def _validate_adapter_result(
         or len(assignment_mechanics) != snapshot_count
         or any(not isinstance(row, Mapping) for row in assignment_mechanics.values())
     ):
-        raise OfflinePanelBuilderError(
-            "B0 adapter assignment mechanics denominator drifted"
-        )
+        raise OfflinePanelBuilderError("B0 adapter assignment mechanics denominator drifted")
     normalized_mechanics: dict[str, dict[str, Any]] = {}
     expected_fields = {
         "campaign_id",
@@ -1333,12 +1314,8 @@ def _campaign_cluster_id(
     return "b0-campaign-" + _canonical_sha256(
         {
             "schema_version": f"{SEQUENTIAL_REPLAY_INPUT_IDENTITY}.campaign_cluster.v1",
-            "b0_replay_input_receipt_sha256": adapter_result[
-                "replay_input_receipt_sha256"
-            ],
-            "market_window_identity_sha256": adapter_result[
-                "market_window_identity_sha256"
-            ],
+            "b0_replay_input_receipt_sha256": adapter_result["replay_input_receipt_sha256"],
+            "market_window_identity_sha256": adapter_result["market_window_identity_sha256"],
             "utc_day": utc_day,
             "campaign_id": int(campaign_id),
         }
@@ -1362,9 +1339,7 @@ def _predecessor_day_opportunity_sha256(
         / "metadata.parquet"
     )
     if not path.is_file():
-        raise OfflinePanelBuilderError(
-            f"predecessor opportunity denominator is missing: {utc_day}"
-        )
+        raise OfflinePanelBuilderError(f"predecessor opportunity denominator is missing: {utc_day}")
     table = pq.read_table(path, columns=["opportunity_id"])
     expected = tuple(str(value) for value in table["opportunity_id"].to_pylist())
     observed = tuple(str(value) for value in observed_ids)
@@ -1467,16 +1442,13 @@ def _project_rows(
         if not isinstance(mechanics_row, Mapping):
             raise OfflinePanelBuilderError("snapshot lacks B0 assignment mechanics")
         campaign_id = int(mechanics_row.get("campaign_id", 0) or 0)
-        assignment_equity_usdc = float(
-            mechanics_row.get("assignment_equity_usdc", float("nan"))
-        )
+        assignment_equity_usdc = float(mechanics_row.get("assignment_equity_usdc", float("nan")))
         order_id, exposure_fill_ordinal = _assignment_identity(snapshot)
         if (
             campaign_id <= 0
             or not math.isfinite(assignment_equity_usdc)
             or int(mechanics_row.get("order_id", 0) or 0) != order_id
-            or int(mechanics_row.get("exposure_fill_ordinal", 0) or 0)
-            != exposure_fill_ordinal
+            or int(mechanics_row.get("exposure_fill_ordinal", 0) or 0) != exposure_fill_ordinal
         ):
             raise OfflinePanelBuilderError("B0 assignment mechanics are invalid")
         campaign_cluster_id = _campaign_cluster_id(
@@ -1568,28 +1540,16 @@ def _project_rows(
                 "exact_owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
                 "exact_owner_predicate_bundle_sha256": (offline.ACTIVE_PREDICATE_BUNDLE_SHA256),
                 "exact_owner_private_config_sha256": (offline.ACTIVE_PRIVATE_CONFIG_SHA256),
-                "replay_input_receipt_sha256": adapter_result[
-                    "replay_input_receipt_sha256"
-                ],
+                "replay_input_receipt_sha256": adapter_result["replay_input_receipt_sha256"],
                 "portable_replay_binding_path": sequential_binding["portable_path"],
                 "portable_replay_binding_sha256": sequential_binding["sha256"],
-                "portable_day_cache_root": sequential_binding[
-                    "portable_day_cache_root"
-                ],
+                "portable_day_cache_root": sequential_binding["portable_day_cache_root"],
                 "day_replay_workers": FORMAL_DAY_REPLAY_WORKERS,
                 "day_input_sha256": day_input_sha256,
-                "market_window_identity_sha256": adapter_result[
-                    "market_window_identity_sha256"
-                ],
-                "model_overlay_identity_sha256": adapter_result[
-                    "model_overlay_identity_sha256"
-                ],
-                "latency_identity_sha256": adapter_result[
-                    "latency_identity_sha256"
-                ],
-                "queue_random_identity_sha256": adapter_result[
-                    "queue_random_identity_sha256"
-                ],
+                "market_window_identity_sha256": adapter_result["market_window_identity_sha256"],
+                "model_overlay_identity_sha256": adapter_result["model_overlay_identity_sha256"],
+                "latency_identity_sha256": adapter_result["latency_identity_sha256"],
+                "queue_random_identity_sha256": adapter_result["queue_random_identity_sha256"],
                 "campaign_id": campaign_id,
                 "order_id": order_id,
                 "exposure_fill_ordinal": exposure_fill_ordinal,
@@ -1743,9 +1703,7 @@ def materialize_day(
             "day_input_sha256": sequential_binding["day_projections"][utc_day][
                 "projection_receipt_sha256"
             ],
-            "observation_end_semantics": (
-                "outcome_blind_common_D_plus_1_administrative_bound_v1"
-            ),
+            "observation_end_semantics": ("outcome_blind_common_D_plus_1_administrative_bound_v1"),
             "observation_end_ts_ns": _observation_end_ts_ns(utc_day),
             "owner_policy_sha256": offline.ACTIVE_OWNER_POLICY_SHA256,
             "owner_predicate_bundle_sha256": (offline.ACTIVE_PREDICATE_BUNDLE_SHA256),
@@ -1772,9 +1730,7 @@ def materialize_day(
             "new_target_assignments_from_continuation_day": 0,
             "opportunity_id_sha256": _canonical_sha256(row_ids),
             "predecessor_opportunity_id_sha256": predecessor_opportunity_id_sha256,
-            "predecessor_opportunity_ids_matched": (
-                predecessor_opportunity_id_sha256 is not None
-            ),
+            "predecessor_opportunity_ids_matched": (predecessor_opportunity_id_sha256 is not None),
             "owner_action_counts": dict(
                 sorted(
                     Counter(
@@ -1865,12 +1821,10 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
     ):
         _require_sha(manifest.get(field), label=f"mechanics day {field}")
     if (
-        manifest.get("sequential_replay_input_identity")
-        != SEQUENTIAL_REPLAY_INPUT_IDENTITY
+        manifest.get("sequential_replay_input_identity") != SEQUENTIAL_REPLAY_INPUT_IDENTITY
         or manifest.get("observation_end_semantics")
         != "outcome_blind_common_D_plus_1_administrative_bound_v1"
-        or manifest.get("observation_end_ts_ns")
-        != _observation_end_ts_ns(str(manifest["utc_day"]))
+        or manifest.get("observation_end_ts_ns") != _observation_end_ts_ns(str(manifest["utc_day"]))
     ):
         raise OfflinePanelBuilderError("mechanics day sequential-input contract drifted")
     binding_path = root.parent / "_bindings" / PORTABLE_BINDING_FILENAME
@@ -1936,9 +1890,11 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
                 or any(replay["target_day_end_terminalized"])
                 or not all(replay["assignment_to_common_washout_required"])
                 or any(int(value) <= 0 for value in replay["campaign_id"])
-                    or any(int(value) < 0 for value in replay["order_id"])
+                or any(int(value) < 0 for value in replay["order_id"])
                 or any(int(value) <= 0 for value in replay["exposure_fill_ordinal"])
-                or any(not math.isfinite(float(value)) for value in replay["assignment_equity_usdc"])
+                or any(
+                    not math.isfinite(float(value)) for value in replay["assignment_equity_usdc"]
+                )
             ):
                 raise OfflinePanelBuilderError("mechanics replay-input v2 fields drifted")
     if row_count != manifest.get("opportunity_count") or _canonical_sha256(
@@ -1948,10 +1904,9 @@ def validate_day(day_root: Path, *, expected_input_binding: str) -> dict[str, An
     predecessor_sha = manifest.get("predecessor_opportunity_id_sha256")
     if predecessor_sha is not None:
         _require_sha(predecessor_sha, label="predecessor opportunity ID census")
-        if (
-            manifest.get("predecessor_opportunity_ids_matched") is not True
-            or predecessor_sha != manifest.get("opportunity_id_sha256")
-        ):
+        if manifest.get(
+            "predecessor_opportunity_ids_matched"
+        ) is not True or predecessor_sha != manifest.get("opportunity_id_sha256"):
             raise OfflinePanelBuilderError("predecessor opportunity-ID receipt drifted")
     elif manifest.get("predecessor_opportunity_ids_matched") is not False:
         raise OfflinePanelBuilderError("predecessor opportunity-ID scope drifted")
@@ -2348,8 +2303,7 @@ def validate_panel(output_root: Path, *, inputs: ValidatedPanelInputs) -> dict[s
         or result.get("replay_context_days") != list(inputs.replay_context_days)
         or result.get("native_observation_schema_version") != EXPECTED_NATIVE_OBSERVATION_SCHEMA
         or result.get("input_binding_sha256") != inputs.input_binding_sha256
-        or result.get("sequential_replay_input_identity")
-        != SEQUENTIAL_REPLAY_INPUT_IDENTITY
+        or result.get("sequential_replay_input_identity") != SEQUENTIAL_REPLAY_INPUT_IDENTITY
     ):
         raise OfflinePanelBuilderError("panel-builder manifest identity drifted")
     days = [

@@ -61,13 +61,8 @@ ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = data_root(ROOT)
 DEFAULT_SPEC = FAMILY_DOCS / "placement_fill_cif_v1_spec_20260726.json"
 DEFAULT_OUTPUT = DATA_ROOT / "reports" / "placement_fill_cif_v1_development_20260726"
-DEFAULT_NORMALIZED = (
-    DATA_ROOT / "normalized_l2_100ms_v2_minimal141_20260727"
-)
-DEFAULT_FEATURE_CONTEXT = (
-    DATA_ROOT
-    / "features_btcusdc_causal_v10_minimal141_context_20260728"
-)
+DEFAULT_NORMALIZED = DATA_ROOT / "normalized_l2_100ms_v2_minimal141_20260727"
+DEFAULT_FEATURE_CONTEXT = DATA_ROOT / "features_btcusdc_causal_v10_minimal141_context_20260728"
 DEFAULT_RAW_BOOK = marketdata_root() / "cryptohftdata"
 DEFAULT_QUEUE = (
     DATA_ROOT
@@ -89,12 +84,8 @@ DEFAULT_VISIBILITY = (
     / "quote_decisions_2026-07-18.csv"
 )
 DEFAULT_WINDOW_CACHE = window_cache_root(ROOT)
-DEFAULT_PAIRED_MECHANICS_CACHE = (
-    DEFAULT_WINDOW_CACHE / "paired_placement_mechanics_v2"
-)
-DEFAULT_SPARSE_QUEUE_TAPE_CACHE = (
-    DEFAULT_WINDOW_CACHE / "active_order_queue_tape_v3"
-)
+DEFAULT_PAIRED_MECHANICS_CACHE = DEFAULT_WINDOW_CACHE / "paired_placement_mechanics_v2"
+DEFAULT_SPARSE_QUEUE_TAPE_CACHE = DEFAULT_WINDOW_CACHE / "active_order_queue_tape_v3"
 BUILDER_SCHEMA_VERSION = "placement_fill_panel_builder.v3"
 PAIRED_MECHANICS_SCHEMA_VERSION = "paired_placement_mechanics_cache.v2"
 SPARSE_TAPE_CACHE_SCHEMA_VERSION = "active_order_queue_tape_cache.v2"
@@ -102,30 +93,18 @@ SPARSE_TAPE_CACHE_SCHEMA_VERSION = "active_order_queue_tape_cache.v2"
 FROZEN_IMPLEMENTATION_PATHS = {
     "placement_fill_panel.py": Path(__file__),
     "paired_order_lifecycle.py": FAMILY_ROOT / "audit" / "paired_order_lifecycle.py",
-    "paired_order_lifecycle_smoke.py": (
-        FAMILY_ROOT / "audit" / "paired_order_lifecycle_smoke.py"
-    ),
+    "paired_order_lifecycle_smoke.py": (FAMILY_ROOT / "audit" / "paired_order_lifecycle_smoke.py"),
     "request_state_features.py": FAMILY_ROOT / "audit" / "request_state_features.py",
     "request_state_panel.py": FAMILY_ROOT / "audit" / "request_state_panel.py",
     "request_state_race.py": FAMILY_ROOT / "audit" / "request_state_race.py",
     "risk_set_expansion.py": FAMILY_ROOT / "audit" / "risk_set_expansion.py",
     "sparse_order_lifecycle.py": FAMILY_ROOT / "audit" / "sparse_order_lifecycle.py",
-    "content_addressed_cache.py": ROOT
-    / "models"
-    / "audit"
-    / "content_addressed_cache.py",
-    "native_gap_segments.py": ROOT
-    / "models"
-    / "audit"
-    / "native_gap_segments.py",
+    "content_addressed_cache.py": ROOT / "models" / "audit" / "content_addressed_cache.py",
+    "native_gap_segments.py": ROOT / "models" / "audit" / "native_gap_segments.py",
     "full_curve_fill_cif.py": FAMILY_ROOT / "audit" / "full_curve_fill_cif.py",
     "active_order_queue.py": ROOT / "models" / "active_order_queue.py",
-    "build_active_order_queue_tape.py": ROOT
-    / "data"
-    / "build_active_order_queue_tape.py",
-    "download_cryptohft_orderbook.py": ROOT
-    / "data"
-    / "download_cryptohft_orderbook.py",
+    "build_active_order_queue_tape.py": ROOT / "data" / "build_active_order_queue_tape.py",
+    "download_cryptohft_orderbook.py": ROOT / "data" / "download_cryptohft_orderbook.py",
     "data_quality.py": ROOT / "data_quality.py",
     "local_order_value_replay.py": (
         ROOT
@@ -195,9 +174,7 @@ def _require_identity(path: Path, expected: str, label: str) -> None:
         raise FileNotFoundError(f"missing {label}: {resolved}")
     actual = _sha256(resolved)
     if actual != str(expected):
-        raise RuntimeError(
-            f"{label} identity changed: expected={expected} actual={actual}"
-        )
+        raise RuntimeError(f"{label} identity changed: expected={expected} actual={actual}")
 
 
 def _frozen_source_path(source_identity: Mapping[str, Any], key: str) -> Path:
@@ -246,9 +223,7 @@ def _validate_spec(spec_path: Path, *, selected_config: Path) -> dict[str, Any]:
             path = ROOT / path
         _require_identity(path, str(sources[hash_key]), path_key)
     implementation = spec.get("implementation_identity_at_freeze", {})
-    expected_keys = set(FROZEN_IMPLEMENTATION_PATHS) | {
-        FROZEN_NATIVE_MODULE_KEY
-    }
+    expected_keys = set(FROZEN_IMPLEMENTATION_PATHS) | {FROZEN_NATIVE_MODULE_KEY}
     if set(implementation) != expected_keys:
         raise RuntimeError("frozen implementation identity is incomplete")
     for name, path in FROZEN_IMPLEMENTATION_PATHS.items():
@@ -271,8 +246,7 @@ def _select_panel_days(
     forbidden = sorted(set(selected) - set(frozen))
     if forbidden:
         raise RuntimeError(
-            f"placement builder is frozen to {panel_name}; forbidden days="
-            + ",".join(forbidden)
+            f"placement builder is frozen to {panel_name}; forbidden days=" + ",".join(forbidden)
         )
     return [day for day in frozen if day in set(selected)]
 
@@ -300,13 +274,10 @@ def _validate_formal_days(
     absent = sorted(set(days) - strict_days)
     if absent:
         raise RuntimeError(
-            "panel days are absent from the frozen strict manifest: "
-            + ",".join(absent)
+            "panel days are absent from the frozen strict manifest: " + ",".join(absent)
         )
 
-    quality_path = Path(
-        str(spec["source_identity"]["normalized_l2_daily_quality"])
-    )
+    quality_path = Path(str(spec["source_identity"]["normalized_l2_daily_quality"]))
     quality = pd.read_csv(quality_path, dtype={"day": str}).set_index("day")
     missing = sorted(set(days) - set(quality.index.astype(str)))
     if missing:
@@ -323,10 +294,7 @@ def _validate_formal_days(
         if not all(_truthy_csv_value(row[name]) for name in required):
             failed.append(day)
     if failed:
-        raise RuntimeError(
-            "panel contains non-formal native-L2 days: "
-            + ",".join(failed)
-        )
+        raise RuntimeError("panel contains non-formal native-L2 days: " + ",".join(failed))
 
     missing_trades: list[str] = []
     duplicate_trades: list[str] = []
@@ -352,22 +320,13 @@ def _validate_formal_days(
     # day's formal eligibility contract.
     for context_day in days:
         for kind in ("bbo", "l2"):
-            path = (
-                normalized_root
-                / kind
-                / f"BTCUSDC-{kind}-{context_day}.parquet"
-            )
+            path = normalized_root / kind / f"BTCUSDC-{kind}-{context_day}.parquet"
             if not path.is_file():
                 missing_context.append(str(path))
         feature_path = feature_context_dir / f"features_{context_day}.parquet"
         if not feature_path.is_file():
             missing_feature_context.append(str(feature_path))
-    if (
-        missing_trades
-        or duplicate_trades
-        or missing_context
-        or missing_feature_context
-    ):
+    if missing_trades or duplicate_trades or missing_context or missing_feature_context:
         raise RuntimeError(
             "formal source preflight failed: "
             f"missing_trade_days={missing_trades} "
@@ -421,12 +380,8 @@ def _storage_preflight(
     usage = shutil.disk_usage(output_dir.parent)
     free_bytes = int(usage.free)
     reserve_bytes = int(float(reserve_gib) * 1024**3)
-    estimated_bytes = max(1, int(remaining_days)) * max(
-        1, int(estimated_day_bytes)
-    )
-    required_bytes = reserve_bytes + int(
-        float(output_multiplier) * estimated_bytes
-    )
+    estimated_bytes = max(1, int(remaining_days)) * max(1, int(estimated_day_bytes))
+    required_bytes = reserve_bytes + int(float(output_multiplier) * estimated_bytes)
     if free_bytes < required_bytes:
         raise RuntimeError(
             "placement storage gate failed: "
@@ -531,9 +486,7 @@ def _run_command(command: Sequence[str], log_path: Path) -> None:
         )
     if process.returncode != 0:
         tail = log_path.read_text(encoding="utf-8", errors="replace")[-8000:]
-        raise RuntimeError(
-            f"baseline trace failed with exit={process.returncode}:\n{tail}"
-        )
+        raise RuntimeError(f"baseline trace failed with exit={process.returncode}:\n{tail}")
 
 
 def _isolate_worker_process_group() -> None:
@@ -586,9 +539,7 @@ def _build_day(
         if not path.is_file():
             raise RuntimeError(f"baseline trace omitted {path.name}")
     daily = json.loads(daily_path.read_text(encoding="utf-8"))
-    if int(daily.get("decision_rows", 0)) >= int(
-        args.decision_trace_max_per_day
-    ):
+    if int(daily.get("decision_rows", 0)) >= int(args.decision_trace_max_per_day):
         raise RuntimeError(f"{day} decision trace was truncated")
     if int(daily.get("quote_rows", 0)) >= int(args.trace_max_per_day):
         raise RuntimeError(f"{day} quote trace was truncated")
@@ -613,9 +564,7 @@ def _build_day(
     if len(cohorts) >= int(args.max_cohorts_per_day):
         raise RuntimeError(f"{day} placement cohort trace was truncated")
     if int(join_audit.get("missing_decision", 0)) != 0:
-        raise RuntimeError(
-            f"{day} has submit rows without a causal decision: {join_audit}"
-        )
+        raise RuntimeError(f"{day} has submit rows without a causal decision: {join_audit}")
 
     bt.configure_symbol("BTCUSDC")
     trades = bt.load_individual_trades(
@@ -659,9 +608,7 @@ def _build_day(
         },
         "individual_trades": trade_identity,
         "native_tape": tape_identity,
-        "sparse_watch_manifest": _ephemeral_file_identity(
-            watch_manifest_path
-        ),
+        "sparse_watch_manifest": _ephemeral_file_identity(watch_manifest_path),
         "mechanics": {
             "tick_size": 0.1,
             "lot_size": 0.001,
@@ -675,9 +622,7 @@ def _build_day(
             "paired_order_lifecycle_smoke": _file_identity(
                 ROOT / "models" / "audit" / "paired_order_lifecycle_smoke.py"
             ),
-            "exchange_book_replay": _file_identity(
-                ROOT / "models" / "exchange_book_replay.py"
-            ),
+            "exchange_book_replay": _file_identity(ROOT / "models" / "exchange_book_replay.py"),
             "native_book_parser": _file_identity(
                 ROOT / "data" / "build_active_order_queue_tape.py"
             ),
@@ -690,9 +635,7 @@ def _build_day(
             "sparse_order_lifecycle_hpp": _file_identity(
                 ROOT / "cpp" / "narrowgate_cpp" / "sparse_order_lifecycle.hpp"
             ),
-            "bindings_cpp": _file_identity(
-                ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp"
-            ),
+            "bindings_cpp": _file_identity(ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp"),
             "cmake": _file_identity(ROOT / "cpp" / "CMakeLists.txt"),
             "content_addressed_cache": _file_identity(
                 ROOT / "models" / "audit" / "content_addressed_cache.py"
@@ -712,20 +655,14 @@ def _build_day(
             "symbol": "BTCUSDC",
             "tick_size": 0.1,
             "warmup_hours": 24,
-            "watch_manifest": _ephemeral_file_identity(
-                watch_manifest_path
-            ),
+            "watch_manifest": _ephemeral_file_identity(watch_manifest_path),
             "native_tape": tape_identity,
             "implementation": {
-                "builder": _file_identity(
-                    ROOT / "data" / "build_active_order_queue_tape.py"
-                ),
+                "builder": _file_identity(ROOT / "data" / "build_active_order_queue_tape.py"),
                 "downloader_parser": _file_identity(
                     ROOT / "data" / "download_cryptohft_orderbook.py"
                 ),
-                "adapter": _file_identity(
-                    ROOT / "models" / "audit" / "sparse_order_lifecycle.py"
-                ),
+                "adapter": _file_identity(ROOT / "models" / "audit" / "sparse_order_lifecycle.py"),
                 "content_addressed_cache": _file_identity(
                     ROOT / "models" / "audit" / "content_addressed_cache.py"
                 ),
@@ -757,9 +694,7 @@ def _build_day(
             for child in cohort.children.values()
         }
         if len(queue_mults) != 1:
-            raise RuntimeError(
-                f"{day} sparse native v1 requires one queue multiplier"
-            )
+            raise RuntimeError(f"{day} sparse native v1 requires one queue multiplier")
         rows, simulation = simulate_sparse_paired_placements(
             cohorts,
             tape_dir=sparse_record.payload_dir,
@@ -772,9 +707,7 @@ def _build_day(
         simulation["sparse_tape_cache"] = {
             "key": sparse_record.key,
             "hit": bool(sparse_record.hit),
-            "identity_sha256": str(
-                sparse_record.manifest["identity_sha256"]
-            ),
+            "identity_sha256": str(sparse_record.manifest["identity_sha256"]),
             "files": list(sparse_record.manifest["files"]),
             "summary": dict(sparse_record.manifest.get("metadata", {})),
         }
@@ -787,24 +720,16 @@ def _build_day(
     else:
         mechanics_record = cached_mechanics
         rows = cached_mechanics.frame
-        simulation = dict(
-            cached_mechanics.manifest.get("metadata", {}).get(
-                "simulation", {}
-            )
-        )
+        simulation = dict(cached_mechanics.manifest.get("metadata", {}).get("simulation", {}))
         mechanics_cache_hit = True
     watch_manifest_path.unlink(missing_ok=True)
     if not simulation:
         raise RuntimeError(f"{day} paired mechanics cache lacks simulation audit")
     if int(simulation["monotonicity_violations"]) != 0:
         raise RuntimeError(f"{day} violated placement distance monotonicity")
-    if not bool(
-        (pd.to_numeric(rows["feature_ready_ts_ns"]) <= rows["submit_ts_ns"]).all()
-    ):
+    if not bool((pd.to_numeric(rows["feature_ready_ts_ns"]) <= rows["submit_ts_ns"]).all()):
         raise RuntimeError(f"{day} contains future-ready decision features")
-    if {"keep", "replace"} & set(
-        rows.filter(regex=r"__(action)$").astype(str).stack().str.lower()
-    ):
+    if {"keep", "replace"} & set(rows.filter(regex=r"__(action)$").astype(str).stack().str.lower()):
         raise RuntimeError("active-order KEEP/REPLACE leaked into placement panel")
 
     panel_path = stage / "placement.parquet"
@@ -821,24 +746,15 @@ def _build_day(
         "active_order_estimand": "separate_not_built",
         "run_identity_sha256": run_identity_sha256,
         "rows": int(len(rows)),
-        "side_counts": {
-            str(k): int(v) for k, v in rows["side"].value_counts().items()
-        },
-        "role_counts": {
-            str(k): int(v)
-            for k, v in rows["inventory_role"].value_counts().items()
-        },
+        "side_counts": {str(k): int(v) for k, v in rows["side"].value_counts().items()},
+        "role_counts": {str(k): int(v) for k, v in rows["inventory_role"].value_counts().items()},
         "join_audit": join_audit,
         "simulation": simulation,
         "paired_mechanics_cache": {
             "key": mechanics_record.key,
             "hit": mechanics_cache_hit,
-            "payload_sha256": str(
-                mechanics_record.manifest["payload_sha256"]
-            ),
-            "identity_sha256": str(
-                mechanics_record.manifest["identity_sha256"]
-            ),
+            "payload_sha256": str(mechanics_record.manifest["payload_sha256"]),
+            "identity_sha256": str(mechanics_record.manifest["identity_sha256"]),
         },
         "sparse_queue_tape_cache": {
             "path": str(args.sparse_queue_tape_cache_dir),
@@ -846,8 +762,7 @@ def _build_day(
         },
         "baseline_daily": daily,
         "baseline_command": [
-            str(value).replace(str(stage), "{partition_stage}")
-            for value in command
+            str(value).replace(str(stage), "{partition_stage}") for value in command
         ],
         "input_artifacts": {
             "decisions": _ephemeral_file_identity(decisions_path),
@@ -914,24 +829,13 @@ def _preflight_manifest(
             ),
             "order_lifecycle": ROOT / "models" / "audit" / "order_lifecycle.py",
             "backtest_tick": ROOT / "models" / "backtest_tick.py",
-            "sparse_order_lifecycle": (
-                FAMILY_ROOT / "audit" / "sparse_order_lifecycle.py"
-            ),
-            "active_order_queue_tape": ROOT
-            / "data"
-            / "build_active_order_queue_tape.py",
-            "sparse_order_lifecycle_cpp": (
-                FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.cpp"
-            ),
-            "sparse_order_lifecycle_hpp": (
-                FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.hpp"
-            ),
+            "sparse_order_lifecycle": (FAMILY_ROOT / "audit" / "sparse_order_lifecycle.py"),
+            "active_order_queue_tape": ROOT / "data" / "build_active_order_queue_tape.py",
+            "sparse_order_lifecycle_cpp": (FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.cpp"),
+            "sparse_order_lifecycle_hpp": (FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.hpp"),
             "bindings_cpp": ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp",
             "cmake": ROOT / "cpp" / "CMakeLists.txt",
-            "content_addressed_cache": ROOT
-            / "models"
-            / "audit"
-            / "content_addressed_cache.py",
+            "content_addressed_cache": ROOT / "models" / "audit" / "content_addressed_cache.py",
         }.items()
     }
     implementation["native_module"] = _native_module_identity()
@@ -1055,23 +959,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.window_cache_dir = args.window_cache_dir.expanduser().resolve()
     if args.gate_report is not None:
         args.gate_report = args.gate_report.expanduser().resolve()
-    if min(
-        int(args.trace_max_per_day),
-        int(args.decision_trace_max_per_day),
-        int(args.max_cohorts_per_day),
-    ) <= 0:
+    if (
+        min(
+            int(args.trace_max_per_day),
+            int(args.decision_trace_max_per_day),
+            int(args.max_cohorts_per_day),
+        )
+        <= 0
+    ):
         raise SystemExit("trace and cohort limits must be positive")
     spec = _validate_spec(args.spec, selected_config=args.config)
     source_identity = spec["source_identity"]
-    args.strict_day_manifest = Path(
-        str(source_identity["strict_day_manifest"])
-    ).expanduser().resolve()
-    args.strict_day_manifest_sha256 = str(
-        source_identity["strict_day_manifest_sha256"]
+    args.strict_day_manifest = (
+        Path(str(source_identity["strict_day_manifest"])).expanduser().resolve()
     )
-    args.feature_context_manifest_sha256 = str(
-        source_identity["feature_context_manifest_sha256"]
-    )
+    args.strict_day_manifest_sha256 = str(source_identity["strict_day_manifest_sha256"])
+    args.feature_context_manifest_sha256 = str(source_identity["feature_context_manifest_sha256"])
     _require_selected_path(
         args.queue_calibration,
         _frozen_source_path(source_identity, "queue_calibration"),
@@ -1102,9 +1005,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _frozen_source_path(source_identity, "normalized_l2_daily_quality"),
         "normalized L2 quality registry",
     )
-    frozen_feature_manifest = _frozen_source_path(
-        source_identity, "feature_context_manifest"
-    )
+    frozen_feature_manifest = _frozen_source_path(source_identity, "feature_context_manifest")
     selected_feature_manifest = (
         args.feature_context_dir / "causal_feature_manifest.json"
     ).resolve()
@@ -1149,9 +1050,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     completed: dict[str, dict[str, Any]] = {}
     pending: list[str] = []
     for day in days:
-        manifest = _partition_manifest(
-            args.output_dir, day, preflight["run_identity_sha256"]
-        )
+        manifest = _partition_manifest(args.output_dir, day, preflight["run_identity_sha256"])
         if manifest is None:
             pending.append(day)
         else:
@@ -1238,9 +1137,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "rows": int(manifest["rows"]),
                 "buy_rows": int(manifest["side_counts"].get("BUY", 0)),
                 "sell_rows": int(manifest["side_counts"].get("SELL", 0)),
-                "monotonicity_violations": int(
-                    manifest["simulation"]["monotonicity_violations"]
-                ),
+                "monotonicity_violations": int(manifest["simulation"]["monotonicity_violations"]),
                 "panel_sha256": str(manifest["panel_sha256"]),
             }
         )

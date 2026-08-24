@@ -347,9 +347,7 @@ def test_projection_rejects_zero_campaign_mae_trace_capacity() -> None:
 
 def test_projection_rejects_legacy_campaign_mae_alias() -> None:
     result = _one_fill_result()
-    result["_campaign_repair_trace"] = [
-        {"campaign_id": 1, "ts_ns": 1, "campaign_mae": -0.1}
-    ]
+    result["_campaign_repair_trace"] = [{"campaign_id": 1, "ts_ns": 1, "campaign_mae": -0.1}]
     with pytest.raises(panel.NativeFullPathABError, match="trace row is invalid"):
         panel._project_arm(
             day="2026-04-17",

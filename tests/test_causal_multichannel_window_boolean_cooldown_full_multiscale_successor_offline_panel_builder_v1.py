@@ -102,8 +102,7 @@ class _SyntheticAdapter:
         exposure_fill_ordinal = 1
         snapshot = emitter.capture_exposure_fill(
             assignment_id=(
-                f"cooldown-v2:BTCUSDC:{fill_ms}:SELL:"
-                f"{order_id}:{exposure_fill_ordinal}"
+                f"cooldown-v2:BTCUSDC:{fill_ms}:SELL:{order_id}:{exposure_fill_ordinal}"
             ),
             fill_event_id=f"fill:{order_id}:1:{fill_ms}:{exposure_fill_ordinal}",
             client_order_id=f"replay-order-{order_id}",
@@ -505,8 +504,7 @@ def test_builds_atomic_outcome_blind_rows_with_exact_owner_action(
     boolean = pq.read_table(first / "boolean_features.parquet")
     continuous = pq.read_table(first / "continuous_features.parquet")
     role_columns = {
-        role: set(pq.read_schema(first / f"{role}.parquet").names)
-        for role in builder.PANEL_ROLES
+        role: set(pq.read_schema(first / f"{role}.parquet").names) for role in builder.PANEL_ROLES
     }
     assert sum(len(fields) for fields in SEQUENTIAL_V2_FIELDS_BY_ROLE.values()) == 23
     for expected_role, fields in SEQUENTIAL_V2_FIELDS_BY_ROLE.items():
@@ -587,8 +585,7 @@ def test_formal_panel_rejects_predecessor_denominator_drift(tmp_path: Path) -> N
     panel_root.mkdir(parents=True)
     selected_days = offline.PRIMARY_TARGET_DAYS
     opportunity_ids = [
-        f"opportunity-{index:04d}"
-        for index in range(builder.FORMAL_OPPORTUNITY_COUNT - 1)
+        f"opportunity-{index:04d}" for index in range(builder.FORMAL_OPPORTUNITY_COUNT - 1)
     ]
     table = pa.table(
         {

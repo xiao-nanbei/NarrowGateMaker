@@ -57,8 +57,7 @@ DEFAULT_PRECOMMIT = ROOT / (
     "causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json"
 )
 DEFAULT_OUTPUT_ROOT = (
-    external_cache_root(ROOT)
-    / "replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3"
+    external_cache_root(ROOT) / "replay_dag/f03_causal_v12_1s_native_40day_full_path_ml_ab_v3"
 )
 PLAN_FILENAME = "execution-plan.json"
 PLAN_SUCCESS = "_PLAN_SUCCESS"
@@ -857,9 +856,7 @@ def _project_arm(
                     f"{day} {arm} campaign MAE trace identity is invalid"
                 ) from exc
             if campaign_id <= 0 or ts_ns < 0:
-                raise NativeFullPathABError(
-                    f"{day} {arm} campaign MAE trace identity is invalid"
-                )
+                raise NativeFullPathABError(f"{day} {arm} campaign MAE trace identity is invalid")
             if not math.isfinite(value) or value > ACCOUNTING_TOLERANCE_USDC:
                 raise NativeFullPathABError(f"{day} {arm} campaign MAE trace value is invalid")
             previous = last_by_campaign.get(campaign_id)
@@ -882,8 +879,10 @@ def _project_arm(
         blockers.append("campaign_mae_not_emitted_by_authoritative_replay")
     trace_audit = result.get("_campaign_mae_trace_audit")
     mismatch_count = -1
-    if isinstance(repair_trace, list) and repair_trace and not any(
-        blocker == "campaign_mae_trace_capacity_reached" for blocker in blockers
+    if (
+        isinstance(repair_trace, list)
+        and repair_trace
+        and not any(blocker == "campaign_mae_trace_capacity_reached" for blocker in blockers)
     ):
         if not isinstance(trace_audit, Mapping):
             blockers.append("campaign_mae_cpp_python_fill_path_audit_missing")
@@ -919,9 +918,7 @@ def _project_arm(
         "campaign_mae_trace_source": (
             trace_audit.get("source") if isinstance(trace_audit, Mapping) else None
         ),
-        "campaign_mae_cpp_python_fill_path_mismatch_count": (
-            mismatch_count
-        ),
+        "campaign_mae_cpp_python_fill_path_mismatch_count": (mismatch_count),
         "repair_event_rate": (
             float(campaign_frame["closed"].astype(bool).mean()) if not campaign_frame.empty else 0.0
         ),
@@ -1017,12 +1014,8 @@ def execute_day(
             payload["control_sources"]["operational_config"],
             role="frozen control operational config",
         )
-        if operational_config["sha256"] != (precommit.get("baseline") or {}).get(
-            "config_sha256"
-        ):
-            raise NativeFullPathABError(
-                "plan control config differs from the frozen precommit"
-            )
+        if operational_config["sha256"] != (precommit.get("baseline") or {}).get("config_sha256"):
+            raise NativeFullPathABError("plan control config differs from the frozen precommit")
         params_loader = (
             _load_formal_base_params if base_params_loader is None else base_params_loader
         )
@@ -1275,8 +1268,7 @@ def _score_panel(
             daily["campaign_accounting_error_usdc"].abs().max()
         ),
         "campaign_accounting_within_tolerance": bool(
-            daily["campaign_accounting_error_usdc"].abs().max()
-            <= ACCOUNTING_TOLERANCE_USDC
+            daily["campaign_accounting_error_usdc"].abs().max() <= ACCOUNTING_TOLERANCE_USDC
         ),
         "cpp_python_fill_path_mismatch_count": fill_path_mismatch_count,
         "cpp_python_fill_path_parity_bound": fill_path_parity_bound,
@@ -1377,21 +1369,13 @@ def _score_panel(
             >= float(gates["campaign_mae_avoidance_lcb_minimum"])
         ),
         "identity_and_hash_parity": execution_integrity["identity_and_hash_parity_passed"],
-        "campaign_accounting_parity": execution_integrity[
-            "campaign_accounting_within_tolerance"
-        ],
-        "cpp_python_fill_path_parity": execution_integrity[
-            "cpp_python_fill_path_parity_passed"
-        ],
-        "python_cpp_feature_parity_bound": execution_integrity[
-            "python_cpp_feature_parity_bound"
-        ],
+        "campaign_accounting_parity": execution_integrity["campaign_accounting_within_tolerance"],
+        "cpp_python_fill_path_parity": execution_integrity["cpp_python_fill_path_parity_passed"],
+        "python_cpp_feature_parity_bound": execution_integrity["python_cpp_feature_parity_bound"],
         "python_cpp_prediction_parity_bound": execution_integrity[
             "python_cpp_prediction_parity_bound"
         ],
-        "tick_gtx_spread_cap_parity_bound": execution_integrity[
-            "tick_gtx_spread_cap_parity_bound"
-        ],
+        "tick_gtx_spread_cap_parity_bound": execution_integrity["tick_gtx_spread_cap_parity_bound"],
         "buy_maker_value_lcb": _paired(
             daily,
             "buy_maker_value_30s_bps",
@@ -1464,11 +1448,15 @@ def _score_panel(
         "live_authorized": False,
         "ranking_score": None,
     }
-    return raw, owner, {
-        "paired_metrics": paired,
-        "metric_blockers": metric_blockers,
-        "execution_integrity": execution_integrity,
-    }
+    return (
+        raw,
+        owner,
+        {
+            "paired_metrics": paired,
+            "metric_blockers": metric_blockers,
+            "execution_integrity": execution_integrity,
+        },
+    )
 
 
 def finalize_panel(
@@ -1589,8 +1577,7 @@ def read_panel(
         manifest.get("schema_version") != PANEL_SCHEMA_VERSION
         or manifest.get("identity") != IDENTITY
         or manifest.get("plan_identity_sha256") != plan["plan_identity_sha256"]
-        or manifest.get("execution_amendment_sha256")
-        != payload["execution_amendment"]["sha256"]
+        or manifest.get("execution_amendment_sha256") != payload["execution_amendment"]["sha256"]
     ):
         raise NativeFullPathABError("F03 panel identity drift")
     expected_days = list(payload["ordered_utc_days"])
@@ -1612,8 +1599,7 @@ def read_panel(
     if (
         report.get("schema_version") != PANEL_SCHEMA_VERSION
         or report.get("identity") != IDENTITY
-        or report.get("execution_amendment_sha256")
-        != payload["execution_amendment"]["sha256"]
+        or report.get("execution_amendment_sha256") != payload["execution_amendment"]["sha256"]
     ):
         raise NativeFullPathABError("F03 panel report identity drift")
     return report | {

@@ -120,26 +120,17 @@ def test_nonpublished_private_source_may_be_materialized_at_runtime_path(
     runtime_path = tmp_path / "models/saved_bundle/record.json"
     runtime_path.parent.mkdir(parents=True)
     runtime_path.write_bytes(source_bytes)
-    index = (
-        tmp_path
-        / "models/private/nonpublished_machine_document_projections.current.local.json"
-    )
+    index = tmp_path / "models/private/nonpublished_machine_document_projections.current.local.json"
     index.parent.mkdir(parents=True)
     index.write_text(
         json.dumps(
             {
-                "schema_version": (
-                    "narrowgate_nonpublished_machine_document_projections_v1"
-                ),
+                "schema_version": ("narrowgate_nonpublished_machine_document_projections_v1"),
                 "entries": [
                     {
-                        "availability": (
-                            "private_working_tree_projection_not_distributed"
-                        ),
+                        "availability": ("private_working_tree_projection_not_distributed"),
                         "public_path": "models/saved_bundle/record.json",
-                        "public_projection_sha256": hashlib.sha256(
-                            projection_bytes
-                        ).hexdigest(),
+                        "public_projection_sha256": hashlib.sha256(projection_bytes).hexdigest(),
                         "source_private_sha256": hashlib.sha256(source_bytes).hexdigest(),
                         "unit_id": "research/families/f03_causal_13_head",
                     }
@@ -156,12 +147,13 @@ def test_nonpublished_private_source_may_be_materialized_at_runtime_path(
     assert projection is not None
     assert projection.materialized_identity == "private_source"
     assert projection.require_private_source() == runtime_path
-    assert projection_module.source_document_path(
-        runtime_path, require_private=True
-    ) == runtime_path
-    assert projection_module.source_identity_sha256(runtime_path) == hashlib.sha256(
-        source_bytes
-    ).hexdigest()
+    assert (
+        projection_module.source_document_path(runtime_path, require_private=True) == runtime_path
+    )
+    assert (
+        projection_module.source_identity_sha256(runtime_path)
+        == hashlib.sha256(source_bytes).hexdigest()
+    )
 
 
 def test_nonpublished_runtime_path_still_rejects_unregistered_bytes(
@@ -170,22 +162,15 @@ def test_nonpublished_runtime_path_still_rejects_unregistered_bytes(
     runtime_path = tmp_path / "models/saved_bundle/record.json"
     runtime_path.parent.mkdir(parents=True)
     runtime_path.write_bytes(b"tampered\n")
-    index = (
-        tmp_path
-        / "models/private/nonpublished_machine_document_projections.current.local.json"
-    )
+    index = tmp_path / "models/private/nonpublished_machine_document_projections.current.local.json"
     index.parent.mkdir(parents=True)
     index.write_text(
         json.dumps(
             {
-                "schema_version": (
-                    "narrowgate_nonpublished_machine_document_projections_v1"
-                ),
+                "schema_version": ("narrowgate_nonpublished_machine_document_projections_v1"),
                 "entries": [
                     {
-                        "availability": (
-                            "private_working_tree_projection_not_distributed"
-                        ),
+                        "availability": ("private_working_tree_projection_not_distributed"),
                         "public_path": "models/saved_bundle/record.json",
                         "public_projection_sha256": "1" * 64,
                         "source_private_sha256": "2" * 64,

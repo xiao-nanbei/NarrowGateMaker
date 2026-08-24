@@ -23,12 +23,9 @@ ENV_LIVE_CONFIG = "NARROWGATE_LIVE_CONFIG"
 ENV_LIVE_REMOTE_POINTER = "NARROWGATE_LIVE_REMOTE_POINTER"
 ENV_LIVE_ENV = "NARROWGATE_LIVE_ENV"
 ENV_PRIVATE_CONFIG_ROOT = "NARROWGATE_PRIVATE_CONFIG_ROOT"
-IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME = (
-    "live_config.backtest_v12.800f4c025663.local.yaml"
-)
+IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME = "live_config.backtest_v12.800f4c025663.local.yaml"
 IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR = (
-    "${NARROWGATE_PRIVATE_CONFIG_ROOT}/"
-    f"{IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME}"
+    f"${{NARROWGATE_PRIVATE_CONFIG_ROOT}}/{IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME}"
 )
 IMMUTABLE_BACKTEST_V12_CONFIG_SHA256 = (
     "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
@@ -206,7 +203,9 @@ def resolve_portable_path(path: Path | str, *, root: Path | None = None) -> Path
         if os.environ.get(ENV_REMOTE_HOME)
         else None,
         "NARROWGATE_LIVE_CONFIG": Path(
-            os.environ.get(ENV_LIVE_CONFIG, repository_root / "docs/private/live_config.current.local.yaml")
+            os.environ.get(
+                ENV_LIVE_CONFIG, repository_root / "docs/private/live_config.current.local.yaml"
+            )
         ),
         "NARROWGATE_LIVE_REMOTE_POINTER": Path(
             os.environ.get(
@@ -214,9 +213,7 @@ def resolve_portable_path(path: Path | str, *, root: Path | None = None) -> Path
                 repository_root / "docs/private/live_remote.current.local.json",
             )
         ),
-        "NARROWGATE_LIVE_ENV": Path(
-            os.environ.get(ENV_LIVE_ENV, repository_root / "live/.env")
-        ),
+        "NARROWGATE_LIVE_ENV": Path(os.environ.get(ENV_LIVE_ENV, repository_root / "live/.env")),
         "NARROWGATE_PRIVATE_CONFIG_ROOT": Path(
             os.environ.get(ENV_PRIVATE_CONFIG_ROOT, repository_root / "docs/private")
         ),
