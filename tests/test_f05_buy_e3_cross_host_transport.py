@@ -641,11 +641,50 @@ def test_admission_rejects_mode_symlink_and_hardlink(
         )
 
 
+def test_active_v2_content_only_binding_is_reopened_at_frozen_path(tmp_path: Path) -> None:
+    canonical_field = "canonical_active_capture_sha256"
+    path = _write(
+        tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        _document(
+            subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+            subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+            canonical_field,
+            "active-v2",
+        ),
+    )
+    binding = subject._content_binding(  # noqa: SLF001
+        subject._open_private_json(path, "active capture"),  # noqa: SLF001
+        canonical_field=canonical_field,
+        expected_schema=subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+        expected_status=subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+    )
+
+    subject._validate_remote_content_at_path(binding, path, "active capture")  # noqa: SLF001
+
+    with pytest.raises(subject.CrossHostTransportError, match="fields drifted"):
+        subject._validate_remote_content_at_path(  # noqa: SLF001
+            {**binding, "path": str(path)}, path, "active capture"
+        )
+
+    _write(
+        path,
+        _document(
+            subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+            subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+            canonical_field,
+            "tampered-active-v2",
+        ),
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="content binding drifted"):
+        subject._validate_remote_content_at_path(binding, path, "active capture")  # noqa: SLF001
+
+
 def _remote_fixture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     resource_path = _write(tmp_path / subject.RESOURCE_FILENAME, {"fixture": True})
     active_path = _write(tmp_path / subject.ACTIVE_CAPTURE_FILENAME, {"fixture": True})
+    _write(tmp_path / "release.json", {"fixture": True})
     monkeypatch.setattr(subject, "FROZEN_FINAL_RESOURCE_PATH_PROVENANCE", str(resource_path))
     monkeypatch.setattr(subject, "FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE", str(active_path))
     direct_binding = {
@@ -709,7 +748,8 @@ def _remote_fixture(
             "config_sha256": stable["config_sha256"],
         },
         "runtime_identity_file_sha256": "2" * 64,
-        "runtime_authority": {"path": "/runtime/release.json"},
+        "resource_receipt": resource_binding,
+        "runtime_authority": direct_binding,
     }
     components = _portable_components(direct_binding)
     monkeypatch.setattr(subject, "_direct_authority", lambda *_a, **_k: ({}, direct_binding))
@@ -723,7 +763,7 @@ def _remote_fixture(
         "_validate_active",
         lambda *_a, **_k: (active, active_binding, b"active", {}),
     )
-    monkeypatch.setattr(subject, "_validate_remote_location_binding", lambda *_a, **_k: None)
+    monkeypatch.setattr(subject, "_validate_remote_content_at_path", lambda *_a, **_k: None)
     monkeypatch.setattr(subject, "_portable_components", lambda **_k: components)
     monkeypatch.setattr(subject.resource_v4, "host_identity", lambda **_k: host)
     recaptured = {
@@ -765,6 +805,24 @@ def test_remote_attestation_captures_live_not_retroactive(
     )
     assert payload["checks"]["captured_live_not_retroactive"] is True
     assert payload["checks"]["frozen_final_runtime_authority_exact"] is True
+
+
+def test_remote_attestation_rejects_resource_path_provenance_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RESOURCE_PATH_PROVENANCE",
+        str(tmp_path / "wrong-resource-receipt.json"),
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="path provenance drifted"):
+        subject.build_remote_active_attestation(
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
 
 
 def test_remote_attestation_rejects_wrong_host(

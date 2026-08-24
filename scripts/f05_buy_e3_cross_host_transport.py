@@ -1114,18 +1114,22 @@ def _stable_process_projection(process: Mapping[str, Any]) -> dict[str, Any]:
     return {field: process.get(field) for field in _PROCESS_STABLE_FIELDS}
 
 
-def _validate_remote_location_binding(value: Any, path: Path, label: str) -> None:
-    if not isinstance(value, Mapping):
-        raise CrossHostTransportError(f"{label} remote location binding is missing")
+def _validate_remote_content_at_path(value: Any, path: Path, label: str) -> None:
+    """Reopen a v2 content-only binding at its separately frozen remote path."""
+    if not isinstance(value, Mapping) or set(value) != set(CONTENT_BINDING_FIELDS):
+        raise CrossHostTransportError(f"{label} remote content binding fields drifted")
+    expected = _content_from_mapping(value, label)
+    if not isinstance(expected["status"], str):
+        raise CrossHostTransportError(f"{label} remote content binding is malformed")
     opened = _open_private_json(path, label)
-    if (
-        value.get("path") != str(opened.path)
-        or value.get("device") != opened.metadata.st_dev
-        or value.get("inode") != opened.metadata.st_ino
-        or _content_from_mapping(value, label)["file_sha256"]
-        != hashlib.sha256(opened.raw).hexdigest()
-    ):
-        raise CrossHostTransportError(f"{label} remote location binding drifted")
+    observed = _content_binding(
+        opened,
+        canonical_field=expected["canonical_field"],
+        expected_schema=expected["schema_version"],
+        expected_status=expected["status"],
+    )
+    if expected != observed:
+        raise CrossHostTransportError(f"{label} remote content binding drifted")
 
 
 def build_remote_active_attestation(
@@ -1159,10 +1163,10 @@ def build_remote_active_attestation(
         resource=resource,
         resource_binding=resource_binding,
     )
-    _validate_remote_location_binding(
+    _validate_remote_content_at_path(
         active.get("resource_receipt"), resource_receipt_path, "resource receipt"
     )
-    _validate_remote_location_binding(
+    _validate_remote_content_at_path(
         active.get("runtime_authority"), direct_release_path, "final runtime authority"
     )
     observed_host = resource_v4.host_identity(
@@ -1201,7 +1205,7 @@ def build_remote_active_attestation(
         release_binding=release_binding,
         semantics=semantics,
     )
-    release_remote_path = str(active["runtime_authority"].get("path", ""))
+    release_remote_path = str(direct_release_path.expanduser().resolve(strict=True))
     timestamp = generated_utc or _now()
     active_process_utc = _utc_datetime(
         process.get("captured_utc"), "active process capture timestamp"
@@ -1327,7 +1331,7 @@ def validate_remote_active_attestation(
         or references["active_process_capture"].get("remote_path_provenance")
         != FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE
         or references["direct_active_release"].get("remote_path_provenance")
-        != active["runtime_authority"].get("path")
+        != str(direct_release_path.expanduser().resolve(strict=True))
     ):
         raise CrossHostTransportError("frozen remote path provenance drifted")
     process = active["active_process"]
