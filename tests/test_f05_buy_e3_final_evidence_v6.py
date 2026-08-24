@@ -682,6 +682,37 @@ def test_module_contract_cold_subprocess_without_monkeypatch() -> None:
     assert completed.stdout.strip() == subject.CURRENT_EXECUTION_COMMIT
 
 
+def test_superseded_v4_config_is_immutable_history_not_relative_old_alias() -> None:
+    assert subject.SUPERSEDED_V4_ACTIVE_CONFIG_SHA256 == (
+        "2f61532126cbe633424476cb093c6c978bab1f935f69a30e06677d677008cae6"
+    )
+    assert (
+        subject.SUPERSEDED_V4_ACTIVE_CONFIG_SHA256
+        != subject.transport_v6.direct_release_v3.OLD_ACTIVE_CONFIG_SHA256
+    )
+    historical = {
+        "role": "superseded_historical_due_global_shadow_runtime_enabled",
+        "epoch_id": subject.SUPERSEDED_V4_EPOCH_ID,
+        "active_config_sha256": subject.SUPERSEDED_V4_ACTIVE_CONFIG_SHA256,
+        "proof_evidence_release": dict(subject.SUPERSEDED_V4_PROOF_CONTENT),
+        "current_runtime_authority": False,
+        "current_cross_host_evidence": False,
+        "current_lifecycle_evidence": False,
+        "reused_as_current_evidence": False,
+    }
+    assert (
+        subject._validate_superseded_v4_historical(historical)[  # noqa: SLF001
+            "active_config_sha256"
+        ]
+        == subject.SUPERSEDED_V4_ACTIVE_CONFIG_SHA256
+    )
+    historical["active_config_sha256"] = (
+        subject.transport_v6.direct_release_v3.OLD_ACTIVE_CONFIG_SHA256
+    )
+    with pytest.raises(subject.FinalEvidenceV6Error, match="historical nonauthority"):
+        subject._validate_superseded_v4_historical(historical)  # noqa: SLF001
+
+
 def test_wrong_lifecycle_context_module_route_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
