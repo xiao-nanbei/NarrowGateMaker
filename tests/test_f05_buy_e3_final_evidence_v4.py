@@ -574,6 +574,12 @@ def test_proof_release_revalidates_v4_and_never_calls_base_direct_helpers(
         is False
     )
     assert payload["evidence_state"]["failed_predecessor_reused"] is False
+    assert payload["evidence_state"]["runtime_consumed"] is True
+    assert (
+        payload["evidence_state"]["runtime_consumed_authority"]
+        == "direct_v4_owner_release_v2"
+    )
+    assert payload["authority_design"]["runtime_consumed"] is True
     assert len(file_sha) == 64
     assert stat.S_IMODE(output.stat().st_mode) == 0o600
     assert (
