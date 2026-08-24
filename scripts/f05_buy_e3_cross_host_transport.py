@@ -1114,6 +1114,16 @@ def _stable_process_projection(process: Mapping[str, Any]) -> dict[str, Any]:
     return {field: process.get(field) for field in _PROCESS_STABLE_FIELDS}
 
 
+def _active_remote_release_path(active: Mapping[str, Any]) -> str:
+    runtime = active.get("runtime_identity")
+    if not isinstance(runtime, Mapping):
+        raise CrossHostTransportError("active runtime identity is missing")
+    value = str(runtime.get("f05_buy_e3_active_release_path", ""))
+    if not PurePosixPath(value).is_absolute():
+        raise CrossHostTransportError("active runtime release path provenance drifted")
+    return value
+
+
 def _validate_remote_content_at_path(value: Any, path: Path, label: str) -> None:
     """Reopen a v2 content-only binding at its separately frozen remote path."""
     if not isinstance(value, Mapping) or set(value) != set(CONTENT_BINDING_FIELDS):
@@ -1205,7 +1215,9 @@ def build_remote_active_attestation(
         release_binding=release_binding,
         semantics=semantics,
     )
-    release_remote_path = str(direct_release_path.expanduser().resolve(strict=True))
+    release_remote_path = _active_remote_release_path(active)
+    if release_remote_path != str(direct_release_path.expanduser().resolve(strict=True)):
+        raise CrossHostTransportError("active runtime release path provenance drifted")
     timestamp = generated_utc or _now()
     active_process_utc = _utc_datetime(
         process.get("captured_utc"), "active process capture timestamp"
@@ -1331,7 +1343,7 @@ def validate_remote_active_attestation(
         or references["active_process_capture"].get("remote_path_provenance")
         != FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE
         or references["direct_active_release"].get("remote_path_provenance")
-        != str(direct_release_path.expanduser().resolve(strict=True))
+        != _active_remote_release_path(active)
     ):
         raise CrossHostTransportError("frozen remote path provenance drifted")
     process = active["active_process"]

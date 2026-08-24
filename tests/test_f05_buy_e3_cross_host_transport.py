@@ -748,6 +748,7 @@ def _remote_fixture(
         "runtime_identity": {
             "config_path": stable["config_path"],
             "config_sha256": stable["config_sha256"],
+            "f05_buy_e3_active_release_path": str(tmp_path / "release.json"),
         },
         "runtime_identity_file_sha256": "2" * 64,
         "resource_receipt": resource_binding,
@@ -822,6 +823,68 @@ def test_remote_attestation_rejects_resource_path_provenance_drift(
         subject.build_remote_active_attestation(
             direct_repository_root=tmp_path,
             direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+
+def test_remote_attestation_release_provenance_is_portable_and_cross_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active, _components, _bindings = _remote_fixture(tmp_path, monkeypatch)
+    remote_release = tmp_path / "release.json"
+    payload = subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=remote_release,
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    attestation = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
+    local_release = _write(tmp_path / "local-release-copy.json", {"fixture": True})
+
+    validated = subject.validate_remote_active_attestation(
+        attestation,
+        direct_repository_root=tmp_path,
+        direct_release_path=local_release,
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+    )
+    assert validated["project_references"]["direct_active_release"][
+        "remote_path_provenance"
+    ] == str(remote_release)
+
+    payload["project_references"]["direct_active_release"]["remote_path_provenance"] = (
+        "/tampered/remote-release.json"
+    )
+    payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
+    )
+    _write(attestation, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="path provenance drifted"):
+        subject.validate_remote_active_attestation(
+            attestation,
+            direct_repository_root=tmp_path,
+            direct_release_path=local_release,
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+    payload["project_references"]["direct_active_release"]["remote_path_provenance"] = str(
+        remote_release
+    )
+    payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
+    )
+    _write(attestation, payload)
+    active["runtime_identity"]["f05_buy_e3_active_release_path"] = (
+        "/tampered/active-runtime-release.json"
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="path provenance drifted"):
+        subject.validate_remote_active_attestation(
+            attestation,
+            direct_repository_root=tmp_path,
+            direct_release_path=local_release,
             resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
             active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
         )
