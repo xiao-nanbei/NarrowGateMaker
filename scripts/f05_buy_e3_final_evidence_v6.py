@@ -137,14 +137,18 @@ FROZEN_CURRENT_LIFECYCLE_CONTENT: Final = {
     "size_bytes": 2_469,
     "mode": "0644",
 }
-FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE: Final = ""
+FROZEN_LIFECYCLE_CONTEXT_PATH_PROVENANCE: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
+    "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+    "lifecycle_context/lifecycle_admission_context.json"
+)
 FROZEN_LIFECYCLE_CONTEXT_CONTENT: Final = {
     "schema_version": lifecycle_context_v1.SCHEMA_VERSION,
     "status": lifecycle_context_v1.STATUS,
-    "file_sha256": "",
+    "file_sha256": "a00e2c7f3e45cb5c338bb25b76624fd32ff3a82d28cb73466e9046f7fd183387",
     "canonical_field": lifecycle_context_v1.CANONICAL_FIELD,
-    "canonical_sha256": "",
-    "size_bytes": 0,
+    "canonical_sha256": "f3282651f55a63576242b178c4a8b95cb82ce14c88eab47498518779c8bc86d3",
+    "size_bytes": 14_854,
     "mode": "0600",
 }
 
@@ -188,14 +192,18 @@ POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD: Final = post_lifecycle_v1.CANONICAL_FIEL
 POST_LIFECYCLE_HEALTH_SCHEMA: Final = post_lifecycle_v1.PORTABLE_SCHEMA_VERSION
 POST_LIFECYCLE_HEALTH_STATUS: Final = post_lifecycle_v1.PORTABLE_STATUS
 POST_LIFECYCLE_HEALTH_CANONICAL_FIELD: Final = post_lifecycle_v1.PORTABLE_CANONICAL_FIELD
-FROZEN_POST_LIFECYCLE_HEALTH_PATH_PROVENANCE: Final = ""
+FROZEN_POST_LIFECYCLE_HEALTH_PATH_PROVENANCE: Final = (
+    "/Volumes/ORICO/MarketData/NarrowGate_BTCUSDC/reports/"
+    "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824/"
+    "post_lifecycle_health/post_lifecycle_live_health.json"
+)
 FROZEN_POST_LIFECYCLE_HEALTH_CONTENT: Final = {
     "schema_version": POST_LIFECYCLE_RECEIPT_SCHEMA,
     "status": POST_LIFECYCLE_RECEIPT_STATUS,
-    "file_sha256": "",
+    "file_sha256": "4dd90fdc9be0d00d378256bbfca490186382e05229c63060cc2ec073082cc0b4",
     "canonical_field": POST_LIFECYCLE_RECEIPT_CANONICAL_FIELD,
-    "canonical_sha256": "",
-    "size_bytes": 0,
+    "canonical_sha256": "d9204c4bdba7a14fbd71d2c1186ffc685ce496f1dc13925cf6145bc95656b417",
+    "size_bytes": 43_200,
     "mode": "0600",
 }
 
