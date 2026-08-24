@@ -1,0 +1,754 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from scripts import f05_buy_e3_cross_host_transport as subject
+
+
+def _write(path: Path, payload: dict[str, Any], *, mode: int = 0o600) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(mode)
+    return path
+
+
+def _document(schema: str, status: str, canonical_field: str, marker: str) -> dict[str, Any]:
+    payload = {
+        "schema_version": schema,
+        "status": status,
+        "marker": marker,
+    }
+    payload[canonical_field] = subject._document_sha256(payload, canonical_field)  # noqa: SLF001
+    return payload
+
+
+def _freeze_final(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    values = {
+        "FROZEN_FINAL_EXECUTION_COMMIT": "1" * 40,
+        "FROZEN_FINAL_EXECUTION_TREE": "2" * 40,
+        "FROZEN_FINAL_ANNOTATED_TAG": "f05-owner-buy-e3-direct-live-v4-fixture",
+        "FROZEN_FINAL_TAG_OBJECT": "3" * 40,
+        "FROZEN_FINAL_RELEASE_SCHEMA": "fixture.release.v4",
+        "FROZEN_FINAL_RELEASE_STATUS": "fixture_release_active",
+        "FROZEN_FINAL_RELEASE_FILE_SHA256": "4" * 64,
+        "FROZEN_FINAL_RELEASE_CANONICAL_SHA256": "5" * 64,
+        "FROZEN_FINAL_RESOURCE_SCHEMA": "fixture.resource.v4",
+        "FROZEN_FINAL_RESOURCE_STATUS": "fixture_resource_passed",
+        "FROZEN_FINAL_RESOURCE_FILE_SHA256": "6" * 64,
+        "FROZEN_FINAL_RESOURCE_CANONICAL_SHA256": "7" * 64,
+        "FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA": "fixture.active.v1",
+        "FROZEN_FINAL_ACTIVE_CAPTURE_STATUS": "fixture_active_captured",
+        "FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256": "8" * 64,
+        "FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256": "9" * 64,
+        "FROZEN_FINAL_DISABLED_CONFIG_SHA256": "a" * 64,
+        "FROZEN_FINAL_ACTIVE_CONFIG_SHA256": "b" * 64,
+        "FROZEN_FINAL_ARTIFACT_SHA256": "c" * 64,
+        "FROZEN_FINAL_RESOURCE_PATH_PROVENANCE": str(tmp_path / subject.RESOURCE_FILENAME),
+        "FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE": str(
+            tmp_path / subject.ACTIVE_CAPTURE_FILENAME
+        ),
+        "FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT": {
+            "schema_version": "fixture.lifecycle_fix_supplement.v1",
+            "status": "fixture_lifecycle_fix_verified",
+            "file_sha256": "d" * 64,
+            "canonical_field": "canonical_lifecycle_fix_supplement_sha256",
+            "canonical_sha256": "e" * 64,
+        },
+    }
+    for name, value in values.items():
+        monkeypatch.setattr(subject, name, value)
+
+
+@pytest.fixture(autouse=True)
+def frozen_final(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    tmp_path.chmod(0o700)
+    _freeze_final(monkeypatch, tmp_path)
+
+
+def _incoming(root: Path) -> dict[str, Path]:
+    root.mkdir(mode=0o700)
+    fields = {
+        "current_host_resource_gate": ("fixture.resource", "resource", "resource"),
+        "active_process_capture": ("fixture.active", "active", "active"),
+        "remote_active_attestation": ("fixture.attestation", "attestation", "attestation"),
+    }
+    output: dict[str, Path] = {}
+    for role, filename in subject.SOURCE_FILENAMES.items():
+        schema, status, marker = fields[role]
+        output[role] = _write(
+            root / filename,
+            _document(schema, status, "canonical_sha256", marker),
+        )
+    return output
+
+
+def _content(path: Path) -> dict[str, Any]:
+    opened = subject._open_private_json(path, path.name)  # noqa: SLF001
+    payload = opened.payload
+    return subject._content_binding(  # noqa: SLF001
+        opened,
+        canonical_field="canonical_sha256",
+        expected_schema=payload["schema_version"],
+        expected_status=payload["status"],
+    )
+
+
+def _portable_components(direct_binding: dict[str, Any]) -> dict[str, Any]:
+    execution = subject._frozen_final_execution()  # noqa: SLF001
+    return {
+        "host": {
+            "provider": "aws",
+            "region": "ap-northeast-1",
+            "instance_id": subject.CURRENT_INSTANCE_ID,
+            "instance_type": subject.CURRENT_INSTANCE_TYPE,
+            "public_ipv4": subject.CURRENT_PUBLIC_IPV4_PROVENANCE,
+            "public_ipv4_role": "network_locator_provenance_only_not_host_authority",
+            "resource_host_identity": {
+                "instance_id": subject.CURRENT_INSTANCE_ID,
+                "instance_type": subject.CURRENT_INSTANCE_TYPE,
+            },
+        },
+        "runtime_execution": execution,
+        "runtime_authority": {
+            **direct_binding,
+            "execution": execution,
+            "runtime_authority": True,
+        },
+        "exact_artifact": {"artifact_sha256": subject.FROZEN_FINAL_ARTIFACT_SHA256},
+        "resource_disabled_process": {
+            "pid": 10,
+            "pid_start_ticks": 100,
+            "process_identity_sha256": "d" * 64,
+            "config_sha256": subject.FROZEN_FINAL_DISABLED_CONFIG_SHA256,
+            "fresh_pid": True,
+            "fresh_start_ticks": True,
+            "same_pid_pre_post": True,
+        },
+        "transition": {
+            "disabled_pid": 10,
+            "disabled_pid_start_ticks": 100,
+            "active_pid": 20,
+            "active_pid_start_ticks": 200,
+            "active_process_identity_sha256": "e" * 64,
+            "fresh_disabled_to_active_restart": True,
+        },
+        "active_runtime": {
+            "config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
+            "runtime_identity": {
+                "schema_version": "runtime.v1",
+                "file_sha256": "f" * 64,
+                "canonical_sha256": "0" * 64,
+            },
+            "startup_attestation": {
+                "schema_version": "startup.v1",
+                "status": "accepted",
+                "canonical_sha256": "1" * 64,
+            },
+            "runtime_source_manifest_sha256": "2" * 64,
+            "runtime_source_files": {"live/main.py": "3" * 64},
+            "artifact_sha256": subject.FROZEN_FINAL_ARTIFACT_SHA256,
+            "buy_e3_enabled": True,
+            "owner_override_effective": True,
+            "startup_semantics": {"startup_status": "accepted"},
+        },
+    }
+
+
+def _patch_source_validator(monkeypatch: pytest.MonkeyPatch) -> None:
+    direct_binding = {
+        "schema_version": subject.FROZEN_FINAL_RELEASE_SCHEMA,
+        "status": subject.FROZEN_FINAL_RELEASE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_RELEASE_FILE_SHA256,
+        "canonical_field": "canonical_active_release_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_RELEASE_CANONICAL_SHA256,
+        "size_bytes": 123,
+        "mode": "0600",
+    }
+    components = _portable_components(direct_binding)
+
+    def validate(
+        *, resource_path: Path, active_path: Path, attestation_path: Path, **_kwargs: Any
+    ) -> subject._SourceSet:  # noqa: SLF001
+        bindings = {
+            "current_host_resource_gate": _content(resource_path),
+            "active_process_capture": _content(active_path),
+            "remote_active_attestation": _content(attestation_path),
+            "direct_active_release": direct_binding,
+        }
+        return subject._SourceSet(  # noqa: SLF001
+            resource={"fixture": "resource"},
+            active={"fixture": "active"},
+            attestation={**components},
+            release={"fixture": "release"},
+            bindings=bindings,
+        )
+
+    monkeypatch.setattr(subject, "_validate_source_set", validate)
+
+
+def test_final_authority_fails_closed_until_v4_is_source_frozen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(subject, "FROZEN_FINAL_RELEASE_FILE_SHA256", "")
+    with pytest.raises(subject.CrossHostTransportError, match="not a lowercase SHA256"):
+        subject._frozen_final_execution()  # noqa: SLF001
+
+
+def test_final_authority_rejects_stale_direct_owner_v1(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_SCHEMA",
+        "causal_multichannel_window_boolean_cooldown_owner_buy_e3_direct_owner_active_release.v1",
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="stale direct-owner release v1"):
+        subject._frozen_final_execution()  # noqa: SLF001
+
+
+def test_validate_runtime_authority_binds_release_v2_and_clean_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    schema = "fixture.direct_owner_active_release.v2"
+    status = "fixture_final_v4_owner_authority"
+    monkeypatch.setattr(subject, "FROZEN_FINAL_RELEASE_SCHEMA", schema)
+    monkeypatch.setattr(subject, "FROZEN_FINAL_RELEASE_STATUS", status)
+    roles = {
+        role: {
+            "schema_version": f"fixture.{role}.v1",
+            "status": None if role == "predicate_bundle" else "frozen",
+            "file_sha256": f"{index + 1:064x}",
+            "canonical_field": "canonical_sha256",
+            "canonical_sha256": f"{index + 4:064x}",
+            "size_bytes": 100 + index,
+            "mode": "0600",
+        }
+        for index, role in enumerate(("manifest", "policy", "predicate_bundle"))
+    }
+    payload = {
+        "schema_version": schema,
+        "identity": schema,
+        "status": status,
+        "generated_utc": "2026-08-24T00:00:00Z",
+        "execution": subject._frozen_final_execution(),  # noqa: SLF001
+        "research_supported": False,
+        "formal_hierarchy_passed": False,
+        "formal_hard_gates_passed": False,
+        "owner_risk_accepted": True,
+        "outcome_informed_owner_override": True,
+        "action_authorized": True,
+        "live_authorized": True,
+        "authorization_basis": dict(subject.AUTHORIZATION_BASIS),
+        "scope": {
+            "side": "BUY",
+            "trigger": "exposure_increasing_executed_fill",
+            "output": "total_cooldown",
+            "reducing_buy_unchanged": True,
+            "sell_owner_policy_unchanged": True,
+        },
+        "rollback": {
+            "buy_e3_enabled": False,
+            "buy_deadline_identity": "B0",
+            "e3_deadline_imported": False,
+            "b0_seconds": 85,
+            "b0_multiplier": "consecutive_fill_units",
+            "b0_contract": "85s_x_consecutive_fill_units",
+        },
+        "exact_artifact": {
+            "artifact_sha256": subject.FROZEN_FINAL_ARTIFACT_SHA256,
+            "roles": roles,
+        },
+        "parent_direct_owner_release": subject.PARENT_DIRECT_OWNER_RELEASE,
+        "historical_evidence_state": subject.HISTORICAL_EVIDENCE_STATE,
+        "historical_attempt4_anchor": subject.HISTORICAL_ATTEMPT4_ANCHOR,
+        "exact_v5_recovery": subject.EXACT_V5_RECOVERY,
+        "pending_current_runtime_evidence": subject.PENDING_CURRENT_RUNTIME_EVIDENCE,
+        "lifecycle_fix_contract": subject.LIFECYCLE_FIX_CONTRACT,
+        "lifecycle_fix_supplement": subject.FROZEN_FINAL_LIFECYCLE_FIX_SUPPLEMENT,
+        "evidence_boundary": subject.RELEASE_V2_EVIDENCE_BOUNDARY,
+    }
+    payload["canonical_active_release_sha256"] = subject._document_sha256(  # noqa: SLF001
+        payload, "canonical_active_release_sha256"
+    )
+    path = _write(tmp_path / "release-v2.json", payload)
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_FILE_SHA256",
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_CANONICAL_SHA256",
+        payload["canonical_active_release_sha256"],
+    )
+    monkeypatch.setattr(
+        subject.release_io,
+        "_operational_git_identity",
+        lambda *_a, **_k: subject._frozen_final_execution(),  # noqa: SLF001
+    )
+
+    observed, binding = subject.validate_runtime_authority(tmp_path, path)
+
+    assert observed == payload
+    assert binding["file_sha256"] == subject.FROZEN_FINAL_RELEASE_FILE_SHA256
+    monkeypatch.setattr(subject, "FROZEN_FINAL_RELEASE_FILE_SHA256", "f" * 64)
+    with pytest.raises(subject.CrossHostTransportError, match="semantic authority drifted"):
+        subject.validate_runtime_authority(tmp_path, path)
+
+    stale = json.loads(json.dumps(payload))
+    stale["historical_evidence_state"]["panel_rebuild_continues"] = True
+    stale["canonical_active_release_sha256"] = subject._document_sha256(  # noqa: SLF001
+        stale, "canonical_active_release_sha256"
+    )
+    _write(path, stale)
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_FILE_SHA256",
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_CANONICAL_SHA256",
+        stale["canonical_active_release_sha256"],
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="semantic authority drifted"):
+        subject.validate_runtime_authority(tmp_path, path)
+
+    lifecycle_drift = json.loads(json.dumps(payload))
+    lifecycle_drift["lifecycle_fix_contract"]["e3_decision_semantics_unchanged"] = False
+    lifecycle_drift["canonical_active_release_sha256"] = subject._document_sha256(  # noqa: SLF001
+        lifecycle_drift, "canonical_active_release_sha256"
+    )
+    _write(path, lifecycle_drift)
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_FILE_SHA256",
+        hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        subject,
+        "FROZEN_FINAL_RELEASE_CANONICAL_SHA256",
+        lifecycle_drift["canonical_active_release_sha256"],
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="semantic authority drifted"):
+        subject.validate_runtime_authority(tmp_path, path)
+
+
+def test_incoming_accepts_exact_same_directory_allowlist(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    assert subject._incoming_paths(tmp_path / "incoming") == paths  # noqa: SLF001
+
+
+def test_incoming_rejects_missing_and_unallowlisted_file(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    paths["active_process_capture"].unlink()
+    with pytest.raises(subject.CrossHostTransportError, match="exactly allowlisted"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+    _write(tmp_path / "incoming" / "extra.json", {"extra": True})
+    with pytest.raises(subject.CrossHostTransportError, match="exactly allowlisted"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+
+
+def test_incoming_rejects_wrong_mode(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    paths["current_host_resource_gate"].chmod(0o644)
+    with pytest.raises(subject.CrossHostTransportError, match="0600"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+
+
+def test_incoming_rejects_symlink(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    target = paths["active_process_capture"]
+    target.unlink()
+    target.symlink_to(paths["current_host_resource_gate"])
+    with pytest.raises(subject.CrossHostTransportError, match="single-link"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+
+
+def test_incoming_rejects_hardlink_and_duplicate_file_identity(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    target = paths["active_process_capture"]
+    target.unlink()
+    os.link(paths["current_host_resource_gate"], target)
+    with pytest.raises(subject.CrossHostTransportError, match="single-link"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+
+
+def test_incoming_rejects_duplicate_json_key(tmp_path: Path) -> None:
+    paths = _incoming(tmp_path / "incoming")
+    paths["remote_active_attestation"].write_text('{"a":1,"a":2}\n', encoding="ascii")
+    paths["remote_active_attestation"].chmod(0o600)
+    with pytest.raises(subject.CrossHostTransportError, match="single-link JSON"):
+        subject._incoming_paths(tmp_path / "incoming")  # noqa: SLF001
+
+
+def test_admission_root_rejects_path_escape(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    parent.mkdir(mode=0o700)
+    with pytest.raises(subject.CrossHostTransportError, match="path-escape"):
+        subject._create_private_root(parent / ".." / "escape")  # noqa: SLF001
+
+
+def test_copy_rejects_non_allowlisted_path_component(tmp_path: Path) -> None:
+    root = tmp_path / "copy"
+    root.mkdir(mode=0o700)
+    descriptor = subject._open_directory_descriptor(root)  # noqa: SLF001
+    try:
+        with pytest.raises(subject.CrossHostTransportError, match="not allowlisted"):
+            subject._copy_exclusive(descriptor, "../escape.json", b"{}\n")  # noqa: SLF001
+    finally:
+        os.close(descriptor)
+
+
+def test_cross_host_admission_round_trip_and_portable_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _patch_source_validator(monkeypatch)
+    _incoming(tmp_path / "incoming")
+    payload, file_sha = subject.finalize_cross_host_admission(
+        incoming_root=tmp_path / "incoming",
+        admission_root=tmp_path / "admitted",
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        admitted_utc="2026-08-24T00:00:00Z",
+    )
+    path = tmp_path / "admitted" / subject.ADMISSION_FILENAME
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == file_sha
+    assert (
+        subject.validate_cross_host_admission(
+            path,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+        == payload
+    )
+    portable = payload["portable_evidence"]
+    assert set(portable) == set(subject.PORTABLE_EVIDENCE_FIELDS)
+    assert portable["runtime_authority"]["runtime_authority"] is True
+    assert portable["host"]["instance_id"] == subject.CURRENT_INSTANCE_ID
+    assert portable["host"]["public_ipv4_role"].endswith("not_host_authority")
+    for role, row in portable["source_receipts"].items():
+        assert set(row) == {*subject.CONTENT_BINDING_FIELDS, "local_filename"}
+        assert row["local_filename"] == subject.SOURCE_FILENAMES[role]
+    assert all(
+        (tmp_path / "admitted" / name).stat().st_mode & 0o777 == 0o600
+        for name in subject.SOURCE_FILENAMES.values()
+    )
+
+
+def test_admission_is_create_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_source_validator(monkeypatch)
+    _incoming(tmp_path / "incoming")
+    (tmp_path / "admitted").mkdir(mode=0o700)
+    with pytest.raises(subject.CrossHostTransportError, match="already exists"):
+        subject.finalize_cross_host_admission(
+            incoming_root=tmp_path / "incoming",
+            admission_root=tmp_path / "admitted",
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+
+
+def _admitted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    _patch_source_validator(monkeypatch)
+    _incoming(tmp_path / "incoming")
+    subject.finalize_cross_host_admission(
+        incoming_root=tmp_path / "incoming",
+        admission_root=tmp_path / "admitted",
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        admitted_utc="2026-08-24T00:00:00Z",
+    )
+    return tmp_path / "admitted" / subject.ADMISSION_FILENAME
+
+
+def test_admission_rejects_transferred_file_tamper_and_wrong_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = _admitted(tmp_path, monkeypatch)
+    source = receipt.parent / subject.ACTIVE_CAPTURE_FILENAME
+    payload = json.loads(source.read_text(encoding="ascii"))
+    payload["marker"] = "tampered"
+    payload["canonical_sha256"] = subject._document_sha256(  # noqa: SLF001
+        payload, "canonical_sha256"
+    )
+    _write(source, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="identity drifted"):
+        subject.validate_cross_host_admission(
+            receipt,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+
+
+def test_admission_rejects_wrong_host_even_when_recanonicalized(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = _admitted(tmp_path, monkeypatch)
+    payload = json.loads(receipt.read_text(encoding="ascii"))
+    payload["portable_evidence"]["host"]["instance_id"] = "i-wrong"
+    payload[subject.ADMISSION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.ADMISSION_CANONICAL_FIELD
+    )
+    _write(receipt, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="identity drifted"):
+        subject.validate_cross_host_admission(
+            receipt,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+
+
+def test_admission_rejects_mode_symlink_and_hardlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    receipt = _admitted(tmp_path, monkeypatch)
+    source = receipt.parent / subject.RESOURCE_FILENAME
+    source.chmod(0o644)
+    with pytest.raises(subject.CrossHostTransportError, match="0600"):
+        subject.validate_cross_host_admission(
+            receipt,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+
+    source.chmod(0o600)
+    duplicate = tmp_path / "hardlink.json"
+    os.link(source, duplicate)
+    with pytest.raises(subject.CrossHostTransportError, match="0600"):
+        subject.validate_cross_host_admission(
+            receipt,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+    duplicate.unlink()
+
+    target = receipt.parent / subject.ACTIVE_CAPTURE_FILENAME
+    replacement = tmp_path / "replacement.json"
+    target.rename(replacement)
+    target.symlink_to(replacement)
+    with pytest.raises(subject.CrossHostTransportError, match="0600"):
+        subject.validate_cross_host_admission(
+            receipt,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+        )
+
+
+def _remote_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    resource_path = _write(tmp_path / subject.RESOURCE_FILENAME, {"fixture": True})
+    active_path = _write(tmp_path / subject.ACTIVE_CAPTURE_FILENAME, {"fixture": True})
+    monkeypatch.setattr(subject, "FROZEN_FINAL_RESOURCE_PATH_PROVENANCE", str(resource_path))
+    monkeypatch.setattr(subject, "FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE", str(active_path))
+    direct_binding = {
+        "schema_version": subject.FROZEN_FINAL_RELEASE_SCHEMA,
+        "status": subject.FROZEN_FINAL_RELEASE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_RELEASE_FILE_SHA256,
+        "canonical_field": "canonical_active_release_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_RELEASE_CANONICAL_SHA256,
+        "size_bytes": 100,
+        "mode": "0600",
+    }
+    resource_binding = {
+        **direct_binding,
+        "schema_version": subject.FROZEN_FINAL_RESOURCE_SCHEMA,
+        "status": subject.FROZEN_FINAL_RESOURCE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_RESOURCE_FILE_SHA256,
+        "canonical_field": "canonical_resource_receipt_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_RESOURCE_CANONICAL_SHA256,
+    }
+    active_binding = {
+        **direct_binding,
+        "schema_version": subject.FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA,
+        "status": subject.FROZEN_FINAL_ACTIVE_CAPTURE_STATUS,
+        "file_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256,
+        "canonical_field": "canonical_active_capture_sha256",
+        "canonical_sha256": subject.FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256,
+    }
+    host = {
+        "instance_id": subject.CURRENT_INSTANCE_ID,
+        "instance_type": subject.CURRENT_INSTANCE_TYPE,
+    }
+    stable = {
+        "pid": 20,
+        "pid_start_ticks": 200,
+        "cmdline": ["python", "live/main.py"],
+        "cmdline_sha256": "1" * 64,
+        "cwd": "/runtime",
+        "config_path": "/runtime/active.yaml",
+        "config_sha256": subject.FROZEN_FINAL_ACTIVE_CONFIG_SHA256,
+        "python_executable": "/runtime/.venv/bin/python",
+        "python_binary_resolved": "/usr/bin/python",
+        "venv_root": "/runtime/.venv",
+        "runtime_identity": {
+            "present": True,
+            "path": "/runtime/runtime_identity.json",
+            "file_sha256": "2" * 64,
+            "schema_version": "runtime.v1",
+        },
+    }
+    process = {
+        **stable,
+        "captured_utc": "2026-08-24T00:00:00Z",
+        "canonical_process_identity_sha256": "3" * 64,
+    }
+    resource = {"host": host}
+    active = {
+        "generated_utc": "2026-08-24T00:00:00Z",
+        "active_process": process,
+        "runtime_identity": {
+            "config_path": stable["config_path"],
+            "config_sha256": stable["config_sha256"],
+        },
+        "runtime_identity_file_sha256": "2" * 64,
+        "runtime_authority": {"path": "/runtime/release.json"},
+    }
+    components = _portable_components(direct_binding)
+    monkeypatch.setattr(subject, "_direct_authority", lambda *_a, **_k: ({}, direct_binding))
+    monkeypatch.setattr(
+        subject,
+        "_validate_resource",
+        lambda *_a, **_k: (resource, resource_binding, b"resource"),
+    )
+    monkeypatch.setattr(
+        subject,
+        "_validate_active",
+        lambda *_a, **_k: (active, active_binding, b"active", {}),
+    )
+    monkeypatch.setattr(subject, "_validate_remote_location_binding", lambda *_a, **_k: None)
+    monkeypatch.setattr(subject, "_portable_components", lambda **_k: components)
+    monkeypatch.setattr(subject.resource_v3, "host_identity", lambda **_k: host)
+    recaptured = {
+        **stable,
+        "captured_utc": "2026-08-24T00:00:00Z",
+        "canonical_process_identity_sha256": "4" * 64,
+    }
+    monkeypatch.setattr(
+        subject.gate_v2,
+        "capture_actual_process_identity",
+        lambda **_k: recaptured,
+    )
+    return (
+        active,
+        components,
+        {
+            "resource": resource_binding,
+            "active": active_binding,
+            "direct": direct_binding,
+        },
+    )
+
+
+def test_remote_attestation_captures_live_not_retroactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    active, _components, _bindings = _remote_fixture(tmp_path, monkeypatch)
+    payload = subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    assert payload["live_process_attestation"]["pid"] == active["active_process"]["pid"]
+    assert (
+        payload["live_process_attestation"]["active_capture_stable_identity_sha256"]
+        == payload["live_process_attestation"]["recaptured_stable_identity_sha256"]
+    )
+    assert payload["checks"]["captured_live_not_retroactive"] is True
+    assert payload["checks"]["frozen_final_runtime_authority_exact"] is True
+
+
+def test_remote_attestation_rejects_wrong_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        subject.resource_v3,
+        "host_identity",
+        lambda **_k: {"instance_id": "i-wrong", "instance_type": subject.CURRENT_INSTANCE_TYPE},
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="not the resource-gate host"):
+        subject.build_remote_active_attestation(
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+
+def test_remote_attestation_rejects_process_identity_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        subject.gate_v2,
+        "capture_actual_process_identity",
+        lambda **_k: {
+            **{
+                field: None
+                for field in subject._PROCESS_STABLE_FIELDS  # noqa: SLF001
+            },
+            "pid": 999,
+        },
+    )
+    with pytest.raises(subject.CrossHostTransportError, match="changed after its capture"):
+        subject.build_remote_active_attestation(
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+
+def test_remote_attestation_validator_rejects_stable_identity_or_chronology_tamper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _remote_fixture(tmp_path, monkeypatch)
+    payload = subject.build_remote_active_attestation(
+        direct_repository_root=tmp_path,
+        direct_release_path=tmp_path / "release.json",
+        resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+        active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        generated_utc="2026-08-24T00:00:01Z",
+    )
+    path = _write(tmp_path / subject.REMOTE_ATTESTATION_FILENAME, payload)
+
+    payload["live_process_attestation"]["recaptured_stable_identity_sha256"] = "f" * 64
+    payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
+    )
+    _write(path, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="identity drifted"):
+        subject.validate_remote_active_attestation(
+            path,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
+
+    payload["live_process_attestation"]["recaptured_stable_identity_sha256"] = payload[
+        "live_process_attestation"
+    ]["active_capture_stable_identity_sha256"]
+    payload["live_process_attestation"]["recaptured_utc"] = "2026-08-24T00:00:02Z"
+    payload[subject.REMOTE_ATTESTATION_CANONICAL_FIELD] = subject._document_sha256(  # noqa: SLF001
+        payload, subject.REMOTE_ATTESTATION_CANONICAL_FIELD
+    )
+    _write(path, payload)
+    with pytest.raises(subject.CrossHostTransportError, match="identity drifted"):
+        subject.validate_remote_active_attestation(
+            path,
+            direct_repository_root=tmp_path,
+            direct_release_path=tmp_path / "release.json",
+            resource_receipt_path=tmp_path / subject.RESOURCE_FILENAME,
+            active_capture_path=tmp_path / subject.ACTIVE_CAPTURE_FILENAME,
+        )
