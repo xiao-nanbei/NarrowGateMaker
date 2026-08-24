@@ -22,12 +22,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Final
 
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v5 as resource_v5,
+    causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v6 as resource_v6,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_owner_buy_e3_deployment_gate_amendment_v2 as gate_v2,
 )
-from scripts import f05_buy_e3_active_capture_v5 as active_capture_v5
+from scripts import f05_buy_e3_active_capture_v6 as active_capture_v6
 from scripts import f05_buy_e3_active_release as release_io
 from scripts import f05_buy_e3_evidence_completion as completion
 
@@ -55,29 +55,25 @@ FROZEN_FINAL_RELEASE_CANONICAL_SHA256: Final = (
 )
 FROZEN_FINAL_RESOURCE_SCHEMA: Final = (
     "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
-    "current_host_concurrent_resource_gate.v5"
+    "current_host_concurrent_resource_gate.v6"
 )
 FROZEN_FINAL_RESOURCE_STATUS: Final = (
-    "fresh_external_venues_disabled_same_pid_concurrent_gate_passed"
+    "fresh_external_venues_disabled_current_pid_rate_window_concurrent_gate_passed"
 )
 # Frozen in a second additive commit after the fresh remote gate is complete.
 FROZEN_FINAL_RESOURCE_FILE_SHA256: Final = ""
 FROZEN_FINAL_RESOURCE_CANONICAL_SHA256: Final = ""
 FROZEN_FINAL_ACTIVE_CAPTURE_SCHEMA: Final = (
     "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
-    "fresh_external_venues_disabled_active_process_capture.v3"
+    "fresh_external_venues_disabled_active_process_capture.v4"
 )
 FROZEN_FINAL_ACTIVE_CAPTURE_STATUS: Final = (
-    "fresh_external_venues_disabled_active_process_captured"
+    "fresh_external_venues_disabled_rate_window_active_process_captured"
 )
 FROZEN_FINAL_ACTIVE_CAPTURE_FILE_SHA256: Final = ""
 FROZEN_FINAL_ACTIVE_CAPTURE_CANONICAL_SHA256: Final = ""
-FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = (
-    "62769b16e55d53bbe92c4f1a4ccf4dd2aa2d049d6ed2b6dd917ddb775c2e4ee4"
-)
-FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = (
-    "eb4f4005695effe4e97160e0360474d89925821dc72c3b44f9a5ecebf0c03887"
-)
+FROZEN_FINAL_CONFIG_CORRECTION_FILE_SHA256: Final = ""
+FROZEN_FINAL_CONFIG_CORRECTION_CANONICAL_SHA256: Final = ""
 FROZEN_FINAL_DISABLED_CONFIG_SHA256: Final = (
     "10158a92177cd87b77fdb24a2a477dcab4b41cfb29208cf96c19953edafe166f"
 )
@@ -86,16 +82,16 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
 FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v5-no-external-20260824/attempt1/"
+    "/home/ec2-user/f05-buy-e3-resource-gate-v6-no-external-20260824/attempt1/"
     "current_host_resource_gate.json"
 )
 FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-active-capture-v5-no-external-20260824/"
-    "active_process_capture_v3.json"
+    "/home/ec2-user/f05-buy-e3-active-capture-v6-no-external-20260824/"
+    "active_process_capture_v4.json"
 )
 FROZEN_CONFIG_CORRECTION_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-20260824/receipts/"
-    "config_correction_v2.json"
+    "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-v3-20260824/receipts/"
+    "config_correction_v3.json"
 )
 # Filled only after the lifecycle-repair supplement is emitted and reviewed.
 # Keeping this unset makes every final-authority entry point fail closed.
@@ -743,15 +739,15 @@ def _validate_resource_execution(value: Any) -> None:
 
 def _validate_config_correction(path: Path) -> tuple[dict[str, Any], dict[str, Any], bytes]:
     try:
-        payload, binding = resource_v5.config_successor.validate_content_receipt(path)
+        payload, binding = resource_v6.config_successor.validate_content_receipt(path)
     except Exception as exc:
         raise CrossHostTransportError("config correction receipt is invalid") from exc
     opened = _open_private_json(path, "config correction receipt")
     if payload != opened.payload or binding != _content_binding(
         opened,
-        canonical_field=resource_v5.config_successor.CANONICAL_FIELD,
-        expected_schema=resource_v5.config_successor.SCHEMA_VERSION,
-        expected_status=resource_v5.config_successor.STATUS,
+        canonical_field=resource_v6.config_successor.CANONICAL_FIELD,
+        expected_schema=resource_v6.config_successor.SCHEMA_VERSION,
+        expected_status=resource_v6.config_successor.STATUS,
     ):
         raise CrossHostTransportError("config correction bytes changed during validation")
     if (
@@ -777,7 +773,7 @@ def _validate_resource(
     )
     resource = dict(opened.payload)
     try:
-        semantically_validated = resource_v5.validate_resource_receipt(
+        semantically_validated = resource_v6.validate_resource_receipt(
             path,
             config_correction_path=config_correction_path,
         )
@@ -904,7 +900,7 @@ def _active_runtime_semantics(
     _runtime_source_manifest, runtime_source_files = _startup_runtime_sources(runtime)
     expected_startup_sources = {
         str(binding["path"]): str(binding["sha256"])
-        for role, binding in resource_v5.CURRENT_V4_RUNTIME_SOURCE_SHA256.items()
+        for role, binding in resource_v6.CURRENT_V4_RUNTIME_SOURCE_SHA256.items()
         if role
         in {
             "live_main",
@@ -1254,7 +1250,7 @@ def build_remote_active_attestation(
     _validate_remote_content_at_path(
         active.get("runtime_authority"), direct_release_path, "final runtime authority"
     )
-    observed_host = resource_v5.host_identity(
+    observed_host = resource_v6.host_identity(
         instance_id=CURRENT_INSTANCE_ID,
         instance_type=CURRENT_INSTANCE_TYPE,
         proc_root=proc_root,
@@ -1580,7 +1576,7 @@ def _validate_source_set(
     if resource.get("config_correction") != correction_binding:
         raise CrossHostTransportError("resource/config correction cross-binding drifted")
     try:
-        semantically_validated_active = active_capture_v5.validate_active_capture(
+        semantically_validated_active = active_capture_v6.validate_active_capture(
             active_path,
             runtime_repository_root=direct_repository_root,
             direct_release_path=direct_release_path,

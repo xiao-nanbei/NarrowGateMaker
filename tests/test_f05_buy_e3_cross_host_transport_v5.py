@@ -259,28 +259,24 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
         ),
         "resource_schema": (
             "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
-            "current_host_concurrent_resource_gate.v5"
+            "current_host_concurrent_resource_gate.v6"
         ),
         "resource_status": (
-            "fresh_external_venues_disabled_same_pid_concurrent_gate_passed"
+            "fresh_external_venues_disabled_current_pid_rate_window_concurrent_gate_passed"
         ),
         "resource_file_sha256": "",
         "resource_canonical_sha256": "",
         "active_schema": (
             "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1."
-            "fresh_external_venues_disabled_active_process_capture.v3"
+            "fresh_external_venues_disabled_active_process_capture.v4"
         ),
         "active_status": (
-            "fresh_external_venues_disabled_active_process_captured"
+            "fresh_external_venues_disabled_rate_window_active_process_captured"
         ),
         "active_file_sha256": "",
         "active_canonical_sha256": "",
-        "config_correction_file_sha256": (
-            "62769b16e55d53bbe92c4f1a4ccf4dd2aa2d049d6ed2b6dd917ddb775c2e4ee4"
-        ),
-        "config_correction_canonical_sha256": (
-            "eb4f4005695effe4e97160e0360474d89925821dc72c3b44f9a5ecebf0c03887"
-        ),
+        "config_correction_file_sha256": "",
+        "config_correction_canonical_sha256": "",
         "disabled_config_sha256": (
             "10158a92177cd87b77fdb24a2a477dcab4b41cfb29208cf96c19953edafe166f"
         ),
@@ -288,16 +284,16 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
             "ad153012b14e725a3ac24f0ddbe02bc353168a13ec827b777cc94761020524ec"
         ),
         "resource_path": (
-            "/home/ec2-user/f05-buy-e3-resource-gate-v5-no-external-20260824/attempt1/"
+            "/home/ec2-user/f05-buy-e3-resource-gate-v6-no-external-20260824/attempt1/"
             "current_host_resource_gate.json"
         ),
         "active_path": (
-            "/home/ec2-user/f05-buy-e3-active-capture-v5-no-external-20260824/"
-            "active_process_capture_v3.json"
+            "/home/ec2-user/f05-buy-e3-active-capture-v6-no-external-20260824/"
+            "active_process_capture_v4.json"
         ),
         "config_correction_path": (
-            "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-20260824/receipts/"
-            "config_correction_v2.json"
+            "/home/ec2-user/f05-buy-e3-no-external-shadow-phase1-v3-20260824/receipts/"
+            "config_correction_v3.json"
         ),
     }
 
@@ -748,10 +744,10 @@ def _remote_fixture(
     }
     correction_binding = {
         **direct_binding,
-        "schema_version": subject.resource_v5.config_successor.SCHEMA_VERSION,
-        "status": subject.resource_v5.config_successor.STATUS,
+        "schema_version": subject.resource_v6.config_successor.SCHEMA_VERSION,
+        "status": subject.resource_v6.config_successor.STATUS,
         "file_sha256": "6" * 64,
-        "canonical_field": subject.resource_v5.config_successor.CANONICAL_FIELD,
+        "canonical_field": subject.resource_v6.config_successor.CANONICAL_FIELD,
         "canonical_sha256": "7" * 64,
     }
     host = {
@@ -814,7 +810,7 @@ def _remote_fixture(
     )
     monkeypatch.setattr(subject, "_validate_remote_content_at_path", lambda *_a, **_k: None)
     monkeypatch.setattr(subject, "_portable_components", lambda **_k: components)
-    monkeypatch.setattr(subject.resource_v5, "host_identity", lambda **_k: host)
+    monkeypatch.setattr(subject.resource_v6, "host_identity", lambda **_k: host)
     recaptured = {
         **stable,
         "captured_utc": "2026-08-24T00:00:00Z",
@@ -948,7 +944,7 @@ def test_remote_attestation_rejects_wrong_host(
 ) -> None:
     _remote_fixture(tmp_path, monkeypatch)
     monkeypatch.setattr(
-        subject.resource_v5,
+        subject.resource_v6,
         "host_identity",
         lambda **_k: {"instance_id": "i-wrong", "instance_type": subject.CURRENT_INSTANCE_TYPE},
     )
