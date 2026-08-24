@@ -132,7 +132,7 @@ SUPERSEDED_V4_PROOF_CONTENT: Final = {
     "mode": "0600",
 }
 SUPERSEDED_V4_ACTIVE_CONFIG_SHA256: Final = (
-    transport.resource_v6.config_successor.OLD_ACTIVE_CONFIG_SHA256
+    transport.resource_v7.config_successor.OLD_ACTIVE_CONFIG_SHA256
 )
 
 NO_NEW_AUTHORITY: Final = {"research": False, "action": False, "live": False}
@@ -317,7 +317,7 @@ def _validate_config_correction_content(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping) or set(value) != set(CONTENT_BINDING_FIELDS):
         raise FinalEvidenceV5Error("config correction exact7 fields drifted")
     content = _content_projection(value, "config correction")
-    successor = transport.resource_v6.config_successor
+    successor = transport.resource_v7.config_successor
     if (
         content["schema_version"] != successor.SCHEMA_VERSION
         or content["status"] != successor.STATUS
@@ -731,9 +731,9 @@ def _validate_portable_v5(
         raise FinalEvidenceV5Error("portable source receipt roles drifted")
     expected_receipt_identity = {
         "config_correction": (
-            transport.resource_v6.config_successor.SCHEMA_VERSION,
-            transport.resource_v6.config_successor.STATUS,
-            transport.resource_v6.config_successor.CANONICAL_FIELD,
+            transport.resource_v7.config_successor.SCHEMA_VERSION,
+            transport.resource_v7.config_successor.STATUS,
+            transport.resource_v7.config_successor.CANONICAL_FIELD,
         ),
         "current_host_resource_gate": (
             transport.FROZEN_FINAL_RESOURCE_SCHEMA,
