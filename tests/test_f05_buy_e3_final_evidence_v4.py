@@ -74,7 +74,9 @@ def _release_bundle() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], d
             None if role == "predicate_bundle" else "frozen",
             str(index + 1),
             str(index + 4),
-            canonical_field=f"canonical_{role}_sha256",
+            canonical_field=(
+                "artifact_sha256" if role == "manifest" else f"canonical_{role}_sha256"
+            ),
             size_bytes=200 + index,
         )
         for index, role in enumerate(("manifest", "policy", "predicate_bundle"))
