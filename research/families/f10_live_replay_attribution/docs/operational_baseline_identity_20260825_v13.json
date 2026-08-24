@@ -1,0 +1,120 @@
+{
+  "schema_version": "narrowgate_operational_baseline_identity.v13",
+  "baseline_id": "btc_usdc_live_v6_no_shadow_backtest_v12_split_20260825",
+  "effective_at_utc": "2026-08-25T00:00:00Z",
+  "operational_status": "active_split_live_and_backtest_authority_locator",
+  "promotion_class": "governance_locator_reconciliation_no_new_strategy_or_economic_authority",
+  "predecessor": {
+    "baseline_id": "btc_usdc_causal_v12_f05_boolean_cooldown_owner_risk_accepted_baseline_20260812",
+    "identity": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json",
+    "identity_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
+    "historical_identity_modified": false,
+    "status": "immutable_backtest_default_control"
+  },
+  "projection_retirement": {
+    "predecessor_mutable_pointer_public_sha256": "fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc",
+    "predecessor_mutable_pointer_private_source_sha256": "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f",
+    "predecessor_private_source_availability": "private_not_distributed",
+    "predecessor_private_source_rewritten": false,
+    "successor_pointer_materialization": "ordinary_safe_public_json_no_private_source_identity_claim"
+  },
+  "current_live": {
+    "authority_resolution": "private_current_remote_pointer_then_stable_live_config_alias",
+    "remote_pointer": "${NARROWGATE_LIVE_REMOTE_POINTER}",
+    "config": {
+      "identity": "owner_buy_e3_no_shadow_release_v3_active_config",
+      "locator": "${NARROWGATE_LIVE_CONFIG}",
+      "sha256": "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e",
+      "availability": "private_not_distributed"
+    },
+    "runtime": {
+      "identity": "f05_owner_buy_e3_no_shadow_runtime_v3",
+      "commit": "eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de",
+      "tree": "0343bd5586b337385cf2aa0d7a643f5c32b0da77",
+      "annotated_tag_object": "3878ea05252ef8f274b6f74ee7a984431c53b892",
+      "availability": "private_release_bundle_not_distributed"
+    },
+    "release": {
+      "identity": "f05_owner_buy_e3_direct_active_release_v3",
+      "status": "owner_active_release_v3_no_shadow",
+      "file_sha256": "310d86d30bd875a7029b3e2f784877c6802ab7b05b0f639383e68bb81a458f49",
+      "canonical_sha256": "81d4449301d29828162a7fb57f52c855803682a697639b6d9cfa2d38a2846b8f",
+      "availability": "private_not_distributed"
+    },
+    "activation_receipt": {
+      "identity": "repository-live-replacement-activation-aws-tokyo-buy-e3-no-shadow-v6-20260824-v1",
+      "file_sha256": "44b6482c0448dfdf773950e94b96fb9b379f4665c4ec3c41ca1241c7fc40aaa9",
+      "canonical_sha256": "6e4269fd821fa943c9888661fa99c28ec4d59eb5457e4103ad930da40f488f7e",
+      "availability": "private_not_distributed",
+      "rewritten_by_v13": false
+    },
+    "buy_e3_enabled": true,
+    "sell_owner_policy_enabled": true,
+    "external_venues_enabled": false,
+    "global_flow_shadow_enabled": false,
+    "global_reference_shadow_enabled": false,
+    "runtime_shadow_classification": "fully_no_shadow_release_v3",
+    "lifecycle_admission_direct_pid_binding": false,
+    "post_lifecycle_capture_is_latest_live_status": false,
+    "economic_outcomes_read": false,
+    "economic_values_persisted": false,
+    "nonbaseline_action_occurrence_proven": false,
+    "economic_effect_proven": false,
+    "private_release_and_evidence_chain_remain_authority": true
+  },
+  "backtest_default": {
+    "status": "immutable_v12_control_retained_until_exact_e3_replay_baseline_exists",
+    "identity": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json",
+    "identity_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
+    "config_locator": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.backtest_v12.800f4c025663.local.yaml",
+    "config_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85",
+    "control_arm": "causal_multichannel_window_boolean_cooldown_owner_policy_v1",
+    "predecessor_control_arm": "current_live_held_global_ber_control",
+    "replay_baseline_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
+    "replay_baseline_sha256": "f2691875f2126a2233419401b4e7d204790e326629c890c3ba9f2eca19096983",
+    "replay_ber_clock_semantics": "live_held_completed_10s_feature_sampled_on_completed_1s_callback.v1",
+    "exact_buy_e3_replay_baseline_available": false,
+    "current_live_config_may_replace_backtest_default": false,
+    "current_live_evidence_is_backtest_economic_authority": false,
+    "historical_v12_economic_evidence_reinterpreted": false
+  },
+  "config": {
+    "scope": "backtest_default_immutable_v12_control",
+    "canonical_private_source": "${NARROWGATE_PRIVATE_CONFIG_ROOT}/live_config.backtest_v12.800f4c025663.local.yaml",
+    "sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85"
+  },
+  "model": {
+    "enabled": true,
+    "directory": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary",
+    "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
+    "bundle_meta_sha256": "a741dee3570fafb0e1950bfe71deb324ca6bc8c52f71f3d6a3053c0603451be2",
+    "training_summary_sha256": "59daa283301ee819aab593dd762cd5b1b4e5662f6451e64f08e0d256759131df",
+    "epoch_model_bundle_identity_sha256": "65792e9b672813ddf9ccb8a3504f998a828cd3c893e970fb0a073747685ee83c",
+    "heads_loaded": 13,
+    "feature_columns_per_head": 173,
+    "feature_semantics_version": 6,
+    "feature_dag_id": "live_10s_signal_cutoff.v1",
+    "feature_dag_sha256": "aeaa171295f9b815d864ffa8242c55003cf6d25aa104301a1144a6eafd06e517",
+    "runtime_schema_check": "pass"
+  },
+  "p3": {
+    "path": "models/saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary/fill_prob_params.json",
+    "sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
+    "schema_version": "narrowgate_p3_touch_calibration.v2",
+    "changed_by_successor": false
+  },
+  "permissions": {
+    "operational_baseline_active": true,
+    "governance_locator_publication_authorized": true,
+    "baseline_promotion_authorized": false,
+    "backtest_default_control_authorized": true,
+    "current_live_authority_granted_by_this_identity": false,
+    "private_release_authority_required": true,
+    "research_prediction_authority": false,
+    "research_live_authority": false,
+    "research_action_experiment_authorized": false,
+    "buy_e3_backtest_economic_authority": false,
+    "buy_e3_nonbaseline_action_occurrence_authority": false,
+    "historical_v12_backtest_control_rewritten": false
+  }
+}

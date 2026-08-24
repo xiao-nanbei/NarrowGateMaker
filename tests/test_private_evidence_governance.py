@@ -383,6 +383,118 @@ def test_authorized_content_requires_allowlist_and_detects_exact_payload_drift(
     assert any(row["kind"] == "private_catalog_sha_mismatch" for row in result["findings"])
 
 
+def test_metadata_candidate_catalog_root_remap_is_explicit_and_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source"
+    candidate_path = tmp_path / "candidate"
+    source_path.mkdir()
+    candidate_path.mkdir()
+    source = _init_repo(source_path)
+    candidate = _init_repo(candidate_path)
+    absolute_source = source / "unit/private/evidence.json"
+    entry = {
+        "artifact_id": "planned-evidence",
+        "local_path": str(absolute_source),
+        "panel_role": "operational",
+        "read_gate": "owner_authorized_locator_resolution_only",
+    }
+    for repo in (source, candidate):
+        (repo / ".gitignore").write_text("unit/private/\nmodels/private/\n", encoding="utf-8")
+        private_root = repo / "unit/private"
+        private_root.mkdir(parents=True)
+        private_root.chmod(0o700)
+        marker = private_root / "README.local.md"
+        marker.write_text("Local only — do not publish.\n", encoding="utf-8")
+        marker.chmod(0o600)
+        evidence = private_root / "evidence.json"
+        evidence.write_text('{"identity":"exact"}\n', encoding="utf-8")
+        evidence.chmod(0o600)
+        _private_catalog(
+            private_root / "catalog.current.local.json",
+            unit_id="unit",
+            entries=[entry],
+        )
+        _projection_manifest(repo / "docs/public_machine_document_projections.json")
+        _projection_manifest(repo / "research/public_machine_document_projections.json")
+        nonpublished = repo / private_audit.NONPUBLISHED_INDEX
+        nonpublished.parent.mkdir(parents=True)
+        nonpublished.write_text(
+            json.dumps({"schema_version": private_audit.NONPUBLISHED_SCHEMA, "entries": []}) + "\n",
+            encoding="utf-8",
+        )
+        nonpublished.chmod(0o600)
+    monkeypatch.setattr(private_audit, "PRIVATE_OWNER_ROOTS", (Path("unit/private"),))
+
+    source_result = private_audit.audit(source)
+    without_remap = private_audit.audit(candidate)
+    with_remap = private_audit.audit(
+        candidate,
+        catalog_path_source_root=source,
+    )
+
+    assert source_result["passed"] is True
+    assert without_remap["passed"] is False
+    assert any(row["kind"] == "private_catalog_path_escape" for row in without_remap["findings"])
+    assert with_remap["passed"] is True
+    assert with_remap["catalog_path_remapping_enabled"] is True
+    assert (
+        with_remap["catalog_path_source_root_sha256"]
+        == hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()
+    )
+    assert with_remap["findings"] == source_result["findings"]
+
+
+def test_catalog_root_remap_rejects_unsafe_modes_and_preserves_external_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_path = tmp_path / "source"
+    candidate_path = tmp_path / "candidate"
+    source_path.mkdir()
+    candidate_path.mkdir()
+    source, _private = _minimal_audit_repo(source_path, entries=[])
+    candidate, candidate_private = _minimal_audit_repo(candidate_path, entries=[])
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}\n", encoding="utf-8")
+    _private_catalog(
+        candidate_private / "catalog.current.local.json",
+        unit_id="unit",
+        entries=[
+            {
+                "artifact_id": "external",
+                "local_path": str(outside),
+                "panel_role": "historical",
+                "read_gate": "owner_only",
+            }
+        ],
+    )
+    monkeypatch.setattr(private_audit, "PRIVATE_OWNER_ROOTS", (Path("unit/private"),))
+
+    result = private_audit.audit(candidate, catalog_path_source_root=source)
+    assert any(row["kind"] == "private_catalog_path_escape" for row in result["findings"])
+    allowlist = _authorization_allowlist(
+        candidate / "authorized.local.json",
+        repo=candidate,
+        catalog_artifact_ids=[],
+        content_roots=["unit/private"],
+    )
+    with pytest.raises(private_audit.PrivateEvidenceAuditError, match="restricted"):
+        private_audit.audit(
+            candidate,
+            mode=private_audit.AUTHORIZED_CONTENT,
+            allowlist_manifest=allowlist,
+            catalog_path_source_root=source,
+        )
+    with pytest.raises(private_audit.PrivateEvidenceAuditError, match="invalid"):
+        private_audit.audit(candidate, catalog_path_source_root=candidate)
+    linked_source = tmp_path / "linked-source"
+    linked_source.symlink_to(source, target_is_directory=True)
+    with pytest.raises(private_audit.PrivateEvidenceAuditError, match="symlink"):
+        private_audit.audit(candidate, catalog_path_source_root=linked_source)
+
+
 @pytest.mark.parametrize(
     ("panel_role", "read_gate", "expected_kind"),
     (

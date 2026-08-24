@@ -338,6 +338,7 @@ def _catalog_locator(
     *,
     content_roots: tuple[Path, ...],
     content_read_requested: bool,
+    catalog_path_source_root: Path | None = None,
 ) -> tuple[Path | None, str | None]:
     if not isinstance(raw, str) or not raw or "..." in raw:
         return None, "private_catalog_path_invalid"
@@ -346,6 +347,13 @@ def _catalog_locator(
         if ".." in path.parts:
             return None, "private_catalog_path_escape"
         path = repo_root / path
+    elif catalog_path_source_root is not None:
+        try:
+            relative = path.relative_to(catalog_path_source_root)
+        except ValueError:
+            pass
+        else:
+            path = repo_root / relative
     if _contains_symlink(path):
         return None, "private_catalog_symlink_escape"
     resolved = path.resolve(strict=False)
@@ -497,6 +505,7 @@ def audit(
     mode: str = METADATA_ONLY,
     deny_locked: bool = True,
     allowlist_manifest: Path | None = None,
+    catalog_path_source_root: Path | None = None,
 ) -> dict[str, object]:
     root = repo_root.expanduser().resolve(strict=True)
     if mode not in AUDIT_MODES:
@@ -513,6 +522,24 @@ def audit(
         raise PrivateEvidenceAuditError("metadata-only mode cannot accept a content allowlist")
     else:
         authorization = None
+    if catalog_path_source_root is not None:
+        if mode != METADATA_ONLY:
+            raise PrivateEvidenceAuditError(
+                "catalog path remapping is restricted to metadata-only candidate audits"
+            )
+        source_candidate = Path(os.path.abspath(os.fspath(catalog_path_source_root.expanduser())))
+        if _contains_symlink(source_candidate):
+            raise PrivateEvidenceAuditError("catalog path source root contains a symlink")
+        source_root = source_candidate.resolve(strict=True)
+        source_metadata = source_root.lstat()
+        if (
+            source_root == root
+            or not stat.S_ISDIR(source_metadata.st_mode)
+            or source_metadata.st_uid != os.getuid()
+        ):
+            raise PrivateEvidenceAuditError("catalog path source root is invalid")
+    else:
+        source_root = None
 
     findings: list[dict[str, object]] = []
     catalog_entries = 0
@@ -679,6 +706,7 @@ def audit(
                 entry.get("local_path"),
                 content_roots=content_roots,
                 content_read_requested=content_requested,
+                catalog_path_source_root=source_root,
             )
             if path_finding is not None:
                 findings.append(
@@ -922,6 +950,12 @@ def audit(
         "schema_version": AUDIT_SCHEMA,
         "mode": mode,
         "deny_locked": True,
+        "catalog_path_remapping_enabled": source_root is not None,
+        "catalog_path_source_root_sha256": (
+            hashlib.sha256(str(source_root).encode("utf-8")).hexdigest()
+            if source_root is not None
+            else None
+        ),
         "authorization_manifest_sha256": (
             authorization["canonical_sha256"] if authorization is not None else None
         ),

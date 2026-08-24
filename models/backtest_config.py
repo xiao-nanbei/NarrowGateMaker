@@ -7,14 +7,18 @@ import hashlib
 import json
 import math
 import os
+import stat
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+import yaml
+
+import live.config as live_config_module
 from data_paths import resolve_portable_path
 from research.governance.public_machine_projection import (
     projection_for,
-    source_identity_sha256,
 )
 
 try:
@@ -81,6 +85,219 @@ CURRENT_OPERATIONAL_BASELINE_POINTER = (
     / "operational_baseline_current.json"
 )
 DEFAULT_LIQ_BASELINE = RegimeConfig().liq_baseline
+OPERATIONAL_BASELINE_POINTER_SCHEMAS = frozenset(
+    {
+        "narrowgate_operational_baseline_pointer.v1",
+        "narrowgate_operational_baseline_pointer.v2",
+    }
+)
+MAX_AUTHORITY_FILE_BYTES = 64 << 20
+PUBLIC_AUTHORITY_MODES = frozenset({0o644})
+PRIVATE_AUTHORITY_MODES = frozenset({0o600})
+
+
+def parse_config_snapshot(
+    source: bytes,
+    *,
+    source_path: Path,
+    source_identity: tuple[int, int, int, int],
+) -> Any:
+    """Parse an already verified live-config snapshot without reopening it."""
+    path = _lexical_absolute(source_path)
+    if not isinstance(source, bytes) or len(source_identity) != 4:
+        raise ValueError("config snapshot identity is malformed")
+    raw = yaml.safe_load(source.decode("utf-8")) or {}
+    config = live_config_module._parse(raw)
+    config._source_file_path = str(path)
+    config._source_file_sha256 = hashlib.sha256(source).hexdigest()
+    config._source_file_identity = source_identity
+    if os.environ.get("BINANCE_API_KEY"):
+        config.api.key = os.environ["BINANCE_API_KEY"]
+    if os.environ.get("BINANCE_API_SECRET"):
+        config.api.secret = os.environ["BINANCE_API_SECRET"]
+    live_config_module._validate_config(config)
+    return config
+
+
+def _strict_json_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise RuntimeError(f"Duplicate JSON key in operational authority: {key}")
+        payload[key] = value
+    return payload
+
+
+def _strict_json_snapshot(raw: bytes, path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(raw.decode("utf-8"), object_pairs_hook=_strict_json_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Operational authority JSON is invalid: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"Operational authority JSON root is invalid: {path}")
+    return payload
+
+
+def _lexical_absolute(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def _open_authority_parent(path: Path) -> tuple[Path, int]:
+    target = _lexical_absolute(path)
+    if not target.is_absolute() or not hasattr(os, "O_NOFOLLOW"):
+        raise RuntimeError("Secure operational authority reads are unsupported")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(target.anchor, flags)
+        for component in target.parent.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+    except OSError as exc:
+        if descriptor is not None:
+            os.close(descriptor)
+        if isinstance(exc, FileNotFoundError):
+            raise FileNotFoundError(target) from exc
+        raise RuntimeError(
+            f"Operational authority path contains an unavailable or symlinked ancestor: {target}"
+        ) from exc
+    if descriptor is None:
+        raise RuntimeError(f"Operational authority parent is unavailable: {target}")
+    return target, descriptor
+
+
+def _authority_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_uid,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _secure_authority_snapshot(
+    path: Path,
+    *,
+    allowed_modes: frozenset[int],
+) -> tuple[bytes, os.stat_result, Path]:
+    target, parent_fd = _open_authority_parent(path)
+    descriptor: int | None = None
+    try:
+        before = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_uid != os.getuid()
+            or stat.S_IMODE(before.st_mode) not in allowed_modes
+            or before.st_nlink != 1
+            or before.st_size < 0
+            or before.st_size > MAX_AUTHORITY_FILE_BYTES
+        ):
+            raise RuntimeError(f"Operational authority file identity is unsafe: {target}")
+        descriptor = os.open(
+            target.name,
+            os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+            dir_fd=parent_fd,
+        )
+        opened = os.fstat(descriptor)
+        if _authority_identity(opened) != _authority_identity(before):
+            raise RuntimeError(f"Operational authority changed while opening: {target}")
+        chunks: list[bytes] = []
+        observed = 0
+        while True:
+            chunk = os.read(descriptor, 1 << 20)
+            if not chunk:
+                break
+            observed += len(chunk)
+            if observed > MAX_AUTHORITY_FILE_BYTES:
+                raise RuntimeError(f"Operational authority is oversized: {target}")
+            chunks.append(chunk)
+        after_fd = os.fstat(descriptor)
+        after_path = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        raw = b"".join(chunks)
+        if (
+            _authority_identity(before) != _authority_identity(after_fd)
+            or _authority_identity(before) != _authority_identity(after_path)
+            or len(raw) != before.st_size
+        ):
+            raise RuntimeError(f"Operational authority changed during read: {target}")
+        _again_target, again_fd = _open_authority_parent(target)
+        try:
+            if _authority_identity(os.fstat(parent_fd)) != _authority_identity(os.fstat(again_fd)):
+                raise RuntimeError(f"Operational authority parent changed during read: {target}")
+        finally:
+            os.close(again_fd)
+        return raw, before, target
+    except FileNotFoundError:
+        raise
+    except OSError as exc:
+        raise RuntimeError(f"Operational authority read failed: {target}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(parent_fd)
+
+
+def _secure_json_authority(
+    path: Path,
+    *,
+    allowed_modes: frozenset[int],
+) -> tuple[dict[str, Any], bytes, os.stat_result, Path]:
+    raw, metadata, target = _secure_authority_snapshot(path, allowed_modes=allowed_modes)
+    return _strict_json_snapshot(raw, target), raw, metadata, target
+
+
+def _verified_projection_identity(
+    path: Path,
+    raw: bytes,
+    *,
+    public_allowed_modes: frozenset[int],
+) -> tuple[Any, str, str]:
+    public_sha256 = hashlib.sha256(raw).hexdigest()
+    projection = projection_for(path, verify_private_if_available=False)
+    after_raw, _after_metadata, _target = _secure_authority_snapshot(
+        path, allowed_modes=public_allowed_modes
+    )
+    if after_raw != raw:
+        raise RuntimeError(f"Operational projection changed during validation: {path}")
+    if projection is None:
+        return None, public_sha256, public_sha256
+    expected_public = (
+        projection.source_private_sha256
+        if projection.materialized_identity == "private_source"
+        else projection.public_projection_sha256
+    )
+    if public_sha256 != expected_public:
+        raise RuntimeError(f"Operational projection public identity drifted: {path}")
+    if projection.private_source_available:
+        private_raw, _private_metadata, _private_target = _secure_authority_snapshot(
+            projection.private_source_path,
+            allowed_modes=frozenset({0o600}),
+        )
+        if hashlib.sha256(private_raw).hexdigest() != projection.source_private_sha256:
+            raise RuntimeError(f"Operational projection private identity drifted: {path}")
+    return projection, public_sha256, projection.source_private_sha256
+
+
+def _resolve_authority_path(raw: Any, *, root: Path = ROOT) -> Path:
+    text = str(raw)
+    private_prefix = "${NARROWGATE_PRIVATE_CONFIG_ROOT}"
+    if text == private_prefix or text.startswith(f"{private_prefix}/"):
+        configured = Path(
+            os.environ.get("NARROWGATE_PRIVATE_CONFIG_ROOT", root / "docs" / "private")
+        ).expanduser()
+        suffix = text[len(private_prefix) :].lstrip("/")
+        path = configured / suffix if suffix else configured
+    else:
+        path = resolve_portable_path(text, root=root)
+    if not path.is_absolute():
+        path = root / path
+    return _lexical_absolute(path)
 
 
 def _sha256_file(path: Path) -> str:
@@ -162,6 +379,53 @@ def _audit_operational_runtime_code(
     }
 
 
+def _expected_v12_flat_projection(identity: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive the compatibility projection from the frozen v12 identity.
+
+    The v2 governance pointer may not invent or silently alter old control-arm
+    semantics.  Every compatibility field is therefore either projected from
+    the recursively hash-verified v12 identity or fixed to the exact v12
+    pointer contract where that identity did not carry a named scalar.
+    """
+
+    config = identity.get("config") or {}
+    policy = identity.get("f05_boolean_cooldown") or {}
+    permissions = identity.get("permissions") or {}
+    model = identity.get("model") or {}
+    if not all(isinstance(value, Mapping) for value in (config, policy, permissions, model)):
+        raise RuntimeError("Frozen v12 identity compatibility fields are malformed")
+    return {
+        "ml_enabled": config.get("ml_enabled"),
+        "buy_fill_selection_shadow_enabled": config.get("buy_fill_selection_shadow_enabled"),
+        "buy_fill_selection_live_enabled": config.get("buy_fill_selection_live_enabled"),
+        "dynamic_fill_hazard_shadow_enabled": config.get("dynamic_fill_hazard_shadow_enabled"),
+        "dynamic_fill_hazard_action_enabled": config.get("dynamic_fill_hazard_action_enabled"),
+        "cross_venue_fair_price_shadow_enabled": config.get(
+            "cross_venue_fair_price_shadow_enabled"
+        ),
+        "inventory_campaign_shadow_enabled": config.get("inventory_campaign_shadow_enabled"),
+        "depth_execution_shadow_enabled": config.get("depth_execution_shadow_enabled"),
+        "depth_imbalance_asymmetry_enabled": config.get("depth_imbalance_asymmetry_enabled"),
+        "boolean_cooldown_policy_enabled": config.get("boolean_cooldown_policy_enabled"),
+        "boolean_cooldown_policy_identity": policy.get("identity"),
+        "boolean_cooldown_policy_sha256": policy.get("policy_sha256"),
+        "boolean_cooldown_predicate_bundle_sha256": policy.get("predicate_bundle_sha256"),
+        "boolean_cooldown_evidence_route": config.get("boolean_cooldown_evidence_route"),
+        "boolean_cooldown_research_hard_gates_passed": identity.get("research_gate_passed"),
+        "boolean_cooldown_owner_risk_accepted": policy.get("owner_override_required"),
+        "boolean_cooldown_owner_live_authorized": permissions.get(
+            "owner_risk_accepted_live_authorized"
+        ),
+        "q90_action_status": "suspended_terminal_active_riskset_integrity",
+        "quote_snapshot_atomicity_contract": "v2",
+        "max_exec_book_visible_age_s": config.get("max_exec_book_visible_age_s"),
+        "max_exec_book_source_lag_s": config.get("max_exec_book_source_lag_s"),
+        "baseline_integrity_gate_passed": identity.get("baseline_integrity_gate_passed"),
+        "model_directory": model.get("directory"),
+        "bundle_meta_sha256": model.get("bundle_meta_sha256"),
+    }
+
+
 def load_operational_baseline_binding(
     *,
     root: Path = ROOT,
@@ -175,7 +439,7 @@ def load_operational_baseline_binding(
     silently use a stale rolling control.
     """
     pointer = (
-        pointer_path.expanduser().resolve()
+        _lexical_absolute(pointer_path)
         if pointer_path is not None
         else (
             CURRENT_OPERATIONAL_BASELINE_POINTER
@@ -186,26 +450,47 @@ def load_operational_baseline_binding(
             / "f10_live_replay_attribution"
             / "docs"
             / "operational_baseline_current.json"
-        ).resolve()
+        )
     )
-    if not pointer.is_file():
+    try:
+        payload, pointer_raw, _pointer_metadata, pointer = _secure_json_authority(
+            pointer, allowed_modes=PUBLIC_AUTHORITY_MODES
+        )
+    except FileNotFoundError:
         return None
 
-    pointer_public_sha256 = _sha256_file(pointer)
-    pointer_projection = projection_for(pointer)
-    pointer_source_sha256 = source_identity_sha256(pointer)
-    payload = json.loads(pointer.read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "narrowgate_operational_baseline_pointer.v1":
+    (
+        pointer_projection,
+        pointer_public_sha256,
+        pointer_source_sha256,
+    ) = _verified_projection_identity(
+        pointer, pointer_raw, public_allowed_modes=PUBLIC_AUTHORITY_MODES
+    )
+    pointer_schema = str(payload.get("schema_version", ""))
+    if pointer_schema not in OPERATIONAL_BASELINE_POINTER_SCHEMAS:
         raise RuntimeError(f"Unsupported operational baseline pointer: {pointer}")
     if not bool(payload.get("backtest_default_control_authorized", False)):
         raise RuntimeError(f"Backtest control is not authorized by {pointer}")
 
-    identity_path = _resolve_repo_path(payload.get("identity_path", ""), root=root)
-    if not identity_path.is_file():
-        raise RuntimeError(f"Operational baseline identity is missing: {identity_path}")
-    identity_public_sha256 = _sha256_file(identity_path)
-    identity_projection = projection_for(identity_path)
-    identity_source_sha256 = source_identity_sha256(identity_path)
+    identity_path = _resolve_authority_path(payload.get("identity_path", ""), root=root)
+    try:
+        (
+            governance_identity,
+            identity_raw,
+            _identity_metadata,
+            identity_path,
+        ) = _secure_json_authority(identity_path, allowed_modes=PUBLIC_AUTHORITY_MODES)
+    except FileNotFoundError:
+        raise RuntimeError(f"Operational baseline identity is missing: {identity_path}") from None
+    (
+        identity_projection,
+        identity_public_sha256,
+        identity_source_sha256,
+    ) = _verified_projection_identity(
+        identity_path,
+        identity_raw,
+        public_allowed_modes=PUBLIC_AUTHORITY_MODES,
+    )
     expected_identity_sha256 = str(payload.get("identity_sha256", ""))
     # The mutable current pointer binds the bytes a public consumer reads. A
     # registered projection separately verifies the frozen private source
@@ -221,74 +506,511 @@ def load_operational_baseline_binding(
             f"{identity_path} expected={payload.get('identity_sha256')} "
             f"public={identity_public_sha256} source={identity_source_sha256}"
         )
-    identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    if identity.get("baseline_id") != payload.get("baseline_id"):
+    if governance_identity.get("baseline_id") != payload.get("baseline_id"):
         raise RuntimeError("Operational baseline pointer and identity IDs disagree")
+    governance_permissions = governance_identity.get("permissions") or {}
+    if not bool(governance_permissions.get("operational_baseline_active", False)):
+        raise RuntimeError("Operational baseline identity is not active")
+    if pointer_schema == "narrowgate_operational_baseline_pointer.v2":
+        if (
+            governance_permissions.get("governance_locator_publication_authorized") is not True
+            or governance_permissions.get("baseline_promotion_authorized") is not False
+            or governance_permissions.get("current_live_authority_granted_by_this_identity")
+            is not False
+        ):
+            raise RuntimeError("Operational locator governance permissions drifted")
+    elif not bool(governance_permissions.get("baseline_promotion_authorized", False)):
+        raise RuntimeError("Operational baseline identity lacks promotion authority")
+    if not bool(governance_permissions.get("backtest_default_control_authorized", False)):
+        raise RuntimeError("Operational baseline identity lacks backtest authority")
+    normalized_pointer = dict(payload)
+    backtest_identity_path = identity_path
+    backtest_identity_projection = identity_projection
+    backtest_identity_source_sha256 = identity_source_sha256
+    backtest_identity_pointer_sha256 = identity_pointer_sha256
+    identity = governance_identity
+    if pointer_schema == "narrowgate_operational_baseline_pointer.v2":
+        current_live = payload.get("current_live_binding") or {}
+        backtest_default = payload.get("backtest_default_binding") or {}
+        backtest_flat = payload.get("backtest_default_flat_projection") or {}
+        identity_current_live = governance_identity.get("current_live") or {}
+        identity_backtest = governance_identity.get("backtest_default") or {}
+        identity_predecessor = governance_identity.get("predecessor") or {}
+        identity_top_config = governance_identity.get("config") or {}
+        identity_projection_retirement = governance_identity.get("projection_retirement") or {}
+        if (
+            set(current_live)
+            != {
+                "authority",
+                "remote_pointer",
+                "config_locator",
+                "config_sha256",
+                "runtime_commit",
+                "runtime_tree",
+                "runtime_annotated_tag_object",
+                "release_file_sha256",
+                "release_canonical_sha256",
+                "activation_receipt_file_sha256",
+                "activation_receipt_canonical_sha256",
+                "no_shadow",
+                "latest_live_status_authority",
+                "nonbaseline_action_occurrence_proven",
+                "economic_effect_proven",
+                "economic_outcomes_read",
+                "economic_values_persisted",
+                "backtest_economic_authority",
+            }
+            or set(backtest_default)
+            != {
+                "baseline_id",
+                "identity_path",
+                "identity_sha256",
+                "config_path",
+                "config_sha256",
+                "current_live_alias_allowed",
+                "exact_buy_e3_replay_baseline_available",
+                "current_live_e3_evidence_is_backtest_economic_authority",
+                "control_arm",
+                "predecessor_control_arm",
+                "replay_baseline_path",
+                "replay_baseline_sha256",
+                "replay_ber_clock_semantics",
+            }
+            or set(identity_current_live)
+            != {
+                "authority_resolution",
+                "remote_pointer",
+                "config",
+                "runtime",
+                "release",
+                "activation_receipt",
+                "buy_e3_enabled",
+                "sell_owner_policy_enabled",
+                "external_venues_enabled",
+                "global_flow_shadow_enabled",
+                "global_reference_shadow_enabled",
+                "runtime_shadow_classification",
+                "lifecycle_admission_direct_pid_binding",
+                "post_lifecycle_capture_is_latest_live_status",
+                "economic_outcomes_read",
+                "economic_values_persisted",
+                "nonbaseline_action_occurrence_proven",
+                "economic_effect_proven",
+                "private_release_and_evidence_chain_remain_authority",
+            }
+            or set(identity_backtest)
+            != {
+                "status",
+                "identity",
+                "identity_sha256",
+                "config_locator",
+                "config_sha256",
+                "control_arm",
+                "predecessor_control_arm",
+                "replay_baseline_path",
+                "replay_baseline_sha256",
+                "replay_ber_clock_semantics",
+                "exact_buy_e3_replay_baseline_available",
+                "current_live_config_may_replace_backtest_default",
+                "current_live_evidence_is_backtest_economic_authority",
+                "historical_v12_economic_evidence_reinterpreted",
+            }
+            or set(governance_permissions)
+            != {
+                "operational_baseline_active",
+                "governance_locator_publication_authorized",
+                "baseline_promotion_authorized",
+                "backtest_default_control_authorized",
+                "current_live_authority_granted_by_this_identity",
+                "private_release_authority_required",
+                "research_prediction_authority",
+                "research_live_authority",
+                "research_action_experiment_authorized",
+                "buy_e3_backtest_economic_authority",
+                "buy_e3_nonbaseline_action_occurrence_authority",
+                "historical_v12_backtest_control_rewritten",
+            }
+        ):
+            raise RuntimeError("Operational v13 authority field sets drifted")
+        if (
+            set(payload)
+            != {
+                "schema_version",
+                "updated_at_utc",
+                "baseline_id",
+                "identity_path",
+                "identity_sha256",
+                "current_live_binding",
+                "backtest_default_binding",
+                "backtest_default_flat_projection",
+                "backtest_default_control_authorized",
+                "backtest_default_control_scope",
+                "historical_v12_identity_modified",
+                "no_cross_layer_substitution",
+            }
+            or set(governance_identity)
+            != {
+                "schema_version",
+                "baseline_id",
+                "effective_at_utc",
+                "operational_status",
+                "promotion_class",
+                "predecessor",
+                "projection_retirement",
+                "current_live",
+                "backtest_default",
+                "config",
+                "model",
+                "p3",
+                "permissions",
+            }
+            or governance_identity.get("schema_version")
+            != "narrowgate_operational_baseline_identity.v13"
+            or governance_identity.get("operational_status")
+            != "active_split_live_and_backtest_authority_locator"
+            or governance_identity.get("promotion_class")
+            != "governance_locator_reconciliation_no_new_strategy_or_economic_authority"
+            or payload.get("backtest_default_control_scope")
+            != "immutable_v12_control_until_exact_buy_e3_replay_baseline_exists"
+            or payload.get("historical_v12_identity_modified") is not False
+            or governance_identity.get("effective_at_utc") != payload.get("updated_at_utc")
+            or identity_projection_retirement
+            != {
+                "predecessor_mutable_pointer_public_sha256": (
+                    "fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc"
+                ),
+                "predecessor_mutable_pointer_private_source_sha256": (
+                    "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f"
+                ),
+                "predecessor_private_source_availability": "private_not_distributed",
+                "predecessor_private_source_rewritten": False,
+                "successor_pointer_materialization": (
+                    "ordinary_safe_public_json_no_private_source_identity_claim"
+                ),
+            }
+            or governance_permissions
+            != {
+                "operational_baseline_active": True,
+                "governance_locator_publication_authorized": True,
+                "baseline_promotion_authorized": False,
+                "backtest_default_control_authorized": True,
+                "current_live_authority_granted_by_this_identity": False,
+                "private_release_authority_required": True,
+                "research_prediction_authority": False,
+                "research_live_authority": False,
+                "research_action_experiment_authorized": False,
+                "buy_e3_backtest_economic_authority": False,
+                "buy_e3_nonbaseline_action_occurrence_authority": False,
+                "historical_v12_backtest_control_rewritten": False,
+            }
+        ):
+            raise RuntimeError("Operational v13 governance envelope drifted")
+        identity_live_config = identity_current_live.get("config") or {}
+        identity_live_runtime = identity_current_live.get("runtime") or {}
+        identity_live_release = identity_current_live.get("release") or {}
+        identity_live_activation = identity_current_live.get("activation_receipt") or {}
+        expected_current_live_keys = {
+            "authority",
+            "remote_pointer",
+            "config_locator",
+            "config_sha256",
+            "runtime_commit",
+            "runtime_tree",
+            "runtime_annotated_tag_object",
+            "release_file_sha256",
+            "release_canonical_sha256",
+            "activation_receipt_file_sha256",
+            "activation_receipt_canonical_sha256",
+            "no_shadow",
+            "latest_live_status_authority",
+            "nonbaseline_action_occurrence_proven",
+            "economic_effect_proven",
+            "economic_outcomes_read",
+            "economic_values_persisted",
+            "backtest_economic_authority",
+        }
+        expected_current_live = {
+            "authority": "private_current_remote_pointer_and_stable_live_config_alias",
+            "remote_pointer": identity_current_live.get("remote_pointer"),
+            "config_locator": identity_live_config.get("locator"),
+            "config_sha256": identity_live_config.get("sha256"),
+            "runtime_commit": identity_live_runtime.get("commit"),
+            "runtime_tree": identity_live_runtime.get("tree"),
+            "runtime_annotated_tag_object": identity_live_runtime.get("annotated_tag_object"),
+            "release_file_sha256": identity_live_release.get("file_sha256"),
+            "release_canonical_sha256": identity_live_release.get("canonical_sha256"),
+            "activation_receipt_file_sha256": identity_live_activation.get("file_sha256"),
+            "activation_receipt_canonical_sha256": identity_live_activation.get("canonical_sha256"),
+            "no_shadow": True,
+            "latest_live_status_authority": False,
+            "nonbaseline_action_occurrence_proven": False,
+            "economic_effect_proven": False,
+            "economic_outcomes_read": False,
+            "economic_values_persisted": False,
+            "backtest_economic_authority": False,
+        }
+        if (
+            payload.get("no_cross_layer_substitution") is not True
+            or not isinstance(current_live, Mapping)
+            or set(current_live) != expected_current_live_keys
+            or dict(current_live) != expected_current_live
+            or set(identity_live_config) != {"identity", "locator", "sha256", "availability"}
+            or identity_live_config.get("identity")
+            != "owner_buy_e3_no_shadow_release_v3_active_config"
+            or identity_live_config.get("availability") != "private_not_distributed"
+            or set(identity_live_runtime)
+            != {"identity", "commit", "tree", "annotated_tag_object", "availability"}
+            or identity_live_runtime.get("identity") != "f05_owner_buy_e3_no_shadow_runtime_v3"
+            or identity_live_runtime.get("availability") != "private_release_bundle_not_distributed"
+            or set(identity_live_release)
+            != {"identity", "status", "file_sha256", "canonical_sha256", "availability"}
+            or identity_live_release.get("identity") != "f05_owner_buy_e3_direct_active_release_v3"
+            or identity_live_release.get("status") != "owner_active_release_v3_no_shadow"
+            or identity_live_release.get("availability") != "private_not_distributed"
+            or set(identity_live_activation)
+            != {
+                "identity",
+                "file_sha256",
+                "canonical_sha256",
+                "availability",
+                "rewritten_by_v13",
+            }
+            or identity_live_activation.get("identity")
+            != ("repository-live-replacement-activation-aws-tokyo-buy-e3-no-shadow-v6-20260824-v1")
+            or identity_live_activation.get("availability") != "private_not_distributed"
+            or identity_live_activation.get("rewritten_by_v13") is not False
+            or identity_current_live.get("authority_resolution")
+            != "private_current_remote_pointer_then_stable_live_config_alias"
+            or identity_current_live.get("buy_e3_enabled") is not True
+            or identity_current_live.get("sell_owner_policy_enabled") is not True
+            or identity_current_live.get("external_venues_enabled") is not False
+            or identity_current_live.get("global_flow_shadow_enabled") is not False
+            or identity_current_live.get("global_reference_shadow_enabled") is not False
+            or identity_current_live.get("runtime_shadow_classification")
+            != "fully_no_shadow_release_v3"
+            or identity_current_live.get("lifecycle_admission_direct_pid_binding") is not False
+            or identity_current_live.get("post_lifecycle_capture_is_latest_live_status")
+            is not False
+            or identity_current_live.get("economic_outcomes_read") is not False
+            or identity_current_live.get("economic_values_persisted") is not False
+            or identity_current_live.get("nonbaseline_action_occurrence_proven") is not False
+            or identity_current_live.get("economic_effect_proven") is not False
+            or identity_current_live.get("private_release_and_evidence_chain_remain_authority")
+            is not True
+            or identity_predecessor
+            != {
+                "baseline_id": backtest_default.get("baseline_id"),
+                "identity": backtest_default.get("identity_path"),
+                "identity_sha256": backtest_default.get("identity_sha256"),
+                "historical_identity_modified": False,
+                "status": "immutable_backtest_default_control",
+            }
+            or identity_top_config
+            != {
+                "scope": "backtest_default_immutable_v12_control",
+                "canonical_private_source": backtest_default.get("config_path"),
+                "sha256": backtest_default.get("config_sha256"),
+            }
+            or identity_backtest.get("status")
+            != "immutable_v12_control_retained_until_exact_e3_replay_baseline_exists"
+            or identity_backtest.get("identity") != backtest_default.get("identity_path")
+            or identity_backtest.get("identity_sha256") != backtest_default.get("identity_sha256")
+            or backtest_default.get("config_sha256") != identity_backtest.get("config_sha256")
+            or backtest_default.get("config_path") != identity_backtest.get("config_locator")
+            or backtest_default.get("exact_buy_e3_replay_baseline_available") is not False
+            or backtest_default.get("current_live_alias_allowed") is not False
+            or backtest_default.get("current_live_e3_evidence_is_backtest_economic_authority")
+            is not False
+            or identity_backtest.get("control_arm") != backtest_default.get("control_arm")
+            or identity_backtest.get("predecessor_control_arm")
+            != backtest_default.get("predecessor_control_arm")
+            or identity_backtest.get("replay_baseline_path")
+            != backtest_default.get("replay_baseline_path")
+            or identity_backtest.get("replay_baseline_sha256")
+            != backtest_default.get("replay_baseline_sha256")
+            or identity_backtest.get("replay_ber_clock_semantics")
+            != backtest_default.get("replay_ber_clock_semantics")
+            or identity_backtest.get("exact_buy_e3_replay_baseline_available") is not False
+            or identity_backtest.get("current_live_config_may_replace_backtest_default")
+            is not False
+            or identity_backtest.get("current_live_evidence_is_backtest_economic_authority")
+            is not False
+            or identity_backtest.get("historical_v12_economic_evidence_reinterpreted") is not False
+            or not isinstance(backtest_flat, Mapping)
+        ):
+            raise RuntimeError("Operational baseline authority layers drifted")
+
+        backtest_identity_path = _resolve_authority_path(
+            backtest_default.get("identity_path", ""), root=root
+        )
+        try:
+            (
+                identity,
+                backtest_identity_raw,
+                _backtest_identity_metadata,
+                backtest_identity_path,
+            ) = _secure_json_authority(backtest_identity_path, allowed_modes=PUBLIC_AUTHORITY_MODES)
+        except FileNotFoundError:
+            raise RuntimeError(
+                f"Frozen backtest identity is missing: {backtest_identity_path}"
+            ) from None
+        (
+            backtest_identity_projection,
+            _backtest_identity_public_sha256,
+            backtest_identity_source_sha256,
+        ) = _verified_projection_identity(
+            backtest_identity_path,
+            backtest_identity_raw,
+            public_allowed_modes=PUBLIC_AUTHORITY_MODES,
+        )
+        backtest_identity_pointer_sha256 = (
+            backtest_identity_projection.public_projection_sha256
+            if backtest_identity_projection is not None
+            else backtest_identity_source_sha256
+        )
+        if (
+            backtest_identity_pointer_sha256 != backtest_default.get("identity_sha256")
+            or identity_backtest.get("identity") != backtest_default.get("identity_path")
+            or identity_backtest.get("identity_sha256") != backtest_default.get("identity_sha256")
+        ):
+            raise RuntimeError("Frozen v12 backtest identity binding drifted")
+        if identity.get("baseline_id") != backtest_default.get("baseline_id"):
+            raise RuntimeError("Frozen v12 backtest baseline id drifted")
+        expected_governance_p3 = {
+            "path": (identity.get("p3") or {}).get("path"),
+            "sha256": (identity.get("p3") or {}).get("sha256"),
+            "schema_version": (identity.get("p3") or {}).get("schema_version"),
+            "changed_by_successor": False,
+        }
+        if (
+            governance_identity.get("model") != identity.get("model")
+            or governance_identity.get("p3") != expected_governance_p3
+        ):
+            raise RuntimeError("Frozen v12 model/P3 governance projection drifted")
+        expected_backtest_flat = _expected_v12_flat_projection(identity)
+        if dict(backtest_flat) != expected_backtest_flat:
+            raise RuntimeError("Frozen v12 backtest compatibility projection drifted")
+        normalized_pointer.update(deepcopy(dict(backtest_flat)))
+        normalized_pointer.update(
+            {
+                "baseline_id": backtest_default["baseline_id"],
+                "identity_path": backtest_default["identity_path"],
+                "identity_sha256": backtest_default["identity_sha256"],
+                "live_config_path": backtest_default["config_path"],
+                "live_config_candidates": [backtest_default["config_path"]],
+                "live_config_sha256": backtest_default["config_sha256"],
+                "backtest_control_arm": backtest_default["control_arm"],
+                "backtest_predecessor_control_arm": backtest_default["predecessor_control_arm"],
+                "backtest_replay_baseline_path": backtest_default["replay_baseline_path"],
+                "backtest_replay_baseline_sha256": backtest_default["replay_baseline_sha256"],
+                "backtest_replay_ber_clock_semantics": backtest_default[
+                    "replay_ber_clock_semantics"
+                ],
+                "model_directory": backtest_flat["model_directory"],
+                "bundle_meta_sha256": backtest_flat["bundle_meta_sha256"],
+            }
+        )
+
     permissions = identity.get("permissions") or {}
     if not bool(permissions.get("operational_baseline_active", False)):
-        raise RuntimeError("Operational baseline identity is not active")
+        raise RuntimeError("Backtest baseline identity is not active")
     if not bool(permissions.get("baseline_promotion_authorized", False)):
-        raise RuntimeError("Operational baseline identity lacks promotion authority")
+        raise RuntimeError("Backtest baseline identity lacks promotion authority")
     if not bool(permissions.get("backtest_default_control_authorized", False)):
-        raise RuntimeError("Operational baseline identity lacks backtest authority")
+        raise RuntimeError("Backtest baseline identity lacks backtest authority")
     runtime_code_audit = _audit_operational_runtime_code(identity, root=root)
 
     replay_baseline: dict[str, Any] | None = None
     replay_baseline_path: Path | None = None
     raw_replay_baseline_path = str(
-        payload.get("backtest_replay_baseline_path", "")
+        normalized_pointer.get("backtest_replay_baseline_path", "")
     ).strip()
     if raw_replay_baseline_path:
-        replay_baseline_path = _resolve_repo_path(raw_replay_baseline_path, root=root)
-        if not replay_baseline_path.is_file():
+        replay_baseline_path = _resolve_authority_path(raw_replay_baseline_path, root=root)
+        try:
+            (
+                replay_baseline,
+                replay_baseline_raw,
+                _replay_metadata,
+                replay_baseline_path,
+            ) = _secure_json_authority(replay_baseline_path, allowed_modes=PUBLIC_AUTHORITY_MODES)
+        except FileNotFoundError:
             raise RuntimeError(
                 f"Operational replay baseline is missing: {replay_baseline_path}"
-            )
-        expected_replay_sha256 = str(
-            payload.get("backtest_replay_baseline_sha256", "")
-        )
-        actual_replay_sha256 = _sha256_file(replay_baseline_path)
+            ) from None
+        expected_replay_sha256 = str(normalized_pointer.get("backtest_replay_baseline_sha256", ""))
+        actual_replay_sha256 = hashlib.sha256(replay_baseline_raw).hexdigest()
         if actual_replay_sha256 != expected_replay_sha256:
             raise RuntimeError(
                 "Operational replay baseline SHA256 mismatch: "
                 f"{replay_baseline_path} expected={expected_replay_sha256} "
                 f"actual={actual_replay_sha256}"
             )
-        replay_baseline = json.loads(replay_baseline_path.read_text(encoding="utf-8"))
         replay_permissions = replay_baseline.get("permissions") or {}
         replay_semantics = replay_baseline.get("replay_semantics") or {}
         if not bool(replay_permissions.get("backtest_default_control_authorized", False)):
             raise RuntimeError("Operational replay baseline lacks backtest authority")
-        expected_clock = str(payload.get("backtest_replay_ber_clock_semantics", ""))
+        expected_clock = str(normalized_pointer.get("backtest_replay_ber_clock_semantics", ""))
         if str(replay_semantics.get("ber_clock_identity", "")) != expected_clock:
             raise RuntimeError("Operational replay baseline BER clock identity drifted")
 
-    preferred_config_path = _resolve_repo_path(
-        payload.get("live_config_path", ""), root=root
+    preferred_config_path = _resolve_authority_path(
+        normalized_pointer.get("live_config_path", ""), root=root
     )
-    candidate_values = list(payload.get("live_config_candidates") or [])
+    candidate_values = list(normalized_pointer.get("live_config_candidates") or [])
     if not candidate_values:
-        candidate_values = [payload.get("live_config_path", "")]
+        candidate_values = [normalized_pointer.get("live_config_path", "")]
     config_path = preferred_config_path
     config_exists = False
-    expected_config_sha256 = str(payload.get("live_config_sha256", ""))
+    config_snapshot_raw: bytes | None = None
+    config_snapshot_identity: tuple[int, int, int, int] | None = None
+    expected_config_sha256 = str(normalized_pointer.get("live_config_sha256", ""))
+    config_allowed_modes = (
+        PRIVATE_AUTHORITY_MODES
+        if pointer_schema == "narrowgate_operational_baseline_pointer.v2"
+        else frozenset({0o600, 0o644})
+    )
     for raw_candidate in candidate_values:
-        candidate = _resolve_repo_path(raw_candidate, root=root)
-        if not candidate.is_file():
+        candidate = _resolve_authority_path(raw_candidate, root=root)
+        try:
+            candidate_raw, candidate_metadata, candidate = _secure_authority_snapshot(
+                candidate, allowed_modes=config_allowed_modes
+            )
+        except FileNotFoundError:
             continue
-        candidate_sha256 = _sha256_file(candidate)
+        candidate_sha256 = hashlib.sha256(candidate_raw).hexdigest()
         if candidate_sha256 == expected_config_sha256:
             config_path = candidate
             config_exists = True
+            config_snapshot_raw = candidate_raw
+            config_snapshot_identity = (
+                candidate_metadata.st_dev,
+                candidate_metadata.st_ino,
+                candidate_metadata.st_size,
+                candidate_metadata.st_mtime_ns,
+            )
             break
         if candidate == preferred_config_path:
             raise RuntimeError(
                 "Operational baseline config SHA256 mismatch: "
                 f"{candidate} expected={expected_config_sha256} actual={candidate_sha256}"
             )
+    if (
+        pointer_schema == "narrowgate_operational_baseline_pointer.v2"
+        and not config_exists
+        and (
+            (root / "docs" / "private").is_dir()
+            or bool(os.environ.get("NARROWGATE_PRIVATE_CONFIG_ROOT", "").strip())
+        )
+    ):
+        raise RuntimeError(
+            "Immutable v12 backtest config is missing from an owner/private checkout"
+        )
     model_path: Path | None = None
     if config_exists:
-        config_sha256 = _sha256_file(config_path)
+        if config_snapshot_raw is None or config_snapshot_identity is None:
+            raise RuntimeError("Operational baseline config snapshot is missing")
+        config_sha256 = hashlib.sha256(config_snapshot_raw).hexdigest()
         identity_config_sha256 = str((identity.get("config") or {}).get("sha256", ""))
         if config_sha256 != expected_config_sha256:
             raise RuntimeError(
@@ -298,53 +1020,102 @@ def load_operational_baseline_binding(
         if config_sha256 != identity_config_sha256:
             raise RuntimeError("Operational baseline identity and config hashes disagree")
 
-        model_path = _resolve_repo_path(payload.get("model_directory", ""), root=root)
+        model_path = _resolve_authority_path(
+            normalized_pointer.get("model_directory", ""), root=root
+        )
         if not model_path.is_dir():
             raise RuntimeError(f"Operational baseline model directory is missing: {model_path}")
         identity_model = identity.get("model") or {}
         if str(identity_model.get("directory", "")) != str(
-            payload.get("model_directory", "")
+            normalized_pointer.get("model_directory", "")
         ):
             raise RuntimeError("Operational baseline pointer and identity model paths disagree")
         bundle_meta = model_path / "bundle_meta.json"
-        expected_bundle_sha256 = str(payload.get("bundle_meta_sha256", ""))
-        if not bundle_meta.is_file() or _sha256_file(bundle_meta) != expected_bundle_sha256:
+        expected_bundle_sha256 = str(normalized_pointer.get("bundle_meta_sha256", ""))
+        try:
+            bundle_raw, _bundle_metadata, _bundle_path = _secure_authority_snapshot(
+                bundle_meta, allowed_modes=PUBLIC_AUTHORITY_MODES
+            )
+        except FileNotFoundError:
+            bundle_raw = b""
+        if hashlib.sha256(bundle_raw).hexdigest() != expected_bundle_sha256:
             raise RuntimeError("Operational baseline bundle_meta SHA256 mismatch")
         if expected_bundle_sha256 != str(identity_model.get("bundle_meta_sha256", "")):
             raise RuntimeError("Operational baseline identity and bundle hashes disagree")
         training_summary = model_path / "training_summary.json"
-        if not training_summary.is_file() or source_identity_sha256(training_summary) != str(
-            identity_model.get("training_summary_sha256", "")
-        ):
+        try:
+            training_raw, _training_metadata, training_summary = _secure_authority_snapshot(
+                training_summary, allowed_modes=PUBLIC_AUTHORITY_MODES
+            )
+            _training_projection, _training_public, training_source = _verified_projection_identity(
+                training_summary,
+                training_raw,
+                public_allowed_modes=PUBLIC_AUTHORITY_MODES,
+            )
+        except FileNotFoundError:
+            training_source = ""
+        if training_source != str(identity_model.get("training_summary_sha256", "")):
             raise RuntimeError("Operational baseline training_summary SHA256 mismatch")
         p3 = identity.get("p3") or {}
-        p3_path = _resolve_repo_path(p3.get("path", ""), root=root)
-        if not p3_path.is_file() or source_identity_sha256(p3_path) != str(
-            p3.get("sha256", "")
-        ):
+        p3_path = _resolve_authority_path(p3.get("path", ""), root=root)
+        try:
+            p3_raw, _p3_metadata, p3_path = _secure_authority_snapshot(
+                p3_path, allowed_modes=PUBLIC_AUTHORITY_MODES
+            )
+            _p3_projection, _p3_public, p3_source = _verified_projection_identity(
+                p3_path, p3_raw, public_allowed_modes=PUBLIC_AUTHORITY_MODES
+            )
+        except FileNotFoundError:
+            p3_source = ""
+        if p3_source != str(p3.get("sha256", "")):
             raise RuntimeError("Operational baseline P3 SHA256 mismatch")
 
+    current_live_binding = (
+        deepcopy(dict(payload.get("current_live_binding") or {}))
+        if pointer_schema == "narrowgate_operational_baseline_pointer.v2"
+        else None
+    )
     return {
-        "pointer": payload,
+        # Compatibility consumers receive the recursively verified backtest
+        # projection. The ordinary public v2 governance pointer remains
+        # separately available and must never relabel a v12 replay as E3/v13.
+        "pointer": normalized_pointer,
+        "governance_pointer": payload,
         "pointer_path": pointer,
         "pointer_sha256": pointer_public_sha256,
         "pointer_source_sha256": pointer_source_sha256,
         "pointer_public_projection_sha256": (
-            pointer_projection.public_projection_sha256
-            if pointer_projection is not None
-            else None
+            pointer_projection.public_projection_sha256 if pointer_projection is not None else None
         ),
         "identity": identity,
-        "identity_path": identity_path,
-        "identity_sha256": identity_pointer_sha256,
-        "identity_source_sha256": identity_source_sha256,
+        "identity_path": backtest_identity_path,
+        "identity_sha256": backtest_identity_pointer_sha256,
+        "identity_source_sha256": backtest_identity_source_sha256,
         "identity_public_projection_sha256": (
+            backtest_identity_projection.public_projection_sha256
+            if backtest_identity_projection is not None
+            else None
+        ),
+        "current_live_identity": governance_identity,
+        "current_live_identity_path": identity_path,
+        "current_live_identity_sha256": identity_pointer_sha256,
+        "current_live_identity_source_sha256": identity_source_sha256,
+        "current_live_identity_public_projection_sha256": (
             identity_projection.public_projection_sha256
             if identity_projection is not None
             else None
         ),
         "config_path": config_path,
         "config_exists": config_exists,
+        "verified_config_raw": config_snapshot_raw,
+        "verified_config_identity": config_snapshot_identity,
+        "verified_config_allowed_modes": config_allowed_modes,
+        "config_scope": (
+            "immutable_v12_backtest_default"
+            if pointer_schema == "narrowgate_operational_baseline_pointer.v2"
+            else "legacy_current_operational_baseline"
+        ),
+        "current_live_config": current_live_binding,
         "model_path": model_path,
         "runtime_code_audit": runtime_code_audit,
         "replay_baseline": replay_baseline,
@@ -367,11 +1138,7 @@ def resolve_backtest_config_path(
     binding = load_operational_baseline_binding(root=root, pointer_path=pointer_path)
     if binding is not None and bool(binding["config_exists"]):
         return Path(binding["config_path"])
-    return (
-        PUBLIC_TEMPLATE_CONFIG
-        if root == ROOT
-        else root / "live" / "config.yaml"
-    ).resolve()
+    return (PUBLIC_TEMPLATE_CONFIG if root == ROOT else root / "live" / "config.yaml").resolve()
 
 
 def operational_baseline_config_candidates(
@@ -381,7 +1148,7 @@ def operational_baseline_config_candidates(
 ) -> set[Path]:
     """Return declared current-config paths without validating their bytes."""
     pointer = (
-        pointer_path.expanduser().resolve()
+        _lexical_absolute(pointer_path)
         if pointer_path is not None
         else (
             CURRENT_OPERATIONAL_BASELINE_POINTER
@@ -392,26 +1159,67 @@ def operational_baseline_config_candidates(
             / "f10_live_replay_attribution"
             / "docs"
             / "operational_baseline_current.json"
-        ).resolve()
+        )
     )
-    if not pointer.is_file():
-        return set()
     try:
-        payload = json.loads(pointer.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        payload, _raw, _metadata, _pointer = _secure_json_authority(
+            pointer, allowed_modes=PUBLIC_AUTHORITY_MODES
+        )
+    except (OSError, RuntimeError):
         return set()
-    raw_candidates = list(payload.get("live_config_candidates") or [])
-    if not raw_candidates:
-        raw_candidates = [payload.get("live_config_path", "")]
+    schema = str(payload.get("schema_version", ""))
+    if schema == "narrowgate_operational_baseline_pointer.v2":
+        backtest = payload.get("backtest_default_binding") or {}
+        raw_candidates = [backtest.get("config_path", "")]
+    else:
+        raw_candidates = list(payload.get("live_config_candidates") or [])
+        if not raw_candidates:
+            raw_candidates = [payload.get("live_config_path", "")]
     return {
-        _resolve_repo_path(raw, root=root)
-        for raw in raw_candidates
-        if str(raw or "").strip()
+        _resolve_authority_path(raw, root=root) for raw in raw_candidates if str(raw or "").strip()
     }
+
+
+def _verified_binding_config_params(binding: Mapping[str, Any]) -> dict[str, Any]:
+    raw = binding.get("verified_config_raw")
+    identity = binding.get("verified_config_identity")
+    path = binding.get("config_path")
+    allowed_modes = binding.get("verified_config_allowed_modes")
+    if (
+        not isinstance(raw, bytes)
+        or not isinstance(identity, tuple)
+        or len(identity) != 4
+        or not isinstance(path, Path)
+        or not isinstance(allowed_modes, frozenset)
+        or not allowed_modes
+        or not all(isinstance(mode, int) for mode in allowed_modes)
+    ):
+        raise RuntimeError("Operational baseline verified config snapshot is unavailable")
+    observed_raw, observed_metadata, observed_path = _secure_authority_snapshot(
+        path, allowed_modes=allowed_modes
+    )
+    observed_identity = (
+        observed_metadata.st_dev,
+        observed_metadata.st_ino,
+        observed_metadata.st_size,
+        observed_metadata.st_mtime_ns,
+    )
+    if observed_path != path or observed_raw != raw or observed_identity != identity:
+        raise RuntimeError("Operational baseline config changed after verification")
+    config = parse_config_snapshot(
+        raw,
+        source_path=path,
+        source_identity=identity,
+    )
+    return to_backtest_params(config)
 
 
 def load_live_config_as_params(path: str | Path | None = None) -> dict[str, Any]:
     """Read live YAML and return the flat replay-compatible parameter map."""
+    if path is None and not str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip():
+        binding = load_operational_baseline_binding()
+        if binding is not None and bool(binding["config_exists"]):
+            return _verified_binding_config_params(binding)
     config_path = resolve_backtest_config_path(path)
     return to_backtest_params(load_config(config_path))
 
@@ -481,9 +1289,7 @@ def build_backtest_base_params(
         "eta": live_params.get("eta", 0.0),
         "exit_urgency_strength": live_params.get("exit_urgency_strength", 0.0),
         "circuit_breaker_sigma": live_params.get("circuit_breaker_sigma", 0.0),
-        "pnl_volatility_horizon_s": live_params.get(
-            "pnl_volatility_horizon_s", 300.0
-        ),
+        "pnl_volatility_horizon_s": live_params.get("pnl_volatility_horizon_s", 300.0),
         "inventory_skew_strength": live_params.get("inventory_skew_strength", 0.0),
         "inventory_asym_strength": live_params.get("inventory_asym_strength", 0.0),
         "inventory_signal_fade_strength": live_params.get("inventory_signal_fade_strength", 0.0),
@@ -516,7 +1322,9 @@ def build_backtest_base_params(
         "adverse_markout_pause_min_s": live_params.get("adverse_markout_pause_min_s", 120.0),
         "adverse_markout_pause_max_s": live_params.get("adverse_markout_pause_max_s", 900.0),
         "adverse_markout_decay_tau_s": live_params.get("adverse_markout_decay_tau_s", 0.0),
-        "adverse_markout_max_resolve_gap_s": live_params.get("adverse_markout_max_resolve_gap_s", 30.0),
+        "adverse_markout_max_resolve_gap_s": live_params.get(
+            "adverse_markout_max_resolve_gap_s", 30.0
+        ),
         "urgency_time_weight": live_params.get("urgency_time_weight", 0.3),
         "urgency_pnl_weight": live_params.get("urgency_pnl_weight", 0.3),
         "urgency_signal_weight": live_params.get("urgency_signal_weight", 0.4),
@@ -527,66 +1335,128 @@ def build_backtest_base_params(
         ),
         "fill_cooldown_apply_reducing": live_params.get("fill_cooldown_apply_reducing", False),
         "fill_cooldown_reducing": live_params.get("fill_cooldown_reducing", 0.0),
-        "fill_cooldown_reducing_campaign_only": live_params.get("fill_cooldown_reducing_campaign_only", False),
-        "fill_cooldown_reducing_inv_threshold": live_params.get("fill_cooldown_reducing_inv_threshold", 0.0),
-        "fill_cooldown_reducing_inv_ratio": live_params.get("fill_cooldown_reducing_inv_ratio", 0.0),
+        "fill_cooldown_reducing_campaign_only": live_params.get(
+            "fill_cooldown_reducing_campaign_only", False
+        ),
+        "fill_cooldown_reducing_inv_threshold": live_params.get(
+            "fill_cooldown_reducing_inv_threshold", 0.0
+        ),
+        "fill_cooldown_reducing_inv_ratio": live_params.get(
+            "fill_cooldown_reducing_inv_ratio", 0.0
+        ),
         "fill_cooldown_reducing_age_s": live_params.get("fill_cooldown_reducing_age_s", 0.0),
         "fill_cooldown_reducing_vol_ref": live_params.get("fill_cooldown_reducing_vol_ref", 0.0),
-        "fill_cooldown_reducing_vol_min_mult": live_params.get("fill_cooldown_reducing_vol_min_mult", 0.5),
-        "fill_cooldown_reducing_vol_max_mult": live_params.get("fill_cooldown_reducing_vol_max_mult", 2.0),
+        "fill_cooldown_reducing_vol_min_mult": live_params.get(
+            "fill_cooldown_reducing_vol_min_mult", 0.5
+        ),
+        "fill_cooldown_reducing_vol_max_mult": live_params.get(
+            "fill_cooldown_reducing_vol_max_mult", 2.0
+        ),
         # Campaign/lifecycle research controls.  These are not promoted live
         # switches by default, but the Python replay can evaluate them as
         # shadow arms inside the same current-config baseline.
         "campaign_stop_add_enabled": bool(live_params.get("campaign_stop_add_enabled", False)),
         "campaign_stop_add_inv_threshold": live_params.get("campaign_stop_add_inv_threshold", 0.0),
         "campaign_stop_add_age_s": live_params.get("campaign_stop_add_age_s", 0.0),
-        "campaign_soft_control_enabled": bool(live_params.get("campaign_soft_control_enabled", False)),
+        "campaign_soft_control_enabled": bool(
+            live_params.get("campaign_soft_control_enabled", False)
+        ),
         "campaign_soft_inv_threshold": live_params.get("campaign_soft_inv_threshold", 0.0),
         "campaign_soft_age_s": live_params.get("campaign_soft_age_s", 0.0),
         "campaign_soft_spread_mult": live_params.get("campaign_soft_spread_mult", 1.0),
         "campaign_soft_gate_enabled": bool(live_params.get("campaign_soft_gate_enabled", False)),
-        "campaign_soft_gate_campaign_inv_ref": live_params.get("campaign_soft_gate_campaign_inv_ref", 0.006),
-        "campaign_soft_gate_campaign_age_ref_s": live_params.get("campaign_soft_gate_campaign_age_ref_s", 3600.0),
-        "campaign_soft_gate_trend_ret_ref": live_params.get("campaign_soft_gate_trend_ret_ref", 2e-5),
+        "campaign_soft_gate_campaign_inv_ref": live_params.get(
+            "campaign_soft_gate_campaign_inv_ref", 0.006
+        ),
+        "campaign_soft_gate_campaign_age_ref_s": live_params.get(
+            "campaign_soft_gate_campaign_age_ref_s", 3600.0
+        ),
+        "campaign_soft_gate_trend_ret_ref": live_params.get(
+            "campaign_soft_gate_trend_ret_ref", 2e-5
+        ),
         "campaign_soft_gate_refill_ref": live_params.get("campaign_soft_gate_refill_ref", 0.10),
-        "campaign_soft_gate_campaign_score": live_params.get("campaign_soft_gate_campaign_score", 1.0),
+        "campaign_soft_gate_campaign_score": live_params.get(
+            "campaign_soft_gate_campaign_score", 1.0
+        ),
         "campaign_soft_gate_trend_score": live_params.get("campaign_soft_gate_trend_score", 1.0),
-        "campaign_soft_gate_refill_edge_max": live_params.get("campaign_soft_gate_refill_edge_max", 0.0),
-        "campaign_soft_gate_reversion_max": live_params.get("campaign_soft_gate_reversion_max", 0.5),
+        "campaign_soft_gate_refill_edge_max": live_params.get(
+            "campaign_soft_gate_refill_edge_max", 0.0
+        ),
+        "campaign_soft_gate_reversion_max": live_params.get(
+            "campaign_soft_gate_reversion_max", 0.5
+        ),
         "campaign_soft_gate_side": live_params.get("campaign_soft_gate_side", "BOTH"),
-        "adaptive_add_cooldown_enabled": bool(live_params.get("adaptive_add_cooldown_enabled", False)),
+        "adaptive_add_cooldown_enabled": bool(
+            live_params.get("adaptive_add_cooldown_enabled", False)
+        ),
         "adaptive_add_cooldown_min_mult": live_params.get("adaptive_add_cooldown_min_mult", 0.5),
         "adaptive_add_cooldown_max_mult": live_params.get("adaptive_add_cooldown_max_mult", 2.5),
         "adaptive_add_cooldown_w_markout": live_params.get("adaptive_add_cooldown_w_markout", 0.0),
         "adaptive_add_cooldown_w_flow": live_params.get("adaptive_add_cooldown_w_flow", 0.0),
-        "adaptive_add_cooldown_w_campaign": live_params.get("adaptive_add_cooldown_w_campaign", 0.0),
+        "adaptive_add_cooldown_w_campaign": live_params.get(
+            "adaptive_add_cooldown_w_campaign", 0.0
+        ),
         "adaptive_add_cooldown_w_trend": live_params.get("adaptive_add_cooldown_w_trend", 0.0),
-        "adaptive_add_cooldown_w_refill_weak": live_params.get("adaptive_add_cooldown_w_refill_weak", 0.0),
-        "adaptive_add_cooldown_w_refill_good": live_params.get("adaptive_add_cooldown_w_refill_good", 0.0),
-        "adaptive_add_cooldown_w_reversion": live_params.get("adaptive_add_cooldown_w_reversion", 0.0),
+        "adaptive_add_cooldown_w_refill_weak": live_params.get(
+            "adaptive_add_cooldown_w_refill_weak", 0.0
+        ),
+        "adaptive_add_cooldown_w_refill_good": live_params.get(
+            "adaptive_add_cooldown_w_refill_good", 0.0
+        ),
+        "adaptive_add_cooldown_w_reversion": live_params.get(
+            "adaptive_add_cooldown_w_reversion", 0.0
+        ),
         "adaptive_add_cooldown_mo_ref": live_params.get("adaptive_add_cooldown_mo_ref", 50.0),
         "adaptive_add_cooldown_flow_ref": live_params.get("adaptive_add_cooldown_flow_ref", 2.0),
-        "adaptive_add_cooldown_campaign_inv_ref": live_params.get("adaptive_add_cooldown_campaign_inv_ref", 0.006),
-        "adaptive_add_cooldown_campaign_age_ref_s": live_params.get("adaptive_add_cooldown_campaign_age_ref_s", 3600.0),
-        "adaptive_add_cooldown_trend_ret_ref": live_params.get("adaptive_add_cooldown_trend_ret_ref", 2e-5),
-        "adaptive_add_cooldown_refill_ref": live_params.get("adaptive_add_cooldown_refill_ref", 0.10),
-        "adaptive_add_cooldown_reversion_ref": live_params.get("adaptive_add_cooldown_reversion_ref", 1.0),
-        "adaptive_add_cooldown_gate_enabled": bool(live_params.get("adaptive_add_cooldown_gate_enabled", False)),
+        "adaptive_add_cooldown_campaign_inv_ref": live_params.get(
+            "adaptive_add_cooldown_campaign_inv_ref", 0.006
+        ),
+        "adaptive_add_cooldown_campaign_age_ref_s": live_params.get(
+            "adaptive_add_cooldown_campaign_age_ref_s", 3600.0
+        ),
+        "adaptive_add_cooldown_trend_ret_ref": live_params.get(
+            "adaptive_add_cooldown_trend_ret_ref", 2e-5
+        ),
+        "adaptive_add_cooldown_refill_ref": live_params.get(
+            "adaptive_add_cooldown_refill_ref", 0.10
+        ),
+        "adaptive_add_cooldown_reversion_ref": live_params.get(
+            "adaptive_add_cooldown_reversion_ref", 1.0
+        ),
+        "adaptive_add_cooldown_gate_enabled": bool(
+            live_params.get("adaptive_add_cooldown_gate_enabled", False)
+        ),
         "adaptive_add_cooldown_gate_mult": live_params.get("adaptive_add_cooldown_gate_mult", 1.75),
-        "adaptive_add_cooldown_gate_campaign_score": live_params.get("adaptive_add_cooldown_gate_campaign_score", 1.0),
-        "adaptive_add_cooldown_gate_trend_score": live_params.get("adaptive_add_cooldown_gate_trend_score", 1.0),
-        "adaptive_add_cooldown_gate_refill_edge_max": live_params.get("adaptive_add_cooldown_gate_refill_edge_max", 0.0),
-        "adaptive_add_cooldown_gate_reversion_max": live_params.get("adaptive_add_cooldown_gate_reversion_max", 0.5),
-        "adaptive_add_cooldown_gate_side": live_params.get("adaptive_add_cooldown_gate_side", "BOTH"),
+        "adaptive_add_cooldown_gate_campaign_score": live_params.get(
+            "adaptive_add_cooldown_gate_campaign_score", 1.0
+        ),
+        "adaptive_add_cooldown_gate_trend_score": live_params.get(
+            "adaptive_add_cooldown_gate_trend_score", 1.0
+        ),
+        "adaptive_add_cooldown_gate_refill_edge_max": live_params.get(
+            "adaptive_add_cooldown_gate_refill_edge_max", 0.0
+        ),
+        "adaptive_add_cooldown_gate_reversion_max": live_params.get(
+            "adaptive_add_cooldown_gate_reversion_max", 0.5
+        ),
+        "adaptive_add_cooldown_gate_side": live_params.get(
+            "adaptive_add_cooldown_gate_side", "BOTH"
+        ),
         "symmetric_size": live_params.get("symmetric_size", False),
         # Exogenous sync-degrade transitions require a frozen environment tape
         # for promotion evidence. Censor/stress modes are explicit diagnostics.
         "sync_adjust_degrade_enabled": bool(live_params.get("sync_adjust_degrade_enabled", False)),
         "sync_adjust_degrade_count": int(live_params.get("sync_adjust_degrade_count", 0) or 0),
-        "sync_adjust_abs_qty_threshold": float(live_params.get("sync_adjust_abs_qty_threshold", 0.0) or 0.0),
-        "sync_adjust_degrade_window_s": float(live_params.get("sync_adjust_degrade_window_s", 0.0) or 0.0),
+        "sync_adjust_abs_qty_threshold": float(
+            live_params.get("sync_adjust_abs_qty_threshold", 0.0) or 0.0
+        ),
+        "sync_adjust_degrade_window_s": float(
+            live_params.get("sync_adjust_degrade_window_s", 0.0) or 0.0
+        ),
         "sync_adjust_pause_s": float(live_params.get("sync_adjust_pause_s", 0.0) or 0.0),
-        "sync_adjust_reconnect_user_stream": bool(live_params.get("sync_adjust_reconnect_user_stream", False)),
+        "sync_adjust_reconnect_user_stream": bool(
+            live_params.get("sync_adjust_reconnect_user_stream", False)
+        ),
         "sync_adjust_cancel_orders": bool(live_params.get("sync_adjust_cancel_orders", False)),
         "sync_adjust_replay_mode": "disabled",
         "sync_adjust_event_tape_path": "",
@@ -595,19 +1465,27 @@ def build_backtest_base_params(
         "sync_adjust_semantics": SYNC_DEGRADE_SEMANTICS,
         "sync_adjust_stress_seed": 20260729,
         "sync_adjust_stress_interval_s": 21_600.0,
-        "max_consecutive_losses": int(
-            live_params.get("max_consecutive_losses", 0) or 0
-        ),
-        "cooldown_after_loss": float(
-            live_params.get("cooldown_after_loss", 0.0) or 0.0
-        ),
+        "max_consecutive_losses": int(live_params.get("max_consecutive_losses", 0) or 0),
+        "cooldown_after_loss": float(live_params.get("cooldown_after_loss", 0.0) or 0.0),
         "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
-        "buy_fill_selection_live_enabled": bool(live_params.get("buy_fill_selection_live_enabled", False)),
-        "buy_fill_selection_live_model_path": live_params.get("buy_fill_selection_live_model_path", ""),
-        "buy_fill_selection_live_score_threshold": float(live_params.get("buy_fill_selection_live_score_threshold", 0.50) or 0.50),
-        "buy_fill_selection_live_spread_mult_cap": float(live_params.get("buy_fill_selection_live_spread_mult_cap", 1.0) or 1.0),
-        "buy_fill_selection_live_apply_reducing": bool(live_params.get("buy_fill_selection_live_apply_reducing", False)),
-        "buy_fill_selection_live_max_missing_features": int(live_params.get("buy_fill_selection_live_max_missing_features", 99) or 99),
+        "buy_fill_selection_live_enabled": bool(
+            live_params.get("buy_fill_selection_live_enabled", False)
+        ),
+        "buy_fill_selection_live_model_path": live_params.get(
+            "buy_fill_selection_live_model_path", ""
+        ),
+        "buy_fill_selection_live_score_threshold": float(
+            live_params.get("buy_fill_selection_live_score_threshold", 0.50) or 0.50
+        ),
+        "buy_fill_selection_live_spread_mult_cap": float(
+            live_params.get("buy_fill_selection_live_spread_mult_cap", 1.0) or 1.0
+        ),
+        "buy_fill_selection_live_apply_reducing": bool(
+            live_params.get("buy_fill_selection_live_apply_reducing", False)
+        ),
+        "buy_fill_selection_live_max_missing_features": int(
+            live_params.get("buy_fill_selection_live_max_missing_features", 99) or 99
+        ),
         # Python native-deep replay implements the full BUY q90 cancel/ACK/
         # recovery/re-entry path. C++ fails fast because it does not consume
         # the strategy-independent snapshot/delta tape.
@@ -624,8 +1502,7 @@ def build_backtest_base_params(
             "dynamic_fill_hazard_shadow_sides", "BUY"
         ),
         "dynamic_fill_hazard_shadow_exposure_ms": float(
-            live_params.get("dynamic_fill_hazard_shadow_exposure_ms", 100.0)
-            or 100.0
+            live_params.get("dynamic_fill_hazard_shadow_exposure_ms", 100.0) or 100.0
         ),
         "dynamic_fill_hazard_shadow_price_jump_ticks": float(
             live_params.get(
@@ -650,7 +1527,9 @@ def build_backtest_base_params(
     return params
 
 
-def apply_tick_defaults(params: dict[str, Any], *, require_historical_bbo: bool | None = None) -> dict[str, Any]:
+def apply_tick_defaults(
+    params: dict[str, Any], *, require_historical_bbo: bool | None = None
+) -> dict[str, Any]:
     """Apply tick-replay defaults that are not explicit in older live configs."""
     for key, value in TICK_DEFAULTS.items():
         params.setdefault(key, value)
@@ -721,25 +1600,23 @@ def add_fill_probability_params(
         if p3_kappa_eff > 0:
             params["p3_kappa_eff"] = p3_kappa_eff
         if params["p3_delta_star"] <= 0.0 or params["p3_kappa_eff"] <= 0.0:
-            raise ValueError(
-                f"{label} calibration must provide positive delta_star and kappa_eff"
-            )
+            raise ValueError(f"{label} calibration must provide positive delta_star and kappa_eff")
         params["fill_probability_calibrated"] = True
         params["fill_probability_schema_version"] = str(fill_model.schema_version)
         params["fill_probability_model_type"] = str(fill_model.model_type)
         params["fill_probability_event_type"] = str(p3_identity["event_type"])
         params["fill_probability_horizon_s"] = float(p3_identity["horizon_s"])
         params["fill_probability_distance_unit"] = str(p3_identity["distance_unit"])
-        params["fill_probability_artifact_sha256"] = str(
-            p3_identity["artifact_sha256"]
-        )
+        params["fill_probability_artifact_sha256"] = str(p3_identity["artifact_sha256"])
         print(
             f"  {label}: delta_star={params['p3_delta_star']:.4f}, "
             f"kappa_eff={params['p3_kappa_eff']:.4f}, path={model_path}"
         )
     except Exception as exc:
         if strict:
-            raise RuntimeError(f"{label} fill calibration unavailable: {model_path}: {exc}") from exc
+            raise RuntimeError(
+                f"{label} fill calibration unavailable: {model_path}: {exc}"
+            ) from exc
         # 探索性入口保持历史 fail-open 行为；formal replay 使用 strict=True。
         print(f"  [WARN] {label} fill model unavailable: {exc}")
         params["p3_delta_star"] = 0.0
@@ -754,11 +1631,7 @@ def add_queue_calibration_params(
     strict: bool = False,
     path: str | Path | None = None,
 ) -> dict[str, Any]:
-    path = (
-        Path(path).expanduser().resolve()
-        if path is not None
-        else calibration_path(symbol)
-    )
+    path = Path(path).expanduser().resolve() if path is not None else calibration_path(symbol)
     queue_calibration = load_daily_queue_calibration(
         symbol=symbol,
         path=path,
@@ -777,7 +1650,9 @@ def add_queue_calibration_params(
         params["_queue_calibration"] = queue_calibration
         params["queue_calibration_loaded"] = True
         params["queue_calibration_day_count"] = len(queue_calibration["days"])
-        params["queue_calibration_schema_version"] = str(queue_calibration.get("schema_version", ""))
+        params["queue_calibration_schema_version"] = str(
+            queue_calibration.get("schema_version", "")
+        )
         params["queue_calibration_apply_mode"] = str(queue_calibration.get("apply_mode", ""))
         params["queue_calibration_fit_days"] = list(queue_calibration.get("fit_days") or [])
         params["queue_calibration_diagnostic_only"] = bool(
@@ -884,20 +1759,16 @@ def validate_formal_replay_calibration(
         errors.append("formal replay requires replay_event_clock=merged")
     if int(params.get("replay_clock_interval_ms", 0) or 0) <= 0:
         errors.append("replay_clock_interval_ms must be positive")
-    if str(
-        params.get("circuit_breaker_exit_mode", "maker_close") or "maker_close"
-    ).lower() != "maker_close":
-        errors.append(
-            "formal replay requires circuit_breaker_exit_mode=maker_close"
-        )
+    if (
+        str(params.get("circuit_breaker_exit_mode", "maker_close") or "maker_close").lower()
+        != "maker_close"
+    ):
+        errors.append("formal replay requires circuit_breaker_exit_mode=maker_close")
 
-    model_dir = _resolve_project_path(
-        params.get("resolved_model_dir") or params.get("model_dir")
-    )
+    model_dir = _resolve_project_path(params.get("resolved_model_dir") or params.get("model_dir"))
     if model_dir is not None:
         meta_paths = sorted(
-            path for path in model_dir.glob("*_meta.json")
-            if path.name != "bundle_meta.json"
+            path for path in model_dir.glob("*_meta.json") if path.name != "bundle_meta.json"
         )
         if not meta_paths:
             errors.append(f"ML model metadata is missing: {model_dir}")
@@ -986,17 +1857,22 @@ def load_tick_base_params(
     strict_calibration: bool = False,
 ) -> dict[str, Any]:
     """Load live config and attach common tick-replay calibration artifacts."""
-    resolved_config_path = resolve_backtest_config_path(config_path)
-    params = load_live_config_as_params(resolved_config_path)
     env_config_explicit = bool(str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip())
     explicit_selection = config_path is not None or env_config_explicit
-    should_bind_current = bool(
-        not explicit_selection
-        or resolved_config_path in operational_baseline_config_candidates()
-    )
-    baseline_binding = (
-        load_operational_baseline_binding() if should_bind_current else None
-    )
+    baseline_binding: dict[str, Any] | None = None
+    if not explicit_selection:
+        baseline_binding = load_operational_baseline_binding()
+        if baseline_binding is not None and bool(baseline_binding["config_exists"]):
+            resolved_config_path = Path(baseline_binding["config_path"])
+            params = _verified_binding_config_params(baseline_binding)
+        else:
+            resolved_config_path = resolve_backtest_config_path(config_path)
+            params = load_live_config_as_params(resolved_config_path)
+    else:
+        resolved_config_path = resolve_backtest_config_path(config_path)
+        params = load_live_config_as_params(resolved_config_path)
+        if resolved_config_path in operational_baseline_config_candidates():
+            baseline_binding = load_operational_baseline_binding()
     bound_to_operational_baseline = bool(
         baseline_binding is not None
         and baseline_binding["config_exists"]
@@ -1004,14 +1880,10 @@ def load_tick_base_params(
     )
     params["_config_path"] = str(resolved_config_path)
     params["_config_explicit"] = bool(
-        config_path is not None
-        or env_config_explicit
-        or bound_to_operational_baseline
+        config_path is not None or env_config_explicit or bound_to_operational_baseline
     )
     runtime_code_audit = (
-        baseline_binding.get("runtime_code_audit", {})
-        if baseline_binding is not None
-        else {}
+        baseline_binding.get("runtime_code_audit", {}) if baseline_binding is not None else {}
     )
     runtime_code_matches = runtime_code_audit.get("matches")
     params["_config_source"] = (
@@ -1044,18 +1916,10 @@ def load_tick_base_params(
         else:
             params["operational_baseline_id"] = baseline_id
             params["operational_baseline_runtime_overlay"] = False
-        params["operational_baseline_pointer_path"] = str(
-            baseline_binding["pointer_path"]
-        )
-        params["operational_baseline_pointer_sha256"] = str(
-            baseline_binding["pointer_sha256"]
-        )
-        params["operational_baseline_identity_path"] = str(
-            baseline_binding["identity_path"]
-        )
-        params["operational_baseline_identity_sha256"] = str(
-            baseline_binding["identity_sha256"]
-        )
+        params["operational_baseline_pointer_path"] = str(baseline_binding["pointer_path"])
+        params["operational_baseline_pointer_sha256"] = str(baseline_binding["pointer_sha256"])
+        params["operational_baseline_identity_path"] = str(baseline_binding["identity_path"])
+        params["operational_baseline_identity_sha256"] = str(baseline_binding["identity_sha256"])
         replay_baseline_path = baseline_binding.get("replay_baseline_path")
         if replay_baseline_path is not None:
             params["operational_replay_baseline_path"] = str(replay_baseline_path)
@@ -1064,9 +1928,7 @@ def load_tick_base_params(
             )
         control_arm = str(baseline_binding["pointer"]["backtest_control_arm"])
         params["backtest_control_arm"] = (
-            f"{control_arm}__runtime_overlay"
-            if runtime_code_matches is False
-            else control_arm
+            f"{control_arm}__runtime_overlay" if runtime_code_matches is False else control_arm
         )
     params["strict_calibration"] = bool(strict_calibration)
     params["strict_calibration_validated"] = False
