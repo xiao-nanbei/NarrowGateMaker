@@ -148,12 +148,12 @@ def _portable() -> dict[str, Any]:
     receipts = {
         "config_correction": {
             **_content(
-                subject.transport.resource_v5.config_successor.SCHEMA_VERSION,
-                subject.transport.resource_v5.config_successor.STATUS,
+                subject.transport.resource_v6.config_successor.SCHEMA_VERSION,
+                subject.transport.resource_v6.config_successor.STATUS,
                 "e",
                 "f",
                 canonical_field=(
-                    subject.transport.resource_v5.config_successor.CANONICAL_FIELD
+                    subject.transport.resource_v6.config_successor.CANONICAL_FIELD
                 ),
             ),
             "local_filename": subject.transport.CONFIG_CORRECTION_FILENAME,
