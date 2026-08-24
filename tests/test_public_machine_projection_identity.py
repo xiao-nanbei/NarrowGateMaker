@@ -59,13 +59,24 @@ def test_owner_private_source_preserves_embedded_canonical_identity() -> None:
     assert observed == expected
 
 
-def test_cross_unit_public_projection_resolves_owner_private_source() -> None:
+def test_registry_successor_retires_predecessor_private_source_projection() -> None:
     projection = projection_for(PROJECT_ROOT / "research/registry.json")
-    assert projection is not None
-    assert projection.unit_id == "research/shared/experiment_governance"
-    assert "original_public_machine_records/cross_unit/research/registry.json" in str(
-        projection.require_private_source()
-    )
+    assert projection is None
+    payload = json.loads((PROJECT_ROOT / "research/registry.json").read_text(encoding="utf-8"))
+    lineage = payload["publication_lineage"]
+    assert lineage == {
+        "materialization": "ordinary_safe_public_json_no_private_source_identity_claim",
+        "predecessor_public_projection_sha256": (
+            "3e4e6feefac208d64f92e8fe4b1e93204728711d2625b9d79a865c01e02e39a2"
+        ),
+        "predecessor_private_source_sha256": (
+            "f09829baa37f43dac3c3521985a1fa53df7af7a570b71a78b31912a3f9529770"
+        ),
+        "predecessor_private_source_availability": "private_not_distributed",
+        "predecessor_private_source_rewritten": False,
+        "predecessor_projection_manifest_entry_retired": True,
+        "successor_projection_identity_claimed": False,
+    }
 
 
 def test_f05_add_wait_spec_keeps_projection_and_frozen_source_identities_distinct() -> None:

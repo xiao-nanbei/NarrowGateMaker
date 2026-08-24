@@ -2000,15 +2000,6 @@
       "private_locator_count": 3
     },
     {
-      "public_path": "research/registry.json",
-      "unit_id": "research/shared/experiment_governance",
-      "source_private_sha256": "f09829baa37f43dac3c3521985a1fa53df7af7a570b71a78b31912a3f9529770",
-      "public_projection_sha256": "3e4e6feefac208d64f92e8fe4b1e93204728711d2625b9d79a865c01e02e39a2",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 19
-    },
-    {
       "public_path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
       "unit_id": "research/shared/replay_lifecycle",
       "source_private_sha256": "6ea76c17da758355f710ed65efb5a51aaa99d99445444177e65e0dc0bbbac59f",
