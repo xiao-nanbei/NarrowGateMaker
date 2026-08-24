@@ -171,6 +171,8 @@ multi_market:
   market_stage: "minimal"
   reference_symbol: "BTCUSDT"
   stablecoin_anchor_symbol: "USDCUSDT"
+  global_flow_shadow_enabled: false
+  global_reference_shadow_enabled: false
 
 # Independent venue references are receive-time shadow inputs only. Public
 # Bitget/Bybit/OKX market data do not require API keys.

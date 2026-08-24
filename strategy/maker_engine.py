@@ -1102,6 +1102,12 @@ class MakerEngine:
 
         # Components
         multi = getattr(cfg, "multi_market", None)
+        self._global_flow_shadow_config_explicit = bool(
+            getattr(multi, "_global_flow_shadow_enabled_explicit", False)
+        )
+        self._global_reference_shadow_config_explicit = bool(
+            getattr(multi, "_global_reference_shadow_enabled_explicit", False)
+        )
         self.signal = SignalEngine(model_dir=model_path,
                                    enable_ml=cfg.ml.enabled,
                                    rest_client=rest_client,
@@ -1109,6 +1115,12 @@ class MakerEngine:
                                    reference_symbol=getattr(multi, "reference_symbol", None),
                                    stablecoin_anchor_symbol=getattr(
                                        multi, "stablecoin_anchor_symbol", "USDCUSDT"
+                                   ),
+                                   global_flow_shadow_enabled=bool(
+                                       getattr(multi, "global_flow_shadow_enabled", False)
+                                   ),
+                                   global_reference_shadow_enabled=bool(
+                                       getattr(multi, "global_reference_shadow_enabled", False)
                                    ),
                                    ret_demean_halflife=cfg.ml.ret_demean_halflife,
                                    bad_trade_log_every=cfg.logging.bad_trade_log_every)
@@ -1897,6 +1909,18 @@ class MakerEngine:
             raise ValueError(
                 "lifecycle_journal_v2 configuration is restart-only and cannot be hot-reloaded"
             )
+        previous_multi = getattr(self.cfg, "multi_market", None)
+        candidate_multi = getattr(cfg, "multi_market", None)
+        for name in (
+            "global_flow_shadow_enabled",
+            "global_reference_shadow_enabled",
+        ):
+            if bool(getattr(previous_multi, name, False)) != bool(
+                getattr(candidate_multi, name, False)
+            ):
+                raise ValueError(
+                    f"multi_market.{name} is restart-only and cannot be hot-reloaded"
+                )
         from live.runtime_policy import (
             require_f05_boolean_cooldown_restart,
             require_f05_buy_e3_restart,
@@ -3041,6 +3065,19 @@ class MakerEngine:
             "execution_tree": "",
             "annotated_operational_tag": "",
             "annotated_operational_tag_object": "",
+        }
+
+    def shadow_runtime_snapshot(self) -> dict[str, Any]:
+        """Bind live config explicitness to the effective signal backends."""
+        signal = self.signal.shadow_runtime_snapshot()
+        return {
+            **signal,
+            "global_flow_shadow_config_explicit": bool(
+                self._global_flow_shadow_config_explicit
+            ),
+            "global_reference_shadow_config_explicit": bool(
+                self._global_reference_shadow_config_explicit
+            ),
         }
 
     def dynamic_fill_hazard_shadow_snapshot(self) -> dict[str, Any]:

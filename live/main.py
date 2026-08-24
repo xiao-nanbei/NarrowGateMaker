@@ -227,6 +227,9 @@ STARTUP_ATTESTATION_GATE_NAMES = (
     "fill_cooldown_artifact_contract_valid",
     "buy_e3_active_release_contract_valid",
     "buy_e3_active_release_matches_checkout",
+    "shadow_config_explicit",
+    "global_flow_shadow_backend_contract_valid",
+    "global_reference_shadow_state_contract_valid",
     "git_toplevel_matches_repo",
     "git_pre_snapshot_available",
     "git_pre_snapshot_stable",
@@ -254,6 +257,8 @@ KEY_LOADED_RUNTIME_MODULES = {
     "live_runtime_policy": ("live.runtime_policy", "live/runtime_policy.py"),
     "live_ws_handler": ("live.ws_handler", "live/ws_handler.py"),
     "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
+    "signal_engine": ("strategy.signal", "strategy/signal.py"),
+    "global_flow": ("strategy.global_flow", "strategy/global_flow.py"),
     "boolean_cooldown_live": (
         "strategy.boolean_cooldown_live",
         "strategy/boolean_cooldown_live.py",
@@ -373,6 +378,7 @@ def _empty_startup_attestation() -> dict:
         "status": "rejected",
         "attested_at_utc": "",
         "fill_cooldown_state": {},
+        "shadow_runtime_identity": {},
         "running_checkout": {},
         "loaded_module_origins": {},
         "interpreter_identity": {},
@@ -394,6 +400,7 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
     source_rows = _runtime_source_rows()
     loaded_origins = _loaded_module_origins(source_rows)
     fill_state = engine.fill_cooldown_state_snapshot()
+    shadow_runtime = engine.shadow_runtime_snapshot()
     active_release = engine.buy_e3_active_release_identity()
     post_snapshot = _git_snapshot()
     interpreter_after = _file_byte_identity(sys.executable)
@@ -491,6 +498,45 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         if release_required
         else True
     )
+    flow_enabled = bool(shadow_runtime.get("global_flow_shadow_enabled", False))
+    reference_enabled = bool(
+        shadow_runtime.get("global_reference_shadow_enabled", False)
+    )
+    flow_backend = shadow_runtime.get("global_flow_backend", {})
+    flow_zero_fields = (
+        "native",
+        "market_count",
+        "trade_batches",
+        "trade_events_seen",
+        "trade_events_accepted",
+        "book_events_seen",
+        "book_events_accepted",
+        "out_of_order_events",
+        "stale_trade_events",
+        "trade_overflow_events",
+        "book_overflow_events",
+    )
+    flow_backend_zero = all(
+        type(flow_backend.get(name)) is int and flow_backend.get(name) == 0
+        for name in flow_zero_fields
+    )
+    shadow_config_explicit = bool(
+        shadow_runtime.get("global_flow_shadow_config_explicit", False)
+        and shadow_runtime.get("global_reference_shadow_config_explicit", False)
+    )
+    global_flow_contract_valid = bool(
+        flow_enabled
+        or (
+            flow_backend_zero
+            and not shadow_runtime.get("global_flow_native_effective", False)
+            and shadow_runtime.get("state_restore_contract")
+            == "shadow_state_never_restored"
+        )
+    )
+    global_reference_contract_valid = bool(
+        reference_enabled
+        or shadow_runtime.get("global_reference_bridge_basis_sample_count") == 0
+    )
     admitted_restore_modes = {
         "fresh_b0_no_checkpoint",
         "exact_same_artifact_resume",
@@ -574,6 +620,11 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         ),
         "buy_e3_active_release_contract_valid": release_contract_valid,
         "buy_e3_active_release_matches_checkout": release_matches_checkout,
+        "shadow_config_explicit": shadow_config_explicit,
+        "global_flow_shadow_backend_contract_valid": global_flow_contract_valid,
+        "global_reference_shadow_state_contract_valid": (
+            global_reference_contract_valid
+        ),
         "git_toplevel_matches_repo": git_toplevel == ROOT,
         "git_pre_snapshot_available": bool(pre_snapshot),
         "git_pre_snapshot_stable": bool(pre_snapshot["snapshot_internally_stable"]),
@@ -589,7 +640,11 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         "native_runtime_contract_valid": (
             (not native_enabled and native_runtime.get("module") == "disabled")
             or (native_enabled and native_before is not None)
-        ),
+        )
+        and bool(
+            native_runtime.get("NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE", False)
+        )
+        == bool(shadow_runtime.get("global_flow_native_effective", False)),
         "native_runtime_identity_available": bool(native_identity),
         "native_runtime_identity_stable": bool(native_identity["stable"]),
         "git_post_snapshot_available": bool(post_snapshot),
@@ -607,6 +662,7 @@ def build_startup_attestation(*, engine: MakerEngine, native_runtime: dict) -> d
         "status": "accepted" if not errors else "rejected",
         "attested_at_utc": datetime.now(UTC).isoformat(),
         "fill_cooldown_state": fill_state,
+        "shadow_runtime_identity": shadow_runtime,
         "buy_e3_active_release": active_release,
         "running_checkout": checkout,
         "loaded_module_origins": loaded_origins,
@@ -636,7 +692,7 @@ def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
     return tuple(sorted(paths))
 
 
-def audit_native_runtime(logger: logging.Logger) -> dict:
+def audit_native_runtime(logger: logging.Logger, *, cfg=None) -> dict:
     """Log the persisted runtime profile and fail fast for broken strict native mode."""
     values = {name: os.environ.get(name, "0") for name in CPP_RUNTIME_FLAGS}
     enabled = {
@@ -652,8 +708,15 @@ def audit_native_runtime(logger: logging.Logger) -> dict:
         required.add("compute_live_routing_decision")
     if enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]:
         required.update({"SignalFeatureEngine", "SIGNAL_FEATURE_NAMES"})
+    global_flow_effective = bool(
+        enabled["NARROWGATE_CPP_GLOBAL_FLOW"]
+        and cfg is not None
+        and bool(getattr(getattr(cfg, "multi_market", None), "global_flow_shadow_enabled", False))
+    )
     if enabled["NARROWGATE_CPP_GLOBAL_FLOW"]:
-        required.update({"NativeGlobalFlowEngine", "TradeBarAggregator"})
+        required.add("TradeBarAggregator")
+    if global_flow_effective:
+        required.add("NativeGlobalFlowEngine")
 
     if required:
         try:
@@ -692,16 +755,26 @@ def audit_native_runtime(logger: logging.Logger) -> dict:
 
     logger.info(
         "NATIVE_PROFILE name=%s quote_core=%d signal_features=%d "
-        "global_flow=%d live_routing=%d strict=%d module=%s",
+        "global_flow_requested=%d global_flow_effective=%d "
+        "live_routing=%d strict=%d module=%s",
         profile,
         int(enabled["NARROWGATE_CPP_QUOTE_CORE"]),
         int(enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]),
         int(enabled["NARROWGATE_CPP_GLOBAL_FLOW"]),
+        int(global_flow_effective),
         int(enabled["NARROWGATE_CPP_LIVE_ROUTING"]),
         int(enabled["NARROWGATE_CPP_STRICT"]),
         module_path,
     )
-    return {"profile": profile, "module": module_path, **enabled}
+    return {
+        "profile": profile,
+        "module": module_path,
+        **enabled,
+        "NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED": enabled[
+            "NARROWGATE_CPP_GLOBAL_FLOW"
+        ],
+        "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE": global_flow_effective,
+    }
 
 
 def setup_logging(cfg):
@@ -725,6 +798,166 @@ def setup_logging(cfg):
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=handlers,
     )
+
+
+def collect_global_shadow_health(*, engine: MakerEngine, cfg, logger) -> tuple[dict, dict]:
+    """Collect optional shadow state without evaluating disabled diagnostics."""
+    ref_enabled = bool(cfg.multi_market.global_reference_shadow_enabled)
+    flow_enabled = bool(cfg.multi_market.global_flow_shadow_enabled)
+    disabled_runtime = None
+    disabled_runtime_error = None
+    if not ref_enabled or not flow_enabled:
+        try:
+            disabled_runtime = engine.signal.shadow_runtime_snapshot()
+        except Exception as exc:
+            disabled_runtime_error = exc
+            logger.warning("Disabled shadow runtime identity failed: %s", exc)
+    ref = {
+        "enabled": int(ref_enabled),
+        "state_error": 0,
+        "valid": 0,
+        "confidence": 0.0,
+        "spot": 0.0,
+        "perp": 0.0,
+        "divergence": 0.0,
+        "residual": 0.0,
+        "fresh_spot": 0,
+        "fresh_perp": 0,
+        "dispersion": 0.0,
+        "basis_samples": 0,
+        "reason": "disabled_by_config",
+    }
+    if not ref_enabled:
+        if disabled_runtime_error is not None:
+            ref.update({"state_error": 1, "reason": "error"})
+        else:
+            basis_samples = disabled_runtime.get(
+                "global_reference_bridge_basis_sample_count"
+            )
+            if type(basis_samples) is not int or basis_samples < 0:
+                ref.update({"state_error": 1, "reason": "identity_malformed"})
+            else:
+                ref["basis_samples"] = basis_samples
+            if disabled_runtime.get("global_reference_shadow_enabled") is not False:
+                ref.update({"state_error": 1, "reason": "config_mismatch"})
+    else:
+        try:
+            state = engine.signal.global_reference_state(tick_size=cfg.tick_size)
+            ref.update(
+                {
+                    "valid": int(state.valid),
+                    "confidence": state.confidence,
+                    "spot": state.global_spot_move_bps,
+                    "perp": state.global_perp_move_bps,
+                    "divergence": state.perp_spot_divergence_bps,
+                    "residual": state.residual_bps,
+                    "fresh_spot": state.fresh_spot_venues,
+                    "fresh_perp": state.fresh_perp_venues,
+                    "dispersion": state.cross_venue_dispersion_bps,
+                    "basis_samples": state.bridge_basis_sample_count,
+                    "reason": state.validity_reason,
+                }
+            )
+        except Exception as exc:
+            logger.warning("Global reference shadow state failed: %s", exc)
+            ref.update({"state_error": 1, "reason": "error"})
+
+    flow = {
+        "enabled": int(flow_enabled),
+        "state_error": 0,
+        "valid": 0,
+        "pressure": 0.0,
+        "pending": 0.0,
+        "spot_pressure": 0.0,
+        "perp_pressure": 0.0,
+        "spot_agreement": 0.0,
+        "perp_agreement": 0.0,
+        "fresh_spot": 0,
+        "fresh_perp": 0,
+        "native": 0,
+        "market_count": 0,
+        "trade_batches": 0,
+        "trade_events_seen": 0,
+        "trade_events_accepted": 0,
+        "book_events_seen": 0,
+        "book_events_accepted": 0,
+        "out_of_order_events": 0,
+        "stale_trade_events": 0,
+        "trade_overflow_events": 0,
+        "book_overflow_events": 0,
+        "reason": "disabled_by_config",
+    }
+    if not flow_enabled:
+        if disabled_runtime_error is not None:
+            flow.update({"state_error": 1, "reason": "error"})
+        else:
+            backend = disabled_runtime.get("global_flow_backend", {})
+            backend_fields = (
+                "native",
+                "market_count",
+                "trade_batches",
+                "trade_events_seen",
+                "trade_events_accepted",
+                "book_events_seen",
+                "book_events_accepted",
+                "out_of_order_events",
+                "stale_trade_events",
+                "trade_overflow_events",
+                "book_overflow_events",
+            )
+            if (
+                not isinstance(backend, dict)
+                or set(backend) != set(backend_fields)
+                or any(type(backend.get(name)) is not int for name in backend_fields)
+            ):
+                flow.update({"state_error": 1, "reason": "identity_malformed"})
+            else:
+                for name in backend_fields:
+                    flow[name] = backend[name]
+            if (
+                disabled_runtime.get("global_flow_shadow_enabled") is not False
+                or disabled_runtime.get("global_flow_native_effective") is not False
+            ):
+                flow.update({"state_error": 1, "reason": "config_mismatch"})
+    else:
+        try:
+            state = engine.signal.global_flow_state()
+            backend = engine.signal.global_flow_backend_snapshot()
+            flow_100 = state.window(100)
+            flow_spot = flow_100.get("spot", {})
+            flow_perp = flow_100.get("perp", {})
+            flow.update(
+                {
+                    "valid": int(flow_100.get("valid", 0)),
+                    "pressure": float(flow_100.get("global_flow_pressure", float("nan"))),
+                    "pending": float(flow_100.get("global_minus_bridge_bps", float("nan"))),
+                    "spot_pressure": float(flow_spot.get("flow_pressure", float("nan"))),
+                    "perp_pressure": float(flow_perp.get("flow_pressure", float("nan"))),
+                    "spot_agreement": float(flow_spot.get("venue_agreement", 0.0)),
+                    "perp_agreement": float(flow_perp.get("venue_agreement", 0.0)),
+                    "fresh_spot": int(flow_spot.get("fresh_venues", 0)),
+                    "fresh_perp": int(flow_perp.get("fresh_venues", 0)),
+                    "reason": "evaluated",
+                }
+            )
+            for name in (
+                "native",
+                "market_count",
+                "trade_batches",
+                "trade_events_seen",
+                "trade_events_accepted",
+                "book_events_seen",
+                "book_events_accepted",
+                "out_of_order_events",
+                "stale_trade_events",
+                "trade_overflow_events",
+                "book_overflow_events",
+            ):
+                flow[name] = int(backend.get(name, 0))
+        except Exception as exc:
+            logger.warning("Global flow shadow state failed: %s", exc)
+            flow.update({"state_error": 1, "reason": "error"})
+    return ref, flow
 
 
 def record_startup_runtime_identity(
@@ -781,6 +1014,26 @@ def record_startup_runtime_identity(
         "testnet": bool(cfg.api.testnet),
         "ml_enabled": bool(cfg.ml.enabled),
         "model_dir": str(model_dir.resolve()),
+        "global_flow_shadow_enabled": bool(
+            cfg.multi_market.global_flow_shadow_enabled
+        ),
+        "global_flow_shadow_config_explicit": bool(
+            getattr(
+                cfg.multi_market,
+                "_global_flow_shadow_enabled_explicit",
+                False,
+            )
+        ),
+        "global_reference_shadow_enabled": bool(
+            cfg.multi_market.global_reference_shadow_enabled
+        ),
+        "global_reference_shadow_config_explicit": bool(
+            getattr(
+                cfg.multi_market,
+                "_global_reference_shadow_enabled_explicit",
+                False,
+            )
+        ),
         "buy_fill_selection_live_enabled": bool(cfg.strategy.buy_fill_selection_live_enabled),
         "buy_fill_selection_shadow_enabled": bool(cfg.strategy.buy_fill_selection_shadow_enabled),
         "dynamic_fill_hazard_shadow_enabled": bool(cfg.strategy.dynamic_fill_hazard_shadow_enabled),
@@ -1069,7 +1322,7 @@ def main():
     logger = logging.getLogger("main")
 
     logger.info("=" * 60)
-    native_runtime = audit_native_runtime(logger)
+    native_runtime = audit_native_runtime(logger, cfg=cfg)
     project_name = getattr(cfg, "project_name", "NarrowGate")
     logger.info(f"{project_name} Maker Engine Starting")
     logger.info(f"  Symbol:    {cfg.symbol}")
@@ -1391,98 +1644,14 @@ def main():
                     ),
                     default=float("inf"),
                 )
-                try:
-                    global_ref = engine.signal.global_reference_state(tick_size=cfg.tick_size)
-                    global_ref_values = {
-                        "valid": int(global_ref.valid),
-                        "confidence": global_ref.confidence,
-                        "spot": global_ref.global_spot_move_bps,
-                        "perp": global_ref.global_perp_move_bps,
-                        "divergence": global_ref.perp_spot_divergence_bps,
-                        "residual": global_ref.residual_bps,
-                        "fresh_spot": global_ref.fresh_spot_venues,
-                        "fresh_perp": global_ref.fresh_perp_venues,
-                        "dispersion": global_ref.cross_venue_dispersion_bps,
-                        "basis_samples": global_ref.bridge_basis_sample_count,
-                        "reason": global_ref.validity_reason,
-                    }
-                except Exception as exc:
-                    logger.warning("Global reference shadow state failed: %s", exc)
-                    global_ref_values = {
-                        "valid": 0,
-                        "confidence": 0.0,
-                        "spot": float("nan"),
-                        "perp": float("nan"),
-                        "divergence": float("nan"),
-                        "residual": float("nan"),
-                        "fresh_spot": 0,
-                        "fresh_perp": 0,
-                        "dispersion": float("nan"),
-                        "basis_samples": 0,
-                        "reason": "error",
-                    }
-                try:
-                    global_flow = engine.signal.global_flow_state()
-                    global_flow_backend = engine.signal.global_flow_backend_snapshot()
-                    flow_100 = global_flow.window(100)
-                    flow_spot = flow_100.get("spot", {})
-                    flow_perp = flow_100.get("perp", {})
-                    global_flow_values = {
-                        "valid": int(flow_100.get("valid", 0)),
-                        "pressure": float(flow_100.get("global_flow_pressure", float("nan"))),
-                        "pending": float(flow_100.get("global_minus_bridge_bps", float("nan"))),
-                        "spot_pressure": float(flow_spot.get("flow_pressure", float("nan"))),
-                        "perp_pressure": float(flow_perp.get("flow_pressure", float("nan"))),
-                        "spot_agreement": float(flow_spot.get("venue_agreement", 0.0)),
-                        "perp_agreement": float(flow_perp.get("venue_agreement", 0.0)),
-                        "fresh_spot": int(flow_spot.get("fresh_venues", 0)),
-                        "fresh_perp": int(flow_perp.get("fresh_venues", 0)),
-                    }
-                    global_flow_backend_values = {
-                        "native": int(global_flow_backend.get("native", 0)),
-                        "market_count": int(global_flow_backend.get("market_count", 0)),
-                        "trade_batches": int(global_flow_backend.get("trade_batches", 0)),
-                        "trade_events_seen": int(global_flow_backend.get("trade_events_seen", 0)),
-                        "trade_events_accepted": int(
-                            global_flow_backend.get("trade_events_accepted", 0)
-                        ),
-                        "book_events_seen": int(global_flow_backend.get("book_events_seen", 0)),
-                        "out_of_order_events": int(
-                            global_flow_backend.get("out_of_order_events", 0)
-                        ),
-                        "stale_trade_events": int(global_flow_backend.get("stale_trade_events", 0)),
-                        "trade_overflow_events": int(
-                            global_flow_backend.get("trade_overflow_events", 0)
-                        ),
-                        "book_overflow_events": int(
-                            global_flow_backend.get("book_overflow_events", 0)
-                        ),
-                    }
-                except Exception as exc:
-                    logger.warning("Global flow shadow state failed: %s", exc)
-                    global_flow_values = {
-                        "valid": 0,
-                        "pressure": float("nan"),
-                        "pending": float("nan"),
-                        "spot_pressure": float("nan"),
-                        "perp_pressure": float("nan"),
-                        "spot_agreement": 0.0,
-                        "perp_agreement": 0.0,
-                        "fresh_spot": 0,
-                        "fresh_perp": 0,
-                    }
-                    global_flow_backend_values = {
-                        "native": 0,
-                        "market_count": 0,
-                        "trade_batches": 0,
-                        "trade_events_seen": 0,
-                        "trade_events_accepted": 0,
-                        "book_events_seen": 0,
-                        "out_of_order_events": 0,
-                        "stale_trade_events": 0,
-                        "trade_overflow_events": 0,
-                        "book_overflow_events": 0,
-                    }
+                global_ref_values, global_flow_backend_values = (
+                    collect_global_shadow_health(
+                        engine=engine,
+                        cfg=cfg,
+                        logger=logger,
+                    )
+                )
+                global_flow_values = global_flow_backend_values
                 logger.info(
                     f"HEALTH pos={snap.qty:+.4f} "
                     f"rpnl={snap.realized_pnl:.2f} "
@@ -1592,6 +1761,8 @@ def main():
                     f"externalTradeAgeMs={external_trade_age_ms:.1f} "
                     f"externalBookEventAgeMs={external_book_event_age_ms:.1f} "
                     f"externalTradeEventAgeMs={external_trade_event_age_ms:.1f} "
+                    f"globalRefShadowEnabled={global_ref_values['enabled']} "
+                    f"globalRefStateError={global_ref_values['state_error']} "
                     f"globalRefValid={global_ref_values['valid']} "
                     f"globalRefConfidence={global_ref_values['confidence']:.4f} "
                     f"globalSpotMoveBps={global_ref_values['spot']:.4f} "
@@ -1602,6 +1773,8 @@ def main():
                     f"globalRefFreshPerp={global_ref_values['fresh_perp']} "
                     f"globalRefDispersionBps={global_ref_values['dispersion']:.4f} "
                     f"globalRefBasisSamples={global_ref_values['basis_samples']} "
+                    f"globalFlowShadowEnabled={global_flow_values['enabled']} "
+                    f"globalFlowStateError={global_flow_values['state_error']} "
                     f"globalFlow100Valid={global_flow_values['valid']} "
                     f"globalFlow100Pressure={global_flow_values['pressure']:.4f} "
                     f"globalFlow100PendingBps={global_flow_values['pending']:.4f} "
@@ -1617,11 +1790,13 @@ def main():
                     f"globalFlowTradeEvents={global_flow_backend_values['trade_events_seen']} "
                     f"globalFlowTradeAccepted={global_flow_backend_values['trade_events_accepted']} "
                     f"globalFlowBookEvents={global_flow_backend_values['book_events_seen']} "
+                    f"globalFlowBookAccepted={global_flow_backend_values['book_events_accepted']} "
                     f"globalFlowOOO={global_flow_backend_values['out_of_order_events']} "
                     f"globalFlowStaleTrades={global_flow_backend_values['stale_trade_events']} "
                     f"globalFlowTradeOverflow={global_flow_backend_values['trade_overflow_events']} "
                     f"globalFlowBookOverflow={global_flow_backend_values['book_overflow_events']} "
                     f"globalRefReason={global_ref_values['reason']} "
+                    f"globalFlowReason={global_flow_values['reason']} "
                     f"state={snap.state.name} "
                     f"orders={engine.orders.active_count()} "
                     f"requotes={engine._requote_count}"

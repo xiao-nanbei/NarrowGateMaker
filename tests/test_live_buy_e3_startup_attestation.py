@@ -118,6 +118,32 @@ class _Engine:
     def buy_e3_active_release_identity(self) -> dict[str, str]:
         return dict(self.active_release)
 
+    def shadow_runtime_snapshot(self) -> dict:
+        return {
+            "schema_version": "narrowgate_shadow_runtime_identity.v1",
+            "global_flow_shadow_enabled": False,
+            "global_reference_shadow_enabled": False,
+            "global_flow_native_requested": False,
+            "global_flow_native_effective": False,
+            "global_flow_backend": {
+                "native": 0,
+                "market_count": 0,
+                "trade_batches": 0,
+                "trade_events_seen": 0,
+                "trade_events_accepted": 0,
+                "book_events_seen": 0,
+                "book_events_accepted": 0,
+                "out_of_order_events": 0,
+                "stale_trade_events": 0,
+                "trade_overflow_events": 0,
+                "book_overflow_events": 0,
+            },
+            "global_reference_bridge_basis_sample_count": 0,
+            "state_restore_contract": "shadow_state_never_restored",
+            "global_flow_shadow_config_explicit": True,
+            "global_reference_shadow_config_explicit": True,
+        }
+
 
 def _bind_clean_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
     rows = _source_rows()
@@ -161,6 +187,7 @@ def test_startup_attestation_accepts_only_clean_fresh_b0(
         "status",
         "attested_at_utc",
         "fill_cooldown_state",
+        "shadow_runtime_identity",
         "buy_e3_active_release",
         "running_checkout",
         "loaded_module_origins",
@@ -271,6 +298,48 @@ def test_startup_attestation_rejects_e3_identity_under_b0_rollback(
 
     assert attestation["status"] == "rejected"
     assert "fill_cooldown_deadline_contract_valid" in attestation["errors"]
+    assert attestation["gates"]["safe_to_start_live_loops"] is False
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_error"),
+    [
+        (
+            lambda state: state.update(
+                {"global_flow_shadow_config_explicit": False}
+            ),
+            "shadow_config_explicit",
+        ),
+        (
+            lambda state: state["global_flow_backend"].update(
+                {"out_of_order_events": 1}
+            ),
+            "global_flow_shadow_backend_contract_valid",
+        ),
+        (
+            lambda state: state.update(
+                {"global_reference_bridge_basis_sample_count": 1}
+            ),
+            "global_reference_shadow_state_contract_valid",
+        ),
+    ],
+)
+def test_startup_attestation_rejects_disabled_shadow_identity_drift(
+    monkeypatch: pytest.MonkeyPatch,
+    mutation,
+    expected_error: str,
+) -> None:
+    _bind_clean_checkout(monkeypatch)
+    engine = _Engine()
+    state = engine.shadow_runtime_snapshot()
+    mutation(state)
+    engine.shadow_runtime_snapshot = lambda: state
+    attestation = subject.build_startup_attestation(
+        engine=engine,
+        native_runtime={"profile": "test", "module": "disabled"},
+    )
+    assert attestation["status"] == "rejected"
+    assert expected_error in attestation["errors"]
     assert attestation["gates"]["safe_to_start_live_loops"] is False
 
 

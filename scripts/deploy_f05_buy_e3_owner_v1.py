@@ -343,7 +343,7 @@ _LEGACY_STARTUP_ATTESTATION_FIELDS = frozenset(
     }
 )
 _STARTUP_ATTESTATION_FIELDS = _LEGACY_STARTUP_ATTESTATION_FIELDS | frozenset(
-    {"buy_e3_active_release"}
+    {"buy_e3_active_release", "shadow_runtime_identity"}
 )
 _LEGACY_STARTUP_GATE_FIELDS = frozenset(
     {
@@ -379,6 +379,9 @@ _STARTUP_GATE_FIELDS = _LEGACY_STARTUP_GATE_FIELDS | frozenset(
     {
         "buy_e3_active_release_contract_valid",
         "buy_e3_active_release_matches_checkout",
+        "shadow_config_explicit",
+        "global_flow_shadow_backend_contract_valid",
+        "global_reference_shadow_state_contract_valid",
     }
 )
 _STARTUP_ACTIVE_RELEASE_FIELDS = frozenset(
@@ -444,6 +447,8 @@ _LOADED_RUNTIME_MODULE_ROLES = frozenset(
         "live_runtime_policy",
         "live_ws_handler",
         "maker_engine",
+        "signal_engine",
+        "global_flow",
         "boolean_cooldown_live",
         "boolean_cooldown_buy_e3",
     }
@@ -469,6 +474,35 @@ _NATIVE_RUNTIME_IDENTITY_FIELDS = frozenset(
         "before",
         "after",
         "stable",
+    }
+)
+_SHADOW_RUNTIME_IDENTITY_FIELDS = frozenset(
+    {
+        "schema_version",
+        "global_flow_shadow_enabled",
+        "global_reference_shadow_enabled",
+        "global_flow_native_requested",
+        "global_flow_native_effective",
+        "global_flow_backend",
+        "global_reference_bridge_basis_sample_count",
+        "state_restore_contract",
+        "global_flow_shadow_config_explicit",
+        "global_reference_shadow_config_explicit",
+    }
+)
+_GLOBAL_FLOW_BACKEND_FIELDS = frozenset(
+    {
+        "native",
+        "market_count",
+        "trade_batches",
+        "trade_events_seen",
+        "trade_events_accepted",
+        "book_events_seen",
+        "book_events_accepted",
+        "out_of_order_events",
+        "stale_trade_events",
+        "trade_overflow_events",
+        "book_overflow_events",
     }
 )
 _HOST_BOUND_STORAGE_GATE_FIELDS = frozenset(
@@ -1283,6 +1317,35 @@ def _validate_startup_attestation(
         raise BuyE3TransactionalDeployError(
             "runtime startup attestation is rejected or deadline-unsafe"
         )
+    shadow_runtime = attestation.get("shadow_runtime_identity")
+    if not legacy:
+        if (
+            not isinstance(shadow_runtime, Mapping)
+            or set(shadow_runtime) != _SHADOW_RUNTIME_IDENTITY_FIELDS
+            or shadow_runtime.get("schema_version")
+            != "narrowgate_shadow_runtime_identity.v1"
+            or shadow_runtime.get("global_flow_shadow_enabled") is not False
+            or shadow_runtime.get("global_reference_shadow_enabled") is not False
+            or type(shadow_runtime.get("global_flow_native_requested")) is not bool
+            or shadow_runtime.get("global_flow_native_effective") is not False
+            or shadow_runtime.get("global_reference_bridge_basis_sample_count") != 0
+            or shadow_runtime.get("state_restore_contract")
+            != "shadow_state_never_restored"
+            or shadow_runtime.get("global_flow_shadow_config_explicit") is not True
+            or shadow_runtime.get("global_reference_shadow_config_explicit") is not True
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime no-shadow startup identity drifted"
+            )
+        backend = shadow_runtime.get("global_flow_backend")
+        if (
+            not isinstance(backend, Mapping)
+            or set(backend) != _GLOBAL_FLOW_BACKEND_FIELDS
+            or any(type(value) is not int or value != 0 for value in backend.values())
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime global-flow backend is not absolute zero"
+            )
     if legacy:
         restore_mode = state.get("restore_mode")
         checkpoint_loaded = state.get("checkpoint_loaded")

@@ -387,6 +387,10 @@ class MultiMarketConfig:
     # Binance lists the conversion market as USDCUSDT: USDT paid per USDC.
     # Therefore BTCUSDT / USDCUSDT converts the local bridge into BTCUSDC.
     stablecoin_anchor_symbol: str = "USDCUSDT"
+    # Optional diagnostic evaluators are fail-closed in the live config.  They
+    # do not provide active quote inputs and must be enabled explicitly.
+    global_flow_shadow_enabled: bool = False
+    global_reference_shadow_enabled: bool = False
     # multi_market.enabled only controls feature/source wiring for ML, quote EV
     # features, shadow labels, and risk buckets. It is not a direct expected-PnL
     # or widen/retreat/TTL/size switch; policy promotion still needs daily OOS
@@ -820,6 +824,17 @@ def _parse(raw: dict) -> Config:
         if sub:
             obj = _dataclass_from_dict(cls, sub, path=section)
             setattr(cfg, section, obj)
+    multi_raw = raw.get("multi_market", {})
+    if not isinstance(multi_raw, dict):
+        raise ValueError("multi_market must be a mapping")
+    # Runtime attestation distinguishes an explicit fail-closed setting from a
+    # dataclass default.  These private markers are not configurable fields.
+    cfg.multi_market._global_flow_shadow_enabled_explicit = (
+        "global_flow_shadow_enabled" in multi_raw
+    )
+    cfg.multi_market._global_reference_shadow_enabled_explicit = (
+        "global_reference_shadow_enabled" in multi_raw
+    )
     return cfg
 
 
@@ -831,6 +846,14 @@ def _validate_config(cfg: Config) -> None:
         q90_action_runtime_policy,
     )
     from strategy.fill_cooldown import normalize_consecutive_reset_policy
+
+    for name in (
+        "global_flow_shadow_enabled",
+        "global_reference_shadow_enabled",
+    ):
+        value = getattr(cfg.multi_market, name, None)
+        if type(value) is not bool:
+            raise ValueError(f"multi_market.{name} must be a boolean")
 
     cfg.strategy.fill_cooldown_consecutive_reset_policy = (
         normalize_consecutive_reset_policy(
@@ -1235,10 +1258,9 @@ def _validate_config(cfg: Config) -> None:
                     raise ValueError("external venue okx:spot requires contract_multiplier=1.0")
 
 
-def load_config(path: Optional[Path] = None) -> Config:
-    """Load config from YAML. Supports env var override for API keys."""
-    global _cfg, _cfg_path
-    p = (Path(path) if path else _cfg_path).expanduser().resolve()
+def _load_config_candidate(path: Path) -> Config:
+    """Parse and validate one config without changing the active config."""
+    p = path.expanduser().resolve()
     with open(p, "r") as f:
         raw = yaml.safe_load(f) or {}
 
@@ -1251,6 +1273,30 @@ def load_config(path: Optional[Path] = None) -> Config:
         cfg.api.secret = os.environ["BINANCE_API_SECRET"]
 
     _validate_config(cfg)
+    return cfg
+
+
+def require_multi_market_shadow_restart(previous: Config, candidate: Config) -> None:
+    """Reject hot changes to diagnostic evaluators before runtime mutation."""
+    previous_multi = getattr(previous, "multi_market", None)
+    candidate_multi = getattr(candidate, "multi_market", None)
+    for name in (
+        "global_flow_shadow_enabled",
+        "global_reference_shadow_enabled",
+    ):
+        if bool(getattr(previous_multi, name, False)) != bool(
+            getattr(candidate_multi, name, False)
+        ):
+            raise ValueError(
+                f"multi_market.{name} is restart-only and cannot be hot-reloaded"
+            )
+
+
+def load_config(path: Optional[Path] = None) -> Config:
+    """Load config from YAML. Supports env var override for API keys."""
+    global _cfg, _cfg_path
+    p = (Path(path) if path else _cfg_path).expanduser().resolve()
+    cfg = _load_config_candidate(p)
 
     with _lock:
         _cfg = cfg
@@ -1272,8 +1318,9 @@ def reload_config(*_args):
     global _cfg
     with _lock:
         previous_cfg = _cfg
+        active_path = _cfg_path
     try:
-        cfg = load_config()
+        cfg = _load_config_candidate(active_path)
         if previous_cfg is not None:
             from live.runtime_policy import (
                 require_f05_boolean_cooldown_restart,
@@ -1293,12 +1340,14 @@ def reload_config(*_args):
                 vars(previous_cfg.strategy),
                 vars(cfg.strategy),
             )
+            require_multi_market_shadow_restart(previous_cfg, cfg)
+        if _engine_ref is not None:
+            _engine_ref.on_config_reload(cfg)
         with _lock:
-            active_path = _cfg_path
+            _cfg = cfg
         logger.info(f"Reloaded {active_path}: γ={cfg.strategy.gamma}, "
                     f"fallback_κ={cfg.strategy.kappa}, vol_blend={cfg.ml.vol_blend}")
         if _engine_ref is not None:
-            _engine_ref.on_config_reload(cfg)
             logger.info("Config propagated to running engine via on_config_reload")
     except Exception as e:
         if previous_cfg is not None:

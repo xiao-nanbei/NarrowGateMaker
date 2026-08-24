@@ -32,6 +32,8 @@ multi_market:
   enabled: false
   reference_symbol: "BTCUSDT"
   market_stage: "minimal"
+  global_flow_shadow_enabled: false
+  global_reference_shadow_enabled: false
 
 external_venues:
   enabled: false
