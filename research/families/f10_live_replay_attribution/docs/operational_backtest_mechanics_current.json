@@ -4,7 +4,7 @@
   "effective_at_utc": "2026-08-25T00:00:01Z",
   "mechanics_identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
   "mechanics_contract_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1_20260825.json",
-  "mechanics_contract_file_sha256": "e10ba954e39643340d226b32724724b46aaac75f62957fcc1d2b4d09b20ee008",
+  "mechanics_contract_file_sha256": "2ad627f6f17c2c9b5caacbb5a65d7d4faa45ad78acae8143737db71f0c821580",
   "predecessor_v13_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json",
   "predecessor_v13_identity_file_sha256": "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079",
   "private_bundle_availability": "private_not_distributed",
@@ -32,5 +32,5 @@
     "hypothetical_live_scoring": false,
     "shadow_or_companion_authority": false
   },
-  "canonical_backtest_mechanics_pointer_sha256": "cbdf019c4afde3b00725e5d1646ad53506ace083147819d40b8a0ced5e2e8cf1"
+  "canonical_backtest_mechanics_pointer_sha256": "080170b6c94ec6aad3d57a2259eafff0fa51f8fbfe88f12cab0ef602bc0b7847"
 }

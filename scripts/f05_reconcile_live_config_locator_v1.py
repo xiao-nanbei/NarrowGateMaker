@@ -47,7 +47,25 @@ from scripts import f05_closeout_operational_metadata_v6 as metadata_v6
 MANIFEST_SCHEMA: Final = "f05_buy_e3_current_config_locator_reconciliation_manifest.v1"
 MANIFEST_STATUS: Final = "release_v3_no_shadow_config_locator_inputs_frozen"
 MANIFEST_CANONICAL_FIELD: Final = "canonical_config_locator_reconciliation_manifest_sha256"
-MANIFEST_RECEIPT_ID: Final = "f05-buy-e3-no-shadow-config-locator-reconciliation-20260825-v1"
+MANIFEST_RECEIPT_ID: Final = "f05-buy-e3-no-shadow-config-locator-reconciliation-20260825-v1-final"
+
+ATTEMPT1_MANIFEST_RECEIPT_ID: Final = (
+    "f05-buy-e3-no-shadow-config-locator-reconciliation-20260825-v1"
+)
+ATTEMPT1_FAILURE_SCHEMA: Final = (
+    "narrowgate.current_live_config_locator_reconciliation_failure_receipt.v1"
+)
+ATTEMPT1_FAILURE_STATUS: Final = (
+    "failed_prepublication_candidate_owner_root_audit_no_official_writes"
+)
+ATTEMPT1_FAILURE_CANONICAL_FIELD: Final = (
+    "canonical_current_live_config_locator_reconciliation_failure_receipt_sha256"
+)
+ATTEMPT1_FAILURE_PHASE: Final = "prepublication_candidate_owner_root_audit"
+ATTEMPT1_NEW_FINDING_COUNT: Final = 160
+ATTEMPT1_NEW_FINDING_SET_SHA256: Final = (
+    "edfe92dff1881d73df492fe670bbd2c96fb9fd65acc330a1812cc13b120d967a"
+)
 
 RECEIPT_SCHEMA: Final = "narrowgate.current_live_config_locator_reconciliation_receipt.v1"
 RECEIPT_STATUS: Final = "completed_release_v3_no_shadow_current_config_locator_reconciled"
@@ -58,14 +76,44 @@ RECEIPT_CANONICAL_FIELD: Final = (
 POINTER_SCHEMA: Final = "narrowgate_live_remote_pointer.v1"
 CATALOG_SCHEMA: Final = "narrowgate_private_artifact_catalog_v1"
 PUBLISHER_MODULE_ROUTE: Final = "scripts.f05_reconcile_live_config_locator_v1"
-PUBLISHER_TAG: Final = "f05-owner-buy-e3-no-shadow-governance-source-v1-20260825"
+ATTEMPT1_PUBLISHER_TAG: Final = "f05-owner-buy-e3-no-shadow-governance-source-v1-20260825"
+PUBLISHER_TAG: Final = "f05-owner-buy-e3-no-shadow-governance-source-v1-final-20260825"
+ATTEMPT1_PUBLISHER_SOURCE: Final = {
+    "module_route": PUBLISHER_MODULE_ROUTE,
+    "annotated_tag": ATTEMPT1_PUBLISHER_TAG,
+    "annotated_tag_object": "4050270c218238f519f8abd3c1a3a75b0f3f1024",
+    "commit": "d993ee362a9d0f6e46c4f7de2514b2b3ba3aff2b",
+    "tree": "d9c891abfaf8c0bd929ec34e8952b50af2edda14",
+    "script_sha256": "b830501877786594a3b6a1e96803c8345c49e361e34f76bc87b5d77230eb635a",
+}
+ATTEMPT1_MANIFEST_FILE_SHA256: Final = (
+    "cd99e1ca80a213df58bb83978ee50ce4c8a3e604df2f9e3358b661c433d1bd78"
+)
+ATTEMPT1_MANIFEST_CANONICAL_SHA256: Final = (
+    "72408ad313bc8eaedcaafbbf9482e11cf99110ea81e5314ce279caf3762cd271"
+)
+ATTEMPT1_MANIFEST_SIZE: Final = 496_478
+ATTEMPT1_SOURCE_BUNDLE_SHA256: Final = (
+    "a71e15be5547ae25bf8c3ce6c64f2e0bff9f0f9912e37a9f88acc2b0b16a4f08"
+)
+ATTEMPT1_SOURCE_BUNDLE_SIZE: Final = 9_087_601
 
 PRIVATE_EVIDENCE_ROOT_ENV: Final = "NARROWGATE_PRIVATE_EVIDENCE_ROOT"
 E3_V6_EVIDENCE_RELATIVE: Final = Path(
     "f05_owner_buy_e3_v1/direct_no_shadow_live_evidence_v6_20260824"
 )
-FORMAL_MANIFEST_RELATIVE: Final = Path(
+ATTEMPT1_FORMAL_MANIFEST_RELATIVE: Final = Path(
     E3_V6_EVIDENCE_RELATIVE / "config_locator_reconciliation/reconciliation_manifest_v1.json"
+)
+ATTEMPT1_FAILURE_RECEIPT_RELATIVE: Final = Path(
+    E3_V6_EVIDENCE_RELATIVE
+    / "config_locator_reconciliation/reconciliation_attempt1_failure_receipt_v1.json"
+)
+ATTEMPT1_SOURCE_BUNDLE_RELATIVE: Final = Path(
+    E3_V6_EVIDENCE_RELATIVE / "authority_sources/no_shadow_governance_source_v1.bundle"
+)
+FORMAL_MANIFEST_RELATIVE: Final = Path(
+    E3_V6_EVIDENCE_RELATIVE / "config_locator_reconciliation/reconciliation_manifest_v1_final.json"
 )
 ACTIVE_CONFIG_SOURCE_RELATIVE: Final = Path(
     E3_V6_EVIDENCE_RELATIVE / "authority_sources/config.direct_owner_active.no_shadow.v2.yaml"
@@ -222,6 +270,18 @@ def _formal_manifest_path() -> Path:
     return _private_evidence_root() / FORMAL_MANIFEST_RELATIVE
 
 
+def _attempt1_formal_manifest_path() -> Path:
+    return _private_evidence_root() / ATTEMPT1_FORMAL_MANIFEST_RELATIVE
+
+
+def _attempt1_failure_receipt_path() -> Path:
+    return _private_evidence_root() / ATTEMPT1_FAILURE_RECEIPT_RELATIVE
+
+
+def _attempt1_source_bundle_path() -> Path:
+    return _private_evidence_root() / ATTEMPT1_SOURCE_BUNDLE_RELATIVE
+
+
 def _active_config_source_path() -> Path:
     return _private_evidence_root() / ACTIVE_CONFIG_SOURCE_RELATIVE
 
@@ -244,6 +304,11 @@ def _validate_private_evidence_layout(root: Path, *, allow_manifest_leaf_missing
     unit = root / E3_V6_EVIDENCE_RELATIVE
     authority_sources = (root / ACTIVE_CONFIG_SOURCE_RELATIVE).parent
     manifest_leaf = (root / FORMAL_MANIFEST_RELATIVE).parent
+    if (
+        manifest_leaf != (root / ATTEMPT1_FORMAL_MANIFEST_RELATIVE).parent
+        or manifest_leaf != (root / ATTEMPT1_FAILURE_RECEIPT_RELATIVE).parent
+    ):
+        raise ConfigLocatorReconciliationError("reconciliation evidence leaf drifted")
     _require_owned_private_directory(unit, "private evidence unit")
     _require_owned_private_directory(authority_sources, "authority source directory")
     if _secure_exists(manifest_leaf):
@@ -1677,6 +1742,529 @@ def _activation_path_from_transaction(transaction: Mapping[str, Any], metadata_r
     return _validate_v6_activation_locator(activation.get("path"), _paths(metadata_root)["private"])
 
 
+def _validate_attempt1_manifest() -> tuple[dict[str, Any], dict[str, Any]]:
+    path = _attempt1_formal_manifest_path()
+    payload, raw, metadata = _load_json(path)
+    binding = _canonical_binding(path, payload, raw, MANIFEST_CANONICAL_FIELD)
+    expected_binding = {
+        "path": str(_absolute(path)),
+        "schema_version": MANIFEST_SCHEMA,
+        "status": MANIFEST_STATUS,
+        "file_sha256": ATTEMPT1_MANIFEST_FILE_SHA256,
+        "canonical_field": MANIFEST_CANONICAL_FIELD,
+        "canonical_sha256": ATTEMPT1_MANIFEST_CANONICAL_SHA256,
+        "size_bytes": ATTEMPT1_MANIFEST_SIZE,
+        "mode": "0600",
+    }
+    if (
+        binding != expected_binding
+        or payload.get("receipt_id") != ATTEMPT1_MANIFEST_RECEIPT_ID
+        or payload.get("publisher_source") != ATTEMPT1_PUBLISHER_SOURCE
+        or _sha(raw) != ATTEMPT1_MANIFEST_FILE_SHA256
+        or len(raw) != ATTEMPT1_MANIFEST_SIZE
+    ):
+        raise ConfigLocatorReconciliationError("attempt1 frozen manifest identity drifted")
+    generated_ns = _timestamp_ns(payload.get("generated_utc"), "attempt1 manifest generated_utc")
+    if abs(metadata.st_mtime_ns - generated_ns) > MANIFEST_MAX_CLOCK_SKEW_SECONDS * 1_000_000_000:
+        raise ConfigLocatorReconciliationError("attempt1 manifest mtime drifted")
+    return dict(payload), binding
+
+
+def _validate_attempt1_source_bundle() -> dict[str, Any]:
+    path = _attempt1_source_bundle_path()
+    raw, _metadata = _validate_exact_raw(
+        path,
+        sha256=ATTEMPT1_SOURCE_BUNDLE_SHA256,
+        size_bytes=ATTEMPT1_SOURCE_BUNDLE_SIZE,
+    )
+    return {
+        "path": str(_absolute(path)),
+        "sha256": _sha(raw),
+        "bytes": len(raw),
+        "mode": "0600",
+        "nlink": 1,
+        "owner_uid": os.getuid(),
+        "complete_history_bundle": True,
+    }
+
+
+def _attempt1_failure_finding_summary(metadata_root: Path) -> dict[str, Any]:
+    index_path = metadata_root / audit_private_evidence.NONPUBLISHED_INDEX
+    payload, _raw, _metadata = _load_json(index_path)
+    public_paths = _nonpublished_projection_public_paths(payload)
+    for relative in public_paths:
+        _indexed_public_path_topology_snapshot(metadata_root, relative)
+    fingerprints = sorted(
+        _canonical(
+            {
+                "kind": "nonpublished_projection_missing",
+                "path": relative.as_posix(),
+            }
+        )
+        for relative in public_paths
+    )
+    finding_set_sha256 = _canonical(fingerprints)
+    if (
+        len(fingerprints) != ATTEMPT1_NEW_FINDING_COUNT
+        or finding_set_sha256 != ATTEMPT1_NEW_FINDING_SET_SHA256
+    ):
+        raise ConfigLocatorReconciliationError("attempt1 failure finding set drifted")
+    return {
+        "candidate_audit_passed": False,
+        "failure_phase": ATTEMPT1_FAILURE_PHASE,
+        "failure_reason": (
+            f"metadata audit introduced {ATTEMPT1_NEW_FINDING_COUNT} new finding(s)"
+        ),
+        "finding_kind": "nonpublished_projection_missing",
+        "nonpublished_projection_entry_count": ATTEMPT1_NEW_FINDING_COUNT,
+        "new_finding_count": ATTEMPT1_NEW_FINDING_COUNT,
+        "new_finding_fingerprint_set_sha256": ATTEMPT1_NEW_FINDING_SET_SHA256,
+        "payload_files_opened": 0,
+    }
+
+
+def _attempt1_predecessor_contract(
+    metadata_root: Path,
+    activation_path: Path,
+) -> dict[str, Any]:
+    paths = _paths(metadata_root)
+    activation = _validate_v6_activation_locator(str(_absolute(activation_path)), paths["private"])
+    return {
+        "current_alias": {
+            "path": str(paths["alias"]),
+            "sha256": OLD_CONFIG_SHA256,
+            "bytes": OLD_CONFIG_SIZE,
+            "mode": "0600",
+        },
+        "current_pointer": {
+            "path": str(paths["pointer"]),
+            "sha256": PREDECESSOR_POINTER_SHA256,
+            "bytes": PREDECESSOR_POINTER_SIZE,
+            "mode": "0600",
+        },
+        "current_catalog": {
+            "path": str(paths["catalog"]),
+            "sha256": PREDECESSOR_CATALOG_SHA256,
+            "bytes": PREDECESSOR_CATALOG_SIZE,
+            "mode": "0600",
+        },
+        "v6_activation_receipt": {
+            "path": str(activation),
+            **V6_ACTIVATION,
+        },
+    }
+
+
+def _attempt1_official_output_contract(metadata_root: Path) -> dict[str, Any]:
+    paths = _paths(metadata_root)
+    return {
+        "create_only_outputs": {
+            role: {"path": str(paths[key]), "state": "absent"}
+            for role, key in (
+                ("backtest_v12_archive", "backtest_archive"),
+                ("release_v3_versioned_config", "release_v3_config"),
+                ("predecessor_pointer_snapshot", "pointer_snapshot"),
+                ("predecessor_catalog_snapshot", "catalog_snapshot"),
+                ("reconciliation_receipt", "receipt"),
+            )
+        },
+        "mutable_outputs": {
+            "stable_live_config_alias": {
+                "path": str(paths["alias"]),
+                "state": "predecessor_exact",
+                "sha256": OLD_CONFIG_SHA256,
+                "bytes": OLD_CONFIG_SIZE,
+            },
+            "current_remote_pointer": {
+                "path": str(paths["pointer"]),
+                "state": "predecessor_exact",
+                "sha256": PREDECESSOR_POINTER_SHA256,
+                "bytes": PREDECESSOR_POINTER_SIZE,
+            },
+            "current_catalog": {
+                "path": str(paths["catalog"]),
+                "state": "predecessor_exact",
+                "sha256": PREDECESSOR_CATALOG_SHA256,
+                "bytes": PREDECESSOR_CATALOG_SIZE,
+            },
+        },
+        "all_successor_outputs_absent": True,
+        "all_pending_and_uncommitted_staging_absent": True,
+    }
+
+
+def _require_attempt1_official_outputs_absent(metadata_root: Path) -> dict[str, Any]:
+    predecessor = _validate_predecessor(metadata_root)
+    paths = predecessor["paths"]
+    for key in (
+        "backtest_archive",
+        "release_v3_config",
+        "pointer_snapshot",
+        "catalog_snapshot",
+        "receipt",
+    ):
+        path = paths[key]
+        if (
+            _secure_exists(path)
+            or _secure_exists(_pending(path, "create"))
+            or _staging_paths(path, "create")
+        ):
+            raise ConfigLocatorReconciliationError(
+                f"attempt1 official successor output is not absent: {key}"
+            )
+    for key, kind in (("alias", "alias"), ("pointer", "pointer"), ("catalog", "catalog")):
+        path = paths[key]
+        if _secure_exists(_pending(path, kind)) or _staging_paths(path, kind):
+            raise ConfigLocatorReconciliationError(
+                f"attempt1 mutable successor staging is not absent: {key}"
+            )
+    return {
+        "predecessor": _attempt1_predecessor_contract(
+            metadata_root,
+            Path(str(predecessor["activation_binding"]["path"])),
+        ),
+        "official_output_state": _attempt1_official_output_contract(metadata_root),
+    }
+
+
+def _build_attempt1_failure_receipt(
+    *,
+    metadata_root: Path,
+    attempt1_manifest_binding: Mapping[str, Any],
+    attempt1_source_bundle_binding: Mapping[str, Any],
+    predecessor: Mapping[str, Any],
+    official_output_state: Mapping[str, Any],
+    finding_summary: Mapping[str, Any],
+    generated_utc: str,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": ATTEMPT1_FAILURE_SCHEMA,
+        "status": ATTEMPT1_FAILURE_STATUS,
+        "generated_utc": generated_utc,
+        "attempt_id": ATTEMPT1_MANIFEST_RECEIPT_ID,
+        "metadata_repository_root": str(_absolute(metadata_root)),
+        "failed_manifest": deepcopy(dict(attempt1_manifest_binding)),
+        "failed_publisher_source": deepcopy(ATTEMPT1_PUBLISHER_SOURCE),
+        "failed_source_bundle": deepcopy(dict(attempt1_source_bundle_binding)),
+        "failure": deepcopy(dict(finding_summary)),
+        "predecessor": deepcopy(dict(predecessor)),
+        "official_output_state": deepcopy(dict(official_output_state)),
+        "writes_performed": False,
+        "transaction_committed": False,
+        "official_outputs_written": False,
+        "permissions": deepcopy(NO_NEW_AUTHORITY),
+        "evidence_boundary": deepcopy(EVIDENCE_BOUNDARY),
+    }
+    payload[ATTEMPT1_FAILURE_CANONICAL_FIELD] = _document_sha(
+        payload,
+        ATTEMPT1_FAILURE_CANONICAL_FIELD,
+    )
+    return payload
+
+
+def _validate_attempt1_failure_payload(
+    payload: Mapping[str, Any],
+    path: Path,
+    raw: bytes,
+    *,
+    recursive: bool,
+) -> dict[str, Any]:
+    expected_top = {
+        "schema_version",
+        "status",
+        "generated_utc",
+        "attempt_id",
+        "metadata_repository_root",
+        "failed_manifest",
+        "failed_publisher_source",
+        "failed_source_bundle",
+        "failure",
+        "predecessor",
+        "official_output_state",
+        "writes_performed",
+        "transaction_committed",
+        "official_outputs_written",
+        "permissions",
+        "evidence_boundary",
+        ATTEMPT1_FAILURE_CANONICAL_FIELD,
+    }
+    if (
+        set(payload) != expected_top
+        or payload.get("schema_version") != ATTEMPT1_FAILURE_SCHEMA
+        or payload.get("status") != ATTEMPT1_FAILURE_STATUS
+        or payload.get("attempt_id") != ATTEMPT1_MANIFEST_RECEIPT_ID
+        or payload.get("failed_publisher_source") != ATTEMPT1_PUBLISHER_SOURCE
+        or payload.get("writes_performed") is not False
+        or payload.get("transaction_committed") is not False
+        or payload.get("official_outputs_written") is not False
+        or payload.get("permissions") != NO_NEW_AUTHORITY
+        or payload.get("evidence_boundary") != EVIDENCE_BOUNDARY
+        or payload.get(ATTEMPT1_FAILURE_CANONICAL_FIELD)
+        != _document_sha(payload, ATTEMPT1_FAILURE_CANONICAL_FIELD)
+    ):
+        raise ConfigLocatorReconciliationError("attempt1 failure receipt identity drifted")
+    if _absolute(path) != _absolute(_attempt1_failure_receipt_path()):
+        raise ConfigLocatorReconciliationError("attempt1 failure receipt path drifted")
+    generated_ns = _timestamp_ns(
+        payload.get("generated_utc"),
+        "attempt1 failure generated_utc",
+    )
+    if generated_ns > _now_utc_ns() + MANIFEST_MAX_CLOCK_SKEW_SECONDS * 1_000_000_000:
+        raise ConfigLocatorReconciliationError("attempt1 failure generated_utc is in the future")
+    metadata_root = Path(str(payload.get("metadata_repository_root", ""))).expanduser()
+    if not metadata_root.is_absolute() or metadata_root != _absolute(metadata_root):
+        raise ConfigLocatorReconciliationError("attempt1 failure metadata root drifted")
+    failure = payload.get("failure")
+    expected_failure = {
+        "candidate_audit_passed": False,
+        "failure_phase": ATTEMPT1_FAILURE_PHASE,
+        "failure_reason": (
+            f"metadata audit introduced {ATTEMPT1_NEW_FINDING_COUNT} new finding(s)"
+        ),
+        "finding_kind": "nonpublished_projection_missing",
+        "nonpublished_projection_entry_count": ATTEMPT1_NEW_FINDING_COUNT,
+        "new_finding_count": ATTEMPT1_NEW_FINDING_COUNT,
+        "new_finding_fingerprint_set_sha256": ATTEMPT1_NEW_FINDING_SET_SHA256,
+        "payload_files_opened": 0,
+    }
+    if failure != expected_failure:
+        raise ConfigLocatorReconciliationError("attempt1 failure finding identity drifted")
+    predecessor = payload.get("predecessor")
+    activation = (
+        predecessor.get("v6_activation_receipt") if isinstance(predecessor, Mapping) else None
+    )
+    if (
+        not isinstance(activation, Mapping)
+        or predecessor
+        != _attempt1_predecessor_contract(
+            metadata_root,
+            Path(str(activation.get("path", ""))),
+        )
+        or payload.get("official_output_state") != _attempt1_official_output_contract(metadata_root)
+    ):
+        raise ConfigLocatorReconciliationError("attempt1 failure predecessor state drifted")
+    if recursive:
+        attempt1_manifest, attempt1_binding = _validate_attempt1_manifest()
+        attempt1_source_bundle = _validate_attempt1_source_bundle()
+        if (
+            payload.get("failed_manifest") != attempt1_binding
+            or attempt1_manifest.get("metadata_repository_root") != str(metadata_root)
+            or attempt1_manifest.get("publisher_source") != ATTEMPT1_PUBLISHER_SOURCE
+            or payload.get("failed_source_bundle") != attempt1_source_bundle
+        ):
+            raise ConfigLocatorReconciliationError(
+                "attempt1 failure frozen manifest binding drifted"
+            )
+    else:
+        failed_manifest = payload.get("failed_manifest")
+        failed_source_bundle = payload.get("failed_source_bundle")
+        if (
+            not isinstance(failed_manifest, Mapping)
+            or failed_manifest.get("file_sha256") != ATTEMPT1_MANIFEST_FILE_SHA256
+            or failed_manifest.get("canonical_sha256") != ATTEMPT1_MANIFEST_CANONICAL_SHA256
+            or failed_manifest.get("size_bytes") != ATTEMPT1_MANIFEST_SIZE
+            or not isinstance(failed_source_bundle, Mapping)
+            or failed_source_bundle.get("path") != str(_attempt1_source_bundle_path())
+            or failed_source_bundle.get("sha256") != ATTEMPT1_SOURCE_BUNDLE_SHA256
+            or failed_source_bundle.get("bytes") != ATTEMPT1_SOURCE_BUNDLE_SIZE
+            or failed_source_bundle.get("mode") != "0600"
+            or failed_source_bundle.get("nlink") != 1
+            or failed_source_bundle.get("owner_uid") != os.getuid()
+            or failed_source_bundle.get("complete_history_bundle") is not True
+        ):
+            raise ConfigLocatorReconciliationError("attempt1 failure manifest projection drifted")
+    return {
+        "payload": dict(payload),
+        "binding": _canonical_binding(
+            path,
+            payload,
+            raw,
+            ATTEMPT1_FAILURE_CANONICAL_FIELD,
+        ),
+    }
+
+
+def _attempt1_failure_candidate(
+    path: Path,
+    *,
+    formal_path: Path,
+    allowed_nlinks: frozenset[int],
+) -> tuple[dict[str, Any], bytes, os.stat_result]:
+    payload, raw, metadata = _load_json(path, allowed_nlinks=allowed_nlinks)
+    _validate_attempt1_failure_payload(payload, formal_path, raw, recursive=True)
+    generated_ns = _timestamp_ns(payload["generated_utc"], "attempt1 failure generated_utc")
+    if abs(metadata.st_mtime_ns - generated_ns) > MANIFEST_MAX_CLOCK_SKEW_SECONDS * 1_000_000_000:
+        raise ConfigLocatorReconciliationError("attempt1 failure receipt mtime drifted")
+    return payload, raw, metadata
+
+
+def validate_attempt1_failure(path: Path, *, recursive: bool = True) -> dict[str, Any]:
+    payload, raw, metadata = _load_json(path)
+    validated = _validate_attempt1_failure_payload(
+        payload,
+        path,
+        raw,
+        recursive=recursive,
+    )
+    generated_ns = _timestamp_ns(payload["generated_utc"], "attempt1 failure generated_utc")
+    if abs(metadata.st_mtime_ns - generated_ns) > MANIFEST_MAX_CLOCK_SKEW_SECONDS * 1_000_000_000:
+        raise ConfigLocatorReconciliationError("attempt1 failure receipt mtime drifted")
+    return {
+        "failure_receipt": validated["binding"],
+        "failed_manifest": deepcopy(payload["failed_manifest"]),
+        "failed_publisher_source": deepcopy(payload["failed_publisher_source"]),
+        "failed_source_bundle": deepcopy(payload["failed_source_bundle"]),
+        "failure": deepcopy(payload["failure"]),
+        "recursive_validation_passed": recursive,
+    }
+
+
+def _assert_attempt2_not_started(path: Path) -> None:
+    pending = _pending(path, "create")
+    if _secure_exists(path) or _secure_exists(pending) or _manifest_staging_paths(path):
+        raise ConfigLocatorReconciliationError(
+            "attempt2 manifest publication already started before failure receipt"
+        )
+
+
+def record_attempt1_failure(
+    *,
+    metadata_repository_root: Path,
+    output_path: Path | None = None,
+) -> dict[str, Any]:
+    metadata_root = _absolute(metadata_repository_root)
+    evidence_root = _private_evidence_root()
+    _validate_private_evidence_layout(evidence_root, allow_manifest_leaf_missing=True)
+    path = _absolute(_attempt1_failure_receipt_path() if output_path is None else output_path)
+    if path != _absolute(_attempt1_failure_receipt_path()):
+        raise ConfigLocatorReconciliationError("attempt1 failure output path drifted")
+    descriptor = _open_transaction_lock(metadata_root)
+    try:
+        _ensure_private_directory(path.parent)
+        pending = _pending(path, "create")
+        final_exists = _secure_exists(path)
+        pending_exists = _secure_exists(pending)
+        staging = _staging_paths(path, "failure-receipt")
+        if staging:
+            if not final_exists and not pending_exists:
+                _cleanup_uncommitted_staging(
+                    path,
+                    None,
+                    pending_kind="create",
+                    staging_kind="failure-receipt",
+                    expected_current=None,
+                )
+            elif not final_exists and pending_exists:
+                _pending_payload, pending_raw, _pending_metadata = _attempt1_failure_candidate(
+                    pending,
+                    formal_path=path,
+                    allowed_nlinks=frozenset({2}),
+                )
+                _recover_staging_transfer(
+                    path,
+                    pending_raw,
+                    pending_kind="create",
+                    staging_kind="failure-receipt",
+                    expected_current=None,
+                )
+            else:
+                raise ConfigLocatorReconciliationError(
+                    "attempt1 failure staging is ambiguous with published state"
+                )
+        if _secure_exists(path):
+            payload, raw, metadata = _attempt1_failure_candidate(
+                path,
+                formal_path=path,
+                allowed_nlinks=frozenset({1, 2}),
+            )
+            if metadata.st_nlink == 2:
+                if not _secure_exists(pending):
+                    raise ConfigLocatorReconciliationError(
+                        "attempt1 failure nlink=2 lacks recovery pending"
+                    )
+                pending_payload, pending_raw, pending_metadata = _attempt1_failure_candidate(
+                    pending,
+                    formal_path=path,
+                    allowed_nlinks=frozenset({2}),
+                )
+                if (
+                    pending_payload != payload
+                    or pending_raw != raw
+                    or (pending_metadata.st_dev, pending_metadata.st_ino)
+                    != (metadata.st_dev, metadata.st_ino)
+                ):
+                    raise ConfigLocatorReconciliationError(
+                        "attempt1 failure recovery hardlink drifted"
+                    )
+                _secure_unlink(pending)
+            elif _secure_exists(pending):
+                raise ConfigLocatorReconciliationError(
+                    "attempt1 failure orphan pending is ambiguous"
+                )
+            result = validate_attempt1_failure(path, recursive=True)
+            result["write_semantics"] = "create_only_idempotent_existing_exact_reused"
+            return result
+        if _secure_exists(pending):
+            payload, raw, _metadata = _attempt1_failure_candidate(
+                pending,
+                formal_path=path,
+                allowed_nlinks=frozenset({1}),
+            )
+            if payload.get("metadata_repository_root") != str(metadata_root):
+                raise ConfigLocatorReconciliationError("pending attempt1 failure inputs drifted")
+            _require_attempt1_official_outputs_absent(metadata_root)
+            _assert_attempt2_not_started(_formal_manifest_path())
+            _secure_link(pending, path)
+            _secure_unlink(pending)
+            result = validate_attempt1_failure(path, recursive=True)
+            result["write_semantics"] = "create_only_pending_recovered"
+            return result
+
+        attempt1_manifest, attempt1_binding = _validate_attempt1_manifest()
+        attempt1_source_bundle_binding = _validate_attempt1_source_bundle()
+        if attempt1_manifest.get("metadata_repository_root") != str(metadata_root):
+            raise ConfigLocatorReconciliationError("attempt1 metadata root drifted")
+        _assert_attempt2_not_started(_formal_manifest_path())
+        state = _require_attempt1_official_outputs_absent(metadata_root)
+        finding_summary = _attempt1_failure_finding_summary(metadata_root)
+        _validate_attempt1_manifest()
+        if _validate_attempt1_source_bundle() != attempt1_source_bundle_binding:
+            raise ConfigLocatorReconciliationError(
+                "attempt1 source bundle changed before failure receipt first writer"
+            )
+        _assert_attempt2_not_started(_formal_manifest_path())
+        state = _require_attempt1_official_outputs_absent(metadata_root)
+        if _attempt1_failure_finding_summary(metadata_root) != finding_summary:
+            raise ConfigLocatorReconciliationError(
+                "attempt1 failure finding set changed before failure receipt first writer"
+            )
+        generated_utc = _nanosecond_utc(_now_utc_ns())
+        payload = _build_attempt1_failure_receipt(
+            metadata_root=metadata_root,
+            attempt1_manifest_binding=attempt1_binding,
+            attempt1_source_bundle_binding=attempt1_source_bundle_binding,
+            predecessor=state["predecessor"],
+            official_output_state=state["official_output_state"],
+            finding_summary=finding_summary,
+            generated_utc=generated_utc,
+        )
+        raw = _render(payload)
+        _validate_attempt1_failure_payload(payload, path, raw, recursive=True)
+        _stage_deterministic_pending(
+            path,
+            raw,
+            pending_kind="create",
+            staging_kind="failure-receipt",
+            expected_current=None,
+        )
+        _publish_create_only(path, raw)
+        result = validate_attempt1_failure(path, recursive=True)
+        result["write_semantics"] = "create_only_first_writer"
+        return result
+    finally:
+        _close_transaction_lock(descriptor)
+
+
 def _build_manifest(
     *,
     publisher_root: Path,
@@ -1685,6 +2273,7 @@ def _build_manifest(
     publisher_source: Mapping[str, Any],
     tracked_successor_files: Mapping[str, str],
     metadata_audit_baseline: Mapping[str, Any],
+    attempt1_failure_receipt_binding: Mapping[str, Any],
     activation_path: Path,
     generated_utc: str,
 ) -> dict[str, Any]:
@@ -1700,6 +2289,10 @@ def _build_manifest(
         "private_evidence_trust_boundary": _private_evidence_trust_contract(
             _private_evidence_root()
         ),
+        "predecessor_failed_attempt": {
+            "attempt_id": ATTEMPT1_MANIFEST_RECEIPT_ID,
+            "failure_receipt": deepcopy(dict(attempt1_failure_receipt_binding)),
+        },
         "metadata_audit_baseline": deepcopy(dict(metadata_audit_baseline)),
         "transaction": _transaction_contract(
             metadata_root,
@@ -1730,6 +2323,7 @@ def _validate_manifest_payload(
         "publisher_source",
         "tracked_successor_files",
         "private_evidence_trust_boundary",
+        "predecessor_failed_attempt",
         "metadata_audit_baseline",
         "transaction",
         "permissions",
@@ -1768,6 +2362,40 @@ def _validate_manifest_payload(
         evidence_root
     ):
         raise ConfigLocatorReconciliationError("private evidence trust boundary drifted")
+    failed_attempt = payload.get("predecessor_failed_attempt")
+    failure_binding = (
+        failed_attempt.get("failure_receipt") if isinstance(failed_attempt, Mapping) else None
+    )
+    expected_failure_binding_fields = {
+        "path",
+        "schema_version",
+        "status",
+        "file_sha256",
+        "canonical_field",
+        "canonical_sha256",
+        "size_bytes",
+        "mode",
+    }
+    if (
+        not isinstance(failed_attempt, Mapping)
+        or set(failed_attempt) != {"attempt_id", "failure_receipt"}
+        or failed_attempt.get("attempt_id") != ATTEMPT1_MANIFEST_RECEIPT_ID
+        or not isinstance(failure_binding, Mapping)
+        or set(failure_binding) != expected_failure_binding_fields
+        or failure_binding.get("path") != str(_attempt1_failure_receipt_path())
+        or failure_binding.get("schema_version") != ATTEMPT1_FAILURE_SCHEMA
+        or failure_binding.get("status") != ATTEMPT1_FAILURE_STATUS
+        or failure_binding.get("canonical_field") != ATTEMPT1_FAILURE_CANONICAL_FIELD
+        or failure_binding.get("mode") != "0600"
+        or not isinstance(failure_binding.get("size_bytes"), int)
+        or failure_binding.get("size_bytes", 0) <= 0
+    ):
+        raise ConfigLocatorReconciliationError("attempt1 failure receipt binding drifted")
+    _require_sha(failure_binding.get("file_sha256"), "attempt1 failure receipt file SHA256")
+    _require_sha(
+        failure_binding.get("canonical_sha256"),
+        "attempt1 failure receipt canonical SHA256",
+    )
     identities: list[tuple[int, int]] = []
     for label, root in (
         ("publisher", publisher_root),
@@ -1830,6 +2458,14 @@ def _validate_manifest_payload(
     if not isinstance(publisher, Mapping):
         raise ConfigLocatorReconciliationError("manifest publisher source is missing")
     if recursive:
+        validated_failure = validate_attempt1_failure(
+            _attempt1_failure_receipt_path(),
+            recursive=True,
+        )
+        if validated_failure["failure_receipt"] != dict(failure_binding):
+            raise ConfigLocatorReconciliationError(
+                "attempt1 failure receipt recursive binding drifted"
+            )
         _validate_tracked_source_pair(
             publisher_root=publisher_root,
             metadata_root=metadata_root,
@@ -1900,6 +2536,10 @@ def prepare_manifest(
         # configured durable root. Only this one reviewed 0700 leaf may be
         # created, before publication-state probes that require its parent.
         _ensure_private_directory(path.parent)
+        attempt1_failure_binding = validate_attempt1_failure(
+            _attempt1_failure_receipt_path(),
+            recursive=True,
+        )["failure_receipt"]
         pending = _pending(path, "create")
         path_exists = _secure_exists(path)
         pending_exists = _secure_exists(pending)
@@ -2013,6 +2653,16 @@ def prepare_manifest(
             expected_tracked=tree_tracked,
         )
         predecessor = _validate_predecessor(metadata_root)
+        if (
+            validate_attempt1_failure(
+                _attempt1_failure_receipt_path(),
+                recursive=True,
+            )["failure_receipt"]
+            != attempt1_failure_binding
+        ):
+            raise ConfigLocatorReconciliationError(
+                "attempt1 failure receipt changed before final manifest first writer"
+            )
         if _secure_exists(path) or _secure_exists(pending) or _manifest_staging_paths(path):
             raise ConfigLocatorReconciliationError(
                 "manifest publication state changed before first writer"
@@ -2025,6 +2675,7 @@ def prepare_manifest(
             publisher_source=publisher,
             tracked_successor_files=tree_tracked,
             metadata_audit_baseline=audit_baseline,
+            attempt1_failure_receipt_binding=attempt1_failure_binding,
             activation_path=Path(str(predecessor["activation_binding"]["path"])),
             generated_utc=generated_utc,
         )
@@ -2654,9 +3305,289 @@ def _private_topology_snapshot(root: Path) -> tuple[tuple[str, tuple[int, ...]],
     return tuple(sorted(records.items()))
 
 
-def _copy_private_metadata_skeleton(metadata_root: Path, candidate_root: Path) -> None:
+def _nonpublished_projection_public_paths(payload: Mapping[str, Any]) -> tuple[Path, ...]:
+    if payload.get("schema_version") != audit_private_evidence.NONPUBLISHED_SCHEMA:
+        raise ConfigLocatorReconciliationError("nonpublished projection index schema drifted")
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+        raise ConfigLocatorReconciliationError("nonpublished projection index entries malformed")
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for offset, entry in enumerate(entries):
+        if not isinstance(entry, Mapping):
+            raise ConfigLocatorReconciliationError(
+                f"nonpublished projection index entry {offset} malformed"
+            )
+        raw_path = entry.get("public_path")
+        if not isinstance(raw_path, str) or not raw_path or "\x00" in raw_path:
+            raise ConfigLocatorReconciliationError(
+                f"nonpublished projection public_path {offset} malformed"
+            )
+        relative = Path(raw_path)
+        if (
+            relative.is_absolute()
+            or relative == Path(".")
+            or relative.as_posix() != raw_path
+            or any(component in {"", ".", "..", ".git"} for component in relative.parts)
+            or "..." in raw_path
+        ):
+            raise ConfigLocatorReconciliationError(
+                f"nonpublished projection public_path {offset} is unsafe"
+            )
+        if any(
+            relative == owner_root or relative.is_relative_to(owner_root)
+            for owner_root in audit_private_evidence.PRIVATE_OWNER_ROOTS
+        ):
+            raise ConfigLocatorReconciliationError(
+                f"nonpublished projection public_path overlaps an owner root: {relative}"
+            )
+        if relative in seen:
+            raise ConfigLocatorReconciliationError(
+                f"duplicate nonpublished projection public_path: {relative}"
+            )
+        seen.add(relative)
+        paths.append(relative)
+    return tuple(paths)
+
+
+def _indexed_public_path_topology_snapshot(
+    root: Path,
+    relative: Path,
+) -> tuple[tuple[str, tuple[int, ...]], ...]:
+    """Securely lstat an indexed projection and its parents without opening it."""
+
+    _opened_root, descriptor = _open_directory_nofollow(root)
+    records: list[tuple[str, tuple[int, ...]]] = []
+    try:
+        root_metadata = os.fstat(descriptor)
+        if (
+            root_metadata.st_uid != os.getuid()
+            or not stat.S_ISDIR(root_metadata.st_mode)
+            or stat.S_IMODE(root_metadata.st_mode) & 0o022
+        ):
+            raise ConfigLocatorReconciliationError(
+                "nonpublished projection source root identity is unsafe"
+            )
+        records.append((".", _topology_stat_identity(root_metadata)))
+        traversed = Path()
+        for offset, component in enumerate(relative.parts):
+            traversed /= component
+            try:
+                metadata = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection is unavailable: {relative}"
+                ) from exc
+            records.append((traversed.as_posix(), _topology_stat_identity(metadata)))
+            if offset == len(relative.parts) - 1:
+                if (
+                    not stat.S_ISREG(metadata.st_mode)
+                    or metadata.st_uid != os.getuid()
+                    or metadata.st_nlink != 1
+                    or stat.S_IMODE(metadata.st_mode) & 0o022
+                ):
+                    raise ConfigLocatorReconciliationError(
+                        f"indexed nonpublished projection identity is unsafe: {relative}"
+                    )
+                continue
+            if (
+                not stat.S_ISDIR(metadata.st_mode)
+                or metadata.st_uid != os.getuid()
+                or stat.S_IMODE(metadata.st_mode) & 0o022
+            ):
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection path is unsafe: {relative}"
+                )
+            flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            try:
+                next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            except OSError as exc:
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection path is unsafe: {relative}"
+                ) from exc
+            opened = os.fstat(next_descriptor)
+            if _topology_stat_identity(opened) != _topology_stat_identity(metadata):
+                os.close(next_descriptor)
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection path drifted: {relative}"
+                )
+            os.close(descriptor)
+            descriptor = next_descriptor
+    finally:
+        os.close(descriptor)
+    return tuple(records)
+
+
+def _capture_indexed_source_topology_proof(metadata_root: Path) -> dict[str, Any]:
+    source_index = metadata_root / audit_private_evidence.NONPUBLISHED_INDEX
+    index_payload, index_raw, index_metadata = _load_json(source_index)
+    public_paths = _nonpublished_projection_public_paths(index_payload)
+    source_snapshots = tuple(
+        (
+            relative.as_posix(),
+            _indexed_public_path_topology_snapshot(metadata_root, relative),
+        )
+        for relative in public_paths
+    )
+    final_raw, final_metadata = _read_regular(source_index)
+    if final_raw != index_raw or _topology_stat_identity(final_metadata) != _topology_stat_identity(
+        index_metadata
+    ):
+        raise ConfigLocatorReconciliationError(
+            "nonpublished projection index changed while freezing topology proof"
+        )
+    return {
+        "index_raw": index_raw,
+        "index_stat": _topology_stat_identity(index_metadata),
+        "public_paths": tuple(relative.as_posix() for relative in public_paths),
+        "source_snapshots": source_snapshots,
+    }
+
+
+def _revalidate_indexed_source_topology(
+    metadata_root: Path,
+    proof: Mapping[str, Any],
+) -> dict[str, Any]:
+    if set(proof) != {"index_raw", "index_stat", "public_paths", "source_snapshots"}:
+        raise ConfigLocatorReconciliationError("indexed source topology proof is malformed")
+    index_raw = proof.get("index_raw")
+    index_stat = proof.get("index_stat")
+    public_path_names = proof.get("public_paths")
+    source_snapshot_rows = proof.get("source_snapshots")
+    if (
+        not isinstance(index_raw, bytes)
+        or not isinstance(index_stat, tuple)
+        or not isinstance(public_path_names, tuple)
+        or not isinstance(source_snapshot_rows, tuple)
+        or any(not isinstance(value, str) for value in public_path_names)
+    ):
+        raise ConfigLocatorReconciliationError("indexed source topology proof is malformed")
+    source_index = metadata_root / audit_private_evidence.NONPUBLISHED_INDEX
+    index_payload, observed_raw, observed_metadata = _load_json(source_index)
+    public_paths = _nonpublished_projection_public_paths(index_payload)
+    if (
+        observed_raw != index_raw
+        or _topology_stat_identity(observed_metadata) != index_stat
+        or tuple(relative.as_posix() for relative in public_paths) != public_path_names
+    ):
+        raise ConfigLocatorReconciliationError("indexed source topology index drifted")
+    try:
+        source_snapshots = dict(source_snapshot_rows)
+    except (TypeError, ValueError) as exc:
+        raise ConfigLocatorReconciliationError(
+            "indexed source topology proof is malformed"
+        ) from exc
+    if set(source_snapshots) != set(public_path_names):
+        raise ConfigLocatorReconciliationError("indexed source topology proof paths drifted")
+    for _pass in range(2):
+        for relative in public_paths:
+            observed = _indexed_public_path_topology_snapshot(metadata_root, relative)
+            if observed != source_snapshots[relative.as_posix()]:
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection topology drifted: {relative}"
+                )
+    final_raw, final_metadata = _read_regular(source_index)
+    if final_raw != index_raw or _topology_stat_identity(final_metadata) != index_stat:
+        raise ConfigLocatorReconciliationError(
+            "indexed source topology index drifted during revalidation"
+        )
+    return {
+        "index_sha256": _sha(index_raw),
+        "indexed_public_path_count": len(public_paths),
+        "topology_proof_revalidated": True,
+    }
+
+
+def _write_indexed_topology_placeholder(
+    candidate_root: Path,
+    relative: Path,
+    source_snapshot: tuple[tuple[str, tuple[int, ...]], ...],
+) -> None:
+    """Create an empty nofollow placeholder using only source lstat metadata."""
+
+    source_rows = dict(source_snapshot)
+    _opened_root, descriptor = _open_directory_nofollow(candidate_root)
+    try:
+        traversed = Path()
+        for component in relative.parts[:-1]:
+            traversed /= component
+            source_identity = source_rows.get(traversed.as_posix())
+            if source_identity is None or not stat.S_ISDIR(source_identity[2]):
+                raise ConfigLocatorReconciliationError(
+                    f"indexed nonpublished projection topology is incomplete: {relative}"
+                )
+            created = False
+            try:
+                metadata = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, stat.S_IMODE(source_identity[2]), dir_fd=descriptor)
+                except OSError as exc:
+                    raise ConfigLocatorReconciliationError(
+                        f"candidate projection directory creation failed: {relative}"
+                    ) from exc
+                created = True
+                metadata = os.stat(component, dir_fd=descriptor, follow_symlinks=False)
+            except OSError as exc:
+                raise ConfigLocatorReconciliationError(
+                    f"candidate projection path is unsafe: {relative}"
+                ) from exc
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise ConfigLocatorReconciliationError(
+                    f"candidate projection path is unsafe: {relative}"
+                )
+            flags = os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0)
+            flags |= getattr(os, "O_CLOEXEC", 0)
+            try:
+                next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            except OSError as exc:
+                raise ConfigLocatorReconciliationError(
+                    f"candidate projection path is unsafe: {relative}"
+                ) from exc
+            if created:
+                os.fchmod(next_descriptor, stat.S_IMODE(source_identity[2]))
+            os.close(descriptor)
+            descriptor = next_descriptor
+
+        source_identity = source_rows.get(relative.as_posix())
+        if source_identity is None or not stat.S_ISREG(source_identity[2]):
+            raise ConfigLocatorReconciliationError(
+                f"indexed nonpublished projection topology is incomplete: {relative}"
+            )
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        try:
+            placeholder = os.open(
+                relative.name,
+                flags,
+                stat.S_IMODE(source_identity[2]),
+                dir_fd=descriptor,
+            )
+        except OSError as exc:
+            raise ConfigLocatorReconciliationError(
+                f"candidate projection placeholder creation failed: {relative}"
+            ) from exc
+        try:
+            os.fchmod(placeholder, stat.S_IMODE(source_identity[2]))
+            created_metadata = os.fstat(placeholder)
+            if not stat.S_ISREG(created_metadata.st_mode) or created_metadata.st_size != 0:
+                raise ConfigLocatorReconciliationError(
+                    f"candidate projection placeholder identity is unsafe: {relative}"
+                )
+        finally:
+            os.close(placeholder)
+    finally:
+        os.close(descriptor)
+
+
+def _copy_private_metadata_skeleton(
+    metadata_root: Path,
+    candidate_root: Path,
+) -> dict[str, Any]:
     """Mirror private metadata topology without reading payload file contents."""
 
+    source_index = metadata_root / audit_private_evidence.NONPUBLISHED_INDEX
     inode_targets: dict[tuple[int, int], Path] = {}
     governance_paths = {
         *(root / "README.local.md" for root in audit_private_evidence.PRIVATE_OWNER_ROOTS),
@@ -2739,9 +3670,8 @@ def _copy_private_metadata_skeleton(metadata_root: Path, candidate_root: Path) -
     # test or a future constrained audit uses an owner-root subset that does
     # not include its parent. Copy only this exact path, never a basename
     # match, so nested lookalikes remain topology-only.
-    source_index = metadata_root / audit_private_evidence.NONPUBLISHED_INDEX
     destination_index = candidate_root / audit_private_evidence.NONPUBLISHED_INDEX
-    if _secure_exists(source_index) and not destination_index.exists():
+    if not destination_index.exists():
         source_metadata = source_index.lstat()
         destination_index.parent.mkdir(parents=True, exist_ok=True)
         _write_skeleton_file(
@@ -2751,6 +3681,23 @@ def _copy_private_metadata_skeleton(metadata_root: Path, candidate_root: Path) -
             inode_targets=inode_targets,
             read_contents=True,
         )
+    candidate_index_raw, _candidate_index_metadata = _read_regular(destination_index)
+    topology_proof = _capture_indexed_source_topology_proof(metadata_root)
+    if candidate_index_raw != topology_proof["index_raw"]:
+        raise ConfigLocatorReconciliationError(
+            "nonpublished projection index changed during candidate skeleton copy"
+        )
+
+    source_snapshots = dict(topology_proof["source_snapshots"])
+    for public_path in topology_proof["public_paths"]:
+        relative = Path(public_path)
+        _write_indexed_topology_placeholder(
+            candidate_root,
+            relative,
+            source_snapshots[public_path],
+        )
+    _revalidate_indexed_source_topology(metadata_root, topology_proof)
+    return topology_proof
 
 
 def _validate_candidate_auditor_identity(
@@ -2792,6 +3739,26 @@ def _validate_candidate_auditor_identity(
     return observed
 
 
+def _candidate_metadata_only_audit(
+    *,
+    metadata_root: Path,
+    candidate_root: Path,
+    topology_proof: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], dict[str, Any]]:
+    observed = audit_private_evidence.audit(
+        candidate_root,
+        mode=audit_private_evidence.METADATA_ONLY,
+        deny_locked=True,
+        allowlist_manifest=None,
+        catalog_path_source_root=metadata_root,
+    )
+    topology_revalidation = _revalidate_indexed_source_topology(
+        metadata_root,
+        topology_proof,
+    )
+    return observed, topology_revalidation
+
+
 def _full_candidate_owner_root_audit(
     *,
     metadata_root: Path,
@@ -2800,7 +3767,7 @@ def _full_candidate_owner_root_audit(
     audit_baseline: Mapping[str, Any],
     audit_contract: Mapping[str, Any],
     planned_files: Mapping[str, tuple[Path, bytes]],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     if audit_contract.get("required_new_finding_count") != 0:
         raise ConfigLocatorReconciliationError("candidate audit contract drifted")
     _validate_candidate_auditor_identity(
@@ -2840,7 +3807,7 @@ def _full_candidate_owner_root_audit(
             audit_contract=audit_contract,
             candidate_root=candidate_root,
         )
-        _copy_private_metadata_skeleton(metadata_root, candidate_root)
+        topology_proof = _copy_private_metadata_skeleton(metadata_root, candidate_root)
         for path in (metadata_root / "docs/private").glob(".*.pending-config-reconciliation-v1"):
             relative = path.relative_to(metadata_root)
             candidate_pending = candidate_root / relative
@@ -2865,12 +3832,10 @@ def _full_candidate_owner_root_audit(
                 "bytes": len(raw),
                 "mode": "0600",
             }
-        observed = audit_private_evidence.audit(
-            candidate_root,
-            mode=audit_private_evidence.METADATA_ONLY,
-            deny_locked=True,
-            allowlist_manifest=None,
-            catalog_path_source_root=metadata_root,
+        observed, topology_revalidation = _candidate_metadata_only_audit(
+            metadata_root=metadata_root,
+            candidate_root=candidate_root,
+            topology_proof=topology_proof,
         )
         _validate_candidate_auditor_identity(
             publisher_root=publisher_root,
@@ -2889,21 +3854,25 @@ def _full_candidate_owner_root_audit(
         raise ConfigLocatorReconciliationError("candidate audit envelope drifted")
     comparison = _assert_no_new_findings(audit_baseline, observed)
     observed_baseline = _audit_baseline(observed)
-    return {
-        "schema_version": "narrowgate.prepublication_candidate_owner_root_audit.v1",
-        "status": "full_metadata_only_candidate_owner_root_audit_passed",
-        "audit_contract_sha256": _canonical(audit_contract),
-        "catalog_path_remapping_enabled": True,
-        "catalog_path_source_root_sha256": source_root_sha256,
-        "candidate_finding_set_sha256": observed_baseline["finding_set_sha256"],
-        "candidate_finding_count": observed_baseline["finding_count"],
-        "new_finding_count": comparison["new_finding_count"],
-        "planned_override_bindings": override_bindings,
-        "validation_read": False,
-        "sealed_holdout_read": False,
-        "payload_files_opened": 0,
-        "passed": True,
-    }
+    return (
+        {
+            "schema_version": "narrowgate.prepublication_candidate_owner_root_audit.v1",
+            "status": "full_metadata_only_candidate_owner_root_audit_passed",
+            "audit_contract_sha256": _canonical(audit_contract),
+            "catalog_path_remapping_enabled": True,
+            "catalog_path_source_root_sha256": source_root_sha256,
+            "candidate_finding_set_sha256": observed_baseline["finding_set_sha256"],
+            "candidate_finding_count": observed_baseline["finding_count"],
+            "new_finding_count": comparison["new_finding_count"],
+            "planned_override_bindings": override_bindings,
+            "indexed_source_topology_revalidation": topology_revalidation,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "payload_files_opened": 0,
+            "passed": True,
+        },
+        topology_proof,
+    )
 
 
 AuditFn = Callable[[Path], Mapping[str, Any]]
@@ -3472,7 +4441,7 @@ def _execute_once(
                 pre_candidate_observed,
             )
         audit_contract = receipt["prepublication_candidate_owner_root_audit_contract"]
-        candidate_audit = _full_candidate_owner_root_audit(
+        candidate_audit, indexed_source_topology_proof = _full_candidate_owner_root_audit(
             metadata_root=metadata_root,
             publisher_root=Path(str(manifest["publisher_root"])),
             publisher_source=manifest["publisher_source"],
@@ -3558,6 +4527,10 @@ def _execute_once(
             activation_path=activation_path,
         )
         _validate_execution_source_identity(manifest)
+        _revalidate_indexed_source_topology(
+            metadata_root,
+            indexed_source_topology_proof,
+        )
 
         for key in (
             "backtest_archive",
@@ -3702,6 +4675,11 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--active-config-source", type=Path, required=True)
     prepare.add_argument("--receipt-id", required=True)
     prepare.add_argument("--output", type=Path)
+    failure = commands.add_parser("record-attempt1-failure")
+    failure.add_argument("--metadata-repository-root", type=Path, required=True)
+    failure.add_argument("--output", type=Path)
+    validate_failure = commands.add_parser("validate-attempt1-failure")
+    validate_failure.add_argument("--receipt", type=Path, required=True)
     validate = commands.add_parser("validate-manifest")
     validate.add_argument("--manifest", type=Path, required=True)
     run = commands.add_parser("run")
@@ -3721,6 +4699,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 receipt_id=args.receipt_id,
                 output_path=args.output,
             )
+        elif args.command == "record-attempt1-failure":
+            result = record_attempt1_failure(
+                metadata_repository_root=args.metadata_repository_root,
+                output_path=args.output,
+            )
+        elif args.command == "validate-attempt1-failure":
+            result = validate_attempt1_failure(args.receipt)
         elif args.command == "validate-manifest":
             result = validate_manifest(args.manifest)
         else:

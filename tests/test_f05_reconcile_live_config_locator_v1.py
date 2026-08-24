@@ -22,6 +22,19 @@ def _private_write(path: Path, raw: bytes) -> None:
     path.chmod(0o600)
 
 
+def _attempt1_failure_binding(path: Path) -> dict[str, object]:
+    return {
+        "path": str(path),
+        "schema_version": subject.ATTEMPT1_FAILURE_SCHEMA,
+        "status": subject.ATTEMPT1_FAILURE_STATUS,
+        "file_sha256": "7" * 64,
+        "canonical_field": subject.ATTEMPT1_FAILURE_CANONICAL_FIELD,
+        "canonical_sha256": "8" * 64,
+        "size_bytes": 123,
+        "mode": "0600",
+    }
+
+
 def _audit(*findings: dict) -> dict:
     return {
         "schema_version": subject.audit_private_evidence.AUDIT_SCHEMA,
@@ -46,6 +59,20 @@ def _transaction_fixture(
     private = metadata_root / "docs/private"
     private.mkdir(parents=True)
     private.chmod(0o700)
+    indexed_relative = Path("models/saved_private_projection/execution-proof.json")
+    indexed_projection = metadata_root / indexed_relative
+    _private_write(indexed_projection, b"indexed source topology proof\n")
+    nonpublished_index = metadata_root / subject.audit_private_evidence.NONPUBLISHED_INDEX
+    _private_write(
+        nonpublished_index,
+        subject._render(
+            {
+                "schema_version": subject.audit_private_evidence.NONPUBLISHED_SCHEMA,
+                "entries": [{"public_path": indexed_relative.as_posix()}],
+            }
+        ),
+    )
+    indexed_source_topology_proof = subject._capture_indexed_source_topology_proof(metadata_root)
     old_config = b"old-v12-control\n"
     active_config = b"release-v3-no-shadow\n"
     alias = private / subject.CURRENT_ALIAS_FILENAME
@@ -173,6 +200,12 @@ def _transaction_fixture(
         "tracked_successor_files": {
             "scripts/audit_private_evidence.py": "5" * 64,
         },
+        "predecessor_failed_attempt": {
+            "attempt_id": subject.ATTEMPT1_MANIFEST_RECEIPT_ID,
+            "failure_receipt": _attempt1_failure_binding(
+                evidence_root / subject.ATTEMPT1_FAILURE_RECEIPT_RELATIVE
+            ),
+        },
         "metadata_audit_baseline": baseline,
         "transaction": subject._transaction_contract(
             metadata_root,
@@ -209,11 +242,14 @@ def _transaction_fixture(
     monkeypatch.setattr(
         subject,
         "_full_candidate_owner_root_audit",
-        lambda **_kwargs: {
-            "status": "full_metadata_only_candidate_owner_root_audit_passed",
-            "new_finding_count": 0,
-            "passed": True,
-        },
+        lambda **_kwargs: (
+            {
+                "status": "full_metadata_only_candidate_owner_root_audit_passed",
+                "new_finding_count": 0,
+                "passed": True,
+            },
+            indexed_source_topology_proof,
+        ),
     )
     monkeypatch.setattr(subject, "_validate_execution_source_identity", lambda _manifest: None)
     monkeypatch.setattr(
@@ -236,6 +272,8 @@ def _transaction_fixture(
         "catalog_raw": catalog_raw,
         "activation_raw": activation_raw,
         "activation_path": activation_path,
+        "indexed_projection": indexed_projection,
+        "indexed_source_topology_proof": indexed_source_topology_proof,
         "audit": lambda _root: _audit(),
     }
 
@@ -332,6 +370,9 @@ def test_manifest_build_uses_last_validated_activation_path_without_pointer_reop
             relative: "5" * 64 for relative in subject.TRACKED_SUCCESSOR_FILES
         },
         "metadata_audit_baseline": subject._audit_baseline(_audit()),
+        "attempt1_failure_receipt_binding": _attempt1_failure_binding(
+            evidence_root / subject.ATTEMPT1_FAILURE_RECEIPT_RELATIVE
+        ),
         "activation_path": fixture["activation_path"],
         "generated_utc": "2026-08-25T00:00:00.000000000Z",
     }
@@ -369,6 +410,8 @@ def _manifest_fixture(
     _private_write(active_source, b"active\n")
     active_source.parent.chmod(0o700)
     formal = evidence_root / subject.FORMAL_MANIFEST_RELATIVE
+    failure_receipt = evidence_root / subject.ATTEMPT1_FAILURE_RECEIPT_RELATIVE
+    failure_binding = _attempt1_failure_binding(failure_receipt)
     publisher = {
         "module_route": subject.PUBLISHER_MODULE_ROUTE,
         "annotated_tag": subject.PUBLISHER_TAG,
@@ -381,6 +424,14 @@ def _manifest_fixture(
     calls: list[str] = []
 
     monkeypatch.setattr(subject, "_private_evidence_root", lambda: evidence_root)
+    monkeypatch.setattr(
+        subject,
+        "validate_attempt1_failure",
+        lambda _path, recursive=True: {
+            "failure_receipt": dict(failure_binding),
+            "recursive_validation_passed": recursive,
+        },
+    )
     monkeypatch.setattr(
         subject,
         "_validate_predecessor",
@@ -415,6 +466,8 @@ def _manifest_fixture(
         "publisher_root": publisher_root,
         "active_source": active_source,
         "formal": formal,
+        "failure_receipt": failure_receipt,
+        "failure_binding": failure_binding,
         "pending": subject._pending(formal, "create"),
         "publisher": publisher,
         "tracked": tracked,
@@ -430,6 +483,312 @@ def _prepare_manifest(fixture: dict) -> dict:
         receipt_id=subject.MANIFEST_RECEIPT_ID,
         output_path=fixture["formal"],
     )
+
+
+def _attempt1_failure_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict[str, object]:
+    evidence_root = tmp_path / "evidence"
+    evidence_unit = evidence_root / subject.E3_V6_EVIDENCE_RELATIVE
+    authority_sources = evidence_unit / "authority_sources"
+    reconciliation = evidence_unit / "config_locator_reconciliation"
+    for directory in (evidence_unit, authority_sources, reconciliation):
+        directory.mkdir(parents=True, exist_ok=True)
+        directory.chmod(0o700)
+    metadata_root = tmp_path / "metadata"
+    private = metadata_root / "docs/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    activation = private / "attempt1-activation.local.json"
+    _private_write(activation, b"activation\n")
+    publisher_source = {
+        "module_route": subject.PUBLISHER_MODULE_ROUTE,
+        "annotated_tag": subject.ATTEMPT1_PUBLISHER_TAG,
+        "annotated_tag_object": "1" * 40,
+        "commit": "2" * 40,
+        "tree": "3" * 40,
+        "script_sha256": "4" * 64,
+    }
+    monkeypatch.setattr(subject, "ATTEMPT1_PUBLISHER_SOURCE", publisher_source)
+    monkeypatch.setattr(subject, "_private_evidence_root", lambda: evidence_root)
+
+    attempt1_manifest = evidence_root / subject.ATTEMPT1_FORMAL_MANIFEST_RELATIVE
+    generated_ns = subject._now_utc_ns()
+    generated_utc = subject._nanosecond_utc(generated_ns)
+    attempt1_payload = {
+        "schema_version": subject.MANIFEST_SCHEMA,
+        "status": subject.MANIFEST_STATUS,
+        "generated_utc": generated_utc,
+        "receipt_id": subject.ATTEMPT1_MANIFEST_RECEIPT_ID,
+        "metadata_repository_root": str(metadata_root),
+        "publisher_source": publisher_source,
+    }
+    attempt1_payload[subject.MANIFEST_CANONICAL_FIELD] = subject._document_sha(
+        attempt1_payload,
+        subject.MANIFEST_CANONICAL_FIELD,
+    )
+    attempt1_raw = subject._render(attempt1_payload)
+    _private_write(attempt1_manifest, attempt1_raw)
+    os.utime(attempt1_manifest, ns=(generated_ns, generated_ns))
+    monkeypatch.setattr(subject, "ATTEMPT1_MANIFEST_FILE_SHA256", _sha(attempt1_raw))
+    monkeypatch.setattr(
+        subject,
+        "ATTEMPT1_MANIFEST_CANONICAL_SHA256",
+        attempt1_payload[subject.MANIFEST_CANONICAL_FIELD],
+    )
+    monkeypatch.setattr(subject, "ATTEMPT1_MANIFEST_SIZE", len(attempt1_raw))
+
+    source_bundle = evidence_root / subject.ATTEMPT1_SOURCE_BUNDLE_RELATIVE
+    source_bundle_raw = b"complete source history bundle\n"
+    _private_write(source_bundle, source_bundle_raw)
+    monkeypatch.setattr(subject, "ATTEMPT1_SOURCE_BUNDLE_SHA256", _sha(source_bundle_raw))
+    monkeypatch.setattr(subject, "ATTEMPT1_SOURCE_BUNDLE_SIZE", len(source_bundle_raw))
+
+    public_path = Path("models/saved_private_projection/attempt1.json")
+    projection = metadata_root / public_path
+    _private_write(projection, b"nonempty private projection\n")
+    index = metadata_root / subject.audit_private_evidence.NONPUBLISHED_INDEX
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.parent.chmod(0o700)
+    _private_write(
+        index,
+        subject._render(
+            {
+                "schema_version": subject.audit_private_evidence.NONPUBLISHED_SCHEMA,
+                "entries": [{"public_path": public_path.as_posix()}],
+            }
+        ),
+    )
+    fingerprint = subject._canonical(
+        {"kind": "nonpublished_projection_missing", "path": public_path.as_posix()}
+    )
+    monkeypatch.setattr(subject, "ATTEMPT1_NEW_FINDING_COUNT", 1)
+    monkeypatch.setattr(
+        subject,
+        "ATTEMPT1_NEW_FINDING_SET_SHA256",
+        subject._canonical([fingerprint]),
+    )
+    monkeypatch.setattr(subject, "OLD_CONFIG_SHA256", "a" * 64)
+    monkeypatch.setattr(subject, "OLD_CONFIG_SIZE", 11)
+    monkeypatch.setattr(subject, "PREDECESSOR_POINTER_SHA256", "b" * 64)
+    monkeypatch.setattr(subject, "PREDECESSOR_POINTER_SIZE", 12)
+    monkeypatch.setattr(subject, "PREDECESSOR_CATALOG_SHA256", "c" * 64)
+    monkeypatch.setattr(subject, "PREDECESSOR_CATALOG_SIZE", 13)
+
+    def predecessor(root: Path) -> dict[str, object]:
+        return {
+            "paths": subject._paths(root),
+            "activation_binding": {"path": str(activation)},
+        }
+
+    monkeypatch.setattr(subject, "_validate_predecessor", predecessor)
+    return {
+        "evidence_root": evidence_root,
+        "metadata_root": metadata_root,
+        "attempt1_manifest": attempt1_manifest,
+        "source_bundle": source_bundle,
+        "failure_receipt": evidence_root / subject.ATTEMPT1_FAILURE_RECEIPT_RELATIVE,
+        "projection": projection,
+    }
+
+
+def test_attempt1_failure_receipt_is_create_only_exact_and_idempotent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    receipt = fixture["failure_receipt"]
+
+    first = subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=receipt,
+    )
+
+    assert first["write_semantics"] == "create_only_first_writer"
+    assert receipt.stat().st_mode & 0o777 == 0o600
+    assert receipt.stat().st_nlink == 1
+    payload = json.loads(receipt.read_text(encoding="utf-8"))
+    assert payload["failure"] == {
+        "candidate_audit_passed": False,
+        "failure_phase": subject.ATTEMPT1_FAILURE_PHASE,
+        "failure_reason": "metadata audit introduced 1 new finding(s)",
+        "finding_kind": "nonpublished_projection_missing",
+        "nonpublished_projection_entry_count": 1,
+        "new_finding_count": 1,
+        "new_finding_fingerprint_set_sha256": subject.ATTEMPT1_NEW_FINDING_SET_SHA256,
+        "payload_files_opened": 0,
+    }
+    assert payload["writes_performed"] is False
+    assert payload["transaction_committed"] is False
+    assert payload["official_outputs_written"] is False
+    assert payload["official_output_state"]["all_successor_outputs_absent"] is True
+    assert payload["failed_source_bundle"]["complete_history_bundle"] is True
+    raw = receipt.read_bytes()
+    repeated = subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=receipt,
+    )
+    assert repeated["write_semantics"] == "create_only_idempotent_existing_exact_reused"
+    assert receipt.read_bytes() == raw
+
+
+@pytest.mark.parametrize("recovery", ["pending_only", "nlink2"])
+def test_attempt1_failure_receipt_recovers_only_full_deterministic_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    recovery: str,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    receipt = fixture["failure_receipt"]
+    subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=receipt,
+    )
+    raw = receipt.read_bytes()
+    pending = subject._pending(receipt, "create")
+    if recovery == "pending_only":
+        receipt.replace(pending)
+    else:
+        os.link(receipt, pending)
+
+    observed = subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=receipt,
+    )
+
+    assert observed["write_semantics"] in {
+        "create_only_pending_recovered",
+        "create_only_idempotent_existing_exact_reused",
+    }
+    assert receipt.read_bytes() == raw
+    assert receipt.stat().st_nlink == 1
+    assert not pending.exists()
+
+
+def test_attempt1_failure_receipt_discards_only_uncommitted_staging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    receipt = fixture["failure_receipt"]
+    staging = subject._staging_path(receipt, "failure-receipt", "a" * 32)
+    _private_write(staging, b'{"short":')
+
+    observed = subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=receipt,
+    )
+
+    assert observed["write_semantics"] == "create_only_first_writer"
+    assert receipt.is_file()
+    assert not staging.exists()
+
+
+def test_attempt1_failure_receipt_preserves_invalid_deterministic_pending(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    receipt = fixture["failure_receipt"]
+    pending = subject._pending(receipt, "create")
+    residue = b'{"short":'
+    _private_write(pending, residue)
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="invalid JSON"):
+        subject.record_attempt1_failure(
+            metadata_repository_root=fixture["metadata_root"],
+            output_path=receipt,
+        )
+    assert pending.read_bytes() == residue
+    assert not receipt.exists()
+
+
+def test_attempt1_failure_receipt_blocks_if_any_official_output_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    output = subject._paths(fixture["metadata_root"])["backtest_archive"]
+    _private_write(output, b"must remain absent\n")
+
+    with pytest.raises(
+        subject.ConfigLocatorReconciliationError,
+        match="official successor output is not absent",
+    ):
+        subject.record_attempt1_failure(
+            metadata_repository_root=fixture["metadata_root"],
+            output_path=fixture["failure_receipt"],
+        )
+
+
+@pytest.mark.parametrize("authority", ["attempt1_manifest", "source_bundle"])
+def test_attempt1_failure_recursive_validation_reopens_frozen_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    authority: str,
+) -> None:
+    fixture = _attempt1_failure_fixture(tmp_path, monkeypatch)
+    subject.record_attempt1_failure(
+        metadata_repository_root=fixture["metadata_root"],
+        output_path=fixture["failure_receipt"],
+    )
+    target = fixture[authority]
+    if authority == "attempt1_manifest":
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        payload["status"] = "drifted"
+        payload[subject.MANIFEST_CANONICAL_FIELD] = subject._document_sha(
+            payload,
+            subject.MANIFEST_CANONICAL_FIELD,
+        )
+        _private_write(target, subject._render(payload))
+    else:
+        _private_write(target, b"drifted frozen authority\n")
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="drifted"):
+        subject.validate_attempt1_failure(fixture["failure_receipt"], recursive=True)
+
+
+def test_final_manifest_recursive_validation_reopens_attempt1_failure_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _manifest_fixture(tmp_path, monkeypatch)
+    fixture["formal"].parent.mkdir(parents=True)
+    fixture["formal"].parent.chmod(0o700)
+    payload = subject._build_manifest(
+        publisher_root=fixture["publisher_root"],
+        metadata_root=fixture["metadata_root"],
+        active_config_source=fixture["active_source"],
+        publisher_source=fixture["publisher"],
+        tracked_successor_files=fixture["tracked"],
+        metadata_audit_baseline=subject._audit_baseline(_audit()),
+        attempt1_failure_receipt_binding=fixture["failure_binding"],
+        activation_path=fixture["private"] / "opaque-immutable-activation.local.json",
+        generated_utc=subject._nanosecond_utc(subject._now_utc_ns()),
+    )
+    raw = subject._render(payload)
+    mismatch = dict(fixture["failure_binding"])
+    mismatch["file_sha256"] = "9" * 64
+    monkeypatch.setattr(
+        subject,
+        "validate_attempt1_failure",
+        lambda _path, recursive=True: {
+            "failure_receipt": mismatch,
+            "recursive_validation_passed": recursive,
+        },
+    )
+
+    with pytest.raises(
+        subject.ConfigLocatorReconciliationError,
+        match="recursive binding drifted",
+    ):
+        subject._validate_manifest_payload(
+            payload,
+            fixture["formal"],
+            raw,
+            recursive=True,
+        )
 
 
 def test_manifest_first_writer_creates_only_authorized_leaf_and_is_idempotent(
@@ -1601,14 +1960,17 @@ def test_activation_drift_during_candidate_blocks_first_write(
     fixture = _transaction_fixture(tmp_path, monkeypatch)
     activation = fixture["activation_path"]
 
-    def mutate_activation(**_kwargs: object) -> dict:
+    def mutate_activation(**_kwargs: object) -> tuple[dict, dict]:
         activation.write_bytes(b"drifted-after-candidate\n")
         activation.chmod(0o600)
-        return {
-            "status": "full_metadata_only_candidate_owner_root_audit_passed",
-            "new_finding_count": 0,
-            "passed": True,
-        }
+        return (
+            {
+                "status": "full_metadata_only_candidate_owner_root_audit_passed",
+                "new_finding_count": 0,
+                "passed": True,
+            },
+            fixture["indexed_source_topology_proof"],
+        )
 
     def validate_authorities(**_kwargs: object) -> dict:
         subject._validate_current_activation_crossbinding(fixture["metadata_root"], activation)
@@ -1627,6 +1989,56 @@ def test_activation_drift_during_candidate_blocks_first_write(
             audit_fn=fixture["audit"],
         )
     assert not (fixture["private"] / subject.RECEIPT_FILENAME).exists()
+
+
+def test_indexed_topology_drift_after_candidate_blocks_first_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixture = _transaction_fixture(tmp_path, monkeypatch)
+    projection = fixture["indexed_projection"]
+    proof = fixture["indexed_source_topology_proof"]
+    private = fixture["private"]
+    before = {path.name: path.read_bytes() for path in private.iterdir() if path.is_file()}
+
+    def mutate_after_candidate(**_kwargs: object) -> tuple[dict, dict]:
+        subject._revalidate_indexed_source_topology(fixture["metadata_root"], proof)
+        original = projection.with_name("execution-proof-before-hardlink.json")
+        projection.rename(original)
+        os.link(original, projection)
+        return (
+            {
+                "status": "full_metadata_only_candidate_owner_root_audit_passed",
+                "new_finding_count": 0,
+                "passed": True,
+            },
+            proof,
+        )
+
+    monkeypatch.setattr(
+        subject,
+        "_full_candidate_owner_root_audit",
+        mutate_after_candidate,
+    )
+    with pytest.raises(
+        subject.ConfigLocatorReconciliationError,
+        match="unsafe|topology drifted",
+    ):
+        subject.execute(
+            fixture["manifest_path"],
+            apply=True,
+            audit_fn=fixture["audit"],
+        )
+
+    assert before == {path.name: path.read_bytes() for path in private.iterdir() if path.is_file()}
+    assert not (private / subject.RECEIPT_FILENAME).exists()
+    for role in (
+        "backtest_archive",
+        "release_v3_config",
+        "pointer_snapshot",
+        "catalog_snapshot",
+    ):
+        assert not subject._paths(fixture["metadata_root"])[role].exists()
 
 
 def test_post_commit_audit_error_raises_committed_failure(
@@ -1777,7 +2189,10 @@ def test_cli_returns_nonzero_and_prints_committed_diagnostics(
 
 def _init_candidate_repo(path: Path) -> str:
     subprocess.run(["git", "init", "-q"], cwd=path, check=True)
-    (path / ".gitignore").write_text("docs/private/\nmodels/private/\n", encoding="utf-8")
+    (path / ".gitignore").write_text(
+        "docs/private/\nmodels/private/\nmodels/saved_private_projection/\n",
+        encoding="utf-8",
+    )
     for relative in (
         "docs/public_machine_document_projections.json",
         "research/public_machine_document_projections.json",
@@ -1862,13 +2277,16 @@ def test_full_candidate_owner_root_audit_runs_real_auditor_without_payload_reads
     _private_write(catalog, subject._render(catalog_payload))
     nested = private / "nested/catalog.current.local.json"
     _private_write(nested, b"LOCKED-PAYLOAD-MUST-NOT-BE-READ")
+    indexed_relative = Path("models/saved_private_projection/projection.json")
+    indexed_projection = metadata / indexed_relative
+    _private_write(indexed_projection, b"NONEMPTY-INDEXED-PAYLOAD-MUST-NOT-BE-READ")
     nonpublished = metadata / subject.audit_private_evidence.NONPUBLISHED_INDEX
     _private_write(
         nonpublished,
         subject._render(
             {
                 "schema_version": subject.audit_private_evidence.NONPUBLISHED_SCHEMA,
-                "entries": [],
+                "entries": [{"public_path": indexed_relative.as_posix()}],
             }
         ),
     )
@@ -1887,13 +2305,40 @@ def test_full_candidate_owner_root_audit_runs_real_auditor_without_payload_reads
     original_read_regular = subject._read_regular
 
     def guarded_read(path: Path, **kwargs: object) -> tuple[bytes, os.stat_result]:
-        if subject._absolute(path) == subject._absolute(nested):
+        absolute = subject._absolute(path)
+        if absolute == subject._absolute(nested):
             raise AssertionError("nested basename lookalike payload was read")
+        if absolute == subject._absolute(indexed_projection):
+            raise AssertionError("indexed nonpublished payload was read")
         return original_read_regular(path, **kwargs)
 
     monkeypatch.setattr(subject, "_read_regular", guarded_read)
+    original_open = subject.os.open
+    indexed_parent = indexed_projection.parent.stat()
 
-    result = subject._full_candidate_owner_root_audit(
+    def guarded_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if (
+            dir_fd is not None
+            and os.fspath(path) == indexed_projection.name
+            and not flags & getattr(os, "O_DIRECTORY", 0)
+        ):
+            parent = os.fstat(dir_fd)
+            if (parent.st_dev, parent.st_ino) == (
+                indexed_parent.st_dev,
+                indexed_parent.st_ino,
+            ):
+                raise AssertionError("indexed nonpublished payload was opened")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(subject.os, "open", guarded_open)
+
+    result, topology_proof = subject._full_candidate_owner_root_audit(
         metadata_root=metadata,
         publisher_root=publisher,
         publisher_source={"commit": commit},
@@ -1909,7 +2354,9 @@ def test_full_candidate_owner_root_audit_runs_real_auditor_without_payload_reads
     assert result["new_finding_count"] == 0
     assert result["payload_files_opened"] == 0
     assert result["catalog_path_remapping_enabled"] is True
+    assert topology_proof["public_paths"] == (indexed_relative.as_posix(),)
     assert nested.read_bytes() == b"LOCKED-PAYLOAD-MUST-NOT-BE-READ"
+    assert indexed_projection.read_bytes() == b"NONEMPTY-INDEXED-PAYLOAD-MUST-NOT-BE-READ"
 
     invalid_catalog_payload = dict(planned_catalog_payload)
     invalid_catalog_payload["entries"] = [dict(planned_catalog_payload["entries"][0])]
@@ -1926,6 +2373,128 @@ def test_full_candidate_owner_root_audit_runs_real_auditor_without_payload_reads
                 "planned": (private / "planned.json", b"planned\n"),
             },
         )
+
+
+def _candidate_index_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    public_path: Path,
+) -> tuple[Path, Path, Path]:
+    metadata = tmp_path / "metadata"
+    candidate = tmp_path / "candidate"
+    private = metadata / "models/private"
+    private.mkdir(parents=True)
+    private.chmod(0o700)
+    candidate.mkdir()
+    index = metadata / subject.audit_private_evidence.NONPUBLISHED_INDEX
+    _private_write(
+        index,
+        subject._render(
+            {
+                "schema_version": subject.audit_private_evidence.NONPUBLISHED_SCHEMA,
+                "entries": [{"public_path": public_path.as_posix()}],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        subject.audit_private_evidence,
+        "PRIVATE_OWNER_ROOTS",
+        (Path("models/private"),),
+    )
+    return metadata, candidate, metadata / public_path
+
+
+def test_candidate_skeleton_rejects_missing_indexed_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata, candidate, _projection = _candidate_index_fixture(
+        tmp_path,
+        monkeypatch,
+        public_path=Path("models/saved_private_projection/missing.json"),
+    )
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="unavailable"):
+        subject._copy_private_metadata_skeleton(metadata, candidate)
+
+
+def test_candidate_skeleton_rejects_symlinked_indexed_projection(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata, candidate, projection = _candidate_index_fixture(
+        tmp_path,
+        monkeypatch,
+        public_path=Path("models/saved_private_projection/symlink.json"),
+    )
+    target = tmp_path / "target.json"
+    _private_write(target, b"private payload\n")
+    projection.parent.mkdir(parents=True)
+    projection.symlink_to(target)
+
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="unsafe"):
+        subject._copy_private_metadata_skeleton(metadata, candidate)
+
+
+def test_candidate_skeleton_rejects_indexed_projection_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public_path = Path("models/saved_private_projection/drift.json")
+    metadata, candidate, projection = _candidate_index_fixture(
+        tmp_path,
+        monkeypatch,
+        public_path=public_path,
+    )
+    _private_write(projection, b"private payload before\n")
+    original_write = subject._write_indexed_topology_placeholder
+    drifted = False
+
+    def mutate_after_placeholder(
+        candidate_root: Path,
+        relative: Path,
+        source_snapshot: tuple[tuple[str, tuple[int, ...]], ...],
+    ) -> None:
+        nonlocal drifted
+        original_write(candidate_root, relative, source_snapshot)
+        if not drifted and relative == public_path:
+            drifted = True
+            projection.write_bytes(b"private payload after\n")
+            projection.chmod(0o600)
+
+    monkeypatch.setattr(subject, "_write_indexed_topology_placeholder", mutate_after_placeholder)
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="topology drifted"):
+        subject._copy_private_metadata_skeleton(metadata, candidate)
+    assert drifted is True
+
+
+def test_candidate_audit_revalidates_indexed_topology_after_auditor_returns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata, candidate, projection = _candidate_index_fixture(
+        tmp_path,
+        monkeypatch,
+        public_path=Path("models/saved_private_projection/audit-drift.json"),
+    )
+    _private_write(projection, b"private payload\n")
+    proof = subject._copy_private_metadata_skeleton(metadata, candidate)
+
+    def mutate_during_audit(*_args: object, **_kwargs: object) -> dict:
+        target = projection.with_name("audit-drift-target.json")
+        projection.rename(target)
+        projection.symlink_to(target.name)
+        return _audit()
+
+    monkeypatch.setattr(subject.audit_private_evidence, "audit", mutate_during_audit)
+    with pytest.raises(subject.ConfigLocatorReconciliationError, match="unsafe"):
+        subject._candidate_metadata_only_audit(
+            metadata_root=metadata,
+            candidate_root=candidate,
+            topology_proof=proof,
+        )
+    assert projection.is_symlink()
 
 
 def test_candidate_audit_rejects_loaded_auditor_origin_or_source_drift(
