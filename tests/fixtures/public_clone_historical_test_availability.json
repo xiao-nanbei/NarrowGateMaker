@@ -45,6 +45,13 @@
         "test_ranked_toxicity_guard_full_path_adapter_contract.py",
         "test_ranked_toxicity_guard_full_path_adapter_contract_v1_3.py",
         "test_ranked_toxicity_registration_linkage_v2.py"
+      ],
+      "nodeids": [
+        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v3.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
+        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v4.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
+        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v5.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
+        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v6.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
+        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v7.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes"
       ]
     },
     "owner_private_execution_config_unavailable": {
@@ -77,8 +84,7 @@
         "tests/test_p3_reach_time_hazard_training.py::test_synthetic_side_model_evaluates_full_cdf_without_economics",
         "tests/test_p3_reach_time_hazard_training.py::test_fold_models_and_results_publish_as_one_atomic_directory",
         "tests/test_p3_touch_source_aware_expanded_v3.py::test_frozen_v3_contract_has_source_separation_and_no_authority",
-        "tests/test_p3_touch_volatility_conditioned_v4.py::test_frozen_v4_spec_is_canonical_and_grants_no_authority",
-        "tests/test_public_machine_projection_identity.py::test_cross_unit_public_projection_resolves_owner_private_source"
+        "tests/test_p3_touch_volatility_conditioned_v4.py::test_frozen_v4_spec_is_canonical_and_grants_no_authority"
       ]
     }
   }

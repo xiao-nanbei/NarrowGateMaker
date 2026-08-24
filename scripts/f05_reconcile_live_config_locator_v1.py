@@ -58,9 +58,7 @@ RECEIPT_CANONICAL_FIELD: Final = (
 POINTER_SCHEMA: Final = "narrowgate_live_remote_pointer.v1"
 CATALOG_SCHEMA: Final = "narrowgate_private_artifact_catalog_v1"
 PUBLISHER_MODULE_ROUTE: Final = "scripts.f05_reconcile_live_config_locator_v1"
-PUBLISHER_TAG: Final = (
-    "f05-owner-buy-e3-no-shadow-config-locator-reconciliation-v1-collector-v1-20260825"
-)
+PUBLISHER_TAG: Final = "f05-owner-buy-e3-no-shadow-governance-source-v1-20260825"
 
 PRIVATE_EVIDENCE_ROOT_ENV: Final = "NARROWGATE_PRIVATE_EVIDENCE_ROOT"
 E3_V6_EVIDENCE_RELATIVE: Final = Path(

@@ -26,11 +26,48 @@ import math
 import os
 import random
 import re
+import stat
+import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import asdict, replace
+from pathlib import Path
 from typing import Any, Mapping, Optional
 from zoneinfo import ZoneInfo
+
+
+def _lexical_checkout_root(script_file):
+    """Bind direct script execution to its lexical checkout, never a symlink."""
+
+    script = Path(os.path.abspath(os.fspath(script_file)))
+    cursor = Path(script.anchor)
+    for part in script.parts[1:]:
+        cursor = cursor / part
+        try:
+            metadata = os.lstat(cursor)
+        except OSError as exc:
+            raise RuntimeError("backtest_tick checkout path is unavailable") from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise RuntimeError("backtest_tick checkout path contains a symlink")
+        if cursor == script:
+            if not stat.S_ISREG(metadata.st_mode):
+                raise RuntimeError("backtest_tick entrypoint is not a regular file")
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise RuntimeError("backtest_tick checkout ancestor is not a directory")
+    if script.parent.name != "models":
+        raise RuntimeError("backtest_tick entrypoint is outside the models directory")
+    return script.parent.parent
+
+
+_LEXICAL_CHECKOUT_ROOT = _lexical_checkout_root(__file__)
+_checkout_root_text = str(_LEXICAL_CHECKOUT_ROOT)
+sys.path[:] = [
+    entry
+    for entry in sys.path
+    if os.path.abspath(entry or os.curdir) != _checkout_root_text
+]
+sys.path.insert(0, _checkout_root_text)
 
 from execution.order_lifecycle import (
     OrderLifecyclePhase,
@@ -625,7 +662,6 @@ def _load_live_requote_clock(path: "Path") -> dict[str, "np.ndarray"]:
 
 from itertools import product
 from multiprocessing import cpu_count
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -32436,6 +32472,211 @@ def _best_result(results, sort_by):
     return _sort_results(results, sort_by)[0]
 
 
+def run_current_default_tick_mechanics_day(*, utc_day):
+    """Execute the current formal mechanics default with no legacy fallback.
+
+    The shared resolver launches an isolated interpreter from the exact
+    annotated-tag checkout, recursively validates the owner-private v14
+    bundle, installs the per-day BUY-E3/SELL-B0 overlay, and only then enters
+    this module's Python tick engine.
+    """
+
+    try:
+        from models.backtest_config import run_default_tick_mechanics_day
+    except ImportError:
+        from backtest_config import run_default_tick_mechanics_day
+
+    return run_default_tick_mechanics_day(utc_day=utc_day)
+
+
+_DEFAULT_MECHANICS_COLD_CHILD_ENV = "NARROWGATE_E3_DEFAULT_COLD_CHILD"
+
+
+def _implicit_current_default_day_requested(args):
+    return bool(
+        args.config is None
+        and not str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip()
+    )
+
+
+def _require_pure_current_default_day_cli():
+    tokens = tuple(sys.argv[1:])
+    valid = (
+        len(tokens) == 2
+        and tokens[0] in {"--day", "--date"}
+        and bool(str(tokens[1]).strip())
+    ) or (
+        len(tokens) == 1
+        and any(tokens[0].startswith(f"{name}=") for name in ("--day", "--date"))
+        and bool(tokens[0].partition("=")[2].strip())
+    )
+    if not valid:
+        option_names = sorted(
+            {
+                token.partition("=")[0]
+                for token in tokens
+                if token.startswith("-")
+                and token.partition("=")[0] not in {"--day", "--date"}
+            }
+        )
+        detail = ", ".join(option_names) if option_names else "unsupported window/mode"
+        raise RuntimeError(
+            "The current exact E3 mechanics default accepts only a pure --day/--date "
+            f"invocation; unsupported arguments: {detail}. Select an explicit "
+            "--config arm for a non-current run"
+        )
+
+
+def _reexec_implicit_current_default_day():
+    """Re-enter this CLI once from the exact clean annotated-tag checkout."""
+
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
+    )
+
+    before = mechanics.capture_cold_publisher(
+        ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG
+    )
+    required = (
+        "NARROWGATE_PRIVATE_EVIDENCE_ROOT",
+        "NARROWGATE_METADATA_REPOSITORY_ROOT",
+    )
+    missing = tuple(name for name in required if not str(os.environ.get(name, "")).strip())
+    if missing:
+        raise RuntimeError(
+            "Current backtest mechanics default is private_not_distributed; "
+            + " and ".join(missing)
+            + " are required"
+        )
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONUNBUFFERED": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+        _DEFAULT_MECHANICS_COLD_CHILD_ENV: "1",
+    }
+    for name in (
+        *required,
+        "NARROWGATE_MARKETDATA_ROOT",
+        "NARROWGATE_DATA_ROOT",
+        "NARROWGATE_CACHE_ROOT",
+        "NARROWGATE_REPLAY_DAG_CACHE_DIR",
+        "NARROWGATE_STORAGE_ROOT",
+        "NARROWGATE_EPHEMERAL_ROOT",
+        "TMPDIR",
+    ):
+        value = str(os.environ.get(name, "") or "").strip()
+        if value:
+            environment[name] = value
+    bootstrap = (
+        "import runpy,sys;"
+        "sys.path.insert(0,sys.argv[1]);"
+        "script=sys.argv[1]+'/models/backtest_tick.py';"
+        "sys.argv=[script,*sys.argv[2:]];"
+        "runpy.run_path(script,run_name='__main__')"
+    )
+    with tempfile.TemporaryDirectory(prefix="narrowgate-e3-cli-pycache-") as cache:
+        os.chmod(cache, 0o700)
+        completed = subprocess.run(
+            (
+                sys.executable,
+                "-I",
+                "-B",
+                "-X",
+                f"pycache_prefix={cache}",
+                "-c",
+                bootstrap,
+                str(ROOT),
+                *sys.argv[1:],
+            ),
+            cwd=ROOT,
+            env=environment,
+            check=False,
+        )
+    after = mechanics.capture_cold_publisher(
+        ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG
+    )
+    if after != before:
+        raise RuntimeError("Tagged default mechanics source changed across CLI execution")
+    return int(completed.returncode)
+
+
+def _run_implicit_current_default_day_in_cold_child(utc_day):
+    """Materialize the frozen outcome-blind D/D+1 inputs and execute E3."""
+
+    import contextlib
+
+    from models.backtest_config import load_default_tick_mechanics_baseline
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_b0_mechanics_adapter_v1 as b0_projection,
+    )
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder,
+    )
+
+    def execute():
+        loaded = load_default_tick_mechanics_baseline()
+        try:
+            defaults = panel_builder._default_cli_paths()
+            inputs = panel_builder.validate_inputs(
+                source_manifest_path=defaults["source_manifest"],
+                book_view_root=defaults["book_view_root"],
+                native_observation_manifest_path=defaults["native_observation_manifest"],
+                native_observation_root=defaults["native_observation_root"],
+                features_manifest_path=defaults["features_manifest"],
+                owner_artifacts=panel_builder.OwnerArtifactPaths(
+                    policy=loaded._staged_b0_policy,
+                    predicate_bundle=loaded._staged_b0_bundle,
+                    private_config=loaded._staged_predecessor_source_config,
+                ),
+            )
+            normalized_day = str(utc_day)
+            if normalized_day not in inputs.selected_days:
+                raise RuntimeError(
+                    "Implicit current default day is outside the reduced-support E3 panel"
+                )
+            request = panel_builder._day_request(inputs, normalized_day)
+            replay = b0_projection._materialize_replay_inputs(request)
+            return loaded.run_default_day_replay(
+                request, replay, utc_day=normalized_day
+            )
+        finally:
+            loaded.close()
+
+    # The formal stdout contract is exactly one JSON document. Any diagnostic
+    # output from loading/materializing/simulating is redirected to stderr.
+    with contextlib.redirect_stdout(sys.stderr):
+        result = execute()
+    normalized_day = str(utc_day)
+    receipt = result.get("_default_buy_e3_mechanics_receipt")
+    policy_audit = result.get("_cooldown_duration_policy_audit")
+    emitter_audit = result.get("_cooldown_v2_snapshot_emitter_audit")
+    authorities = result.get("_default_mechanics_authorities")
+    if (
+        not isinstance(receipt, Mapping)
+        or not isinstance(policy_audit, Mapping)
+        or not isinstance(emitter_audit, Mapping)
+        or not isinstance(authorities, Mapping)
+        or any(value is not False for value in authorities.values())
+    ):
+        raise RuntimeError("Current default E3 execution receipt is missing")
+    print(
+        json.dumps(
+            {
+                "status": "current_default_buy_e3_mechanics_day_complete",
+                "utc_day": normalized_day,
+                "mechanics_receipt": dict(receipt),
+                "policy_audit": dict(policy_audit),
+                "emitter_audit": dict(emitter_audit),
+                "authorities": dict(authorities),
+            },
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
+        )
+    )
+    return 0
+
 def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                                ml_data=None, bbo_data=None, l2_data=None,
                                var_ti=None, var_retsq=None, reference_event_tapes=None,
@@ -32446,6 +32687,24 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                                exchange_book_event_tape=None,
                                variance_time_data=None,
                                ranked_toxicity_guard_binding=None):
+    def label_explicit_arm(result):
+        selection = params.get("baseline_selection")
+        if selection is None:
+            return result
+        labeled = dict(result)
+        labeled["baseline_selection"] = str(selection)
+        labeled["current_e3_mechanics_default"] = bool(
+            params.get("current_e3_mechanics_default", False)
+        )
+        labeled["_baseline_selection_receipt"] = {
+            "baseline_selection": str(selection),
+            "current_e3_mechanics_default": bool(
+                params.get("current_e3_mechanics_default", False)
+            ),
+            "explicit_non_current_arm": True,
+        }
+        return labeled
+
     if engine == "cpp":
         if params.get("cooldown_duration_policy_evaluator") is not None:
             _validate_f05_cpp_cooldown_runtime(
@@ -32560,28 +32819,42 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
             raise NotImplementedError(
                 "receive-time multi-market policy replay is Python-only until C++ parity"
             )
-        return _simulate_tick_cpp(
-            trades_df, var_ts_ms, var_ssq, params,
-            ml_data=ml_data,
-            bbo_data=bbo_data, l2_data=l2_data,
-            var_ti=var_ti, var_retsq=var_retsq,
-            historical_fair_price_data=historical_fair_price_data,
+        return label_explicit_arm(
+            _simulate_tick_cpp(
+                trades_df,
+                var_ts_ms,
+                var_ssq,
+                params,
+                ml_data=ml_data,
+                bbo_data=bbo_data,
+                l2_data=l2_data,
+                var_ti=var_ti,
+                var_retsq=var_retsq,
+                historical_fair_price_data=historical_fair_price_data,
+            )
         )
     if engine == "python":
-        return simulate_tick(
-            trades_df, var_ts_ms, var_ssq, params,
-            ml_data=ml_data,
-            bbo_data=bbo_data, l2_data=l2_data,
-            var_ti=var_ti, var_retsq=var_retsq,
-            reference_event_tapes=reference_event_tapes,
-            campaign_repair_data=campaign_repair_data,
-            campaign_repair_model=campaign_repair_model,
-            historical_global_flow_data=historical_global_flow_data,
-            historical_fair_price_data=historical_fair_price_data,
-            active_order_queue_data=active_order_queue_data,
-            exchange_book_event_tape=exchange_book_event_tape,
-            variance_time_data=variance_time_data,
-            ranked_toxicity_guard_binding=ranked_toxicity_guard_binding,
+        return label_explicit_arm(
+            simulate_tick(
+                trades_df,
+                var_ts_ms,
+                var_ssq,
+                params,
+                ml_data=ml_data,
+                bbo_data=bbo_data,
+                l2_data=l2_data,
+                var_ti=var_ti,
+                var_retsq=var_retsq,
+                reference_event_tapes=reference_event_tapes,
+                campaign_repair_data=campaign_repair_data,
+                campaign_repair_model=campaign_repair_model,
+                historical_global_flow_data=historical_global_flow_data,
+                historical_fair_price_data=historical_fair_price_data,
+                active_order_queue_data=active_order_queue_data,
+                exchange_book_event_tape=exchange_book_event_tape,
+                variance_time_data=variance_time_data,
+                ranked_toxicity_guard_binding=ranked_toxicity_guard_binding,
+            )
         )
     raise ValueError(f"Unknown replay engine={engine!r}")
 
@@ -33110,6 +33383,26 @@ def _aggregate_quality_segment_results(
         for row in r.get("_state_conditioned_policy_trace", [])
     ]
     out["_decision_trace"] = [row for r in results for row in r.get("_decision_trace", [])]
+    selections = {
+        str(result["baseline_selection"])
+        for result in results
+        if result.get("baseline_selection") is not None
+    }
+    current_flags = {
+        bool(result["current_e3_mechanics_default"])
+        for result in results
+        if result.get("current_e3_mechanics_default") is not None
+    }
+    if selections or current_flags:
+        if len(selections) != 1 or current_flags != {False}:
+            raise RuntimeError("Segmented replay mixed baseline-selection authority")
+        out["baseline_selection"] = selections.pop()
+        out["current_e3_mechanics_default"] = False
+        out["_baseline_selection_receipt"] = {
+            "baseline_selection": out["baseline_selection"],
+            "current_e3_mechanics_default": False,
+            "explicit_non_current_arm": True,
+        }
     return out
 
 
@@ -33267,6 +33560,8 @@ def _daily_result_row(day_label: str, result: dict) -> dict:
         "new_order_latency_sample_count",
         "cancel_order_latency_sample_count",
         "live_perf_latency_mode",
+        "baseline_selection",
+        "current_e3_mechanics_default",
     ]
     row = {"day": day_label}
     for field in fields:
@@ -33656,8 +33951,9 @@ def main():
         type=Path,
         default=None,
         help=(
-            "Live-style baseline config. Default resolves the hash-bound current "
-            "operational baseline when available, otherwise the public template."
+            "Explicit non-current live-style config arm. Omit this option and use "
+            "a pure --day/--date invocation to run the private exact current E3 "
+            "mechanics default; that default has no public or B0 fallback."
         ),
     )
     ap.add_argument("--sweep", action="store_true")
@@ -33967,6 +34263,18 @@ def main():
         args.end_time = (day_ts + pd.Timedelta(days=1)).strftime("%Y-%m-%d 00:00")
     elif not args.start_time and not args.end_time:
         raise SystemExit("Provide --day YYYY-MM-DD or an explicit --start-time/--end-time window")
+    implicit_current_default = _implicit_current_default_day_requested(args)
+    if implicit_current_default:
+        _require_pure_current_default_day_cli()
+        verified_cold_child = bool(
+            os.environ.get(_DEFAULT_MECHANICS_COLD_CHILD_ENV) == "1"
+            and sys.flags.isolated == 1
+            and sys.dont_write_bytecode
+            and sys.pycache_prefix
+        )
+        if verified_cold_child:
+            raise SystemExit(_run_implicit_current_default_day_in_cold_child(args.day))
+        raise SystemExit(_reexec_implicit_current_default_day())
     VERBOSE = bool(args.verbose)
     if (args.bbo_dir is None) != (args.l2_dir is None):
         raise SystemExit("--bbo-dir and --l2-dir must be supplied together")
@@ -33992,6 +34300,8 @@ def main():
         min_historical_book_coverage=args.min_historical_book_coverage,
         maker_fill_prob=args.maker_fill_prob,
     )
+    base["current_e3_mechanics_default"] = False
+    base["baseline_selection"] = "explicit_non_current_e3_config_arm"
     run_ml = bool(base.get("ml_enabled", False)) if args.ml is None else bool(args.ml)
     base["ml_enabled"] = run_ml
 
@@ -34011,6 +34321,7 @@ def main():
             "  Baseline config: "
             f"{base['operational_baseline_config_id']} (runtime-code overlay)"
         )
+    print("  Mechanics default: explicit non-current-E3 config arm")
     print(f"{'='*60}\n")
 
     if args.requote_threshold_bps is not None:
@@ -34552,6 +34863,8 @@ def main():
             "timestamp": result["_ts"],
             "pnl": result["_pnl_ts"],
             "inventory": result["_inv_ts"],
+            "baseline_selection": result["baseline_selection"],
+            "current_e3_mechanics_default": result["current_e3_mechanics_default"],
         })
         path = RESULTS_DIR / "tick_pnl_series.parquet"
         df.to_parquet(path)

@@ -22,7 +22,7 @@
     "terminal_value_usdc": "0.00200000"
   },
   "campaign_terminal_value_usdc": "0.00200000",
-  "canonical_summary_sha256": "05aa58490cb72b1ba39fc0a50af337e25e90364434379c4255efe1783b516aca",
+  "canonical_summary_sha256": "122e721a2879c1c0994c1b2bd0a67670b9b3c26020d1f13b7eda3e7bc79cd0e2",
   "classification": {
     "classification": "synthetic_non_economic",
     "economic_authority": "none",
@@ -214,7 +214,7 @@
   "identity": {
     "accounting_contract_version": "continuous_accounting_contract.v1",
     "code": {
-      "bundle_sha256": "816b08377a643058909f67af3b8142b8fa85067c9d3bf5bd2d219e623efd72c3",
+      "bundle_sha256": "7f96df59a305314b5fd401268835e09d901664c357cde819dba482624ccbae8c",
       "sources": [
         {
           "path": "scripts/narrowgate_replay_demo.py",
@@ -254,7 +254,7 @@
         },
         {
           "path": "data_paths.py",
-          "sha256": "882eeeb1109dd7220f6f3bc831cb960c3a51f307643abd0a4c7bce1c4b1fdf85"
+          "sha256": "84a8029a1da69b00054cac990d0433ebd95be14addfcb164e53811586f33339f"
         }
       ],
       "version": "narrowgate_replay_demo_engine.v1"

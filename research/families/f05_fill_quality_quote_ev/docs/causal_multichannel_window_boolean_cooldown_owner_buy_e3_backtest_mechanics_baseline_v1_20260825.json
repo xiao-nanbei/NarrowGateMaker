@@ -1,0 +1,197 @@
+{
+  "schema_version": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1.contract.v1",
+  "identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
+  "status": "executable_fail_closed_mechanics_factory_contract",
+  "canonical_contract_sha256": "a3bd912225a25a2e51a64a9d6882fdc44774b14b6e479a15ce55b17f78d67611",
+  "factory": {
+    "module": "research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
+    "constructor": "create_owner_buy_e3_backtest_mechanics_baseline",
+    "day_overlay_api": "OwnerBuyE3MechanicsBaseline.build_day_overlay",
+    "default_day_consumer": "models.backtest_tick.main implicit pure --day/--date invocation",
+    "programmatic_default_day_consumer": "models.backtest_config.run_default_tick_mechanics_day accepts only utc_day and rebuilds all replay objects in the cold child",
+    "default_overlay_resolver": "none_outside_the_verified_cold_child",
+    "in_process_overlay_helper": "models.backtest_config.resolve_owner_tick_mechanics_overlay_in_process is non-formal and only for an already verified owner cold process",
+    "default_execution_boundary": "fresh isolated Python -I -B subprocess from the exact clean annotated-tag checkout",
+    "unsupported_implicit_default_arguments": "fail_closed_nonzero_no_B0_fallback",
+    "successful_default_execution_requires_positive_counts": [
+      "BUY_E3_evaluations",
+      "SELL_B0_delegated_evaluations",
+      "D_plus_1_exact_B0_fallbacks",
+      "cooldown_v2_snapshots_emitted"
+    ],
+    "backtest_tick_repeated_policy_abi": [
+      "cooldown_v2_snapshot_emitter",
+      "cooldown_duration_policy_evaluator",
+      "trace_cooldown_duration_opportunities_max"
+    ],
+    "public_clone_without_private_inputs": "unavailable_fail_closed_no_template_or_v12_fallback",
+    "private_input_availability": "private_not_distributed"
+  },
+  "owner_private_input_resolution": {
+    "schema_version": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1.owner_private_relative_inputs.v1",
+    "input_count": 12,
+    "durable_evidence_root_environment": "NARROWGATE_PRIVATE_EVIDENCE_ROOT",
+    "metadata_repository_root_environment": "NARROWGATE_METADATA_REPOSITORY_ROOT",
+    "relative_locators_only": true,
+    "absolute_locators_persisted": false,
+    "recursive_layer4_day_receipts": true,
+    "v13_committed_transaction_required": true
+  },
+  "configuration": {
+    "predecessor_v12_source_file_sha256": "800f4c025663ce6b54cfcf16d02ce510ccaf52545332ca4c19b1fbdf37f0cf85",
+    "active_source_file_sha256": "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e",
+    "active_source_canonical_mapping_sha256": "f5cb3d238edfdff4c2353e2d7cd5c2d948d36ef0be1e7733ce0dda73ea7a21c2",
+    "host_neutral_projection_canonical_mapping_sha256": "bbfff858a35a387abf8b38b19d44cc4f60414d21d91d63de0a9613e15f665a05",
+    "host_neutral_projection_file_sha256": "7b67b51197d93b99b04da323e02d3d970d7179ef4740720cc596a8ea3695a53f",
+    "host_neutral_projection_size_bytes": 16175,
+    "host_neutral_projection_availability": "private_not_distributed",
+    "host_neutral_projection_values_published": false,
+    "host_neutral_projection_changed_paths": [
+      "lifecycle_journal_v2.enabled",
+      "lifecycle_journal_v2.baseline_identity_path",
+      "lifecycle_journal_v2.baseline_identity_sha256",
+      "lifecycle_journal_v2.required_mount",
+      "lifecycle_journal_v2.root",
+      "lifecycle_journal_v2.prospective_epoch_root",
+      "lifecycle_journal_v2.remote_spool_allowlisted_roots",
+      "strategy.boolean_cooldown_policy_path",
+      "strategy.boolean_cooldown_predicate_bundle_path",
+      "strategy.buy_e3_cooldown_artifact_manifest_path",
+      "strategy.buy_e3_cooldown_policy_path",
+      "strategy.buy_e3_cooldown_predicate_bundle_path"
+    ],
+    "host_neutral_projection_changes_quote_policy": false,
+    "source_config_delta_path_count": 15,
+    "source_config_delta_paths_sha256": "be2c9553007f9ad1f03a7a8b291d13ea0ad2929b97d2a15a01484aab9db474d6",
+    "source_config_delta_values_published": false,
+    "source_replay_abi_delta_path_count": 9,
+    "source_replay_abi_delta_paths_sha256": "bcd3458d9b5a28e0fe24cf24c4c422a3a36cbb152913ff2759e9abf4fa9df2eb",
+    "final_replay_abi_delta_path_count": 8,
+    "final_replay_abi_delta_paths_sha256": "afaf618aca694bd1f6f96fc84243517640a71a47d859ae110698b1fc661cf07f",
+    "final_replay_abi_delta_semantics": "only_the_eight_exact_BUY_E3_artifact_enable_and_locator_hash_fields;_diagnostic_shadow_disable_is_forced_false_in_both_arms",
+    "active_final_replay_abi_sha256": "6a15b4d7933dfe036efed649cd6220667d45f45073a66eab4651461031291337",
+    "replay_engine_overlay_sha256": "1a05187343aa57fa2924bb78068126c2487177bf93e40bd335331608ce89eea2"
+  },
+  "exact_e3_artifact": {
+    "artifact_sha256": "17e99df737157c6587602e6b496eadbecbed0a98d025da1d1db4cc8ef670786d",
+    "artifact_manifest_file_sha256": "c64f8551268d0aaabab1a17bfc2f184cc576a2570cad3d0efb63fdcbc33c9929",
+    "artifact_manifest_size_bytes": 3528,
+    "policy_file_sha256": "ba041dac4f082829f72e9f6838bc50b0c5dce61b24fcb5e1897ef2ac6c2c754b",
+    "policy_size_bytes": 236318,
+    "predicate_bundle_file_sha256": "4e127745fcc7987fb2eddc3bbf3ceaa19d64251c20ec156bb6d9b5d57edef915",
+    "predicate_bundle_size_bytes": 57418,
+    "source_locator_availability": "private_not_distributed",
+    "load_contract": "lexical_dirfd_nofollow_single_snapshot_strict_ASCII_JSON_mode0600_nlink1_stable_inode_and_path_rebind_then_proven_loader_on_private_stage"
+  },
+  "exact_b0_delegation": {
+    "policy_file_sha256": "877a20033ff678bd7aa9b58069f37c3dc459b18db78c316b7e50023248f15a29",
+    "predicate_bundle_file_sha256": "ba4c1bac2380564aa24d47d12796f3be5c0312cc88d28218ce84bd20e4170f37",
+    "predicate_bundle_canonical_sha256": "96d66218318f4dda7377082691482b15e586f73be985bdcec7912d1a39e94aa8",
+    "buy_pre_cutoff": "compiled_E3",
+    "sell_all_times": "exact_owner_B0",
+    "d_plus_1_new_assignments": "exact_owner_B0"
+  },
+    "runtime_source_sha256": {
+        "live/config.py": "9160b8884e877e4230efee1505d569dbf349c6e4e41e4f95192e95b95b3df425",
+        "live/runtime_policy.py": "23bf62c1e0bfdd0bcc94ef203d39e22f61f9296bf3545157c373ca4f45912964",
+    "models/backtest_config.py": "13833cf65f6245539d72e318c8ebc66d047d60e2df28dc5b6c66d514f18becdc",
+    "models/backtest_tick.py": "55f3a64572444ad0ea26bdbf0525b691b3bba74d9a602eae35af2ca29ea72c0f",
+    "strategy/boolean_cooldown_buy_e3.py": "85cd44c6695caa3f50942b2dc1cf489f6d1af113db53cd07b891d44d1ccfaf94",
+    "strategy/boolean_cooldown_live.py": "7802eb19973b21a0e1051ae6ec252ec63e9949f42cafe4c2b08e329c054fc113",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_replay_emitter.py": "51784343a37635ca813023df8f8c494c75a37aa943baba7c96b0c6c5250cefcb",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_replay_adapter_v1.py": "15f201b200fb4c4928cbc086e9ef22272d05d588109bfe4cd2acd94fb14edd5d",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py": "1cbaf779d316e08465aab9cdbb05491f11a5fcf97336a9f8a0050efd78f6bd17",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_native_observation_cache.py": "80ed5ce1ba15dcfd4edc5e98857eea302cb85f77fac3570623d7d9e2de90c194",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_repeated_policy_v1.py": "9516cdd3bef17525bf78a9f4a468c24507af46440575df58b972569be2842f16",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_predicate_view_v1.py": "646a1728fedd1ffadcb5891bb6a545610b1a4131bb955afd6490194d5b1ff2f2",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_v1.py": "01485964342fd35d048be0e44e0d78d37629eb14fafa2a41b4314d103c1f41c8",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_runtime_policy.py": "c7b118793c374c19e4f5d54d6a4e4313d94dba7e2f32291e0e166ddacd993a5f",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_v1.py": "8c66a339820ade7a9b3fcc4bb0e6cce97c87a79fd1f5323576759936af5a66b4",
+    "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_owner_buy_e3_parity_amendment_v2.py": "ad8b1e21cdcd2b11d54e6f668c4fb3876f36c08bfc8cf037f33277afb2d37741"
+  },
+  "parity_evidence": {
+    "research_compiled": {
+      "file_sha256": "7629b2667a4b59d1a4967d8e87e4dfd2e975ea483302675ab4e0c87dc0042c56",
+      "canonical_sha256": "86558c59c0156ec60f2f5dcff6934fdd7f9b59594ba8cd667acd12253e321297",
+      "logical_vectors": 50000,
+      "mismatch_count": 0
+    },
+    "development_snapshot": {
+      "file_sha256": "875b06cd558e9628e8338f7d9b3818f00c11a162e03acfba58697086a4625dc3",
+      "canonical_sha256": "758d97f3f4ca208f6ad1a319b0f42659eb2ca3bb7a68de8413542cd3b533df6c",
+      "mismatch_count": 0
+    },
+    "streaming_offline": {
+      "file_sha256": "478a46853bd484ccc325eb17400d107d16d9eef7280e6c2072abaa65fb0654c2",
+      "canonical_sha256": "1adc0f03a9844b8605281e6e7d1fddeba0b83262ca44539d42d98148b7936ec6",
+      "callbacks": 20482,
+      "mismatch_count": 0
+    },
+    "amended_layer4_v2": {
+      "contract_file_sha256": "5a331486a343814ec33b7eb00b294a5af341f21a17fafaeda4a77696807013f7",
+      "contract_canonical_sha256": "df82ffde7fa488590a9c350c1b8afe50c9fff3a07351afe156bdc2af53469b53",
+      "final_file_sha256": "e0de72be169092a04bbc3231e59c122f3db287ac9c6725885bb856d22e107c7b",
+      "final_canonical_sha256": "c3277ae190cd1211f7039cf35174355f2aa01bfaf48b253ea93ce02e292d9505",
+      "day_receipts_sha256": "127db7b4b967f669718cdb65f4e1bc25bb9652eb18a50cf26b9002fb124ef8e4",
+      "learning_algorithm_artifact_sha256": "de056921335450619f7d8099d545125f1d7d6045ebc448dc2526e63c4cb72072",
+      "v1_layer4_daily_receipts_reusable": false,
+      "mismatch_count": 0
+    }
+  },
+  "support": {
+    "identity": "formal_e3_mechanics_panel",
+    "reduced_support": true,
+    "day_count": 30,
+    "day_set_sha256": "77fa38007fb057d4cdd0551af331a65ab1c4e1d84aeec46544988921c2913630",
+    "is_current_v12_50_day_causal_or_economic_baseline": false,
+    "current_v12_50_day_economic_control_replaced": false,
+    "intended_integration": "E3_mechanics_default_or_paired_arm_with_v12_50_day_economic_control_retained"
+  },
+  "day_state_semantics": {
+    "fresh_emitter_per_arm_per_day": true,
+    "fresh_compiled_evaluator_per_arm_per_day": true,
+    "live_inventory_order_campaign_or_policy_state_carried_between_days": false,
+    "d_minus_1_context": "natural_UTC_market_and_feature_warmup_in_frozen_observation_cache_only",
+    "warmup_cutoff": "D_00:00:00Z",
+    "buy_e3_warmup_s": 2048,
+    "target_interval": "[D_00:00:00Z,D_plus_1_00:00:00Z)",
+    "d_plus_1_context": "common_washout;_new_E3_assignments_forbidden_and_exact_B0_used",
+    "restart": "discard_partial_state_and_replay_complete_day_from_frozen_input_and_seed"
+  },
+  "availability": {
+    "mechanics_replay_available": true,
+    "config_replay_available": true
+  },
+  "permissions": {
+    "economic_authority": false,
+    "research_authority": false,
+    "action_authority": false,
+    "live_authority": false,
+    "nonbaseline_occurrence_authority": false,
+    "promotion_authority": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "economic_values_read": false,
+    "economic_values_exposed": false,
+    "hypothetical_live_scoring": false,
+    "shadow_or_companion_authority": false
+  },
+  "sequential_governance": {
+    "v13_role": "locator_reconciliation_only_no_new_strategy",
+    "v14_predecessor_required": "exact_v13_identity_and_file_SHA256",
+    "v14_promotion_class": "owner_requested_mechanics_only",
+        "v14_receipt_producer": "create_v14_mechanics_governance_receipt",
+        "v14_receipt_validator": "validate_v14_mechanics_governance_receipt",
+        "v14_private_bundle_publisher": "publish_v14_private_bundle",
+        "v14_private_bundle_validator": "validate_v14_private_bundle",
+        "v13_committed_validator_source_sha256": "b830501877786594a3b6a1e96803c8345c49e361e34f76bc87b5d77230eb635a",
+        "v14_private_bundle_storage": "NARROWGATE_PRIVATE_EVIDENCE_ROOT_logical_resolution_only",
+        "v14_cold_publisher_annotated_tag": "f05-owner-buy-e3-no-shadow-governance-source-v1-20260825",
+        "v14_private_bundle_create_only_mode": "owner_0700_directory;_0600_nlink1_files;_locked_unique_staging_to_exact_pending_to_hardlink_final;_manifest_last",
+        "v14_publisher_execution_proof": "fresh isolated tagged subprocess loads all 12 exact inputs and constructs one real BUY-E3/SELL-B0 day overlay before commit",
+        "v14_effective_at_utc": "2026-08-25T00:00:01Z",
+        "v14_activation_state": "current_default_resolver_integrated_private_fail_closed",
+        "v14_backtest_default_arm_resolution_authorized": true,
+        "pointer_or_shared_backtest_config_modified_by_this_contract": true
+  }
+}

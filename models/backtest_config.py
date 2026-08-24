@@ -8,8 +8,12 @@ import json
 import math
 import os
 import stat
+import subprocess
+import sys
+import tempfile
 from collections.abc import Callable, Mapping
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +88,14 @@ CURRENT_OPERATIONAL_BASELINE_POINTER = (
     / "docs"
     / "operational_baseline_current.json"
 )
+CURRENT_BACKTEST_MECHANICS_POINTER = (
+    ROOT
+    / "research"
+    / "families"
+    / "f10_live_replay_attribution"
+    / "docs"
+    / "operational_backtest_mechanics_current.json"
+)
 DEFAULT_LIQ_BASELINE = RegimeConfig().liq_baseline
 OPERATIONAL_BASELINE_POINTER_SCHEMAS = frozenset(
     {
@@ -94,6 +106,23 @@ OPERATIONAL_BASELINE_POINTER_SCHEMAS = frozenset(
 MAX_AUTHORITY_FILE_BYTES = 64 << 20
 PUBLIC_AUTHORITY_MODES = frozenset({0o644})
 PRIVATE_AUTHORITY_MODES = frozenset({0o600})
+
+
+@dataclass(slots=True)
+class DefaultTickMechanicsResolution:
+    """Own one exact baseline and its fresh per-day overlay."""
+
+    baseline: Any
+    overlay: Any
+
+    def close(self) -> None:
+        self.baseline.close()
+
+    def __enter__(self) -> DefaultTickMechanicsResolution:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
 
 
 def parse_config_snapshot(
@@ -1837,6 +1866,267 @@ def validate_formal_replay_calibration(
     params["strict_calibration_validated"] = True
     params["strict_calibration_require_latency"] = bool(require_latency)
     return params
+
+
+def _current_backtest_mechanics_pointer() -> dict[str, Any]:
+    document, _raw, _metadata, _path = _secure_json_authority(
+        CURRENT_BACKTEST_MECHANICS_POINTER,
+        allowed_modes=PUBLIC_AUTHORITY_MODES,
+    )
+    canonical_field = "canonical_backtest_mechanics_pointer_sha256"
+    body = dict(document)
+    observed_canonical = str(body.pop(canonical_field, ""))
+    computed_canonical = hashlib.sha256(
+        json.dumps(
+            body,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ).hexdigest()
+    if observed_canonical != computed_canonical:
+        raise RuntimeError("Current backtest mechanics pointer canonical identity drifted")
+    contract_file_sha256 = str(body.pop("mechanics_contract_file_sha256", ""))
+    if len(contract_file_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in contract_file_sha256
+    ):
+        raise RuntimeError("Current backtest mechanics contract SHA256 is malformed")
+    expected = {
+        "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v1",
+        "status": "current_default_private_exact_buy_e3_mechanics",
+        "effective_at_utc": "2026-08-25T00:00:01Z",
+        "mechanics_identity": (
+            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+            "backtest_mechanics_baseline_v1"
+        ),
+        "mechanics_contract_path": (
+            "research/families/f05_fill_quality_quote_ev/docs/"
+            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+            "backtest_mechanics_baseline_v1_20260825.json"
+        ),
+        "predecessor_v13_identity_path": (
+            "research/families/f10_live_replay_attribution/docs/"
+            "operational_baseline_identity_20260825_v13.json"
+        ),
+        "predecessor_v13_identity_file_sha256": (
+            "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079"
+        ),
+        "private_bundle_availability": "private_not_distributed",
+        "default_arm": {
+            "target_side": "BUY",
+            "buy_policy": "exact_owner_E3",
+            "sell_delegation": "exact_owner_B0",
+            "formal_e3_mechanics_panel_day_count": 30,
+            "reduced_support": True,
+        },
+        "v12_50_day_economic_control_retained": True,
+        "permissions": {
+            "backtest_mechanics_available": True,
+            "backtest_default_arm_resolution_authorized": True,
+            "economic_authority": False,
+            "research_authority": False,
+            "action_authority": False,
+            "live_authority": False,
+            "nonbaseline_occurrence_authority": False,
+            "promotion_authority": False,
+            "validation_read": False,
+            "sealed_holdout_read": False,
+            "economic_values_read": False,
+            "economic_values_exposed": False,
+            "hypothetical_live_scoring": False,
+            "shadow_or_companion_authority": False,
+        },
+    }
+    if body != expected:
+        raise RuntimeError("Current backtest mechanics pointer fields drifted")
+    return document
+
+
+def load_default_tick_mechanics_baseline() -> Any:
+    """Resolve the current BUY-E3 mechanics default without a public fallback."""
+
+    pointer = _current_backtest_mechanics_pointer()
+    durable_raw = os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "").strip()
+    metadata_raw = os.environ.get("NARROWGATE_METADATA_REPOSITORY_ROOT", "").strip()
+    if not durable_raw or not metadata_raw:
+        raise RuntimeError(
+            "Current backtest mechanics default is private_not_distributed; "
+            "NARROWGATE_PRIVATE_EVIDENCE_ROOT and "
+            "NARROWGATE_METADATA_REPOSITORY_ROOT are required"
+        )
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
+    )
+
+    if pointer["mechanics_contract_file_sha256"] != mechanics.V14_PUBLIC_CONTRACT_FILE_SHA256:
+        raise RuntimeError("Current backtest mechanics contract identity drifted")
+
+    contract_path = ROOT / str(pointer["mechanics_contract_path"])
+    predecessor_path = ROOT / str(pointer["predecessor_v13_identity_path"])
+    try:
+        return mechanics.load_published_owner_buy_e3_default(
+            runtime_repository_root=ROOT,
+            durable_evidence_root=Path(durable_raw),
+            metadata_repository_root=Path(metadata_raw),
+            predecessor_v13_identity_path=predecessor_path,
+            public_contract_path=contract_path,
+            cold_repository_root=ROOT,
+        )
+    except mechanics.OwnerBuyE3MechanicsBaselineError as exc:
+        raise RuntimeError("Current BUY-E3 mechanics default is unavailable") from exc
+
+
+def resolve_owner_tick_mechanics_overlay_in_process(
+    request: Any,
+    replay: Any,
+    *,
+    utc_day: str,
+) -> DefaultTickMechanicsResolution:
+    """Construct an overlay inside an already verified owner cold process.
+
+    This factory helper intentionally does not claim formal default-execution
+    authority. External default consumers must use the day-only isolated
+    runner below so caller-controlled executable objects never cross the
+    process boundary.
+    """
+
+    loaded = load_default_tick_mechanics_baseline()
+    try:
+        overlay = loaded.build_day_overlay(request, replay, utc_day=utc_day)
+    except BaseException:
+        loaded.close()
+        raise
+    return DefaultTickMechanicsResolution(baseline=loaded, overlay=overlay)
+
+
+def run_default_tick_mechanics_day(*, utc_day: str) -> Mapping[str, Any]:
+    """Run one formal current-default day in the exact isolated tagged CLI.
+
+    The public programmatic boundary accepts only a UTC day string. Request,
+    replay, evaluator, and emitter objects are rebuilt from frozen inputs
+    inside the child; no pickle or caller-provided executable object crosses
+    the process boundary.
+    """
+
+    _current_backtest_mechanics_pointer()
+    durable_raw = os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "").strip()
+    metadata_raw = os.environ.get("NARROWGATE_METADATA_REPOSITORY_ROOT", "").strip()
+    if not durable_raw or not metadata_raw:
+        raise RuntimeError(
+            "Current backtest mechanics default is private_not_distributed; "
+            "NARROWGATE_PRIVATE_EVIDENCE_ROOT and "
+            "NARROWGATE_METADATA_REPOSITORY_ROOT are required"
+        )
+    from research.families.f05_fill_quality_quote_ev.audit import (
+        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
+    )
+
+    normalized_day = str(utc_day)
+    if normalized_day not in mechanics.FORMAL_E3_MECHANICS_DAYS:
+        raise RuntimeError("Current default day is outside the reduced-support E3 panel")
+    before = mechanics.capture_cold_publisher(ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG)
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "PYTHONUNBUFFERED": "1",
+        "NARROWGATE_PRIVATE_EVIDENCE_ROOT": durable_raw,
+        "NARROWGATE_METADATA_REPOSITORY_ROOT": metadata_raw,
+        "NARROWGATE_E3_DEFAULT_COLD_CHILD": "1",
+        "GIT_NO_REPLACE_OBJECTS": "1",
+        "GIT_OPTIONAL_LOCKS": "0",
+    }
+    for name in (
+        "NARROWGATE_MARKETDATA_ROOT",
+        "NARROWGATE_DATA_ROOT",
+        "NARROWGATE_CACHE_ROOT",
+        "NARROWGATE_REPLAY_DAG_CACHE_DIR",
+        "NARROWGATE_STORAGE_ROOT",
+        "NARROWGATE_EPHEMERAL_ROOT",
+        "TMPDIR",
+    ):
+        value = str(os.environ.get(name, "") or "").strip()
+        if value:
+            environment[name] = value
+    bootstrap = (
+        "import runpy,sys;"
+        "sys.path.insert(0,sys.argv[1]);"
+        "script=sys.argv[1]+'/models/backtest_tick.py';"
+        "sys.argv=[script,*sys.argv[2:]];"
+        "runpy.run_path(script,run_name='__main__')"
+    )
+    with tempfile.TemporaryDirectory(prefix="narrowgate-e3-programmatic-pycache-") as cache:
+        Path(cache).chmod(0o700)
+        try:
+            completed = subprocess.run(
+                (
+                    sys.executable,
+                    "-I",
+                    "-B",
+                    "-X",
+                    f"pycache_prefix={cache}",
+                    "-c",
+                    bootstrap,
+                    str(ROOT),
+                    "--day",
+                    normalized_day,
+                ),
+                cwd=ROOT,
+                env=environment,
+                check=True,
+                capture_output=True,
+            )
+        except (OSError, subprocess.CalledProcessError) as exc:
+            raise RuntimeError(
+                "Current BUY-E3 mechanics default failed in the isolated tagged runner"
+            ) from exc
+    after = mechanics.capture_cold_publisher(ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG)
+    if after != before:
+        raise RuntimeError("Tagged default mechanics source changed across execution")
+    payload = _strict_json_snapshot(
+        completed.stdout,
+        Path("isolated-current-default-mechanics-result.json"),
+    )
+    receipt = payload.get("mechanics_receipt")
+    policy_audit = payload.get("policy_audit")
+    emitter_audit = payload.get("emitter_audit")
+    authorities = payload.get("authorities")
+
+    def positive_count(audit: Mapping[str, Any], name: str) -> bool:
+        value = audit.get(name)
+        return type(value) is int and value > 0
+
+    if (
+        set(payload)
+        != {
+            "status",
+            "utc_day",
+            "mechanics_receipt",
+            "policy_audit",
+            "emitter_audit",
+            "authorities",
+        }
+        or payload.get("status") != "current_default_buy_e3_mechanics_day_complete"
+        or payload.get("utc_day") != normalized_day
+        or not isinstance(receipt, Mapping)
+        or receipt.get("identity") != mechanics.IDENTITY
+        or receipt.get("utc_day") != normalized_day
+        or receipt.get("sell_delegates_exact_b0") is not True
+        or receipt.get("d_plus_1_exact_b0_washout") is not True
+        or not isinstance(policy_audit, Mapping)
+        or not positive_count(policy_audit, "target_side_evaluations")
+        or not positive_count(policy_audit, "b0_delegated_evaluations")
+        or not positive_count(policy_audit, "d_plus_1_exact_b0_fallback_count")
+        or not isinstance(emitter_audit, Mapping)
+        or not positive_count(emitter_audit, "snapshots_emitted")
+        or authorities != mechanics.PERMISSIONS
+    ):
+        raise RuntimeError("Isolated default mechanics execution receipt drifted")
+    result = dict(payload)
+    result["_default_mechanics_isolated_execution"] = {
+        "fresh_isolated_subprocess": True,
+        "cold_publisher": dict(after),
+    }
+    return result
 
 
 def load_tick_base_params(

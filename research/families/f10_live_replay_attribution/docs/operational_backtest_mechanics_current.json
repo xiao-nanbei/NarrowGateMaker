@@ -1,0 +1,36 @@
+{
+  "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v1",
+  "status": "current_default_private_exact_buy_e3_mechanics",
+  "effective_at_utc": "2026-08-25T00:00:01Z",
+  "mechanics_identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
+  "mechanics_contract_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1_20260825.json",
+  "mechanics_contract_file_sha256": "e10ba954e39643340d226b32724724b46aaac75f62957fcc1d2b4d09b20ee008",
+  "predecessor_v13_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json",
+  "predecessor_v13_identity_file_sha256": "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079",
+  "private_bundle_availability": "private_not_distributed",
+  "default_arm": {
+    "target_side": "BUY",
+    "buy_policy": "exact_owner_E3",
+    "sell_delegation": "exact_owner_B0",
+    "formal_e3_mechanics_panel_day_count": 30,
+    "reduced_support": true
+  },
+  "v12_50_day_economic_control_retained": true,
+  "permissions": {
+    "backtest_mechanics_available": true,
+    "backtest_default_arm_resolution_authorized": true,
+    "economic_authority": false,
+    "research_authority": false,
+    "action_authority": false,
+    "live_authority": false,
+    "nonbaseline_occurrence_authority": false,
+    "promotion_authority": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "economic_values_read": false,
+    "economic_values_exposed": false,
+    "hypothetical_live_scoring": false,
+    "shadow_or_companion_authority": false
+  },
+  "canonical_backtest_mechanics_pointer_sha256": "cbdf019c4afde3b00725e5d1646ad53506ace083147819d40b8a0ced5e2e8cf1"
+}
