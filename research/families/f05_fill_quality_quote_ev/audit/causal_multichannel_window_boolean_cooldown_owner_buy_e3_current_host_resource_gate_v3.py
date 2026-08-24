@@ -695,10 +695,17 @@ def _validate_disabled_config(path: Path) -> str:
         "buy_fill_selection_shadow_enabled": False,
         "dynamic_fill_hazard_shadow_enabled": False,
         "cross_venue_fair_price_shadow_enabled": False,
+    }
+    if any(strategy.get(name) is not value for name, value in expected_flags.items()):
+        raise BuyE3CurrentHostResourceGateError("disabled/no-shadow config flags drifted")
+    logging = _mapping(payload.get("logging"), "logging config")
+    expected_logging_flags = {
         "inventory_campaign_shadow_enabled": False,
         "market_tape_enabled": False,
     }
-    if any(strategy.get(name) is not value for name, value in expected_flags.items()):
+    if any(
+        logging.get(name) is not value for name, value in expected_logging_flags.items()
+    ):
         raise BuyE3CurrentHostResourceGateError("disabled/no-shadow config flags drifted")
     exact_values = {
         "buy_e3_cooldown_artifact_manifest_sha256": EXACT_DEPLOYED_FILE_SHA256["manifest"],

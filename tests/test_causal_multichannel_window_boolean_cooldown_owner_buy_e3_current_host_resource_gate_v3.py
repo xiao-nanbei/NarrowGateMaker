@@ -499,8 +499,6 @@ def test_disabled_config_requires_no_shadow_and_exact_artifact(
         "buy_fill_selection_shadow_enabled": False,
         "dynamic_fill_hazard_shadow_enabled": False,
         "cross_venue_fair_price_shadow_enabled": False,
-        "inventory_campaign_shadow_enabled": False,
-        "market_tape_enabled": False,
         "buy_e3_cooldown_artifact_manifest_sha256": subject.EXACT_DEPLOYED_FILE_SHA256["manifest"],
         "buy_e3_cooldown_artifact_sha256": subject.EXACT_ARTIFACT_SHA256,
         "buy_e3_cooldown_policy_sha256": subject.EXACT_DEPLOYED_FILE_SHA256["policy"],
@@ -508,14 +506,64 @@ def test_disabled_config_requires_no_shadow_and_exact_artifact(
             "predicate_bundle"
         ],
     }
+    logging = {
+        "inventory_campaign_shadow_enabled": False,
+        "market_tape_enabled": False,
+    }
     path = tmp_path / "disabled.yaml"
-    path.write_text(yaml.safe_dump({"strategy": strategy}), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"strategy": strategy, "logging": logging}), encoding="utf-8"
+    )
     monkeypatch.setattr(subject, "EXPECTED_DISABLED_CONFIG_SHA256", subject.file_sha256(path))
     assert subject._validate_disabled_config(path) == subject.file_sha256(path)  # noqa: SLF001
 
     strategy["dynamic_fill_hazard_shadow_enabled"] = True
-    path.write_text(yaml.safe_dump({"strategy": strategy}), encoding="utf-8")
+    path.write_text(
+        yaml.safe_dump({"strategy": strategy, "logging": logging}), encoding="utf-8"
+    )
     monkeypatch.setattr(subject, "EXPECTED_DISABLED_CONFIG_SHA256", subject.file_sha256(path))
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="no-shadow"):
+        subject._validate_disabled_config(path)  # noqa: SLF001
+
+
+@pytest.mark.parametrize("failure", ("wrong_parent", "missing", "true"))
+def test_disabled_config_rejects_logging_shadow_flag_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    strategy = {
+        "buy_e3_cooldown_policy_enabled": False,
+        "boolean_cooldown_policy_enabled": True,
+        "buy_fill_selection_shadow_enabled": False,
+        "dynamic_fill_hazard_shadow_enabled": False,
+        "cross_venue_fair_price_shadow_enabled": False,
+        "buy_e3_cooldown_artifact_manifest_sha256": subject.EXACT_DEPLOYED_FILE_SHA256[
+            "manifest"
+        ],
+        "buy_e3_cooldown_artifact_sha256": subject.EXACT_ARTIFACT_SHA256,
+        "buy_e3_cooldown_policy_sha256": subject.EXACT_DEPLOYED_FILE_SHA256["policy"],
+        "buy_e3_cooldown_predicate_bundle_sha256": subject.EXACT_DEPLOYED_FILE_SHA256[
+            "predicate_bundle"
+        ],
+    }
+    logging = {
+        "inventory_campaign_shadow_enabled": False,
+        "market_tape_enabled": False,
+    }
+    if failure == "wrong_parent":
+        strategy.update(logging)
+        logging = {}
+    elif failure == "missing":
+        logging.pop("market_tape_enabled")
+    else:
+        logging["inventory_campaign_shadow_enabled"] = True
+    path = tmp_path / f"disabled-{failure}.yaml"
+    path.write_text(
+        yaml.safe_dump({"strategy": strategy, "logging": logging}), encoding="utf-8"
+    )
+    monkeypatch.setattr(subject, "EXPECTED_DISABLED_CONFIG_SHA256", subject.file_sha256(path))
+
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="no-shadow"):
         subject._validate_disabled_config(path)  # noqa: SLF001
 
