@@ -7,6 +7,8 @@ import pytest
 
 from live import main as subject
 
+RUNNING_CONFIG_SHA256 = "1" * 64
+
 
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(
@@ -88,6 +90,8 @@ class _Engine:
                     "execution_tree": "b" * 40,
                     "annotated_operational_tag": "f05-buy-e3-active-v1",
                     "annotated_operational_tag_object": "c" * 40,
+                    "active_config_file_sha256": RUNNING_CONFIG_SHA256,
+                    "disabled_config_file_sha256": "2" * 64,
                 }
                 if active_identity.startswith("BUY_E3:")
                 else {
@@ -98,6 +102,8 @@ class _Engine:
                     "execution_tree": "",
                     "annotated_operational_tag": "",
                     "annotated_operational_tag_object": "",
+                    "active_config_file_sha256": "",
+                    "disabled_config_file_sha256": "",
                 }
             )
         )
@@ -177,6 +183,7 @@ def test_startup_attestation_accepts_only_clean_fresh_b0(
     attestation = subject.build_startup_attestation(
         engine=_Engine(),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "accepted"
@@ -219,11 +226,36 @@ def test_startup_attestation_accepts_exact_same_artifact_resume(
             active_identity=artifact_identity,
         ),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "accepted"
     assert attestation["errors"] == []
     assert attestation["fill_cooldown_state"]["restore_mode"] == ("exact_same_artifact_resume")
+
+
+def test_startup_attestation_rejects_release_bound_to_another_active_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _bind_clean_checkout(monkeypatch)
+    artifact_identity = f"BUY_E3:{'a' * 64}"
+    engine = _Engine(
+        buy_identity=artifact_identity,
+        remaining_ms=1_500_000,
+        restore_mode="exact_same_artifact_resume",
+        checkpoint_loaded=True,
+        checkpoint_sequence=8,
+        active_identity=artifact_identity,
+    )
+    attestation = subject.build_startup_attestation(
+        engine=engine,
+        native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256="9" * 64,
+    )
+
+    assert attestation["status"] == "rejected"
+    assert "buy_e3_active_release_matches_running_config" in attestation["errors"]
+    assert attestation["gates"]["safe_to_start_live_loops"] is False
 
 
 def test_startup_attestation_rejects_active_e3_without_checkpoint_epoch(
@@ -234,6 +266,7 @@ def test_startup_attestation_rejects_active_e3_without_checkpoint_epoch(
     attestation = subject.build_startup_attestation(
         engine=_Engine(active_identity=artifact_identity),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "rejected"
@@ -255,6 +288,7 @@ def test_startup_attestation_accepts_rollback_to_residual_b0(
             checkpoint_sequence=12,
         ),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "accepted"
@@ -275,6 +309,7 @@ def test_startup_attestation_accepts_artifact_drift_only_after_b0_conversion(
             active_identity=f"BUY_E3:{'b' * 64}",
         ),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "accepted"
@@ -294,6 +329,7 @@ def test_startup_attestation_rejects_e3_identity_under_b0_rollback(
             checkpoint_sequence=2,
         ),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
 
     assert attestation["status"] == "rejected"
@@ -322,6 +358,30 @@ def test_startup_attestation_rejects_e3_identity_under_b0_rollback(
             ),
             "global_reference_shadow_state_contract_valid",
         ),
+        (
+            lambda state: state.update(
+                {"global_reference_bridge_basis_sample_count": False}
+            ),
+            "global_reference_shadow_state_contract_valid",
+        ),
+        (
+            lambda state: state.update(
+                {"global_reference_bridge_basis_sample_count": 0.0}
+            ),
+            "global_reference_shadow_state_contract_valid",
+        ),
+        (
+            lambda state: state.update({"global_flow_shadow_enabled": True}),
+            "global_flow_shadow_backend_contract_valid",
+        ),
+        (
+            lambda state: state.update({"global_reference_shadow_enabled": True}),
+            "global_reference_shadow_state_contract_valid",
+        ),
+        (
+            lambda state: state.update({"global_flow_native_effective": True}),
+            "global_flow_shadow_backend_contract_valid",
+        ),
     ],
 )
 def test_startup_attestation_rejects_disabled_shadow_identity_drift(
@@ -337,6 +397,7 @@ def test_startup_attestation_rejects_disabled_shadow_identity_drift(
     attestation = subject.build_startup_attestation(
         engine=engine,
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
     assert attestation["status"] == "rejected"
     assert expected_error in attestation["errors"]
@@ -413,6 +474,7 @@ def test_git_snapshot_includes_tracked_and_untracked_drift(
     attestation = subject.build_startup_attestation(
         engine=_Engine(),
         native_runtime={"profile": "test", "module": "disabled"},
+        running_config_sha256=RUNNING_CONFIG_SHA256,
     )
     assert attestation["status"] == "rejected"
     assert "git_pre_worktree_clean" in attestation["errors"]

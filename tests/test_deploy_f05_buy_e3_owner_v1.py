@@ -5,12 +5,15 @@ import copy
 import hashlib
 import json
 import os
+import shlex
 import stat
 import subprocess
 import sys
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
@@ -141,8 +144,10 @@ def _runtime_identity_payload(
     *,
     pid: int,
     active_release_binding: dict | None = None,
+    repository_root: str | None = None,
 ) -> dict:
     expected = subject._expected_process_binding(plan, phase, active_release_binding)
+    runtime_repository_root = repository_root or expected["repo_root"]
     source_hashes = {
         binding["repository_relative_path"]: binding["working_file_sha256"]
         for binding in plan["runtime_sources"]["files"].values()
@@ -152,6 +157,7 @@ def _runtime_identity_payload(
         "strategy/boolean_cooldown_live.py",
         "strategy/signal.py",
         "strategy/global_flow.py",
+        "strategy/global_reference.py",
     ):
         source_hashes[extra_path] = hashlib.sha256(extra_path.encode()).hexdigest()
     source_rows = [
@@ -201,6 +207,10 @@ def _runtime_identity_payload(
         "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
         "signal_engine": ("strategy.signal", "strategy/signal.py"),
         "global_flow": ("strategy.global_flow", "strategy/global_flow.py"),
+        "global_reference": (
+            "strategy.global_reference",
+            "strategy/global_reference.py",
+        ),
         "boolean_cooldown_live": (
             "strategy.boolean_cooldown_live",
             "strategy/boolean_cooldown_live.py",
@@ -213,7 +223,7 @@ def _runtime_identity_payload(
     loaded_module_origins = {
         role: {
             "module_name": module_name,
-            "origin_path": f"/remote/repo/{relative_path}",
+            "origin_path": str(Path(runtime_repository_root) / relative_path),
             "repository_relative_path": relative_path,
             "source_sha256": source_hashes[relative_path],
         }
@@ -233,6 +243,8 @@ def _runtime_identity_payload(
         "NARROWGATE_CPP_GLOBAL_FLOW": False,
         "NARROWGATE_CPP_LIVE_ROUTING": False,
         "NARROWGATE_CPP_STRICT": False,
+        "NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED": False,
+        "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE": False,
     }
     startup_release = subject._empty_active_release_identity()
     if expected["enabled"] and active_release_binding is not None:
@@ -241,7 +253,7 @@ def _runtime_identity_payload(
             "annotated_operational_tag": plan["execution"]["annotated_tag"],
             "annotated_operational_tag_object": plan["execution"]["annotated_tag_object"],
         }
-    return {
+    payload = {
         "schema_version": subject.RUNTIME_IDENTITY_SCHEMA,
         "recorded_at_utc": "2026-08-22T00:00:00Z",
         "pid": pid,
@@ -262,7 +274,7 @@ def _runtime_identity_payload(
         ],
         "native_runtime": native_runtime,
         "startup_attestation": {
-            "schema_version": subject.STARTUP_ATTESTATION_SCHEMA,
+            "schema_version": expected["startup_attestation_schema_version"],
             "status": "accepted",
             "attested_at_utc": "2026-08-22T00:00:01Z",
             "fill_cooldown_state": {
@@ -331,6 +343,24 @@ def _runtime_identity_payload(
             "errors": [],
         },
     }
+    if (
+        expected["startup_attestation_schema_version"]
+        == subject.HISTORICAL_STARTUP_ATTESTATION_SCHEMA
+    ):
+        startup = payload["startup_attestation"]
+        startup.pop("shadow_runtime_identity")
+        startup["buy_e3_active_release"].pop("active_config_file_sha256")
+        startup["buy_e3_active_release"].pop("disabled_config_file_sha256")
+        for field in subject._STARTUP_GATE_FIELDS - subject._HISTORICAL_STARTUP_GATE_FIELDS:
+            startup["gates"].pop(field)
+        for role in (
+            subject._LOADED_RUNTIME_MODULE_ROLES
+            - subject._HISTORICAL_LOADED_RUNTIME_MODULE_ROLES
+        ):
+            startup["loaded_module_origins"].pop(role)
+        payload["native_runtime"].pop("NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED")
+        payload["native_runtime"].pop("NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE")
+    return payload
 
 
 def _runtime_identity(
@@ -379,7 +409,10 @@ def _specification(tmp_path: Path) -> dict:
     active = tmp_path / "active.yaml"
     pointer = tmp_path / "pointer.json"
     known = tmp_path / "known_hosts"
-    manifest.write_text("{}\n", encoding="ascii")
+    manifest.write_text(
+        json.dumps({"artifact_sha256": "a" * 64}) + "\n",
+        encoding="ascii",
+    )
     policy.write_text(
         json.dumps({"bindings": {"owner_execution_commit": gate_v2.FROZEN_EXECUTION_COMMIT}})
         + "\n",
@@ -466,7 +499,11 @@ def _specification(tmp_path: Path) -> dict:
                 "config_sha256": "c" * 64,
                 "runtime_code_sha256": _RUNTIME_CODE_SHA256,
             },
-            "deep_predecessor": _rollback("deep", "a" * 40),
+            "deep_predecessor": {
+                **_rollback("deep", gate_v2.FROZEN_EXECUTION_COMMIT),
+                "execution_tree": "5" * 40,
+                "runtime_code_sha256": _RUNTIME_CODE_SHA256,
+            },
         },
         "phase_token_sha256": {phase: _token_hash(f"token-{phase}") for phase in subject.PHASES},
     }
@@ -749,6 +786,235 @@ def _plan(
     return plan, spec
 
 
+def test_actual_native_audit_roundtrips_current_v5_and_tamper_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from live import main as live_main
+
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    for name in live_main.CPP_RUNTIME_FLAGS:
+        monkeypatch.setenv(name, "0")
+    monkeypatch.delenv("NARROWGATE_CPP_PROFILE", raising=False)
+    native_runtime = live_main.audit_native_runtime(
+        Mock(),
+        cfg=SimpleNamespace(
+            multi_market=SimpleNamespace(global_flow_shadow_enabled=False)
+        ),
+    )
+    assert set(native_runtime) == {
+        "profile",
+        "module",
+        *live_main.CPP_RUNTIME_FLAGS,
+        "NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED",
+        "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE",
+    }
+    runtime = _runtime_identity_payload(
+        plan,
+        "disabled-deploy",
+        pid=377,
+    )
+    runtime["native_runtime"] = native_runtime
+    expected = subject._expected_process_binding(plan, "disabled-deploy")
+
+    def validate(candidate: dict) -> dict:
+        return subject._validate_runtime_identity_authority(
+            candidate,
+            expected_pid=377,
+            expected_config_path=expected["config_path"],
+            expected_config_sha256=expected["config_sha256"],
+            expected_python_executable=expected["python_executable"],
+            expected_python_binary_resolved=expected["python_executable"],
+            expected_enabled=False,
+            expected_artifact_sha256=expected["artifact_sha256"],
+            expected_execution_commit=expected["execution_commit"],
+            expected_execution_tree=expected["execution_tree"],
+            expected_runtime_sources=plan["runtime_sources"],
+            expected_repository_root=expected["repo_root"],
+            expected_startup_attestation_schema_version=(
+                subject.STARTUP_ATTESTATION_SCHEMA
+            ),
+            expected_active_release=None,
+        )
+
+    assert validate(runtime) == runtime["startup_attestation"]
+    mutations = (
+        lambda value: value["native_runtime"].pop(
+            "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE"
+        ),
+        lambda value: value["native_runtime"].__setitem__("unexpected", False),
+        lambda value: value["native_runtime"].__setitem__(
+            "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE", True
+        ),
+        lambda value: value["native_runtime"].__setitem__(
+            "NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED", True
+        ),
+    )
+    for mutation in mutations:
+        tampered = copy.deepcopy(runtime)
+        mutation(tampered)
+        with pytest.raises(
+            subject.BuyE3TransactionalDeployError,
+            match="runtime native attestation",
+        ):
+            validate(tampered)
+
+    origin_mutations = (
+        lambda value: value["startup_attestation"]["loaded_module_origins"].pop(
+            "global_reference"
+        ),
+        lambda value: value["startup_attestation"]["loaded_module_origins"].__setitem__(
+            "unexpected",
+            copy.deepcopy(
+                value["startup_attestation"]["loaded_module_origins"][
+                    "global_reference"
+                ]
+            ),
+        ),
+        lambda value: value["startup_attestation"]["loaded_module_origins"][
+            "global_reference"
+        ].__setitem__("source_sha256", "0" * 64),
+        lambda value: value["startup_attestation"]["loaded_module_origins"][
+            "global_reference"
+        ].__setitem__("origin_path", "/outside/strategy/global_reference.py"),
+        lambda value: value["startup_attestation"]["loaded_module_origins"][
+            "global_reference"
+        ].__setitem__("module_name", "strategy.global_flow"),
+        lambda value: value["startup_attestation"]["loaded_module_origins"][
+            "global_reference"
+        ].__setitem__("repository_relative_path", "strategy/global_flow.py"),
+    )
+    for mutation in origin_mutations:
+        tampered = copy.deepcopy(runtime)
+        mutation(tampered)
+        with pytest.raises(
+            subject.BuyE3TransactionalDeployError,
+            match="loaded module origin",
+        ):
+            validate(tampered)
+
+
+def test_runtime_source_authority_validates_actual_git_checkout_and_tamper(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "runtime-repo"
+    repo.mkdir()
+    for index, relative in enumerate(gate_v2.REQUIRED_RUNTIME_PATHS.values()):
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"runtime-source-{index}\n", encoding="ascii")
+    subprocess.run(("git", "init", "-q"), cwd=repo, check=True)
+    subprocess.run(("git", "add", "."), cwd=repo, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ),
+        cwd=repo,
+        check=True,
+    )
+    commit = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    files = {}
+    for role, relative in gate_v2.REQUIRED_RUNTIME_PATHS.items():
+        sha256 = gate_v2.file_sha256(repo / relative)
+        files[role] = {
+            "repository_relative_path": relative,
+            "artifact_manifest_sha256": sha256,
+            "execution_commit_blob_sha256": sha256,
+            "working_file_sha256": sha256,
+        }
+    aggregate = gate_v2.canonical_sha256(files)
+    authority = {"files": files, "runtime_code_sha256": aggregate}
+
+    assert subject._validate_checkout_runtime_source_authority(
+        repository_root=repo,
+        execution_commit=commit,
+        runtime_sources=authority,
+        expected_runtime_code_sha256=aggregate,
+    ) == authority
+    encoded = subject._encode_runtime_source_authority(authority)
+    assert subject._decode_runtime_source_authority(encoded) == authority
+
+    for mutate in (
+        lambda value: value["files"].__setitem__("unexpected", {}),
+        lambda value: value["files"]["live_main"].__setitem__(
+            "working_file_sha256", "0" * 64
+        ),
+    ):
+        tampered = copy.deepcopy(authority)
+        mutate(tampered)
+        with pytest.raises(
+            subject.BuyE3TransactionalDeployError,
+            match="runtime source authority",
+        ):
+            subject._validate_checkout_runtime_source_authority(
+                repository_root=repo,
+                execution_commit=commit,
+                runtime_sources=tampered,
+                expected_runtime_code_sha256=aggregate,
+            )
+    with pytest.raises(subject.BuyE3TransactionalDeployError, match="base64"):
+        subject._decode_runtime_source_authority("not-base64!")
+
+
+def test_generated_process_probe_cli_roundtrips_parser_and_main(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    captured_kwargs: list[dict] = []
+    monkeypatch.setattr(
+        subject,
+        "capture_runtime_process_probe",
+        lambda **kwargs: captured_kwargs.append(kwargs) or {"status": "accepted"},
+    )
+    for phase in ("disabled-deploy", "rollback-deep"):
+        row = next(
+            item for item in plan["phases"][phase] if "process-probe" in item["label"]
+        )
+        remote_tokens = shlex.split(str(row["argv"][-1]))
+        command_index = remote_tokens.index("process-probe")
+        cli = remote_tokens[command_index:]
+        parsed = subject._parser().parse_args(cli)
+        assert parsed.command == "process-probe"
+        assert subject.main(cli) == 0
+    assert len(captured_kwargs) == 2
+    assert captured_kwargs[0]["expected_startup_attestation_schema_version"] == (
+        subject.STARTUP_ATTESTATION_SCHEMA
+    )
+    assert subject._decode_runtime_source_authority(
+        captured_kwargs[0]["runtime_source_authority_base64"]
+    ) == plan["runtime_sources"]
+    assert captured_kwargs[1]["expected_artifact_sha256"] == ""
+    assert captured_kwargs[1]["artifact_manifest_path"] is None
+    assert captured_kwargs[1]["policy_path"] is None
+    assert captured_kwargs[1]["predicate_bundle_path"] is None
+    assert capsys.readouterr().out.count('"status": "accepted"') == 2
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="duplicate CLI option",
+    ):
+        subject.main(
+            [
+                *cli,
+                "--expected-startup-attestation-schema-version",
+                subject.STARTUP_ATTESTATION_SCHEMA,
+            ]
+        )
+
 def test_deploy_attestation_schema_matches_runtime_writer() -> None:
     from live import main as live_main
 
@@ -757,8 +1023,8 @@ def test_deploy_attestation_schema_matches_runtime_writer() -> None:
     assert subject.RUNNING_CHECKOUT_SCHEMA == live_main.RUNNING_CHECKOUT_SCHEMA
     assert subject._STARTUP_GATE_FIELDS == frozenset(live_main.STARTUP_ATTESTATION_GATE_NAMES)
     assert subject._LOADED_RUNTIME_MODULE_ROLES == frozenset(live_main.KEY_LOADED_RUNTIME_MODULES)
-    # The runtime's rejected placeholder predates the accepted-v4 release field;
-    # accepted attestations include it and are validated strictly below.
+    # The runtime's rejected placeholder omits the release field; accepted v5
+    # attestations include it and are validated strictly below.
     assert set(empty_attestation) | {"buy_e3_active_release"} == (
         subject._STARTUP_ATTESTATION_FIELDS
     )
@@ -785,7 +1051,12 @@ def _capture_runtime_probe_fixture(
     runtime_identity_path = tmp_path / "runtime_identity.json"
     artifact_manifest_path = Path(spec["artifact"]["manifest_path"])
 
-    runtime = _runtime_identity_payload(plan, "disabled-deploy", pid=pid)
+    runtime = _runtime_identity_payload(
+        plan,
+        "disabled-deploy",
+        pid=pid,
+        repository_root=str(tmp_path.resolve()),
+    )
     runtime.update(
         {
             "python_executable": str(python_executable.absolute()),
@@ -851,6 +1122,11 @@ def _capture_runtime_probe_fixture(
         return subprocess.CompletedProcess(command, 0, f"{stdout}\n", "")
 
     monkeypatch.setattr(subject.subprocess, "run", fake_git_run)
+    monkeypatch.setattr(
+        subject,
+        "_validate_checkout_runtime_source_authority",
+        lambda **_kwargs: copy.deepcopy(plan["runtime_sources"]),
+    )
     process = subject.capture_runtime_process_probe(
         repository_root=tmp_path,
         pid_file=pid_file,
@@ -863,8 +1139,21 @@ def _capture_runtime_probe_fixture(
         expected_execution_commit=plan["execution"]["execution_commit"],
         expected_execution_tree=plan["execution"]["execution_tree"],
         expected_artifact_sha256=plan["artifact"]["artifact_sha256"],
+        expected_artifact_manifest_file_sha256=plan["artifact"][
+            "manifest_file_sha256"
+        ],
+        expected_policy_file_sha256=plan["artifact"]["policy_file_sha256"],
+        expected_predicate_bundle_file_sha256=plan["artifact"][
+            "predicate_bundle_file_sha256"
+        ],
         expected_runtime_code_sha256=plan["runtime_sources"]["runtime_code_sha256"],
+        runtime_source_authority_base64=subject._encode_runtime_source_authority(
+            plan["runtime_sources"]
+        ),
+        expected_startup_attestation_schema_version=subject.STARTUP_ATTESTATION_SCHEMA,
         artifact_manifest_path=artifact_manifest_path,
+        policy_path=Path(spec["artifact"]["policy_path"]),
+        predicate_bundle_path=Path(spec["artifact"]["predicate_bundle_path"]),
     )
     return process, runtime_text, pid_start_ticks
 
@@ -1559,7 +1848,7 @@ def test_successful_activation_receipt_embeds_exact_fresh_process_identity(
         envelope_path,
         release_path,
         release_binding,
-    ) = _compatible_activation_context(tmp_path, monkeypatch)
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
     fake_runner, _commands = _successful_runner(
         plan,
         "activate",
@@ -1576,7 +1865,7 @@ def test_successful_activation_receipt_embeds_exact_fresh_process_identity(
         runner=fake_runner,
         output_path=receipt,
         disabled_phase_receipt_path=disabled_path,
-        activation_envelope_path=envelope_path,
+        activation_envelope_path=None,
         active_release_path=release_path,
     )
 
@@ -1655,9 +1944,20 @@ def test_activation_reprobes_exact_disabled_process_before_stop(
     field: str,
     replacement,
 ) -> None:
-    plan, _spec = _plan(tmp_path, monkeypatch, activation_gate=True)
-    disabled_path, _receipt, disabled_process = _successful_disabled_receipt(tmp_path, plan)
-    base_runner, calls = _successful_runner(plan, "activate", disabled_process=disabled_process)
+    (
+        plan,
+        disabled_path,
+        disabled_process,
+        _envelope_path,
+        release_path,
+        release_binding,
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
+    base_runner, calls = _successful_runner(
+        plan,
+        "activate",
+        disabled_process=disabled_process,
+        active_release_binding=release_binding,
+    )
     reprobe_argv = tuple(
         next(
             row["argv"]
@@ -1687,10 +1987,11 @@ def test_activation_reprobes_exact_disabled_process_before_stop(
             phase="activate",
             token="token-activate",
             authorize_remote_mutation=True,
-            runner=mismatched_runner,
-            output_path=output,
-            disabled_phase_receipt_path=disabled_path,
-        )
+                runner=mismatched_runner,
+                output_path=output,
+                disabled_phase_receipt_path=disabled_path,
+                active_release_path=release_path,
+            )
     payload = subject.validate_phase_receipt(output, plan=plan, expected_phase="activate")
     assert payload["status"] == subject.PHASE_FAILED_CLOSED
     assert payload["failure_class"] == "disabled_process_handoff_mismatch"
@@ -1706,9 +2007,20 @@ def test_activation_reprobes_exact_disabled_process_before_stop(
 def test_activation_fails_closed_on_tampered_runtime_identity_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    plan, _spec = _plan(tmp_path, monkeypatch, activation_gate=True)
-    disabled_path, _receipt, disabled_process = _successful_disabled_receipt(tmp_path, plan)
-    base_runner, _calls = _successful_runner(plan, "activate", disabled_process=disabled_process)
+    (
+        plan,
+        disabled_path,
+        disabled_process,
+        _envelope_path,
+        release_path,
+        release_binding,
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
+    base_runner, _calls = _successful_runner(
+        plan,
+        "activate",
+        disabled_process=disabled_process,
+        active_release_binding=release_binding,
+    )
 
     runtime_read = tuple(
         next(
@@ -1737,10 +2049,11 @@ def test_activation_fails_closed_on_tampered_runtime_identity_file(
             phase="activate",
             token="token-activate",
             authorize_remote_mutation=True,
-            runner=wrong_attestation_runner,
-            output_path=output,
-            disabled_phase_receipt_path=disabled_path,
-        )
+                runner=wrong_attestation_runner,
+                output_path=output,
+                disabled_phase_receipt_path=disabled_path,
+                active_release_path=release_path,
+            )
     payload = subject.validate_phase_receipt(output, plan=plan, expected_phase="activate")
     assert payload["failure_class"] == "runtime_identity_invalid"
     assert payload["rollback_attempted"] is True
@@ -1792,6 +2105,9 @@ def test_capture_runtime_process_probe_accepts_expired_b0_checkpoint(
     [
         "missing",
         "v1-schema",
+        "v4-schema",
+        "missing-v5-field",
+        "extra-v5-field",
         "expected-echo",
         "forged-deadline",
         "forged-source",
@@ -1811,6 +2127,14 @@ def test_capture_runtime_process_probe_rejects_non_authoritative_startup_attesta
             runtime["startup_attestation"]["schema_version"] = (
                 "narrowgate_buy_e3_startup_attestation.v1"
             )
+        elif runtime_mutation == "v4-schema":
+            runtime["startup_attestation"]["schema_version"] = (
+                subject.HISTORICAL_STARTUP_ATTESTATION_SCHEMA
+            )
+        elif runtime_mutation == "missing-v5-field":
+            runtime["startup_attestation"].pop("shadow_runtime_identity")
+        elif runtime_mutation == "extra-v5-field":
+            runtime["startup_attestation"]["unversioned_extension"] = False
         elif runtime_mutation == "expected-echo":
             runtime["startup_attestation"] = {
                 "schema_version": subject.STARTUP_ATTESTATION_SCHEMA,
@@ -2141,7 +2465,7 @@ def test_validate_activation_receipt_rejects_process_artifact_and_deadline_tampe
         envelope_path,
         release_path,
         release_binding,
-    ) = _compatible_activation_context(tmp_path, monkeypatch)
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
     runner, _commands = _successful_runner(
         plan,
         "activate",
@@ -2157,7 +2481,7 @@ def test_validate_activation_receipt_rejects_process_artifact_and_deadline_tampe
         runner=runner,
         output_path=original,
         disabled_phase_receipt_path=disabled_path,
-        activation_envelope_path=envelope_path,
+        activation_envelope_path=None,
         active_release_path=release_path,
     )
     payload = json.loads(original.read_text(encoding="ascii"))
@@ -2259,6 +2583,13 @@ def _compatible_attempt(
     }
     runtime_sources = subject._compatible_runtime_sources(attempt_payload)
     spec["rollback_identities"]["primary_disabled"].update(
+        {
+            "execution_commit": runtime_commit,
+            "execution_tree": runtime_tree,
+            "runtime_code_sha256": runtime_sources["runtime_code_sha256"],
+        }
+    )
+    spec["rollback_identities"]["deep_predecessor"].update(
         {
             "execution_commit": runtime_commit,
             "execution_tree": runtime_tree,
@@ -3409,6 +3740,115 @@ def _compatible_activation_context(
     )
 
 
+def _direct_v3_activation_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict, Path, dict, Path, Path, dict]:
+    (
+        plan,
+        disabled_path,
+        disabled_process,
+        historical_envelope_path,
+        _legacy_release_path,
+        _legacy_release_binding,
+    ) = _compatible_activation_context(tmp_path, monkeypatch)
+    payload = {
+        "schema_version": subject.buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        "identity": subject.buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_IDENTITY,
+        "status": subject.buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_STATUS,
+        "execution": {
+            "execution_commit": plan["execution"]["execution_commit"],
+            "execution_tree": plan["execution"]["execution_tree"],
+            "annotated_operational_tag": plan["execution"]["annotated_tag"],
+            "annotated_operational_tag_object": plan["execution"]["annotated_tag_object"],
+            "tag_peeled_commit": plan["execution"]["execution_commit"],
+        },
+        "exact_artifact": {
+            "artifact_sha256": plan["artifact"]["artifact_sha256"],
+            "roles": {
+                role: {"file_sha256": plan["artifact"][field]}
+                for role, field in {
+                    "manifest": "manifest_file_sha256",
+                    "policy": "policy_file_sha256",
+                    "predicate_bundle": "predicate_bundle_file_sha256",
+                }.items()
+            },
+        },
+        "config_pair": {
+            "active": {
+                "file_sha256": plan["configs"]["active"]["config_sha256"]
+            },
+            "disabled": {
+                "file_sha256": plan["configs"]["disabled"]["config_sha256"]
+            },
+        },
+    }
+    payload["canonical_active_release_sha256"] = subject.active_release.document_sha256(
+        payload,
+        "canonical_active_release_sha256",
+    )
+    release_path = tmp_path / "direct-v3-active-release.json"
+    release_path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="ascii")
+    release_path.chmod(0o600)
+
+    def validate_v3(observed, **expected):
+        if (
+            observed.get("schema_version") != payload["schema_version"]
+            or observed.get("status") != payload["status"]
+            or observed.get("canonical_active_release_sha256")
+            != subject.active_release.document_sha256(
+                observed, "canonical_active_release_sha256"
+            )
+            or expected["expected_canonical_sha256"]
+            != observed.get("canonical_active_release_sha256")
+            or expected["expected_artifact_sha256"]
+            != plan["artifact"]["artifact_sha256"]
+        ):
+            raise ValueError("test direct-v3 release drifted")
+        return {
+            "file_canonical_sha256": observed["canonical_active_release_sha256"],
+            "execution_commit": plan["execution"]["execution_commit"],
+            "execution_tree": plan["execution"]["execution_tree"],
+            "annotated_operational_tag": plan["execution"]["annotated_tag"],
+            "annotated_operational_tag_object": plan["execution"][
+                "annotated_tag_object"
+            ],
+            "active_config_file_sha256": plan["configs"]["active"][
+                "config_sha256"
+            ],
+            "disabled_config_file_sha256": plan["configs"]["disabled"][
+                "config_sha256"
+            ],
+        }
+
+    monkeypatch.setattr(subject.buy_e3_runtime, "_validate_active_release", validate_v3)
+    file_sha256 = gate_v2.file_sha256(release_path)
+    binding = {
+        "local_path": str(release_path.resolve(strict=True)),
+        "remote_path": subject._remote_active_release_path(
+            plan["active_pointer"]["repo_root"], file_sha256
+        ),
+        "file_sha256": file_sha256,
+        "canonical_active_release_sha256": payload[
+            "canonical_active_release_sha256"
+        ],
+        "schema_version": payload["schema_version"],
+        "status": payload["status"],
+        "active_config_file_sha256": plan["configs"]["active"]["config_sha256"],
+        "disabled_config_file_sha256": plan["configs"]["disabled"][
+            "config_sha256"
+        ],
+    }
+    return (
+        plan,
+        disabled_path,
+        disabled_process,
+        historical_envelope_path,
+        release_path,
+        binding,
+    )
+
+
 def test_compatible_activation_envelope_binds_all_receipts_before_fake_activation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3435,38 +3875,23 @@ def test_compatible_activation_envelope_binds_all_receipts_before_fake_activatio
     assert validated == envelope
     assert all(envelope["checks"].values())
 
-    runner, _commands = _successful_runner(
-        plan,
-        "activate",
-        disabled_process=disabled_process,
-        active_release_binding=release_binding,
-    )
-    activation_receipt_path = tmp_path / "compatible-activate.json"
-    result = subject.execute_phase(
-        plan=plan,
-        phase="activate",
-        token="token-activate",
-        authorize_remote_mutation=True,
-        runner=runner,
-        output_path=activation_receipt_path,
-        disabled_phase_receipt_path=disabled_path,
-        activation_envelope_path=envelope_path,
-        active_release_path=release_path,
-    )
-    assert result["status"] == subject.PHASE_COMPLETE
-    assert (
-        result["activation_envelope_binding"]["canonical_activation_envelope_sha256"]
-        == envelope["canonical_activation_envelope_sha256"]
-    )
-    assert result["active_release_binding"] == release_binding
-    assert (
-        subject.validate_phase_receipt(
-            activation_receipt_path,
+    runner = Mock(side_effect=AssertionError("historical authority must not run"))
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="historical standalone release is not current live activation authority",
+    ):
+        subject.execute_phase(
             plan=plan,
-            expected_phase="activate",
+            phase="activate",
+            token="token-activate",
+            authorize_remote_mutation=True,
+            runner=runner,
+            output_path=tmp_path / "historical-rejected.json",
+            disabled_phase_receipt_path=disabled_path,
+            activation_envelope_path=envelope_path,
+            active_release_path=release_path,
         )
-        == result
-    )
+    runner.assert_not_called()
 
     for field in (
         "concurrent_resource_receipt",
@@ -3487,6 +3912,37 @@ def test_compatible_activation_envelope_binds_all_receipts_before_fake_activatio
                 plan=plan,
                 disabled_phase_receipt_path=disabled_path,
             )
+
+
+def test_direct_v3_activation_rejects_historical_envelope_before_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (
+        plan,
+        disabled_path,
+        _disabled_process,
+        envelope_path,
+        release_path,
+        _release_binding,
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
+    runner = Mock(side_effect=AssertionError("v3 envelope rejection must precede runner"))
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="forbids a historical activation envelope",
+    ):
+        subject.execute_phase(
+            plan=plan,
+            phase="activate",
+            token="token-activate",
+            authorize_remote_mutation=True,
+            runner=runner,
+            output_path=tmp_path / "v3-envelope-rejected.json",
+            disabled_phase_receipt_path=disabled_path,
+            activation_envelope_path=envelope_path,
+            active_release_path=release_path,
+        )
+    runner.assert_not_called()
 
 
 def _activation_envelope_binding(
@@ -3535,8 +3991,10 @@ def _synthetic_active_release_binding(plan: dict) -> dict:
         ),
         "file_sha256": file_sha256,
         "canonical_active_release_sha256": "e" * 64,
-        "schema_version": subject.active_release.ACTIVE_RELEASE_SCHEMA,
-        "status": subject.active_release.ACTIVE_RELEASE_STATUS,
+        "schema_version": subject.buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        "status": subject.buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_STATUS,
+        "active_config_file_sha256": plan["configs"]["active"]["config_sha256"],
+        "disabled_config_file_sha256": plan["configs"]["disabled"]["config_sha256"],
     }
 
 
@@ -3566,6 +4024,7 @@ def _validate_fixture_startup(
     *,
     expected_enabled: bool,
     active_release_binding: dict | None,
+    allow_legacy: bool = False,
 ) -> dict:
     expected = subject._expected_process_binding(
         plan,
@@ -3574,18 +4033,90 @@ def _validate_fixture_startup(
     )
     return subject._validate_startup_attestation(
         attestation,
+        expected_schema_version=(
+            str(attestation.get("schema_version"))
+            if allow_legacy
+            else subject.STARTUP_ATTESTATION_SCHEMA
+        ),
         expected_execution_commit=expected["execution_commit"],
         expected_execution_tree=expected["execution_tree"],
         expected_artifact_sha256=expected["artifact_sha256"],
         expected_runtime_sources=plan["runtime_sources"],
+        expected_repository_root=expected["repo_root"],
         expected_python_executable=expected["python_executable"],
         expected_python_binary_resolved=expected["python_executable"],
+        expected_config_sha256=expected["config_sha256"],
         expected_enabled=expected_enabled,
         expected_active_release=active_release_binding,
+        allow_legacy=allow_legacy,
     )
 
 
-def test_compatible_activation_requires_post_envelope_release_before_runner(
+def _as_frozen_07ef_startup_v4(attestation: dict) -> dict:
+    historical = copy.deepcopy(attestation)
+    historical["schema_version"] = subject.HISTORICAL_STARTUP_ATTESTATION_SCHEMA
+    historical.pop("shadow_runtime_identity")
+    historical["buy_e3_active_release"].pop("active_config_file_sha256")
+    historical["buy_e3_active_release"].pop("disabled_config_file_sha256")
+    for field in subject._STARTUP_GATE_FIELDS - subject._HISTORICAL_STARTUP_GATE_FIELDS:
+        historical["gates"].pop(field)
+    for role in subject._LOADED_RUNTIME_MODULE_ROLES - (
+        subject._HISTORICAL_LOADED_RUNTIME_MODULE_ROLES
+    ):
+        historical["loaded_module_origins"].pop(role)
+    assert set(historical) == subject._HISTORICAL_STARTUP_ATTESTATION_FIELDS
+    assert set(historical["gates"]) == subject._HISTORICAL_STARTUP_GATE_FIELDS
+    return historical
+
+
+def test_frozen_07ef_startup_v4_is_historical_only_and_exact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    current = _runtime_identity_payload(
+        plan,
+        "disabled-deploy",
+        pid=499,
+    )["startup_attestation"]
+    historical = _as_frozen_07ef_startup_v4(current)
+
+    assert _validate_fixture_startup(
+        plan,
+        historical,
+        expected_enabled=False,
+        active_release_binding=None,
+        allow_legacy=True,
+    ) == historical
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="startup attestation (fields|schema)",
+    ):
+        _validate_fixture_startup(
+            plan,
+            historical,
+            expected_enabled=False,
+            active_release_binding=None,
+        )
+
+    for mutation in (
+        lambda value: value.__setitem__("shadow_runtime_identity", {}),
+        lambda value: value["gates"].__setitem__("shadow_config_explicit", True),
+        lambda value: value["buy_e3_active_release"].pop("path"),
+    ):
+        tampered = copy.deepcopy(historical)
+        mutation(tampered)
+        with pytest.raises(subject.BuyE3TransactionalDeployError):
+            _validate_fixture_startup(
+                plan,
+                tampered,
+                expected_enabled=False,
+                active_release_binding=None,
+                allow_legacy=True,
+            )
+
+
+def test_current_activation_requires_direct_v3_release_before_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3604,7 +4135,7 @@ def test_compatible_activation_requires_post_envelope_release_before_runner(
         called = True
         raise AssertionError("runner must not execute without the post-envelope release")
 
-    with pytest.raises(PermissionError, match="post-envelope active release"):
+    with pytest.raises(PermissionError, match="exact direct-owner v3 active release"):
         subject.execute_phase(
             plan=plan,
             phase="activate",
@@ -3654,26 +4185,16 @@ def test_active_release_rejects_wrong_plan_or_envelope_before_runner(
         _release_binding,
     ) = _compatible_activation_context(tmp_path, monkeypatch)
     _rewrite_active_release(release_path, mutation)
-    called = False
-
-    def runner(_command):
-        nonlocal called
-        called = True
-        raise AssertionError("runner must not execute with a misbound release")
-
     with pytest.raises(subject.BuyE3TransactionalDeployError, match=message):
-        subject.execute_phase(
+        subject._validate_active_release_for_activation(
+            release_path,
             plan=plan,
-            phase="activate",
-            token="token-activate",
-            authorize_remote_mutation=True,
-            runner=runner,
-            output_path=tmp_path / "misbound-release.json",
-            disabled_phase_receipt_path=disabled_path,
-            activation_envelope_path=envelope_path,
-            active_release_path=release_path,
+            activation_envelope_binding=_activation_envelope_binding(
+                plan,
+                envelope_path,
+                disabled_path,
+            ),
         )
-    assert called is False
 
 
 def test_active_release_validation_rejects_path_swap(
@@ -3743,7 +4264,7 @@ def test_activation_receipt_rejects_post_activation_release_tamper(
         envelope_path,
         release_path,
         release_binding,
-    ) = _compatible_activation_context(tmp_path, monkeypatch)
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
     runner, _commands = _successful_runner(
         plan,
         "activate",
@@ -3759,7 +4280,7 @@ def test_activation_receipt_rejects_post_activation_release_tamper(
         runner=runner,
         output_path=receipt_path,
         disabled_phase_receipt_path=disabled_path,
-        activation_envelope_path=envelope_path,
+        activation_envelope_path=None,
         active_release_path=release_path,
     )
 
@@ -3767,7 +4288,7 @@ def test_activation_receipt_rejects_post_activation_release_tamper(
     release_path.chmod(0o600)
     with pytest.raises(
         subject.BuyE3TransactionalDeployError,
-        match="active release bytes or activation binding drifted",
+        match="direct-owner v3 active release bytes drifted",
     ):
         subject.validate_phase_receipt(
             receipt_path,
@@ -3787,7 +4308,7 @@ def test_post_envelope_stage_failure_rolls_back_to_release_free_b0(
         envelope_path,
         release_path,
         release_binding,
-    ) = _compatible_activation_context(tmp_path, monkeypatch)
+    ) = _direct_v3_activation_context(tmp_path, monkeypatch)
     base_runner, _commands = _successful_runner(
         plan,
         "activate",
@@ -3815,7 +4336,7 @@ def test_post_envelope_stage_failure_rolls_back_to_release_free_b0(
             runner=runner,
             output_path=receipt_path,
             disabled_phase_receipt_path=disabled_path,
-            activation_envelope_path=envelope_path,
+            activation_envelope_path=None,
             active_release_path=release_path,
         )
     receipt = subject.validate_phase_receipt(
@@ -4016,6 +4537,14 @@ def test_installed_active_release_process_probe_rebinds_file_and_identity(
         expected_execution_commit=plan["execution"]["execution_commit"],
         expected_execution_tree=plan["execution"]["execution_tree"],
         expected_artifact_sha256=plan["artifact"]["artifact_sha256"],
+        expected_manifest_file_sha256=plan["artifact"]["manifest_file_sha256"],
+        expected_policy_file_sha256=plan["artifact"]["policy_file_sha256"],
+        expected_predicate_bundle_file_sha256=plan["artifact"][
+            "predicate_bundle_file_sha256"
+        ],
+        expected_active_config_file_sha256=plan["configs"]["active"][
+            "config_sha256"
+        ],
     )
     assert (
         payload["canonical_active_release_sha256"]
@@ -4030,6 +4559,14 @@ def test_installed_active_release_process_probe_rebinds_file_and_identity(
             expected_execution_commit=plan["execution"]["execution_commit"],
             expected_execution_tree=plan["execution"]["execution_tree"],
             expected_artifact_sha256=plan["artifact"]["artifact_sha256"],
+            expected_manifest_file_sha256=plan["artifact"]["manifest_file_sha256"],
+            expected_policy_file_sha256=plan["artifact"]["policy_file_sha256"],
+            expected_predicate_bundle_file_sha256=plan["artifact"][
+                "predicate_bundle_file_sha256"
+            ],
+            expected_active_config_file_sha256=plan["configs"]["active"][
+                "config_sha256"
+            ],
         )
     release_path.chmod(0o400)
     with pytest.raises(subject.BuyE3TransactionalDeployError, match="owner-only"):
@@ -4040,6 +4577,14 @@ def test_installed_active_release_process_probe_rebinds_file_and_identity(
             expected_execution_commit=plan["execution"]["execution_commit"],
             expected_execution_tree=plan["execution"]["execution_tree"],
             expected_artifact_sha256=plan["artifact"]["artifact_sha256"],
+            expected_manifest_file_sha256=plan["artifact"]["manifest_file_sha256"],
+            expected_policy_file_sha256=plan["artifact"]["policy_file_sha256"],
+            expected_predicate_bundle_file_sha256=plan["artifact"][
+                "predicate_bundle_file_sha256"
+            ],
+            expected_active_config_file_sha256=plan["configs"]["active"][
+                "config_sha256"
+            ],
         )
 
 
@@ -4061,7 +4606,7 @@ def test_installed_active_release_process_probe_rebinds_file_and_identity(
         (False, "rollback_to_b0", True, 5, "B0", 85_000),
     ],
 )
-def test_v4_startup_validator_accepts_admitted_restore_modes(
+def test_v5_startup_validator_accepts_admitted_restore_modes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     expected_enabled: bool,
@@ -4105,7 +4650,7 @@ def test_v4_startup_validator_accepts_admitted_restore_modes(
     )
 
 
-def test_v4_startup_validator_strictly_rejects_mode_identity_and_release_drift(
+def test_v5_startup_validator_strictly_rejects_mode_identity_and_release_drift(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4227,6 +4772,10 @@ def _as_legacy_v3_disabled_receipt(receipt: dict) -> dict:
     startup.pop("shadow_runtime_identity")
     for field in subject._STARTUP_GATE_FIELDS - subject._LEGACY_STARTUP_GATE_FIELDS:
         startup["gates"].pop(field)
+    for role in subject._LOADED_RUNTIME_MODULE_ROLES - (
+        subject._HISTORICAL_LOADED_RUNTIME_MODULE_ROLES
+    ):
+        startup["loaded_module_origins"].pop(role)
     startup_sha256 = gate_v2.canonical_sha256(startup)
     process["startup_attestation_sha256"] = startup_sha256
     process["canonical_process_identity_sha256"] = gate_v2.document_sha256(
@@ -4272,3 +4821,24 @@ def test_historical_v3_disabled_receipt_validator_remains_supported(
     assert receipt["schema_version"] == subject.RECEIPT_SCHEMA
     assert receipt["active_release_binding"] is None
     assert disabled_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_historical_v4_receipt_is_explicitly_non_authoritative(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    _disabled_path, receipt, _process = _successful_disabled_receipt(tmp_path, plan)
+    historical = copy.deepcopy(receipt)
+    historical["schema_version"] = subject.HISTORICAL_RECEIPT_SCHEMA
+    historical_path = _write_receipt(tmp_path / "historical-v4.json", historical)
+
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="historical receipt-v4.*not accepted",
+    ):
+        subject.validate_phase_receipt(
+            historical_path,
+            plan=plan,
+            expected_phase="disabled-deploy",
+        )

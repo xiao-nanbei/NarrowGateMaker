@@ -12,8 +12,8 @@ from strategy.signal import SignalEngine
 
 def test_cross_trade_batch_matches_single_event_state(monkeypatch):
     monkeypatch.delenv("NARROWGATE_CPP_GLOBAL_FLOW", raising=False)
-    single = SignalEngine(enable_ml=False)
-    batched = SignalEngine(enable_ml=False)
+    single = SignalEngine(enable_ml=False, global_flow_shadow_enabled=True)
+    batched = SignalEngine(enable_ml=False, global_flow_shadow_enabled=True)
     receive_ns = 1_800_000_000_500_000_000
     events = [
         {"s": "BTCUSDT", "T": 1_800_000_000_100, "p": "60000.0", "q": "0.1", "m": True},

@@ -115,7 +115,11 @@ def test_book_history_respects_local_receive_time_at_prior_endpoint():
 
 
 def test_binance_bridge_basis_is_sampled_per_10s_bucket_before_health():
-    engine = SignalEngine(enable_ml=False, stablecoin_anchor_symbol="USDCUSDT")
+    engine = SignalEngine(
+        enable_ml=False,
+        stablecoin_anchor_symbol="USDCUSDT",
+        global_reference_shadow_enabled=True,
+    )
     for index in range(31):
         timestamp_ms = 1_000_000 + index * 10_000
         receive_ns = timestamp_ms * 1_000_000
@@ -136,7 +140,11 @@ def test_binance_bridge_basis_is_sampled_per_10s_bucket_before_health():
 
 
 def test_slow_stablecoin_anchor_does_not_need_a_two_second_book_change():
-    engine = SignalEngine(enable_ml=False, stablecoin_anchor_symbol="USDCUSDT")
+    engine = SignalEngine(
+        enable_ml=False,
+        stablecoin_anchor_symbol="USDCUSDT",
+        global_reference_shadow_enabled=True,
+    )
     for index in range(31):
         timestamp_ms = 1_000_000 + index * 10_000
         receive_ns = timestamp_ms * 1_000_000

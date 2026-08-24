@@ -122,7 +122,10 @@ def _signal_consumer(native: bool):
             os.environ.pop(flag, None)
             os.environ.pop("NARROWGATE_CPP_STRICT", None)
         signal = SignalEngine(
-            enable_ml=False, symbol="BTCUSDC", reference_symbol="BTCUSDT"
+            enable_ml=False,
+            symbol="BTCUSDC",
+            reference_symbol="BTCUSDT",
+            global_flow_shadow_enabled=True,
         )
     finally:
         if prior_flag is None:

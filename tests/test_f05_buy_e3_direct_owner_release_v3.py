@@ -161,6 +161,8 @@ def _rewrite_canonical(payload: dict[str, Any]) -> None:
 def test_runtime_accepts_exact_v3_release_and_preserves_action_vocabulary() -> None:
     validated = _runtime_validate(_payload())
     assert validated["execution_commit"] == EXECUTION["execution_commit"]
+    assert validated["active_config_file_sha256"] == subject.NEW_ACTIVE_CONFIG_SHA256
+    assert validated["disabled_config_file_sha256"] == subject.NEW_DISABLED_CONFIG_SHA256
     assert list(runtime.BUY_ACTIONS) == subject.RUNTIME_FIX_CONTRACT["buy_action_vocabulary"]
 
 
