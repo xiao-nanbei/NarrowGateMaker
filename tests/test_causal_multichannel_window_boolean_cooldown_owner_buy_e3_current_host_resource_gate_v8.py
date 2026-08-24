@@ -336,15 +336,23 @@ def _capture(samples: list[dict[str, Any]]) -> dict[str, Any]:
         "benchmark_exit_monotonic_ns": 2_000,
         "rate_boundary_main_health_generation": 1,
         "rate_boundary_main_health_line_sha256": "0" * 64,
+        "rate_boundary_lifecycle_health_generation": 1,
+        "rate_boundary_lifecycle_health_line_sha256": "a" * 64,
         "rate_first_main_health_generation": 2,
         "rate_first_main_health_line_sha256": "8" * 64,
+        "rate_first_lifecycle_health_generation": 2,
+        "rate_first_lifecycle_health_line_sha256": "b" * 64,
         "rate_second_main_health_generation": 3,
         "rate_second_main_health_line_sha256": "1" * 64,
+        "rate_second_lifecycle_health_generation": 3,
+        "rate_second_lifecycle_health_line_sha256": "3" * 64,
         "rate_window_update_delta": 1_000,
         "rate_window_elapsed_s": 10.0,
         "rate_window_same_live_pid_and_start_ticks": True,
         "baseline_main_health_generation": 3,
         "final_main_health_generation": 4,
+        "baseline_lifecycle_health_generation": 3,
+        "final_lifecycle_health_generation": 4,
         "baseline_main_health_line_sha256": "1" * 64,
         "final_main_health_line_sha256": "2" * 64,
         "baseline_lifecycle_health_line_sha256": "3" * 64,
@@ -513,7 +521,9 @@ def test_schema_surface_and_cycle_break_are_explicit() -> None:
     assert subject.AUTHORITY_DESIGN == {
         "runtime_authority": "immutable_direct_owner_no_shadow_release_v3",
         "runtime_authority_release_file_sha256": subject.DIRECT_SUCCESSOR_RELEASE_FILE_SHA256,
-        "runtime_authority_release_canonical_sha256": (subject.DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256),
+        "runtime_authority_release_canonical_sha256": (
+            subject.DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
+        ),
         "resource_receipt_is_post_authority_completion_evidence": True,
         "resource_receipt_is_not_embedded_in_direct_successor_release": True,
         "direct_successor_release_does_not_depend_on_resource_receipt": True,
@@ -660,7 +670,9 @@ def test_disjoint_runtime_and_collector_histories_bind_exact_source_bytes(
     )
     monkeypatch.setattr(subject, "DIRECT_SUCCESSOR_ANNOTATED_TAG", "runtime-v4")
     monkeypatch.setattr(
-        subject, "DIRECT_SUCCESSOR_TAG_OBJECT", git_value(runtime, "rev-parse", "refs/tags/runtime-v4")
+        subject,
+        "DIRECT_SUCCESSOR_TAG_OBJECT",
+        git_value(runtime, "rev-parse", "refs/tags/runtime-v4"),
     )
     monkeypatch.setattr(
         subject,
@@ -794,13 +806,31 @@ def test_health_tail_does_not_reuse_historical_markerless_row(tmp_path: Path) ->
         f" globalFlowReason={subject.SHADOW_DISABLED_REASON}", ""
     ).replace(f" globalRefReason={subject.SHADOW_DISABLED_REASON}", "")
     log.write_text(
-        historical
-        + "2026-08-24 00:00:00 [main] INFO "
+        historical + "2026-08-24 00:00:00 [main] INFO "
         "ORDER_LIFECYCLE_JOURNAL_V2_HEALTH drops=0 errors=0\n",
         encoding="utf-8",
     )
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="required HEALTH"):
         subject.LiveHealthTail(log)
+
+
+def test_health_tail_rejects_symlink_and_same_path_inode_replacement(tmp_path: Path) -> None:
+    row = _health_line("2026-08-24 00:00:00") + (
+        "2026-08-24 00:00:00 [main] INFO ORDER_LIFECYCLE_JOURNAL_V2_HEALTH drops=0 errors=0\n"
+    )
+    real = tmp_path / "real.log"
+    real.write_text(row, encoding="utf-8")
+    link = tmp_path / "link.log"
+    link.symlink_to(real)
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="non-symlink"):
+        subject.LiveHealthTail(link)
+
+    tail = subject.LiveHealthTail(real)
+    old = tmp_path / "old.log"
+    real.rename(old)
+    real.write_text(row + row, encoding="utf-8")
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="rotated"):
+        tail.snapshot()
 
 
 def test_rate_window_ignores_old_high_then_uses_two_current_process_rows(
@@ -830,6 +860,32 @@ def test_rate_window_ignores_old_high_then_uses_two_current_process_rows(
     assert first["boolean_cooldown_updates"] == 562
     assert second["boolean_cooldown_updates"] == 1_115
     assert rate == pytest.approx(553.0 / 60.0)
+
+
+def test_rate_window_rejects_new_main_rows_with_stale_predecessor_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    disabled = _disabled_process()
+    monkeypatch.setattr(subject, "_process_identity_from_live", lambda **_kwargs: _live_identity())
+    boundary = _rate_health(1, updates=2_127, timestamp_s=1_000.0)
+    first = _rate_health(2, updates=562, timestamp_s=1_060.0)
+    second = _rate_health(3, updates=1_115, timestamp_s=1_120.0)
+    first["lifecycle_generation"] = boundary["lifecycle_generation"]
+    second["lifecycle_generation"] = boundary["lifecycle_generation"]
+    tail = _RateTail([boundary, first, second])
+
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="first current-process"):
+        subject._capture_current_process_rate_window(  # noqa: SLF001
+            health_tail=tail,
+            disabled_process=disabled,
+            runtime_repository_root=Path("/runtime/repo"),
+            disabled_config_path=Path(disabled["config_path"]),
+            proc_root=tmp_path / "proc",
+            sample_interval_s=0.1,
+            timeout_s=4.0,
+            sleep=lambda _seconds: None,
+            monotonic_ns=_rate_clock(),
+        )
 
 
 def test_rate_window_without_second_current_row_fails_with_no_output(
@@ -933,6 +989,19 @@ def test_counter_window_requires_global_flow_absolute_and_delta_zero() -> None:
     assert payload["checks"]["all_drop_invalid_overflow_window_deltas_zero"] is True
 
 
+@pytest.mark.parametrize("counter", ["externalErrors", "externalRecordDropped"])
+def test_resource_gate_requires_external_error_counters_absolute_zero(counter: str) -> None:
+    baseline = _health(3)
+    final = _health(4)
+    baseline["counter_values"][counter] = 1
+    final["counter_values"][counter] = 1
+    with pytest.raises(
+        subject.BuyE3CurrentHostResourceGateError,
+        match="external_error_counters_absolute_zero_throughout",
+    ):
+        _resource_payload(baseline=baseline, final=final)
+
+
 def test_resource_builder_rejects_nonzero_global_flow_absolute_baseline() -> None:
     counters = _counters(book_overflow=9)
     baseline = _health(1, counters=counters)
@@ -953,7 +1022,10 @@ def test_resource_receipt_round_trip_and_collector_cross_binding(tmp_path: Path)
         expected_collector_execution=_collector_execution(),
     )
     assert validated == payload
-    assert validated["runtime_execution"]["execution_commit"] == subject.DIRECT_SUCCESSOR_EXECUTION_COMMIT
+    assert (
+        validated["runtime_execution"]["execution_commit"]
+        == subject.DIRECT_SUCCESSOR_EXECUTION_COMMIT
+    )
     assert validated["sample_rows_persisted"] is False
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 

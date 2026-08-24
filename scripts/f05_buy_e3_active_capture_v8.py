@@ -15,7 +15,8 @@ import json
 import os
 import stat
 import subprocess
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -30,9 +31,11 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 from scripts import deploy_f05_buy_e3_owner_v1 as deploy
 
 OWNER: Final = "causal_multichannel_window_boolean_cooldown_owner_buy_e3_v1"
-SCHEMA_VERSION: Final = f"{OWNER}.fresh_all_shadow_evaluators_disabled_active_process_capture.v6"
-STATUS: Final = "fresh_all_shadow_evaluators_disabled_active_process_captured"
+SCHEMA_VERSION: Final = f"{OWNER}.fresh_all_shadow_evaluators_disabled_active_process_capture.v7"
+STATUS: Final = "fresh_active_health_proven_all_shadow_evaluators_disabled"
 CANONICAL_FIELD: Final = "canonical_active_capture_sha256"
+HEALTH_WINDOW_SCHEMA: Final = f"{OWNER}.fresh_active_main_health_window.v1"
+HEALTH_WINDOW_STATUS: Final = "two_consecutive_fresh_active_main_health_rows_verified"
 
 DIRECT_SUCCESSOR_EXECUTION_COMMIT: Final = "eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de"
 DIRECT_SUCCESSOR_EXECUTION_TREE: Final = "0343bd5586b337385cf2aa0d7a643f5c32b0da77"
@@ -74,8 +77,8 @@ STARTUP_SOURCE_ROLE_MAP: Final = {
     "signal_engine": "signal_engine",
     "global_flow": "global_flow",
     "global_reference": "global_reference",
-    "boolean_cooldown_live": "sell_runtime",
-    "boolean_cooldown_buy_e3": "buy_e3_runtime",
+    "sell_owner_runtime": "sell_runtime",
+    "live_buy_runtime": "buy_e3_runtime",
 }
 
 NO_AUTHORITY: Final = {"research": False, "action": False, "live": False}
@@ -120,6 +123,12 @@ CHECKS: Final = {
     "artifact_exact": True,
     "buy_and_lifecycle_runtime_sources_exact": True,
     "active_process_stable_during_capture": True,
+    "two_consecutive_fresh_active_main_health_rows": True,
+    "active_health_same_pid_and_start_ticks": True,
+    "active_health_e3_and_sell_enabled": True,
+    "active_health_external_sources_absolute_zero": True,
+    "active_health_shadow_state_absolute_zero": True,
+    "active_health_line_bytes_revalidated": True,
     "restart_only_activation": True,
     "retroactive_signature": False,
 }
@@ -149,6 +158,7 @@ TOP_LEVEL_FIELDS: Final = frozenset(
         "runtime_identity",
         "runtime_identity_file_sha256",
         "startup_semantics",
+        "active_health_window",
         "checks",
         "authority_design",
         "permissions",
@@ -159,8 +169,13 @@ TOP_LEVEL_FIELDS: Final = frozenset(
 MAX_JSON_BYTES: Final = 64 << 20
 
 
-class ActiveCaptureV6Error(RuntimeError):
-    """Raised when the additive direct-successor capture cannot prove exact identity."""
+class ActiveCaptureV7Error(RuntimeError):
+    """Raised when the additive health-proven active capture is not exact."""
+
+
+# Compatibility only for focused tests and callers of the never-materialized
+# v6 candidate.  The actual exception class and receipt schema are v7.
+ActiveCaptureV6Error = ActiveCaptureV7Error
 
 
 @dataclass(frozen=True)
@@ -287,7 +302,9 @@ def _validate_runtime_repository(root: Path) -> tuple[Path, dict[str, Any]]:
             runtime_authority=True,
         )
     except Exception as exc:
-        raise ActiveCaptureV6Error("active runtime checkout is not exact clean direct-successor") from exc
+        raise ActiveCaptureV6Error(
+            "active runtime checkout is not exact clean direct-successor"
+        ) from exc
     expected = {
         "execution_commit": DIRECT_SUCCESSOR_EXECUTION_COMMIT,
         "execution_tree": DIRECT_SUCCESSOR_EXECUTION_TREE,
@@ -352,7 +369,8 @@ def _validate_resource(
         or execution.get("execution_tree") != DIRECT_SUCCESSOR_EXECUTION_TREE
         or execution.get("annotated_tag") != DIRECT_SUCCESSOR_ANNOTATED_TAG
         or execution.get("annotated_tag_object") != DIRECT_SUCCESSOR_TAG_OBJECT
-        or authority.get("runtime_authority_release_file_sha256") != DIRECT_SUCCESSOR_RELEASE_FILE_SHA256
+        or authority.get("runtime_authority_release_file_sha256")
+        != DIRECT_SUCCESSOR_RELEASE_FILE_SHA256
         or authority.get("runtime_authority_release_canonical_sha256")
         != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
         or authority.get("direct_successor_release_does_not_depend_on_resource_receipt") is not True
@@ -466,14 +484,25 @@ def _startup_source_plan() -> dict[str, Any]:
         sha = str(frozen["sha256"])
         files[startup_role] = {
             "repository_relative_path": str(frozen["path"]),
-            "artifact_manifest_sha256": sha,
             "execution_commit_blob_sha256": sha,
             "working_file_sha256": sha,
+            "authority_basis": deploy._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS,  # noqa: SLF001
         }
-    return {
+    plan = {
         "files": files,
         "runtime_code_sha256": resource_v8.canonical_sha256(files),
     }
+    try:
+        expected = deploy._validated_expected_runtime_source_hashes(plan)  # noqa: SLF001
+    except Exception as exc:
+        raise ActiveCaptureV7Error("startup runtime source authority is malformed") from exc
+    if expected != {
+        str(binding["path"]): str(binding["sha256"])
+        for binding in resource_v8.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.values()
+        if str(binding["path"]) in set(deploy._CURRENT_RUNTIME_SOURCE_PATHS.values())  # noqa: SLF001
+    }:
+        raise ActiveCaptureV7Error("startup runtime source authority is incomplete")
+    return plan
 
 
 def _release_phase_binding(
@@ -488,6 +517,8 @@ def _release_phase_binding(
         "canonical_active_release_sha256": release_binding["canonical_sha256"],
         "schema_version": release_binding["schema_version"],
         "status": release_binding["status"],
+        "active_config_file_sha256": ACTIVE_CONFIG_SHA256,
+        "disabled_config_file_sha256": resource_v8.EXPECTED_DISABLED_CONFIG_SHA256,
     }
 
 
@@ -569,9 +600,13 @@ def _runtime_semantics(
     process: Mapping[str, Any],
     release: Mapping[str, Any],
     release_binding: Mapping[str, Any],
+    expected_repository_root: Path,
     expected_release_path: str | None,
 ) -> dict[str, Any]:
     active_pid = _strict_positive_int(process.get("pid"), "active PID")
+    repository = expected_repository_root.expanduser().absolute()
+    if Path(str(process.get("cwd", ""))).expanduser().absolute() != repository:
+        raise ActiveCaptureV6Error("active process cwd differs from runtime authority")
     runtime_release_path = str(runtime.get("f05_buy_e3_active_release_path", ""))
     if not PurePosixPath(runtime_release_path).is_absolute() or (
         expected_release_path is not None and runtime_release_path != expected_release_path
@@ -590,13 +625,17 @@ def _runtime_semantics(
             expected_execution_commit=DIRECT_SUCCESSOR_EXECUTION_COMMIT,
             expected_execution_tree=DIRECT_SUCCESSOR_EXECUTION_TREE,
             expected_runtime_sources=_startup_source_plan(),
+            expected_repository_root=str(repository),
+            expected_startup_attestation_schema_version=STARTUP_ATTESTATION_SCHEMA,
             expected_active_release=_release_phase_binding(
                 release_binding,
                 runtime_release_path=runtime_release_path,
             ),
         )
     except Exception as exc:
-        raise ActiveCaptureV6Error("active runtime/startup attestation is not exact successor") from exc
+        raise ActiveCaptureV6Error(
+            "active runtime/startup attestation is not exact successor"
+        ) from exc
     roles = release.get("exact_artifact", {}).get("roles", {})
     startup_release = startup.get("buy_e3_active_release")
     gates = startup.get("gates")
@@ -617,7 +656,8 @@ def _runtime_semantics(
         != roles.get("predicate_bundle", {}).get("file_sha256")
         or runtime.get("f05_buy_e3_active_release_authority_schema_version")
         != ACTIVE_RUNTIME_AUTHORITY_SCHEMA
-        or runtime.get("f05_buy_e3_active_release_file_sha256") != DIRECT_SUCCESSOR_RELEASE_FILE_SHA256
+        or runtime.get("f05_buy_e3_active_release_file_sha256")
+        != DIRECT_SUCCESSOR_RELEASE_FILE_SHA256
         or runtime.get("f05_buy_e3_active_release_canonical_sha256")
         != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
         or startup.get("schema_version") != STARTUP_ATTESTATION_SCHEMA
@@ -703,6 +743,343 @@ def _capture_process(
         raise ActiveCaptureV6Error("actual active process identity capture failed") from exc
 
 
+def _health_projection(parsed: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "boolean_cooldown_enabled": parsed.get("boolean_cooldown_enabled"),
+        "boolean_cooldown_updates": parsed.get("boolean_cooldown_updates"),
+        "buy_e3_enabled": parsed.get("buy_e3_enabled"),
+        "deep_book_buffer": parsed.get("deep_book_buffer"),
+        "shadow_disabled_state": dict(parsed.get("shadow_disabled_state", {})),
+        "counter_values": dict(parsed.get("counter_values", {})),
+    }
+
+
+def _validate_health_projection(raw: Any) -> dict[str, Any]:
+    expected_fields = {
+        "boolean_cooldown_enabled",
+        "boolean_cooldown_updates",
+        "buy_e3_enabled",
+        "deep_book_buffer",
+        "shadow_disabled_state",
+        "counter_values",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != expected_fields:
+        raise ActiveCaptureV6Error("active HEALTH projection fields drifted")
+    projection = dict(raw)
+    shadow = projection.get("shadow_disabled_state")
+    counters = projection.get("counter_values")
+    expected_shadow_fields = {
+        "externalSources",
+        *resource_v8.GLOBAL_FLOW_STATE_ZERO_FIELDS,
+        *resource_v8.GLOBAL_FLOW_VALUE_ZERO_FIELDS,
+        *resource_v8.GLOBAL_REFERENCE_ZERO_FIELDS,
+        *resource_v8.GLOBAL_REFERENCE_VALUE_ZERO_FIELDS,
+        *resource_v8.GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS,
+        "globalFlowReason",
+        "globalRefReason",
+    }
+    if (
+        projection.get("boolean_cooldown_enabled") != 1
+        or projection.get("buy_e3_enabled") != 1
+        or type(projection.get("boolean_cooldown_updates")) is not int
+        or int(projection["boolean_cooldown_updates"]) < 0
+        or projection.get("deep_book_buffer") != 0
+        or not isinstance(shadow, Mapping)
+        or set(shadow) != expected_shadow_fields
+        or shadow.get("globalFlowReason") != resource_v8.SHADOW_DISABLED_REASON
+        or shadow.get("globalRefReason") != resource_v8.SHADOW_DISABLED_REASON
+        or any(
+            type(value) is not int or value != 0
+            for key, value in shadow.items()
+            if key not in {"globalFlowReason", "globalRefReason"}
+        )
+        or not isinstance(counters, Mapping)
+        or set(counters) != set(resource_v8.WINDOW_ZERO_COUNTERS[:-2])
+        or any(type(value) is not int or value < 0 for value in counters.values())
+        or any(
+            counters.get(name) != 0
+            for name in (
+                "buyE3CooldownInvalid",
+                "buyE3CooldownResets",
+                "externalErrors",
+                "externalRecordDropped",
+                *resource_v8.GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS,
+            )
+        )
+    ):
+        raise ActiveCaptureV6Error("active HEALTH no-shadow semantics drifted")
+    return projection
+
+
+class ActiveMainHealthTail:
+    """Read only main HEALTH lines appended after an exact EOF boundary."""
+
+    def __init__(self, path: Path) -> None:
+        candidate = path.expanduser().absolute()
+        if candidate.is_symlink() or not candidate.is_file():
+            raise ActiveCaptureV6Error("active live log is not a regular non-symlink file")
+        self.path = candidate.resolve(strict=True)
+        metadata = self.path.stat()
+        self._device = metadata.st_dev
+        self._inode = metadata.st_ino
+        if metadata.st_size:
+            with self.path.open("rb") as handle:
+                handle.seek(-1, os.SEEK_END)
+                if handle.read(1) != b"\n":
+                    raise ActiveCaptureV7Error(
+                        "active live log EOF is not a complete-line boundary"
+                    )
+        self.boundary_offset_bytes = metadata.st_size
+        self._read_offset = metadata.st_size
+        self._buffer = b""
+        self._buffer_start = metadata.st_size
+        self._main_generation = 0
+
+    def poll(self) -> list[dict[str, Any]]:
+        metadata = self.path.stat()
+        if (
+            metadata.st_dev != self._device
+            or metadata.st_ino != self._inode
+            or metadata.st_size < self._read_offset
+        ):
+            raise ActiveCaptureV6Error("active live log rotated during HEALTH capture")
+        if metadata.st_size > self._read_offset:
+            with self.path.open("rb") as handle:
+                handle.seek(self._read_offset)
+                chunk = handle.read()
+                self._read_offset = handle.tell()
+            self._buffer += chunk
+        observed: list[dict[str, Any]] = []
+        while True:
+            newline = self._buffer.find(b"\n")
+            if newline < 0:
+                break
+            line_bytes = self._buffer[: newline + 1]
+            raw = line_bytes[:-1]
+            start = self._buffer_start
+            self._buffer = self._buffer[newline + 1 :]
+            self._buffer_start += newline + 1
+            if resource_v8._HEALTH_MARKER.encode("ascii") not in raw:  # noqa: SLF001
+                continue
+            try:
+                line = line_bytes.decode("utf-8", errors="strict")
+            except UnicodeError as exc:
+                raise ActiveCaptureV6Error("active HEALTH line is not UTF-8") from exc
+            self._main_generation += 1
+            try:
+                parsed = resource_v8._parse_main_health(  # noqa: SLF001
+                    line,
+                    generation=self._main_generation,
+                )
+            except Exception as exc:
+                raise ActiveCaptureV6Error("active main HEALTH line is not exact") from exc
+            projection = _validate_health_projection(_health_projection(parsed))
+            observed.append(
+                {
+                    "fresh_generation": self._main_generation,
+                    "line_offset_bytes": start,
+                    "line_size_bytes": len(line_bytes),
+                    "line_sha256": hashlib.sha256(line_bytes).hexdigest(),
+                    "main_wall_timestamp_s": parsed["wall_timestamp_s"],
+                    "projection": projection,
+                }
+            )
+        return observed
+
+
+def _pid_start_key(*, pid_file: Path, proc_root: Path) -> tuple[int, int]:
+    pid = _read_pid(pid_file)
+    try:
+        start_ticks = resource_v8._proc_start_ticks(proc_root, pid)  # noqa: SLF001
+    except Exception as exc:
+        raise ActiveCaptureV6Error("active PID/start ticks disappeared") from exc
+    return pid, int(start_ticks)
+
+
+def _capture_fresh_active_health_window(
+    *,
+    tail: ActiveMainHealthTail,
+    expected_pid: int,
+    expected_start_ticks: int,
+    process_stable_identity_sha256: str,
+    identity_supplier: Callable[[], tuple[int, int]],
+    timeout_s: float = 150.0,
+    poll_interval_s: float = 0.25,
+    sleep: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    expected_key = (expected_pid, expected_start_ticks)
+
+    def assert_identity() -> None:
+        if identity_supplier() != expected_key:
+            raise ActiveCaptureV6Error("active PID/start ticks changed during HEALTH capture")
+
+    if timeout_s <= 0.0 or poll_interval_s <= 0.0:
+        raise ActiveCaptureV6Error("active HEALTH timeout/poll interval is invalid")
+    assert_identity()
+    rows: list[dict[str, Any]] = []
+    deadline = monotonic() + timeout_s
+    while monotonic() <= deadline and len(rows) < 2:
+        assert_identity()
+        for row in tail.poll():
+            assert_identity()
+            rows.append(row)
+            if len(rows) == 2:
+                break
+        assert_identity()
+        if len(rows) < 2:
+            sleep(min(poll_interval_s, max(0.0, deadline - monotonic())))
+    if len(rows) < 2:
+        raise ActiveCaptureV6Error("two fresh active main HEALTH rows were not observed")
+    first, second = rows[:2]
+    if (
+        first.get("fresh_generation") != 1
+        or second.get("fresh_generation") != 2
+        or float(second.get("main_wall_timestamp_s", 0.0))
+        <= float(first.get("main_wall_timestamp_s", 0.0))
+        or int(second["projection"]["boolean_cooldown_updates"])
+        <= int(first["projection"]["boolean_cooldown_updates"])
+    ):
+        raise ActiveCaptureV6Error("active main HEALTH pair is not consecutive and monotonic")
+    _require_sha256(process_stable_identity_sha256, "active process stable identity")
+    return {
+        "schema_version": HEALTH_WINDOW_SCHEMA,
+        "status": HEALTH_WINDOW_STATUS,
+        "log_path_provenance": str(tail.path),
+        "boundary_offset_bytes": tail.boundary_offset_bytes,
+        "active_pid": expected_pid,
+        "active_pid_start_ticks": expected_start_ticks,
+        "active_process_stable_identity_sha256": process_stable_identity_sha256,
+        "rows": [first, second],
+        "checks": {
+            "constructor_boundary_only": True,
+            "two_consecutive_fresh_main_health_rows": True,
+            "same_pid_and_start_ticks_before_between_after": True,
+            "sell_owner_enabled_both_rows": True,
+            "buy_e3_enabled_both_rows": True,
+            "external_sources_absolute_zero_both_rows": True,
+            "global_flow_explicit_disabled_error_and_backend_zero_both_rows": True,
+            "global_reference_explicit_disabled_error_and_state_zero_both_rows": True,
+        },
+    }
+
+
+def _validate_active_health_window(
+    raw: Any,
+    *,
+    live_log_path: Path,
+    expected_pid: int,
+    expected_start_ticks: int,
+    expected_process_stable_identity_sha256: str,
+) -> dict[str, Any]:
+    expected_fields = {
+        "schema_version",
+        "status",
+        "log_path_provenance",
+        "boundary_offset_bytes",
+        "active_pid",
+        "active_pid_start_ticks",
+        "active_process_stable_identity_sha256",
+        "rows",
+        "checks",
+    }
+    if not isinstance(raw, Mapping) or set(raw) != expected_fields:
+        raise ActiveCaptureV6Error("active HEALTH window fields drifted")
+    window = dict(raw)
+    log = live_log_path.expanduser().absolute()
+    if log.is_symlink() or not log.is_file():
+        raise ActiveCaptureV6Error("active live log is not a regular non-symlink file")
+    resolved = log.resolve(strict=True)
+    rows = window.get("rows")
+    expected_checks = {
+        "constructor_boundary_only": True,
+        "two_consecutive_fresh_main_health_rows": True,
+        "same_pid_and_start_ticks_before_between_after": True,
+        "sell_owner_enabled_both_rows": True,
+        "buy_e3_enabled_both_rows": True,
+        "external_sources_absolute_zero_both_rows": True,
+        "global_flow_explicit_disabled_error_and_backend_zero_both_rows": True,
+        "global_reference_explicit_disabled_error_and_state_zero_both_rows": True,
+    }
+    if (
+        window.get("schema_version") != HEALTH_WINDOW_SCHEMA
+        or window.get("status") != HEALTH_WINDOW_STATUS
+        or window.get("log_path_provenance") != str(resolved)
+        or type(window.get("boundary_offset_bytes")) is not int
+        or int(window["boundary_offset_bytes"]) < 0
+        or window.get("active_pid") != expected_pid
+        or window.get("active_pid_start_ticks") != expected_start_ticks
+        or window.get("active_process_stable_identity_sha256")
+        != expected_process_stable_identity_sha256
+        or not isinstance(rows, list)
+        or len(rows) != 2
+        or window.get("checks") != expected_checks
+    ):
+        raise ActiveCaptureV6Error("active HEALTH window identity drifted")
+    expected_row_fields = {
+        "fresh_generation",
+        "line_offset_bytes",
+        "line_size_bytes",
+        "line_sha256",
+        "main_wall_timestamp_s",
+        "projection",
+    }
+    for row in rows:
+        if not isinstance(row, Mapping) or set(row) != expected_row_fields:
+            raise ActiveCaptureV7Error("active HEALTH row fields drifted")
+    boundary = int(window["boundary_offset_bytes"])
+    last = rows[-1]
+    end = last.get("line_offset_bytes")
+    last_size = last.get("line_size_bytes")
+    if type(end) is not int or type(last_size) is not int or last_size <= 0:
+        raise ActiveCaptureV7Error("active HEALTH row location drifted")
+    end += last_size
+    if end <= boundary:
+        raise ActiveCaptureV7Error("active HEALTH byte interval drifted")
+    with resolved.open("rb") as handle:
+        handle.seek(boundary)
+        interval = handle.read(end - boundary)
+    if len(interval) != end - boundary or not interval.endswith(b"\n"):
+        raise ActiveCaptureV7Error("active HEALTH byte interval is incomplete")
+    recomputed: list[dict[str, Any]] = []
+    offset = boundary
+    for line_bytes in interval.splitlines(keepends=True):
+        if not line_bytes.endswith(b"\n"):
+            raise ActiveCaptureV7Error("active HEALTH interval has an incomplete line")
+        if resource_v8._HEALTH_MARKER.encode("ascii") not in line_bytes:  # noqa: SLF001
+            offset += len(line_bytes)
+            continue
+        index = len(recomputed) + 1
+        try:
+            line = line_bytes.decode("utf-8", errors="strict")
+            parsed = resource_v8._parse_main_health(  # noqa: SLF001
+                line,
+                generation=index,
+            )
+        except Exception as exc:
+            raise ActiveCaptureV7Error("active HEALTH line could not be recomputed") from exc
+        recomputed.append(
+            {
+                "fresh_generation": index,
+                "line_offset_bytes": offset,
+                "line_size_bytes": len(line_bytes),
+                "line_sha256": hashlib.sha256(line_bytes).hexdigest(),
+                "main_wall_timestamp_s": parsed["wall_timestamp_s"],
+                "projection": _validate_health_projection(_health_projection(parsed)),
+            }
+        )
+        offset += len(line_bytes)
+    if recomputed != [dict(row) for row in rows]:
+        raise ActiveCaptureV7Error("active HEALTH rows or intervening bytes drifted")
+    if float(recomputed[1]["main_wall_timestamp_s"]) <= float(
+        recomputed[0]["main_wall_timestamp_s"]
+    ) or int(recomputed[1]["projection"]["boolean_cooldown_updates"]) <= int(
+        recomputed[0]["projection"]["boolean_cooldown_updates"]
+    ):
+        raise ActiveCaptureV6Error("active HEALTH row chronology drifted")
+    return window
+
+
 def build_active_capture(
     *,
     runtime_repository_root: Path,
@@ -714,7 +1091,10 @@ def build_active_capture(
     python_executable: Path,
     venv_root: Path,
     runtime_identity_path: Path,
+    live_log_path: Path,
     proc_root: Path = Path("/proc"),
+    health_timeout_s: float = 150.0,
+    health_poll_interval_s: float = 0.25,
     generated_utc: str | None = None,
 ) -> dict[str, Any]:
     repository, _execution = _validate_runtime_repository(runtime_repository_root)
@@ -776,7 +1156,19 @@ def build_active_capture(
         process=process,
         release=release,
         release_binding=release_binding,
+        expected_repository_root=repository,
         expected_release_path=release_resolved,
+    )
+    stable_process_sha = resource_v8.canonical_sha256(_stable_process_projection(process))
+    health_tail = ActiveMainHealthTail(live_log_path)
+    health_window = _capture_fresh_active_health_window(
+        tail=health_tail,
+        expected_pid=active_pid,
+        expected_start_ticks=active_start,
+        process_stable_identity_sha256=stable_process_sha,
+        identity_supplier=lambda: _pid_start_key(pid_file=pid_file, proc_root=proc_root),
+        timeout_s=health_timeout_s,
+        poll_interval_s=health_poll_interval_s,
     )
     recaptured = _capture_process(
         pid=active_pid,
@@ -789,6 +1181,13 @@ def build_active_capture(
     )
     if _stable_process_projection(recaptured) != _stable_process_projection(process):
         raise ActiveCaptureV6Error("active process changed during capture")
+    _validate_active_health_window(
+        health_window,
+        live_log_path=live_log_path,
+        expected_pid=active_pid,
+        expected_start_ticks=active_start,
+        expected_process_stable_identity_sha256=stable_process_sha,
+    )
     process_row = dict(process)
     process_row.pop("canonical_process_identity_sha256", None)
     process_row.update(
@@ -812,6 +1211,10 @@ def build_active_capture(
     captured_at = max(
         _utc_datetime(process.get("captured_utc"), "active process capture timestamp"),
         _utc_datetime(recaptured.get("captured_utc"), "active process recapture timestamp"),
+        datetime.fromtimestamp(
+            float(health_window["rows"][1]["main_wall_timestamp_s"]),
+            tz=UTC,
+        ),
     )
     if _utc_datetime(timestamp, "active capture timestamp") < captured_at:
         raise ActiveCaptureV6Error("active capture receipt predates its process observation")
@@ -834,6 +1237,7 @@ def build_active_capture(
         "runtime_identity": dict(runtime_opened.payload),
         "runtime_identity_file_sha256": runtime_file_sha,
         "startup_semantics": semantics,
+        "active_health_window": health_window,
         "checks": dict(CHECKS),
         "authority_design": dict(AUTHORITY_DESIGN),
         "permissions": dict(NO_AUTHORITY),
@@ -850,6 +1254,7 @@ def validate_active_capture(
     direct_release_path: Path,
     resource_receipt_path: Path,
     config_correction_path: Path,
+    live_log_path: Path,
 ) -> dict[str, Any]:
     repository, _execution = _validate_runtime_repository(runtime_repository_root)
     release, release_binding = _validate_release(direct_release_path)
@@ -915,6 +1320,14 @@ def validate_active_capture(
     )
     if process_canonical != resource_v8.canonical_sha256(process_body):
         raise ActiveCaptureV6Error("active process canonical identity drifted")
+    stable_process_sha = resource_v8.canonical_sha256(_stable_process_projection(process))
+    health_window = _validate_active_health_window(
+        payload.get("active_health_window"),
+        live_log_path=live_log_path,
+        expected_pid=active_pid,
+        expected_start_ticks=active_start,
+        expected_process_stable_identity_sha256=stable_process_sha,
+    )
     runtime_file_sha = _require_sha256(
         payload.get("runtime_identity_file_sha256"), "runtime identity file"
     )
@@ -930,6 +1343,7 @@ def validate_active_capture(
         process=process,
         release=release,
         release_binding=release_binding,
+        expected_repository_root=repository,
         expected_release_path=None,
     )
     if (
@@ -942,7 +1356,13 @@ def validate_active_capture(
         or payload.get(CANONICAL_FIELD) != resource_v8.document_sha256(payload, CANONICAL_FIELD)
     ):
         raise ActiveCaptureV6Error("active-capture-v6 semantic identity drifted")
-    _timestamp(payload.get("generated_utc"), "active capture timestamp")
+    generated = _utc_datetime(payload.get("generated_utc"), "active capture timestamp")
+    health_observed = datetime.fromtimestamp(
+        float(health_window["rows"][1]["main_wall_timestamp_s"]),
+        tz=UTC,
+    )
+    if generated < health_observed:
+        raise ActiveCaptureV6Error("active capture predates its fresh HEALTH window")
     return dict(payload)
 
 
@@ -957,6 +1377,7 @@ def finalize_active_capture(
     python_executable: Path,
     venv_root: Path,
     runtime_identity_path: Path,
+    live_log_path: Path,
     output_path: Path,
     proc_root: Path = Path("/proc"),
     generated_utc: str | None = None,
@@ -971,6 +1392,7 @@ def finalize_active_capture(
         python_executable=python_executable,
         venv_root=venv_root,
         runtime_identity_path=runtime_identity_path,
+        live_log_path=live_log_path,
         proc_root=proc_root,
         generated_utc=generated_utc,
     )
@@ -984,6 +1406,7 @@ def finalize_active_capture(
         direct_release_path=direct_release_path,
         resource_receipt_path=resource_receipt_path,
         config_correction_path=config_correction_path,
+        live_log_path=live_log_path,
     )
     if observed != payload:
         raise ActiveCaptureV6Error("active capture changed after write")
@@ -1003,6 +1426,7 @@ def _parser() -> argparse.ArgumentParser:
     capture.add_argument("--python", type=Path, required=True)
     capture.add_argument("--venv-root", type=Path, required=True)
     capture.add_argument("--runtime-identity", type=Path, required=True)
+    capture.add_argument("--live-log", type=Path, required=True)
     capture.add_argument("--output", type=Path, required=True)
     validate = subparsers.add_parser("validate")
     validate.add_argument("--receipt", type=Path, required=True)
@@ -1010,6 +1434,7 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("--direct-release", type=Path, required=True)
     validate.add_argument("--resource-receipt", type=Path, required=True)
     validate.add_argument("--config-correction", type=Path, required=True)
+    validate.add_argument("--live-log", type=Path, required=True)
     return parser
 
 
@@ -1026,6 +1451,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             python_executable=args.python,
             venv_root=args.venv_root,
             runtime_identity_path=args.runtime_identity,
+            live_log_path=args.live_log,
             output_path=args.output,
         )
     else:
@@ -1035,6 +1461,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             direct_release_path=args.direct_release,
             resource_receipt_path=args.resource_receipt,
             config_correction_path=args.config_correction,
+            live_log_path=args.live_log,
         )
         file_sha = resource_v8.file_sha256(args.receipt)
     print(

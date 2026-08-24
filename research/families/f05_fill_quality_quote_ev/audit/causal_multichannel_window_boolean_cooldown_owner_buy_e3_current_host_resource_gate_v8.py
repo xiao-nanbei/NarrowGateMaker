@@ -50,9 +50,7 @@ BENCHMARK_SCHEMA: Final = f"{OWNER_IDENTITY}.exact_four_file_host_benchmark.v6"
 BENCHMARK_STATUS: Final = "all_shadow_evaluators_disabled_four_file_aggregate_benchmark_passed"
 BENCHMARK_CANONICAL_FIELD: Final = "canonical_benchmark_receipt_sha256"
 RESOURCE_SCHEMA: Final = f"{OWNER_IDENTITY}.current_host_concurrent_resource_gate.v8"
-RESOURCE_STATUS: Final = (
-    "fresh_all_shadow_evaluators_disabled_concurrent_gate_passed"
-)
+RESOURCE_STATUS: Final = "fresh_all_shadow_evaluators_disabled_concurrent_gate_passed"
 RESOURCE_CANONICAL_FIELD: Final = "canonical_resource_receipt_sha256"
 BENCHMARK_PRODUCER_MODULE: Final = (
     "research.families.f05_fill_quality_quote_ev.audit."
@@ -267,6 +265,7 @@ RESOURCE_CHECK_NAMES: Final = (
     "global_flow_absolute_zero_throughout",
     "global_reference_absolute_zero_throughout",
     "external_sources_absolute_zero_throughout",
+    "external_error_counters_absolute_zero_throughout",
     "sell_owner_enabled_throughout",
     "same_live_pid_and_start_ticks_throughout",
     "benchmark_process_overlap_proven",
@@ -320,15 +319,23 @@ RESOURCE_CAPTURE_FIELDS: Final = (
     "benchmark_exit_monotonic_ns",
     "rate_boundary_main_health_generation",
     "rate_boundary_main_health_line_sha256",
+    "rate_boundary_lifecycle_health_generation",
+    "rate_boundary_lifecycle_health_line_sha256",
     "rate_first_main_health_generation",
     "rate_first_main_health_line_sha256",
+    "rate_first_lifecycle_health_generation",
+    "rate_first_lifecycle_health_line_sha256",
     "rate_second_main_health_generation",
     "rate_second_main_health_line_sha256",
+    "rate_second_lifecycle_health_generation",
+    "rate_second_lifecycle_health_line_sha256",
     "rate_window_update_delta",
     "rate_window_elapsed_s",
     "rate_window_same_live_pid_and_start_ticks",
     "baseline_main_health_generation",
     "final_main_health_generation",
+    "baseline_lifecycle_health_generation",
+    "final_lifecycle_health_generation",
     "baseline_main_health_line_sha256",
     "final_main_health_line_sha256",
     "baseline_lifecycle_health_line_sha256",
@@ -590,14 +597,18 @@ def capture_git_execution(
     )
     if runtime_authority:
         if not ancestor:
-            raise BuyE3CurrentHostResourceGateError("runtime execution is not direct-successor lineage")
+            raise BuyE3CurrentHostResourceGateError(
+                "runtime execution is not direct-successor lineage"
+            )
         if (
             commit != DIRECT_SUCCESSOR_EXECUTION_COMMIT
             or tree != DIRECT_SUCCESSOR_EXECUTION_TREE
             or annotated_tag != DIRECT_SUCCESSOR_ANNOTATED_TAG
             or tag_object != DIRECT_SUCCESSOR_TAG_OBJECT
         ):
-            raise BuyE3CurrentHostResourceGateError("live runtime checkout is not exact direct-successor")
+            raise BuyE3CurrentHostResourceGateError(
+                "live runtime checkout is not exact direct-successor"
+            )
     return {
         "repository_root": str(root),
         "execution_commit": _require_git_sha(commit, "execution commit"),
@@ -639,8 +650,7 @@ def bind_current_successor_runtime_sources(
         ).hexdigest()
         if {runtime_working, collector_working, runtime_git, collector_git} != {expected}:
             raise BuyE3CurrentHostResourceGateError(
-                    "current successor runtime source drifted or imported stale bytes: "
-                    f"{role}"
+                f"current successor runtime source drifted or imported stale bytes: {role}"
             )
         rows[role] = {
             "role": role,
@@ -686,7 +696,8 @@ def _validate_direct_release_payload(payload: Mapping[str, Any]) -> None:
         or payload.get("schema_version") != DIRECT_SUCCESSOR_RELEASE_SCHEMA
         or payload.get("identity") != DIRECT_SUCCESSOR_RELEASE_SCHEMA
         or payload.get("status") != DIRECT_SUCCESSOR_RELEASE_STATUS
-        or payload.get("canonical_active_release_sha256") != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
+        or payload.get("canonical_active_release_sha256")
+        != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
         or document_sha256(payload, "canonical_active_release_sha256")
         != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
         or payload.get("research_supported") is not False
@@ -702,8 +713,7 @@ def _validate_direct_release_payload(payload: Mapping[str, Any]) -> None:
         or payload.get("runtime_fix_contract") != direct_release_v3.RUNTIME_FIX_CONTRACT
         or not isinstance(supplement, Mapping)
         or payload.get("runtime_fix_supplement") != dict(supplement)
-        or payload.get("no_shadow_runtime_contract")
-        != direct_release_v3.NO_SHADOW_RUNTIME_CONTRACT
+        or payload.get("no_shadow_runtime_contract") != direct_release_v3.NO_SHADOW_RUNTIME_CONTRACT
         or payload.get("pending_current_runtime_evidence")
         != direct_release_v3.PENDING_CURRENT_RUNTIME_EVIDENCE
         or payload.get("rollback") != direct_release_v3.ROLLBACK
@@ -731,8 +741,7 @@ def _validate_direct_release_payload(payload: Mapping[str, Any]) -> None:
         or active_config.get("file_sha256") != config_successor.CORRECTED_ACTIVE_SHA256
         or disabled_config.get("semantic_sha256")
         != config_successor.CORRECTED_DISABLED_SEMANTIC_SHA256
-        or active_config.get("semantic_sha256")
-        != config_successor.CORRECTED_ACTIVE_SEMANTIC_SHA256
+        or active_config.get("semantic_sha256") != config_successor.CORRECTED_ACTIVE_SEMANTIC_SHA256
         or config_pair.get("old_to_new_semantic_additions")
         != list(config_successor.ADDED_FALSE_PATHS)
         or config_pair.get("active_disabled_only_difference")
@@ -896,10 +905,8 @@ def _validate_config_correction(
     if (
         disabled.get("file_sha256") != EXPECTED_DISABLED_CONFIG_SHA256
         or active.get("file_sha256") != config_successor.CORRECTED_ACTIVE_SHA256
-        or disabled.get("semantic_sha256")
-        != config_successor.CORRECTED_DISABLED_SEMANTIC_SHA256
-        or active.get("semantic_sha256")
-        != config_successor.CORRECTED_ACTIVE_SEMANTIC_SHA256
+        or disabled.get("semantic_sha256") != config_successor.CORRECTED_DISABLED_SEMANTIC_SHA256
+        or active.get("semantic_sha256") != config_successor.CORRECTED_ACTIVE_SEMANTIC_SHA256
         or authority.get("file_sha256") != DIRECT_SUCCESSOR_RELEASE_FILE_SHA256
         or authority.get("canonical_sha256") != DIRECT_SUCCESSOR_RELEASE_CANONICAL_SHA256
     ):
@@ -1133,21 +1140,16 @@ def _parse_main_health(line: str, *, generation: int) -> dict[str, Any]:
         *GLOBAL_REFERENCE_VALUE_ZERO_FIELDS,
         *GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS,
     )
-    nonzero = sorted(
-        name for name in absolute_zero_fields if parsed.get(name) != 0
-    )
+    nonzero = sorted(name for name in absolute_zero_fields if parsed.get(name) != 0)
     if nonzero:
         raise BuyE3CurrentHostResourceGateError(
-            "disabled shadow evaluator HEALTH fields are non-zero: "
-            + ", ".join(nonzero)
+            "disabled shadow evaluator HEALTH fields are non-zero: " + ", ".join(nonzero)
         )
     if (
         parsed.get("globalFlowReason") != SHADOW_DISABLED_REASON
         or parsed.get("globalRefReason") != SHADOW_DISABLED_REASON
     ):
-        raise BuyE3CurrentHostResourceGateError(
-            "disabled shadow evaluator HEALTH reason drifted"
-        )
+        raise BuyE3CurrentHostResourceGateError("disabled shadow evaluator HEALTH reason drifted")
     return {
         "generation": generation,
         "wall_timestamp_s": datetime.strptime(timestamp.group(1), "%Y-%m-%d %H:%M:%S")
@@ -1187,14 +1189,22 @@ class LiveHealthTail:
     """Read existing aggregate HEALTH log lines; never connect to a live stream."""
 
     def __init__(self, path: Path, *, initial_tail_bytes: int = 8 << 20) -> None:
-        self.path = path.expanduser().resolve(strict=True)
+        candidate = path.expanduser().absolute()
+        if candidate.is_symlink() or not candidate.is_file():
+            raise BuyE3CurrentHostResourceGateError("live log is not a regular non-symlink file")
+        self.path = candidate.resolve(strict=True)
+        metadata = self.path.stat()
+        if not stat.S_ISREG(metadata.st_mode):
+            raise BuyE3CurrentHostResourceGateError("live log is not a regular file")
+        self._device = metadata.st_dev
+        self._inode = metadata.st_ino
         self.offset = 0
         self.pending = b""
         self.main_generation = 0
         self.lifecycle_generation = 0
         self.main: dict[str, Any] | None = None
         self.lifecycle: dict[str, Any] | None = None
-        size = self.path.stat().st_size
+        size = metadata.st_size
         start = max(0, size - int(initial_tail_bytes))
         with self.path.open("rb") as handle:
             handle.seek(start)
@@ -1234,8 +1244,14 @@ class LiveHealthTail:
                 )
 
     def snapshot(self) -> dict[str, Any]:
-        size = self.path.stat().st_size
-        if size < self.offset:
+        metadata = self.path.stat()
+        size = metadata.st_size
+        if (
+            metadata.st_dev != self._device
+            or metadata.st_ino != self._inode
+            or not stat.S_ISREG(metadata.st_mode)
+            or size < self.offset
+        ):
             raise BuyE3CurrentHostResourceGateError("live log rotated during resource gate")
         if size > self.offset:
             with self.path.open("rb") as handle:
@@ -1309,8 +1325,15 @@ def _capture_current_process_rate_window(
         candidate = dict(health_tail.snapshot())
         assert_current_process()
         generation = _strict_int(candidate.get("main_generation"), "HEALTH generation", minimum=1)
+        lifecycle_generation = _strict_int(
+            candidate.get("lifecycle_generation"), "lifecycle HEALTH generation", minimum=1
+        )
         if generation <= _strict_int(
             boundary.get("main_generation"), "rate boundary generation", minimum=1
+        ) or lifecycle_generation <= _strict_int(
+            boundary.get("lifecycle_generation"),
+            "rate lifecycle boundary generation",
+            minimum=1,
         ):
             sleep(min(sample_interval_s, 0.25))
             continue
@@ -1331,10 +1354,24 @@ def _capture_current_process_rate_window(
         candidate_generation = _strict_int(
             candidate.get("main_generation"), "second rate generation", minimum=1
         )
-        if candidate_generation <= first_generation:
+        first_lifecycle_generation = _strict_int(
+            first.get("lifecycle_generation"), "first lifecycle generation", minimum=1
+        )
+        candidate_lifecycle_generation = _strict_int(
+            candidate.get("lifecycle_generation"),
+            "second lifecycle generation",
+            minimum=1,
+        )
+        if (
+            candidate_generation <= first_generation
+            or candidate_lifecycle_generation <= first_lifecycle_generation
+        ):
             sleep(min(sample_interval_s, 0.25))
             continue
-        if candidate_generation != first_generation + 1:
+        if (
+            candidate_generation != first_generation + 1
+            or candidate_lifecycle_generation != first_lifecycle_generation + 1
+        ):
             # The tail advanced by multiple lines between polls.  We cannot
             # reconstruct the skipped aggregate row, so restart the pair from
             # the newest observed state and require its immediate successor.
@@ -1950,9 +1987,7 @@ def _shadow_runtime_projection(health: Mapping[str, Any], label: str) -> dict[st
         row["globalFlowReason"] != SHADOW_DISABLED_REASON
         or row["globalRefReason"] != SHADOW_DISABLED_REASON
     ):
-        raise BuyE3CurrentHostResourceGateError(
-            f"{label} disabled shadow runtime reason drifted"
-        )
+        raise BuyE3CurrentHostResourceGateError(f"{label} disabled shadow runtime reason drifted")
     return dict(row)
 
 
@@ -2085,6 +2120,11 @@ def build_resource_receipt(
         "external_sources_absolute_zero_throughout": all(
             row["externalSources"] == 0 for row in (baseline_shadow, final_shadow)
         ),
+        "external_error_counters_absolute_zero_throughout": all(
+            counters[role][name] == 0
+            for role in ("absolute_baseline", "absolute_final", "window_delta")
+            for name in ("externalErrors", "externalRecordDropped")
+        ),
         "sell_owner_enabled_throughout": True,
         "same_live_pid_and_start_ticks_throughout": True,
         "benchmark_process_overlap_proven": any(value > 0.0 for value in benchmark_rss),
@@ -2092,6 +2132,16 @@ def build_resource_receipt(
             _strict_int(final_health.get("main_generation"), "final HEALTH generation", minimum=1)
             > _strict_int(
                 baseline_health.get("main_generation"), "baseline HEALTH generation", minimum=1
+            )
+            and _strict_int(
+                final_health.get("lifecycle_generation"),
+                "final lifecycle HEALTH generation",
+                minimum=1,
+            )
+            > _strict_int(
+                baseline_health.get("lifecycle_generation"),
+                "baseline lifecycle HEALTH generation",
+                minimum=1,
             )
         ),
         "min_mem_available_at_least_512mib": min(mem_available) >= MIN_MEM_AVAILABLE_MIB,
@@ -2354,9 +2404,13 @@ def validate_resource_receipt(
         after = _strict_int(final[name], f"final {name}")
         if deltas[name] != after - before or deltas[name] != 0:
             raise BuyE3CurrentHostResourceGateError(f"counter window advanced: {name}")
-        if name in GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS and (before != 0 or after != 0):
+        if name in (
+            *GLOBAL_FLOW_ABSOLUTE_ZERO_FIELDS,
+            "externalErrors",
+            "externalRecordDropped",
+        ) and (before != 0 or after != 0):
             raise BuyE3CurrentHostResourceGateError(
-                f"disabled global-flow counter is not absolute zero: {name}"
+                f"disabled shadow/input counter is not absolute zero: {name}"
             )
     shadow_runtime = _exact_mapping(
         payload.get("shadow_runtime"),
@@ -2474,6 +2528,16 @@ def validate_resource_receipt(
             minimum=1,
         )
         or _strict_int(
+            capture.get("rate_boundary_lifecycle_health_generation"),
+            "rate lifecycle boundary generation",
+            minimum=1,
+        )
+        >= _strict_int(
+            capture.get("rate_first_lifecycle_health_generation"),
+            "first rate lifecycle generation",
+            minimum=1,
+        )
+        or _strict_int(
             capture.get("rate_second_main_health_generation"),
             "second rate generation",
             minimum=1,
@@ -2484,8 +2548,25 @@ def validate_resource_receipt(
             minimum=1,
         )
         + 1
+        or _strict_int(
+            capture.get("rate_second_lifecycle_health_generation"),
+            "second rate lifecycle generation",
+            minimum=1,
+        )
+        != _strict_int(
+            capture.get("rate_first_lifecycle_health_generation"),
+            "first rate lifecycle generation",
+            minimum=1,
+        )
+        + 1
         or capture.get("rate_second_main_health_generation")
         != capture.get("baseline_main_health_generation")
+        or capture.get("rate_second_lifecycle_health_generation")
+        != capture.get("baseline_lifecycle_health_generation")
+        or capture.get("rate_second_main_health_line_sha256")
+        != capture.get("baseline_main_health_line_sha256")
+        or capture.get("rate_second_lifecycle_health_line_sha256")
+        != capture.get("baseline_lifecycle_health_line_sha256")
         or _strict_int(
             capture.get("rate_window_update_delta"), "rate-window update delta", minimum=1
         )
@@ -2510,6 +2591,16 @@ def validate_resource_receipt(
             capture.get("baseline_main_health_generation"), "baseline generation", minimum=1
         )
         >= _strict_int(capture.get("final_main_health_generation"), "final generation", minimum=1)
+        or _strict_int(
+            capture.get("baseline_lifecycle_health_generation"),
+            "baseline lifecycle generation",
+            minimum=1,
+        )
+        >= _strict_int(
+            capture.get("final_lifecycle_health_generation"),
+            "final lifecycle generation",
+            minimum=1,
+        )
         or any(
             _require_sha256(capture.get(name), name) != capture.get(name)
             for name in (
@@ -2518,6 +2609,9 @@ def validate_resource_receipt(
                 "rate_boundary_main_health_line_sha256",
                 "rate_first_main_health_line_sha256",
                 "rate_second_main_health_line_sha256",
+                "rate_boundary_lifecycle_health_line_sha256",
+                "rate_first_lifecycle_health_line_sha256",
+                "rate_second_lifecycle_health_line_sha256",
                 "baseline_lifecycle_health_line_sha256",
                 "final_lifecycle_health_line_sha256",
                 "benchmark_stdout_sha256",
@@ -2667,22 +2761,18 @@ def capture_concurrent_resource_gate(
             "capture host identity is not current c7i-flex.large"
         )
     health_tail = _health_tail_factory(live_log_path)
-    rate_boundary, first_rate, second_rate, observed_rate = (
-        _capture_current_process_rate_window(
-            health_tail=health_tail,
-            disabled_process=disabled,
-            runtime_repository_root=runtime_root,
-            disabled_config_path=disabled_config_path,
-            proc_root=proc_root,
-            sample_interval_s=interval,
-            timeout_s=rate_window_timeout_s,
-            sleep=_sleep,
-            monotonic_ns=_monotonic_ns,
-        )
+    rate_boundary, first_rate, second_rate, observed_rate = _capture_current_process_rate_window(
+        health_tail=health_tail,
+        disabled_process=disabled,
+        runtime_repository_root=runtime_root,
+        disabled_config_path=disabled_config_path,
+        proc_root=proc_root,
+        sample_interval_s=interval,
+        timeout_s=rate_window_timeout_s,
+        sleep=_sleep,
+        monotonic_ns=_monotonic_ns,
     )
-    update_delta = (
-        second_rate["boolean_cooldown_updates"] - first_rate["boolean_cooldown_updates"]
-    )
+    update_delta = second_rate["boolean_cooldown_updates"] - first_rate["boolean_cooldown_updates"]
     rate_elapsed_s = second_rate["main_wall_timestamp_s"] - first_rate["main_wall_timestamp_s"]
     baseline_health = second_rate
     benchmark_output = benchmark_output_path.expanduser().absolute()
@@ -2757,12 +2847,43 @@ def capture_concurrent_resource_gate(
             raise BuyE3CurrentHostResourceGateError("four-file benchmark subprocess failed")
         if len(samples) < 2:
             raise BuyE3CurrentHostResourceGateError("benchmark overlap has fewer than two samples")
-        exit_generation = dict(health_tail.snapshot())["main_generation"]
+        exit_health = dict(health_tail.snapshot())
+        exit_main_generation = exit_health["main_generation"]
+        exit_lifecycle_generation = exit_health["lifecycle_generation"]
         post_deadline = _monotonic_ns() + int(_finite(post_health_timeout_s, "post timeout") * 1e9)
         final_health: dict[str, Any] | None = None
         while _monotonic_ns() <= post_deadline:
+            before_health_identity = _process_identity_from_live(
+                runtime_repository_root=runtime_root,
+                pid=live_pid,
+                config_path=disabled_config_path,
+                proc_root=proc_root,
+            )
+            if (
+                _stable_live_identity(before_health_identity)
+                != disabled["stable_process_identity_sha256"]
+            ):
+                raise BuyE3CurrentHostResourceGateError(
+                    "live process changed before post-benchmark HEALTH"
+                )
             candidate = dict(health_tail.snapshot())
-            if candidate["main_generation"] > exit_generation:
+            after_health_identity = _process_identity_from_live(
+                runtime_repository_root=runtime_root,
+                pid=live_pid,
+                config_path=disabled_config_path,
+                proc_root=proc_root,
+            )
+            if (
+                _stable_live_identity(after_health_identity)
+                != disabled["stable_process_identity_sha256"]
+            ):
+                raise BuyE3CurrentHostResourceGateError(
+                    "live process changed after post-benchmark HEALTH"
+                )
+            if (
+                candidate["main_generation"] > exit_main_generation
+                and candidate["lifecycle_generation"] > exit_lifecycle_generation
+            ):
                 final_health = candidate
                 break
             _sleep(min(interval, 0.25))
@@ -2802,15 +2923,23 @@ def capture_concurrent_resource_gate(
             "benchmark_exit_monotonic_ns": benchmark_exit_ns,
             "rate_boundary_main_health_generation": rate_boundary["main_generation"],
             "rate_boundary_main_health_line_sha256": rate_boundary["main_line_sha256"],
+            "rate_boundary_lifecycle_health_generation": rate_boundary["lifecycle_generation"],
+            "rate_boundary_lifecycle_health_line_sha256": rate_boundary["lifecycle_line_sha256"],
             "rate_first_main_health_generation": first_rate["main_generation"],
             "rate_first_main_health_line_sha256": first_rate["main_line_sha256"],
+            "rate_first_lifecycle_health_generation": first_rate["lifecycle_generation"],
+            "rate_first_lifecycle_health_line_sha256": first_rate["lifecycle_line_sha256"],
             "rate_second_main_health_generation": second_rate["main_generation"],
             "rate_second_main_health_line_sha256": second_rate["main_line_sha256"],
+            "rate_second_lifecycle_health_generation": second_rate["lifecycle_generation"],
+            "rate_second_lifecycle_health_line_sha256": second_rate["lifecycle_line_sha256"],
             "rate_window_update_delta": update_delta,
             "rate_window_elapsed_s": rate_elapsed_s,
             "rate_window_same_live_pid_and_start_ticks": True,
             "baseline_main_health_generation": baseline_health["main_generation"],
             "final_main_health_generation": final_health["main_generation"],
+            "baseline_lifecycle_health_generation": baseline_health["lifecycle_generation"],
+            "final_lifecycle_health_generation": final_health["lifecycle_generation"],
             "baseline_main_health_line_sha256": baseline_health["main_line_sha256"],
             "final_main_health_line_sha256": final_health["main_line_sha256"],
             "baseline_lifecycle_health_line_sha256": baseline_health["lifecycle_line_sha256"],
