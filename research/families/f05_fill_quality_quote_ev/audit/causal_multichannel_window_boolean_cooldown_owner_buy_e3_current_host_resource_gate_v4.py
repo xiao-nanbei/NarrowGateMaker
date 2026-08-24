@@ -195,7 +195,7 @@ RESOURCE_CHECK_NAMES: Final = (
     "exact_2_vcpu_host",
     "host_memory_class_4gib",
     "runtime_checkout_exact_direct_v4",
-    "collector_is_clean_annotated_direct_v4_descendant",
+    "collector_is_clean_annotated_with_exact_v4_runtime_sources",
     "exact_four_deployed_files_bound",
     "immutable_direct_v4_authority_has_no_resource_dependency",
     "fresh_disabled_process_proven",
@@ -511,15 +511,16 @@ def capture_git_execution(
         ).returncode
         == 0
     )
-    if not ancestor:
-        raise BuyE3CurrentHostResourceGateError("execution is not a direct-v4 descendant")
-    if runtime_authority and (
-        commit != DIRECT_V4_EXECUTION_COMMIT
-        or tree != DIRECT_V4_EXECUTION_TREE
-        or annotated_tag != DIRECT_V4_ANNOTATED_TAG
-        or tag_object != DIRECT_V4_TAG_OBJECT
-    ):
-        raise BuyE3CurrentHostResourceGateError("live runtime checkout is not exact direct-v4")
+    if runtime_authority:
+        if not ancestor:
+            raise BuyE3CurrentHostResourceGateError("runtime execution is not direct-v4 lineage")
+        if (
+            commit != DIRECT_V4_EXECUTION_COMMIT
+            or tree != DIRECT_V4_EXECUTION_TREE
+            or annotated_tag != DIRECT_V4_ANNOTATED_TAG
+            or tag_object != DIRECT_V4_TAG_OBJECT
+        ):
+            raise BuyE3CurrentHostResourceGateError("live runtime checkout is not exact direct-v4")
     return {
         "repository_root": str(root),
         "execution_commit": _require_git_sha(commit, "execution commit"),
@@ -527,7 +528,7 @@ def capture_git_execution(
         "annotated_tag": annotated_tag,
         "annotated_tag_object": _require_git_sha(tag_object, "tag object"),
         "tag_peeled_commit": _require_git_sha(peeled, "peeled commit"),
-        "direct_v4_commit_is_ancestor": True,
+        "direct_v4_commit_is_ancestor": ancestor,
         "runtime_authority_checkout": bool(runtime_authority),
     }
 
@@ -1667,6 +1668,10 @@ def build_resource_receipt(
 ) -> dict[str, Any]:
     if len(samples) < 2:
         raise BuyE3CurrentHostResourceGateError("concurrent sample window is too short")
+    runtime_execution_row = _validate_execution_shape(runtime_execution, runtime=True)
+    collector_execution_row = _validate_execution_shape(collector_execution, runtime=False)
+    runtime_source_binding = _validate_runtime_source_binding(runtime_sources)
+    deployed_file_binding = _validate_exact_deployed_binding(exact_deployed_files)
     host_row = dict(host)
     mem_total = _finite(host_row.get("mem_total_mib"), "host total memory")
     prior_pid = _strict_int(prior_process.get("pid"), "prior PID", minimum=1)
@@ -1714,17 +1719,19 @@ def build_resource_receipt(
         "exact_2_vcpu_host": host_row.get("logical_cpu_count") == CURRENT_LOGICAL_CPU_COUNT,
         "host_memory_class_4gib": MIN_HOST_MEM_TOTAL_MIB <= mem_total <= MAX_HOST_MEM_TOTAL_MIB,
         "runtime_checkout_exact_direct_v4": (
-            runtime_execution.get("execution_commit") == DIRECT_V4_EXECUTION_COMMIT
-            and runtime_execution.get("execution_tree") == DIRECT_V4_EXECUTION_TREE
-            and runtime_execution.get("annotated_tag") == DIRECT_V4_ANNOTATED_TAG
-            and runtime_execution.get("annotated_tag_object") == DIRECT_V4_TAG_OBJECT
+            runtime_execution_row.get("execution_commit") == DIRECT_V4_EXECUTION_COMMIT
+            and runtime_execution_row.get("execution_tree") == DIRECT_V4_EXECUTION_TREE
+            and runtime_execution_row.get("annotated_tag") == DIRECT_V4_ANNOTATED_TAG
+            and runtime_execution_row.get("annotated_tag_object") == DIRECT_V4_TAG_OBJECT
         ),
-        "collector_is_clean_annotated_direct_v4_descendant": (
-            collector_execution.get("direct_v4_commit_is_ancestor") is True
-            and collector_execution.get("runtime_authority_checkout") is False
+        "collector_is_clean_annotated_with_exact_v4_runtime_sources": (
+            collector_execution_row.get("direct_v4_commit_is_ancestor") is False
+            and collector_execution_row.get("runtime_authority_checkout") is False
+            and runtime_source_binding.get("direct_v4_execution_commit")
+            == DIRECT_V4_EXECUTION_COMMIT
         ),
         "exact_four_deployed_files_bound": len(
-            _mapping(exact_deployed_files.get("files"), "deployed files")
+            _mapping(deployed_file_binding.get("files"), "deployed files")
         )
         == 4,
         "immutable_direct_v4_authority_has_no_resource_dependency": True,
@@ -1798,10 +1805,10 @@ def build_resource_receipt(
         "generated_utc": generated_utc or _utc_now(),
         "authority_design": dict(AUTHORITY_DESIGN),
         "host": host_row,
-        "runtime_execution": dict(runtime_execution),
-        "collector_execution": dict(collector_execution),
-        "runtime_sources": dict(runtime_sources),
-        "exact_deployed_files": dict(exact_deployed_files),
+        "runtime_execution": runtime_execution_row,
+        "collector_execution": collector_execution_row,
+        "runtime_sources": runtime_source_binding,
+        "exact_deployed_files": deployed_file_binding,
         "fresh_disabled_process": {
             "prior_process_identity_sha256": prior_process["stable_process_identity_sha256"],
             "prior_pid": prior_pid,
@@ -1870,17 +1877,22 @@ def _validate_execution_shape(raw: Any, *, runtime: bool) -> dict[str, Any]:
         not PurePosixPath(str(row["repository_root"])).is_absolute()
         or not str(row["annotated_tag"]).strip()
         or peeled != commit
-        or row["direct_v4_commit_is_ancestor"] is not True
+        or not isinstance(row["direct_v4_commit_is_ancestor"], bool)
         or row["runtime_authority_checkout"] is not runtime
     ):
         raise BuyE3CurrentHostResourceGateError("execution identity drifted")
     if runtime and (
-        commit != DIRECT_V4_EXECUTION_COMMIT
+        row["direct_v4_commit_is_ancestor"] is not True
+        or commit != DIRECT_V4_EXECUTION_COMMIT
         or tree != DIRECT_V4_EXECUTION_TREE
         or row["annotated_tag"] != DIRECT_V4_ANNOTATED_TAG
         or tag_object != DIRECT_V4_TAG_OBJECT
     ):
         raise BuyE3CurrentHostResourceGateError("runtime execution is not direct-v4")
+    if not runtime and row["direct_v4_commit_is_ancestor"] is not False:
+        raise BuyE3CurrentHostResourceGateError(
+            "collector execution must record its independent non-ancestor lineage"
+        )
     return row
 
 

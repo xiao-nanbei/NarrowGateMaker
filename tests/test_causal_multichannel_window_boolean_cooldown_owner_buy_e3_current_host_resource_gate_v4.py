@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -36,7 +37,7 @@ def _collector_execution() -> dict[str, Any]:
         "annotated_tag": "f05-buy-e3-resource-gate-v4-test",
         "annotated_tag_object": "c" * 40,
         "tag_peeled_commit": "a" * 40,
-        "direct_v4_commit_is_ancestor": True,
+        "direct_v4_commit_is_ancestor": False,
         "runtime_authority_checkout": False,
     }
 
@@ -349,6 +350,145 @@ def test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes(
         subject.bind_current_v4_runtime_sources(
             runtime_repository_root=root,
             collector_repository_root=root,
+        )
+
+
+def test_collector_execution_records_nonancestor_lineage_without_relaxing_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = Path(__file__).resolve().parents[1]
+
+    def fake_run_git(
+        _repository_root: Path,
+        *arguments: str,
+        check: bool = True,
+    ) -> Any:
+        del check
+        if arguments == ("rev-parse", "HEAD"):
+            return SimpleNamespace(returncode=0, stdout="a" * 40 + "\n", stderr="")
+        if arguments == ("rev-parse", "HEAD^{tree}"):
+            return SimpleNamespace(returncode=0, stdout="b" * 40 + "\n", stderr="")
+        if arguments == ("status", "--porcelain=v1", "--untracked-files=all"):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if arguments[:2] == ("cat-file", "-t"):
+            return SimpleNamespace(returncode=0, stdout="tag\n", stderr="")
+        if arguments[:1] == ("rev-parse",) and arguments[1].startswith("refs/tags/"):
+            value = "a" * 40 if arguments[1].endswith("^{commit}") else "c" * 40
+            return SimpleNamespace(returncode=0, stdout=value + "\n", stderr="")
+        if arguments[:2] == ("merge-base", "--is-ancestor"):
+            return SimpleNamespace(returncode=1, stdout="", stderr="")
+        raise AssertionError(arguments)
+
+    monkeypatch.setattr(subject, "_run_git", fake_run_git)
+    collector = subject.capture_git_execution(
+        root,
+        annotated_tag="f05-owner-buy-e3-resource-v4-collector-v2-test",
+        runtime_authority=False,
+    )
+    assert collector["direct_v4_commit_is_ancestor"] is False
+    assert collector["runtime_authority_checkout"] is False
+
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="runtime execution"):
+        subject.capture_git_execution(
+            root,
+            annotated_tag=subject.DIRECT_V4_ANNOTATED_TAG,
+            runtime_authority=True,
+        )
+
+
+def test_disjoint_runtime_and_collector_histories_bind_exact_source_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = tmp_path / "runtime"
+    collector = tmp_path / "collector"
+    source = Path("strategy/boolean_cooldown_buy_e3.py")
+    contents = b"exact v4 runtime source\n"
+
+    def initialize(root: Path, *, tag: str, extra: bool) -> None:
+        (root / source.parent).mkdir(parents=True)
+        (root / source).write_bytes(contents)
+        if extra:
+            (root / "collector-only.txt").write_text("collector\n", encoding="ascii")
+        commands = (
+            ("git", "init", "-q"),
+            ("git", "add", "."),
+            (
+                "git",
+                "-c",
+                "user.name=resource-test",
+                "-c",
+                "user.email=resource-test@example.invalid",
+                "commit",
+                "-qm",
+                "initial",
+            ),
+            (
+                "git",
+                "-c",
+                "user.name=resource-test",
+                "-c",
+                "user.email=resource-test@example.invalid",
+                "tag",
+                "-a",
+                tag,
+                "-m",
+                tag,
+            ),
+        )
+        for command in commands:
+            subprocess.run(command, cwd=root, check=True, capture_output=True)
+
+    initialize(runtime, tag="runtime-v4", extra=False)
+    initialize(collector, tag="collector-v2", extra=True)
+
+    def git_value(root: Path, *arguments: str) -> str:
+        return subprocess.run(
+            ("git", *arguments),
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    runtime_commit = git_value(runtime, "rev-parse", "HEAD")
+    monkeypatch.setattr(subject, "DIRECT_V4_EXECUTION_COMMIT", runtime_commit)
+    monkeypatch.setattr(
+        subject, "DIRECT_V4_EXECUTION_TREE", git_value(runtime, "rev-parse", "HEAD^{tree}")
+    )
+    monkeypatch.setattr(subject, "DIRECT_V4_ANNOTATED_TAG", "runtime-v4")
+    monkeypatch.setattr(
+        subject, "DIRECT_V4_TAG_OBJECT", git_value(runtime, "rev-parse", "refs/tags/runtime-v4")
+    )
+    monkeypatch.setattr(
+        subject,
+        "CURRENT_V4_RUNTIME_SOURCE_SHA256",
+        {"buy_e3_runtime": {"path": str(source), "sha256": hashlib_sha(runtime / source)}},
+    )
+
+    runtime_identity = subject.capture_git_execution(
+        runtime,
+        annotated_tag="runtime-v4",
+        runtime_authority=True,
+    )
+    collector_identity = subject.capture_git_execution(
+        collector,
+        annotated_tag="collector-v2",
+        runtime_authority=False,
+    )
+    assert runtime_identity["direct_v4_commit_is_ancestor"] is True
+    assert collector_identity["direct_v4_commit_is_ancestor"] is False
+    binding = subject.bind_current_v4_runtime_sources(
+        runtime_repository_root=runtime,
+        collector_repository_root=collector,
+    )
+    assert binding["files"]["buy_e3_runtime"]["collector_head_matches_direct_v4"] is True
+
+    (collector / source).write_text("drift\n", encoding="ascii")
+    with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="source drifted"):
+        subject.bind_current_v4_runtime_sources(
+            runtime_repository_root=runtime,
+            collector_repository_root=collector,
         )
 
 
