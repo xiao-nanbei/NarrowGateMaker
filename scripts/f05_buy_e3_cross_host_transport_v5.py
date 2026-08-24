@@ -82,7 +82,7 @@ FROZEN_FINAL_ACTIVE_CONFIG_SHA256: Final = (
 )
 FROZEN_FINAL_ARTIFACT_SHA256: Final = completion.ARTIFACT_SHA256
 FROZEN_FINAL_RESOURCE_PATH_PROVENANCE: Final = (
-    "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt1/"
+    "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/"
     "current_host_resource_gate.json"
 )
 FROZEN_FINAL_ACTIVE_CAPTURE_PATH_PROVENANCE: Final = (

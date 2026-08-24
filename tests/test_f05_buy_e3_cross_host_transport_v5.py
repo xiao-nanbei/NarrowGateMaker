@@ -284,7 +284,7 @@ def test_new_epoch_source_constants_are_exact_and_receipts_fail_closed_pending()
             "ad153012b14e725a3ac24f0ddbe02bc353168a13ec827b777cc94761020524ec"
         ),
         "resource_path": (
-            "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt1/"
+            "/home/ec2-user/f05-buy-e3-resource-gate-v7-no-external-20260824/attempt2/"
             "current_host_resource_gate.json"
         ),
         "active_path": (
