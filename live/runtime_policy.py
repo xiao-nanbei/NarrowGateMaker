@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -27,6 +28,13 @@ F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV = (
 )
 F05_BUY_E3_ACTIVE_RELEASE_AUTHORITY_SCHEMA = (
     "narrowgate_f05_buy_e3_active_release_runtime_authority.v1"
+)
+LIVE_SAFETY_SUCCESSOR_PATH_ENV = "NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH"
+LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV = (
+    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256"
+)
+LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV = (
+    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256"
 )
 RUNTIME_POLICY_SCHEMA_VERSION = "narrowgate_runtime_policy.v1"
 
@@ -224,6 +232,118 @@ def f05_buy_e3_active_release_runtime_authority(
         "active_release_path": path,
         "active_release_file_sha256": file_sha256,
         "active_release_canonical_sha256": canonical_sha256,
+    }
+
+
+def live_safety_successor_runtime_authority(
+    *,
+    expected_manifest_file_sha256: str,
+    expected_policy_file_sha256: str,
+    expected_predicate_bundle_file_sha256: str,
+    environ: Mapping[str, str] | None = None,
+) -> dict[str, Any]:
+    """Load the always-required shared execution-safety authority."""
+
+    environment = os.environ if environ is None else environ
+    path_text = str(environment.get(LIVE_SAFETY_SUCCESSOR_PATH_ENV, "")).strip()
+    expected_file = str(
+        environment.get(LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV, "")
+    ).strip().lower()
+    expected_canonical = str(
+        environment.get(LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV, "")
+    ).strip().lower()
+    candidate = Path(path_text).expanduser()
+    if (
+        not path_text
+        or "\x00" in path_text
+        or not candidate.is_absolute()
+        or _SHA256_RE.fullmatch(expected_file) is None
+        or _SHA256_RE.fullmatch(expected_canonical) is None
+        or candidate.is_symlink()
+        or not candidate.is_file()
+    ):
+        raise ValueError("live safety successor authority is missing or malformed")
+    resolved = candidate.resolve(strict=True)
+    metadata = resolved.stat()
+    if metadata.st_nlink != 1 or metadata.st_mode & 0o777 != 0o600:
+        raise ValueError("live safety successor permissions/link count drifted")
+    before = resolved.read_bytes()
+    if hashlib.sha256(before).hexdigest() != expected_file:
+        raise ValueError("live safety successor file hash drifted")
+    try:
+        payload = json.loads(before)
+    except json.JSONDecodeError as exc:
+        raise ValueError("live safety successor is not JSON") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("live safety successor is not a mapping")
+    from strategy import boolean_cooldown_buy_e3 as buy_e3
+
+    identity = buy_e3._validate_active_release(  # noqa: SLF001
+        payload,
+        expected_canonical_sha256=expected_canonical,
+        expected_artifact_sha256=buy_e3.DIRECT_OWNER_EXACT_ARTIFACT_SHA256,
+        expected_manifest_file_sha256=str(expected_manifest_file_sha256).lower(),
+        expected_policy_file_sha256=str(expected_policy_file_sha256).lower(),
+        expected_predicate_bundle_file_sha256=str(
+            expected_predicate_bundle_file_sha256
+        ).lower(),
+    )
+    if payload.get("schema_version") != buy_e3.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+        raise ValueError("runtime requires the live safety successor schema")
+    after = resolved.read_bytes()
+    if before != after:
+        raise ValueError("live safety successor changed while loading")
+    return {
+        "path": str(resolved),
+        "file_sha256": expected_file,
+        "canonical_sha256": expected_canonical,
+        "execution_commit": identity["execution_commit"],
+        "execution_tree": identity["execution_tree"],
+        "active_config_file_sha256": identity["active_config_file_sha256"],
+        "disabled_config_file_sha256": identity["disabled_config_file_sha256"],
+        "native_module_sha256": str(payload["native_build"]["module_sha256"]),
+        "native_wheel_sha256": str(payload["native_build"]["wheel_sha256"]),
+        "native_soabi": str(payload["native_build"]["soabi"]),
+        "native_build_receipt_sha256": str(
+            payload["native_build"]["file_sha256"]
+        ),
+        "native_build_receipt_canonical_sha256": str(
+            payload["native_build"]["canonical_sha256"]
+        ),
+        "runtime_lock_file_sha256": str(
+            payload["native_build"]["runtime_lock_file_sha256"]
+        ),
+        "runtime_lock_path": str(payload["native_build"]["runtime_lock_path"]),
+        "runtime_lock_canonical_sha256": str(
+            payload["native_build"]["runtime_lock_canonical_sha256"]
+        ),
+        "wheelhouse_manifest_file_sha256": str(
+            payload["native_build"]["wheelhouse_manifest_file_sha256"]
+        ),
+        "wheelhouse_path": str(payload["native_build"]["wheelhouse_path"]),
+        "wheelhouse_canonical_sha256": str(
+            payload["native_build"]["wheelhouse_canonical_sha256"]
+        ),
+        "install_receipt_path": str(
+            payload["native_build"]["install_receipt_path"]
+        ),
+        "install_receipt_file_sha256": str(
+            payload["native_build"]["install_receipt_file_sha256"]
+        ),
+        "install_receipt_canonical_sha256": str(
+            payload["native_build"]["install_receipt_canonical_sha256"]
+        ),
+        "root_wheel_sha256": str(
+            payload["native_build"]["root_wheel_sha256"]
+        ),
+        "root_wheel_path": str(payload["native_build"]["root_wheel_path"]),
+        "native_wheel_path": str(payload["native_build"]["native_wheel_path"]),
+        "installed_record_aggregate_sha256": str(
+            payload["native_build"]["installed_record_aggregate_sha256"]
+        ),
+        "locked_runtime_interpreter": dict(
+            payload["native_build"]["interpreter"]
+        ),
     }
 
 

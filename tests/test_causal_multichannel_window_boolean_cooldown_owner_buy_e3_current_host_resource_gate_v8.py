@@ -553,15 +553,17 @@ def test_predecessor_runtime_binding_is_immutable_and_safety_overlay_fails_close
             current_mismatches.add(role)
 
     # Preserve the release-v3 hashes as immutable historical evidence.  The
-    # current safety repair intentionally changes only these live host/runtime
-    # surfaces; trying to present it as the predecessor must fail closed until
-    # its own successor receipt is published.
+    # Descendant safety repairs intentionally change these live host/runtime
+    # surfaces.  The release-v3 gate remains immutable and must reject the
+    # descendant checkout even though the descendant has its own authority.
     assert current_mismatches == {
+        "buy_e3_runtime",
         "maker_engine",
         "signal_engine",
         "live_config",
         "live_main",
         "live_run",
+        "live_runtime_policy",
         "live_ws_handler",
     }
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="source drifted"):

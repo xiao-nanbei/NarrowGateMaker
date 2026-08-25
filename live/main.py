@@ -32,38 +32,44 @@ import os
 import signal
 import subprocess
 import sys
+import sysconfig
 import time
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import Any
 
 # Add project root to path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from execution.order_lifecycle_live_writer_v2 import OrderLifecycleLiveWriterV2
+from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
 from live.config import (
     install_reload_handler,
     load_config,
     revalidate_loaded_config_source,
     set_engine_ref,
+    set_restart_only_config_sha256,
 )
 from live.runtime_policy import (
     f05_boolean_cooldown_runtime_policy,
     f05_buy_e3_active_release_runtime_authority,
     f05_buy_e3_runtime_policy,
+    live_safety_successor_runtime_authority,
     q90_action_runtime_policy,
     write_runtime_identity,
 )
 from live.ws_handler import WSHandler
-from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
-from execution.order_lifecycle_live_writer_v2 import OrderLifecycleLiveWriterV2
 from models.replay.prospective_baseline_epoch import (
     live_clock_semantics_identity,
     publish_prospective_baseline_epoch,
     snapshot_action_enablement,
     snapshot_data_source_identity,
 )
+from scripts import f05_live_safety_locked_runtime as locked_runtime
 from strategy.maker_engine import MakerEngine
-
 
 CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_QUOTE_CORE",
@@ -82,6 +88,7 @@ RUNTIME_HEALTH_SCHEMA = "narrowgate.live_runtime_health.v1"
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
     "market_fusion.py",
+    "models/replay/continuous_accounting.py",
     "models/replay/baseline_epoch_manifest.py",
     "models/replay/prospective_baseline_epoch.py",
 )
@@ -222,9 +229,17 @@ def run_formal_dry_run(
     return exit_code
 
 STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v5"
+LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_SCHEMA = (
+    "narrowgate_buy_e3_startup_attestation.v6"
+)
 RUNNING_CHECKOUT_SCHEMA = "narrowgate_running_checkout_identity.v2"
 INTERPRETER_IDENTITY_SCHEMA = "narrowgate_interpreter_identity.v1"
 NATIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_native_runtime_identity.v1"
+NATIVE_ABI_CONTRACT_SCHEMA = "narrowgate_native_live_safety_abi.v1"
+NATIVE_QUOTE_ABI_FIELDS = {
+    "QuoteFlags": ("delta_cap", "final_compressed", "cap_exposure_block"),
+    "SideQuoteContext": ("cap_exposure_block",),
+}
 STARTUP_ATTESTATION_GATE_NAMES = (
     "fill_cooldown_state_available",
     "fill_cooldown_state_schema_v2",
@@ -259,6 +274,14 @@ STARTUP_ATTESTATION_GATE_NAMES = (
     "git_snapshot_stable",
     "safe_to_start_live_loops",
 )
+LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_GATE_NAMES = (
+    *STARTUP_ATTESTATION_GATE_NAMES[:-1],
+    "live_safety_successor_authority_valid",
+    "repository_module_closure_available",
+    "repository_module_closure_complete",
+    "mandatory_safety_modules_loaded",
+    "safe_to_start_live_loops",
+)
 KEY_LOADED_RUNTIME_MODULES = {
     "live_main": ("live.main", "live/main.py"),
     "live_config": ("live.config", "live/config.py"),
@@ -278,6 +301,21 @@ KEY_LOADED_RUNTIME_MODULES = {
     "boolean_cooldown_buy_e3": (
         "strategy.boolean_cooldown_buy_e3",
         "strategy/boolean_cooldown_buy_e3.py",
+    ),
+}
+LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES = {
+    **KEY_LOADED_RUNTIME_MODULES,
+    "inventory_manager": ("strategy.inventory_manager", "strategy/inventory_manager.py"),
+    "order_manager": ("strategy.order_manager", "strategy/order_manager.py"),
+    "quote_core": ("strategy.quote_core", "strategy/quote_core.py"),
+    "replay_controls": ("strategy.replay_controls", "strategy/replay_controls.py"),
+    "continuous_accounting": (
+        "models.replay.continuous_accounting",
+        "models/replay/continuous_accounting.py",
+    ),
+    "order_lifecycle_live_writer": (
+        "execution.order_lifecycle_live_writer_v2",
+        "execution/order_lifecycle_live_writer_v2.py",
     ),
 }
 
@@ -317,9 +355,37 @@ def _git_snapshot() -> dict:
     }
 
 
-def _runtime_source_rows() -> list[dict]:
+def _repository_loaded_python_modules() -> tuple[tuple[str, str], ...]:
+    modules: set[tuple[str, str]] = set()
+    for module_name, module in tuple(sys.modules.items()):
+        raw_origin = getattr(module, "__file__", None)
+        if not raw_origin:
+            continue
+        try:
+            origin = Path(str(raw_origin)).resolve(strict=True)
+            relative = origin.relative_to(ROOT)
+        except (OSError, ValueError):
+            continue
+        if origin.suffix in {".so", ".dylib", ".pyd"}:
+            continue
+        if origin.suffix == ".pyc" and "__pycache__" in relative.parts:
+            source_name = origin.name.split(".", 1)[0] + ".py"
+            origin = origin.parent.parent / source_name
+            relative = origin.relative_to(ROOT)
+        if origin.suffix == ".py" and origin.is_file():
+            modules.add((str(module_name), relative.as_posix()))
+    return tuple(sorted(modules))
+
+
+def _runtime_source_rows(*, loaded_paths: Sequence[str] | None = None) -> list[dict]:
     rows = []
-    for relative in sorted({value[1] for value in KEY_LOADED_RUNTIME_MODULES.values()}):
+    if loaded_paths is None:
+        paths = {value[1] for value in KEY_LOADED_RUNTIME_MODULES.values()}
+    else:
+        paths = set(prospective_epoch_runtime_code_paths(ROOT))
+        paths.update({"live/run.sh", "live/profiles/native.env"})
+        paths.update(loaded_paths)
+    for relative in sorted(paths):
         path = ROOT / relative
         working = path.read_bytes()
         head = _git_output("show", f"HEAD:{relative}")
@@ -352,10 +418,14 @@ def _file_byte_identity(path: str | Path) -> dict:
     }
 
 
-def _loaded_module_origins(source_rows: list[dict]) -> dict:
+def _loaded_module_origins(
+    source_rows: list[dict],
+    module_identities: Mapping[str, tuple[str, str]] | None = None,
+) -> dict:
     source_by_path = {row["path"]: row for row in source_rows}
     output = {}
-    for role, (module_name, expected_relative) in KEY_LOADED_RUNTIME_MODULES.items():
+    identities = KEY_LOADED_RUNTIME_MODULES if module_identities is None else module_identities
+    for role, (module_name, expected_relative) in identities.items():
         module = importlib.import_module(module_name)
         origin = Path(str(module.__file__)).resolve(strict=True)
         relative = origin.relative_to(ROOT).as_posix()
@@ -368,6 +438,42 @@ def _loaded_module_origins(source_rows: list[dict]) -> dict:
             "source_sha256": source_by_path[relative]["working_file_sha256"],
         }
     return output
+
+
+def _repository_loaded_module_closure(source_rows: list[dict]) -> list[dict]:
+    """Return every loaded repository module, not only the mandatory safety set."""
+
+    source_by_path = {row["path"]: row for row in source_rows}
+    closure: list[dict] = []
+    for module_name, module in sorted(sys.modules.items()):
+        raw_origin = getattr(module, "__file__", None)
+        if not raw_origin:
+            continue
+        try:
+            origin = Path(str(raw_origin)).resolve(strict=True)
+            relative = origin.relative_to(ROOT).as_posix()
+        except (OSError, ValueError):
+            continue
+        if origin.suffix in {".so", ".dylib", ".pyd"}:
+            continue
+        if relative.endswith(".pyc") and "/__pycache__/" in relative:
+            relative = str(
+                Path(relative).parent.parent
+                / (Path(relative).name.split(".", 1)[0] + ".py")
+            )
+        if relative not in source_by_path:
+            raise RuntimeError(f"loaded repository module is outside runtime source closure: {module_name}")
+        row = {
+            "module_name": module_name,
+            "origin_path": str(ROOT / relative),
+            "repository_relative_path": relative,
+            "source_sha256": source_by_path[relative]["working_file_sha256"],
+        }
+        closure.append(row)
+    return sorted(
+        closure,
+        key=lambda row: (row["module_name"], row["repository_relative_path"]),
+    )
 
 
 def _native_runtime_file_identity(native_runtime: dict) -> dict | None:
@@ -405,6 +511,7 @@ def build_startup_attestation(
     engine: MakerEngine,
     native_runtime: dict,
     running_config_sha256: str,
+    safety_authority: Mapping[str, Any] | None = None,
 ) -> dict:
     """Bind the checkout and restored cooldown state before live loops start."""
 
@@ -414,14 +521,55 @@ def build_startup_attestation(
     interpreter_before = _file_byte_identity(sys.executable)
     native_before = _native_runtime_file_identity(native_runtime)
     pre_snapshot = _git_snapshot()
-    source_rows = _runtime_source_rows()
-    loaded_origins = _loaded_module_origins(source_rows)
+    successor = safety_authority is not None
+    if successor:
+        for module_name, _relative in LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES.values():
+            importlib.import_module(module_name)
+        loaded_modules_before = _repository_loaded_python_modules()
+        source_rows = _runtime_source_rows(
+            loaded_paths=tuple(path for _module, path in loaded_modules_before)
+        )
+        loaded_origins = _loaded_module_origins(
+            source_rows,
+            LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES,
+        )
+        repository_module_closure = _repository_loaded_module_closure(source_rows)
+        loaded_modules_after = _repository_loaded_python_modules()
+    else:
+        loaded_modules_before = ()
+        source_rows = _runtime_source_rows()
+        loaded_origins = _loaded_module_origins(source_rows)
+        repository_module_closure = []
+        loaded_modules_after = ()
     fill_state = engine.fill_cooldown_state_snapshot()
     shadow_runtime = engine.shadow_runtime_snapshot()
     active_release = engine.buy_e3_active_release_identity()
     post_snapshot = _git_snapshot()
     interpreter_after = _file_byte_identity(sys.executable)
     native_after = _native_runtime_file_identity(native_runtime)
+    safety_authority_valid = False
+    if safety_authority is not None:
+        safety_config_sha256 = running_config_sha256 in {
+            safety_authority.get("active_config_file_sha256"),
+            safety_authority.get("disabled_config_file_sha256"),
+        }
+        safety_authority_valid = (
+            safety_authority.get("execution_commit") == post_snapshot["commit"]
+            and safety_authority.get("execution_tree") == post_snapshot["tree"]
+            and safety_config_sha256
+            and native_after is not None
+            and safety_authority.get("native_module_sha256") == native_after["sha256"]
+            and str(safety_authority.get("native_wheel_sha256", "")) != ""
+            and safety_authority.get("native_soabi")
+            == str(sysconfig.get_config_var("SOABI"))
+            and native_runtime.get("locked_runtime", {}).get("validated") is True
+            and native_runtime.get("locked_runtime", {}).get(
+                "installed_record_aggregate_sha256"
+            )
+            == safety_authority.get("installed_record_aggregate_sha256")
+            and native_runtime.get("locked_runtime", {}).get("interpreter")
+            == safety_authority.get("locked_runtime_interpreter")
+        )
 
     snapshots_equal = pre_snapshot == post_snapshot
     runtime_files_match = bool(source_rows) and all(row["matches_head_blob"] for row in source_rows)
@@ -450,6 +598,9 @@ def build_startup_attestation(
         "after": native_after,
         "stable": native_before == native_after,
     }
+    if successor:
+        native_identity["abi_contract"] = native_runtime.get("abi_contract")
+        native_identity["locked_runtime"] = native_runtime.get("locked_runtime")
     interpreter_identity = {
         "schema_version": INTERPRETER_IDENTITY_SCHEMA,
         "version": ".".join(map(str, sys.version_info[:3])),
@@ -658,7 +809,14 @@ def build_startup_attestation(
         "git_pre_worktree_clean": bool(pre_snapshot["worktree_clean"]),
         "runtime_source_manifest_available": bool(source_rows),
         "runtime_files_match_head": runtime_files_match,
-        "loaded_module_origins_available": (set(loaded_origins) == set(KEY_LOADED_RUNTIME_MODULES)),
+        "loaded_module_origins_available": (
+            set(loaded_origins)
+            == set(
+                LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES
+                if successor
+                else KEY_LOADED_RUNTIME_MODULES
+            )
+        ),
         "loaded_module_origins_under_repo": loaded_under_repo,
         "loaded_module_origins_match_runtime_sources": loaded_match_sources,
         "interpreter_identity_available": bool(interpreter_identity),
@@ -680,12 +838,36 @@ def build_startup_attestation(
         "git_snapshot_stable": bool(stable_snapshot["stable"]),
         "safe_to_start_live_loops": False,
     }
+    if successor:
+        gates.update(
+            {
+                "live_safety_successor_authority_valid": safety_authority_valid,
+                "repository_module_closure_available": bool(repository_module_closure),
+                "repository_module_closure_complete": (
+                    loaded_modules_before == loaded_modules_after
+                    and all(
+                        row["repository_relative_path"] in source_by_path
+                        and row["source_sha256"]
+                        == source_by_path[row["repository_relative_path"]][
+                            "working_file_sha256"
+                        ]
+                        for row in repository_module_closure
+                    )
+                ),
+                "mandatory_safety_modules_loaded": set(loaded_origins)
+                == set(LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES),
+            }
+        )
     gates["safe_to_start_live_loops"] = all(
         value for name, value in gates.items() if name != "safe_to_start_live_loops"
     )
     errors = sorted(name for name, passed in gates.items() if not passed)
-    return {
-        "schema_version": STARTUP_ATTESTATION_SCHEMA,
+    attestation = {
+        "schema_version": (
+            LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+            if successor
+            else STARTUP_ATTESTATION_SCHEMA
+        ),
         "status": "accepted" if not errors else "rejected",
         "attested_at_utc": datetime.now(UTC).isoformat(),
         "fill_cooldown_state": fill_state,
@@ -698,6 +880,10 @@ def build_startup_attestation(
         "gates": gates,
         "errors": errors,
     }
+    if successor:
+        attestation["live_safety_successor"] = dict(safety_authority or {})
+        attestation["loaded_repository_module_closure"] = repository_module_closure
+    return attestation
 
 
 def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
@@ -719,7 +905,9 @@ def prospective_epoch_runtime_code_paths(repo_root: Path) -> tuple[str, ...]:
     return tuple(sorted(paths))
 
 
-def audit_native_runtime(logger: logging.Logger, *, cfg=None) -> dict:
+def audit_native_runtime(
+    logger: logging.Logger, *, cfg=None, safety_authority: dict | None = None
+) -> dict:
     """Log the persisted runtime profile and fail fast for broken strict native mode."""
     values = {name: os.environ.get(name, "0") for name in CPP_RUNTIME_FLAGS}
     enabled = {
@@ -753,12 +941,8 @@ def audit_native_runtime(logger: logging.Logger, *, cfg=None) -> dict:
             if missing:
                 raise RuntimeError(f"narrowgate_cpp missing APIs: {', '.join(missing)}")
             if enabled["NARROWGATE_CPP_QUOTE_CORE"]:
-                abi_fields = {
-                    "QuoteFlags": ("delta_cap", "final_compressed", "cap_exposure_block"),
-                    "SideQuoteContext": ("cap_exposure_block",),
-                }
                 missing_fields = []
-                for class_name, field_names in abi_fields.items():
+                for class_name, field_names in NATIVE_QUOTE_ABI_FIELDS.items():
                     cls = getattr(module, class_name, None)
                     instance = cls() if cls is not None else None
                     for field_name in field_names:
@@ -793,7 +977,118 @@ def audit_native_runtime(logger: logging.Logger, *, cfg=None) -> dict:
         int(enabled["NARROWGATE_CPP_STRICT"]),
         module_path,
     )
-    return {
+    abi_contract = {
+        "schema_version": NATIVE_ABI_CONTRACT_SCHEMA,
+        "required_apis": sorted(required),
+        "required_quote_fields": {
+            name: list(fields) for name, fields in sorted(NATIVE_QUOTE_ABI_FIELDS.items())
+        },
+        "validated": bool(not required or not module_path.startswith("unavailable:")),
+    }
+    if safety_authority is not None:
+        candidate = Path(module_path).expanduser()
+        if (
+            profile != "native"
+            or any(not enabled[name] for name in CPP_RUNTIME_FLAGS)
+            or global_flow_effective is not False
+            or module_path == "disabled"
+            or module_path.startswith("unavailable:")
+            or candidate.is_symlink()
+            or not candidate.is_file()
+            or _sha256_bytes(candidate.resolve(strict=True).read_bytes())
+            != safety_authority.get("native_module_sha256")
+            or str(sysconfig.get_config_var("SOABI"))
+            != safety_authority.get("native_soabi")
+        ):
+            raise RuntimeError("native runtime differs from live safety successor authority")
+        install_receipt_path = Path(
+            str(safety_authority.get("install_receipt_path", ""))
+        ).expanduser()
+        if (
+            not install_receipt_path.is_absolute()
+            or install_receipt_path.is_symlink()
+            or not install_receipt_path.is_file()
+            or _sha256_bytes(install_receipt_path.read_bytes())
+            != safety_authority.get("install_receipt_file_sha256")
+        ):
+            raise RuntimeError(
+                "locked runtime install receipt differs from successor authority"
+            )
+        frozen_interpreter = safety_authority.get("locked_runtime_interpreter")
+        if not isinstance(frozen_interpreter, Mapping):
+            raise RuntimeError("locked runtime interpreter authority is missing")
+        selected_venv = ROOT / ".venv-active"
+        expected_venv = install_receipt_path.parent / (
+            f"venv-{safety_authority.get('execution_commit', '')}"
+        )
+        expected_python = expected_venv / "bin" / "python3"
+        reported_python = Path(sys.executable).expanduser().absolute()
+        try:
+            selector_target = os.readlink(selected_venv)
+            resolved_selector = selected_venv.resolve(strict=True)
+            locked_runtime_python = reported_python.resolve(strict=True)
+        except OSError as exc:
+            raise RuntimeError("successor venv selector authority is unavailable") from exc
+        if (
+            not selected_venv.is_symlink()
+            or selector_target != str(expected_venv)
+            or resolved_selector != expected_venv
+            or reported_python != selected_venv / "bin" / "python3"
+            or locked_runtime_python != expected_python
+            or expected_venv.is_symlink()
+            or not expected_venv.is_dir()
+            or expected_python.is_symlink()
+            or not expected_python.is_file()
+            or expected_python.stat().st_nlink != 1
+            or _sha256_bytes(expected_python.read_bytes())
+            != frozen_interpreter.get("executable_sha256")
+        ):
+            raise RuntimeError("successor venv selector authority drifted")
+        try:
+            locked_receipt = locked_runtime.validate_startup_runtime(
+                venv_python=locked_runtime_python,
+                pip_runner_python=locked_runtime_python,
+                receipt_path=install_receipt_path,
+                expected_receipt_sha256=str(
+                    safety_authority["install_receipt_canonical_sha256"]
+                ),
+                expected_lock_sha256=str(
+                    safety_authority["runtime_lock_canonical_sha256"]
+                ),
+                expected_wheelhouse_sha256=str(
+                    safety_authority["wheelhouse_canonical_sha256"]
+                ),
+                expected_root_wheel_sha256=str(
+                    safety_authority["root_wheel_sha256"]
+                ),
+                expected_native_wheel_sha256=str(
+                    safety_authority["native_wheel_sha256"]
+                ),
+                expected_python_version=str(frozen_interpreter["version"]),
+                expected_soabi=str(frozen_interpreter["soabi"]),
+                expected_compiler=str(frozen_interpreter["compiler"]),
+                expected_openssl_runtime=str(
+                    frozen_interpreter["openssl_runtime"]
+                ),
+                expected_interpreter_executable_sha256=str(
+                    frozen_interpreter["executable_sha256"]
+                ),
+            )
+        except (KeyError, locked_runtime.LockedRuntimeError) as exc:
+            raise RuntimeError("locked successor runtime validation failed") from exc
+        if (
+            locked_receipt.get("interpreter") != frozen_interpreter
+            or locked_receipt.get("installed_record_aggregate_sha256")
+            != safety_authority.get("installed_record_aggregate_sha256")
+            or locked_receipt.get("lock_authority", {}).get("lock_file_sha256")
+            != safety_authority.get("runtime_lock_file_sha256")
+            or locked_receipt.get("wheelhouse_authority", {}).get(
+                "manifest_file_sha256"
+            )
+            != safety_authority.get("wheelhouse_manifest_file_sha256")
+        ):
+            raise RuntimeError("locked successor runtime receipt authority drifted")
+    runtime_identity = {
         "profile": profile,
         "module": module_path,
         **enabled,
@@ -802,6 +1097,33 @@ def audit_native_runtime(logger: logging.Logger, *, cfg=None) -> dict:
         ],
         "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE": global_flow_effective,
     }
+    if safety_authority is not None:
+        runtime_identity["abi_contract"] = abi_contract
+        runtime_identity["locked_runtime"] = {
+            "validated": True,
+            "venv_selector_path": str(selected_venv),
+            "venv_selector_target": selector_target,
+            "venv_real_path": str(expected_venv),
+            "python_real_path": str(locked_runtime_python),
+            "install_receipt_path": str(install_receipt_path.resolve(strict=True)),
+            "install_receipt_file_sha256": safety_authority[
+                "install_receipt_file_sha256"
+            ],
+            "install_receipt_canonical_sha256": safety_authority[
+                "install_receipt_canonical_sha256"
+            ],
+            "runtime_lock_canonical_sha256": safety_authority[
+                "runtime_lock_canonical_sha256"
+            ],
+            "wheelhouse_canonical_sha256": safety_authority[
+                "wheelhouse_canonical_sha256"
+            ],
+            "installed_record_aggregate_sha256": locked_receipt[
+                "installed_record_aggregate_sha256"
+            ],
+            "interpreter": dict(locked_receipt["interpreter"]),
+        }
+    return runtime_identity
 
 
 def setup_logging(cfg):
@@ -992,6 +1314,7 @@ def record_startup_runtime_identity(
     cfg,
     config_path: Path,
     native_runtime: dict,
+    safety_authority: Mapping[str, Any] | None = None,
     dry_run: bool,
     engine: MakerEngine | None = None,
 ) -> tuple[Path, dict]:
@@ -1121,6 +1444,7 @@ def record_startup_runtime_identity(
             engine=engine,
             native_runtime=native_runtime,
             running_config_sha256=config_sha256,
+            safety_authority=safety_authority,
         )
         identity["startup_attestation"] = attestation
     if has_loaded_source_identity:
@@ -1155,6 +1479,151 @@ def _initial_exchange_open_orders(rest, *, symbol: str) -> list[dict]:
             }
         )
     return normalized
+
+
+def validate_startup_exchange_reconciliation_lineage(
+    rest,
+    *,
+    engine: MakerEngine,
+    symbol: str,
+    api_key: str,
+) -> dict[str, str]:
+    """Bind the new process to the stopped transaction's signed barrier."""
+
+    path_text = os.environ.get(
+        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH", ""
+    ).strip()
+    path = Path(path_text).expanduser()
+    if (
+        not path_text
+        or not path.is_absolute()
+        or path.is_symlink()
+        or not path.is_file()
+    ):
+        raise RuntimeError("startup exchange reconciliation authority is missing")
+    resolved = path.resolve(strict=True)
+    metadata = resolved.stat()
+    if metadata.st_nlink != 1 or metadata.st_mode & 0o777 != 0o600:
+        raise RuntimeError("startup exchange reconciliation inode drifted")
+    before = resolved.read_bytes()
+    expected_file_sha256 = os.environ.get(
+        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256", ""
+    ).strip().lower()
+    expected_canonical_sha256 = os.environ.get(
+        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256", ""
+    ).strip().lower()
+    expected_account_key_sha256 = os.environ.get(
+        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256", ""
+    ).strip().lower()
+    running_account_key_sha256 = _sha256_bytes(str(api_key).encode("utf-8"))
+    if (
+        len(expected_file_sha256) != 64
+        or _sha256_bytes(before) != expected_file_sha256
+        or len(expected_canonical_sha256) != 64
+        or len(expected_account_key_sha256) != 64
+        or expected_account_key_sha256 != running_account_key_sha256
+    ):
+        raise RuntimeError("startup exchange reconciliation binding is missing or drifted")
+    try:
+        payload = json.loads(before)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("startup exchange reconciliation is not JSON") from exc
+    canonical = dict(payload) if isinstance(payload, dict) else {}
+    expected_canonical = canonical.pop(
+        "canonical_exchange_reconciliation_sha256", None
+    )
+    actual_canonical = _sha256_bytes(
+        json.dumps(
+            canonical,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    )
+    position_rows = payload.get("position_rows") if isinstance(payload, dict) else None
+    if (
+        payload.get("schema_version")
+        != "narrowgate_stopped_exchange_reconciliation.v1"
+        or payload.get("status")
+        != "signed_open_orders_zero_exact_position_stable"
+        or payload.get("symbol") != symbol
+        or payload.get("open_order_count") != 0
+        or payload.get("signed_endpoints") != ["openOrders", "positionRisk"]
+        or expected_canonical != actual_canonical
+        or expected_canonical != expected_canonical_sha256
+        or payload.get("account_key_sha256") != expected_account_key_sha256
+        or not isinstance(position_rows, list)
+        or len(position_rows) != 1
+        or position_rows[0].get("position_side") != "BOTH"
+    ):
+        raise RuntimeError("startup exchange reconciliation authority drifted")
+    orders = rest.get_orders(symbol=symbol)
+    if orders != []:
+        raise RuntimeError("exchange orders appeared after the stopped barrier")
+    current_rows: list[dict[str, str | int]] = []
+    for item in rest.get_position_risk(symbol=symbol) or []:
+        if isinstance(item, Mapping) and str(item.get("symbol", "")) == symbol:
+            current_rows.append(
+                {
+                    "symbol": symbol,
+                    "position_side": str(item.get("positionSide", "BOTH")),
+                    "position_amt": str(item.get("positionAmt", "")),
+                    "entry_price": str(item.get("entryPrice", "")),
+                    "update_time_ms": int(item.get("updateTime", 0) or 0),
+                }
+            )
+    current_rows.sort(key=lambda row: str(row["position_side"]))
+    if current_rows != position_rows or resolved.read_bytes() != before:
+        raise RuntimeError("startup position differs from the stopped signed barrier")
+    stopped_position = position_rows[0]
+    try:
+        stopped_qty = Decimal(str(stopped_position["position_amt"]))
+        stopped_entry = Decimal(str(stopped_position["entry_price"]))
+        stopped_update_time_ms = int(stopped_position["update_time_ms"])
+        local_position = engine.inventory.snapshot
+        local_qty = Decimal(str(local_position.qty))
+        local_entry = Decimal(str(local_position.avg_entry_price))
+        local_barrier = engine.inventory.reconciliation_snapshot()
+        local_update_time_ms = int(local_barrier["snapshot_update_time_ms"])
+    except (AttributeError, KeyError, TypeError, ValueError, InvalidOperation) as exc:
+        raise RuntimeError(
+            "startup local position reconciliation identity is unavailable"
+        ) from exc
+    if (
+        not stopped_qty.is_finite()
+        or not stopped_entry.is_finite()
+        or not local_qty.is_finite()
+        or not local_entry.is_finite()
+        or local_qty != stopped_qty
+        or local_entry != stopped_entry
+        or local_update_time_ms != stopped_update_time_ms
+    ):
+        raise RuntimeError(
+            "startup local inventory was not seeded from the stopped signed barrier"
+        )
+    lineage = str(payload.get("position_lineage_sha256", ""))
+    if lineage != _sha256_bytes(
+        json.dumps(
+            position_rows,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    ):
+        raise RuntimeError("startup position lineage hash drifted")
+    logging.getLogger("main").info(
+        "STARTUP_EXCHANGE_RECONCILIATION_LINEAGE position_sha256=%s",
+        lineage,
+    )
+    return {
+        "path": str(resolved),
+        "file_sha256": expected_file_sha256,
+        "canonical_sha256": expected_canonical_sha256,
+        "account_key_sha256": expected_account_key_sha256,
+        "position_lineage_sha256": lineage,
+    }
 
 
 def initialize_prospective_lifecycle_collection(
@@ -1251,6 +1720,9 @@ def start_engine_with_prospective_collection(
     config_path: Path,
     native_runtime: dict,
     dry_run: bool,
+    exchange_reconciliation_required: bool = False,
+    runtime_identity_path: Path | None = None,
+    runtime_identity: dict | None = None,
 ) -> tuple[object | None, OrderLifecycleLiveWriterV2 | None]:
     """Start warmup, bind collection, then permit the first WS event."""
 
@@ -1258,10 +1730,26 @@ def start_engine_with_prospective_collection(
     startup_open_orders = _initial_exchange_open_orders(rest, symbol=cfg.symbol)
     if startup_open_orders:
         raise RuntimeError("startup open-order ownership did not converge after cancel")
+    logging.getLogger("main").info(
+        "STARTUP_CANCEL_AND_OPEN_ORDERS_COMPLETE open_orders=0"
+    )
     # Install the one and only startup seed after stale-order cancellation is
     # authoritatively complete.  Seeding before this point could hide a fill in
     # the cancellation window or create an unknown predecessor-order cursor.
     engine.sync_position(required=True)
+    if exchange_reconciliation_required:
+        exchange_binding = validate_startup_exchange_reconciliation_lineage(
+            rest,
+            engine=engine,
+            symbol=cfg.symbol,
+            api_key=str(cfg.api.key),
+        )
+        if runtime_identity_path is None or runtime_identity is None:
+            raise RuntimeError(
+                "required exchange reconciliation lacks runtime identity persistence"
+            )
+        runtime_identity["startup_exchange_reconciliation"] = exchange_binding
+        write_runtime_identity(runtime_identity_path, runtime_identity)
     epoch, writer = initialize_prospective_lifecycle_collection(
         cfg=cfg,
         engine=engine,
@@ -1476,6 +1964,30 @@ def main():
     # Load config only after the formal dry-run branch has exited.
     cfg = load_config(config_path)
     resolved_config_path = config_path.expanduser().resolve()
+    safety_authority = live_safety_successor_runtime_authority(
+        expected_manifest_file_sha256=str(
+            cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
+        ),
+        expected_policy_file_sha256=str(cfg.strategy.buy_e3_cooldown_policy_sha256),
+        expected_predicate_bundle_file_sha256=str(
+            cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
+        ),
+    )
+    running_config_sha256 = _sha256_bytes(resolved_config_path.read_bytes())
+    expected_config_sha256 = (
+        safety_authority["active_config_file_sha256"]
+        if bool(cfg.strategy.buy_e3_cooldown_policy_enabled)
+        else safety_authority["disabled_config_file_sha256"]
+    )
+    checkout = _git_snapshot()
+    if (
+        running_config_sha256 != expected_config_sha256
+        or checkout["commit"] != safety_authority["execution_commit"]
+        or checkout["tree"] != safety_authority["execution_tree"]
+        or checkout["worktree_clean"] is not True
+    ):
+        raise RuntimeError("checkout/config differs from live safety successor authority")
+    set_restart_only_config_sha256(running_config_sha256)
 
     if args.live:
         cfg.api.testnet = False
@@ -1486,7 +1998,9 @@ def main():
     logger = logging.getLogger("main")
 
     logger.info("=" * 60)
-    native_runtime = audit_native_runtime(logger, cfg=cfg)
+    native_runtime = audit_native_runtime(
+        logger, cfg=cfg, safety_authority=safety_authority
+    )
     project_name = getattr(cfg, "project_name", "NarrowGate")
     logger.info(f"{project_name} Maker Engine Starting")
     logger.info(f"  Symbol:    {cfg.symbol}")
@@ -1532,6 +2046,7 @@ def main():
         cfg=cfg,
         config_path=resolved_config_path,
         native_runtime=native_runtime,
+        safety_authority=safety_authority,
         dry_run=False,
         engine=engine,
     )
@@ -1628,6 +2143,7 @@ def main():
                 # Repeat the lightweight contract here so the preflight log
                 # records the exact head count and P3 identity.
                 from pathlib import Path as _P
+
                 from strategy.model_contract import validate_model_bundle
 
                 model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
@@ -1664,6 +2180,9 @@ def main():
             config_path=resolved_config_path,
             native_runtime=native_runtime,
             dry_run=bool(args.dry_run),
+            exchange_reconciliation_required=True,
+            runtime_identity_path=runtime_identity_path,
+            runtime_identity=runtime_identity,
         )
         if prospective_epoch is not None:
             logger.info(

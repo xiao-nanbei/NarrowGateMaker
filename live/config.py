@@ -29,6 +29,7 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 _lock = threading.Lock()
 _cfg: Optional["Config"] = None
 _cfg_path: Path = CONFIG_PATH
+_restart_only_config_sha256: Optional[str] = None
 
 
 @dataclass
@@ -1385,14 +1386,50 @@ def set_engine_ref(engine):
     _engine_ref = engine
 
 
+def set_restart_only_config_sha256(expected_sha256: Optional[str]) -> None:
+    """Freeze every config byte for an authority-bound live process.
+
+    The successor startup attestation binds the complete config file.  Allowing
+    SIGHUP to accept different bytes would leave that attestation looking valid
+    after the policy, timeout, or no-shadow controls had changed underneath it.
+    Passing ``None`` is reserved for tests and predecessor processes.
+    """
+
+    global _restart_only_config_sha256
+    normalized = None if expected_sha256 is None else str(expected_sha256).lower()
+    if normalized is not None and (
+        len(normalized) != 64
+        or any(character not in "0123456789abcdef" for character in normalized)
+    ):
+        raise ValueError("restart-only config SHA256 is malformed")
+    with _lock:
+        _restart_only_config_sha256 = normalized
+
+
 def reload_config(*_args):
     """SIGHUP handler — reload config from disk and propagate to engine."""
     global _cfg
     with _lock:
         previous_cfg = _cfg
         active_path = _cfg_path
+        restart_only_sha256 = _restart_only_config_sha256
     try:
+        if restart_only_sha256 is not None:
+            observed_sha256 = hashlib.sha256(active_path.read_bytes()).hexdigest()
+            if observed_sha256 != restart_only_sha256:
+                raise ValueError(
+                    "live safety successor config bytes are restart-only; "
+                    "restart through the signed deployment transaction"
+                )
         cfg = _load_config_candidate(active_path)
+        if (
+            restart_only_sha256 is not None
+            and getattr(cfg, "_source_file_sha256", None) != restart_only_sha256
+        ):
+            raise ValueError(
+                "live safety successor config bytes changed while reloading; "
+                "restart through the signed deployment transaction"
+            )
         if previous_cfg is not None:
             from live.runtime_policy import (
                 require_f05_boolean_cooldown_restart,

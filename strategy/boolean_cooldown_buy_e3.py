@@ -46,6 +46,16 @@ DIRECT_OWNER_ACTIVE_RELEASE_V3_IDENTITY = DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
 DIRECT_OWNER_ACTIVE_RELEASE_V3_STATUS = (
     "owner_authorized_direct_live_no_shadow_runtime_pending_evidence"
 )
+DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "direct_owner_live_safety_successor.v1"
+)
+DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_IDENTITY = (
+    DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+)
+DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_STATUS = (
+    "owner_authorized_direct_live_safety_successor_pending_runtime_evidence"
+)
 DIRECT_OWNER_EXACT_ARTIFACT_SHA256 = (
     "17e99df737157c6587602e6b496eadbecbed0a98d025da1d1db4cc8ef670786d"
 )
@@ -378,6 +388,224 @@ _DIRECT_OWNER_V3_CONFIG_FALSE_PATHS = [
     "logging.inventory_campaign_shadow_enabled",
     "logging.market_tape_enabled",
 ]
+
+_LIVE_SAFETY_SUCCESSOR_FIELDS = frozenset(
+    {
+        "schema_version",
+        "identity",
+        "status",
+        "generated_utc",
+        "research_supported",
+        "formal_hierarchy_passed",
+        "formal_hard_gates_passed",
+        "owner_risk_accepted",
+        "outcome_informed_owner_override",
+        "action_authorized",
+        "live_authorized",
+        "authorization_basis",
+        "scope",
+        "execution",
+        "predecessor_runtime_authority",
+        "exact_artifact",
+        "candidate_semantics",
+        "protected_semantics",
+        "config_pair",
+        "operational_safety_contract",
+        "runtime_source_contract",
+        "changed_repository_files",
+        "native_abi_contract",
+        "native_build",
+        "no_shadow_runtime_contract",
+        "pending_current_runtime_evidence",
+        "rollback",
+        "evidence_boundary",
+        "canonical_active_release_sha256",
+    }
+)
+_LIVE_SAFETY_SUCCESSOR_AUTHORIZATION_BASIS = {
+    "authority": "explicit_owner_directive",
+    "directive_id": "deploy_exact_owner_buy_e3_live_safety_successor_20260825",
+    "authority_inherited_from_predecessor_release_v3": True,
+    "e3_strategy_action_risk_authority_unchanged": True,
+    "shared_execution_safety_authority_from_current_owner_directive": True,
+    "shared_execution_mechanics_changed": True,
+    "strategy_action_authority_unchanged": True,
+    "does_not_relabel_research_evidence": True,
+}
+_LIVE_SAFETY_SUCCESSOR_PREDECESSOR_EXECUTION = {
+    "execution_commit": "eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de",
+    "execution_tree": "0343bd5586b337385cf2aa0d7a643f5c32b0da77",
+    "annotated_operational_tag": "f05-owner-buy-e3-no-shadow-runtime-v3-20260824",
+    "annotated_operational_tag_object": "3878ea05252ef8f274b6f74ee7a984431c53b892",
+    "tag_peeled_commit": "eacb6ccb1f4437d99d8385ba3f46ba6012f5c1de",
+}
+_LIVE_SAFETY_SUCCESSOR_PREDECESSOR_RELEASE = {
+    "schema_version": DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+    "status": DIRECT_OWNER_ACTIVE_RELEASE_V3_STATUS,
+    "file_sha256": "310d86d30bd875a7029b3e2f784877c6802ab7b05b0f639383e68bb81a458f49",
+    "canonical_field": "canonical_active_release_sha256",
+    "canonical_sha256": "81d4449301d29828162a7fb57f52c855803682a697639b6d9cfa2d38a2846b8f",
+    "size_bytes": 15386,
+    "mode": "0600",
+}
+_LIVE_SAFETY_SUCCESSOR_CANDIDATE_SEMANTICS = {
+    "selected_candidate": SELECTED_CANDIDATE,
+    "selected_profile": SELECTED_PROFILE,
+    "exact_e3_artifact_unchanged": True,
+    "e3_decision_ast_unchanged": True,
+    "e1_full_ema_bank": "not_deployed_unchanged",
+    "e2_directional_ema": "not_deployed_unchanged",
+    "buy_action_vocabulary": list(BUY_ACTIONS),
+    "sell_owner_policy_unchanged": True,
+    "b0_fallback_unchanged": True,
+    "new_strategy_arm_created": False,
+    "mechanics_successor_reference": {
+        "authority": "backtest_mechanics_non_live_authority_only",
+        "execution_commit": "e0804e1dd8b199e2dc04d36c0dcd5f27e9fc83d5",
+        "annotated_tag_object": "af3ba11de798a210b4701a791a4e4c4d2723f77d",
+        "contract_file_sha256": "a3469af71276d0681dbee1bd1dc9336dac8f29e912bc40c70cab3d2802efd853",
+        "contract_canonical_sha256": "e9ff41a02b063909d932733c9d9499212e624db5737c4c7f89c7b903eaad47e6",
+        "pointer_file_sha256": "b3893229e5198e6d24763a5bde78408024a4d3c36873339819041f8a5c471de4",
+        "pointer_canonical_sha256": "bd8d915bc39b15fa4f128c094a49b48d2ebb05db1213fdd80b164ba0d69f2009",
+        "private_manifest_file_sha256": "e380179f7a66ee8e2be5f8770a9bdd43e82b5dfe4955814e999f560d547dc9c6",
+        "private_manifest_canonical_sha256": "5eb01dcb7329fee1550853f5edd8326210f2a099fc891c54ca30b906fccb750f",
+        "economic_authority": False,
+        "research_authority": False,
+        "action_authority": False,
+        "live_authority": False,
+    },
+}
+_LIVE_SAFETY_SUCCESSOR_OPERATIONAL_CONTRACT = {
+    "spread_cap": {
+        "default_mode": "pause_exposure",
+        "compress_requires_explicit_research_opt_in": True,
+        "risk_requested_widening_is_not_compressed_by_default": True,
+    },
+    "exposure_role": {
+        "classification": "quantity_aware_exact_close_partial_reduce_and_flip",
+        "exact_close_is_exposure_increasing": False,
+        "partial_reduce_is_exposure_increasing": False,
+        "flip_is_split_at_flat_boundary": True,
+    },
+    "order_ledger": {
+        "cumulative_fill_monotone_and_idempotent": True,
+        "terminal_correction_by_later_higher_cumulative_fill": True,
+        "finite_nonnegative_bounded_fill_required": True,
+        "orphan_callbacks_outside_state_lock": True,
+        "callback_delivery_fifo": True,
+    },
+    "rest_ws_reconciliation": {
+        "request_clock_time_fudge_allowed": False,
+        "trade_id_order_id_cumulative_fill_identity_required": True,
+        "exchange_snapshot_update_time_bound": True,
+        "already_snapshotted_fill_is_idempotent": True,
+    },
+    "network_and_supervision": {
+        "finite_rest_timeout_required": True,
+        "fatal_main_loop_exception_exit_code": 78,
+        "unsafe_automatic_restart_allowed": False,
+    },
+    "shutdown": {
+        "user_stream_callback_quiescence_required": True,
+        "final_stable_generation_drain_required": True,
+        "uncertain_execution_state_requires_operator_reconciliation": True,
+    },
+    "ownership_conflict": {
+        "process_lifetime_fail_closed_latch": True,
+        "emergency_cancel_before_release": True,
+        "operator_gated_reconciliation_and_restart": True,
+    },
+    "flip_accounting": {
+        "closing_and_opening_legs_split": True,
+        "campaign_side_reopened_after_flat_boundary": True,
+        "commission_allocated_by_economic_leg": True,
+    },
+}
+_LIVE_SAFETY_SUCCESSOR_RUNTIME_SOURCE_CONTRACT = {
+    "authority": "exact_clean_git_commit_tree_and_runtime_source_manifest",
+    "closure": "dynamic_repository_origin_modules_plus_explicit_safety_required_modules",
+    "required_repository_paths": [
+        "live/config.py",
+        "live/main.py",
+        "live/profiles/native.env",
+        "live/run.sh",
+        "live/runtime_policy.py",
+        "live/ws_handler.py",
+        "models/replay/continuous_accounting.py",
+        "strategy/boolean_cooldown_buy_e3.py",
+        "strategy/boolean_cooldown_live.py",
+        "strategy/inventory_manager.py",
+        "strategy/maker_engine.py",
+        "strategy/order_manager.py",
+        "strategy/quote_core.py",
+        "strategy/replay_controls.py",
+        "strategy/signal.py",
+    ],
+    "working_tree_clean_required": True,
+    "loaded_module_origin_must_be_below_repository": True,
+    "loaded_module_bytes_must_match_head": True,
+}
+_LIVE_SAFETY_SUCCESSOR_NATIVE_ABI_CONTRACT = {
+    "native_profile": {
+        "repository_relative_path": "live/profiles/native.env",
+        "file_sha256": "4b263d5ebbd4b64c928d70a25fa30db940a569329e4ef181ef304739bca248af",
+        "profile_name": "native",
+        "required_flags": {
+            "NARROWGATE_CPP_QUOTE_CORE": True,
+            "NARROWGATE_CPP_SIGNAL_FEATURES": True,
+            "NARROWGATE_CPP_GLOBAL_FLOW": True,
+            "NARROWGATE_CPP_LIVE_ROUTING": True,
+            "NARROWGATE_CPP_STRICT": True,
+        },
+        "global_flow_effective": False,
+    },
+    "module_bytes_bound_at_startup": True,
+    "module_origin_bound_at_startup": True,
+    "required_quote_core_classes": {
+        "QuoteFlags": ["delta_cap", "final_compressed", "cap_exposure_block"],
+        "SideQuoteContext": ["cap_exposure_block"],
+    },
+    "required_live_apis": [
+        "compute_quote_core_live",
+        "compute_live_routing_decision",
+    ],
+    "strict_profile_fails_closed_on_abi_drift": True,
+}
+_LIVE_SAFETY_SUCCESSOR_PENDING_RUNTIME_EVIDENCE = {
+    "disabled_startup_attestation_complete": False,
+    "active_startup_attestation_complete": False,
+    "stable_live_health_window_complete": False,
+    "post_restart_exchange_reconciliation_complete": False,
+    "final_operational_receipt_complete": False,
+}
+_LIVE_SAFETY_SUCCESSOR_ROLLBACK = {
+    "primary_disabled": {
+        "runtime": "successor_execution",
+        "config": "successor_disabled_config_from_release",
+        "buy_e3_enabled": False,
+        "buy_deadline_identity": "B0",
+        "imports_e3_deadline": False,
+    },
+    "deep_predecessor": {
+        "mode": "stop_cancel_reconcile_only",
+        "historical_execution": _LIVE_SAFETY_SUCCESSOR_PREDECESSOR_EXECUTION,
+        "historical_config_file_sha256": "d92fdec7ce89586f56fb1a6c80a6bc6fbe96b50023bd8c481cae730606c75204",
+        "automatic_historical_runtime_start_allowed": False,
+    },
+    "automatic_promotion_after_rollback": False,
+}
+_LIVE_SAFETY_SUCCESSOR_EVIDENCE_BOUNDARY = {
+    "old_oof_applies_to_learning_algorithm_only": True,
+    "exact_artifact_oof_available": False,
+    "validation_read": False,
+    "sealed_holdout_read": False,
+    "shadow_created": False,
+    "companion_created": False,
+    "shadow_or_companion_collection_enabled": False,
+    "new_economic_arm_run": False,
+    "economic_values_read": False,
+    "operational_safety_changes_are_not_action_uplift_evidence": True,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -1139,6 +1367,375 @@ def _validate_direct_owner_active_release_v3(
     }
 
 
+def _validate_live_safety_successor(
+    payload: Mapping[str, Any],
+    *,
+    expected_canonical_sha256: str,
+    expected_artifact_sha256: str,
+    expected_manifest_file_sha256: str,
+    expected_policy_file_sha256: str,
+    expected_predicate_bundle_file_sha256: str,
+) -> dict[str, str]:
+    if set(payload) != set(_LIVE_SAFETY_SUCCESSOR_FIELDS):
+        raise ValueError("buy_e3_live_safety_successor_fields_drifted")
+    _validate_canonical(
+        payload,
+        "canonical_active_release_sha256",
+        "buy_e3_live_safety_successor",
+    )
+    canonical = str(payload["canonical_active_release_sha256"])
+    if canonical != str(expected_canonical_sha256).strip().lower():
+        raise ValueError("buy_e3_live_safety_successor_expected_canonical_sha256_mismatch")
+    if (
+        payload.get("schema_version") != DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        or payload.get("identity") != DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_IDENTITY
+        or payload.get("status") != DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_STATUS
+        or payload.get("research_supported") is not False
+        or payload.get("formal_hierarchy_passed") is not False
+        or payload.get("formal_hard_gates_passed") is not False
+        or payload.get("owner_risk_accepted") is not True
+        or payload.get("outcome_informed_owner_override") is not True
+        or payload.get("action_authorized") is not True
+        or payload.get("live_authorized") is not True
+        or payload.get("authorization_basis")
+        != _LIVE_SAFETY_SUCCESSOR_AUTHORIZATION_BASIS
+        or payload.get("scope")
+        != {
+            "strategy_action_scope": {
+                "side": "BUY",
+                "candidate": "E3",
+                "trigger": "exposure_increasing_executed_fill",
+                "output": "total_cooldown",
+                "artifact_and_action_authority_unchanged": True,
+            },
+            "operational_safety_scope": {
+                "sides": ["BUY", "SELL"],
+                "shared_execution_state_corrections": True,
+                "new_economic_strategy_arm": False,
+                "authorized_by_current_owner_deploy_fix_directive": True,
+            },
+        }
+        or payload.get("predecessor_runtime_authority")
+        != {
+            "release": _LIVE_SAFETY_SUCCESSOR_PREDECESSOR_RELEASE,
+            "execution": _LIVE_SAFETY_SUCCESSOR_PREDECESSOR_EXECUTION,
+        }
+        or payload.get("candidate_semantics")
+        != _LIVE_SAFETY_SUCCESSOR_CANDIDATE_SEMANTICS
+        or payload.get("operational_safety_contract")
+        != _LIVE_SAFETY_SUCCESSOR_OPERATIONAL_CONTRACT
+        or payload.get("runtime_source_contract")
+        != _LIVE_SAFETY_SUCCESSOR_RUNTIME_SOURCE_CONTRACT
+        or payload.get("native_abi_contract")
+        != _LIVE_SAFETY_SUCCESSOR_NATIVE_ABI_CONTRACT
+        or payload.get("no_shadow_runtime_contract")
+        != _DIRECT_OWNER_V3_NO_SHADOW_RUNTIME_CONTRACT
+        or payload.get("pending_current_runtime_evidence")
+        != _LIVE_SAFETY_SUCCESSOR_PENDING_RUNTIME_EVIDENCE
+        or payload.get("rollback") != _LIVE_SAFETY_SUCCESSOR_ROLLBACK
+        or payload.get("evidence_boundary")
+        != _LIVE_SAFETY_SUCCESSOR_EVIDENCE_BOUNDARY
+    ):
+        raise ValueError("buy_e3_live_safety_successor_authority_drifted")
+
+    native_build = _exact_mapping(
+        payload.get("native_build"),
+        frozenset(
+            {
+                "schema_version",
+                "status",
+                "file_sha256",
+                "canonical_sha256",
+                "module_sha256",
+                "wheel_sha256",
+                "soabi",
+                "python_minor",
+                "platform",
+                "runtime_lock_file_sha256",
+                "runtime_lock_path",
+                "runtime_lock_canonical_sha256",
+                "wheelhouse_manifest_file_sha256",
+                "wheelhouse_path",
+                "wheelhouse_canonical_sha256",
+                "install_receipt_path",
+                "install_receipt_file_sha256",
+                "install_receipt_canonical_sha256",
+                "root_wheel_sha256",
+                "root_wheel_path",
+                "native_wheel_path",
+                "installed_record_aggregate_sha256",
+                "interpreter",
+            }
+        ),
+        "buy_e3_live_safety_successor_native_build",
+    )
+    if (
+        native_build.get("schema_version")
+        != "narrowgate_linux_x86_64_native_build_receipt.v2"
+        or native_build.get("status")
+        != "exact_tag_native_build_dependency_lock_and_parity_passed"
+        or native_build.get("platform") != "linux_x86_64"
+        or native_build.get("python_minor") != "3.12"
+        or not str(native_build.get("soabi", "")).startswith("cpython-312-")
+        or any(
+            _SHA256_RE.fullmatch(str(native_build.get(field, ""))) is None
+            for field in (
+                "file_sha256",
+                "canonical_sha256",
+                "module_sha256",
+                "wheel_sha256",
+                "runtime_lock_file_sha256",
+                "runtime_lock_canonical_sha256",
+                "wheelhouse_manifest_file_sha256",
+                "wheelhouse_canonical_sha256",
+                "install_receipt_file_sha256",
+                "install_receipt_canonical_sha256",
+                "root_wheel_sha256",
+                "installed_record_aggregate_sha256",
+            )
+        )
+        or any(
+            not str(native_build.get(field, "")).startswith("/")
+            for field in (
+                "runtime_lock_path",
+                "wheelhouse_path",
+                "install_receipt_path",
+                "root_wheel_path",
+                "native_wheel_path",
+            )
+        )
+    ):
+        raise ValueError("buy_e3_live_safety_successor_native_build_drifted")
+    interpreter = _exact_mapping(
+        native_build.get("interpreter"),
+        frozenset(
+            {
+                "implementation",
+                "version",
+                "version_info",
+                "cache_tag",
+                "soabi",
+                "abiflags",
+                "sysconfig_platform",
+                "system",
+                "machine",
+                "compiler",
+                "openssl_runtime",
+                "openssl_version_number",
+                "executable_sha256",
+                "executable_size_bytes",
+                "base_executable_sha256",
+                "base_executable_size_bytes",
+                "is_virtual_environment",
+            }
+        ),
+        "buy_e3_live_safety_successor_interpreter",
+    )
+    if (
+        interpreter.get("implementation") != "cpython"
+        or interpreter.get("version_info", [])[:2] != [3, 12]
+        or interpreter.get("is_virtual_environment") is not True
+        or interpreter.get("soabi") != native_build.get("soabi")
+        or any(
+            _SHA256_RE.fullmatch(str(interpreter.get(field, ""))) is None
+            for field in ("executable_sha256", "base_executable_sha256")
+        )
+    ):
+        raise ValueError("buy_e3_live_safety_successor_interpreter_drifted")
+    protected = _exact_mapping(
+        payload.get("protected_semantics"),
+        frozenset(
+            {
+                "e3_decision_ast_sha256",
+                "sell_owner_policy_file_sha256",
+                "e1_e2_definition_file_sha256",
+                "b0_fallback_file_sha256",
+                "f03_sources_unchanged_after_e080",
+                "frozen_mechanics_evidence_bytes_referenced_not_modified",
+                "current_head_not_mechanics_authority",
+            }
+        ),
+        "buy_e3_live_safety_successor_protected_semantics",
+    )
+    if (
+        any(
+            _SHA256_RE.fullmatch(str(protected.get(field, ""))) is None
+            for field in (
+                "e3_decision_ast_sha256",
+                "sell_owner_policy_file_sha256",
+                "e1_e2_definition_file_sha256",
+                "b0_fallback_file_sha256",
+            )
+        )
+        or protected.get("f03_sources_unchanged_after_e080") is not True
+        or protected.get("frozen_mechanics_evidence_bytes_referenced_not_modified") is not True
+        or protected.get("current_head_not_mechanics_authority") is not True
+    ):
+        raise ValueError("buy_e3_live_safety_successor_protected_semantics_drifted")
+
+    execution = _exact_mapping(
+        payload.get("execution"),
+        frozenset(
+            {
+                "execution_commit",
+                "execution_tree",
+                "annotated_operational_tag",
+                "annotated_operational_tag_object",
+                "tag_peeled_commit",
+            }
+        ),
+        "buy_e3_live_safety_successor_execution",
+    )
+    commit = str(execution.get("execution_commit", ""))
+    tree = str(execution.get("execution_tree", ""))
+    tag_object = str(execution.get("annotated_operational_tag_object", ""))
+    if (
+        _GIT_SHA_RE.fullmatch(commit) is None
+        or _GIT_SHA_RE.fullmatch(tree) is None
+        or _GIT_SHA_RE.fullmatch(tag_object) is None
+        or execution.get("tag_peeled_commit") != commit
+        or commit == _LIVE_SAFETY_SUCCESSOR_PREDECESSOR_EXECUTION["execution_commit"]
+        or not str(execution.get("annotated_operational_tag", "")).strip()
+    ):
+        raise ValueError("buy_e3_live_safety_successor_execution_identity_drifted")
+
+    if expected_artifact_sha256 != DIRECT_OWNER_EXACT_ARTIFACT_SHA256:
+        raise ValueError("buy_e3_live_safety_successor_expected_artifact_sha256_mismatch")
+    exact_artifact = _exact_mapping(
+        payload.get("exact_artifact"),
+        frozenset({"artifact_sha256", "roles"}),
+        "buy_e3_live_safety_successor_artifact",
+    )
+    if exact_artifact.get("artifact_sha256") != expected_artifact_sha256:
+        raise ValueError("buy_e3_live_safety_successor_artifact_sha256_mismatch")
+    roles = _exact_mapping(
+        exact_artifact.get("roles"),
+        frozenset({"manifest", "policy", "predicate_bundle"}),
+        "buy_e3_live_safety_successor_artifact_roles",
+    )
+    expected_files = {
+        "manifest": expected_manifest_file_sha256,
+        "policy": expected_policy_file_sha256,
+        "predicate_bundle": expected_predicate_bundle_file_sha256,
+    }
+    for role, expected in expected_files.items():
+        binding = _exact_mapping(
+            roles.get(role),
+            _ACTIVE_RELEASE_BINDING_FIELDS,
+            f"buy_e3_live_safety_successor_{role}",
+        )
+        if (
+            binding.get("role") != role
+            or binding.get("file_sha256") != expected
+            or binding.get("mode") != "0600"
+            or (
+                role == "manifest"
+                and binding.get("canonical_sha256") != DIRECT_OWNER_EXACT_ARTIFACT_SHA256
+            )
+        ):
+            raise ValueError(f"buy_e3_live_safety_successor_{role}_binding_drifted")
+
+    config_pair = _exact_mapping(
+        payload.get("config_pair"),
+        frozenset(
+            {
+                "schema_version",
+                "status",
+                "predecessor",
+                "disabled",
+                "active",
+                "predecessor_to_successor_semantic_changes",
+                "explicit_safety_values",
+                "active_disabled_only_difference",
+                "required_false_paths",
+                "external_shadow_only_marker_inert",
+                "release_fields_present_in_yaml",
+            }
+        ),
+        "buy_e3_live_safety_successor_config_pair",
+    )
+    if (
+        config_pair.get("schema_version")
+        != "f05_buy_e3_live_safety_successor_config_pair.v1"
+        or config_pair.get("status") != "explicit_timeout_pause_exposure_no_shadow_pair"
+        or config_pair.get("predecessor")
+        != {
+            "disabled_file_sha256": "d92fdec7ce89586f56fb1a6c80a6bc6fbe96b50023bd8c481cae730606c75204",
+            "active_file_sha256": "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e",
+        }
+        or any(
+            not isinstance(config_pair.get(role), Mapping)
+            or set(config_pair[role])
+            != {"file_sha256", "semantic_sha256", "size_bytes", "mode"}
+            or _SHA256_RE.fullmatch(str(config_pair[role].get("file_sha256", "")))
+            is None
+            or _SHA256_RE.fullmatch(str(config_pair[role].get("semantic_sha256", "")))
+            is None
+            or type(config_pair[role].get("size_bytes")) is not int
+            or int(config_pair[role]["size_bytes"]) <= 0
+            or config_pair[role].get("mode") != "0600"
+            for role in ("disabled", "active")
+        )
+        or config_pair.get("predecessor_to_successor_semantic_changes")
+        != ["api.timeout_s", "strategy.spread_cap_mode"]
+        or config_pair.get("explicit_safety_values")
+        != {"api.timeout_s": 5.0, "strategy.spread_cap_mode": "pause_exposure"}
+        or config_pair.get("active_disabled_only_difference")
+        != "strategy.buy_e3_cooldown_policy_enabled"
+        or config_pair.get("required_false_paths") != _DIRECT_OWNER_V3_CONFIG_FALSE_PATHS
+        or config_pair.get("external_shadow_only_marker_inert") is not True
+        or config_pair.get("release_fields_present_in_yaml") is not False
+    ):
+        raise ValueError("buy_e3_live_safety_successor_config_pair_drifted")
+
+    changed_files = payload.get("changed_repository_files")
+    if not isinstance(changed_files, Mapping) or not changed_files:
+        raise ValueError("buy_e3_live_safety_successor_changed_file_map_missing")
+    required_changed = {
+        "live/config.py",
+        "live/main.py",
+        "live/run.sh",
+        "live/ws_handler.py",
+        "models/replay/continuous_accounting.py",
+        "strategy/inventory_manager.py",
+        "strategy/maker_engine.py",
+        "strategy/order_manager.py",
+        "strategy/quote_core.py",
+        "strategy/replay_controls.py",
+    }
+    if not required_changed.issubset(changed_files):
+        raise ValueError("buy_e3_live_safety_successor_required_changed_files_missing")
+    for path, raw_binding in changed_files.items():
+        components = str(path).split("/")
+        if (
+            type(path) is not str
+            or not path
+            or path.startswith("/")
+            or "\\" in path
+            or any(component in {"", ".", ".."} for component in components)
+        ):
+            raise ValueError("buy_e3_live_safety_successor_changed_file_path_invalid")
+        binding = _exact_mapping(
+            raw_binding,
+            frozenset({"git_blob_sha1", "file_sha256"}),
+            f"buy_e3_live_safety_successor_changed_file_{path}",
+        )
+        if (
+            _GIT_SHA_RE.fullmatch(str(binding.get("git_blob_sha1", ""))) is None
+            or _SHA256_RE.fullmatch(str(binding.get("file_sha256", ""))) is None
+        ):
+            raise ValueError("buy_e3_live_safety_successor_changed_file_binding_invalid")
+    return {
+        "file_canonical_sha256": canonical,
+        "execution_commit": commit,
+        "execution_tree": tree,
+        "annotated_operational_tag": str(execution["annotated_operational_tag"]),
+        "annotated_operational_tag_object": tag_object,
+        "active_config_file_sha256": str(config_pair["active"]["file_sha256"]),
+        "disabled_config_file_sha256": str(config_pair["disabled"]["file_sha256"]),
+    }
+
+
 def _validate_active_release(
     payload: Mapping[str, Any],
     *,
@@ -1148,6 +1745,15 @@ def _validate_active_release(
     expected_policy_file_sha256: str,
     expected_predicate_bundle_file_sha256: str,
 ) -> dict[str, str]:
+    if payload.get("schema_version") == DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+        return _validate_live_safety_successor(
+            payload,
+            expected_canonical_sha256=expected_canonical_sha256,
+            expected_artifact_sha256=expected_artifact_sha256,
+            expected_manifest_file_sha256=expected_manifest_file_sha256,
+            expected_policy_file_sha256=expected_policy_file_sha256,
+            expected_predicate_bundle_file_sha256=expected_predicate_bundle_file_sha256,
+        )
     if payload.get("schema_version") == DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA:
         return _validate_direct_owner_active_release_v3(
             payload,

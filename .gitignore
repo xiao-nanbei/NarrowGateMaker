@@ -26,6 +26,7 @@ logs/
 
 # Python environments, caches, and build outputs
 .venv/
+.venv-active
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

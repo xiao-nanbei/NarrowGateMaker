@@ -106,7 +106,9 @@ def test_run_sh_preflights_before_background_launch() -> None:
     assert "_run_deploy_preflight" in start_body
     assert "scripts/preflight_live_deploy.py" in script
     assert start_body.index("_run_deploy_preflight") < start_body.index("nohup ")
-    assert restart_body.index("_run_deploy_preflight") < restart_body.index("stop 2>/dev/null")
+    assert restart_body.index("_run_deploy_preflight") < restart_body.index("\n    stop\n")
+    assert "stop ||" not in restart_body
+    assert restart_body.index("\n    stop\n") < restart_body.index("\n    start\n")
 
 
 def test_rest_client_applies_one_finite_timeout_to_every_sync_call(

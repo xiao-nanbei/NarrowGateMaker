@@ -1152,8 +1152,19 @@ def test_safety_successor_preserves_frozen_predecessor_and_binds_all_economic_le
     assert successor["runtime_source_sha256"]["live/main.py"] == (
         "5889ac75729e1d9eefe2734c2175e09b4470cb8ad0457e8109deeb1e180d34f7"
     )
+    # This contract is immutable historical evidence.  Descendant operational
+    # safety releases may legitimately change live runtime files, so verify the
+    # source closure at the contract's frozen annotated tag rather than against
+    # the descendant checkout's working tree.
+    frozen_tree = f"{baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG}^{{}}"
     for relative, expected_sha256 in successor["runtime_source_sha256"].items():
-        assert _sha((root / relative).read_bytes()) == expected_sha256, relative
+        frozen_raw = subprocess.run(
+            ("git", "show", f"{frozen_tree}:{relative}"),
+            cwd=root,
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert _sha(frozen_raw) == expected_sha256, relative
     covered_paths = {
         path
         for encoded_paths in successor["mechanics_safety_source_coverage"].values()

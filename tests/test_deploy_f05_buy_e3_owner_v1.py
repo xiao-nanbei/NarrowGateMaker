@@ -1773,7 +1773,7 @@ def test_post_stop_failure_attempts_primary_rollback_and_writes_0600_receipt(
         if "printf '%s" in joined:
             return subprocess.CompletedProcess(command, 0, "100\n", "")
         # Fail after stop/quiescence/checkout when disabled start is attempted.
-        if "bash live/run.sh start" in joined and "disabled.yaml" in joined and not failed_at:
+        if "live/run.sh start" in joined and "disabled.yaml" in joined and not failed_at:
             failed_at.append(len(calls))
             return subprocess.CompletedProcess(command, 1, "", "failed")
         if " process-probe " in joined:

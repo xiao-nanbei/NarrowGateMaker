@@ -16,6 +16,7 @@ import importlib.util
 import json
 import math
 import os
+import platform
 import shlex
 import stat
 import subprocess
@@ -23,6 +24,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import contextmanager
+from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -36,11 +38,55 @@ from live.runtime_policy import (  # noqa: E402
     F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
     F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
     F05_BUY_E3_OWNER_OVERRIDE_ENV,
+    LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV,
+    LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV,
+    LIVE_SAFETY_SUCCESSOR_PATH_ENV,
     f05_buy_e3_runtime_policy,
 )
 from scripts import f05_buy_e3_active_release as active_release  # noqa: E402
 from scripts import f05_buy_e3_execution_attempt as execution_attempt  # noqa: E402
+from scripts import f05_live_safety_locked_runtime as locked_runtime  # noqa: E402
+from scripts import (  # noqa: E402
+    f05_live_safety_startup_static_authority as startup_static_authority,
+)
 from strategy import boolean_cooldown_buy_e3 as buy_e3_runtime  # noqa: E402
+
+STARTUP_EXCHANGE_RECONCILIATION_PATH_ENV = (
+    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH"
+)
+STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256_ENV = (
+    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256"
+)
+STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256_ENV = (
+    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256"
+)
+STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256_ENV = (
+    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256"
+)
+STARTUP_STATIC_RUNTIME_AUTHORITY_PATH_ENV = (
+    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH"
+)
+STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256_ENV = (
+    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256"
+)
+STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256_ENV = (
+    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256"
+)
+STARTUP_STATIC_RUNTIME_VERIFIER_PATH_ENV = (
+    "NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH"
+)
+STARTUP_STATIC_RUNTIME_VERIFIER_SHA256_ENV = (
+    "NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256"
+)
+STARTUP_STATIC_TRUSTED_PYTHON_PATH_ENV = (
+    "NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH"
+)
+STARTUP_STATIC_TRUSTED_PYTHON_SHA256_ENV = (
+    "NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256"
+)
+_ACTIVE_RELEASE_PROBE_ARGS_PLACEHOLDER = (
+    "__NARROWGATE_ACTIVE_RELEASE_PROBE_ARGS__"
+)
 
 try:  # noqa: E402
     from research.families.f05_fill_quality_quote_ev.audit import (
@@ -64,6 +110,8 @@ except ImportError:
 
 PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v1"
 COMPATIBLE_PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v2"
+SUCCESSOR_PLAN_SCHEMA = "f05_buy_e3_operational_safety_successor_deploy_plan.v1"
+SUCCESSOR_ANNOTATED_TAG = "f05-owner-buy-e3-live-safety-successor-v1-final-20260825"
 LEGACY_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v3"
 HISTORICAL_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v4"
 RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v5"
@@ -72,6 +120,20 @@ RUNTIME_IDENTITY_SCHEMA = "narrowgate_live_runtime_identity.v1"
 LEGACY_STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v3"
 HISTORICAL_STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v4"
 STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v5"
+PREDECESSOR_STARTUP_ATTESTATION_SCHEMA = STARTUP_ATTESTATION_SCHEMA
+SUCCESSOR_STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v6"
+SUCCESSOR_STOP_FAILURE_RECOVERY_SCHEMA = (
+    "f05_buy_e3_successor_stop_failure_reconciliation.v1"
+)
+SUCCESSOR_READINESS_MARKERS = frozenset(
+    {
+        "RUNTIME_IDENTITY path=",
+        "STARTUP_CANCEL_AND_OPEN_ORDERS_COMPLETE open_orders=0",
+        "POSITION_RECONCILIATION_COMPLETE seed=1",
+        "STARTUP_EXCHANGE_RECONCILIATION_LINEAGE position_sha256=",
+        "Entering main loop...",
+    }
+)
 FROZEN_07EF_EXECUTION_COMMIT = "07ef93733a3a685caba945c7761a48473e403072"
 FROZEN_07EF_EXECUTION_TREE = "ff505cd81a8eb11f2087d2ae27e7986fd99b0444"
 FROZEN_07EF_DISABLED_CONFIG_SHA256 = (
@@ -129,6 +191,8 @@ FAILURE_CLASSES = frozenset(
         "receipt_validation_failed",
         "phase_contract_validation_failed",
         "phase_timeout",
+        "stop_execution_state_uncertain",
+        "exchange_reconciliation_failed",
     }
 )
 RECEIPT_EVIDENCE_BOUNDARY = {
@@ -176,6 +240,10 @@ TRANSACTION_CONTRACT = {
     "remote_host_bound_spool_preflight_mandatory": True,
     "per_command_timeout_s": 180,
     "whole_phase_timeout_s": 1_800,
+    "successor_pre_stop_staging_is_not_live_state_mutation": True,
+    "successor_uncertain_stop_forbids_automatic_restart": True,
+    "successor_exchange_reconciliation_failure_forbids_restart": True,
+    "successor_rollback_requires_signed_exchange_reconciliation": True,
 }
 PLAN_EVIDENCE_BOUNDARY = {
     "validation_read": False,
@@ -214,6 +282,10 @@ HOST_BOUND_SPOOL_REMOTE_CHECKS = (
 
 class BuyE3TransactionalDeployError(RuntimeError):
     """Raised when a deployment plan or transaction cannot fail closed."""
+
+
+def _is_successor_execution(execution: Mapping[str, Any]) -> bool:
+    return str(execution.get("annotated_tag", "")) == SUCCESSOR_ANNOTATED_TAG
 
 
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
@@ -257,6 +329,9 @@ _PROCESS_IDENTITY_FIELDS = _LEGACY_PROCESS_IDENTITY_FIELDS | frozenset(
         "active_release_execution_commit",
         "active_release_execution_tree",
     }
+)
+_SUCCESSOR_PROCESS_IDENTITY_FIELDS = _PROCESS_IDENTITY_FIELDS | frozenset(
+    {"startup_exchange_reconciliation"}
 )
 _RESULT_FIELDS = frozenset(
     {
@@ -331,6 +406,32 @@ _ACTIVE_RELEASE_PHASE_BINDING_FIELDS = (
         }
     )
 )
+_SUCCESSOR_ACTIVE_RELEASE_PHASE_BINDING_FIELDS = (
+    _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+    | frozenset(
+        {
+            "native_build_receipt_sha256",
+            "native_build_receipt_canonical_sha256",
+            "native_module_sha256",
+            "native_wheel_sha256",
+            "native_soabi",
+            "runtime_lock_file_sha256",
+            "runtime_lock_path",
+            "runtime_lock_canonical_sha256",
+            "wheelhouse_manifest_file_sha256",
+            "wheelhouse_path",
+            "wheelhouse_canonical_sha256",
+            "install_receipt_path",
+            "install_receipt_file_sha256",
+            "install_receipt_canonical_sha256",
+            "root_wheel_sha256",
+            "root_wheel_path",
+            "native_wheel_path",
+            "installed_record_aggregate_sha256",
+            "locked_runtime_interpreter",
+        }
+    )
+)
 _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS = frozenset(
     {
         "schema_version",
@@ -361,6 +462,18 @@ _RUNTIME_IDENTITY_BINDING_FIELDS = _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS | fro
         "active_release_execution_tree",
     }
 )
+_SUCCESSOR_RUNTIME_IDENTITY_BINDING_FIELDS = _RUNTIME_IDENTITY_BINDING_FIELDS | {
+    "startup_exchange_reconciliation"
+}
+_STARTUP_EXCHANGE_RECONCILIATION_BINDING_FIELDS = frozenset(
+    {
+        "path",
+        "file_sha256",
+        "canonical_sha256",
+        "account_key_sha256",
+        "position_lineage_sha256",
+    }
+)
 _LEGACY_STARTUP_ATTESTATION_FIELDS = frozenset(
     {
         "schema_version",
@@ -380,6 +493,10 @@ _HISTORICAL_STARTUP_ATTESTATION_FIELDS = (
 )
 _STARTUP_ATTESTATION_FIELDS = _HISTORICAL_STARTUP_ATTESTATION_FIELDS | frozenset(
     {"shadow_runtime_identity"}
+)
+_PREDECESSOR_STARTUP_ATTESTATION_FIELDS = _STARTUP_ATTESTATION_FIELDS
+_SUCCESSOR_STARTUP_ATTESTATION_FIELDS = _STARTUP_ATTESTATION_FIELDS | frozenset(
+    {"loaded_repository_module_closure", "live_safety_successor"}
 )
 _LEGACY_STARTUP_GATE_FIELDS = frozenset(
     {
@@ -423,6 +540,45 @@ _STARTUP_GATE_FIELDS = _HISTORICAL_STARTUP_GATE_FIELDS | frozenset(
         "shadow_config_explicit",
         "global_flow_shadow_backend_contract_valid",
         "global_reference_shadow_state_contract_valid",
+    }
+)
+_PREDECESSOR_STARTUP_GATE_FIELDS = _STARTUP_GATE_FIELDS
+_SUCCESSOR_STARTUP_GATE_FIELDS = _STARTUP_GATE_FIELDS | frozenset(
+    {
+        "repository_module_closure_available",
+        "repository_module_closure_complete",
+        "mandatory_safety_modules_loaded",
+        "live_safety_successor_authority_valid",
+    }
+)
+_LIVE_SAFETY_SUCCESSOR_IDENTITY_FIELDS = frozenset(
+    {
+        "path",
+        "file_sha256",
+        "canonical_sha256",
+        "execution_commit",
+        "execution_tree",
+        "active_config_file_sha256",
+        "disabled_config_file_sha256",
+        "native_module_sha256",
+        "native_wheel_sha256",
+        "native_soabi",
+        "native_build_receipt_sha256",
+        "native_build_receipt_canonical_sha256",
+        "runtime_lock_file_sha256",
+        "runtime_lock_path",
+        "runtime_lock_canonical_sha256",
+        "wheelhouse_manifest_file_sha256",
+        "wheelhouse_path",
+        "wheelhouse_canonical_sha256",
+        "install_receipt_path",
+        "install_receipt_file_sha256",
+        "install_receipt_canonical_sha256",
+        "root_wheel_sha256",
+        "root_wheel_path",
+        "native_wheel_path",
+        "installed_record_aggregate_sha256",
+        "locked_runtime_interpreter",
     }
 )
 _HISTORICAL_STARTUP_ACTIVE_RELEASE_FIELDS = frozenset(
@@ -505,7 +661,23 @@ _LOADED_RUNTIME_MODULE_IDENTITIES = {
         "strategy/boolean_cooldown_buy_e3.py",
     ),
 }
+_SUCCESSOR_LOADED_RUNTIME_MODULE_IDENTITIES = {
+    **_LOADED_RUNTIME_MODULE_IDENTITIES,
+    "inventory_manager": ("strategy.inventory_manager", "strategy/inventory_manager.py"),
+    "order_manager": ("strategy.order_manager", "strategy/order_manager.py"),
+    "quote_core": ("strategy.quote_core", "strategy/quote_core.py"),
+    "replay_controls": ("strategy.replay_controls", "strategy/replay_controls.py"),
+    "continuous_accounting": (
+        "models.replay.continuous_accounting",
+        "models/replay/continuous_accounting.py",
+    ),
+    "order_lifecycle_live_writer": (
+        "execution.order_lifecycle_live_writer_v2",
+        "execution/order_lifecycle_live_writer_v2.py",
+    ),
+}
 _LOADED_RUNTIME_MODULE_ROLES = frozenset(_LOADED_RUNTIME_MODULE_IDENTITIES)
+_PREDECESSOR_LOADED_RUNTIME_MODULE_IDENTITIES = _LOADED_RUNTIME_MODULE_IDENTITIES
 _HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES = {
     "live_main": ("live.main", "live/main.py"),
     "live_config": ("live.config", "live/config.py"),
@@ -540,6 +712,33 @@ if set(_CURRENT_RUNTIME_SOURCE_PATHS.values()) != {
     relative for _module, relative in _LOADED_RUNTIME_MODULE_IDENTITIES.values()
 }:  # pragma: no cover - import-time invariant
     raise RuntimeError("current runtime source roles differ from startup loaded modules")
+
+
+def _successor_runtime_source_paths(repository_root: Path) -> dict[str, str]:
+    root = repository_root.expanduser().resolve(strict=True)
+    paths = {
+        candidate.relative_to(root).as_posix()
+        for root_name in ("live", "strategy", "execution", "features")
+        for candidate in (root / root_name).rglob("*.py")
+        if "__pycache__" not in candidate.parts
+    }
+    paths.update(
+        {
+            "market_fusion.py",
+            "models/replay/baseline_epoch_manifest.py",
+            "models/replay/continuous_accounting.py",
+            "models/replay/prospective_baseline_epoch.py",
+            "data_paths.py",
+            "scripts/f05_live_safety_locked_runtime.py",
+            "scripts/f05_live_safety_startup_static_authority.py",
+            "live/run.sh",
+            "live/profiles/native.env",
+        }
+    )
+    missing = sorted(path for path in paths if not (root / path).is_file())
+    if missing:
+        raise RuntimeError("successor runtime source closure is incomplete: " + ", ".join(missing))
+    return {path: path for path in sorted(paths)}
 _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS = (
     "validated_current_execution_commit_and_working_tree"
 )
@@ -564,6 +763,75 @@ _NATIVE_RUNTIME_IDENTITY_FIELDS = frozenset(
         "before",
         "after",
         "stable",
+    }
+)
+_PREDECESSOR_NATIVE_RUNTIME_IDENTITY_FIELDS = _NATIVE_RUNTIME_IDENTITY_FIELDS
+_SUCCESSOR_NATIVE_RUNTIME_IDENTITY_FIELDS = _NATIVE_RUNTIME_IDENTITY_FIELDS | {
+    "abi_contract",
+    "locked_runtime",
+}
+_LOCKED_RUNTIME_INTERPRETER_FIELDS = frozenset(
+    {
+        "implementation",
+        "version",
+        "version_info",
+        "cache_tag",
+        "soabi",
+        "abiflags",
+        "sysconfig_platform",
+        "system",
+        "machine",
+        "compiler",
+        "openssl_runtime",
+        "openssl_version_number",
+        "executable_sha256",
+        "executable_size_bytes",
+        "base_executable_sha256",
+        "base_executable_size_bytes",
+        "is_virtual_environment",
+    }
+)
+_LOCKED_RUNTIME_STARTUP_FIELDS = frozenset(
+    {
+        "validated",
+        "venv_selector_path",
+        "venv_selector_target",
+        "venv_real_path",
+        "python_real_path",
+        "install_receipt_path",
+        "install_receipt_file_sha256",
+        "install_receipt_canonical_sha256",
+        "runtime_lock_canonical_sha256",
+        "wheelhouse_canonical_sha256",
+        "installed_record_aggregate_sha256",
+        "interpreter",
+    }
+)
+_SUCCESSOR_NATIVE_BUILD_PROJECTED_FIELDS = frozenset(
+    {
+        "schema_version",
+        "status",
+        "file_sha256",
+        "canonical_sha256",
+        "module_sha256",
+        "wheel_sha256",
+        "soabi",
+        "python_minor",
+        "platform",
+        "runtime_lock_file_sha256",
+        "runtime_lock_path",
+        "runtime_lock_canonical_sha256",
+        "wheelhouse_manifest_file_sha256",
+        "wheelhouse_path",
+        "wheelhouse_canonical_sha256",
+        "install_receipt_path",
+        "install_receipt_file_sha256",
+        "install_receipt_canonical_sha256",
+        "root_wheel_sha256",
+        "root_wheel_path",
+        "native_wheel_path",
+        "installed_record_aggregate_sha256",
+        "interpreter",
     }
 )
 _SHADOW_RUNTIME_IDENTITY_FIELDS = frozenset(
@@ -702,6 +970,137 @@ def _remote_active_release_path(repo_root: str, file_sha256: str) -> str:
     )
 
 
+def _startup_static_authority_binding_from_payload(
+    payload: Mapping[str, Any], *, stage_root: str
+) -> dict[str, str]:
+    canonical = _require_sha256(
+        payload.get(startup_static_authority.CANONICAL_FIELD),
+        "startup static authority canonical hash",
+    )
+    raw = startup_static_authority.file_bytes(payload)
+    file_sha256 = hashlib.sha256(raw).hexdigest()
+    return {
+        "remote_path": str(
+            PurePosixPath(stage_root)
+            / f"startup-static-runtime-authority-{file_sha256}.json"
+        ),
+        "file_sha256": file_sha256,
+        "canonical_sha256": canonical,
+    }
+
+
+def _startup_static_authority_from_release(
+    *,
+    repo_root: str,
+    execution: Mapping[str, Any],
+    runtime_sources: Mapping[str, Any],
+    host: Mapping[str, Any],
+    remote: Mapping[str, Any],
+    release_binding: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    commit = str(execution["execution_commit"])
+    stage_root = str(remote["stage_root"])
+    repo_root = str(repo_root)
+    runtime_root = f"{stage_root}/runtime-{commit}"
+    venv_path = f"{stage_root}/venv-{commit}"
+    static_relative = "scripts/f05_live_safety_startup_static_authority.py"
+    locked_relative = "scripts/f05_live_safety_locked_runtime.py"
+    sources = runtime_sources.get("files")
+    if not isinstance(sources, Mapping):
+        raise BuyE3TransactionalDeployError(
+            "startup static authority lacks runtime source bindings"
+        )
+
+    def source_hash(relative: str) -> str:
+        binding = sources.get(relative)
+        if not isinstance(binding, Mapping):
+            raise BuyE3TransactionalDeployError(
+                f"startup static authority lacks source: {relative}"
+            )
+        return _require_sha256(
+            binding.get("working_file_sha256"),
+            f"startup static authority source {relative}",
+        )
+
+    interpreter = release_binding.get("locked_runtime_interpreter")
+    if not isinstance(interpreter, Mapping):
+        raise BuyE3TransactionalDeployError(
+            "startup static authority lacks locked interpreter"
+        )
+    payload = startup_static_authority.build_authority(
+        execution_commit=commit,
+        execution_tree=str(execution["execution_tree"]),
+        repository_path=repo_root,
+        runtime_root=runtime_root,
+        selector_path=f"{repo_root}/.venv-active",
+        selector_target=venv_path,
+        trusted_python_path=str(host["trusted_static_python_path"]),
+        trusted_python_sha256=str(host["trusted_static_python_sha256"]),
+        authority_verifier_path=f"{runtime_root}/{static_relative}",
+        authority_verifier_sha256=source_hash(static_relative),
+        locked_runtime_verifier_path=f"{runtime_root}/{locked_relative}",
+        locked_runtime_verifier_sha256=source_hash(locked_relative),
+        venv_path=venv_path,
+        target_python_path=f"{venv_path}/bin/python3",
+        target_python_sha256=str(interpreter["executable_sha256"]),
+        install_receipt_path=str(release_binding["install_receipt_path"]),
+        install_receipt_file_sha256=str(
+            release_binding["install_receipt_file_sha256"]
+        ),
+        install_receipt_canonical_sha256=str(
+            release_binding["install_receipt_canonical_sha256"]
+        ),
+        installed_record_aggregate_sha256=str(
+            release_binding["installed_record_aggregate_sha256"]
+        ),
+        safety_release_path=str(release_binding["remote_path"]),
+        safety_release_file_sha256=str(release_binding["file_sha256"]),
+        safety_release_canonical_sha256=str(
+            release_binding["canonical_active_release_sha256"]
+        ),
+    )
+    return payload, _startup_static_authority_binding_from_payload(
+        payload, stage_root=stage_root
+    )
+
+
+def _startup_static_authority_env(
+    authority: Mapping[str, Any], binding: Mapping[str, Any]
+) -> str:
+    return " ".join(
+        (
+            f"{STARTUP_STATIC_RUNTIME_AUTHORITY_PATH_ENV}="
+            f"{shlex.quote(str(binding['remote_path']))}",
+            f"{STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256_ENV}="
+            f"{shlex.quote(str(binding['file_sha256']))}",
+            f"{STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256_ENV}="
+            f"{shlex.quote(str(binding['canonical_sha256']))}",
+            f"{STARTUP_STATIC_RUNTIME_VERIFIER_PATH_ENV}="
+            f"{shlex.quote(str(authority['authority_verifier']['path']))}",
+            f"{STARTUP_STATIC_RUNTIME_VERIFIER_SHA256_ENV}="
+            f"{shlex.quote(str(authority['authority_verifier']['sha256']))}",
+            f"{STARTUP_STATIC_TRUSTED_PYTHON_PATH_ENV}="
+            f"{shlex.quote(str(authority['trusted_python']['path']))}",
+            f"{STARTUP_STATIC_TRUSTED_PYTHON_SHA256_ENV}="
+            f"{shlex.quote(str(authority['trusted_python']['sha256']))}",
+        )
+    )
+
+
+def _clean_remote_shell_command(command: str) -> str:
+    if not command.strip():
+        raise BuyE3TransactionalDeployError("clean remote command is empty")
+    return (
+        '/usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin '
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+        f"/bin/bash --noprofile --norc -c {shlex.quote(command)}"
+    )
+
+
+def _clean_static_gate_command(command: str) -> str:
+    return _clean_remote_shell_command(command)
+
+
 def _plan_core_payload(plan: Mapping[str, Any]) -> dict[str, Any]:
     missing = _PLAN_CORE_FIELDS - set(plan)
     if missing:
@@ -812,6 +1211,7 @@ def _current_runtime_sources(
     repository_root: Path,
     execution_commit: str,
     attempt_payload: Mapping[str, Any] | None = None,
+    source_paths: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     execution_commit = _require_git_sha(
         execution_commit,
@@ -849,8 +1249,11 @@ def _current_runtime_sources(
                 "compatible execution attempt runtime identity drifted"
             )
     root = repository_root.expanduser().resolve(strict=True)
+    selected_paths = (
+        _CURRENT_RUNTIME_SOURCE_PATHS if source_paths is None else dict(source_paths)
+    )
     bindings: dict[str, Any] = {}
-    for role, relative in _CURRENT_RUNTIME_SOURCE_PATHS.items():
+    for role, relative in selected_paths.items():
         candidate = root / relative
         if candidate.is_symlink() or not candidate.is_file():
             raise BuyE3TransactionalDeployError(
@@ -893,6 +1296,17 @@ def _current_runtime_sources(
         "files": bindings,
         "runtime_code_sha256": gate_v2.canonical_sha256(bindings),
     }
+
+
+def _successor_runtime_sources(
+    *, repository_root: Path, execution_commit: str
+) -> dict[str, Any]:
+    root = repository_root.expanduser().resolve(strict=True)
+    return _current_runtime_sources(
+        repository_root=root,
+        execution_commit=execution_commit,
+        source_paths=_successor_runtime_source_paths(root),
+    )
 
 
 def _compatible_runtime_sources(
@@ -1334,14 +1748,21 @@ def _validate_checkout_runtime_source_authority(
 ) -> dict[str, Any]:
     files = runtime_sources.get("files") if isinstance(runtime_sources, Mapping) else None
     if expected_startup_attestation_schema_version not in {
+        SUCCESSOR_STARTUP_ATTESTATION_SCHEMA,
         STARTUP_ATTESTATION_SCHEMA,
         HISTORICAL_STARTUP_ATTESTATION_SCHEMA,
         LEGACY_STARTUP_ATTESTATION_SCHEMA,
     }:
         raise BuyE3TransactionalDeployError("runtime source startup schema is unsupported")
+    successor = (
+        expected_startup_attestation_schema_version
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    )
     current = expected_startup_attestation_schema_version == STARTUP_ATTESTATION_SCHEMA
-    expected_paths = (
-        _CURRENT_RUNTIME_SOURCE_PATHS if current else gate_v2.REQUIRED_RUNTIME_PATHS
+    expected_paths = _successor_runtime_source_paths(repository_root) if successor else (
+        _CURRENT_RUNTIME_SOURCE_PATHS
+        if current
+        else gate_v2.REQUIRED_RUNTIME_PATHS
     )
     if (
         not isinstance(files, Mapping)
@@ -1358,7 +1779,7 @@ def _validate_checkout_runtime_source_authority(
             "working_file_sha256",
             "authority_basis",
         }
-        if current
+        if current or successor
         else {
             "repository_relative_path",
             "artifact_manifest_sha256",
@@ -1380,11 +1801,14 @@ def _validate_checkout_runtime_source_authority(
             relative != expected_relative
             or raw.get("execution_commit_blob_sha256") != expected_sha
             or (
-                current
+                (current or successor)
                 and raw.get("authority_basis")
                 != _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
             )
-            or (not current and raw.get("artifact_manifest_sha256") != expected_sha)
+            or (
+                not (current or successor)
+                and raw.get("artifact_manifest_sha256") != expected_sha
+            )
         ):
             raise BuyE3TransactionalDeployError(
                 f"runtime source authority identity drifted: {role}"
@@ -1427,18 +1851,28 @@ def _validate_checkout_runtime_source_authority(
 
 def _validated_expected_runtime_source_hashes(
     runtime_sources: Mapping[str, Any],
-) -> dict[str, str]:
+) -> dict[str, Any]:
     files = runtime_sources.get("files")
     if not isinstance(files, Mapping):
         raise BuyE3TransactionalDeployError("runtime source bindings are malformed")
     if runtime_sources.get("runtime_code_sha256") != gate_v2.canonical_sha256(files):
         raise BuyE3TransactionalDeployError("runtime source aggregate is malformed")
-    current = set(files) == set(_CURRENT_RUNTIME_SOURCE_PATHS)
+    current = bool(files) and all(
+        isinstance(raw, Mapping)
+        and str(role) == str(raw.get("repository_relative_path", ""))
+        and raw.get("authority_basis") == _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
+        for role, raw in files.items()
+    )
+    predecessor = set(files) == set(_CURRENT_RUNTIME_SOURCE_PATHS)
     historical = set(files) == set(gate_v2.REQUIRED_RUNTIME_PATHS)
-    if not current and not historical:
+    if not current and not predecessor and not historical:
         raise BuyE3TransactionalDeployError("runtime source role set is malformed")
     expected_paths = (
-        _CURRENT_RUNTIME_SOURCE_PATHS if current else gate_v2.REQUIRED_RUNTIME_PATHS
+        {str(role): str(role) for role in files}
+        if current
+        else _CURRENT_RUNTIME_SOURCE_PATHS
+        if predecessor
+        else gate_v2.REQUIRED_RUNTIME_PATHS
     )
     expected_fields = (
         {
@@ -1447,7 +1881,7 @@ def _validated_expected_runtime_source_hashes(
             "working_file_sha256",
             "authority_basis",
         }
-        if current
+        if current or predecessor
         else {
             "repository_relative_path",
             "artifact_manifest_sha256",
@@ -1465,7 +1899,7 @@ def _validated_expected_runtime_source_hashes(
             raise BuyE3TransactionalDeployError(f"runtime source path is unsafe: {role}")
         hash_fields = (
             ("execution_commit_blob_sha256", "working_file_sha256")
-            if current
+            if current or predecessor
             else (
                 "artifact_manifest_sha256",
                 "execution_commit_blob_sha256",
@@ -1481,7 +1915,7 @@ def _validated_expected_runtime_source_hashes(
             or path in expected
             or path != expected_paths[role]
             or (
-                current
+                (current or predecessor)
                 and raw.get("authority_basis")
                 != _CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS
             )
@@ -1542,6 +1976,10 @@ def _active_release_contract(schema_version: Any) -> tuple[str, str]:
             buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_IDENTITY,
             buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_STATUS,
         ),
+        buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA: (
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_IDENTITY,
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_STATUS,
+        ),
     }
     try:
         return contracts[str(schema_version)]
@@ -1549,6 +1987,100 @@ def _active_release_contract(schema_version: Any) -> tuple[str, str]:
         raise BuyE3TransactionalDeployError(
             "active release schema is not supported"
         ) from exc
+
+
+def _successor_native_build_binding(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, Mapping) or set(raw) != _SUCCESSOR_NATIVE_BUILD_PROJECTED_FIELDS:
+        raise BuyE3TransactionalDeployError(
+            "successor native build projection fields drifted"
+        )
+    native = dict(raw)
+    if (
+        native.get("schema_version")
+        != "narrowgate_linux_x86_64_native_build_receipt.v2"
+        or native.get("status")
+        != "exact_tag_native_build_dependency_lock_and_parity_passed"
+        or native.get("platform") != "linux_x86_64"
+        or native.get("python_minor") != "3.12"
+        or not str(native.get("soabi", "")).startswith("cpython-312-")
+        or any(
+            not PurePosixPath(str(native.get(field, ""))).is_absolute()
+            for field in (
+                "runtime_lock_path",
+                "wheelhouse_path",
+                "install_receipt_path",
+                "root_wheel_path",
+                "native_wheel_path",
+            )
+        )
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor native build projection identity drifted"
+        )
+    for field in (
+        "file_sha256",
+        "canonical_sha256",
+        "module_sha256",
+        "wheel_sha256",
+        "runtime_lock_file_sha256",
+        "runtime_lock_canonical_sha256",
+        "wheelhouse_manifest_file_sha256",
+        "wheelhouse_canonical_sha256",
+        "install_receipt_file_sha256",
+        "install_receipt_canonical_sha256",
+        "root_wheel_sha256",
+        "installed_record_aggregate_sha256",
+    ):
+        native[field] = _require_sha256(native.get(field), field)
+    interpreter = native.get("interpreter")
+    if (
+        not isinstance(interpreter, Mapping)
+        or set(interpreter) != _LOCKED_RUNTIME_INTERPRETER_FIELDS
+        or interpreter.get("implementation") != "cpython"
+        or interpreter.get("version_info", [])[:2] != [3, 12]
+        or interpreter.get("is_virtual_environment") is not True
+        or interpreter.get("soabi") != native["soabi"]
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor native build interpreter authority drifted"
+        )
+    _require_sha256(
+        interpreter.get("executable_sha256"),
+        "successor interpreter executable",
+    )
+    _require_sha256(
+        interpreter.get("base_executable_sha256"),
+        "successor interpreter base executable",
+    )
+    return {
+        "native_build_receipt_sha256": native["file_sha256"],
+        "native_build_receipt_canonical_sha256": native["canonical_sha256"],
+        "native_module_sha256": native["module_sha256"],
+        "native_wheel_sha256": native["wheel_sha256"],
+        "native_soabi": native["soabi"],
+        "runtime_lock_file_sha256": native["runtime_lock_file_sha256"],
+        "runtime_lock_path": native["runtime_lock_path"],
+        "runtime_lock_canonical_sha256": native[
+            "runtime_lock_canonical_sha256"
+        ],
+        "wheelhouse_manifest_file_sha256": native[
+            "wheelhouse_manifest_file_sha256"
+        ],
+        "wheelhouse_path": native["wheelhouse_path"],
+        "wheelhouse_canonical_sha256": native["wheelhouse_canonical_sha256"],
+        "install_receipt_path": native["install_receipt_path"],
+        "install_receipt_file_sha256": native["install_receipt_file_sha256"],
+        "install_receipt_canonical_sha256": native[
+            "install_receipt_canonical_sha256"
+        ],
+        "root_wheel_sha256": native["root_wheel_sha256"],
+        "root_wheel_path": native["root_wheel_path"],
+        "native_wheel_path": native["native_wheel_path"],
+        "installed_record_aggregate_sha256": native[
+            "installed_record_aggregate_sha256"
+        ],
+        "locked_runtime_interpreter": dict(interpreter),
+    }
 
 
 def _expected_active_release_identity(
@@ -1560,10 +2092,15 @@ def _expected_active_release_identity(
     if raw is None:
         return _empty_active_release_identity()
     schema_version = str(raw.get("schema_version", ""))
-    is_v3 = schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
+    config_bound = schema_version in {
+        buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+    }
     expected_fields = (
-        _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
-        if is_v3
+        _SUCCESSOR_ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+        if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        else _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+        if config_bound
         else _LEGACY_ACTIVE_RELEASE_PHASE_BINDING_FIELDS
     )
     if set(raw) != expected_fields:
@@ -1580,7 +2117,7 @@ def _expected_active_release_identity(
         "active_config_file_sha256": "",
         "disabled_config_file_sha256": "",
     }
-    if is_v3:
+    if config_bound:
         identity["active_config_file_sha256"] = _require_sha256(
             raw.get("active_config_file_sha256"),
             "active release embedded active config hash",
@@ -1589,6 +2126,55 @@ def _expected_active_release_identity(
             raw.get("disabled_config_file_sha256"),
             "active release embedded disabled config hash",
         )
+    if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+        for field in (
+            "native_build_receipt_sha256",
+            "native_build_receipt_canonical_sha256",
+            "native_module_sha256",
+            "native_wheel_sha256",
+            "runtime_lock_file_sha256",
+            "runtime_lock_canonical_sha256",
+            "wheelhouse_manifest_file_sha256",
+            "wheelhouse_canonical_sha256",
+            "install_receipt_file_sha256",
+            "install_receipt_canonical_sha256",
+            "root_wheel_sha256",
+            "installed_record_aggregate_sha256",
+        ):
+            identity[field] = _require_sha256(
+                raw.get(field), f"active release {field}"
+            )
+        interpreter = raw.get("locked_runtime_interpreter")
+        if (
+            not str(raw.get("native_soabi", "")).startswith("cpython-312-")
+            or any(
+                not PurePosixPath(str(raw.get(field, ""))).is_absolute()
+                for field in (
+                    "runtime_lock_path",
+                    "wheelhouse_path",
+                    "install_receipt_path",
+                    "root_wheel_path",
+                    "native_wheel_path",
+                )
+            )
+            or not isinstance(interpreter, Mapping)
+            or set(interpreter) != _LOCKED_RUNTIME_INTERPRETER_FIELDS
+            or interpreter.get("implementation") != "cpython"
+            or interpreter.get("version_info", [])[:2] != [3, 12]
+            or interpreter.get("is_virtual_environment") is not True
+            or interpreter.get("soabi") != raw.get("native_soabi")
+        ):
+            raise BuyE3TransactionalDeployError("active release native SOABI drifted")
+        identity["native_soabi"] = str(raw["native_soabi"])
+        for field in (
+            "runtime_lock_path",
+            "wheelhouse_path",
+            "install_receipt_path",
+            "root_wheel_path",
+            "native_wheel_path",
+        ):
+            identity[field] = str(raw[field])
+        identity["locked_runtime_interpreter"] = dict(interpreter)
     return identity
 
 
@@ -1670,6 +2256,7 @@ def _validate_startup_attestation(
     expected_config_sha256: str,
     expected_enabled: bool,
     expected_active_release: Mapping[str, Any] | None,
+    expected_safety_release: Mapping[str, Any] | None = None,
     allow_legacy: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
@@ -1682,6 +2269,8 @@ def _validate_startup_attestation(
         )
     legacy_v3 = schema_version == LEGACY_STARTUP_ATTESTATION_SCHEMA
     historical_v4 = schema_version == HISTORICAL_STARTUP_ATTESTATION_SCHEMA
+    predecessor_v5 = schema_version == STARTUP_ATTESTATION_SCHEMA
+    successor_v6 = schema_version == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
     historical = legacy_v3 or historical_v4
     if legacy_v3:
         expected_fields = _LEGACY_STARTUP_ATTESTATION_FIELDS
@@ -1689,9 +2278,16 @@ def _validate_startup_attestation(
     elif historical_v4:
         expected_fields = _HISTORICAL_STARTUP_ATTESTATION_FIELDS
         expected_gate_fields = _HISTORICAL_STARTUP_GATE_FIELDS
+    elif predecessor_v5:
+        expected_fields = _PREDECESSOR_STARTUP_ATTESTATION_FIELDS
+        expected_gate_fields = _PREDECESSOR_STARTUP_GATE_FIELDS
+    elif successor_v6:
+        expected_fields = _SUCCESSOR_STARTUP_ATTESTATION_FIELDS
+        expected_gate_fields = _SUCCESSOR_STARTUP_GATE_FIELDS
     else:
-        expected_fields = _STARTUP_ATTESTATION_FIELDS
-        expected_gate_fields = _STARTUP_GATE_FIELDS
+        raise BuyE3TransactionalDeployError(
+            "runtime startup attestation schema is unsupported"
+        )
     if set(attestation) != expected_fields or (historical and not allow_legacy):
         raise BuyE3TransactionalDeployError("runtime startup attestation fields drifted")
     gates = attestation.get("gates")
@@ -1706,6 +2302,8 @@ def _validate_startup_attestation(
             else HISTORICAL_STARTUP_ATTESTATION_SCHEMA
             if historical_v4
             else STARTUP_ATTESTATION_SCHEMA
+            if predecessor_v5
+            else SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
         )
         or attestation.get("status") != "accepted"
         or not str(attestation.get("attested_at_utc", "")).strip()
@@ -1811,6 +2409,8 @@ def _validate_startup_attestation(
                     "enabled runtime startup lacks post-envelope active release authority"
                 )
             for field, value in expected_release.items():
+                if field not in expected_release_fields:
+                    continue
                 if release.get(field) != value:
                     raise BuyE3TransactionalDeployError("runtime active release identity drifted")
             if (
@@ -1920,11 +2520,16 @@ def _validate_startup_attestation(
         _HISTORICAL_LOADED_RUNTIME_MODULE_IDENTITIES
         if historical
         else _LOADED_RUNTIME_MODULE_IDENTITIES
+        if predecessor_v5
+        else _SUCCESSOR_LOADED_RUNTIME_MODULE_IDENTITIES
     )
     expected_loaded_paths = {
         relative for _module, relative in expected_loaded_modules.values()
     }
-    if set(observed) != expected_loaded_paths:
+    if not expected_loaded_paths.issubset(observed) or (
+        not successor_v6
+        and set(observed) != expected_loaded_paths
+    ):
         raise BuyE3TransactionalDeployError(
             "runtime startup source manifest path set drifted"
         )
@@ -1940,7 +2545,11 @@ def _validate_startup_attestation(
             for path, sha256 in expected_sources.items()
             if path in expected_loaded_paths
         }
-    elif set(expected_sources) != expected_loaded_paths:
+    elif predecessor_v5 and set(expected_sources) != expected_loaded_paths:
+        raise BuyE3TransactionalDeployError(
+            "predecessor runtime source authority does not cover every loaded module"
+        )
+    elif successor_v6 and not set(expected_sources).issubset(observed):
         raise BuyE3TransactionalDeployError(
             "current runtime source authority does not cover every loaded module"
         )
@@ -1980,6 +2589,34 @@ def _validate_startup_attestation(
             raise BuyE3TransactionalDeployError(
                 f"runtime loaded module origin is not source-bound: {role}"
             )
+    if successor_v6:
+        closure = attestation.get("loaded_repository_module_closure")
+        if not isinstance(closure, list) or not closure:
+            raise BuyE3TransactionalDeployError("runtime repository module closure is empty")
+        closure_pairs: list[tuple[str, str]] = []
+        for raw_module in closure:
+            if not isinstance(raw_module, Mapping) or set(raw_module) != _LOADED_RUNTIME_MODULE_FIELDS:
+                raise BuyE3TransactionalDeployError(
+                    "runtime repository module closure fields drifted"
+                )
+            path = str(raw_module.get("repository_relative_path", ""))
+            pair = (str(raw_module.get("module_name", "")), path)
+            if pair in closure_pairs or observed.get(path) != raw_module.get("source_sha256"):
+                raise BuyE3TransactionalDeployError(
+                    "runtime repository module closure is not source-bound"
+                )
+            expected_origin = str(PurePosixPath(expected_repository_root) / path)
+            if raw_module.get("origin_path") != expected_origin:
+                raise BuyE3TransactionalDeployError(
+                    "runtime repository module closure escaped the checkout"
+                )
+            closure_pairs.append(pair)
+        if closure_pairs != sorted(closure_pairs) or not expected_loaded_paths.issubset(
+            {path for _module, path in closure_pairs}
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime repository module closure is incomplete or unordered"
+            )
     interpreter = attestation.get("interpreter_identity")
     if (
         not isinstance(interpreter, Mapping)
@@ -2006,13 +2643,76 @@ def _validate_startup_attestation(
     native = attestation.get("native_runtime_identity")
     if (
         not isinstance(native, Mapping)
-        or set(native) != _NATIVE_RUNTIME_IDENTITY_FIELDS
+        or set(native)
+        != (
+            _SUCCESSOR_NATIVE_RUNTIME_IDENTITY_FIELDS
+            if successor_v6
+            else _NATIVE_RUNTIME_IDENTITY_FIELDS
+        )
         or native.get("schema_version") != NATIVE_RUNTIME_IDENTITY_SCHEMA
         or not str(native.get("platform", "")).strip()
         or native.get("stable") is not True
         or not isinstance(native.get("enabled"), bool)
     ):
         raise BuyE3TransactionalDeployError("native runtime identity drifted")
+    if successor_v6:
+        abi = native.get("abi_contract")
+        locked = native.get("locked_runtime")
+        expected_venv = (
+            str(
+                PurePosixPath(
+                    str(expected_safety_release.get("install_receipt_path", ""))
+                ).parent
+                / f"venv-{expected_execution_commit}"
+            )
+            if expected_safety_release is not None
+            else ""
+        )
+        expected_selector = str(
+            PurePosixPath(expected_repository_root) / ".venv-active"
+        )
+        if (
+            not isinstance(abi, Mapping)
+            or abi.get("schema_version") != "narrowgate_native_live_safety_abi.v1"
+            or abi.get("validated") is not True
+            or not isinstance(abi.get("required_apis"), list)
+            or abi.get("required_quote_fields")
+            != {
+                "QuoteFlags": ["delta_cap", "final_compressed", "cap_exposure_block"],
+                "SideQuoteContext": ["cap_exposure_block"],
+            }
+        ):
+            raise BuyE3TransactionalDeployError("native runtime ABI contract drifted")
+        if (
+            expected_safety_release is None
+            or not isinstance(locked, Mapping)
+            or set(locked) != _LOCKED_RUNTIME_STARTUP_FIELDS
+            or locked.get("validated") is not True
+            or locked.get("venv_selector_path") != expected_selector
+            or locked.get("venv_selector_target") != expected_venv
+            or locked.get("venv_real_path") != expected_venv
+            or locked.get("python_real_path")
+            != str(PurePosixPath(expected_venv) / "bin/python3")
+            or locked.get("install_receipt_path")
+            != expected_safety_release.get("install_receipt_path")
+            or locked.get("install_receipt_file_sha256")
+            != expected_safety_release.get("install_receipt_file_sha256")
+            or locked.get("install_receipt_canonical_sha256")
+            != expected_safety_release.get("install_receipt_canonical_sha256")
+            or locked.get("runtime_lock_canonical_sha256")
+            != expected_safety_release.get("runtime_lock_canonical_sha256")
+            or locked.get("wheelhouse_canonical_sha256")
+            != expected_safety_release.get("wheelhouse_canonical_sha256")
+            or locked.get("installed_record_aggregate_sha256")
+            != expected_safety_release.get(
+                "installed_record_aggregate_sha256"
+            )
+            or locked.get("interpreter")
+            != expected_safety_release.get("locked_runtime_interpreter")
+        ):
+            raise BuyE3TransactionalDeployError(
+                "locked successor runtime startup authority drifted"
+            )
     if native["enabled"]:
         native_before = _validate_file_byte_identity(
             native.get("before"), label="native runtime before"
@@ -2026,6 +2726,19 @@ def _validate_startup_attestation(
             or native.get("loaded_module_origin_path") != native_before["resolved_path"]
         ):
             raise BuyE3TransactionalDeployError("native runtime module bytes or origin drifted")
+        if (
+            expected_safety_release is not None
+            and expected_safety_release.get("schema_version")
+            == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+            and native_before["sha256"]
+            != _require_sha256(
+                expected_safety_release.get("native_module_sha256"),
+                "successor expected native module hash",
+            )
+        ):
+            raise BuyE3TransactionalDeployError(
+                "native runtime module differs from successor build receipt"
+            )
     elif (
         native.get("reported_module_path") != "disabled"
         or native.get("loaded_module_origin_path") is not None
@@ -2033,6 +2746,41 @@ def _validate_startup_attestation(
         or native.get("after") is not None
     ):
         raise BuyE3TransactionalDeployError("disabled native runtime identity is malformed")
+    if successor_v6:
+        safety = attestation.get("live_safety_successor")
+        expected_safety_identity = None
+        if expected_safety_release is not None:
+            expected_safety_identity = {
+                "path": expected_safety_release["remote_path"],
+                "file_sha256": expected_safety_release["file_sha256"],
+                "canonical_sha256": expected_safety_release[
+                    "canonical_active_release_sha256"
+                ],
+                "execution_commit": expected_execution_commit,
+                "execution_tree": expected_execution_tree,
+                "active_config_file_sha256": expected_safety_release[
+                    "active_config_file_sha256"
+                ],
+                "disabled_config_file_sha256": expected_safety_release[
+                    "disabled_config_file_sha256"
+                ],
+                **{
+                    field: expected_safety_release[field]
+                    for field in _SUCCESSOR_ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+                    - _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+                },
+            }
+        if (
+            expected_safety_release is None
+            or expected_safety_release.get("schema_version")
+            != buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+            or not isinstance(safety, Mapping)
+            or set(safety) != _LIVE_SAFETY_SUCCESSOR_IDENTITY_FIELDS
+            or safety != expected_safety_identity
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime live safety successor identity drifted"
+            )
     return attestation
 
 
@@ -2052,6 +2800,8 @@ def _validate_runtime_identity_authority(
     expected_repository_root: str,
     expected_startup_attestation_schema_version: str,
     expected_active_release: Mapping[str, Any] | None,
+    expected_safety_release: Mapping[str, Any] | None = None,
+    expected_exchange_reconciliation_path: str | None = None,
     allow_legacy_startup: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(runtime, Mapping):
@@ -2072,6 +2822,66 @@ def _validate_runtime_identity_authority(
     ):
         raise BuyE3TransactionalDeployError(
             "runtime identity process/config/artifact authority drifted"
+        )
+    successor_runtime = (
+        expected_startup_attestation_schema_version
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    )
+    exchange_binding = runtime.get("startup_exchange_reconciliation")
+    if successor_runtime:
+        if (
+            not isinstance(exchange_binding, Mapping)
+            or set(exchange_binding)
+            != _STARTUP_EXCHANGE_RECONCILIATION_BINDING_FIELDS
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime startup exchange reconciliation binding drifted"
+            )
+        exchange_path = Path(str(exchange_binding.get("path", ""))).expanduser()
+        try:
+            exchange_raw = exchange_path.read_bytes()
+            exchange_payload = json.loads(exchange_raw)
+        except (OSError, json.JSONDecodeError) as exc:
+            raise BuyE3TransactionalDeployError(
+                "runtime startup exchange reconciliation receipt is unavailable"
+            ) from exc
+        exchange_canonical = dict(exchange_payload)
+        observed_canonical = exchange_canonical.pop(
+            "canonical_exchange_reconciliation_sha256", None
+        )
+        if (
+            not exchange_path.is_absolute()
+            or exchange_path.is_symlink()
+            or not exchange_path.is_file()
+            or exchange_path.stat().st_nlink != 1
+            or stat.S_IMODE(exchange_path.stat().st_mode) != 0o600
+            or (
+                expected_exchange_reconciliation_path is not None
+                and str(exchange_path.resolve(strict=True))
+                != expected_exchange_reconciliation_path
+            )
+            or hashlib.sha256(exchange_raw).hexdigest()
+            != exchange_binding.get("file_sha256")
+            or observed_canonical != exchange_binding.get("canonical_sha256")
+            or gate_v2.canonical_sha256(exchange_canonical) != observed_canonical
+            or exchange_payload.get("account_key_sha256")
+            != exchange_binding.get("account_key_sha256")
+            or exchange_payload.get("position_lineage_sha256")
+            != exchange_binding.get("position_lineage_sha256")
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime startup exchange reconciliation receipt drifted"
+            )
+        for field in (
+            "file_sha256",
+            "canonical_sha256",
+            "account_key_sha256",
+            "position_lineage_sha256",
+        ):
+            _require_sha256(exchange_binding.get(field), f"startup exchange {field}")
+    elif exchange_binding is not None:
+        raise BuyE3TransactionalDeployError(
+            "predecessor runtime carries successor exchange authority"
         )
     expected_release = _expected_active_release_identity(
         expected_active_release,
@@ -2133,6 +2943,7 @@ def _validate_runtime_identity_authority(
         expected_config_sha256=expected_config_sha256,
         expected_enabled=expected_enabled,
         expected_active_release=expected_active_release,
+        expected_safety_release=expected_safety_release,
         allow_legacy=allow_legacy_startup,
     )
     native_runtime = runtime.get("native_runtime")
@@ -2155,6 +2966,8 @@ def _validate_runtime_identity_authority(
         expected_native_fields.update(
             {native_flow_requested_field, native_flow_effective_field}
         )
+    if attestation.get("schema_version") == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA:
+        expected_native_fields.update({"abi_contract", "locked_runtime"})
     shadow_runtime = attestation.get("shadow_runtime_identity", {})
     if (
         not isinstance(native_runtime, Mapping)
@@ -2174,6 +2987,15 @@ def _validate_runtime_identity_authority(
         )
         or native_identity.get("profile") != native_runtime.get("profile")
         or native_identity.get("reported_module_path") != native_runtime.get("module")
+        or (
+            attestation.get("schema_version") == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+            and native_identity.get("abi_contract") != native_runtime.get("abi_contract")
+        )
+        or (
+            attestation.get("schema_version") == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+            and native_identity.get("locked_runtime")
+            != native_runtime.get("locked_runtime")
+        )
         or native_identity.get("enabled")
         is not any(bool(native_runtime[name]) for name in native_enable_flag_names)
     ):
@@ -2208,11 +3030,18 @@ def capture_runtime_process_probe(
     active_release_path: Path | None = None,
     expected_active_release_file_sha256: str = "",
     expected_active_release_canonical_sha256: str = "",
+    safety_release_path: Path | None = None,
+    expected_safety_release_file_sha256: str = "",
+    expected_safety_release_canonical_sha256: str = "",
+    expected_safety_active_config_file_sha256: str = "",
+    expected_safety_disabled_config_file_sha256: str = "",
+    expected_exchange_reconciliation_path: Path | None = None,
 ) -> dict[str, Any]:
     if expected_startup_attestation_schema_version not in {
         LEGACY_STARTUP_ATTESTATION_SCHEMA,
         HISTORICAL_STARTUP_ATTESTATION_SCHEMA,
         STARTUP_ATTESTATION_SCHEMA,
+        SUCCESSOR_STARTUP_ATTESTATION_SCHEMA,
     }:
         raise BuyE3TransactionalDeployError(
             "expected startup attestation schema is not an admitted frozen writer"
@@ -2331,7 +3160,10 @@ def capture_runtime_process_probe(
             "schema_version": schema_version,
             "status": release_status,
         }
-        if schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA:
+        if schema_version in {
+            buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+        }:
             config_pair = installed_release["config_pair"]
             active_release_binding.update(
                 {
@@ -2343,9 +3175,109 @@ def capture_runtime_process_probe(
                     ),
                 }
             )
+        if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+            native_build = installed_release["native_build"]
+            active_release_binding.update(
+                _successor_native_build_binding(native_build)
+            )
     elif expected_buy_e3_enabled:
         raise BuyE3TransactionalDeployError(
             "enabled process probe requires post-envelope active release authority"
+        )
+    safety_release_binding: dict[str, Any] | None = None
+    supplied_safety_release = any(
+        (
+            safety_release_path is not None,
+            bool(str(expected_safety_release_file_sha256).strip()),
+            bool(str(expected_safety_release_canonical_sha256).strip()),
+            bool(str(expected_safety_active_config_file_sha256).strip()),
+            bool(str(expected_safety_disabled_config_file_sha256).strip()),
+        )
+    )
+    if supplied_safety_release:
+        if (
+            safety_release_path is None
+            or not all(
+                str(value).strip()
+                for value in (
+                    expected_safety_release_file_sha256,
+                    expected_safety_release_canonical_sha256,
+                    expected_safety_active_config_file_sha256,
+                    expected_safety_disabled_config_file_sha256,
+                )
+            )
+        ):
+            raise BuyE3TransactionalDeployError(
+                "successor safety release process-probe binding is incomplete"
+            )
+        installed_safety = _validate_installed_active_release_file(
+            safety_release_path,
+            expected_file_sha256=_require_sha256(
+                expected_safety_release_file_sha256,
+                "expected successor safety release file hash",
+            ),
+            expected_canonical_sha256=_require_sha256(
+                expected_safety_release_canonical_sha256,
+                "expected successor safety release canonical hash",
+            ),
+            expected_execution_commit=expected_execution_commit,
+            expected_execution_tree=expected_execution_tree,
+            expected_artifact_sha256=artifact_sha,
+            expected_manifest_file_sha256=artifact_file_hashes["manifest"],
+            expected_policy_file_sha256=artifact_file_hashes["policy"],
+            expected_predicate_bundle_file_sha256=artifact_file_hashes[
+                "predicate_bundle"
+            ],
+            expected_active_config_file_sha256=_require_sha256(
+                expected_safety_active_config_file_sha256,
+                "expected successor active config hash",
+            ),
+            expected_disabled_config_file_sha256=_require_sha256(
+                expected_safety_disabled_config_file_sha256,
+                "expected successor disabled config hash",
+            ),
+        )
+        if (
+            installed_safety.get("schema_version")
+            != buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        ):
+            raise BuyE3TransactionalDeployError(
+                "safety release process probe requires successor schema"
+            )
+        config_pair = installed_safety["config_pair"]
+        native_build = installed_safety["native_build"]
+        safety_release_binding = {
+            "local_path": "not_transferred_to_probe_host",
+            "remote_path": str(safety_release_path.expanduser().absolute()),
+            "file_sha256": _require_sha256(
+                expected_safety_release_file_sha256,
+                "expected successor safety release file hash",
+            ),
+            "canonical_active_release_sha256": _require_sha256(
+                expected_safety_release_canonical_sha256,
+                "expected successor safety release canonical hash",
+            ),
+            "schema_version": buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+            "status": buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_STATUS,
+            "active_config_file_sha256": str(config_pair["active"]["file_sha256"]),
+            "disabled_config_file_sha256": str(config_pair["disabled"]["file_sha256"]),
+        }
+        safety_release_binding.update(_successor_native_build_binding(native_build))
+    if (
+        expected_startup_attestation_schema_version
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+        and safety_release_binding is None
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor process probe requires always-on safety release authority"
+        )
+    if (
+        expected_startup_attestation_schema_version
+        != SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+        and safety_release_binding is not None
+    ):
+        raise BuyE3TransactionalDeployError(
+            "predecessor process probe cannot carry successor safety authority"
         )
     completed_commit = subprocess.run(
         ("git", "rev-parse", "HEAD"),
@@ -2407,9 +3339,14 @@ def capture_runtime_process_probe(
             expected_startup_attestation_schema_version
         ),
         expected_active_release=active_release_binding,
-        allow_legacy_startup=(
-            expected_startup_attestation_schema_version != STARTUP_ATTESTATION_SCHEMA
+        expected_safety_release=safety_release_binding,
+        expected_exchange_reconciliation_path=(
+            str(expected_exchange_reconciliation_path.expanduser().absolute())
+            if expected_exchange_reconciliation_path is not None
+            else None
         ),
+        allow_legacy_startup=expected_startup_attestation_schema_version
+        in {LEGACY_STARTUP_ATTESTATION_SCHEMA, HISTORICAL_STARTUP_ATTESTATION_SCHEMA},
     )
     startup_state = startup_attestation["fill_cooldown_state"]
     startup_release = startup_attestation.get("buy_e3_active_release")
@@ -2443,6 +3380,16 @@ def capture_runtime_process_probe(
             "active_release_execution_tree": str(startup_release.get("execution_tree", "")),
         }
     )
+    if (
+        expected_startup_attestation_schema_version
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    ):
+        exchange = runtime.get("startup_exchange_reconciliation")
+        if not isinstance(exchange, Mapping):
+            raise BuyE3TransactionalDeployError(
+                "successor process probe lacks exchange reconciliation binding"
+            )
+        process["startup_exchange_reconciliation"] = dict(exchange)
     process["canonical_process_identity_sha256"] = gate_v2.document_sha256(
         process, "canonical_process_identity_sha256"
     )
@@ -2452,6 +3399,34 @@ def capture_runtime_process_probe(
 def _validate_rollback_identity(name: str, raw: Any) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise BuyE3TransactionalDeployError(f"rollback identity is malformed: {name}")
+    if name == "deep_predecessor" and raw.get("mode") == "stop_cancel_reconcile_only":
+        expected = {
+            "identity",
+            "mode",
+            "historical_execution_commit",
+            "historical_execution_tree",
+            "automatic_historical_restart_authorized",
+            "requires_manual_exchange_reconciliation",
+        }
+        if (
+            set(raw) != expected
+            or not str(raw.get("identity", "")).strip()
+            or raw.get("automatic_historical_restart_authorized") is not False
+            or raw.get("requires_manual_exchange_reconciliation") is not True
+        ):
+            raise BuyE3TransactionalDeployError(
+                "deep predecessor must be an exact stop/cancel/reconcile-only identity"
+            )
+        normalized = dict(raw)
+        normalized["historical_execution_commit"] = _require_git_sha(
+            raw.get("historical_execution_commit"),
+            "deep rollback historical commit",
+        )
+        normalized["historical_execution_tree"] = _require_git_sha(
+            raw.get("historical_execution_tree"),
+            "deep rollback historical tree",
+        )
+        return normalized
     required = (
         "identity",
         "execution_commit",
@@ -2488,7 +3463,11 @@ def _rollback_startup_attestation_schema(
         identity.get("execution_commit") == current_execution.get("execution_commit")
         and identity.get("execution_tree") == current_execution.get("execution_tree")
     ):
-        return STARTUP_ATTESTATION_SCHEMA
+        return (
+            SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+            if _is_successor_execution(current_execution)
+            else STARTUP_ATTESTATION_SCHEMA
+        )
     if (
         identity.get("execution_commit") == FROZEN_07EF_EXECUTION_COMMIT
         and identity.get("execution_tree") == FROZEN_07EF_EXECUTION_TREE
@@ -2554,6 +3533,24 @@ def _activation_gate_cross_binding(
     host: Mapping[str, Any],
     rollback: Mapping[str, Any],
 ) -> dict[str, Any]:
+    host_binding = {
+        "active_pointer_file_sha256": pointer.get("file_sha256"),
+        "known_hosts_file_sha256": known_hosts.get("file_sha256"),
+        "host_key_fingerprint": known_hosts.get("expected_fingerprint"),
+        "repo_root": pointer.get("repo_root"),
+        "python_executable": host.get("python_executable"),
+        "venv_root": host.get("venv_root"),
+    }
+    if _is_successor_execution(execution):
+        host_binding["current_venv_selector_target"] = host.get(
+            "current_venv_selector_target"
+        )
+        host_binding["trusted_static_python_path"] = host.get(
+            "trusted_static_python_path"
+        )
+        host_binding["trusted_static_python_sha256"] = host.get(
+            "trusted_static_python_sha256"
+        )
     return {
         "execution": {
             field: execution.get(field)
@@ -2570,14 +3567,7 @@ def _activation_gate_cross_binding(
         "configs": {
             name: configs.get(name, {}).get("config_sha256") for name in ("disabled", "active")
         },
-        "host": {
-            "active_pointer_file_sha256": pointer.get("file_sha256"),
-            "known_hosts_file_sha256": known_hosts.get("file_sha256"),
-            "host_key_fingerprint": known_hosts.get("expected_fingerprint"),
-            "repo_root": pointer.get("repo_root"),
-            "python_executable": host.get("python_executable"),
-            "venv_root": host.get("venv_root"),
-        },
+        "host": host_binding,
         "rollback_identities": {
             name: dict(rollback.get(name, {})) for name in ("primary_disabled", "deep_predecessor")
         },
@@ -2596,6 +3586,22 @@ def _activation_gate_receipt_cross_binding(receipt: Mapping[str, Any]) -> dict[s
         for value in (execution, runtime_sources, artifact, configs, host, rollback)
     ):
         raise BuyE3TransactionalDeployError("activation gate cross-binding is incomplete")
+    host_fields = [
+        "active_pointer_file_sha256",
+        "known_hosts_file_sha256",
+        "host_key_fingerprint",
+        "repo_root",
+        "python_executable",
+        "venv_root",
+    ]
+    if _is_successor_execution(execution):
+        host_fields.extend(
+            (
+                "current_venv_selector_target",
+                "trusted_static_python_path",
+                "trusted_static_python_sha256",
+            )
+        )
     return {
         "execution": {
             field: execution.get(field)
@@ -2612,17 +3618,7 @@ def _activation_gate_receipt_cross_binding(receipt: Mapping[str, Any]) -> dict[s
         "configs": {
             name: configs.get(name, {}).get("config_sha256") for name in ("disabled", "active")
         },
-        "host": {
-            field: host.get(field)
-            for field in (
-                "active_pointer_file_sha256",
-                "known_hosts_file_sha256",
-                "host_key_fingerprint",
-                "repo_root",
-                "python_executable",
-                "venv_root",
-            )
-        },
+        "host": {field: host.get(field) for field in host_fields},
         "rollback_identities": {
             name: dict(rollback.get(name, {})) for name in ("primary_disabled", "deep_predecessor")
         },
@@ -2676,18 +3672,47 @@ def _release_env_unsets() -> str:
     )
 
 
+def _safety_env_unsets() -> str:
+    return " ".join(
+        f"-u {name}"
+        for name in (
+            LIVE_SAFETY_SUCCESSOR_PATH_ENV,
+            LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV,
+            LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV,
+        )
+    )
+
+
 def _remote_external_config_start(
     repo_root: str,
     config_path: str,
     *,
     owner_override: bool,
     active_release_binding: Mapping[str, Any] | None = None,
+    safety_release_binding: Mapping[str, Any] | None = None,
+    exchange_reconciliation_path: str | None = None,
+    dynamic_exchange_authority: bool = False,
+    startup_static_authority_env: str = "",
 ) -> str:
-    buy_authority = (
-        f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1"
-        if owner_override
-        else f"-u {F05_BUY_E3_OWNER_OVERRIDE_ENV}"
-    )
+    authority_unset_fragments: list[str] = []
+    if not owner_override:
+        authority_unset_fragments.append(f"-u {F05_BUY_E3_OWNER_OVERRIDE_ENV}")
+    if active_release_binding is None:
+        authority_unset_fragments.append(_release_env_unsets())
+    if safety_release_binding is None:
+        authority_unset_fragments.append(_safety_env_unsets())
+    if exchange_reconciliation_path is None:
+        authority_unset_fragments.extend(
+            f"-u {name}"
+            for name in (
+                STARTUP_EXCHANGE_RECONCILIATION_PATH_ENV,
+                STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256_ENV,
+                STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256_ENV,
+                STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256_ENV,
+            )
+        )
+    authority_unsets = " ".join(authority_unset_fragments)
+    buy_authority = f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1" if owner_override else ""
     if active_release_binding is not None:
         if not owner_override:
             raise BuyE3TransactionalDeployError(
@@ -2704,13 +3729,46 @@ def _remote_external_config_start(
             )
         )
     else:
-        release_authority = _release_env_unsets()
+        release_authority = ""
+    if safety_release_binding is None:
+        safety_authority = ""
+    else:
+        safety_authority = " ".join(
+            (
+                f"{LIVE_SAFETY_SUCCESSOR_PATH_ENV}="
+                f"{shlex.quote(str(safety_release_binding['remote_path']))}",
+                f"{LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV}="
+                f"{shlex.quote(str(safety_release_binding['file_sha256']))}",
+                f"{LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV}="
+                f"{shlex.quote(str(safety_release_binding['canonical_active_release_sha256']))}",
+            )
+        )
+    if exchange_reconciliation_path is None:
+        exchange_authority = ""
+    elif dynamic_exchange_authority:
+        exchange_authority = " ".join(
+            (
+                f"{STARTUP_EXCHANGE_RECONCILIATION_PATH_ENV}="
+                f"{shlex.quote(exchange_reconciliation_path)}",
+                f'{STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256_ENV}="$exchange_file_sha256"',
+                f'{STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256_ENV}="$exchange_canonical_sha256"',
+                f'{STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256_ENV}="$exchange_account_key_sha256"',
+            )
+        )
+    else:
+        raise BuyE3TransactionalDeployError(
+            "successor exchange receipt requires same-transaction hash authority"
+        )
     return (
-        f"cd {shlex.quote(repo_root)} && "
-        f"env {buy_authority} {release_authority} "
+        f"/usr/bin/env -i {authority_unsets} HOME=\"$HOME\" PATH=/usr/bin:/bin "
+        f"{buy_authority} {release_authority} {safety_authority} {exchange_authority} "
+        f"{startup_static_authority_env} "
         f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+        "NARROWGATE_LIVE_PROFILE=native "
+        f"NARROWGATE_LIVE_PROFILE_FILE={shlex.quote(repo_root + '/live/profiles/native.env')} "
         f"NARROWGATE_LIVE_CONFIG={shlex.quote(config_path)} "
-        "bash live/run.sh start"
+        f"/bin/bash --noprofile --norc {shlex.quote(repo_root + '/live/run.sh')} start"
     )
 
 
@@ -2718,6 +3776,7 @@ def _remote_external_config_stop(repo_root: str, config_path: str) -> str:
     return (
         f"cd {shlex.quote(repo_root)} && "
         f"env -u {F05_BUY_E3_OWNER_OVERRIDE_ENV} {_release_env_unsets()} "
+        f"{_safety_env_unsets()} "
         f"NARROWGATE_LIVE_CONFIG={shlex.quote(config_path)} bash live/run.sh stop"
     )
 
@@ -2732,6 +3791,7 @@ def _remote_preflight(
     external_gate: str,
     external_script_sha256: str,
     external_gate_sha256: str,
+    clean_isolated_execution: bool = False,
 ) -> str:
     buy_authority = (
         f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1"
@@ -2741,18 +3801,26 @@ def _remote_preflight(
     command = (
         f"cd {shlex.quote(repo_root)} && env {buy_authority} {_release_env_unsets()} "
         f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
         f"PYTHONPATH={shlex.quote(repo_root)} "
         f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-        f"{shlex.quote(python)} {shlex.quote(external_script)} isolated-preflight "
+        f"{shlex.quote(python)} "
+        f"{'-I ' if clean_isolated_execution else ''}"
+        f"{shlex.quote(external_script)} isolated-preflight "
         f"--repository-root {shlex.quote(repo_root)} --config {shlex.quote(config_path)} "
         f"--expected-enabled {1 if expected_enabled else 0}"
     )
-    return _verified_external_exec(
+    verified = _verified_external_exec(
         command=command,
         external_script=external_script,
         external_script_sha256=external_script_sha256,
         external_gate=external_gate,
         external_gate_sha256=external_gate_sha256,
+    )
+    return (
+        _clean_remote_shell_command(verified)
+        if clean_isolated_execution
+        else verified
     )
 
 
@@ -2769,6 +3837,138 @@ def _verified_external_exec(
         f"{shlex.quote(external_script_sha256)} && "
         f"test \"$(sha256sum {shlex.quote(external_gate)} | awk '{{print $1}}')\" = "
         f"{shlex.quote(external_gate_sha256)} && {command}"
+    )
+
+
+def _remote_exchange_reconciliation_command(
+    *,
+    repo_root: str,
+    external_tool_root: str,
+    external_tool_python: str,
+    external_script: str,
+    external_script_sha256: str,
+    external_gate: str,
+    external_gate_sha256: str,
+    config_path: str,
+    output_path: str,
+    startup_static_gate: str,
+) -> str:
+    if not startup_static_gate.strip():
+        raise BuyE3TransactionalDeployError(
+            "exchange reconciliation requires a trusted static runtime gate"
+        )
+    inner = (
+        "set -eu; "
+        f"{startup_static_gate}; "
+        "safe_home=$HOME; "
+        "set -a; "
+        f". {shlex.quote(repo_root + '/live/.env')}; "
+        "set +a; "
+        "api_key=${BINANCE_API_KEY-}; api_secret=${BINANCE_API_SECRET-}; "
+        "builtin unset BASH_ENV ENV LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD "
+        "PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP PYTHONUSERBASE; "
+        "/usr/bin/env -i HOME=\"$safe_home\" PATH=/usr/bin:/bin "
+        'BINANCE_API_KEY="$api_key" BINANCE_API_SECRET="$api_secret" '
+        f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+        f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+        f"{shlex.quote(external_tool_python)} -I {shlex.quote(external_script)} "
+        f"exchange-reconcile --config {shlex.quote(config_path)} "
+        f"--output {shlex.quote(output_path)}"
+    )
+    verified = _verified_external_exec(
+        command=f"{{ {inner}; }}",
+        external_script=external_script,
+        external_script_sha256=external_script_sha256,
+        external_gate=external_gate,
+        external_gate_sha256=external_gate_sha256,
+    )
+    return (
+        '/usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin '
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+        f"/bin/bash --noprofile --norc -c {shlex.quote(verified)}"
+    )
+
+
+def _remote_bound_exchange_config_start(
+    *,
+    repo_root: str,
+    runtime_config_path: str,
+    reconciliation_config_path: str,
+    reconciliation_output_path: str,
+    owner_override: bool,
+    external_tool_root: str,
+    external_tool_python: str,
+    external_script: str,
+    external_script_sha256: str,
+    external_gate: str,
+    external_gate_sha256: str,
+    active_release_binding: Mapping[str, Any] | None = None,
+    safety_release_binding: Mapping[str, Any] | None = None,
+    startup_static_authority_env: str = "",
+    startup_static_gate: str = "",
+    trusted_static_python_path: str = "",
+) -> str:
+    """Reconcile, freeze its authority, and start in one remote shell."""
+
+    if not PurePosixPath(trusted_static_python_path).is_absolute():
+        raise BuyE3TransactionalDeployError(
+            "bound exchange start requires an absolute trusted Python"
+        )
+
+    reconcile = _remote_exchange_reconciliation_command(
+        repo_root=repo_root,
+        external_tool_root=external_tool_root,
+        external_tool_python=external_tool_python,
+        external_script=external_script,
+        external_script_sha256=external_script_sha256,
+        external_gate=external_gate,
+        external_gate_sha256=external_gate_sha256,
+        config_path=reconciliation_config_path,
+        output_path=reconciliation_output_path,
+        startup_static_gate=startup_static_gate,
+    )
+    canonical_field = "canonical_exchange_reconciliation_sha256"
+    account_field = "account_key_sha256"
+    json_field_reader = (
+        'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))'
+        "[sys.argv[2]])"
+    )
+    start = _remote_external_config_start(
+        repo_root,
+        runtime_config_path,
+        owner_override=owner_override,
+        active_release_binding=active_release_binding,
+        safety_release_binding=safety_release_binding,
+        exchange_reconciliation_path=reconciliation_output_path,
+        dynamic_exchange_authority=True,
+        startup_static_authority_env=startup_static_authority_env,
+    )
+    transaction = (
+        f"{reconcile} && "
+        f"test ! -L {shlex.quote(reconciliation_output_path)} && "
+        f"test -f {shlex.quote(reconciliation_output_path)} && "
+        f"test \"$(stat -c '%a' {shlex.quote(reconciliation_output_path)})\" = 600 && "
+        f"test \"$(stat -c '%h' {shlex.quote(reconciliation_output_path)})\" = 1 && "
+        f"exchange_file_sha256=$(sha256sum {shlex.quote(reconciliation_output_path)} | awk '{{print $1}}') && "
+        f"exchange_canonical_sha256=$({shlex.quote(trusted_static_python_path)} -I -S -c "
+        f"{shlex.quote(json_field_reader)} {shlex.quote(reconciliation_output_path)} "
+        f"{shlex.quote(canonical_field)}) && "
+        f"exchange_account_key_sha256=$({shlex.quote(trusted_static_python_path)} -I -S -c "
+        f"{shlex.quote(json_field_reader)} {shlex.quote(reconciliation_output_path)} "
+        f"{shlex.quote(account_field)}) && "
+        "case \"$exchange_file_sha256$exchange_canonical_sha256"
+        "$exchange_account_key_sha256\" in "
+        "*[!0-9a-f]*|'') exit 86 ;; esac && "
+        "test \"${#exchange_file_sha256}\" = 64 && "
+        "test \"${#exchange_canonical_sha256}\" = 64 && "
+        "test \"${#exchange_account_key_sha256}\" = 64 && "
+        f"{start}"
+    )
+    return (
+        '/usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin '
+        "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+        f"/bin/bash --noprofile --norc -c {shlex.quote(transaction)}"
     )
 
 
@@ -2816,9 +4016,127 @@ def _phase_commands(
     external_gate = staged_paths["gate_amendment"]
     external_script_sha256 = local_hashes["deploy_script"]
     external_gate_sha256 = local_hashes["gate_amendment"]
+    try:
+        committed_tool_relatives = {
+            role: Path(local_package[role]).resolve().relative_to(REPO_ROOT.resolve())
+            for role in ("deploy_script", "gate_amendment")
+        }
+    except ValueError as exc:
+        raise BuyE3TransactionalDeployError(
+            "successor external tools must be repository-owned files"
+        ) from exc
     disabled_config = str(remote["disabled_config_path"])
     active_config = str(remote["active_config_path"])
-    pid_file = str(remote["pid_file"])
+    successor_process_contract = _is_successor_execution(execution)
+    legacy_pid_file = str(remote["pid_file"])
+    supervisor_pid_file = str(
+        remote.get("supervisor_pid_file", legacy_pid_file)
+    )
+    maker_child_pid_file = str(
+        remote.get("maker_child_pid_file", legacy_pid_file)
+    )
+    if successor_process_contract and (
+        supervisor_pid_file == maker_child_pid_file
+        or supervisor_pid_file == legacy_pid_file == maker_child_pid_file
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor deploy requires distinct supervisor and maker child PID files"
+        )
+    pid_file = maker_child_pid_file
+    successor_safety_binding = (
+        {
+            "remote_path": str(remote["safety_release_path"]),
+            "file_sha256": str(remote["safety_release_file_sha256"]),
+            "canonical_active_release_sha256": str(
+                remote["safety_release_canonical_sha256"]
+            ),
+        }
+        if successor_process_contract
+        else None
+    )
+    successor_static_authority_binding: dict[str, str] | None = None
+    successor_static_authority_env = ""
+    successor_static_gate = ""
+    successor_candidate_static_gate = ""
+    if successor_process_contract:
+        static_relative = "scripts/f05_live_safety_startup_static_authority.py"
+        static_source = runtime_sources.get("files", {}).get(static_relative)
+        if not isinstance(static_source, Mapping):
+            raise BuyE3TransactionalDeployError(
+                "successor runtime sources lack the startup static verifier"
+            )
+        static_source_sha256 = _require_sha256(
+            static_source.get("working_file_sha256"),
+            "successor startup static verifier source",
+        )
+        successor_static_authority_binding = {
+            "remote_path": str(remote["startup_static_runtime_authority_path"]),
+            "file_sha256": _require_sha256(
+                remote["startup_static_runtime_authority_file_sha256"],
+                "successor startup static authority file",
+            ),
+            "canonical_sha256": _require_sha256(
+                remote["startup_static_runtime_authority_canonical_sha256"],
+                "successor startup static authority canonical",
+            ),
+        }
+        static_authority_projection = {
+            "authority_verifier": {
+                "path": (
+                    f"{stage_root}/runtime-{execution['execution_commit']}/"
+                    f"{static_relative}"
+                ),
+                "sha256": static_source_sha256,
+            },
+            "trusted_python": {
+                "path": str(host["trusted_static_python_path"]),
+                "sha256": _require_sha256(
+                    host["trusted_static_python_sha256"],
+                    "successor trusted static Python",
+                ),
+            },
+        }
+        successor_static_authority_env = _startup_static_authority_env(
+            static_authority_projection,
+            successor_static_authority_binding,
+        )
+        static_verifier_path = str(
+            static_authority_projection["authority_verifier"]["path"]
+        )
+        trusted_python_path = str(
+            static_authority_projection["trusted_python"]["path"]
+        )
+        authority_path = str(successor_static_authority_binding["remote_path"])
+        raw_successor_static_gate = (
+            f"test ! -L {shlex.quote(trusted_python_path)} && "
+            f"test -f {shlex.quote(trusted_python_path)} && "
+            f"test \"$(stat -c '%h' {shlex.quote(trusted_python_path)})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(trusted_python_path)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(static_authority_projection['trusted_python']['sha256']))} && "
+            f"test ! -L {shlex.quote(static_verifier_path)} && "
+            f"test -f {shlex.quote(static_verifier_path)} && "
+            f"test \"$(stat -c '%h' {shlex.quote(static_verifier_path)})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(static_verifier_path)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(static_source_sha256)} && "
+            f"test ! -L {shlex.quote(authority_path)} && "
+            f"test -f {shlex.quote(authority_path)} && "
+            f"test \"$(stat -c '%h' {shlex.quote(authority_path)})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(authority_path)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(successor_static_authority_binding['file_sha256'])} && "
+            "env PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+            f"{shlex.quote(trusted_python_path)} -I -S "
+            f"{shlex.quote(static_verifier_path)} --authority "
+            f"{shlex.quote(authority_path)} --expected-file-sha256 "
+            f"{shlex.quote(successor_static_authority_binding['file_sha256'])} "
+            f"--expected-canonical-sha256 "
+            f"{shlex.quote(successor_static_authority_binding['canonical_sha256'])}"
+        )
+        successor_static_gate = _clean_static_gate_command(
+            raw_successor_static_gate
+        )
+        successor_candidate_static_gate = _clean_static_gate_command(
+            f"{raw_successor_static_gate} --candidate-only"
+        )
     checkpoint_base = str(remote["startup_checkpoint_path"])
     disabled_checkpoint = f"{checkpoint_base}.disabled"
     active_checkpoint = f"{checkpoint_base}.active"
@@ -2880,6 +4198,7 @@ def _phase_commands(
         ("active_config", active_config),
     )
     compatible = execution.get("compatible_attempt_manifest") is not None
+    isolated_required = compatible or successor_process_contract
 
     def install_command(label: str, destinations: Sequence[tuple[str, str]]) -> dict[str, Any]:
         fragments: list[str] = []
@@ -2910,10 +4229,53 @@ def _phase_commands(
 
     install_bytes = install_command("install-private-artifact-and-config-bytes", installs)
     isolated_root = f"{stage_root}/runtime-{execution['execution_commit']}"
+    isolated_venv = f"{stage_root}/venv-{execution['execution_commit']}"
+    isolated_python = f"{isolated_venv}/bin/python3"
+    isolated_wheel_dir = f"{stage_root}/native-wheel-{execution['execution_commit']}"
+    selected_python = f"{repo_root}/.venv-active/bin/python3"
+    selected_venv = f"{repo_root}/.venv-active"
+    external_tool_root = isolated_root if successor_process_contract else repo_root
+    external_tool_python = isolated_python if successor_process_contract else python
+    exchange_external_script = (
+        f"{external_tool_root}/scripts/deploy_f05_buy_e3_owner_v1.py"
+        if successor_process_contract
+        else external_script
+    )
+    operational_external_script = exchange_external_script
+    selector_temp = (
+        f"{repo_root}/.venv-active.next-{package_sha256[:12]}-"
+        f"{str(execution['execution_commit'])[:12]}"
+    )
+    if successor_process_contract and (
+        python != selected_python or str(host["venv_root"]) != selected_venv
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor host identity must select the atomic .venv-active runtime"
+        )
+    predecessor_selector_target = str(
+        host.get("current_venv_selector_target", "")
+    ).strip()
+    trusted_static_python = str(host.get("trusted_static_python_path", "")).strip()
+    trusted_static_python_sha256 = str(
+        host.get("trusted_static_python_sha256", "")
+    ).strip().lower()
+    if successor_process_contract and (
+        not predecessor_selector_target
+        or "\x00" in predecessor_selector_target
+        or not PurePosixPath(trusted_static_python).is_absolute()
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor host identity lacks the frozen predecessor selector/interpreter"
+        )
+    if successor_process_contract:
+        _require_sha256(
+            trusted_static_python_sha256,
+            "successor trusted static Python hash",
+        )
     isolated_installs: list[tuple[str, str]] = []
     prepare_isolated_runtime: dict[str, Any] | None = None
     install_isolated_bytes: dict[str, Any] | None = None
-    if compatible:
+    if isolated_required:
         repo_prefix = PurePosixPath(repo_root)
         for role, destination in installs:
             try:
@@ -2927,34 +4289,117 @@ def _phase_commands(
         commit = str(execution["execution_commit"])
         tree = str(execution["execution_tree"])
         tag_object = str(execution["annotated_tag_object"])
+        native_receipt = f"{stage_root}/native-build-{commit}.json"
+        if successor_process_contract:
+            prepare_label = "validate-prebuilt-successor-runtime"
+            prepare_remote_command = (
+                "export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 && "
+                f"cd {shlex.quote(repo_root)} && "
+                'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
+                f'test "$(git cat-file -t refs/tags/{shlex.quote(tag)})" = tag && '
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)})" = '
+                f"{shlex.quote(tag_object)} && "
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)}^{{}})" = '
+                f"{shlex.quote(commit)} && "
+                f'test "$(git rev-parse {shlex.quote(commit)}^{{tree}})" = '
+                f"{shlex.quote(tree)} && "
+                f"test ! -L {shlex.quote(isolated_root)} && "
+                f"test -d {shlex.quote(isolated_root)} && "
+                f"cd {shlex.quote(isolated_root)} && "
+                f"test \"$(sha256sum {shlex.quote(str(committed_tool_relatives['deploy_script']))} | awk '{{print $1}}')\" = {shlex.quote(external_script_sha256)} && "
+                f"test \"$(sha256sum {shlex.quote(str(committed_tool_relatives['gate_amendment']))} | awk '{{print $1}}')\" = {shlex.quote(external_gate_sha256)} && "
+                f'test "$(git cat-file -t refs/tags/{shlex.quote(tag)})" = tag && '
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)})" = '
+                f"{shlex.quote(tag_object)} && "
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)}^{{}})" = '
+                f"{shlex.quote(commit)} && "
+                f'test "$(git rev-parse HEAD)" = {shlex.quote(commit)} && '
+                f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(tree)} && '
+                'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
+                'test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64 && '
+                f"test ! -L {shlex.quote(isolated_venv)} && "
+                f"test -x {shlex.quote(isolated_python)} && "
+                f"test ! -e {shlex.quote(selector_temp)} && "
+                f'test "$({shlex.quote(isolated_python)} -c '
+                "'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')"
+                "= 3.12 && "
+                f"{shlex.quote(isolated_python)} -m pip check && "
+                f"PYTHONPATH={shlex.quote(isolated_root)} {shlex.quote(isolated_python)} -c \"import Crypto, binance, importlib.machinery, live.main, live.ws_handler, narrowgate_cpp, numpy, pandas, pytest, requests, strategy.maker_engine, websocket, yaml, pathlib, platform, sys, sysconfig; "
+                "assert platform.system() == 'Linux' and platform.machine() == 'x86_64'; "
+                "assert str(sysconfig.get_config_var('SOABI')).startswith('cpython-312-'); "
+                "assert pathlib.Path(narrowgate_cpp.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
+                "assert any(str(narrowgate_cpp.__file__).endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)\" && "
+                f"test ! -L {shlex.quote(isolated_wheel_dir)} && "
+                f"test -d {shlex.quote(isolated_wheel_dir)} && "
+                f"test \"$(find {shlex.quote(isolated_wheel_dir)} -maxdepth 1 -type f -name '*.whl' | wc -l)\" = 1 && "
+                f"test ! -L {shlex.quote(native_receipt)} && "
+                f"test -f {shlex.quote(native_receipt)} && "
+                f"test \"$(stat -c '%a' {shlex.quote(native_receipt)})\" = 600 && "
+                f"test \"$(stat -c '%h' {shlex.quote(native_receipt)})\" = 1"
+            )
+            prepare_mutates = False
+        else:
+            prepare_label = "fetch-and-prepare-isolated-runtime"
+            prepare_remote_command = (
+                f"cd {shlex.quote(repo_root)} && "
+                'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
+                "git fetch --no-tags origin "
+                "refs/heads/main:refs/remotes/origin/main && "
+                f"git fetch --no-tags origin refs/tags/{shlex.quote(tag)}:"
+                f"refs/tags/{shlex.quote(tag)} && "
+                f'test "$(git cat-file -t refs/tags/{shlex.quote(tag)})" = tag && '
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)})" = '
+                f"{shlex.quote(tag_object)} && "
+                f'test "$(git rev-parse refs/tags/{shlex.quote(tag)}^{{}})" = '
+                f"{shlex.quote(commit)} && "
+                f"test ! -L {shlex.quote(isolated_root)} && "
+                f"(test -d {shlex.quote(isolated_root)} || "
+                f"git worktree add --detach {shlex.quote(isolated_root)} "
+                f"{shlex.quote(commit)}) && "
+                f"cd {shlex.quote(isolated_root)} && "
+                f'test "$(git rev-parse HEAD)" = {shlex.quote(commit)} && '
+                f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(tree)} && '
+                'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
+                'test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64 && '
+                'test "$(python3.12 -c \'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")\')" = 3.12 && '
+                f"(test -x {shlex.quote(isolated_python)} || ("
+                f"test ! -e {shlex.quote(isolated_venv)} && "
+                f"python3.12 -m venv {shlex.quote(isolated_venv)} && "
+                f"mkdir -p {shlex.quote(isolated_wheel_dir)} && "
+                f"{shlex.quote(isolated_python)} -m pip wheel --no-deps "
+                f"--no-build-isolation --wheel-dir {shlex.quote(isolated_wheel_dir)} cpp && "
+                f"wheel=$(find {shlex.quote(isolated_wheel_dir)} -maxdepth 1 -type f "
+                "-name '*.whl' -print -quit) && test -n \"$wheel\" && "
+                f"{shlex.quote(isolated_python)} -m pip install --force-reinstall "
+                "--no-deps \"$wheel\")) && "
+                f"{shlex.quote(isolated_python)} -c \"import importlib.machinery, narrowgate_cpp, pathlib, platform, sys, sysconfig; "
+                "assert sys.version_info[:2] == (3, 12); "
+                "assert platform.system() == 'Linux' and platform.machine() == 'x86_64'; "
+                "assert str(sysconfig.get_config_var('SOABI')).startswith('cpython-312-'); "
+                "required=('compute_quote_core_live','compute_live_routing_decision',"
+                "'SignalFeatureEngine','SIGNAL_FEATURE_NAMES','TradeBarAggregator'); "
+                "assert all(hasattr(narrowgate_cpp,name) for name in required); "
+                "q=narrowgate_cpp.QuoteFlags(); s=narrowgate_cpp.SideQuoteContext(); "
+                "assert all(hasattr(q,name) for name in ('delta_cap','final_compressed','cap_exposure_block')); "
+                "assert hasattr(s,'cap_exposure_block'); "
+                "assert pathlib.Path(narrowgate_cpp.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
+                "assert any(str(narrowgate_cpp.__file__).endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)\" && "
+                f"site=$({shlex.quote(isolated_python)} -c "
+                "'import site; print(site.getsitepackages()[0])') && "
+                f"PYTHONPATH=\"$site:{shlex.quote(isolated_root)}\" python3.12 "
+                "-m pytest -q tests/test_cpp_quote_core_parity.py "
+                "tests/test_cpp_tick_replay_golden_parity.py "
+                "tests/test_conditional_p3_cpp_overlay.py"
+            )
+            prepare_mutates = True
         prepare_isolated_runtime = _command(
-            "fetch-and-prepare-isolated-runtime",
+            prepare_label,
             _ssh_command(
                 target=target,
                 known_hosts=known,
-                remote_command=(
-                    f"cd {shlex.quote(repo_root)} && "
-                    'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
-                    "git fetch --no-tags origin "
-                    "refs/heads/main:refs/remotes/origin/main && "
-                    f"git fetch --no-tags origin refs/tags/{shlex.quote(tag)}:"
-                    f"refs/tags/{shlex.quote(tag)} && "
-                    f'test "$(git cat-file -t refs/tags/{shlex.quote(tag)})" = tag && '
-                    f'test "$(git rev-parse refs/tags/{shlex.quote(tag)})" = '
-                    f"{shlex.quote(tag_object)} && "
-                    f'test "$(git rev-parse refs/tags/{shlex.quote(tag)}^{{}})" = '
-                    f"{shlex.quote(commit)} && "
-                    f"test ! -L {shlex.quote(isolated_root)} && "
-                    f"(test -d {shlex.quote(isolated_root)} || "
-                    f"git worktree add --detach {shlex.quote(isolated_root)} "
-                    f"{shlex.quote(commit)}) && "
-                    f"cd {shlex.quote(isolated_root)} && "
-                    f'test "$(git rev-parse HEAD)" = {shlex.quote(commit)} && '
-                    f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(tree)} && '
-                    'test -z "$(git status --porcelain=v1 --untracked-files=all)"'
-                ),
+                remote_command=prepare_remote_command,
             ),
-            mutates=True,
+            mutates=prepare_mutates,
         )
         install_isolated_bytes = install_command(
             "install-isolated-preflight-artifact-and-config-bytes",
@@ -2971,60 +4416,137 @@ def _phase_commands(
         f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(str(execution["execution_tree"]))} '
         '&& test -z "$(git status --porcelain=v1 --untracked-files=all)"'
     )
-    preflight_root = isolated_root if compatible else repo_root
+    preflight_root = isolated_root if isolated_required else repo_root
     preflight_disabled_config = (
         next(destination for role, destination in isolated_installs if role == "disabled_config")
-        if compatible
+        if isolated_required
         else disabled_config
     )
     preflight_active_config = (
         next(destination for role, destination in isolated_installs if role == "active_config")
-        if compatible
+        if isolated_required
         else active_config
     )
+    preflight_python = isolated_python if successor_process_contract else python
     disabled_preflight = _remote_preflight(
         repo_root=preflight_root,
-        external_script=external_script,
+        external_script=operational_external_script,
         config_path=preflight_disabled_config,
         expected_enabled=False,
-        python=python,
+        python=preflight_python,
         external_gate=external_gate,
         external_script_sha256=external_script_sha256,
         external_gate_sha256=external_gate_sha256,
+        clean_isolated_execution=successor_process_contract,
     )
     active_preflight = _remote_preflight(
         repo_root=preflight_root,
-        external_script=external_script,
+        external_script=operational_external_script,
         config_path=preflight_active_config,
         expected_enabled=True,
-        python=python,
+        python=preflight_python,
         external_gate=external_gate,
         external_script_sha256=external_script_sha256,
         external_gate_sha256=external_gate_sha256,
+        clean_isolated_execution=successor_process_contract,
     )
 
-    def common_pre_stop(checkpoint_path: str) -> list[dict[str, Any]]:
+    def common_pre_stop(
+        checkpoint_path: str, *, existing_successor_family: bool
+    ) -> list[dict[str, Any]]:
         log_checkpoint = _verified_external_exec(
             command=(
-                f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-                f"{shlex.quote(external_script)} log-checkpoint --log "
+                "env PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+                f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+                f"PYTHONPATH={shlex.quote(external_tool_root)} "
+                f"{shlex.quote(external_tool_python)} "
+                f"{'-I ' if successor_process_contract else ''}"
+                f"{shlex.quote(operational_external_script)} log-checkpoint --log "
                 f"{shlex.quote(str(remote['log_path']))} --output "
                 f"{shlex.quote(checkpoint_path)}"
             ),
-            external_script=external_script,
+            external_script=operational_external_script,
             external_script_sha256=external_script_sha256,
             external_gate=external_gate,
             external_gate_sha256=external_gate_sha256,
         )
-        if compatible:
+        if successor_process_contract:
+            log_checkpoint = _clean_remote_shell_command(log_checkpoint)
+        if isolated_required:
             if prepare_isolated_runtime is None or install_isolated_bytes is None:
                 raise BuyE3TransactionalDeployError(
                     "compatible isolated preflight commands are incomplete"
                 )
             preflight_setup = [prepare_isolated_runtime, install_isolated_bytes]
+            if successor_process_contract:
+                # Make rollback B0 dependencies ready while the predecessor is
+                # still untouched.  Post-stop work is then only atomic runtime
+                # selection/checkout/start plus read-only verification.
+                preflight_setup.append(install_bytes)
         else:
             preflight_setup = [install_bytes]
+        existing_child_pid_file = (
+            maker_child_pid_file if existing_successor_family else legacy_pid_file
+        )
+        pid_capture_rows = [
+            _command(
+                "capture-old-pid",
+                _ssh_command(
+                    target=target,
+                    known_hosts=known,
+                    remote_command=(
+                        (
+                            f"test -s {shlex.quote(existing_child_pid_file)} && "
+                            f"p=$(cat {shlex.quote(existing_child_pid_file)}) && "
+                            "test -r /proc/$p/stat && printf '%s %s\\n' \"$p\" "
+                            "\"$(awk '{print $22}' /proc/$p/stat)\""
+                        )
+                        if successor_process_contract
+                        else (
+                            f"test -s {shlex.quote(existing_child_pid_file)} && "
+                            f"printf '%s\\n' \"$(cat {shlex.quote(existing_child_pid_file)})\""
+                        )
+                    ),
+                ),
+                mutates=False,
+            )
+        ]
+        selector_target = (
+            isolated_venv
+            if existing_successor_family
+            else predecessor_selector_target
+        )
+        selector_check = _command(
+            "validate-current-venv-selector-before-stop",
+            _ssh_command(
+                target=target,
+                known_hosts=known,
+                remote_command=(
+                    f"test -L {shlex.quote(selected_venv)} && "
+                    f"test \"$(readlink {shlex.quote(selected_venv)})\" = "
+                    f"{shlex.quote(selector_target)} && "
+                    f"test ! -e {shlex.quote(selector_temp)}"
+                ),
+            ),
+            mutates=False,
+        )
+        if existing_successor_family:
+            pid_capture_rows.append(
+                _command(
+                    "capture-old-supervisor-pid",
+                    _ssh_command(
+                        target=target,
+                        known_hosts=known,
+                        remote_command=(
+                            f"test -s {shlex.quote(supervisor_pid_file)} && "
+                            f"p=$(cat {shlex.quote(supervisor_pid_file)}) && "
+                            "test -r /proc/$p/stat && printf '%s %s\\n' \"$p\" "
+                            "\"$(awk '{print $22}' /proc/$p/stat)\""
+                        ),
+                    ),
+                    mutates=False,
+                )
+            )
         return [
             prepare_stage,
             *transfers,
@@ -3040,18 +4562,8 @@ def _phase_commands(
                 _ssh_command(target=target, known_hosts=known, remote_command=active_preflight),
                 mutates=False,
             ),
-            _command(
-                "capture-old-pid",
-                _ssh_command(
-                    target=target,
-                    known_hosts=known,
-                    remote_command=(
-                        f"test -s {shlex.quote(pid_file)} && "
-                        f"printf '%s\\n' \"$(cat {shlex.quote(pid_file)})\""
-                    ),
-                ),
-                mutates=False,
-            ),
+            *([selector_check] if successor_process_contract else []),
+            *pid_capture_rows,
             _command(
                 "startup-log-checkpoint",
                 _ssh_command(
@@ -3063,33 +4575,186 @@ def _phase_commands(
             ),
         ]
 
-    stop_disabled = _ssh_command(
-        target=target,
-        known_hosts=known,
-        remote_command=_remote_external_config_stop(repo_root, disabled_config),
+    def stop_with_identity_quiescence(
+        config_path: str, *, existing_successor_family: bool
+    ) -> list[str]:
+        stop = _remote_external_config_stop(repo_root, config_path)
+        if not successor_process_contract:
+            remote_stop = stop
+        else:
+            child_file = (
+                maker_child_pid_file if existing_successor_family else legacy_pid_file
+            )
+            capture = (
+                f"cp=$(cat {shlex.quote(child_file)}) && "
+                "test \"$cp\" -gt 1 && test -r /proc/$cp/stat && "
+                "ct=$(awk '{print $22}' /proc/$cp/stat) && test \"$ct\" -gt 0 && "
+            )
+            supervisor_check = ""
+            stop_state_check = ""
+            if existing_successor_family:
+                capture += (
+                    f"sp=$(cat {shlex.quote(supervisor_pid_file)}) && "
+                    "test \"$sp\" -gt 1 && test \"$sp\" != \"$cp\" && "
+                    "test -r /proc/$sp/stat && "
+                    "st=$(awk '{print $22}' /proc/$sp/stat) && test \"$st\" -gt 0 && "
+                )
+                supervisor_check = (
+                    "if test -r /proc/$sp/stat && "
+                    "test \"$(awk '{print $22}' /proc/$sp/stat)\" = \"$st\"; "
+                    "then exit 72; fi && "
+                )
+                stop_state = f"{repo_root}/logs/maker.stop.state"
+                stop_state_check = (
+                    f"test ! -L {shlex.quote(stop_state)} && "
+                    f"test -f {shlex.quote(stop_state)} && "
+                    f"test \"$(awk -F= '$1==\"schema\" {{print $2}}' {shlex.quote(stop_state)})\" = narrowgate_live_stop_state.v1 && "
+                    f"test \"$(awk -F= '$1==\"supervisor_pid\" {{print $2}}' {shlex.quote(stop_state)})\" = \"$sp\" && "
+                    f"test \"$(awk -F= '$1==\"child_pid\" {{print $2}}' {shlex.quote(stop_state)})\" = \"$cp\" && "
+                    f"test \"$(awk -F= '$1==\"supervisor_state\" {{print $2}}' {shlex.quote(stop_state)})\" = stopped_by_operator && "
+                    f"test \"$(awk -F= '$1==\"child_exit_code\" {{print $2}}' {shlex.quote(stop_state)})\" = 0 && "
+                    f"test \"$(awk -F= '$1==\"kill_escalation\" {{print $2}}' {shlex.quote(stop_state)})\" = 0 && "
+                    f"test \"$(awk -F= '$1==\"orphan_count\" {{print $2}}' {shlex.quote(stop_state)})\" = 0 && "
+                    f"test \"$(awk -F= '$1==\"clean\" {{print $2}}' {shlex.quote(stop_state)})\" = 1 && "
+                )
+            remote_stop = (
+                "{ "
+                + capture
+                + "true; } || exit 70; stop_rc=0; ("
+                + stop
+                + ") || stop_rc=$?; "
+                + "if test -r /proc/$cp/stat && "
+                + "test \"$(awk '{print $22}' /proc/$cp/stat)\" = \"$ct\"; "
+                + "then exit 71; fi && "
+                + supervisor_check
+                + stop_state_check
+                + "test -z \"$(pgrep -f '[l]ive/main.py' || true)\" && "
+                + "test \"$stop_rc\" = 0"
+            )
+        return _ssh_command(
+            target=target,
+            known_hosts=known,
+            remote_command=remote_stop,
+        )
+
+    stop_disabled_initial = stop_with_identity_quiescence(
+        disabled_config, existing_successor_family=False
     )
-    stop_active = _ssh_command(
-        target=target,
-        known_hosts=known,
-        remote_command=_remote_external_config_stop(repo_root, active_config),
+    stop_disabled_successor = stop_with_identity_quiescence(
+        disabled_config, existing_successor_family=successor_process_contract
+    )
+    stop_active = stop_with_identity_quiescence(
+        active_config, existing_successor_family=successor_process_contract
     )
     quiescent = _ssh_command(
         target=target,
         known_hosts=known,
         remote_command=("test -z \"$(pgrep -f '[l]ive/main.py' || true)\""),
     )
+
+    def exchange_reconciliation_remote_command(
+        config_path: str, output_path: str
+    ) -> str:
+        return _remote_exchange_reconciliation_command(
+            repo_root=repo_root,
+            external_tool_root=external_tool_root,
+            external_tool_python=external_tool_python,
+            external_script=exchange_external_script,
+            external_script_sha256=external_script_sha256,
+            external_gate=external_gate,
+            external_gate_sha256=external_gate_sha256,
+            config_path=config_path,
+            output_path=output_path,
+            startup_static_gate=successor_candidate_static_gate,
+        )
+    def exchange_reconciliation(config_path: str, output_path: str) -> list[str]:
+        return _ssh_command(
+            target=target,
+            known_hosts=known,
+            remote_command=exchange_reconciliation_remote_command(
+                config_path, output_path
+            ),
+        )
+
+    disabled_exchange_checkpoint = f"{disabled_checkpoint}.exchange"
+    active_exchange_checkpoint = f"{active_checkpoint}.exchange"
+    rollback_exchange_checkpoint = f"{checkpoint_base}.rollback.exchange"
     checkout_command = _ssh_command(target=target, known_hosts=known, remote_command=checkout)
+    select_successor_venv = _ssh_command(
+        target=target,
+        known_hosts=known,
+        remote_command=(
+            f"test -x {shlex.quote(isolated_python)} && "
+            f"(test ! -e {shlex.quote(selected_venv)} || "
+            f"test -L {shlex.quote(selected_venv)}) && "
+            f"test ! -e {shlex.quote(selector_temp)} && "
+            f"tmp={shlex.quote(selector_temp)} && "
+            "cleanup() { test ! -L \"$tmp\" || rm -f -- \"$tmp\"; } && "
+            "trap cleanup EXIT HUP INT TERM && "
+            f"ln -s {shlex.quote(isolated_venv)} "
+            "\"$tmp\" && "
+            f"test \"$(readlink \"$tmp\")\" = {shlex.quote(isolated_venv)} && "
+            f"mv -Tf \"$tmp\" {shlex.quote(repo_root + '/.venv-active')} && "
+            "trap - EXIT HUP INT TERM"
+        ),
+    )
     start_disabled = _ssh_command(
         target=target,
         known_hosts=known,
-        remote_command=_remote_external_config_start(
-            repo_root, disabled_config, owner_override=False
+        remote_command=(
+            _remote_bound_exchange_config_start(
+                repo_root=repo_root,
+                runtime_config_path=disabled_config,
+                reconciliation_config_path=disabled_config,
+                reconciliation_output_path=f"{disabled_exchange_checkpoint}.startup",
+                owner_override=False,
+                external_tool_root=external_tool_root,
+                external_tool_python=external_tool_python,
+                external_script=exchange_external_script,
+                external_script_sha256=external_script_sha256,
+                external_gate=external_gate,
+                external_gate_sha256=external_gate_sha256,
+                safety_release_binding=successor_safety_binding,
+                startup_static_authority_env=successor_static_authority_env,
+                startup_static_gate=successor_static_gate,
+                trusted_static_python_path=str(host["trusted_static_python_path"]),
+            )
+            if successor_process_contract
+            else _remote_external_config_start(
+                repo_root,
+                disabled_config,
+                owner_override=False,
+            )
         ),
     )
     start_active = _ssh_command(
         target=target,
         known_hosts=known,
-        remote_command=_remote_external_config_start(repo_root, active_config, owner_override=True),
+        remote_command=(
+            _remote_bound_exchange_config_start(
+                repo_root=repo_root,
+                runtime_config_path=active_config,
+                reconciliation_config_path=disabled_config,
+                reconciliation_output_path=f"{active_exchange_checkpoint}.startup",
+                owner_override=True,
+                external_tool_root=external_tool_root,
+                external_tool_python=external_tool_python,
+                external_script=exchange_external_script,
+                external_script_sha256=external_script_sha256,
+                external_gate=external_gate,
+                external_gate_sha256=external_gate_sha256,
+                safety_release_binding=successor_safety_binding,
+                startup_static_authority_env=successor_static_authority_env,
+                startup_static_gate=successor_static_gate,
+                trusted_static_python_path=str(host["trusted_static_python_path"]),
+            )
+            if successor_process_contract
+            else _remote_external_config_start(
+                repo_root,
+                active_config,
+                owner_override=True,
+            )
+        ),
     )
 
     def process_probe(
@@ -3102,13 +4767,17 @@ def _phase_commands(
         expected_runtime_sources: Mapping[str, Any] = runtime_sources,
         expected_artifact_sha256: str = str(artifact["artifact_sha256"]),
         expected_startup_attestation_schema_version: str = STARTUP_ATTESTATION_SCHEMA,
+        expected_exchange_reconciliation_path: str | None = None,
     ) -> list[str]:
         command = _verified_external_exec(
             command=(
-                f"cd {shlex.quote(repo_root)} && env "
+                f"cd {shlex.quote(external_tool_root)} && env "
+                "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
                 f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-                f"{shlex.quote(external_script)} process-probe --repository-root "
+                f"PYTHONPATH={shlex.quote(external_tool_root)} "
+                f"{shlex.quote(external_tool_python)} "
+                f"{'-I ' if successor_process_contract else ''}"
+                f"{shlex.quote(operational_external_script)} process-probe --repository-root "
                 f"{shlex.quote(repo_root)} --pid-file {shlex.quote(pid_file)} --config "
                 f"{shlex.quote(config_path)} --config-sha256 {shlex.quote(config_sha)} "
                 f"--python-executable {shlex.quote(python)} --venv-root "
@@ -3123,7 +4792,7 @@ def _phase_commands(
                 f"--expected-startup-attestation-schema-version "
                 f"{shlex.quote(expected_startup_attestation_schema_version)}"
             ),
-            external_script=external_script,
+            external_script=operational_external_script,
             external_script_sha256=external_script_sha256,
             external_gate=external_gate,
             external_gate_sha256=external_gate_sha256,
@@ -3141,6 +4810,29 @@ def _phase_commands(
                 f" --predicate-bundle-file-sha256 "
                 f"{shlex.quote(str(artifact['predicate_bundle_file_sha256']))}"
             )
+        if successor_process_contract:
+            if expected_exchange_reconciliation_path is None:
+                raise BuyE3TransactionalDeployError(
+                    "successor process probe requires exact exchange reconciliation path"
+                )
+            assert successor_safety_binding is not None
+            command += (
+                f" --safety-release "
+                f"{shlex.quote(str(successor_safety_binding['remote_path']))}"
+                f" --safety-release-file-sha256 "
+                f"{shlex.quote(str(successor_safety_binding['file_sha256']))}"
+                f" --safety-release-canonical-sha256 "
+                f"{shlex.quote(str(successor_safety_binding['canonical_active_release_sha256']))}"
+                f" --safety-active-config-sha256 "
+                f"{shlex.quote(str(configs['active']['config_sha256']))}"
+                f" --safety-disabled-config-sha256 "
+                f"{shlex.quote(str(configs['disabled']['config_sha256']))}"
+                f" --expected-exchange-reconciliation-path "
+                f"{shlex.quote(expected_exchange_reconciliation_path)}"
+            )
+            if enabled:
+                command += f" {_ACTIVE_RELEASE_PROBE_ARGS_PLACEHOLDER}"
+            command = _clean_remote_shell_command(command)
         return _ssh_command(target=target, known_hosts=known, remote_command=command)
 
     runtime_identity_read = _ssh_command(
@@ -3153,23 +4845,74 @@ def _phase_commands(
         ),
     )
 
+    def process_family_probe(label: str) -> dict[str, Any] | None:
+        if not successor_process_contract:
+            return None
+        command = (
+            f"sp=$(cat {shlex.quote(supervisor_pid_file)}) && "
+            f"cp=$(cat {shlex.quote(maker_child_pid_file)}) && "
+            "test \"$sp\" -gt 1 && test \"$cp\" -gt 1 && test \"$sp\" != \"$cp\" && "
+            "test -r /proc/$sp/stat && test -r /proc/$cp/stat && "
+            "test \"$(awk '{print $4}' /proc/$cp/stat)\" = \"$sp\" && "
+            "ss1=$(awk '{print $22}' /proc/$sp/stat) && "
+            "cs1=$(awk '{print $22}' /proc/$cp/stat) && "
+            "test \"$ss1\" -gt 0 && test \"$cs1\" -gt 0 && "
+            "ss2=$(awk '{print $22}' /proc/$sp/stat) && "
+            "cs2=$(awk '{print $22}' /proc/$cp/stat) && "
+            "test \"$ss1\" = \"$ss2\" && test \"$cs1\" = \"$cs2\" && "
+            "printf '%s %s %s %s\\n' \"$sp\" \"$ss1\" \"$cp\" \"$cs1\""
+        )
+        return _command(
+            label,
+            _ssh_command(target=target, known_hosts=known, remote_command=command),
+            mutates=False,
+            after_stop=True,
+        )
+
     def log_validate(checkpoint_path: str) -> list[str]:
         markers = " ".join(
             f"--marker {shlex.quote(str(marker))}" for marker in remote["startup_markers"]
         )
         command = _verified_external_exec(
             command=(
-                f"env NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-                f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-                f"{shlex.quote(external_script)} log-validate --log "
+                "env PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+                f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
+                f"PYTHONPATH={shlex.quote(external_tool_root)} "
+                f"{shlex.quote(external_tool_python)} "
+                f"{'-I ' if successor_process_contract else ''}"
+                f"{shlex.quote(operational_external_script)} log-validate --log "
                 f"{shlex.quote(str(remote['log_path']))} --checkpoint "
                 f"{shlex.quote(checkpoint_path)} {markers}"
             ),
-            external_script=external_script,
+            external_script=operational_external_script,
             external_script_sha256=external_script_sha256,
             external_gate=external_gate,
             external_gate_sha256=external_gate_sha256,
         )
+        if successor_process_contract:
+            command = _clean_remote_shell_command(command)
+        if successor_process_contract:
+            stable_family = (
+                f"test \"$(cat {shlex.quote(supervisor_pid_file)})\" = \"$sp\" && "
+                f"test \"$(cat {shlex.quote(maker_child_pid_file)})\" = \"$cp\" && "
+                "test -r /proc/$sp/stat && test -r /proc/$cp/stat && "
+                "test \"$(awk '{print $22}' /proc/$sp/stat)\" = \"$st\" && "
+                "test \"$(awk '{print $22}' /proc/$cp/stat)\" = \"$ct\" && "
+                "test \"$(awk '{print $4}' /proc/$cp/stat)\" = \"$sp\""
+            )
+            command = (
+                f"sp=$(cat {shlex.quote(supervisor_pid_file)}) && "
+                f"cp=$(cat {shlex.quote(maker_child_pid_file)}) && "
+                "test \"$sp\" -gt 1 && test \"$cp\" -gt 1 && "
+                "test \"$sp\" != \"$cp\" && "
+                "st=$(awk '{print $22}' /proc/$sp/stat) && "
+                "ct=$(awk '{print $22}' /proc/$cp/stat) && "
+                "test \"$st\" -gt 0 && test \"$ct\" -gt 0 && "
+                "deadline=$((SECONDS + 120)) && "
+                f"until ({command}); do {stable_family} && "
+                "test \"$SECONDS\" -lt \"$deadline\" && sleep 1; done && "
+                f"{stable_family}"
+            )
         return _ssh_command(target=target, known_hosts=known, remote_command=command)
 
     current_startup_schema = (
@@ -3182,15 +4925,69 @@ def _phase_commands(
             and configs.get("active", {}).get("config_sha256")
             == FROZEN_07EF_ACTIVE_CONFIG_SHA256
         )
+        else PREDECESSOR_STARTUP_ATTESTATION_SCHEMA
+        if (
+            execution.get("execution_commit") == gate_v2.FROZEN_EXECUTION_COMMIT
+            and execution.get("execution_tree") == gate_v2.FROZEN_EXECUTION_TREE
+        )
+        else SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+        if _is_successor_execution(execution)
         else STARTUP_ATTESTATION_SCHEMA
     )
     disabled = [
-        *common_pre_stop(disabled_checkpoint),
-        _command("stop-live", stop_disabled, mutates=True, after_stop=True),
+        *common_pre_stop(disabled_checkpoint, existing_successor_family=False),
+        _command("stop-live", stop_disabled_initial, mutates=True, after_stop=True),
         _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
+        *(
+            [
+                _command(
+                    "signed-exchange-open-orders-position-reconciliation",
+                    exchange_reconciliation(
+                        disabled_config, disabled_exchange_checkpoint
+                    ),
+                    mutates=True,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
         _command("checkout-frozen-runtime", checkout_command, mutates=True, after_stop=True),
-        *([install_bytes] if compatible else []),
+        *(
+            [
+                _command(
+                    "select-successor-native-venv",
+                    select_successor_venv,
+                    mutates=True,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
+        *(
+            [install_bytes]
+            if isolated_required and not successor_process_contract
+            else []
+        ),
         _command("start-disabled", start_disabled, mutates=True, after_stop=True),
+        *(
+            [
+                _command(
+                    "wait-disabled-exchange-ready",
+                    log_validate(disabled_checkpoint),
+                    mutates=False,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
+        *(
+            [process_family_probe("fresh-disabled-supervisor-child-probe")]
+            if successor_process_contract
+            else []
+        ),
         _command(
             "fresh-disabled-process-probe",
             process_probe(
@@ -3198,6 +4995,11 @@ def _phase_commands(
                 str(configs["disabled"]["config_sha256"]),
                 False,
                 expected_startup_attestation_schema_version=current_startup_schema,
+                expected_exchange_reconciliation_path=(
+                    f"{disabled_exchange_checkpoint}.startup"
+                    if successor_process_contract
+                    else None
+                ),
             ),
             mutates=False,
             after_stop=True,
@@ -3208,15 +5010,24 @@ def _phase_commands(
             mutates=False,
             after_stop=True,
         ),
-        _command(
-            "validate-disabled-startup-log",
-            log_validate(disabled_checkpoint),
-            mutates=False,
-            after_stop=True,
+        *(
+            [
+                _command(
+                    "validate-disabled-startup-log",
+                    log_validate(disabled_checkpoint),
+                    mutates=False,
+                    after_stop=True,
+                )
+            ]
+            if not successor_process_contract
+            else []
         ),
     ]
     activate = [
-        *common_pre_stop(active_checkpoint),
+        *common_pre_stop(
+            active_checkpoint,
+            existing_successor_family=successor_process_contract,
+        ),
         _command(
             "reprobe-disabled-process-before-stop",
             process_probe(
@@ -3224,6 +5035,11 @@ def _phase_commands(
                 str(configs["disabled"]["config_sha256"]),
                 False,
                 expected_startup_attestation_schema_version=current_startup_schema,
+                expected_exchange_reconciliation_path=(
+                    f"{disabled_exchange_checkpoint}.startup"
+                    if successor_process_contract
+                    else None
+                ),
             ),
             mutates=False,
         ),
@@ -3232,10 +5048,55 @@ def _phase_commands(
             runtime_identity_read,
             mutates=False,
         ),
-        _command("stop-live", stop_disabled, mutates=True, after_stop=True),
+        _command("stop-live", stop_disabled_successor, mutates=True, after_stop=True),
         _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
-        *([install_bytes] if compatible else []),
+        *(
+            [
+                _command(
+                    "signed-exchange-open-orders-position-reconciliation",
+                    exchange_reconciliation(disabled_config, active_exchange_checkpoint),
+                    mutates=True,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
+        *(
+            [
+                _command(
+                    "reselect-successor-native-venv",
+                    select_successor_venv,
+                    mutates=True,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
+        *(
+            [install_bytes]
+            if isolated_required and not successor_process_contract
+            else []
+        ),
         _command("start-active-restart-only", start_active, mutates=True, after_stop=True),
+        *(
+            [
+                _command(
+                    "wait-active-exchange-ready",
+                    log_validate(active_checkpoint),
+                    mutates=False,
+                    after_stop=True,
+                )
+            ]
+            if successor_process_contract
+            else []
+        ),
+        *(
+            [process_family_probe("fresh-active-supervisor-child-probe")]
+            if successor_process_contract
+            else []
+        ),
         _command(
             "fresh-active-process-probe",
             process_probe(
@@ -3243,6 +5104,11 @@ def _phase_commands(
                 str(configs["active"]["config_sha256"]),
                 True,
                 expected_startup_attestation_schema_version=current_startup_schema,
+                expected_exchange_reconciliation_path=(
+                    f"{active_exchange_checkpoint}.startup"
+                    if successor_process_contract
+                    else None
+                ),
             ),
             mutates=False,
             after_stop=True,
@@ -3253,16 +5119,67 @@ def _phase_commands(
             mutates=False,
             after_stop=True,
         ),
-        _command(
-            "validate-active-startup-log",
-            log_validate(active_checkpoint),
-            mutates=False,
-            after_stop=True,
+        *(
+            [
+                _command(
+                    "validate-active-startup-log",
+                    log_validate(active_checkpoint),
+                    mutates=False,
+                    after_stop=True,
+                )
+            ]
+            if not successor_process_contract
+            else []
         ),
     ]
 
     def rollback_commands(name: str, stop_command: Sequence[str]) -> list[dict[str, Any]]:
         identity = rollback[name]
+        if identity.get("mode") == "stop_cancel_reconcile_only":
+            return [
+                _command(
+                    "capture-old-pid",
+                    _ssh_command(
+                        target=target,
+                        known_hosts=known,
+                        remote_command=(
+                            f"test -s {shlex.quote(pid_file)} && "
+                            f"p=$(cat {shlex.quote(pid_file)}) && test -r /proc/$p/stat && "
+                            "printf '%s %s\\n' \"$p\" \"$(awk '{print $22}' /proc/$p/stat)\""
+                        ),
+                    ),
+                    mutates=False,
+                ),
+                _command("stop-live", stop_command, mutates=True, after_stop=True),
+                _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
+                *(
+                    [
+                        _command(
+                            "signed-exchange-open-orders-position-reconciliation",
+                            exchange_reconciliation(
+                                disabled_config,
+                                f"{checkpoint_base}.deep-rollback.exchange",
+                            ),
+                            mutates=True,
+                            after_stop=True,
+                        )
+                    ]
+                    if successor_process_contract
+                    else []
+                ),
+                _command(
+                    "deep-stop-reconciliation-required",
+                    _ssh_command(
+                        target=target,
+                        known_hosts=known,
+                        remote_command=(
+                            "printf '%s\\n' 'live stopped; manual exchange reconciliation required'"
+                        ),
+                    ),
+                    mutates=False,
+                    after_stop=True,
+                ),
+            ]
         rollback_checkout = _ssh_command(
             target=target,
             known_hosts=known,
@@ -3276,26 +5193,115 @@ def _phase_commands(
         rollback_start = _ssh_command(
             target=target,
             known_hosts=known,
-            remote_command=_remote_external_config_start(
-                repo_root, str(identity["config_path"]), owner_override=False
+            remote_command=(
+                _remote_bound_exchange_config_start(
+                    repo_root=repo_root,
+                    runtime_config_path=str(identity["config_path"]),
+                    reconciliation_config_path=disabled_config,
+                    reconciliation_output_path=(
+                        f"{rollback_exchange_checkpoint}.startup"
+                    ),
+                    owner_override=False,
+                    external_tool_root=external_tool_root,
+                    external_tool_python=external_tool_python,
+                    external_script=exchange_external_script,
+                    external_script_sha256=external_script_sha256,
+                    external_gate=external_gate,
+                    external_gate_sha256=external_gate_sha256,
+                    safety_release_binding=successor_safety_binding,
+                    startup_static_authority_env=successor_static_authority_env,
+                    startup_static_gate=successor_static_gate,
+                    trusted_static_python_path=str(host["trusted_static_python_path"]),
+                )
+                if successor_process_contract
+                else _remote_external_config_start(
+                    repo_root,
+                    str(identity["config_path"]),
+                    owner_override=False,
+                )
             ),
         )
+        rollback_successor_prerequisite: dict[str, Any] | None = None
+        if successor_process_contract:
+            assert successor_safety_binding is not None
+            prerequisite = (
+                f"{successor_static_gate} && "
+                f"test -x {shlex.quote(isolated_python)} && "
+                f"test -L {shlex.quote(selected_venv)} && "
+                f"test \"$(readlink {shlex.quote(selected_venv)})\" = "
+                f"{shlex.quote(isolated_venv)} && "
+                f"test ! -e {shlex.quote(selector_temp)} && "
+                f"test ! -L {shlex.quote(str(successor_safety_binding['remote_path']))} && "
+                f"test -f {shlex.quote(str(successor_safety_binding['remote_path']))} && "
+                f"test \"$(sha256sum {shlex.quote(str(successor_safety_binding['remote_path']))} | awk '{{print $1}}')\" = "
+                f"{shlex.quote(str(successor_safety_binding['file_sha256']))} && "
+                f"test \"$(sha256sum {shlex.quote(str(identity['config_path']))} | awk '{{print $1}}')\" = "
+                f"{shlex.quote(str(identity['config_sha256']))}"
+            )
+            rollback_successor_prerequisite = _command(
+                "validate-rollback-successor-prerequisites-before-stop",
+                _ssh_command(
+                    target=target,
+                    known_hosts=known,
+                    remote_command=prerequisite,
+                ),
+                mutates=False,
+            )
         return [
+            *(
+                [rollback_successor_prerequisite]
+                if rollback_successor_prerequisite is not None
+                else []
+            ),
             _command(
                 "capture-old-pid",
                 _ssh_command(
                     target=target,
                     known_hosts=known,
                     remote_command=(
-                        f"test -s {shlex.quote(pid_file)} && cat {shlex.quote(pid_file)}"
+                        f"test -s {shlex.quote(pid_file)} && "
+                        f"p=$(cat {shlex.quote(pid_file)}) && test -r /proc/$p/stat && "
+                        "printf '%s %s\\n' \"$p\" \"$(awk '{print $22}' /proc/$p/stat)\""
                     ),
                 ),
                 mutates=False,
             ),
             _command("stop-live", stop_command, mutates=True, after_stop=True),
             _command("confirm-quiescent", quiescent, mutates=False, after_stop=True),
+            *(
+                [
+                    _command(
+                        "signed-exchange-open-orders-position-reconciliation",
+                        exchange_reconciliation(
+                            str(identity["config_path"]),
+                            rollback_exchange_checkpoint,
+                        ),
+                        mutates=True,
+                        after_stop=True,
+                    )
+                ]
+                if successor_process_contract
+                else []
+            ),
             _command("checkout-rollback-runtime", rollback_checkout, mutates=True, after_stop=True),
+            *(
+                [
+                    _command(
+                        "select-rollback-successor-native-venv",
+                        select_successor_venv,
+                        mutates=True,
+                        after_stop=True,
+                    )
+                ]
+                if successor_process_contract
+                else []
+            ),
             _command("start-rollback-fresh-b0", rollback_start, mutates=True, after_stop=True),
+            *(
+                [process_family_probe("fresh-rollback-supervisor-child-probe")]
+                if successor_process_contract
+                else []
+            ),
             _command(
                 "fresh-rollback-process-probe",
                 process_probe(
@@ -3316,6 +5322,11 @@ def _phase_commands(
                             current_execution=execution,
                         )
                     ),
+                    expected_exchange_reconciliation_path=(
+                        f"{rollback_exchange_checkpoint}.startup"
+                        if successor_process_contract
+                        else None
+                    ),
                 ),
                 mutates=False,
                 after_stop=True,
@@ -3335,10 +5346,15 @@ def _validate_active_release_phase_binding(
 ) -> dict[str, Any]:
     schema_version = str(raw.get("schema_version", ""))
     expected_identity, expected_status = _active_release_contract(schema_version)
-    is_v3 = schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
+    config_bound = schema_version in {
+        buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+    }
     expected_fields = (
-        _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
-        if is_v3
+        _SUCCESSOR_ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+        if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        else _ACTIVE_RELEASE_PHASE_BINDING_FIELDS
+        if config_bound
         else _LEGACY_ACTIVE_RELEASE_PHASE_BINDING_FIELDS
     )
     if set(raw) != expected_fields:
@@ -3363,7 +5379,7 @@ def _validate_active_release_phase_binding(
         binding.get("canonical_active_release_sha256"),
         "active release canonical hash",
     )
-    if is_v3:
+    if config_bound:
         binding["active_config_file_sha256"] = _require_sha256(
             binding.get("active_config_file_sha256"),
             "active release embedded active config hash",
@@ -3381,16 +5397,91 @@ def _validate_active_release_phase_binding(
             raise BuyE3TransactionalDeployError(
                 "active release phase config binding drifted"
             )
+    if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+        for field in (
+            "native_build_receipt_sha256",
+            "native_build_receipt_canonical_sha256",
+            "native_module_sha256",
+            "native_wheel_sha256",
+            "runtime_lock_file_sha256",
+            "runtime_lock_canonical_sha256",
+            "wheelhouse_manifest_file_sha256",
+            "wheelhouse_canonical_sha256",
+            "install_receipt_file_sha256",
+            "install_receipt_canonical_sha256",
+            "root_wheel_sha256",
+            "installed_record_aggregate_sha256",
+        ):
+            binding[field] = _require_sha256(binding.get(field), field)
+        interpreter = binding.get("locked_runtime_interpreter")
+        stage_root = PurePosixPath(str(plan["remote"]["stage_root"]))
+        commit = str(plan["execution"]["execution_commit"])
+        runtime_lock_path = PurePosixPath(str(binding.get("runtime_lock_path", "")))
+        wheelhouse_path = PurePosixPath(str(binding.get("wheelhouse_path", "")))
+        install_receipt_path = PurePosixPath(
+            str(binding.get("install_receipt_path", ""))
+        )
+        root_wheel_path = PurePosixPath(str(binding.get("root_wheel_path", "")))
+        native_wheel_path = PurePosixPath(
+            str(binding.get("native_wheel_path", ""))
+        )
+        if (
+            not str(binding.get("native_soabi", "")).startswith("cpython-312-")
+            or any(
+                not PurePosixPath(str(binding.get(field, ""))).is_absolute()
+                for field in (
+                    "runtime_lock_path",
+                    "wheelhouse_path",
+                    "install_receipt_path",
+                    "root_wheel_path",
+                    "native_wheel_path",
+                )
+            )
+            or not isinstance(interpreter, Mapping)
+            or set(interpreter) != _LOCKED_RUNTIME_INTERPRETER_FIELDS
+            or interpreter.get("soabi") != binding.get("native_soabi")
+            or plan["host"].get("trusted_static_python_sha256")
+            not in {
+                interpreter.get("executable_sha256"),
+                interpreter.get("base_executable_sha256"),
+            }
+            or runtime_lock_path != stage_root / f"runtime-lock-{commit}.json"
+            or wheelhouse_path
+            != stage_root / f"wheelhouse-{binding['runtime_lock_canonical_sha256']}"
+            or install_receipt_path
+            != stage_root / f"locked-runtime-install-{commit}.json"
+            or root_wheel_path.parent != stage_root / f"root-wheel-{commit}"
+            or root_wheel_path.suffix != ".whl"
+            or native_wheel_path.parent != stage_root / f"native-wheel-{commit}"
+            or native_wheel_path.suffix != ".whl"
+        ):
+            raise BuyE3TransactionalDeployError("active release phase native SOABI drifted")
+        binding["locked_runtime_interpreter"] = dict(interpreter)
+        if (
+            binding["remote_path"] != plan["remote"].get("safety_release_path")
+            or binding["file_sha256"]
+            != plan["remote"].get("safety_release_file_sha256")
+            or binding["canonical_active_release_sha256"]
+            != plan["remote"].get("safety_release_canonical_sha256")
+        ):
+            raise BuyE3TransactionalDeployError(
+                "successor release differs from the plan-time safety authority"
+            )
     return binding
 
 
 def _activation_rows_with_active_release(
-    plan: Mapping[str, Any], active_release_binding: Mapping[str, Any]
+    plan: Mapping[str, Any],
+    active_release_binding: Mapping[str, Any],
+    *,
+    phase: str = "activate",
 ) -> list[dict[str, Any]]:
     """Derive post-envelope authority commands without changing the frozen plan."""
 
     binding = _validate_active_release_phase_binding(active_release_binding, plan=plan)
-    base_rows = [dict(row) for row in plan["phases"]["activate"]]
+    if phase not in {"disabled-deploy", "activate"}:
+        raise BuyE3TransactionalDeployError("safety release can bind only deployment phases")
+    base_rows = [dict(row) for row in plan["phases"][phase]]
     package = plan["external_tools_and_package"]
     package_files = package["files"]
     stage = f"{plan['remote']['stage_root']}/package-{package['content_package_sha256']}"
@@ -3401,6 +5492,62 @@ def _activation_rows_with_active_release(
     known_hosts = str(plan["ssh"]["path"])
     repo_root = str(plan["active_pointer"]["repo_root"])
     python = str(plan["host"]["python_executable"])
+    successor_release = (
+        binding["schema_version"]
+        == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+    )
+    external_tool_root = (
+        f"{plan['remote']['stage_root']}/runtime-"
+        f"{plan['execution']['execution_commit']}"
+        if successor_release
+        else repo_root
+    )
+    external_tool_python = (
+        f"{plan['remote']['stage_root']}/venv-"
+        f"{plan['execution']['execution_commit']}/bin/python3"
+        if successor_release
+        else python
+    )
+    exchange_external_script = (
+        f"{external_tool_root}/scripts/deploy_f05_buy_e3_owner_v1.py"
+        if successor_release
+        else ""
+    )
+    startup_static_payload: dict[str, Any] | None = None
+    startup_static_binding: dict[str, str] | None = None
+    startup_static_env = ""
+    if successor_release:
+        startup_static_payload, startup_static_binding = (
+            _startup_static_authority_from_release(
+                repo_root=repo_root,
+                execution=plan["execution"],
+                runtime_sources=plan["runtime_sources"],
+                host=plan["host"],
+                remote=plan["remote"],
+                release_binding=binding,
+            )
+        )
+        planned_static_binding = {
+            "remote_path": str(
+                plan["remote"]["startup_static_runtime_authority_path"]
+            ),
+            "file_sha256": str(
+                plan["remote"]["startup_static_runtime_authority_file_sha256"]
+            ),
+            "canonical_sha256": str(
+                plan["remote"][
+                    "startup_static_runtime_authority_canonical_sha256"
+                ]
+            ),
+        }
+        if startup_static_binding != planned_static_binding:
+            raise BuyE3TransactionalDeployError(
+                "startup static authority differs from the frozen plan/release"
+            )
+        startup_static_env = _startup_static_authority_env(
+            startup_static_payload,
+            startup_static_binding,
+        )
 
     def staged_path(role: str) -> str:
         local_path = Path(str(package_files[role]["path"]))
@@ -3438,20 +5585,262 @@ def _activation_rows_with_active_release(
         ),
         mutates=True,
     )
-    install_command = _verified_external_exec(
-        command=(
-            f"cd {shlex.quote(repo_root)} && env {_release_env_unsets()} "
-            f"PYTHONPATH={shlex.quote(repo_root)} {shlex.quote(python)} "
-            f"{shlex.quote(external_script)} install-active-release --source "
-            f"{shlex.quote(release_stage_path)} --destination "
-            f"{shlex.quote(str(binding['remote_path']))} --file-sha256 "
-            f"{shlex.quote(str(binding['file_sha256']))}"
-        ),
-        external_script=external_script,
-        external_script_sha256=external_script_sha256,
-        external_gate=external_gate,
-        external_gate_sha256=external_gate_sha256,
-    )
+    native_build_validate: dict[str, Any] | None = None
+    static_tree_validate: dict[str, Any] | None = None
+    startup_static_install: dict[str, Any] | None = None
+    stale_bytecode_cleanup: dict[str, Any] | None = None
+    full_static_tree_command = ""
+    if binding["schema_version"] == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+        isolated_python = (
+            f"{plan['remote']['stage_root']}/venv-"
+            f"{plan['execution']['execution_commit']}/bin/python3"
+        )
+        native_receipt = (
+            f"{plan['remote']['stage_root']}/native-build-"
+            f"{plan['execution']['execution_commit']}.json"
+        )
+        locked_script_relative = "scripts/f05_live_safety_locked_runtime.py"
+        locked_source = plan["runtime_sources"]["files"].get(
+            locked_script_relative
+        )
+        if not isinstance(locked_source, Mapping):
+            raise BuyE3TransactionalDeployError(
+                "successor plan lacks locked runtime verifier source authority"
+            )
+        locked_script_sha256 = _require_sha256(
+            locked_source.get("working_file_sha256"),
+            "locked runtime verifier source",
+        )
+        locked_script = f"{external_tool_root}/{locked_script_relative}"
+        if startup_static_payload is None or startup_static_binding is None:
+            raise BuyE3TransactionalDeployError(
+                "successor startup static authority was not constructed"
+            )
+        static_verifier = str(
+            startup_static_payload["authority_verifier"]["path"]
+        )
+        static_verifier_sha256 = str(
+            startup_static_payload["authority_verifier"]["sha256"]
+        )
+        static_authority_path = str(startup_static_binding["remote_path"])
+        static_authority_raw = startup_static_authority.file_bytes(
+            startup_static_payload
+        )
+        static_authority_base64 = base64.b64encode(static_authority_raw).decode(
+            "ascii"
+        )
+        static_authority_temp = f"{static_authority_path}.next-{str(binding['file_sha256'])[:12]}"
+        install_static_command = (
+            "set -eu; "
+            f"test ! -L {shlex.quote(static_verifier)}; "
+            f"test -f {shlex.quote(static_verifier)}; "
+            f"test \"$(sha256sum {shlex.quote(static_verifier)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(static_verifier_sha256)}; "
+            f"test ! -L {shlex.quote(locked_script)}; "
+            f"test -f {shlex.quote(locked_script)}; "
+            f"test \"$(sha256sum {shlex.quote(locked_script)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(locked_script_sha256)}; "
+            f"chmod 444 {shlex.quote(static_verifier)} {shlex.quote(locked_script)}; "
+            f"test \"$(stat -c '%a' {shlex.quote(static_verifier)})\" = 444; "
+            f"test \"$(stat -c '%a' {shlex.quote(locked_script)})\" = 444; "
+            f"test ! -e {shlex.quote(static_authority_temp)}; "
+            f"if test ! -e {shlex.quote(static_authority_path)}; then "
+            "umask 077; "
+            f"trap 'rm -f {shlex.quote(static_authority_temp)}' EXIT HUP INT TERM; "
+            f"printf '%s' {shlex.quote(static_authority_base64)} | base64 -d > "
+            f"{shlex.quote(static_authority_temp)}; "
+            f"test \"$(sha256sum {shlex.quote(static_authority_temp)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(startup_static_binding['file_sha256']))}; "
+            f"chmod 400 {shlex.quote(static_authority_temp)}; "
+            f"mv -n {shlex.quote(static_authority_temp)} {shlex.quote(static_authority_path)}; "
+            f"if test -e {shlex.quote(static_authority_temp)}; then "
+            f"cmp -s {shlex.quote(static_authority_temp)} {shlex.quote(static_authority_path)}; "
+            f"rm -f {shlex.quote(static_authority_temp)}; fi; "
+            "trap - EXIT HUP INT TERM; "
+            "fi; "
+            f"test ! -L {shlex.quote(static_authority_path)}; "
+            f"test -f {shlex.quote(static_authority_path)}; "
+            f"test \"$(stat -c '%a' {shlex.quote(static_authority_path)})\" = 400; "
+            f"test \"$(stat -c '%h' {shlex.quote(static_authority_path)})\" = 1; "
+            f"test \"$(sha256sum {shlex.quote(static_authority_path)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(startup_static_binding['file_sha256']))}"
+        )
+        startup_static_install = _command(
+            "install-successor-startup-static-runtime-authority",
+            _ssh_command(
+                target=target,
+                known_hosts=known_hosts,
+                remote_command=install_static_command,
+            ),
+            mutates=True,
+            after_stop=False,
+        )
+        wheelhouse_manifest = (
+            f"{binding['wheelhouse_path']}/{locked_runtime.WHEELHOUSE_MANIFEST}"
+        )
+        frozen_python_sha256 = str(
+            binding["locked_runtime_interpreter"]["executable_sha256"]
+        )
+        command = (
+            "export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 && "
+            f"test \"$(sha256sum {shlex.quote(locked_script)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(locked_script_sha256)} && "
+            f"test ! -L {shlex.quote(isolated_python)} && "
+            f"test -f {shlex.quote(isolated_python)} && "
+            f"test \"$(stat -c '%h' {shlex.quote(isolated_python)})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(isolated_python)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(frozen_python_sha256)} && "
+            f"test ! -L {shlex.quote(native_receipt)} && "
+            f"test -f {shlex.quote(native_receipt)} && "
+            f"test \"$(sha256sum {shlex.quote(native_receipt)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['native_build_receipt_sha256']))} && "
+            f"test \"$(sha256sum {shlex.quote(str(binding['runtime_lock_path']))} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['runtime_lock_file_sha256']))} && "
+            f"test \"$(sha256sum {shlex.quote(wheelhouse_manifest)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['wheelhouse_manifest_file_sha256']))} && "
+            f"test \"$(sha256sum {shlex.quote(str(binding['install_receipt_path']))} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['install_receipt_file_sha256']))} && "
+            f"test \"$(sha256sum {shlex.quote(str(binding['root_wheel_path']))} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['root_wheel_sha256']))} && "
+            f"test \"$(sha256sum {shlex.quote(str(binding['native_wheel_path']))} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(binding['native_wheel_sha256']))} && "
+            f"{shlex.quote(isolated_python)} {shlex.quote(locked_script)} verify-install "
+            f"--builder-python {shlex.quote(isolated_python)} "
+            f"--venv {shlex.quote(str(PurePosixPath(isolated_python).parent.parent))} "
+            f"--lock {shlex.quote(str(binding['runtime_lock_path']))} "
+            f"--expected-lock-sha256 {shlex.quote(str(binding['runtime_lock_canonical_sha256']))} "
+            f"--wheelhouse {shlex.quote(str(binding['wheelhouse_path']))} "
+            f"--expected-wheelhouse-sha256 {shlex.quote(str(binding['wheelhouse_canonical_sha256']))} "
+            f"--root-wheel {shlex.quote(str(binding['root_wheel_path']))} "
+            f"--root-wheel-sha256 {shlex.quote(str(binding['root_wheel_sha256']))} "
+            f"--native-wheel {shlex.quote(str(binding['native_wheel_path']))} "
+            f"--native-wheel-sha256 {shlex.quote(str(binding['native_wheel_sha256']))} "
+            f"--receipt {shlex.quote(str(binding['install_receipt_path']))} "
+            f"--expected-receipt-sha256 {shlex.quote(str(binding['install_receipt_canonical_sha256']))} && "
+            f"module=$({shlex.quote(isolated_python)} -c "
+            "'import narrowgate_cpp; print(narrowgate_cpp.__file__)') && "
+            "test -f \"$module\" && "
+            "test \"$(sha256sum \"$module\" | awk '{print $1}')\" = "
+            f"{shlex.quote(str(binding['native_module_sha256']))} && "
+            f"test \"$({shlex.quote(isolated_python)} -c "
+            "'import sysconfig; print(sysconfig.get_config_var(\"SOABI\"))')\" = "
+            f"{shlex.quote(str(binding['native_soabi']))}"
+        )
+        native_build_validate = _command(
+            "validate-successor-native-build-before-stop",
+            _ssh_command(
+                target=target,
+                known_hosts=known_hosts,
+                remote_command=command,
+            ),
+            mutates=False,
+        )
+        static_tree_command = (
+            f"test \"$(sha256sum {shlex.quote(static_verifier)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(static_verifier_sha256)} && "
+            f"test \"$(stat -c '%a' {shlex.quote(static_verifier)})\" = 444 && "
+            f"test \"$(sha256sum {shlex.quote(locked_script)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(locked_script_sha256)} && "
+            f"test \"$(stat -c '%a' {shlex.quote(locked_script)})\" = 444 && "
+            f"test ! -L {shlex.quote(str(plan['host']['trusted_static_python_path']))} && "
+            f"test -f {shlex.quote(str(plan['host']['trusted_static_python_path']))} && "
+            f"test \"$(stat -c '%h' {shlex.quote(str(plan['host']['trusted_static_python_path']))})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(str(plan['host']['trusted_static_python_path']))} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(plan['host']['trusted_static_python_sha256']))} && "
+            f"test ! -L {shlex.quote(static_authority_path)} && "
+            f"test -f {shlex.quote(static_authority_path)} && "
+            f"test \"$(stat -c '%a' {shlex.quote(static_authority_path)})\" = 400 && "
+            f"test \"$(stat -c '%h' {shlex.quote(static_authority_path)})\" = 1 && "
+            f"test \"$(sha256sum {shlex.quote(static_authority_path)} | awk '{{print $1}}')\" = "
+            f"{shlex.quote(str(startup_static_binding['file_sha256']))} && "
+            "export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 && "
+            f"{shlex.quote(str(plan['host']['trusted_static_python_path']))} "
+            f"-I -S {shlex.quote(static_verifier)} "
+            f"--authority {shlex.quote(static_authority_path)} "
+            f"--expected-file-sha256 {shlex.quote(str(startup_static_binding['file_sha256']))} "
+            f"--expected-canonical-sha256 "
+            f"{shlex.quote(str(startup_static_binding['canonical_sha256']))}"
+        )
+        full_static_tree_command = _clean_static_gate_command(static_tree_command)
+        static_tree_command = _clean_static_gate_command(
+            f"{static_tree_command} --candidate-only"
+        )
+        static_tree_validate = _command(
+            "validate-successor-static-runtime-tree-before-target-python",
+            _ssh_command(
+                target=target,
+                known_hosts=known_hosts,
+                remote_command=static_tree_command,
+            ),
+            mutates=False,
+        )
+        cleanup_fragments = []
+        for cleanup_root in (repo_root, external_tool_root):
+            cleanup_fragments.append(
+                f"test ! -L {shlex.quote(cleanup_root)} && "
+                f"/usr/bin/find {shlex.quote(cleanup_root)} -type f "
+                "\\( -name '*.pyc' -o -name '*.pyo' \\) -delete && "
+                f"/usr/bin/find {shlex.quote(cleanup_root)} -depth -type d "
+                "-name __pycache__ -empty -delete"
+            )
+        stale_bytecode_cleanup = _command(
+            "remove-stale-successor-bytecode-caches",
+            _ssh_command(
+                target=target,
+                known_hosts=known_hosts,
+                remote_command=" && ".join(cleanup_fragments),
+            ),
+            mutates=True,
+        )
+    if successor_release:
+        release_destination = str(binding["remote_path"])
+        release_parent = str(PurePosixPath(release_destination).parent)
+        release_temp = (
+            f"{release_destination}.next-{str(binding['file_sha256'])[:16]}"
+        )
+        install_command = _clean_remote_shell_command(
+            "set -eu; umask 077; "
+            f"test ! -L {shlex.quote(release_stage_path)}; "
+            f"test -f {shlex.quote(release_stage_path)}; "
+            f"test \"$(/usr/bin/sha256sum {shlex.quote(release_stage_path)} | "
+            f"/usr/bin/awk '{{print $1}}')\" = {shlex.quote(str(binding['file_sha256']))}; "
+            f"/usr/bin/install -d -m 700 {shlex.quote(release_parent)}; "
+            f"test ! -e {shlex.quote(release_temp)}; "
+            f"trap '/usr/bin/rm -f -- {shlex.quote(release_temp)}' EXIT HUP INT TERM; "
+            f"/usr/bin/install -m 600 {shlex.quote(release_stage_path)} "
+            f"{shlex.quote(release_temp)}; "
+            f"if /usr/bin/ln {shlex.quote(release_temp)} "
+            f"{shlex.quote(release_destination)} 2>/dev/null; then :; "
+            f"else test ! -L {shlex.quote(release_destination)} && "
+            f"test -f {shlex.quote(release_destination)} && "
+            f"/usr/bin/cmp -s {shlex.quote(release_temp)} "
+            f"{shlex.quote(release_destination)}; fi; "
+            f"/usr/bin/rm -f -- {shlex.quote(release_temp)}; "
+            "trap - EXIT HUP INT TERM; "
+            f"test ! -L {shlex.quote(release_destination)}; "
+            f"test -f {shlex.quote(release_destination)}; "
+            f"test \"$(/usr/bin/stat -c '%a' {shlex.quote(release_destination)})\" = 600; "
+            f"test \"$(/usr/bin/stat -c '%h' {shlex.quote(release_destination)})\" = 1; "
+            f"test \"$(/usr/bin/sha256sum {shlex.quote(release_destination)} | "
+            f"/usr/bin/awk '{{print $1}}')\" = {shlex.quote(str(binding['file_sha256']))}"
+        )
+    else:
+        install_command = _verified_external_exec(
+            command=(
+                f"cd {shlex.quote(external_tool_root)} && env {_release_env_unsets()} "
+                "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
+                f"PYTHONPATH={shlex.quote(external_tool_root)} "
+                f"{shlex.quote(external_tool_python)} "
+                f"{shlex.quote(external_script)} install-active-release --source "
+                f"{shlex.quote(release_stage_path)} --destination "
+                f"{shlex.quote(str(binding['remote_path']))} --file-sha256 "
+                f"{shlex.quote(str(binding['file_sha256']))}"
+            ),
+            external_script=external_script,
+            external_script_sha256=external_script_sha256,
+            external_gate=external_gate,
+            external_gate_sha256=external_gate_sha256,
+        )
     install = _command(
         "install-private-active-release",
         _ssh_command(
@@ -3460,18 +5849,61 @@ def _activation_rows_with_active_release(
             remote_command=install_command,
         ),
         mutates=True,
-        after_stop=True,
+        after_stop=False,
     )
     start = _command(
-        "start-active-restart-only",
+        "start-active-restart-only" if phase == "activate" else "start-disabled",
         _ssh_command(
             target=target,
             known_hosts=known_hosts,
-            remote_command=_remote_external_config_start(
-                repo_root,
-                str(plan["remote"]["active_config_path"]),
-                owner_override=True,
-                active_release_binding=binding,
+            remote_command=(
+                _remote_bound_exchange_config_start(
+                    repo_root=repo_root,
+                    runtime_config_path=str(
+                        plan["remote"][
+                            "active_config_path"
+                            if phase == "activate"
+                            else "disabled_config_path"
+                        ]
+                    ),
+                    reconciliation_config_path=str(
+                        plan["remote"]["disabled_config_path"]
+                    ),
+                    reconciliation_output_path=(
+                        f"{plan['remote']['startup_checkpoint_path']}."
+                        f"{'active' if phase == 'activate' else 'disabled'}."
+                        "exchange.startup"
+                    ),
+                    owner_override=phase == "activate",
+                    external_tool_root=external_tool_root,
+                    external_tool_python=external_tool_python,
+                    external_script=exchange_external_script,
+                    external_script_sha256=external_script_sha256,
+                    external_gate=external_gate,
+                    external_gate_sha256=external_gate_sha256,
+                    active_release_binding=(binding if phase == "activate" else None),
+                    safety_release_binding=binding,
+                    startup_static_authority_env=startup_static_env,
+                    startup_static_gate=full_static_tree_command,
+                    trusted_static_python_path=str(
+                        plan["host"]["trusted_static_python_path"]
+                    ),
+                )
+                if successor_release
+                else _remote_external_config_start(
+                    repo_root,
+                    str(
+                        plan["remote"][
+                            "active_config_path"
+                            if phase == "activate"
+                            else "disabled_config_path"
+                        ]
+                    ),
+                    owner_override=phase == "activate",
+                    active_release_binding=(binding if phase == "activate" else None),
+                    safety_release_binding=binding,
+                    startup_static_authority_env=startup_static_env,
+                )
             ),
         ),
         mutates=True,
@@ -3481,20 +5913,46 @@ def _activation_rows_with_active_release(
     rows: list[dict[str, Any]] = []
     for row in base_rows:
         label = str(row["label"])
+        if label == "validate-prebuilt-successor-runtime" and static_tree_validate is not None:
+            if startup_static_install is None:
+                raise BuyE3TransactionalDeployError(
+                    "successor startup static authority install is unavailable"
+                )
+            rows.extend((transfer, validate_stage, install))
+            rows.append(startup_static_install)
+            if stale_bytecode_cleanup is not None:
+                rows.append(stale_bytecode_cleanup)
+            rows.append(static_tree_validate)
         if label == "startup-log-checkpoint":
-            rows.extend((transfer, validate_stage))
-        if label == "start-active-restart-only":
-            rows.extend((install, start))
+            if not successor_release:
+                rows.extend((transfer, validate_stage))
+            if native_build_validate is not None:
+                rows.append(native_build_validate)
+            if not successor_release:
+                rows.append(install)
+        if label == ("start-active-restart-only" if phase == "activate" else "start-disabled"):
+            rows.append(start)
             continue
-        if label == "fresh-active-process-probe":
+        if label == "fresh-active-process-probe" and phase == "activate":
             argv = list(row["argv"])
-            argv[-1] = (
-                f"{argv[-1]} --active-release {shlex.quote(str(binding['remote_path']))} "
+            active_args = (
+                f"--active-release {shlex.quote(str(binding['remote_path']))} "
                 f"--active-release-file-sha256 "
                 f"{shlex.quote(str(binding['file_sha256']))} "
                 f"--active-release-canonical-sha256 "
                 f"{shlex.quote(str(binding['canonical_active_release_sha256']))}"
             )
+            if successor_release:
+                if argv[-1].count(_ACTIVE_RELEASE_PROBE_ARGS_PLACEHOLDER) != 1:
+                    raise BuyE3TransactionalDeployError(
+                        "successor active process probe placeholder drifted"
+                    )
+                argv[-1] = argv[-1].replace(
+                    _ACTIVE_RELEASE_PROBE_ARGS_PLACEHOLDER,
+                    active_args,
+                )
+            else:
+                argv[-1] = f"{argv[-1]} {active_args}"
             rows.append(
                 _command(
                     label,
@@ -3513,8 +5971,10 @@ def _execution_rows(
     phase: str,
     active_release_binding: Mapping[str, Any] | None,
 ) -> list[Mapping[str, Any]]:
-    if phase == "activate" and active_release_binding is not None:
-        return _activation_rows_with_active_release(plan, active_release_binding)
+    if phase in {"disabled-deploy", "activate"} and active_release_binding is not None:
+        return _activation_rows_with_active_release(
+            plan, active_release_binding, phase=phase
+        )
     return list(plan["phases"][phase])
 
 
@@ -3581,16 +6041,25 @@ def build_plan(
     _read_json(manifest_path)
     policy_payload = _read_json(policy_path)
     expected_producer_commit = (
-        execution["execution_commit"]
+        gate_v2.FROZEN_EXECUTION_COMMIT
+        if _is_successor_execution(execution)
+        else execution["execution_commit"]
         if attempt_payload is None
         else attempt_payload["artifact_producer_execution"]["execution_commit"]
     )
     if policy_payload.get("bindings", {}).get("owner_execution_commit") != expected_producer_commit:
         raise BuyE3TransactionalDeployError("policy artifact binds another execution commit")
     runtime_sources = (
-        _current_runtime_sources(
-            repository_root=root,
-            execution_commit=execution["execution_commit"],
+        (
+            _successor_runtime_sources(
+                repository_root=root,
+                execution_commit=execution["execution_commit"],
+            )
+            if _is_successor_execution(execution)
+            else _current_runtime_sources(
+                repository_root=root,
+                execution_commit=execution["execution_commit"],
+            )
         )
         if runtime_sources_from_attempt is None
         else runtime_sources_from_attempt
@@ -3642,6 +6111,60 @@ def build_plan(
     ):
         if not str(remote.get(field, "")).startswith("/"):
             raise BuyE3TransactionalDeployError(f"remote path is not absolute: {field}")
+    successor_process_contract = _is_successor_execution(execution)
+    if successor_process_contract:
+        if (
+            not str(host.get("current_venv_selector_target", "")).strip()
+            or not PurePosixPath(
+                str(host.get("trusted_static_python_path", ""))
+            ).is_absolute()
+        ):
+            raise BuyE3TransactionalDeployError(
+                "successor host identity lacks current selector/static interpreter"
+            )
+        _require_sha256(
+            host.get("trusted_static_python_sha256"),
+            "successor trusted static Python hash",
+        )
+        for field in ("supervisor_pid_file", "maker_child_pid_file"):
+            if not str(remote.get(field, "")).startswith("/"):
+                raise BuyE3TransactionalDeployError(
+                    f"successor remote path is not absolute: {field}"
+                )
+        if remote["supervisor_pid_file"] == remote["maker_child_pid_file"]:
+            raise BuyE3TransactionalDeployError(
+                "successor supervisor and child PID files must differ"
+            )
+        if not str(remote.get("safety_release_path", "")).startswith("/"):
+            raise BuyE3TransactionalDeployError(
+                "successor remote safety release path is not absolute"
+            )
+        _require_sha256(
+            remote.get("safety_release_file_sha256"),
+            "successor remote safety release file hash",
+        )
+        _require_sha256(
+            remote.get("safety_release_canonical_sha256"),
+            "successor remote safety release canonical hash",
+        )
+        authority_path = PurePosixPath(
+            str(remote.get("startup_static_runtime_authority_path", ""))
+        )
+        authority_file_sha256 = _require_sha256(
+            remote.get("startup_static_runtime_authority_file_sha256"),
+            "successor startup static authority file hash",
+        )
+        _require_sha256(
+            remote.get("startup_static_runtime_authority_canonical_sha256"),
+            "successor startup static authority canonical hash",
+        )
+        if authority_path != (
+            PurePosixPath(str(remote["stage_root"]))
+            / f"startup-static-runtime-authority-{authority_file_sha256}.json"
+        ):
+            raise BuyE3TransactionalDeployError(
+                "successor startup static authority path drifted"
+            )
     startup_markers = remote.get("startup_markers")
     if (
         not isinstance(startup_markers, list)
@@ -3649,6 +6172,12 @@ def build_plan(
         or any(not str(marker).strip() for marker in startup_markers)
     ):
         raise BuyE3TransactionalDeployError("remote startup markers are not frozen")
+    if successor_process_contract and not SUCCESSOR_READINESS_MARKERS.issubset(
+        {str(marker) for marker in startup_markers}
+    ):
+        raise BuyE3TransactionalDeployError(
+            "successor startup markers lack the fixed exchange/readiness contract"
+        )
     disabled_strategy = _strategy_mapping(disabled_config)
     active_strategy = _strategy_mapping(active_config)
     remote_artifact_fields = {
@@ -3797,7 +6326,13 @@ def build_plan(
             if argv[0] not in {"ssh", "rsync"} or "StrictHostKeyChecking=yes" not in " ".join(argv):
                 raise BuyE3TransactionalDeployError("remote command lacks strict SSH")
     plan: dict[str, Any] = {
-        "schema_version": (PLAN_SCHEMA if attempt_payload is None else COMPATIBLE_PLAN_SCHEMA),
+        "schema_version": (
+            SUCCESSOR_PLAN_SCHEMA
+            if _is_successor_execution(execution)
+            else PLAN_SCHEMA
+            if attempt_payload is None
+            else COMPATIBLE_PLAN_SCHEMA
+        ),
         "status": "plan_only_no_remote_command_executed",
         "planner_repository_root": str(root),
         "execution": execution,
@@ -3821,7 +6356,14 @@ def build_plan(
         "phase_token_sha256": phase_tokens,
         "phases": commands,
         "transaction_contract": dict(TRANSACTION_CONTRACT),
-        "runtime_attestation_contract": _runtime_attestation_contract(remote),
+        "runtime_attestation_contract": _runtime_attestation_contract(
+            remote,
+            startup_schema_version=(
+                SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+                if _is_successor_execution(execution)
+                else STARTUP_ATTESTATION_SCHEMA
+            ),
+        ),
         "evidence_boundary": dict(PLAN_EVIDENCE_BOUNDARY),
     }
     plan["plan_core_sha256"] = _plan_core_sha256(plan)
@@ -3912,6 +6454,11 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
         raise BuyE3TransactionalDeployError("deployment execution identity is malformed")
     compatible_binding = execution.get("compatible_attempt_manifest")
     compatible = compatible_binding is not None
+    successor = _is_successor_execution(execution)
+    if successor and compatible:
+        raise BuyE3TransactionalDeployError(
+            "operational safety successor cannot use a compatible-attempt plan"
+        )
     if compatible and has_activation:
         raise BuyE3TransactionalDeployError(
             "compatible deployment plans cannot embed a plan-time activation gate"
@@ -3932,13 +6479,31 @@ def validate_plan(plan: Mapping[str, Any]) -> None:
             "compatible execution attempt plan canonical hash",
         )
     if (
-        plan.get("schema_version") != (COMPATIBLE_PLAN_SCHEMA if compatible else PLAN_SCHEMA)
+        plan.get("schema_version")
+        != (
+            SUCCESSOR_PLAN_SCHEMA
+            if successor
+            else COMPATIBLE_PLAN_SCHEMA
+            if compatible
+            else PLAN_SCHEMA
+        )
         or plan.get("status") != "plan_only_no_remote_command_executed"
-        or (not compatible and execution.get("execution_commit") != gate_v2.FROZEN_EXECUTION_COMMIT)
+        or (
+            not compatible
+            and not successor
+            and execution.get("execution_commit") != gate_v2.FROZEN_EXECUTION_COMMIT
+        )
         or plan.get("transaction_contract") != TRANSACTION_CONTRACT
         or plan.get("evidence_boundary") != PLAN_EVIDENCE_BOUNDARY
         or plan.get("runtime_attestation_contract")
-        != _runtime_attestation_contract(plan.get("remote", {}))
+        != _runtime_attestation_contract(
+            plan.get("remote", {}),
+            startup_schema_version=(
+                SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+                if successor
+                else STARTUP_ATTESTATION_SCHEMA
+            ),
+        )
         or plan.get("plan_core_sha256") != _plan_core_sha256(plan)
     ):
         raise BuyE3TransactionalDeployError("deployment plan core identity drifted")
@@ -4083,9 +6648,16 @@ def _revalidate_plan_inputs(plan: Mapping[str, Any]) -> None:
             annotated_tag=str(execution["annotated_tag"]),
             expected_tag_object=str(execution["annotated_tag_object"]),
         )
-        runtime = _current_runtime_sources(
-            repository_root=root,
-            execution_commit=str(execution["execution_commit"]),
+        runtime = (
+            _successor_runtime_sources(
+                repository_root=root,
+                execution_commit=str(execution["execution_commit"]),
+            )
+            if _is_successor_execution(execution)
+            else _current_runtime_sources(
+                repository_root=root,
+                execution_commit=str(execution["execution_commit"]),
+            )
         )
     else:
         compatible_payload, runtime = _revalidate_compatible_execution(
@@ -4357,6 +6929,7 @@ def _validate_installed_active_release_file(
     expected_policy_file_sha256: str = "",
     expected_predicate_bundle_file_sha256: str = "",
     expected_active_config_file_sha256: str = "",
+    expected_disabled_config_file_sha256: str = "",
 ) -> dict[str, Any]:
     """Independently bind the installed private release to process-probe inputs."""
 
@@ -4449,7 +7022,10 @@ def _validate_installed_active_release_file(
         raise BuyE3TransactionalDeployError(
             "installed active release process authority identity drifted"
         )
-    if schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA:
+    if schema_version in {
+        buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+    }:
         active_config_sha256 = _require_sha256(
             expected_active_config_file_sha256,
             "installed active release expected active config hash",
@@ -4458,6 +7034,18 @@ def _validate_installed_active_release_file(
             raise BuyE3TransactionalDeployError(
                 "installed active release binds another active config"
             )
+        if expected_disabled_config_file_sha256:
+            disabled_config_sha256 = _require_sha256(
+                expected_disabled_config_file_sha256,
+                "installed active release expected disabled config hash",
+            )
+            if (
+                release_identity.get("disabled_config_file_sha256")
+                != disabled_config_sha256
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "installed active release binds another disabled config"
+                )
     return payload
 
 
@@ -4481,8 +7069,80 @@ def _expected_commands(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, str]
     ]
 
 
-def _automatic_rollback_rows(plan: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    return [row for row in plan["phases"]["rollback-primary"] if row["label"] != "capture-old-pid"]
+def _automatic_rollback_from_proven_quiescence(
+    results: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Return whether rollback may skip a second process capture/stop.
+
+    A successful quiescence probe is useful only until a start command is
+    attempted.  A failed or disconnected start can still have spawned a
+    process, so any observed start row forces the full stop path.
+    """
+
+    main_results = [
+        result
+        for result in results
+        if not str(result.get("label", "")).startswith("automatic-rollback:")
+    ]
+    quiescent_index = next(
+        (
+            index
+            for index in range(len(main_results) - 1, -1, -1)
+            if main_results[index].get("label") == "confirm-quiescent"
+            and main_results[index].get("returncode") == 0
+        ),
+        None,
+    )
+    if quiescent_index is None:
+        return False
+    return not any(
+        str(result.get("label", "")).startswith("start-")
+        for result in main_results[quiescent_index + 1 :]
+    )
+
+
+def _automatic_rollback_rows(
+    plan: Mapping[str, Any], *, already_quiescent: bool = False
+) -> list[Mapping[str, Any]]:
+    rows = list(plan["phases"]["rollback-primary"])
+    if already_quiescent:
+        if not _is_successor_execution(plan["execution"]):
+            raise BuyE3TransactionalDeployError(
+                "legacy automatic rollback cannot use successor quiescence"
+            )
+        start_index = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if row["label"]
+                == "signed-exchange-open-orders-position-reconciliation"
+            ),
+            None,
+        )
+        if start_index is None:
+            raise BuyE3TransactionalDeployError(
+                "quiescent rollback lacks signed exchange reconciliation"
+            )
+        return rows[start_index:]
+    without_capture = [row for row in rows if row["label"] != "capture-old-pid"]
+    if not _is_successor_execution(plan["execution"]):
+        return without_capture
+    by_label = {str(row["label"]): row for row in without_capture}
+    prerequisite_label = "validate-rollback-successor-prerequisites-before-stop"
+    stop = by_label.get("stop-live")
+    quiescent = by_label.get("confirm-quiescent")
+    prerequisite = by_label.get(prerequisite_label)
+    if stop is None or quiescent is None or prerequisite is None:
+        raise BuyE3TransactionalDeployError(
+            "successor automatic rollback lacks stop-first prerequisites"
+        )
+    tail = [
+        row
+        for row in without_capture
+        if row["label"]
+        not in {"stop-live", "confirm-quiescent", prerequisite_label}
+    ]
+    return [stop, quiescent, prerequisite, *tail]
 
 
 def _same_file_state(before: os.stat_result, after: os.stat_result) -> bool:
@@ -4774,7 +7434,10 @@ def _validate_active_release_for_activation(
                 raise BuyE3TransactionalDeployError(
                     "active release attempt manifest differs from the plan"
                 )
-        elif schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA:
+        elif schema_version in {
+            buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+        }:
             if activation_envelope_binding is not None:
                 raise BuyE3TransactionalDeployError(
                     "direct-owner v3 cannot borrow a historical activation envelope"
@@ -4806,7 +7469,10 @@ def _validate_active_release_for_activation(
             "schema_version": schema_version,
             "status": expected_status,
         }
-        if schema_version == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA:
+        if schema_version in {
+            buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+        }:
             binding.update(
                 {
                     "active_config_file_sha256": release_identity[
@@ -4817,6 +7483,9 @@ def _validate_active_release_for_activation(
                     ],
                 }
             )
+        if schema_version == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
+            native_build = payload["native_build"]
+            binding.update(_successor_native_build_binding(native_build))
         return binding
 
 
@@ -4827,10 +7496,21 @@ def _expected_process_binding(
 ) -> dict[str, Any]:
     if phase in {"disabled-deploy", "activate"}:
         config_name = "active" if phase == "activate" else "disabled"
-        if phase != "activate" and active_release_binding is not None:
+        if phase != "activate" and active_release_binding is not None and (
+            active_release_binding.get("schema_version")
+            != buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        ):
             raise BuyE3TransactionalDeployError(
                 "disabled process cannot carry active release authority"
             )
+        active_binding = active_release_binding if phase == "activate" else None
+        safety_binding = (
+            active_release_binding
+            if active_release_binding is not None
+            and active_release_binding.get("schema_version")
+            == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+            else None
+        )
         return {
             "enabled": phase == "activate",
             "startup_attestation_schema_version": str(
@@ -4848,9 +7528,17 @@ def _expected_process_binding(
             "python_executable": plan["host"]["python_executable"],
             "venv_root": plan["host"]["venv_root"],
             "active_release": _expected_active_release_identity(
-                active_release_binding,
+                active_binding,
                 expected_execution_commit=plan["execution"]["execution_commit"],
                 expected_execution_tree=plan["execution"]["execution_tree"],
+            ),
+            "active_release_binding": active_binding,
+            "safety_release_binding": safety_binding,
+            "startup_exchange_reconciliation_path": (
+                f"{plan['remote']['startup_checkpoint_path']}.{config_name}."
+                "exchange.startup"
+                if _is_successor_execution(plan["execution"])
+                else None
             ),
         }
     rollback_name = {
@@ -4860,6 +7548,13 @@ def _expected_process_binding(
     if rollback_name is None:
         raise BuyE3TransactionalDeployError("process identity phase is unknown")
     identity = plan["rollback_identities"][rollback_name]
+    safety_binding = (
+        active_release_binding
+        if active_release_binding is not None
+        and active_release_binding.get("schema_version")
+        == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        else None
+    )
     return {
         "enabled": False,
         "startup_attestation_schema_version": _rollback_startup_attestation_schema(
@@ -4876,6 +7571,13 @@ def _expected_process_binding(
         "python_executable": identity["python_executable"],
         "venv_root": identity["venv_root"],
         "active_release": _empty_active_release_identity(),
+        "active_release_binding": None,
+        "safety_release_binding": safety_binding,
+        "startup_exchange_reconciliation_path": (
+            f"{plan['remote']['startup_checkpoint_path']}.rollback.exchange.startup"
+            if _is_successor_execution(plan["execution"])
+            else None
+        ),
     }
 
 
@@ -4907,16 +7609,29 @@ def _validate_actual_process_identity(
     active_release_binding: Mapping[str, Any] | None = None,
     allow_legacy: bool = False,
 ) -> dict[str, Any]:
+    expected = _expected_process_binding(plan, phase, active_release_binding)
+    successor = (
+        expected["startup_attestation_schema_version"]
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    )
     legacy = set(process) == _LEGACY_PROCESS_IDENTITY_FIELDS
-    if set(process) != (
-        _LEGACY_PROCESS_IDENTITY_FIELDS if legacy else _PROCESS_IDENTITY_FIELDS
-    ) or (legacy and not allow_legacy):
+    expected_fields = (
+        _LEGACY_PROCESS_IDENTITY_FIELDS
+        if legacy
+        else _SUCCESSOR_PROCESS_IDENTITY_FIELDS
+        if successor
+        else _PROCESS_IDENTITY_FIELDS
+    )
+    if (
+        set(process) != expected_fields
+        or (legacy and not allow_legacy)
+        or (successor and legacy)
+    ):
         raise BuyE3TransactionalDeployError("actual process identity fields drifted")
     if process.get("schema_version") != gate_v2.PROCESS_IDENTITY_SCHEMA or process.get(
         "canonical_process_identity_sha256"
     ) != gate_v2.document_sha256(process, "canonical_process_identity_sha256"):
         raise BuyE3TransactionalDeployError("actual process identity hash drifted")
-    expected = _expected_process_binding(plan, phase, active_release_binding)
     try:
         pid = int(process.get("pid", -1))
         start_ticks = int(process.get("pid_start_ticks", -1))
@@ -5040,6 +7755,24 @@ def _validate_actual_process_identity(
         or not str(process.get("python_binary_resolved", "")).strip()
     ):
         raise BuyE3TransactionalDeployError("actual process capture identity is incomplete")
+    if successor:
+        exchange = process.get("startup_exchange_reconciliation")
+        if (
+            not isinstance(exchange, Mapping)
+            or set(exchange) != _STARTUP_EXCHANGE_RECONCILIATION_BINDING_FIELDS
+            or exchange.get("path")
+            != expected["startup_exchange_reconciliation_path"]
+        ):
+            raise BuyE3TransactionalDeployError(
+                "actual process exchange reconciliation binding drifted"
+            )
+        for field in (
+            "file_sha256",
+            "canonical_sha256",
+            "account_key_sha256",
+            "position_lineage_sha256",
+        ):
+            _require_sha256(exchange.get(field), f"process exchange {field}")
     return dict(process)
 
 
@@ -5081,11 +7814,45 @@ def _parse_process_probe(
     )
 
 
+def _parse_process_family_probe(stdout: str) -> dict[str, int | str]:
+    tokens = stdout.split()
+    if len(tokens) != 4:
+        raise BuyE3TransactionalDeployError(
+            "supervisor/child process family probe is malformed"
+        )
+    try:
+        supervisor_pid, supervisor_ticks, child_pid, child_ticks = (
+            int(value) for value in tokens
+        )
+    except (TypeError, ValueError) as exc:
+        raise BuyE3TransactionalDeployError(
+            "supervisor/child process family probe is malformed"
+        ) from exc
+    if (
+        min(supervisor_pid, supervisor_ticks, child_pid, child_ticks) <= 0
+        or supervisor_pid == child_pid
+    ):
+        raise BuyE3TransactionalDeployError(
+            "supervisor/child process family probe is malformed"
+        )
+    family: dict[str, int | str] = {
+        "supervisor_pid": supervisor_pid,
+        "supervisor_start_ticks": supervisor_ticks,
+        "child_pid": child_pid,
+        "child_start_ticks": child_ticks,
+        "child_ppid": supervisor_pid,
+    }
+    family["process_family_identity_sha256"] = gate_v2.canonical_sha256(
+        family
+    )
+    return family
+
+
 def _process_handoff_identity(process: Mapping[str, Any]) -> dict[str, Any]:
     runtime_identity = process.get("runtime_identity")
     if not isinstance(runtime_identity, Mapping):
         raise BuyE3TransactionalDeployError("disabled process runtime identity is malformed")
-    return {
+    handoff = {
         "pid": int(process["pid"]),
         "pid_start_ticks": int(process["pid_start_ticks"]),
         "cmdline": process["cmdline"],
@@ -5115,6 +7882,14 @@ def _process_handoff_identity(process: Mapping[str, Any]) -> dict[str, Any]:
         "active_release_execution_commit": process.get("active_release_execution_commit"),
         "active_release_execution_tree": process.get("active_release_execution_tree"),
     }
+    if "startup_exchange_reconciliation" in process:
+        exchange = process.get("startup_exchange_reconciliation")
+        if not isinstance(exchange, Mapping):
+            raise BuyE3TransactionalDeployError(
+                "disabled process exchange reconciliation binding is malformed"
+            )
+        handoff["startup_exchange_reconciliation"] = dict(exchange)
+    return handoff
 
 
 def _require_same_disabled_process(prior: Mapping[str, Any], current: Mapping[str, Any]) -> None:
@@ -5200,11 +7975,13 @@ def _validate_runtime_identity_stdout(
         expected_startup_attestation_schema_version=expected[
             "startup_attestation_schema_version"
         ],
-        expected_active_release=active_release_binding,
-        allow_legacy_startup=(
-            expected["startup_attestation_schema_version"]
-            != STARTUP_ATTESTATION_SCHEMA
+        expected_active_release=expected.get("active_release_binding"),
+        expected_safety_release=expected.get("safety_release_binding"),
+        expected_exchange_reconciliation_path=expected.get(
+            "startup_exchange_reconciliation_path"
         ),
+        allow_legacy_startup=expected["startup_attestation_schema_version"]
+        in {LEGACY_STARTUP_ATTESTATION_SCHEMA, HISTORICAL_STARTUP_ATTESTATION_SCHEMA},
     )
     startup_attestation_sha256 = gate_v2.canonical_sha256(attestation)
     if process.get("startup_attestation_sha256") != startup_attestation_sha256:
@@ -5234,6 +8011,13 @@ def _validate_runtime_identity_stdout(
         "startup_attestation": attestation,
         "startup_attestation_sha256": startup_attestation_sha256,
     }
+    if (
+        expected["startup_attestation_schema_version"]
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    ):
+        binding["startup_exchange_reconciliation"] = dict(
+            runtime["startup_exchange_reconciliation"]
+        )
     binding["canonical_runtime_identity_binding_sha256"] = gate_v2.document_sha256(
         binding, "canonical_runtime_identity_binding_sha256"
     )
@@ -5250,10 +8034,20 @@ def _validate_runtime_identity_binding(
     allow_legacy: bool = False,
     expected_startup_schema_version: str | None = None,
 ) -> dict[str, Any]:
+    expected = _expected_process_binding(plan, process_phase, active_release_binding)
+    successor = (
+        expected["startup_attestation_schema_version"]
+        == SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+    )
     legacy = set(raw) == _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS
-    if set(raw) != (
-        _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS if legacy else _RUNTIME_IDENTITY_BINDING_FIELDS
-    ) or (legacy and not allow_legacy):
+    expected_fields = (
+        _LEGACY_RUNTIME_IDENTITY_BINDING_FIELDS
+        if legacy
+        else _SUCCESSOR_RUNTIME_IDENTITY_BINDING_FIELDS
+        if successor
+        else _RUNTIME_IDENTITY_BINDING_FIELDS
+    )
+    if set(raw) != expected_fields or (legacy and not allow_legacy):
         raise BuyE3TransactionalDeployError("runtime identity binding fields drifted")
     binding = dict(raw)
     runtime_identity = process.get("runtime_identity")
@@ -5261,7 +8055,6 @@ def _validate_runtime_identity_binding(
         raise BuyE3TransactionalDeployError("runtime identity process binding is malformed")
     if runtime_identity.get("file_sha256") != process.get("runtime_identity_file_sha256"):
         raise BuyE3TransactionalDeployError("runtime identity process file hashes disagree")
-    expected = _expected_process_binding(plan, process_phase, active_release_binding)
     exact = {
         "schema_version": RUNTIME_IDENTITY_BINDING_SCHEMA,
         "authority": "runtime_written_startup_attestation",
@@ -5291,6 +8084,24 @@ def _validate_runtime_identity_binding(
         }
         if any(binding.get(field) != value for field, value in expected_release_fields.items()):
             raise BuyE3TransactionalDeployError("runtime identity active release binding drifted")
+    if successor:
+        exchange = binding.get("startup_exchange_reconciliation")
+        if (
+            not isinstance(exchange, Mapping)
+            or set(exchange) != _STARTUP_EXCHANGE_RECONCILIATION_BINDING_FIELDS
+            or exchange.get("path")
+            != expected["startup_exchange_reconciliation_path"]
+        ):
+            raise BuyE3TransactionalDeployError(
+                "runtime identity exchange reconciliation binding drifted"
+            )
+        for field in (
+            "file_sha256",
+            "canonical_sha256",
+            "account_key_sha256",
+            "position_lineage_sha256",
+        ):
+            _require_sha256(exchange.get(field), f"runtime binding exchange {field}")
     attestation = _validate_startup_attestation(
         binding.get("startup_attestation"),
         expected_schema_version=(
@@ -5306,7 +8117,8 @@ def _validate_runtime_identity_binding(
         expected_python_binary_resolved=str(process["python_binary_resolved"]),
         expected_config_sha256=expected["config_sha256"],
         expected_enabled=bool(expected["enabled"]),
-        expected_active_release=active_release_binding,
+        expected_active_release=expected.get("active_release_binding"),
+        expected_safety_release=expected.get("safety_release_binding"),
         allow_legacy=allow_legacy,
     )
     if (
@@ -5768,7 +8580,14 @@ def _build_phase_receipt(
     rollback_process_identity: Mapping[str, Any] | None,
     failure_class: str | None,
 ) -> dict[str, Any]:
-    rollback_rows = _automatic_rollback_rows(plan) if rollback_attempted else []
+    rollback_rows = (
+        _automatic_rollback_rows(
+            plan,
+            already_quiescent=_automatic_rollback_from_proven_quiescence(results),
+        )
+        if rollback_attempted
+        else []
+    )
     receipt: dict[str, Any] = {
         "schema_version": RECEIPT_SCHEMA,
         "plan_sha256": plan["canonical_plan_sha256"],
@@ -5865,9 +8684,52 @@ def _validate_result_shape(result: Mapping[str, Any]) -> None:
     bare_label = label.removeprefix("automatic-rollback:")
     if bare_label == "capture-old-pid":
         if identity_fields and (
-            identity_fields != {"observed_pid"} or int(result["observed_pid"]) <= 0
+            identity_fields
+            not in ({"observed_pid"}, {"observed_pid", "observed_start_ticks"})
+            or int(result["observed_pid"]) <= 0
+            or (
+                "observed_start_ticks" in result
+                and int(result["observed_start_ticks"]) <= 0
+            )
         ):
             raise BuyE3TransactionalDeployError("old PID result binding is malformed")
+    elif bare_label == "capture-old-supervisor-pid":
+        if identity_fields and (
+            identity_fields != {"observed_pid", "observed_start_ticks"}
+            or int(result["observed_pid"]) <= 0
+            or int(result["observed_start_ticks"]) <= 0
+        ):
+            raise BuyE3TransactionalDeployError(
+                "old supervisor PID result binding is malformed"
+            )
+    elif "supervisor-child-probe" in bare_label:
+        family_fields = {
+            "supervisor_pid",
+            "supervisor_start_ticks",
+            "child_pid",
+            "child_start_ticks",
+            "child_ppid",
+            "process_family_identity_sha256",
+        }
+        if identity_fields and (
+            identity_fields != family_fields
+            or any(int(result[field]) <= 0 for field in family_fields - {"process_family_identity_sha256"})
+            or int(result["child_ppid"]) != int(result["supervisor_pid"])
+        ):
+            raise BuyE3TransactionalDeployError("process family result binding is malformed")
+        if identity_fields:
+            observed_family_sha = _require_sha256(
+                result["process_family_identity_sha256"],
+                "process family identity hash",
+            )
+            family_identity = {
+                field: result[field]
+                for field in family_fields - {"process_family_identity_sha256"}
+            }
+            if observed_family_sha != gate_v2.canonical_sha256(family_identity):
+                raise BuyE3TransactionalDeployError(
+                    "process family canonical identity drifted"
+                )
     elif "process-probe" in bare_label or bare_label == "reprobe-disabled-process-before-stop":
         if identity_fields and identity_fields != {
             "observed_pid",
@@ -5924,7 +8786,16 @@ def validate_phase_receipt(
         phase == "activate"
         and isinstance(raw_active_release_binding, Mapping)
         and raw_active_release_binding.get("schema_version")
-        == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
+        in {
+            buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+            buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+        }
+    )
+    successor_disabled = bool(
+        phase == "disabled-deploy"
+        and isinstance(raw_active_release_binding, Mapping)
+        and raw_active_release_binding.get("schema_version")
+        == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
     )
     compatible_activation = bool(
         phase == "activate"
@@ -5945,6 +8816,8 @@ def validate_phase_receipt(
     expected_receipt_startup_schema = (
         LEGACY_STARTUP_ATTESTATION_SCHEMA
         if legacy_v3_receipt
+        else SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+        if _is_successor_execution(plan["execution"])
         else STARTUP_ATTESTATION_SCHEMA
     )
     validate_plan(plan)
@@ -5974,7 +8847,7 @@ def validate_phase_receipt(
             raise BuyE3TransactionalDeployError(
                 "historical phase receipt carries future active release authority"
             )
-    elif compatible_activation or direct_v3_activation:
+    elif compatible_activation or direct_v3_activation or successor_disabled:
         if not isinstance(active_release_binding, Mapping):
             raise BuyE3TransactionalDeployError(
                 "activation receipt lacks active release binding"
@@ -6024,7 +8897,12 @@ def validate_phase_receipt(
         } != expected[index]:
             raise BuyE3TransactionalDeployError("phase command order/hash drifted")
     attempted_rows = execution_rows[: len(main_results)]
-    mutation_started = any(bool(row["mutates_remote"]) for row in attempted_rows)
+    successor_transaction = plan.get("schema_version") == SUCCESSOR_PLAN_SCHEMA
+    mutation_started = any(
+        bool(row["mutates_remote"])
+        and (not successor_transaction or bool(row["after_stop"]))
+        for row in attempted_rows
+    )
     if receipt.get("mutation_started") is not mutation_started:
         raise BuyE3TransactionalDeployError("phase mutation-start binding drifted")
     status = receipt.get("status")
@@ -6252,8 +9130,36 @@ def validate_phase_receipt(
         ]
         if len(matching) != 1:
             raise BuyE3TransactionalDeployError("process probe result is not rebound")
-    elif status == PHASE_COMPLETE:
+        if _is_successor_execution(plan["execution"]):
+            family_results = [
+                result
+                for result in main_results
+                if "supervisor-child-probe" in str(result.get("label", ""))
+            ]
+            if (
+                len(family_results) != 1
+                or int(family_results[0].get("child_pid", -1))
+                != int(validated_process["pid"])
+                or int(family_results[0].get("child_start_ticks", -1))
+                != int(validated_process["pid_start_ticks"])
+                or int(family_results[0].get("child_ppid", -1))
+                != int(family_results[0].get("supervisor_pid", -2))
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "successor process receipt lacks an exact supervisor/child binding"
+                )
+    elif status == PHASE_COMPLETE and phase != "rollback-deep":
         raise BuyE3TransactionalDeployError("completed phase lacks actual process identity")
+    elif status == PHASE_COMPLETE:
+        deep_labels = {result["label"] for result in main_results}
+        if (
+            "confirm-quiescent" not in deep_labels
+            or "deep-stop-reconciliation-required" not in deep_labels
+            or any("start" in label or "process-probe" in label for label in deep_labels)
+        ):
+            raise BuyE3TransactionalDeployError(
+                "deep rollback receipt is not exact stopped reconciliation evidence"
+            )
     if actual_startup is not None:
         if not isinstance(actual_startup, Mapping) or not isinstance(process, Mapping):
             raise BuyE3TransactionalDeployError("actual runtime startup binding is malformed")
@@ -6308,24 +9214,101 @@ def validate_phase_receipt(
     else:
         if not isinstance(stop_failure_probe, Mapping):
             raise BuyE3TransactionalDeployError("stop failure lacks post-stop probe")
-        _validate_result_shape(stop_failure_probe)
         expected_probe_row = next(
             row for row in execution_rows if row["label"] == "confirm-quiescent"
         )
-        if (
-            stop_failure_probe.get("label") != "stop-failure-probe:confirm-quiescent"
-            or stop_failure_probe.get("command_sha256") != expected_probe_row["command_sha256"]
-        ):
-            raise BuyE3TransactionalDeployError("stop failure probe command drifted")
+        if successor_transaction:
+            if set(stop_failure_probe) != {"schema_version", "results"} or (
+                stop_failure_probe.get("schema_version")
+                != SUCCESSOR_STOP_FAILURE_RECOVERY_SCHEMA
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "successor stop failure recovery evidence drifted"
+                )
+            recovery_results = stop_failure_probe.get("results")
+            if not isinstance(recovery_results, list) or not recovery_results:
+                raise BuyE3TransactionalDeployError(
+                    "successor stop failure lacks a quiescence result"
+                )
+            for recovery_result in recovery_results:
+                if not isinstance(recovery_result, Mapping):
+                    raise BuyE3TransactionalDeployError(
+                        "successor stop failure recovery result is malformed"
+                    )
+                _validate_result_shape(recovery_result)
+            first_recovery = recovery_results[0]
+            if (
+                first_recovery.get("label")
+                != "stop-failure-probe:confirm-quiescent"
+                or first_recovery.get("command_sha256")
+                != expected_probe_row["command_sha256"]
+            ):
+                raise BuyE3TransactionalDeployError(
+                    "stop failure quiescence command drifted"
+                )
+            quiescent = first_recovery.get("returncode") == 0
+            expected_reconciliation_row = next(
+                (
+                    row
+                    for row in execution_rows
+                    if row["label"]
+                    == "signed-exchange-open-orders-position-reconciliation"
+                ),
+                None,
+            )
+            if quiescent:
+                if expected_reconciliation_row is None or len(recovery_results) != 2:
+                    raise BuyE3TransactionalDeployError(
+                        "quiescent stop failure lacks independent exchange reconciliation"
+                    )
+                reconciliation_result = recovery_results[1]
+                if (
+                    reconciliation_result.get("label")
+                    != "stop-failure-probe:signed-exchange-open-orders-position-reconciliation"
+                    or reconciliation_result.get("command_sha256")
+                    != expected_reconciliation_row["command_sha256"]
+                ):
+                    raise BuyE3TransactionalDeployError(
+                        "stop failure exchange reconciliation command drifted"
+                    )
+            elif len(recovery_results) != 1:
+                raise BuyE3TransactionalDeployError(
+                    "non-quiescent stop failure ran exchange reconciliation"
+                )
+        else:
+            _validate_result_shape(stop_failure_probe)
+            if (
+                stop_failure_probe.get("label")
+                != "stop-failure-probe:confirm-quiescent"
+                or stop_failure_probe.get("command_sha256")
+                != expected_probe_row["command_sha256"]
+            ):
+                raise BuyE3TransactionalDeployError("stop failure probe command drifted")
     expected_rollback_attempt = (
         status == PHASE_FAILED_CLOSED
         and mutation_started
         and phase not in {"rollback-primary", "rollback-deep"}
+        and not (
+            successor_transaction
+            and (
+                failed_stop is not None
+                or failure_class == "exchange_reconciliation_failed"
+            )
+        )
     )
     if receipt.get("rollback_attempted") is not expected_rollback_attempt:
         raise BuyE3TransactionalDeployError("automatic rollback behavior drifted")
     expected_rollback = (
-        _expected_commands(_automatic_rollback_rows(plan)) if expected_rollback_attempt else []
+        _expected_commands(
+            _automatic_rollback_rows(
+                plan,
+                already_quiescent=_automatic_rollback_from_proven_quiescence(
+                    main_results
+                ),
+            )
+        )
+        if expected_rollback_attempt
+        else []
     )
     if receipt.get("expected_automatic_rollback_commands") != expected_rollback:
         raise BuyE3TransactionalDeployError("automatic rollback command binding drifted")
@@ -6374,6 +9357,25 @@ def validate_phase_receipt(
                 != 1
             ):
                 raise BuyE3TransactionalDeployError("rollback process probe is not rebound")
+            if _is_successor_execution(plan["execution"]):
+                family_results = [
+                    result
+                    for result in rollback_results
+                    if "supervisor-child-probe"
+                    in str(result.get("label", ""))
+                ]
+                if (
+                    len(family_results) != 1
+                    or int(family_results[0].get("child_pid", -1))
+                    != int(validated_rollback["pid"])
+                    or int(family_results[0].get("child_start_ticks", -1))
+                    != int(validated_rollback["pid_start_ticks"])
+                    or int(family_results[0].get("child_ppid", -1))
+                    != int(family_results[0].get("supervisor_pid", -2))
+                ):
+                    raise BuyE3TransactionalDeployError(
+                        "automatic rollback lacks an exact supervisor/child binding"
+                    )
         elif rollback_status == "rollback_failed_closed":
             if rollback_failure_class not in FAILURE_CLASSES:
                 raise BuyE3TransactionalDeployError("rollback failure class is unsafe")
@@ -6400,14 +9402,44 @@ def _run_stop_failure_probe(
     phase: str,
     runner: CommandRunner,
 ) -> dict[str, Any]:
-    row = next(row for row in plan["phases"][phase] if row["label"] == "confirm-quiescent")
+    rows = plan["phases"][phase]
+    row = next(row for row in rows if row["label"] == "confirm-quiescent")
     probe_row = dict(row)
     probe_row["label"] = "stop-failure-probe:confirm-quiescent"
     try:
         completed = runner(tuple(str(value) for value in row["argv"]))
     except Exception:
-        return _command_result(probe_row, None)
-    return _command_result(probe_row, completed)
+        completed = None
+    quiescence_result = _command_result(probe_row, completed)
+    if not _is_successor_execution(plan["execution"]):
+        return quiescence_result
+
+    recovery_results = [quiescence_result]
+    if completed is not None and completed.returncode == 0:
+        reconciliation_row = next(
+            row
+            for row in rows
+            if row["label"]
+            == "signed-exchange-open-orders-position-reconciliation"
+        )
+        reconciliation_probe = dict(reconciliation_row)
+        reconciliation_probe["label"] = (
+            "stop-failure-probe:"
+            "signed-exchange-open-orders-position-reconciliation"
+        )
+        try:
+            reconciled = runner(
+                tuple(str(value) for value in reconciliation_row["argv"])
+            )
+        except Exception:
+            reconciled = None
+        recovery_results.append(
+            _command_result(reconciliation_probe, reconciled)
+        )
+    return {
+        "schema_version": SUCCESSOR_STOP_FAILURE_RECOVERY_SCHEMA,
+        "results": recovery_results,
+    }
 
 
 def _run_automatic_rollback(
@@ -6416,11 +9448,13 @@ def _run_automatic_rollback(
     runner: CommandRunner,
     results: list[dict[str, Any]],
     old_pid: int | None,
+    already_quiescent: bool,
 ) -> tuple[str, str | None, dict[str, Any] | None]:
     rollback_failure_class: str | None = None
     rollback_process_identity: dict[str, Any] | None = None
+    rollback_process_family: dict[str, int | str] | None = None
     completed_rows = 0
-    rows = _automatic_rollback_rows(plan)
+    rows = _automatic_rollback_rows(plan, already_quiescent=already_quiescent)
     for row in rows:
         automatic_row = dict(row)
         automatic_row["label"] = f"automatic-rollback:{row['label']}"
@@ -6436,7 +9470,16 @@ def _run_automatic_rollback(
         if completed.returncode != 0:
             rollback_failure_class = "command_returncode_nonzero"
             break
-        if "process-probe" in row["label"]:
+        if "supervisor-child-probe" in row["label"]:
+            try:
+                rollback_process_family = _parse_process_family_probe(
+                    completed.stdout or ""
+                )
+            except BuyE3TransactionalDeployError:
+                rollback_failure_class = "process_probe_invalid"
+                break
+            result.update(rollback_process_family)
+        elif "process-probe" in row["label"]:
             try:
                 rollback_process_identity = _parse_process_probe(
                     completed.stdout or "",
@@ -6451,10 +9494,23 @@ def _run_automatic_rollback(
             result["process_identity_sha256"] = rollback_process_identity[
                 "canonical_process_identity_sha256"
             ]
+            if _is_successor_execution(plan["execution"]) and (
+                rollback_process_family is None
+                or int(rollback_process_identity["pid"])
+                != int(rollback_process_family["child_pid"])
+                or int(rollback_process_identity["pid_start_ticks"])
+                != int(rollback_process_family["child_start_ticks"])
+            ):
+                rollback_failure_class = "process_identity_invalid"
+                break
     if (
         rollback_failure_class is None
         and completed_rows == len(rows)
         and rollback_process_identity is not None
+        and (
+            rollback_process_family is not None
+            or not _is_successor_execution(plan["execution"])
+        )
     ):
         return "rollback_complete", None, rollback_process_identity
     return "rollback_failed_closed", rollback_failure_class, rollback_process_identity
@@ -6485,7 +9541,8 @@ def execute_phase(
         raise PermissionError("phase token does not match the frozen plan")
     compatible = plan["execution"].get("compatible_attempt_manifest") is not None
     release_schema = ""
-    if phase == "activate" and active_release_path is not None:
+    successor_plan = _is_successor_execution(plan["execution"])
+    if phase in {"disabled-deploy", "activate"} and active_release_path is not None:
         with _stable_private_active_release(
             active_release_path
         ) as (_candidate, _raw, release_payload):
@@ -6502,9 +9559,17 @@ def execute_phase(
             raise BuyE3TransactionalDeployError(
                 "historical direct-owner release cannot authorize current activation"
             )
-    direct_v3_activation = (
-        release_schema == buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
-    )
+        if phase == "disabled-deploy" and (
+            release_schema
+            != buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+        ):
+            raise BuyE3TransactionalDeployError(
+                "disabled successor phase requires operational safety successor authority"
+            )
+    direct_v3_activation = release_schema in {
+        buy_e3_runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA,
+        buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA,
+    }
     activation_envelope_binding: dict[str, Any] | None = None
     if phase == "activate" and direct_v3_activation:
         if activation_envelope_path is not None:
@@ -6557,7 +9622,7 @@ def execute_phase(
             "disabled phase receipt is accepted only for activation"
         )
     active_release_binding: dict[str, Any] | None = None
-    if phase == "activate" and active_release_path is not None:
+    if phase in {"disabled-deploy", "activate"} and active_release_path is not None:
         if not direct_v3_activation and activation_envelope_binding is None:
             raise PermissionError(
                 "legacy compatible activation requires a post-envelope active release"
@@ -6568,8 +9633,16 @@ def execute_phase(
             activation_envelope_binding=activation_envelope_binding,
         )
     elif phase == "activate":
+        if successor_plan:
+            raise PermissionError(
+                "successor deployment requires an exact live safety successor release"
+            )
         raise PermissionError(
             "current activation requires an exact direct-owner v3 active release"
+        )
+    elif phase == "disabled-deploy" and successor_plan:
+        raise PermissionError(
+            "successor deployment requires an exact live safety successor release"
         )
     elif active_release_path is not None:
         raise BuyE3TransactionalDeployError(
@@ -6593,7 +9666,12 @@ def execute_phase(
     phase_complete = False
     failure_class: str | None = None
     old_pid: int | None = None
+    old_pid_start_ticks: int | None = None
+    old_supervisor_pid: int | None = None
+    old_supervisor_start_ticks: int | None = None
+    current_process_family: dict[str, int | str] | None = None
     phase_error: BaseException | None = None
+    stop_execution_state_uncertain = False
     phase_started = time.monotonic()
 
     def require_phase_time() -> None:
@@ -6605,37 +9683,75 @@ def execute_phase(
     try:
         for row in rows:
             require_phase_time()
-            if row["mutates_remote"]:
+            if row["mutates_remote"] and (
+                not successor_plan or bool(row["after_stop"])
+            ):
                 mutation_started = True
             try:
                 completed = runner(tuple(str(value) for value in row["argv"]))
             except Exception:
                 results.append(_command_result(row, None))
-                failure_class = "command_runner_exception"
                 if row["label"] == "stop-live":
+                    stop_execution_state_uncertain = successor_plan
+                    failure_class = (
+                        "stop_execution_state_uncertain"
+                        if successor_plan
+                        else "command_runner_exception"
+                    )
                     stop_failure_probe_result = _run_stop_failure_probe(
                         plan=plan, phase=phase, runner=runner
+                    )
+                else:
+                    stop_execution_state_uncertain = (
+                        successor_plan
+                        and row["label"]
+                        == "signed-exchange-open-orders-position-reconciliation"
+                    )
+                    failure_class = (
+                        "exchange_reconciliation_failed"
+                        if stop_execution_state_uncertain
+                        else "command_runner_exception"
                     )
                 raise
             result = _command_result(row, completed)
             results.append(result)
             if completed.returncode != 0:
-                failure_class = "command_returncode_nonzero"
                 if row["label"] == "stop-live":
+                    stop_execution_state_uncertain = successor_plan
+                    failure_class = (
+                        "stop_execution_state_uncertain"
+                        if successor_plan
+                        else "command_returncode_nonzero"
+                    )
                     stop_failure_probe_result = _run_stop_failure_probe(
                         plan=plan, phase=phase, runner=runner
+                    )
+                else:
+                    stop_execution_state_uncertain = (
+                        successor_plan
+                        and row["label"]
+                        == "signed-exchange-open-orders-position-reconciliation"
+                    )
+                    failure_class = (
+                        "exchange_reconciliation_failed"
+                        if stop_execution_state_uncertain
+                        else "command_returncode_nonzero"
                     )
                 raise BuyE3TransactionalDeployError(f"remote phase failed closed at {row['label']}")
             if completed.returncode == 0 and row["label"] == "capture-old-pid":
                 try:
-                    old_pid = int((completed.stdout or "").strip())
-                except ValueError as exc:
+                    tokens = (completed.stdout or "").split()
+                    old_pid = int(tokens[0])
+                    old_pid_start_ticks = int(tokens[1]) if successor_plan else None
+                except (IndexError, ValueError) as exc:
                     failure_class = "old_pid_probe_invalid"
                     raise BuyE3TransactionalDeployError("old PID probe is malformed") from exc
                 if old_pid <= 0:
                     failure_class = "old_pid_probe_invalid"
                     raise BuyE3TransactionalDeployError("old PID probe is invalid")
                 result["observed_pid"] = old_pid
+                if old_pid_start_ticks is not None:
+                    result["observed_start_ticks"] = old_pid_start_ticks
                 if (
                     phase == "activate"
                     and prior_disabled_process is not None
@@ -6645,6 +9761,41 @@ def execute_phase(
                     raise BuyE3TransactionalDeployError(
                         "captured process differs from disabled phase receipt"
                     )
+            elif completed.returncode == 0 and row["label"] == "capture-old-supervisor-pid":
+                try:
+                    tokens = (completed.stdout or "").split()
+                    old_supervisor_pid = int(tokens[0])
+                    old_supervisor_start_ticks = int(tokens[1])
+                except (IndexError, ValueError) as exc:
+                    failure_class = "old_pid_probe_invalid"
+                    raise BuyE3TransactionalDeployError(
+                        "old supervisor PID probe is malformed"
+                    ) from exc
+                if old_supervisor_pid <= 0 or old_supervisor_start_ticks <= 0:
+                    raise BuyE3TransactionalDeployError(
+                        "old supervisor PID probe is invalid"
+                    )
+                result["observed_pid"] = old_supervisor_pid
+                result["observed_start_ticks"] = old_supervisor_start_ticks
+            elif completed.returncode == 0 and "supervisor-child-probe" in row["label"]:
+                current_process_family = _parse_process_family_probe(
+                    completed.stdout or ""
+                )
+                sp = int(current_process_family["supervisor_pid"])
+                ss = int(current_process_family["supervisor_start_ticks"])
+                cp = int(current_process_family["child_pid"])
+                cs = int(current_process_family["child_start_ticks"])
+                if (
+                    (old_pid == cp and old_pid_start_ticks == cs)
+                    or (
+                        old_supervisor_pid == sp
+                        and old_supervisor_start_ticks == ss
+                    )
+                ):
+                    raise BuyE3TransactionalDeployError(
+                        "supervisor/child process family is stale or reused"
+                    )
+                result.update(current_process_family)
             if row["label"] == "reprobe-disabled-process-before-stop":
                 try:
                     pre_stop_disabled_process_identity = _parse_process_probe(
@@ -6684,6 +9835,14 @@ def execute_phase(
                 result["process_identity_sha256"] = actual_process_identity[
                     "canonical_process_identity_sha256"
                 ]
+                if (
+                    current_process_family is not None
+                    and int(actual_process_identity["pid"])
+                    != int(current_process_family["child_pid"])
+                ):
+                    raise BuyE3TransactionalDeployError(
+                        "runtime identity process is not the attested supervisor child"
+                    )
             if row["label"] in {
                 "read-disabled-runtime-identity",
                 "read-pre-stop-disabled-runtime-identity",
@@ -6706,7 +9865,14 @@ def execute_phase(
                         process=identity_process,
                         process_phase=identity_phase,
                         active_release_binding=(
-                            active_release_binding if identity_phase == "activate" else None
+                            active_release_binding
+                            if identity_phase == "activate"
+                            or (
+                                active_release_binding is not None
+                                and active_release_binding.get("schema_version")
+                                == buy_e3_runtime.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA
+                            )
+                            else None
                         ),
                     )
                 except BuyE3TransactionalDeployError:
@@ -6730,7 +9896,7 @@ def execute_phase(
                         )
                 else:
                     actual_startup_attestation = startup_binding
-        if actual_process_identity is None:
+        if actual_process_identity is None and phase != "rollback-deep":
             failure_class = "phase_contract_validation_failed"
             raise BuyE3TransactionalDeployError("phase did not return actual process identity")
         if phase in {"disabled-deploy", "activate"} and actual_startup_attestation is None:
@@ -6753,7 +9919,11 @@ def execute_phase(
         phase_error = exc
         if failure_class is None:
             failure_class = "phase_contract_validation_failed"
-        if mutation_started and phase not in {"rollback-primary", "rollback-deep"}:
+        if (
+            mutation_started
+            and not stop_execution_state_uncertain
+            and phase not in {"rollback-primary", "rollback-deep"}
+        ):
             rollback_attempted = True
             (
                 rollback_status,
@@ -6764,6 +9934,9 @@ def execute_phase(
                 runner=runner,
                 results=results,
                 old_pid=old_pid,
+                already_quiescent=(
+                    _automatic_rollback_from_proven_quiescence(results)
+                ),
             )
     receipt = _build_phase_receipt(
         plan=plan,
@@ -6801,6 +9974,7 @@ def execute_phase(
         if (
             mutation_started
             and not rollback_attempted
+            and not stop_execution_state_uncertain
             and phase not in {"rollback-primary", "rollback-deep"}
         ):
             rollback_attempted = True
@@ -6809,6 +9983,9 @@ def execute_phase(
                 runner=runner,
                 results=results,
                 old_pid=old_pid,
+                already_quiescent=(
+                    _automatic_rollback_from_proven_quiescence(results)
+                ),
             )
         raise BuyE3TransactionalDeployError(
             f"phase receipt failed closed: {receipt_failure_class}"
@@ -6825,12 +10002,421 @@ def _build_spec_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repository-root", type=Path, default=REPO_ROOT)
 
 
+def prepare_successor_native_runtime(
+    *,
+    repository_root: Path,
+    stage_root: Path,
+    annotated_tag: str,
+    annotated_tag_object: str,
+    execution_commit: str,
+    execution_tree: str,
+    seed_python: Path,
+) -> dict[str, Any]:
+    """Prepare native bytes before a release or deployment plan can exist.
+
+    This is deliberately a separate, pre-deploy operation.  It is safe to run
+    while the predecessor remains live and it never changes the active checkout,
+    selector, config, PID files, or process.  The resulting create-only receipt
+    is an input to the private successor release; deployment only validates it.
+    """
+
+    root = repository_root.expanduser().resolve(strict=True)
+    stage = stage_root.expanduser().absolute()
+    commit = _require_git_sha(execution_commit, "native preparation commit")
+    tree = _require_git_sha(execution_tree, "native preparation tree")
+    tag_object = _require_git_sha(
+        annotated_tag_object, "native preparation annotated tag object"
+    )
+    tag = str(annotated_tag).strip()
+    if (
+        not tag
+        or "/" in tag
+        or ".." in tag
+        or platform.system() != "Linux"
+        or platform.machine() != "x86_64"
+        or sys.version_info[:2] != (3, 12)
+    ):
+        raise BuyE3TransactionalDeployError(
+            "native preparation requires a simple annotated tag on Linux x86_64 Python 3.12"
+        )
+    if stage.is_symlink():
+        raise BuyE3TransactionalDeployError("native preparation stage root is a symlink")
+    stage.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stat.S_IMODE(stage.stat().st_mode) != 0o700:
+        raise BuyE3TransactionalDeployError("native preparation stage mode drifted")
+    runtime_root = stage / f"runtime-{commit}"
+    venv_root = stage / f"venv-{commit}"
+    python = venv_root / "bin" / "python3"
+    lock_path = stage / f"runtime-lock-{commit}.json"
+    root_wheel_dir = stage / f"root-wheel-{commit}"
+    wheel_dir = stage / f"native-wheel-{commit}"
+    install_receipt = stage / f"locked-runtime-install-{commit}.json"
+    receipt = stage / f"native-build-{commit}.json"
+    seed = Path(os.path.abspath(os.path.expanduser(str(seed_python))))
+    try:
+        resolved_seed = seed.resolve(strict=True)
+    except OSError as exc:
+        raise BuyE3TransactionalDeployError(
+            "native preparation seed Python does not resolve"
+        ) from exc
+    if not resolved_seed.is_file() or not seed.is_file():
+        raise BuyE3TransactionalDeployError(
+            "native preparation seed Python is not an executable file"
+        )
+
+    def run(argv: Sequence[str], *, cwd: Path = root, timeout: float = 900.0) -> None:
+        safe_env = os.environ.copy()
+        safe_env.update(
+            {"PYTHONDONTWRITEBYTECODE": "1", "PYTHONNOUSERSITE": "1"}
+        )
+        completed = subprocess.run(
+            tuple(str(value) for value in argv),
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=safe_env,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()[-1000:]
+            raise BuyE3TransactionalDeployError(
+                f"native preparation command failed: {argv[0]}: {detail}"
+            )
+
+    run(("git", "fetch", "--no-tags", "origin", f"refs/tags/{tag}:refs/tags/{tag}"))
+    git_checks = {
+        "type": subprocess.run(
+            ("git", "cat-file", "-t", f"refs/tags/{tag}"),
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "tag_object": subprocess.run(
+            ("git", "rev-parse", f"refs/tags/{tag}"),
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        "commit": subprocess.run(
+            ("git", "rev-parse", f"refs/tags/{tag}^{{}}"),
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+    }
+    if git_checks != {"type": "tag", "tag_object": tag_object, "commit": commit}:
+        raise BuyE3TransactionalDeployError("native preparation tag identity drifted")
+    if runtime_root.is_symlink():
+        raise BuyE3TransactionalDeployError("native preparation worktree is a symlink")
+    if not runtime_root.exists():
+        run(("git", "worktree", "add", "--detach", str(runtime_root), commit))
+    checkout = (
+        subprocess.run(
+            ("git", "rev-parse", "HEAD"),
+            cwd=runtime_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        subprocess.run(
+            ("git", "rev-parse", "HEAD^{tree}"),
+            cwd=runtime_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+        subprocess.run(
+            ("git", "status", "--porcelain=v1", "--untracked-files=all"),
+            cwd=runtime_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip(),
+    )
+    if checkout != (commit, tree, ""):
+        raise BuyE3TransactionalDeployError("native preparation worktree identity drifted")
+    if receipt.exists() or receipt.is_symlink():
+        raise BuyE3TransactionalDeployError(
+            "native preparation is create-only; an existing receipt requires a "
+            "separate externally frozen read-only validation workflow"
+        )
+
+    for path, label in (
+        (venv_root, "venv"),
+        (lock_path, "runtime lock"),
+        (install_receipt, "install receipt"),
+    ):
+        if path.exists() or path.is_symlink():
+            raise BuyE3TransactionalDeployError(
+                f"native preparation {label} must be create-only"
+            )
+    for directory, label in (
+        (root_wheel_dir, "root wheel directory"),
+        (wheel_dir, "native wheel directory"),
+    ):
+        if directory.is_symlink() or (directory.exists() and any(directory.iterdir())):
+            raise BuyE3TransactionalDeployError(
+                f"native preparation {label} must be absent or empty"
+            )
+        directory.mkdir(mode=0o700, exist_ok=True)
+
+    try:
+        lock_result = locked_runtime.generate_lock(
+            seed_python=seed,
+            output_path=lock_path,
+        )
+        lock_sha256 = str(
+            lock_result["lock"][locked_runtime.LOCK_CANONICAL_FIELD]
+        )
+        wheelhouse = stage / f"wheelhouse-{lock_sha256}"
+        if wheelhouse.exists() or wheelhouse.is_symlink():
+            raise BuyE3TransactionalDeployError(
+                "dependency wheelhouse must be create-only for a new native receipt"
+            )
+        wheelhouse_result = locked_runtime.download_wheelhouse(
+            lock_path=lock_path,
+            expected_lock_sha256=lock_sha256,
+            pip_python=seed,
+            output_dir=wheelhouse,
+        )
+        wheelhouse_sha256 = str(
+            wheelhouse_result["manifest"][locked_runtime.WHEELHOUSE_CANONICAL_FIELD]
+        )
+    except locked_runtime.LockedRuntimeError as exc:
+        raise BuyE3TransactionalDeployError(
+            f"locked dependency preparation failed: {exc}"
+        ) from exc
+
+    wheel_build = (
+        "-m",
+        "pip",
+        "wheel",
+        "--no-deps",
+        "--no-build-isolation",
+        "--disable-pip-version-check",
+        "--no-input",
+    )
+    run(
+        (str(seed), *wheel_build, "--wheel-dir", str(root_wheel_dir), str(runtime_root)),
+        cwd=runtime_root,
+    )
+    run(
+        (
+            str(seed),
+            *wheel_build,
+            "--wheel-dir",
+            str(wheel_dir),
+            str(runtime_root / "cpp"),
+        ),
+        cwd=runtime_root,
+    )
+    root_wheels = sorted(root_wheel_dir.glob("*.whl"))
+    wheels = sorted(wheel_dir.glob("*.whl"))
+    if (
+        len(root_wheels) != 1
+        or len(wheels) != 1
+        or any(
+            wheel.is_symlink() or not wheel.is_file()
+            for wheel in (*root_wheels, *wheels)
+        )
+    ):
+        raise BuyE3TransactionalDeployError(
+            "native preparation requires exactly one root and one native wheel"
+        )
+    try:
+        root_binding = locked_runtime.inspect_wheel(root_wheels[0])
+        native_binding = locked_runtime.inspect_wheel(wheels[0])
+        install_result = locked_runtime.install_locked_runtime(
+            builder_python=seed,
+            venv_dir=venv_root,
+            lock_path=lock_path,
+            expected_lock_sha256=lock_sha256,
+            wheelhouse_dir=wheelhouse,
+            expected_wheelhouse_sha256=wheelhouse_sha256,
+            root_wheel_path=root_wheels[0],
+            root_wheel_sha256=str(root_binding["sha256"]),
+            native_wheel_path=wheels[0],
+            native_wheel_sha256=str(native_binding["sha256"]),
+            receipt_path=install_receipt,
+        )
+        install_sha256 = str(
+            install_result["receipt"][locked_runtime.INSTALL_CANONICAL_FIELD]
+        )
+    except locked_runtime.LockedRuntimeError as exc:
+        raise BuyE3TransactionalDeployError(
+            f"offline locked runtime installation failed: {exc}"
+        ) from exc
+    run(
+        (
+            str(python),
+            str(runtime_root / "scripts" / "f05_live_safety_native_build_receipt.py"),
+            "--repository-root",
+            str(runtime_root),
+            "--annotated-tag",
+            tag,
+            "--wheel",
+            str(wheels[0]),
+            "--builder-python",
+            str(seed),
+            "--runtime-lock",
+            str(lock_path),
+            "--runtime-lock-sha256",
+            lock_sha256,
+            "--dependency-wheelhouse",
+            str(wheelhouse),
+            "--dependency-wheelhouse-sha256",
+            wheelhouse_sha256,
+            "--root-wheel",
+            str(root_wheels[0]),
+            "--root-wheel-sha256",
+            str(root_binding["sha256"]),
+            "--install-receipt",
+            str(install_receipt),
+            "--install-receipt-sha256",
+            install_sha256,
+            "--output",
+            str(receipt),
+        ),
+        cwd=runtime_root,
+    )
+    return {
+        "status": "successor_native_prepared_before_deployment",
+        "runtime_root": str(runtime_root),
+        "venv_root": str(venv_root),
+        "python_executable": str(python),
+        "wheel_path": str(wheels[0]),
+        "wheel_sha256": gate_v2.file_sha256(wheels[0]),
+        "runtime_lock_path": str(lock_path),
+        "runtime_lock_canonical_sha256": lock_sha256,
+        "wheelhouse_path": str(wheelhouse),
+        "wheelhouse_canonical_sha256": wheelhouse_sha256,
+        "locked_runtime_install_receipt_path": str(install_receipt),
+        "locked_runtime_install_receipt_canonical_sha256": install_sha256,
+        "native_build_receipt_path": str(receipt),
+        "native_build_receipt_sha256": gate_v2.file_sha256(receipt),
+    }
+
+
+def signed_exchange_reconciliation(config_path: Path, output_path: Path) -> dict[str, Any]:
+    """Cancel residual orders and freeze one stable signed position snapshot."""
+
+    from live.config import load_config
+    from live.main import create_rest_client
+
+    cfg = load_config(config_path)
+    if not str(cfg.api.key).strip() or not str(cfg.api.secret).strip():
+        raise BuyE3TransactionalDeployError(
+            "signed exchange reconciliation requires API credentials"
+        )
+    rest = create_rest_client(cfg, dry_run=False)
+    deadline = time.monotonic() + 30.0
+    orders = rest.get_orders(symbol=cfg.symbol)
+    if not isinstance(orders, list):
+        raise BuyE3TransactionalDeployError("signed openOrders returned a non-list")
+    if orders:
+        rest.cancel_open_orders(symbol=cfg.symbol)
+    while True:
+        orders = rest.get_orders(symbol=cfg.symbol)
+        if isinstance(orders, list) and not orders:
+            break
+        if time.monotonic() >= deadline:
+            raise BuyE3TransactionalDeployError(
+                "signed exchange openOrders did not converge to zero"
+            )
+        time.sleep(0.25)
+
+    def position_snapshot() -> list[dict[str, str | int]]:
+        raw = rest.get_position_risk(symbol=cfg.symbol)
+        if not isinstance(raw, list) or not raw:
+            raise BuyE3TransactionalDeployError(
+                "signed positionRisk returned no position rows"
+            )
+        rows: list[dict[str, str | int]] = []
+        for item in raw:
+            if not isinstance(item, Mapping) or str(item.get("symbol", "")) != cfg.symbol:
+                continue
+            normalized: dict[str, str | int] = {
+                "symbol": cfg.symbol,
+                "position_side": str(item.get("positionSide", "BOTH")),
+                "position_amt": str(item.get("positionAmt", "")),
+                "entry_price": str(item.get("entryPrice", "")),
+                "update_time_ms": int(item.get("updateTime", 0) or 0),
+            }
+            try:
+                if not Decimal(str(normalized["position_amt"])).is_finite() or not Decimal(
+                    str(normalized["entry_price"])
+                ).is_finite():
+                    raise InvalidOperation
+            except (InvalidOperation, ValueError) as exc:
+                raise BuyE3TransactionalDeployError(
+                    "signed positionRisk contains a non-finite quantity or price"
+                ) from exc
+            rows.append(normalized)
+        rows.sort(key=lambda row: str(row["position_side"]))
+        if len(rows) != 1 or rows[0]["position_side"] != "BOTH":
+            raise BuyE3TransactionalDeployError(
+                "signed positionRisk must contain exactly one BOTH row"
+            )
+        return rows
+
+    first = position_snapshot()
+    if rest.get_orders(symbol=cfg.symbol) != []:
+        raise BuyE3TransactionalDeployError(
+            "exchange orders appeared during position reconciliation"
+        )
+    second = position_snapshot()
+    if first != second:
+        raise BuyE3TransactionalDeployError(
+            "signed position changed during the stopped reconciliation barrier"
+        )
+    payload: dict[str, Any] = {
+        "schema_version": "narrowgate_stopped_exchange_reconciliation.v1",
+        "status": "signed_open_orders_zero_exact_position_stable",
+        "symbol": cfg.symbol,
+        "signed_endpoints": ["openOrders", "positionRisk"],
+        "open_order_count": 0,
+        "position_rows": second,
+        "account_key_sha256": hashlib.sha256(
+            str(cfg.api.key).encode("utf-8")
+        ).hexdigest(),
+    }
+    payload["position_lineage_sha256"] = gate_v2.canonical_sha256(second)
+    payload["canonical_exchange_reconciliation_sha256"] = gate_v2.document_sha256(
+        payload, "canonical_exchange_reconciliation_sha256"
+    )
+    output = output_path.expanduser().absolute()
+    descriptor = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    if stat.S_IMODE(output.stat().st_mode) != 0o600 or output.stat().st_nlink != 1:
+        raise BuyE3TransactionalDeployError("exchange reconciliation receipt inode drifted")
+    return payload
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     plan = subparsers.add_parser("plan")
     _build_spec_parser(plan)
     plan.add_argument("--output", type=Path, required=True)
+    prepare_native = subparsers.add_parser("prepare-successor-native")
+    prepare_native.add_argument("--repository-root", type=Path, required=True)
+    prepare_native.add_argument("--stage-root", type=Path, required=True)
+    prepare_native.add_argument("--annotated-tag", required=True)
+    prepare_native.add_argument("--annotated-tag-object", required=True)
+    prepare_native.add_argument("--execution-commit", required=True)
+    prepare_native.add_argument("--execution-tree", required=True)
+    prepare_native.add_argument("--seed-python", type=Path, required=True)
+    exchange = subparsers.add_parser("exchange-reconcile")
+    exchange.add_argument("--config", type=Path, required=True)
+    exchange.add_argument("--output", type=Path, required=True)
     preflight = subparsers.add_parser("isolated-preflight")
     preflight.add_argument("--repository-root", type=Path, required=True)
     preflight.add_argument("--config", type=Path, required=True)
@@ -6862,12 +10448,19 @@ def _parser() -> argparse.ArgumentParser:
             LEGACY_STARTUP_ATTESTATION_SCHEMA,
             HISTORICAL_STARTUP_ATTESTATION_SCHEMA,
             STARTUP_ATTESTATION_SCHEMA,
+            SUCCESSOR_STARTUP_ATTESTATION_SCHEMA,
         ),
         required=True,
     )
     process.add_argument("--active-release", type=Path)
     process.add_argument("--active-release-file-sha256", default="")
     process.add_argument("--active-release-canonical-sha256", default="")
+    process.add_argument("--safety-release", type=Path)
+    process.add_argument("--safety-release-file-sha256", default="")
+    process.add_argument("--safety-release-canonical-sha256", default="")
+    process.add_argument("--safety-active-config-sha256", default="")
+    process.add_argument("--safety-disabled-config-sha256", default="")
+    process.add_argument("--expected-exchange-reconciliation-path", type=Path)
     install_release = subparsers.add_parser("install-active-release")
     install_release.add_argument("--source", type=Path, required=True)
     install_release.add_argument("--destination", type=Path, required=True)
@@ -6926,6 +10519,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(arguments)
     command = args.command
+    if command == "exchange-reconcile":
+        payload = signed_exchange_reconciliation(args.config, args.output)
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    if command == "prepare-successor-native":
+        payload = prepare_successor_native_runtime(
+            repository_root=args.repository_root,
+            stage_root=args.stage_root,
+            annotated_tag=args.annotated_tag,
+            annotated_tag_object=args.annotated_tag_object,
+            execution_commit=args.execution_commit,
+            execution_tree=args.execution_tree,
+            seed_python=args.seed_python,
+        )
+        print(json.dumps(payload, sort_keys=True))
+        return 0
     if command == "isolated-preflight":
         payload = isolated_config_preflight(
             args.repository_root,
@@ -6966,6 +10575,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             active_release_path=args.active_release,
             expected_active_release_file_sha256=args.active_release_file_sha256,
             expected_active_release_canonical_sha256=(args.active_release_canonical_sha256),
+            safety_release_path=args.safety_release,
+            expected_safety_release_file_sha256=args.safety_release_file_sha256,
+            expected_safety_release_canonical_sha256=(
+                args.safety_release_canonical_sha256
+            ),
+            expected_safety_active_config_file_sha256=(
+                args.safety_active_config_sha256
+            ),
+            expected_safety_disabled_config_file_sha256=(
+                args.safety_disabled_config_sha256
+            ),
+            expected_exchange_reconciliation_path=(
+                args.expected_exchange_reconciliation_path
+            ),
         )
         print(json.dumps(payload, sort_keys=True))
         return 0
@@ -7056,7 +10679,9 @@ __all__ = [
     "isolated_config_preflight",
     "load_sha_bound_active_pointer",
     "phase_authorization_token_sha256",
+    "prepare_successor_native_runtime",
     "run_isolated_preflight",
+    "signed_exchange_reconciliation",
     "validate_b0_config_contract",
     "validate_compatible_activation_envelope",
     "validate_phase_receipt",
