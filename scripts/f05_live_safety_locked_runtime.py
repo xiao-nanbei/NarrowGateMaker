@@ -234,10 +234,37 @@ def _resolved_executable_bytes(path: Path) -> tuple[bytes, Path]:
     return resolved.read_bytes(), resolved
 
 
+def _versioned_base_executable_candidate() -> Path:
+    if os.name == "nt":
+        return Path(sys.base_prefix) / Path(sys.executable).name
+    return (
+        Path(sys.base_prefix)
+        / "bin"
+        / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    )
+
+
+def _bound_base_executable_bytes(executable_raw: bytes) -> bytes:
+    declared_path = Path(getattr(sys, "_base_executable", sys.executable))
+    declared_raw, _ = _resolved_executable_bytes(declared_path)
+    if sys.prefix == sys.base_prefix or declared_raw == executable_raw:
+        return declared_raw
+
+    # Amazon Linux can give a copied Python 3.12 venv ``/usr/bin/python3`` as
+    # ``sys._base_executable``, even when that unversioned path is Python 3.9.
+    # Correct that declaration only when the versioned base is byte-identical
+    # to the running venv executable; every other mismatch remains observable.
+    candidate = _versioned_base_executable_candidate()
+    try:
+        candidate_raw, _ = _resolved_executable_bytes(candidate)
+    except LockedRuntimeError:
+        return declared_raw
+    return candidate_raw if candidate_raw == executable_raw else declared_raw
+
+
 def _current_interpreter_snapshot() -> dict[str, Any]:
     executable_raw, _ = _resolved_executable_bytes(Path(sys.executable))
-    base_path = Path(getattr(sys, "_base_executable", sys.executable))
-    base_raw, _ = _resolved_executable_bytes(base_path)
+    base_raw = _bound_base_executable_bytes(executable_raw)
     return {
         "implementation": platform.python_implementation().lower(),
         "version": platform.python_version(),

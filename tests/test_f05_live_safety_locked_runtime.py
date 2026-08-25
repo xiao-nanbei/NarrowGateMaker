@@ -225,6 +225,87 @@ def _rewrite_record_digest(record: Path, relative_name: str, raw: bytes) -> None
     record.write_text(output.getvalue())
 
 
+def _mock_copied_venv_interpreters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    executable_raw: bytes,
+    declared_base_raw: bytes,
+    versioned_base_raw: bytes,
+) -> tuple[Path, Path, Path]:
+    venv_prefix = tmp_path / "venv"
+    base_prefix = tmp_path / "base"
+    executable_name = "python.exe" if sys.platform == "win32" else "python"
+    executable = (
+        venv_prefix
+        / ("Scripts" if sys.platform == "win32" else "bin")
+        / executable_name
+    )
+    declared_base = base_prefix / (
+        "python3.exe" if sys.platform == "win32" else "bin/python3"
+    )
+    versioned_base = (
+        base_prefix / executable_name
+        if sys.platform == "win32"
+        else base_prefix / "bin" / f"python{sys.version_info.major}.{sys.version_info.minor}"
+    )
+    for path, raw in (
+        (executable, executable_raw),
+        (declared_base, declared_base_raw),
+        (versioned_base, versioned_base_raw),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+    monkeypatch.setattr(sys, "executable", str(executable))
+    monkeypatch.setattr(sys, "prefix", str(venv_prefix))
+    monkeypatch.setattr(sys, "base_prefix", str(base_prefix))
+    monkeypatch.setattr(sys, "_base_executable", str(declared_base))
+    return executable, declared_base, versioned_base
+
+
+def test_interpreter_snapshot_safely_corrects_wrong_unversioned_base_for_copied_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_raw = b"exact Python 3.12 executable bytes"
+    _executable, declared_base, _versioned_base = _mock_copied_venv_interpreters(
+        tmp_path,
+        monkeypatch,
+        executable_raw=executable_raw,
+        declared_base_raw=b"Amazon Linux unversioned Python 3.9 bytes",
+        versioned_base_raw=executable_raw,
+    )
+
+    snapshot = subject._current_interpreter_snapshot()  # noqa: SLF001
+
+    assert snapshot["executable_sha256"] == hashlib.sha256(executable_raw).hexdigest()
+    assert snapshot["base_executable_sha256"] == snapshot["executable_sha256"]
+    assert snapshot["base_executable_size_bytes"] == len(executable_raw)
+    assert snapshot["base_executable_sha256"] != hashlib.sha256(
+        declared_base.read_bytes()
+    ).hexdigest()
+
+
+def test_interpreter_snapshot_refuses_mismatched_versioned_base_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    declared_raw = b"declared unversioned base bytes"
+    _mock_copied_venv_interpreters(
+        tmp_path,
+        monkeypatch,
+        executable_raw=b"copied Python 3.12 executable bytes",
+        declared_base_raw=declared_raw,
+        versioned_base_raw=b"different versioned candidate bytes",
+    )
+
+    snapshot = subject._current_interpreter_snapshot()  # noqa: SLF001
+
+    assert snapshot["base_executable_sha256"] == hashlib.sha256(declared_raw).hexdigest()
+    assert snapshot["base_executable_size_bytes"] == len(declared_raw)
+    assert snapshot["base_executable_sha256"] != snapshot["executable_sha256"]
+
+
 class _SeedDistribution:
     def __init__(self, metadata_path: Path, *, name: str, version: str) -> None:
         self._path = metadata_path
