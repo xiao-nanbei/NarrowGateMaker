@@ -71,6 +71,8 @@ from models.replay.prospective_baseline_epoch import (
 from scripts import f05_live_safety_locked_runtime as locked_runtime
 from strategy.maker_engine import MakerEngine
 
+POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
+
 CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_QUOTE_CORE",
     "NARROWGATE_CPP_SIGNAL_FEATURES",
@@ -1560,7 +1562,8 @@ def validate_startup_exchange_reconciliation_lineage(
         != "signed_open_orders_zero_exact_position_stable"
         or payload.get("symbol") != symbol
         or payload.get("open_order_count") != 0
-        or payload.get("signed_endpoints") != ["openOrders", "positionRisk"]
+        or payload.get("signed_endpoints")
+        != ["/fapi/v1/openOrders", POSITION_RISK_RECONCILIATION_ENDPOINT]
         or expected_canonical != actual_canonical
         or expected_canonical != expected_canonical_sha256
         or payload.get("account_key_sha256") != expected_account_key_sha256
@@ -1776,7 +1779,7 @@ def start_engine_with_prospective_collection(
 
 
 def create_rest_client(cfg, dry_run=False):
-    """Create Binance Futures REST client."""
+    """Create the Binance Futures client with complete position snapshots."""
     if dry_run:
         raise ValueError(
             "legacy simulated REST dry-run was removed; use live/main.py --dry-run"
@@ -1794,6 +1797,15 @@ def create_rest_client(cfg, dry_run=False):
         base_url=base_url,
         timeout=float(cfg.api.timeout_s),
     )
+    # V3 omits symbols with neither a position nor an open order.  The
+    # reconciliation contract needs V2's explicit zero-position row and
+    # exchange updateTime; an empty V3 response has neither.
+    def get_position_risk_v2(**kwargs):
+        return client.sign_request(
+            "GET", POSITION_RISK_RECONCILIATION_ENDPOINT, kwargs
+        )
+
+    client.get_position_risk = get_position_risk_v2
     return client
 
 

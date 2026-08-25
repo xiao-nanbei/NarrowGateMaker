@@ -221,6 +221,31 @@ def test_stable_position_snapshot_rejects_missing_configured_exchange_clock(resp
     engine.rest.get_account_trades.assert_not_called()
 
 
+def test_stable_position_snapshot_accepts_v2_explicit_flat_row() -> None:
+    update_time_ms = 1_787_709_422_627
+    engine = _stable_fetch_engine(
+        [
+            {
+                "symbol": "BTCUSDC",
+                "positionSide": "BOTH",
+                "positionAmt": "0.000",
+                "entryPrice": "0.0",
+                "updateTime": update_time_ms,
+            }
+        ]
+    )
+
+    payload = engine._stable_exchange_reconciliation_payload(max_attempts=1)
+
+    assert payload[0:3] == (0.0, 0.0, update_time_ms)
+    engine.rest.get_account_trades.assert_called_once_with(
+        symbol="BTCUSDC",
+        startTime=update_time_ms,
+        endTime=update_time_ms,
+        limit=1000,
+    )
+
+
 def test_position_snapshot_and_account_trades_build_monotonic_order_cursors() -> None:
     engine = _stable_fetch_engine([])
     engine._reconciliation_trade_identity_by_id = {
@@ -384,6 +409,7 @@ def test_same_millisecond_fill_between_p1_and_p2_rejects_unstable_snapshot() -> 
     p1 = [
         {
             "symbol": "BTCUSDC",
+            "positionSide": "BOTH",
             "positionAmt": "0",
             "entryPrice": "0",
             "updateTime": 2_000,
@@ -392,6 +418,7 @@ def test_same_millisecond_fill_between_p1_and_p2_rejects_unstable_snapshot() -> 
     p2 = [
         {
             "symbol": "BTCUSDC",
+            "positionSide": "BOTH",
             "positionAmt": "0.001",
             "entryPrice": "70000",
             "updateTime": 2_000,

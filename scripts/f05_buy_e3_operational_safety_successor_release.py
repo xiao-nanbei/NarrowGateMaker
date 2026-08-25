@@ -62,6 +62,15 @@ SCOPE: Final = {
     },
 }
 
+# A deleted tracked path has no blob in the successor tree.  Keep the existing
+# two-digest receipt schema by binding deletions to the canonical empty-content
+# tombstone; the exact execution tree and the predecessor-to-successor diff
+# independently prove that the path is absent.
+_DELETED_GIT_BLOB_SHA1: Final = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+_DELETED_FILE_SHA256: Final = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+
 
 def _config_pair(
     *,
@@ -168,24 +177,38 @@ def _changed_repository_files(root: Path, execution_commit: str) -> dict[str, An
         ).stdout.splitlines()
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as exc:
         raise LiveSafetySuccessorError("cannot enumerate successor source delta") from exc
-    paths: list[str] = []
+    statuses: dict[str, str] = {}
     for row in rows:
         fields = row.split("\t")
-        if len(fields) != 2 or fields[0] not in {"A", "M"}:
+        if len(fields) != 2 or fields[0] not in {"A", "M", "D"}:
             raise LiveSafetySuccessorError(
-                "successor delta must contain only added or modified tracked files"
+                "successor delta must contain only added, modified, or deleted tracked files"
             )
-        paths.append(fields[1])
+        statuses[fields[1]] = fields[0]
+    paths = set(statuses)
     required = set(RUNTIME_SOURCE_CONTRACT["required_repository_paths"])
-    if not required.intersection(paths) or not {
+    safety_runtime = {
         "strategy/inventory_manager.py",
         "strategy/order_manager.py",
         "live/main.py",
         "live/run.sh",
-    }.issubset(paths):
+    }
+    protected_changed = (required | safety_runtime).intersection(paths)
+    if (
+        not required.intersection(paths)
+        or not safety_runtime.issubset(paths)
+        or any(statuses[path] == "D" for path in protected_changed)
+    ):
         raise LiveSafetySuccessorError("successor delta lacks required safety runtime changes")
     return {
-        path: _git_file_binding(root, execution_commit, path)
+        path: (
+            {
+                "git_blob_sha1": _DELETED_GIT_BLOB_SHA1,
+                "file_sha256": _DELETED_FILE_SHA256,
+            }
+            if statuses[path] == "D"
+            else _git_file_binding(root, execution_commit, path)
+        )
         for path in sorted(paths)
     }
 

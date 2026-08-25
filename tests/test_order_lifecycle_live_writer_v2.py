@@ -737,14 +737,20 @@ def test_bounded_remote_spool_never_claims_local_admission_and_stops_cleanly(
         heartbeat_interval_s=0.01,
         storage_profile=BOUNDED_REMOTE_SPOOL,
         epoch_root=epoch_root,
-        session_max_duration_s=0.02,
+        session_max_duration_s=120.0,
         session_max_bytes=1024 * 1024,
     )
-    assert runtime.enqueue_order_event(order, "submit") is True
-    _wait_for(runtime, 1)
-    time.sleep(0.03)
-    assert runtime.enqueue_order_event(order, "after-bound") is False
-    final = runtime.close(drain_timeout_s=1.0)
+    try:
+        assert runtime.enqueue_order_event(order, "submit") is True
+        _wait_for(runtime, 1)
+        # Advance the deadline deterministically.  A 20 ms constructor-to-enqueue
+        # deadline races slow CI hosts and can leave the heartbeat thread alive
+        # when the first assertion fails.
+        runtime._session_max_duration_s = 0.02
+        runtime._collection_deadline_monotonic_ns = time.monotonic_ns() - 1
+        assert runtime.enqueue_order_event(order, "after-bound") is False
+    finally:
+        final = runtime.close(drain_timeout_s=1.0)
     assert final["state"] == "closed"
     assert final["storage_profile"] == BOUNDED_REMOTE_SPOOL
     assert final["collection_bound_reason"] == "max_duration_reached"
@@ -765,11 +771,13 @@ def test_remote_spool_tree_is_scanned_on_heartbeat_not_each_callback(
     import execution.order_lifecycle_live_writer_v2 as live_writer_module
 
     scans = 0
+    tracked_roots: set[Path] = set()
     original_tree_size = live_writer_module._tree_size_bytes
 
     def counted_tree_size(path: Path) -> int:
         nonlocal scans
-        scans += 1
+        if path.resolve() in tracked_roots:
+            scans += 1
         return original_tree_size(path)
 
     monkeypatch.setattr(live_writer_module, "_tree_size_bytes", counted_tree_size)
@@ -793,15 +801,18 @@ def test_remote_spool_tree_is_scanned_on_heartbeat_not_each_callback(
         session_max_duration_s=120.0,
         session_max_bytes=1024 * 1024,
     )
-    assert runtime.enqueue_order_event(order, "submit") is True
-    _wait_for(runtime, 1)
-    order.order_id = 42
-    order.lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)
-    assert runtime.enqueue_order_event(order, "rest_ack") is True
-    _wait_for(runtime, 2)
+    tracked_roots.update((runtime._writer.session_root.resolve(), epoch_root.resolve()))
+    try:
+        assert runtime.enqueue_order_event(order, "submit") is True
+        _wait_for(runtime, 1)
+        order.order_id = 42
+        order.lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)
+        assert runtime.enqueue_order_event(order, "rest_ack") is True
+        _wait_for(runtime, 2)
 
-    assert scans == 0
-    runtime.close(drain_timeout_s=1.0)
+        assert scans == 0
+    finally:
+        runtime.close(drain_timeout_s=1.0)
     assert scans == 2
 
 

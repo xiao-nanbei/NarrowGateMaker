@@ -117,17 +117,28 @@ def test_rest_client_applies_one_finite_timeout_to_every_sync_call(
     import binance.um_futures
 
     captured = {}
-    monkeypatch.setattr(
-        binance.um_futures,
-        "UMFutures",
-        lambda **kwargs: captured.update(kwargs) or object(),
-    )
+
+    class FakeUMFutures:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def sign_request(self, method, path, params):
+            captured["position_request"] = (method, path, params)
+            return []
+
+    monkeypatch.setattr(binance.um_futures, "UMFutures", FakeUMFutures)
     cfg = Config()
     cfg.api.timeout_s = 2.5
 
-    create_rest_client(cfg)
+    client = create_rest_client(cfg)
 
     assert captured["timeout"] == pytest.approx(2.5)
+    assert client.get_position_risk(symbol="BTCUSDC") == []
+    assert captured["position_request"] == (
+        "GET",
+        "/fapi/v2/positionRisk",
+        {"symbol": "BTCUSDC"},
+    )
 
 
 @pytest.mark.parametrize("timeout", (0.0, -1.0, float("nan"), float("inf"), True))

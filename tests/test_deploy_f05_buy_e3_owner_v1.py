@@ -784,6 +784,332 @@ def _plan(
     return plan, spec
 
 
+def _successor_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[dict, dict, list[dict]]:
+    spec = _specification(tmp_path)
+    spec["execution"] = {
+        "commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+        "tree": subject.SUCCESSOR_EXECUTION_TREE,
+        "annotated_tag": subject.SUCCESSOR_ANNOTATED_TAG,
+        "annotated_tag_object": subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+    }
+    spec["host"].update(
+        {
+            "python_executable": "/remote/repo/.venv-active/bin/python3",
+            "venv_root": "/remote/repo/.venv-active",
+            "current_venv_selector_target": "/remote/repo/.venv-py312",
+            "trusted_static_python_path": "/usr/bin/python3.12",
+            "trusted_static_python_sha256": "0" * 64,
+        }
+    )
+    safety_release_sha256 = "1" * 64
+    startup_static_sha256 = "2" * 64
+    spec["remote"].update(
+        {
+            "supervisor_pid_file": "/remote/repo/logs/maker.pid",
+            "maker_child_pid_file": "/remote/repo/logs/maker.child.pid",
+            "startup_markers": sorted(subject.SUCCESSOR_READINESS_MARKERS),
+            "safety_release_path": subject._remote_active_release_path(  # noqa: SLF001
+                "/remote/repo", safety_release_sha256
+            ),
+            "safety_release_file_sha256": safety_release_sha256,
+            "safety_release_canonical_sha256": "3" * 64,
+            "startup_static_runtime_authority_path": (
+                "/remote/stage/e3/startup-static-runtime-authority-"
+                f"{startup_static_sha256}.json"
+            ),
+            "startup_static_runtime_authority_file_sha256": (
+                startup_static_sha256
+            ),
+            "startup_static_runtime_authority_canonical_sha256": "4" * 64,
+        }
+    )
+    runtime_paths = (
+        "scripts/f05_live_safety_locked_runtime.py",
+        "scripts/f05_live_safety_startup_static_authority.py",
+    )
+    runtime_files = {
+        path: {
+            "repository_relative_path": path,
+            "execution_commit_blob_sha256": hashlib.sha256(path.encode()).hexdigest(),
+            "working_file_sha256": hashlib.sha256(path.encode()).hexdigest(),
+            "authority_basis": subject._CURRENT_RUNTIME_SOURCE_AUTHORITY_BASIS,  # noqa: SLF001
+        }
+        for path in runtime_paths
+    }
+    runtime_sources = {
+        "files": runtime_files,
+        "runtime_code_sha256": gate_v2.canonical_sha256(runtime_files),
+    }
+    spec["rollback_identities"]["primary_disabled"].update(
+        {
+            "execution_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+            "execution_tree": subject.SUCCESSOR_EXECUTION_TREE,
+            "python_executable": spec["host"]["python_executable"],
+            "venv_root": spec["host"]["venv_root"],
+            "runtime_code_sha256": runtime_sources["runtime_code_sha256"],
+        }
+    )
+    spec["rollback_identities"]["deep_predecessor"] = {
+        "identity": "predecessor-stop-cancel-reconcile-only",
+        "mode": "stop_cancel_reconcile_only",
+        "historical_execution_commit": gate_v2.FROZEN_EXECUTION_COMMIT,
+        "historical_execution_tree": "5" * 40,
+        "automatic_historical_restart_authorized": False,
+        "requires_manual_exchange_reconciliation": True,
+    }
+    _patch_plan_dependencies(monkeypatch, tmp_path, spec)
+    observed: list[dict] = []
+
+    def verify_successor(**kwargs):
+        observed.append(dict(kwargs))
+        return {
+            "execution_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+            "execution_tree": subject.SUCCESSOR_EXECUTION_TREE,
+            "annotated_tag": subject.SUCCESSOR_ANNOTATED_TAG,
+            "annotated_tag_object": subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+            "tag_peeled_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+        }
+
+    monkeypatch.setattr(subject, "_verify_annotated_tag_git_identity", verify_successor)
+    monkeypatch.setattr(
+        subject,
+        "_successor_runtime_sources",
+        lambda **_: copy.deepcopy(runtime_sources),
+    )
+    monkeypatch.setattr(
+        gate_v2,
+        "verify_execution_git_identity",
+        lambda **_: pytest.fail("frozen successor was routed through the legacy c170 gate"),
+    )
+    plan = subject.build_plan(
+        specification=spec,
+        repository_root=tmp_path,
+        preflight_runner=lambda _repo, _config, enabled: _preflight(enabled),
+    )
+    return plan, spec, observed
+
+
+def test_exact_frozen_successor_builds_plan_without_legacy_execution_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, spec, observed = _successor_plan(tmp_path, monkeypatch)
+
+    assert plan["schema_version"] == subject.SUCCESSOR_PLAN_SCHEMA
+    assert plan["execution"] == {
+        "execution_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+        "execution_tree": subject.SUCCESSOR_EXECUTION_TREE,
+        "annotated_tag": subject.SUCCESSOR_ANNOTATED_TAG,
+        "annotated_tag_object": subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+        "tag_peeled_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+    }
+    assert "artifact_sha256" not in spec["rollback_identities"]["primary_disabled"]
+    assert plan["rollback_identities"]["primary_disabled"]["artifact_sha256"] == "a" * 64
+    rollback_probe = next(
+        row
+        for row in plan["phases"]["rollback-primary"]
+        if row["label"] == "fresh-rollback-process-probe"
+    )
+    assert f"--artifact-sha256 {'a' * 64}" in rollback_probe["argv"][-1]
+    subject._revalidate_plan_inputs(plan)  # noqa: SLF001
+    assert observed == [
+        {
+            "repository_root": tmp_path.resolve(),
+            "expected_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+            "expected_tree": subject.SUCCESSOR_EXECUTION_TREE,
+            "annotated_tag": subject.SUCCESSOR_ANNOTATED_TAG,
+            "expected_tag_object": subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+        },
+        {
+            "repository_root": tmp_path.resolve(),
+            "expected_commit": subject.SUCCESSOR_EXECUTION_COMMIT,
+            "expected_tree": subject.SUCCESSOR_EXECUTION_TREE,
+            "annotated_tag": subject.SUCCESSOR_ANNOTATED_TAG,
+            "expected_tag_object": subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+        },
+    ]
+
+
+def test_new_successor_identity_routes_through_exact_annotated_tag_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = []
+    values = {
+        "expected_commit": "1" * 40,
+        "expected_tree": "2" * 40,
+        "annotated_tag": "f05-owner-buy-e3-live-safety-20260826",
+        "expected_tag_object": "3" * 40,
+    }
+
+    def verify(**kwargs):
+        observed.append(kwargs)
+        return {"verified": True}
+
+    monkeypatch.setattr(
+        subject,
+        "_verify_annotated_tag_git_identity",
+        verify,
+    )
+
+    assert subject._verify_deployment_execution_git_identity(  # noqa: SLF001
+        repository_root=tmp_path,
+        **values,
+    ) == {"verified": True}
+    assert observed == [{"repository_root": tmp_path, **values}]
+
+
+def test_successor_tag_forgery_cannot_borrow_the_successor_identity(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        gate_v2.BuyE3DeploymentGateAmendmentError,
+        match="execution commit is not frozen c170493e",
+    ):
+        subject._verify_deployment_execution_git_identity(  # noqa: SLF001
+            repository_root=tmp_path,
+            expected_commit=subject.SUCCESSOR_EXECUTION_COMMIT,
+            expected_tree=subject.SUCCESSOR_EXECUTION_TREE,
+            annotated_tag="forged-successor-tag",
+            expected_tag_object=subject.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+        )
+
+
+def test_annotated_tag_verifier_requires_exact_clean_tagged_head(
+    tmp_path: Path,
+) -> None:
+    repository = tmp_path / "tagged-repository"
+    repository.mkdir()
+    (repository / "runtime.py").write_text("VALUE = 1\n", encoding="ascii")
+    subprocess.run(("git", "init", "-q"), cwd=repository, check=True)
+    subprocess.run(("git", "add", "runtime.py"), cwd=repository, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "fixture",
+        ),
+        cwd=repository,
+        check=True,
+    )
+    tag = "fixture-successor"
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "tag",
+            "-am",
+            "fixture",
+            tag,
+        ),
+        cwd=repository,
+        check=True,
+    )
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ("git", *args),
+            cwd=repository,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    commit = git("rev-parse", "HEAD")
+    tree = git("rev-parse", "HEAD^{tree}")
+    tag_object = git("rev-parse", f"refs/tags/{tag}")
+    expected = {
+        "execution_commit": commit,
+        "execution_tree": tree,
+        "annotated_tag": tag,
+        "annotated_tag_object": tag_object,
+        "tag_peeled_commit": commit,
+    }
+    assert subject._verify_annotated_tag_git_identity(  # noqa: SLF001
+        repository_root=repository,
+        expected_commit=commit,
+        expected_tree=tree,
+        annotated_tag=tag,
+        expected_tag_object=tag_object,
+    ) == expected
+
+    (repository / "untracked.py").write_text("VALUE = 2\n", encoding="ascii")
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="execution Git identity drifted",
+    ):
+        subject._verify_annotated_tag_git_identity(  # noqa: SLF001
+            repository_root=repository,
+            expected_commit=commit,
+            expected_tree=tree,
+            annotated_tag=tag,
+            expected_tag_object=tag_object,
+        )
+    subprocess.run(("git", "add", "untracked.py"), cwd=repository, check=True)
+    subprocess.run(
+        (
+            "git",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "new head",
+        ),
+        cwd=repository,
+        check=True,
+    )
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="execution Git identity drifted",
+    ):
+        subject._verify_annotated_tag_git_identity(  # noqa: SLF001
+            repository_root=repository,
+            expected_commit=commit,
+            expected_tree=tree,
+            annotated_tag=tag,
+            expected_tag_object=tag_object,
+        )
+
+
+def test_successor_plan_rejects_identity_drift_and_compatible_attempt_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _spec, _observed = _successor_plan(tmp_path, monkeypatch)
+    forged = copy.deepcopy(plan)
+    forged["execution"]["execution_tree"] = "0" * 40
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="deployment plan core identity drifted",
+    ):
+        subject.validate_plan(forged)
+
+    compatible = copy.deepcopy(plan)
+    compatible["execution"]["compatible_attempt_manifest"] = {
+        "path": "/private/forged.json",
+        "file_sha256": "0" * 64,
+        "canonical_sha256": "1" * 64,
+    }
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="successor cannot use a compatible-attempt plan",
+    ):
+        subject.validate_plan(compatible)
+
+
 def test_actual_native_audit_roundtrips_current_v5_and_tamper_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1420,6 +1746,66 @@ def test_plan_is_dry_run_strict_ssh_and_preflights_before_stop(
     )
 
 
+@pytest.mark.parametrize(
+    ("expected_enabled", "expected_owner_override"),
+    ((False, None), (True, "1")),
+    ids=("disabled", "active"),
+)
+def test_remote_preflight_executes_env_unsets_before_authority_assignments(
+    tmp_path: Path,
+    expected_enabled: bool,
+    expected_owner_override: str | None,
+) -> None:
+    repo_root = tmp_path / "isolated-runtime"
+    repo_root.mkdir()
+    release_env_names = (
+        subject.F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
+        subject.F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
+        subject.F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
+    )
+    inspected_env_names = (subject.F05_BUY_E3_OWNER_OVERRIDE_ENV, *release_env_names)
+    external_script = tmp_path / "preflight.py"
+    external_script.write_text(
+        "\n".join(
+            (
+                "import json",
+                "import os",
+                f"names = {inspected_env_names!r}",
+                "print(json.dumps({name: os.environ.get(name) for name in names}, sort_keys=True))",
+            )
+        )
+        + "\n",
+        encoding="ascii",
+    )
+    external_gate = tmp_path / "gate.py"
+    external_gate.write_text("# frozen gate\n", encoding="ascii")
+    command = subject._remote_preflight(
+        repo_root=str(repo_root),
+        external_script=str(external_script),
+        config_path=str(tmp_path / "config.yaml"),
+        expected_enabled=expected_enabled,
+        python=sys.executable,
+        external_gate=str(external_gate),
+        external_script_sha256=hashlib.sha256(external_script.read_bytes()).hexdigest(),
+        external_gate_sha256=hashlib.sha256(external_gate.read_bytes()).hexdigest(),
+    )
+    inherited_env = os.environ.copy()
+    inherited_env[subject.F05_BUY_E3_OWNER_OVERRIDE_ENV] = "stale-owner-authority"
+    for name in release_env_names:
+        inherited_env[name] = "stale-release-authority"
+
+    completed = subprocess.run(
+        ("/bin/bash", "--noprofile", "--norc", "-c", command),
+        check=True,
+        capture_output=True,
+        text=True,
+        env=inherited_env,
+    )
+    observed = json.loads(completed.stdout)
+    assert observed[subject.F05_BUY_E3_OWNER_OVERRIDE_ENV] == expected_owner_override
+    assert all(observed[name] is None for name in release_env_names)
+
+
 def test_validate_plan_rejects_rehashed_argv_injection_and_extra_fields(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1497,6 +1883,184 @@ def test_staged_tools_are_content_addressed_read_only_and_verified_at_exec(
             assert "sha256sum" in joined
             assert package["files"]["deploy_script"]["file_sha256"] in joined
             assert package["files"]["gate_amendment"]["file_sha256"] in joined
+
+
+def test_staged_package_freeze_rejects_hardlinks_before_live_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan, _spec = _plan(tmp_path, monkeypatch)
+    package = plan["external_tools_and_package"]
+    stage = (
+        f"{plan['remote']['stage_root']}/"
+        f"package-{package['content_package_sha256']}"
+    )
+    for phase in ("disabled-deploy", "activate"):
+        rows = plan["phases"][phase]
+        labels = [row["label"] for row in rows]
+        freeze_index = labels.index("validate-and-freeze-content-addressed-stage")
+        stop_index = labels.index("stop-live")
+        assert freeze_index < stop_index
+        assert all(
+            labels.index(f"stage-{role}") < freeze_index
+            for role in subject._EXTERNAL_PACKAGE_ROLES  # noqa: SLF001
+        )
+        command = rows[freeze_index]["argv"][-1]
+        chmod_index = command.index("chmod 400")
+        for role in subject._EXTERNAL_PACKAGE_ROLES:  # noqa: SLF001
+            binding = package["files"][role]
+            suffix = Path(binding["path"]).suffix
+            staged_path = (
+                f"{stage}/{role}-{binding['file_sha256']}{suffix}"
+            )
+            nlink_check = f"stat -c '%h' {shlex.quote(staged_path)}"
+            owner_check = f"stat -c '%u' {shlex.quote(staged_path)}"
+            frozen_mode_check = f"stat -c '%a' {shlex.quote(staged_path)}"
+            assert command.count(nlink_check) == 2
+            assert command.count(owner_check) == 2
+            assert command.count(frozen_mode_check) == 1
+            assert command.index(nlink_check) < chmod_index
+            assert command.rindex(nlink_check) > chmod_index
+            assert command.index(frozen_mode_check) > chmod_index
+
+
+def test_rsync_command_is_openrsync_compatible_and_keeps_strict_transfer_options(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="ascii")
+    command = subject._rsync_command(  # noqa: SLF001
+        source=str(source),
+        target="deploy@host.invalid",
+        known_hosts=str(tmp_path / "known_hosts"),
+        destination="/srv/narrowgate/stage/source.json",
+    )
+
+    assert command[:4] == [
+        "rsync",
+        "--archive",
+        "--checksum",
+        "--ignore-existing",
+    ]
+    assert "--protect-args" not in command
+    assert command[-3:] == [
+        "--",
+        str(source),
+        "deploy@host.invalid:/srv/narrowgate/stage/source.json",
+    ]
+    assert "StrictHostKeyChecking=yes" in command[command.index("-e") + 1]
+
+    system_rsync = Path("/usr/bin/rsync")
+    if not system_rsync.is_file():
+        pytest.skip("system rsync is unavailable")
+    version = subprocess.run(
+        (str(system_rsync), "--version"),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    if "openrsync" not in version:
+        pytest.skip("system rsync is not openrsync")
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    portable_options = command[1 : command.index("-e")]
+    subprocess.run(
+        (
+            str(system_rsync),
+            *portable_options,
+            "--dry-run",
+            "--",
+            str(source),
+            f"{destination}/",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "user name@host",
+        "user@host;touch",
+        "user@$(id)",
+        "-e@host",
+        "user@host:22",
+    ],
+)
+def test_rsync_command_rejects_unsafe_remote_target(
+    tmp_path: Path,
+    target: str,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="ascii")
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="shell-safe user@host",
+    ):
+        subject._rsync_command(  # noqa: SLF001
+            source=str(source),
+            target=target,
+            known_hosts=str(tmp_path / "known_hosts"),
+            destination="/srv/narrowgate/stage/source.json",
+        )
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "relative/path",
+        "-leading-dash",
+        "/safe path/file",
+        "/safe/;touch",
+        "/safe/$(id)",
+        "/safe/./file",
+        "/safe/../escape",
+        "/safe//file",
+        "/safe/file/",
+    ],
+)
+def test_rsync_command_rejects_unsafe_remote_destination(
+    tmp_path: Path,
+    destination: str,
+) -> None:
+    source = tmp_path / "source.json"
+    source.write_text("{}\n", encoding="ascii")
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="destination must be an absolute shell-safe POSIX path",
+    ):
+        subject._rsync_command(  # noqa: SLF001
+            source=str(source),
+            target="user@host",
+            known_hosts=str(tmp_path / "known_hosts"),
+            destination=destination,
+        )
+
+
+def test_rsync_command_rejects_unsafe_missing_and_symlink_sources(
+    tmp_path: Path,
+) -> None:
+    safe = tmp_path / "source.json"
+    safe.write_text("{}\n", encoding="ascii")
+    symlink = tmp_path / "source-link.json"
+    symlink.symlink_to(safe)
+    for source, error in (
+        ("relative.json", "absolute shell-safe POSIX path"),
+        ("-leading-dash", "absolute shell-safe POSIX path"),
+        (str(tmp_path / "source with space.json"), "absolute shell-safe POSIX path"),
+        (str(tmp_path / "$(id).json"), "absolute shell-safe POSIX path"),
+        (str(tmp_path / "missing.json"), "existing non-symlink regular file"),
+        (str(symlink), "existing non-symlink regular file"),
+    ):
+        with pytest.raises(subject.BuyE3TransactionalDeployError, match=error):
+            subject._rsync_command(  # noqa: SLF001
+                source=source,
+                target="user@host",
+                known_hosts=str(tmp_path / "known_hosts"),
+                destination="/srv/narrowgate/stage/source.json",
+            )
 
 
 def test_plaintext_cli_token_is_rejected_and_secure_token_sources_work(
@@ -2391,6 +2955,103 @@ def test_runtime_identity_rejects_forged_top_level_attestation_sha256(
             process=validated,
             process_phase="disabled-deploy",
         )
+
+
+def test_runtime_identity_remote_exchange_receipt_is_not_reopened_on_planner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    remote_exchange_path = str(tmp_path / "remote-host-only" / "exchange.json")
+    exchange_binding = {
+        "path": remote_exchange_path,
+        "file_sha256": "1" * 64,
+        "canonical_sha256": "2" * 64,
+        "account_key_sha256": "3" * 64,
+        "position_lineage_sha256": "4" * 64,
+    }
+    abi_contract = {"identity": "fixture-abi"}
+    locked_runtime = {"identity": "fixture-lock"}
+    native_runtime = {
+        "profile": "unmanaged",
+        "module": "disabled",
+        "NARROWGATE_CPP_QUOTE_CORE": False,
+        "NARROWGATE_CPP_SIGNAL_FEATURES": False,
+        "NARROWGATE_CPP_GLOBAL_FLOW": False,
+        "NARROWGATE_CPP_LIVE_ROUTING": False,
+        "NARROWGATE_CPP_STRICT": False,
+        "NARROWGATE_CPP_GLOBAL_FLOW_REQUESTED": False,
+        "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE": False,
+        "abi_contract": abi_contract,
+        "locked_runtime": locked_runtime,
+    }
+    attestation = {
+        "schema_version": subject.SUCCESSOR_STARTUP_ATTESTATION_SCHEMA,
+        "native_runtime_identity": {
+            "profile": "unmanaged",
+            "reported_module_path": "disabled",
+            "enabled": False,
+            "abi_contract": abi_contract,
+            "locked_runtime": locked_runtime,
+        },
+        "shadow_runtime_identity": {
+            "global_flow_native_requested": False,
+            "global_flow_native_effective": False,
+        },
+    }
+    monkeypatch.setattr(
+        subject,
+        "_validate_startup_attestation",
+        lambda *_args, **_kwargs: attestation,
+    )
+    runtime = {
+        "schema_version": subject.RUNTIME_IDENTITY_SCHEMA,
+        "recorded_at_utc": "2026-08-26T00:00:00Z",
+        "pid": 101,
+        "python_executable": "/remote/repo/.venv-active/bin/python3",
+        "config_path": "/remote/repo/live/private/disabled.yaml",
+        "config_sha256": "5" * 64,
+        "f05_buy_e3_enabled": False,
+        "f05_buy_e3_owner_override_effective": False,
+        "f05_buy_e3_artifact_sha256": "6" * 64,
+        "f05_buy_e3_active_release_authority_schema_version": (
+            subject.ACTIVE_RELEASE_RUNTIME_AUTHORITY_SCHEMA
+        ),
+        "f05_buy_e3_required": False,
+        "f05_buy_e3_active_release_path": "",
+        "f05_buy_e3_active_release_file_sha256": "",
+        "f05_buy_e3_active_release_canonical_sha256": "",
+        "startup_exchange_reconciliation": exchange_binding,
+        "startup_attestation": {},
+        "native_runtime": native_runtime,
+    }
+    kwargs = {
+        "expected_pid": 101,
+        "expected_config_path": runtime["config_path"],
+        "expected_config_sha256": runtime["config_sha256"],
+        "expected_python_executable": runtime["python_executable"],
+        "expected_python_binary_resolved": runtime["python_executable"],
+        "expected_enabled": False,
+        "expected_artifact_sha256": runtime["f05_buy_e3_artifact_sha256"],
+        "expected_execution_commit": "7" * 40,
+        "expected_execution_tree": "8" * 40,
+        "expected_runtime_sources": {},
+        "expected_repository_root": "/remote/repo",
+        "expected_startup_attestation_schema_version": (
+            subject.SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
+        ),
+        "expected_active_release": None,
+        "expected_exchange_reconciliation_path": remote_exchange_path,
+    }
+
+    with pytest.raises(
+        subject.BuyE3TransactionalDeployError,
+        match="receipt is unavailable",
+    ):
+        subject._validate_runtime_identity_authority(runtime, **kwargs)
+    assert subject._validate_runtime_identity_authority(
+        runtime,
+        **kwargs,
+        verify_exchange_reconciliation_receipt_file=False,
+    ) == attestation
 
 
 def test_expected_value_echo_is_not_runtime_owned_startup_evidence(

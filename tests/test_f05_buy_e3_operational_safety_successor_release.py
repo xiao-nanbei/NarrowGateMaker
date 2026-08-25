@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
+from scripts import deploy_f05_buy_e3_owner_v1 as deploy
 from scripts import f05_buy_e3_operational_safety_successor_release as builder
 from strategy import boolean_cooldown_buy_e3 as runtime
 
@@ -158,7 +161,10 @@ def _payload() -> dict:
         "rollback": copy.deepcopy(builder.ROLLBACK),
         "evidence_boundary": copy.deepcopy(builder.EVIDENCE_BOUNDARY),
     }
-    payload[builder.CANONICAL_FIELD] = runtime._canonical_sha256(payload)  # noqa: SLF001
+    payload[builder.CANONICAL_FIELD] = builder.release_io.document_sha256(
+        payload,
+        builder.CANONICAL_FIELD,
+    )
     return payload
 
 
@@ -200,3 +206,124 @@ def test_successor_rejects_authority_safety_native_and_rollback_drift(mutate) ->
     payload[builder.CANONICAL_FIELD] = runtime._canonical_sha256(payload)  # noqa: SLF001
     with pytest.raises(ValueError):
         _validate(payload)
+
+
+def _deployable_release(tmp_path: Path) -> tuple[Path, dict, dict]:
+    payload = _payload()
+    commit = deploy.SUCCESSOR_EXECUTION_COMMIT
+    payload["execution"] = {
+        "execution_commit": commit,
+        "execution_tree": deploy.SUCCESSOR_EXECUTION_TREE,
+        "annotated_operational_tag": deploy.SUCCESSOR_ANNOTATED_TAG,
+        "annotated_operational_tag_object": deploy.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+        "tag_peeled_commit": commit,
+    }
+    native = payload["native_build"]
+    native.update(
+        {
+            "runtime_lock_path": f"/stage/runtime-lock-{commit}.json",
+            "wheelhouse_path": f"/stage/wheelhouse-{SHA}",
+            "install_receipt_path": f"/stage/locked-runtime-install-{commit}.json",
+            "root_wheel_path": f"/stage/root-wheel-{commit}/root.whl",
+            "native_wheel_path": f"/stage/native-wheel-{commit}/native.whl",
+        }
+    )
+    payload[builder.CANONICAL_FIELD] = builder.release_io.document_sha256(
+        payload,
+        builder.CANONICAL_FIELD,
+    )
+    path = tmp_path / "successor-release.json"
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="ascii")
+    path.chmod(0o600)
+    file_sha256 = deploy.gate_v2.file_sha256(path)
+    repo_root = "/srv/narrowgate"
+    plan = {
+        "planner_repository_root": str(tmp_path),
+        "execution": {
+            "execution_commit": commit,
+            "execution_tree": deploy.SUCCESSOR_EXECUTION_TREE,
+            "annotated_tag": deploy.SUCCESSOR_ANNOTATED_TAG,
+            "annotated_tag_object": deploy.SUCCESSOR_ANNOTATED_TAG_OBJECT,
+            "tag_peeled_commit": commit,
+        },
+        "artifact": {
+            "artifact_sha256": runtime.DIRECT_OWNER_EXACT_ARTIFACT_SHA256,
+            "manifest_path": "/private/manifest.json",
+            "manifest_file_sha256": SHA,
+            "policy_path": "/private/policy.json",
+            "policy_file_sha256": SHA,
+            "predicate_bundle_path": "/private/predicates.json",
+            "predicate_bundle_file_sha256": SHA,
+        },
+        "configs": {
+            "active": {"config_sha256": SHA},
+            "disabled": {"config_sha256": SHA},
+        },
+        "active_pointer": {"repo_root": repo_root},
+        "host": {"trusted_static_python_sha256": SHA},
+        "remote": {
+            "stage_root": "/stage",
+            "safety_release_path": deploy._remote_active_release_path(  # noqa: SLF001
+                repo_root, file_sha256
+            ),
+            "safety_release_file_sha256": file_sha256,
+            "safety_release_canonical_sha256": payload[builder.CANONICAL_FIELD],
+        },
+    }
+    return path, payload, plan
+
+
+def test_deploy_release_binding_rejects_forged_execution_and_native_receipt(
+    tmp_path: Path,
+) -> None:
+    path, payload, plan = _deployable_release(tmp_path)
+    binding = deploy._validate_active_release_for_activation(  # noqa: SLF001
+        path,
+        plan=plan,
+        activation_envelope_binding=None,
+    )
+    deploy._validate_active_release_phase_binding(binding, plan=plan)  # noqa: SLF001
+
+    forged_execution = copy.deepcopy(payload)
+    forged_execution["execution"]["execution_commit"] = "0" * 40
+    forged_execution[builder.CANONICAL_FIELD] = builder.release_io.document_sha256(
+        forged_execution,
+        builder.CANONICAL_FIELD,
+    )
+    path.write_text(
+        json.dumps(forged_execution, sort_keys=True) + "\n",
+        encoding="ascii",
+    )
+    with pytest.raises(
+        deploy.BuyE3TransactionalDeployError,
+        match="active release validation failed.*execution_identity_drifted",
+    ):
+        deploy._validate_active_release_for_activation(  # noqa: SLF001
+            path,
+            plan=plan,
+            activation_envelope_binding=None,
+        )
+
+    forged_receipt = copy.deepcopy(payload)
+    forged_receipt["native_build"]["file_sha256"] = "0" * 64
+    forged_receipt[builder.CANONICAL_FIELD] = builder.release_io.document_sha256(
+        forged_receipt,
+        builder.CANONICAL_FIELD,
+    )
+    path.write_text(
+        json.dumps(forged_receipt, sort_keys=True) + "\n",
+        encoding="ascii",
+    )
+    forged_binding = deploy._validate_active_release_for_activation(  # noqa: SLF001
+        path,
+        plan=plan,
+        activation_envelope_binding=None,
+    )
+    with pytest.raises(
+        deploy.BuyE3TransactionalDeployError,
+        match="release differs from the plan-time safety authority",
+    ):
+        deploy._validate_active_release_phase_binding(  # noqa: SLF001
+            forged_binding,
+            plan=plan,
+        )

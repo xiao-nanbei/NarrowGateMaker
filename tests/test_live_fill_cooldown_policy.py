@@ -473,6 +473,7 @@ def test_rest_only_account_trade_runs_the_normal_fill_and_cooldown_pipeline(
     position = [
         {
             "symbol": "BTCUSDC",
+            "positionSide": "BOTH",
             "positionAmt": "0.003",
             "entryPrice": "70000",
             "updateTime": 2_000,

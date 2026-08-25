@@ -37,7 +37,7 @@ def _receipt(path: Path, *, api_key: str = "key") -> list[dict[str, str | int]]:
         "schema_version": "narrowgate_stopped_exchange_reconciliation.v1",
         "status": "signed_open_orders_zero_exact_position_stable",
         "symbol": "BTCUSDC",
-        "signed_endpoints": ["openOrders", "positionRisk"],
+        "signed_endpoints": ["/fapi/v1/openOrders", "/fapi/v2/positionRisk"],
         "open_order_count": 0,
         "position_rows": rows,
         "account_key_sha256": hashlib.sha256(api_key.encode("utf-8")).hexdigest(),
@@ -216,8 +216,8 @@ def test_signed_exchange_gate_cancels_then_freezes_a_stable_position(
                 {
                     "symbol": "BTCUSDC",
                     "positionSide": "BOTH",
-                    "positionAmt": "-0.001",
-                    "entryPrice": "65000",
+                    "positionAmt": "0.000",
+                    "entryPrice": "0.0",
                     "updateTime": 456,
                 }
             ]
@@ -229,5 +229,5 @@ def test_signed_exchange_gate_cancels_then_freezes_a_stable_position(
 
     assert cancel_calls == 1
     assert payload["open_order_count"] == 0
-    assert payload["position_rows"][0]["position_amt"] == "-0.001"
+    assert payload["position_rows"][0]["position_amt"] == "0.000"
     assert output.stat().st_mode & 0o777 == 0o600
