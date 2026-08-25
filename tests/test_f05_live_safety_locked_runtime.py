@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,65 @@ def _wheel(
             info.external_attr = 0o100644 << 16
             archive.writestr(info, raw)
     return path
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _explicit_builder_virtual_environment(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Iterator[None]:
+    """Exercise the runtime builder through a real venv on every test host."""
+
+    global BUILDER_PYTHON
+
+    original = BUILDER_PYTHON
+    root = tmp_path_factory.mktemp("f05-locked-runtime-builder")
+    venv = root / "venv"
+    subprocess.run(
+        (
+            str(original),
+            "-I",
+            "-B",
+            "-m",
+            "venv",
+            "--copies",
+            str(venv),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180.0,
+    )
+    builder = venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+    excluded_wheels = (
+        _wheel(root, name="narrowgate", version="0.1.1"),
+        _wheel(root, name="narrowgate-btcusdc-cpp", version="0.0.0"),
+    )
+    subprocess.run(
+        (
+            str(builder),
+            "-I",
+            "-B",
+            "-m",
+            "pip",
+            "install",
+            "--no-index",
+            "--no-deps",
+            "--no-cache-dir",
+            "--disable-pip-version-check",
+            "--no-compile",
+            *(str(path) for path in excluded_wheels),
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180.0,
+    )
+    assert subject.probe_interpreter(builder)["is_virtual_environment"] is True
+    BUILDER_PYTHON = builder
+    try:
+        yield
+    finally:
+        BUILDER_PYTHON = original
 
 
 def _write_lock(
@@ -390,6 +450,7 @@ def test_build_lock_still_rejects_same_name_at_distinct_metadata_inodes(
     )
     snapshot = subject._seed_snapshot_current()  # noqa: SLF001
     assert len(snapshot["distributions"]) == 2
+    snapshot["interpreter"] = subject.probe_interpreter(BUILDER_PYTHON)
     monkeypatch.setattr(subject, "_run_python_json", lambda *_args: snapshot)
 
     with pytest.raises(subject.LockedRuntimeError, match="duplicate seed distribution: duplicate"):

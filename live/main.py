@@ -78,6 +78,7 @@ CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_LIVE_ROUTING",
     "NARROWGATE_CPP_STRICT",
 )
+CPP_MODULE_TOKEN_ENV = "NARROWGATE_CPP_EXPECT_MODULE_TOKEN"
 
 FORMAL_DRY_RUN_SCHEMA = "narrowgate.live_dry_run.v1"
 DEFAULT_DRY_RUN_TIMEOUT_S = 30.0
@@ -488,6 +489,15 @@ def _native_runtime_file_identity(native_runtime: dict) -> dict | None:
     if not module_path or module_path.startswith("unavailable:"):
         raise RuntimeError("enabled native runtime has no loadable module identity")
     return _file_byte_identity(module_path)
+
+
+def _bind_successor_cpp_module_token(expected_venv: Path) -> str:
+    token = f"{expected_venv.expanduser().resolve(strict=True)}{os.sep}"
+    supplied = os.environ.get(CPP_MODULE_TOKEN_ENV, "")
+    if supplied and supplied != token:
+        raise RuntimeError("native module token differs from successor authority")
+    os.environ[CPP_MODULE_TOKEN_ENV] = token
+    return token
 
 
 def _empty_startup_attestation() -> dict:
@@ -1088,6 +1098,7 @@ def audit_native_runtime(
             != safety_authority.get("wheelhouse_manifest_file_sha256")
         ):
             raise RuntimeError("locked successor runtime receipt authority drifted")
+        _bind_successor_cpp_module_token(expected_venv)
     runtime_identity = {
         "profile": profile,
         "module": module_path,

@@ -93,12 +93,37 @@ def _file(path: Path) -> dict[str, Any]:
     return {"path": str(target), "sha256": _sha(raw), "size_bytes": len(raw)}
 
 
-def _run_native_parity_smoke(root: Path) -> None:
+def _locked_venv_module_token(*, venv: Path, commit: str) -> str:
+    resolved = venv.expanduser().resolve(strict=True)
+    if (
+        len(commit) != 40
+        or any(character not in "0123456789abcdef" for character in commit)
+        or resolved.name != f"venv-{commit}"
+    ):
+        raise NativeBuildReceiptError(
+            "native module interpreter is outside the commit-bound venv"
+        )
+    return f"{resolved}{os.sep}"
+
+
+def _run_native_parity_smoke(
+    root: Path,
+    *,
+    expected_module_token: str,
+) -> None:
+    if (
+        not expected_module_token
+        or "\x00" in expected_module_token
+        or not expected_module_token.endswith(os.sep)
+        or not Path(expected_module_token).is_absolute()
+    ):
+        raise NativeBuildReceiptError("native parity module token is invalid")
     parity_environment = dict(os.environ)
     parity_environment.update(
         {
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONNOUSERSITE": "1",
+            "NARROWGATE_CPP_EXPECT_MODULE_TOKEN": expected_module_token,
         }
     )
     completed = subprocess.run(
@@ -214,9 +239,14 @@ def build_receipt(
     import narrowgate_cpp
 
     module = Path(str(narrowgate_cpp.__file__)).resolve(strict=True)
+    locked_venv = Path(sys.prefix).resolve(strict=True)
+    expected_module_token = _locked_venv_module_token(
+        venv=locked_venv,
+        commit=commit,
+    )
     if not any(str(module).endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES):
         raise NativeBuildReceiptError("narrowgate_cpp is not a native extension")
-    if not module.is_relative_to(Path(sys.prefix).resolve(strict=True)):
+    if not module.is_relative_to(locked_venv):
         raise NativeBuildReceiptError("narrowgate_cpp is outside the isolated venv")
     wheel = wheel_path.expanduser().resolve(strict=True)
     with zipfile.ZipFile(wheel) as archive:
@@ -247,7 +277,10 @@ def build_receipt(
         for name in ("delta_cap", "final_compressed", "cap_exposure_block")
     ) or not hasattr(side, "cap_exposure_block"):
         raise NativeBuildReceiptError("native module lacks successor quote ABI fields")
-    _run_native_parity_smoke(root)
+    _run_native_parity_smoke(
+        root,
+        expected_module_token=expected_module_token,
+    )
     sources: dict[str, Any] = {}
     for relative in NATIVE_SOURCES:
         path = root / relative

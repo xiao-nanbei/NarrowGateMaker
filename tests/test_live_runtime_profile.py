@@ -1,9 +1,30 @@
 import logging
+import os
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
 from live import main
+
+
+def test_successor_cpp_module_token_is_derived_and_conflict_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected_venv = tmp_path / f"venv-{'a' * 40}"
+    expected_venv.mkdir()
+    expected_token = f"{expected_venv.resolve()}{os.sep}"
+
+    monkeypatch.setenv(main.CPP_MODULE_TOKEN_ENV, "")
+    assert main._bind_successor_cpp_module_token(expected_venv) == expected_token  # noqa: SLF001
+    assert os.environ[main.CPP_MODULE_TOKEN_ENV] == expected_token
+
+    assert main._bind_successor_cpp_module_token(expected_venv) == expected_token  # noqa: SLF001
+
+    monkeypatch.setenv(main.CPP_MODULE_TOKEN_ENV, "/hostile/runtime/")
+    with pytest.raises(RuntimeError, match="differs from successor authority"):
+        main._bind_successor_cpp_module_token(expected_venv)  # noqa: SLF001
 
 
 def _clear_flags(monkeypatch) -> None:
