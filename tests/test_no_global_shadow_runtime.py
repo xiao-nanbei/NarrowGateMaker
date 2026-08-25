@@ -27,6 +27,20 @@ def _function_ast_sha256(relative: str, class_name: str, function_name: str) -> 
                     isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and child.name == function_name
                 ):
+                    # Python 3.12 added an empty ``type_params`` field to
+                    # function/class AST nodes.  Normalize older parsers to
+                    # that schema so the frozen 3.12 structural hashes remain
+                    # identical on every supported Python minor.
+                    for descendant in ast.walk(child):
+                        if (
+                            isinstance(
+                                descendant,
+                                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+                            )
+                            and "type_params" not in descendant._fields
+                        ):
+                            descendant._fields = (*descendant._fields, "type_params")
+                            descendant.type_params = []
                     return hashlib.sha256(
                         ast.dump(child, include_attributes=False).encode("utf-8")
                     ).hexdigest()
@@ -67,9 +81,7 @@ def test_config_loader_records_explicit_false(tmp_path: Path) -> None:
     assert cfg.multi_market._global_reference_shadow_enabled_explicit is True
     assert cfg._source_file_path == str(path.resolve())
     assert cfg._source_file_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert live_config.revalidate_loaded_config_source(cfg, path) == (
-        cfg._source_file_sha256
-    )
+    assert live_config.revalidate_loaded_config_source(cfg, path) == (cfg._source_file_sha256)
 
 
 def test_loaded_config_source_revalidation_rejects_post_load_replacement(

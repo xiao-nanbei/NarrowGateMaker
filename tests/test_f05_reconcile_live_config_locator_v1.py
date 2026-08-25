@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -2676,15 +2677,19 @@ def test_private_evidence_root_and_unit_permissions_fail_closed(
     unrelated_temp = tmp_path / "declared-temp"
     unrelated_temp.mkdir()
     monkeypatch.setattr(subject.tempfile, "gettempdir", lambda: str(unrelated_temp))
-    evidence = tmp_path / "durable-evidence"
-    evidence.mkdir()
-    monkeypatch.setenv(subject.PRIVATE_EVIDENCE_ROOT_ENV, str(evidence))
-    evidence.chmod(0o770)
-    with pytest.raises(subject.ConfigLocatorReconciliationError, match="writable"):
-        subject._private_evidence_root()
+    durable_parent = Path(__file__).resolve().parents[2]
+    with tempfile.TemporaryDirectory(
+        prefix=".narrowgate-private-evidence-",
+        dir=durable_parent,
+    ) as evidence_directory:
+        evidence = Path(evidence_directory)
+        monkeypatch.setenv(subject.PRIVATE_EVIDENCE_ROOT_ENV, str(evidence))
+        evidence.chmod(0o770)
+        with pytest.raises(subject.ConfigLocatorReconciliationError, match="writable"):
+            subject._private_evidence_root()
 
-    evidence.chmod(0o750)
-    assert subject._private_evidence_root() == evidence
+        evidence.chmod(0o750)
+        assert subject._private_evidence_root() == evidence
 
     fixture = _manifest_fixture(tmp_path / "layout", monkeypatch)
     fixture["active_source"].parent.chmod(0o750)
