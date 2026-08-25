@@ -3,8 +3,8 @@
     "campaign_value_additivity_error_usdc": "0.00000000",
     "campaigns_closed": 1,
     "continuous_pnl_usdc": "0.00200000",
-    "contract_version": "continuous_accounting_contract.v1",
-    "state_contract_version": "continuous_replay_state.v1"
+    "contract_version": "continuous_accounting_contract.v2",
+    "state_contract_version": "continuous_replay_state.v2"
   },
   "campaign": {
     "closed": [
@@ -22,7 +22,7 @@
     "terminal_value_usdc": "0.00200000"
   },
   "campaign_terminal_value_usdc": "0.00200000",
-  "canonical_summary_sha256": "122e721a2879c1c0994c1b2bd0a67670b9b3c26020d1f13b7eda3e7bc79cd0e2",
+  "canonical_summary_sha256": "18c6a008e6cd8e7ee7f97e6dbdc41321184c18378e5e25d55f9253286bcceac4",
   "classification": {
     "classification": "synthetic_non_economic",
     "economic_authority": "none",
@@ -212,9 +212,9 @@
     "status": "passed_demo_mechanics_only"
   },
   "identity": {
-    "accounting_contract_version": "continuous_accounting_contract.v1",
+    "accounting_contract_version": "continuous_accounting_contract.v2",
     "code": {
-      "bundle_sha256": "7f96df59a305314b5fd401268835e09d901664c357cde819dba482624ccbae8c",
+      "bundle_sha256": "089a9a9e28d2aa58ddbe6dd768bf7c36056ab06053f00722fb0d9753a593925d",
       "sources": [
         {
           "path": "scripts/narrowgate_replay_demo.py",
@@ -230,7 +230,7 @@
         },
         {
           "path": "models/replay/continuous_accounting.py",
-          "sha256": "ad04ea1ca8557bae1c58a4b16ce0b0d9bfb4867754860141960a5a5f387893e6"
+          "sha256": "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
         },
         {
           "path": "models/replay/continuous_calendar.py",
@@ -238,7 +238,7 @@
         },
         {
           "path": "models/replay/replay_state_checkpoint.py",
-          "sha256": "4189252229cca0c2dbced25ce5b208acd5d4f09fdd790274a5b9f3466c5d4453"
+          "sha256": "8b092950eaf4b620be8b2148a6207f7abb37f8a692cfbbeaa90013c75bcd73e3"
         },
         {
           "path": "data/__init__.py",
@@ -264,7 +264,7 @@
       "sha256": "f5ec7f12d7ee92614428003daa6ad2ba0f0d91cef981577b2875fa63c65a8ec7",
       "version": "narrowgate_replay_demo_contract.v1"
     },
-    "state_contract_version": "continuous_replay_state.v1",
+    "state_contract_version": "continuous_replay_state.v2",
     "tape": {
       "artifact_id": "public_synthetic_queue_campaign_v1",
       "schema_version": "narrowgate.synthetic_replay_tape.v1",

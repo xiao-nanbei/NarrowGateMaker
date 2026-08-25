@@ -1059,11 +1059,16 @@ def load_operational_baseline_binding(
             normalized_pointer.get("model_directory", "")
         ):
             raise RuntimeError("Operational baseline pointer and identity model paths disagree")
+        model_authority_modes = (
+            PRIVATE_AUTHORITY_MODES
+            if pointer_schema == "narrowgate_operational_baseline_pointer.v2"
+            else PUBLIC_AUTHORITY_MODES
+        )
         bundle_meta = model_path / "bundle_meta.json"
         expected_bundle_sha256 = str(normalized_pointer.get("bundle_meta_sha256", ""))
         try:
             bundle_raw, _bundle_metadata, _bundle_path = _secure_authority_snapshot(
-                bundle_meta, allowed_modes=PUBLIC_AUTHORITY_MODES
+                bundle_meta, allowed_modes=model_authority_modes
             )
         except FileNotFoundError:
             bundle_raw = b""
@@ -1074,12 +1079,12 @@ def load_operational_baseline_binding(
         training_summary = model_path / "training_summary.json"
         try:
             training_raw, _training_metadata, training_summary = _secure_authority_snapshot(
-                training_summary, allowed_modes=PUBLIC_AUTHORITY_MODES
+                training_summary, allowed_modes=model_authority_modes
             )
             _training_projection, _training_public, training_source = _verified_projection_identity(
                 training_summary,
                 training_raw,
-                public_allowed_modes=PUBLIC_AUTHORITY_MODES,
+                public_allowed_modes=model_authority_modes,
             )
         except FileNotFoundError:
             training_source = ""
@@ -1089,10 +1094,10 @@ def load_operational_baseline_binding(
         p3_path = _resolve_authority_path(p3.get("path", ""), root=root)
         try:
             p3_raw, _p3_metadata, p3_path = _secure_authority_snapshot(
-                p3_path, allowed_modes=PUBLIC_AUTHORITY_MODES
+                p3_path, allowed_modes=model_authority_modes
             )
             _p3_projection, _p3_public, p3_source = _verified_projection_identity(
-                p3_path, p3_raw, public_allowed_modes=PUBLIC_AUTHORITY_MODES
+                p3_path, p3_raw, public_allowed_modes=model_authority_modes
             )
         except FileNotFoundError:
             p3_source = ""
@@ -1345,7 +1350,7 @@ def build_backtest_base_params(
         "markout_ema_span_fills": live_params.get("markout_ema_span_fills", 50),
         "markout_spread_scale": live_params.get("markout_spread_scale", 0.2),
         "markout_side_asymmetry_sign": live_params.get("markout_side_asymmetry_sign", 1.0),
-        "spread_cap_mode": live_params.get("spread_cap_mode", "compress"),
+        "spread_cap_mode": live_params.get("spread_cap_mode", "pause_exposure"),
         "adverse_markout_pause_hybrid": live_params.get("adverse_markout_pause_hybrid", False),
         "adverse_markout_pause_base_s": live_params.get("adverse_markout_pause_base_s", 120.0),
         "adverse_markout_pause_min_s": live_params.get("adverse_markout_pause_min_s", 120.0),
@@ -1893,18 +1898,46 @@ def _current_backtest_mechanics_pointer() -> dict[str, Any]:
     ):
         raise RuntimeError("Current backtest mechanics contract SHA256 is malformed")
     expected = {
-        "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v1",
-        "status": "current_default_private_exact_buy_e3_mechanics",
-        "effective_at_utc": "2026-08-25T00:00:01Z",
+        "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v2",
+        "status": "current_default_private_exact_buy_e3_mechanics_safety_successor",
+        "effective_at_utc": "2026-08-25T03:45:34Z",
         "mechanics_identity": (
             "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-            "backtest_mechanics_baseline_v1"
+            "backtest_mechanics_safety_successor_v1"
         ),
         "mechanics_contract_path": (
             "research/families/f05_fill_quality_quote_ev/docs/"
             "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-            "backtest_mechanics_baseline_v1_20260825.json"
+            "backtest_mechanics_safety_successor_v1_20260825.json"
         ),
+        "predecessor_mechanics_contract": {
+            "identity": (
+                "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+                "backtest_mechanics_baseline_v1"
+            ),
+            "repository_relative_path": (
+                "research/families/f05_fill_quality_quote_ev/docs/"
+                "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+                "backtest_mechanics_baseline_v1_20260825.json"
+            ),
+            "file_sha256": (
+                "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699"
+            ),
+            "canonical_sha256": (
+                "c2f680c79ca2946c66a5f6d6732792fb7b61c4285630e7a951944dfeac9bc968"
+            ),
+            "annotated_tag": (
+                "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
+            ),
+            "annotated_tag_object": "6180725e03e38a8580ce86f14959acf0946d8b90",
+            "private_bundle_relative_identity": (
+                "direct_no_shadow_live_evidence_v6_20260824/"
+                "backtest_mechanics_default_v1"
+            ),
+            "historical_contract_modified": False,
+            "historical_private_bundle_modified": False,
+            "historical_annotated_tag_modified": False,
+        },
         "predecessor_v13_identity_path": (
             "research/families/f10_live_replay_attribution/docs/"
             "operational_baseline_identity_20260825_v13.json"
@@ -1913,6 +1946,12 @@ def _current_backtest_mechanics_pointer() -> dict[str, Any]:
             "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079"
         ),
         "private_bundle_availability": "private_not_distributed",
+        "private_bundle_relative_identity": (
+            "mechanics_safety_successor_v1_20260825/backtest_mechanics_default_v1"
+        ),
+        "cold_publisher_annotated_tag": (
+            "f05-owner-buy-e3-backtest-mechanics-safety-successor-v1-final-20260825"
+        ),
         "default_arm": {
             "target_side": "BUY",
             "buy_policy": "exact_owner_E3",
@@ -1920,7 +1959,51 @@ def _current_backtest_mechanics_pointer() -> dict[str, Any]:
             "formal_e3_mechanics_panel_day_count": 30,
             "reduced_support": True,
         },
-        "v12_50_day_economic_control_retained": True,
+        "v12_50_day_economic_comparator_retained": True,
+        "v12_50_day_economic_results_status": (
+            "historical_comparator_stale_under_current_safety_mechanics"
+        ),
+        "material_mechanics_config_delta": {
+            "source_config_path": "strategy.spread_cap_mode",
+            "final_replay_abi_path": "spread_cap_mode",
+            "predecessor_effective_default": "compress",
+            "successor_cold_default": "pause_exposure",
+            "explicit_research_arm": "compress",
+            "explicit_research_arm_can_override_cold_default": False,
+            "active_source_config_bytes_modified": False,
+        },
+        "mechanics_safety_semantics": {
+            "spread_cap": (
+                "pause_exposure_is_the_safe_default;_compress_is_an_explicit_research_arm_only"
+            ),
+            "exposure_role": (
+                "exact_close_and_partial_reduce_are_reducing;_only_cross_zero_residual_is_increasing"
+            ),
+            "order_ledger": (
+                "finite_nonnegative_bounded_monotone_cumulative_fills;_exact_trade_and_order_"
+                "identity;_terminal_corrections_fail_closed"
+            ),
+            "campaign_flip": (
+                "zero_crossing_closes_the_old_campaign_and_opens_a_new_opposite_side_campaign"
+            ),
+            "commission": (
+                "signed_commission_and_rebates_are_preserved_and_split_by_economic_leg"
+            ),
+            "same_timestamp_fill_order": (
+                "preserve_source_exchange_sequence;_never_reorder_equal_timestamp_fills_"
+                "by_order_id"
+            ),
+            "cooldown_checkpoint": (
+                "full_cooldown_v2_snapshot_is_required;_legacy_partial_state_fails_closed"
+            ),
+            "live_liveness": (
+                "websocket_and_main_loop_fail_closed;_fatal_runtime_errors_propagate_and_"
+                "network_calls_are_bounded"
+            ),
+            "economic_status": (
+                "predecessor_v12_50_day_results_are_historical_stale_comparator_only"
+            ),
+        },
         "permissions": {
             "backtest_mechanics_available": True,
             "backtest_default_arm_resolution_authorized": True,
@@ -1944,7 +2027,7 @@ def _current_backtest_mechanics_pointer() -> dict[str, Any]:
 
 
 def load_default_tick_mechanics_baseline() -> Any:
-    """Resolve the current BUY-E3 mechanics default without a public fallback."""
+    """Resolve the current BUY-E3 mechanics safety successor without fallback."""
 
     pointer = _current_backtest_mechanics_pointer()
     durable_raw = os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "").strip()
@@ -1959,7 +2042,9 @@ def load_default_tick_mechanics_baseline() -> Any:
         causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
     )
 
-    if pointer["mechanics_contract_file_sha256"] != mechanics.V14_PUBLIC_CONTRACT_FILE_SHA256:
+    if pointer["mechanics_contract_file_sha256"] != (
+        mechanics.SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256
+    ):
         raise RuntimeError("Current backtest mechanics contract identity drifted")
 
     contract_path = ROOT / str(pointer["mechanics_contract_path"])
@@ -2025,7 +2110,10 @@ def run_default_tick_mechanics_day(*, utc_day: str) -> Mapping[str, Any]:
     normalized_day = str(utc_day)
     if normalized_day not in mechanics.FORMAL_E3_MECHANICS_DAYS:
         raise RuntimeError("Current default day is outside the reduced-support E3 panel")
-    before = mechanics.capture_cold_publisher(ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG)
+    before = mechanics.capture_cold_publisher(
+        ROOT,
+        annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+    )
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "PYTHONUNBUFFERED": "1",
@@ -2079,7 +2167,10 @@ def run_default_tick_mechanics_day(*, utc_day: str) -> Mapping[str, Any]:
             raise RuntimeError(
                 "Current BUY-E3 mechanics default failed in the isolated tagged runner"
             ) from exc
-    after = mechanics.capture_cold_publisher(ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG)
+    after = mechanics.capture_cold_publisher(
+        ROOT,
+        annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+    )
     if after != before:
         raise RuntimeError("Tagged default mechanics source changed across execution")
     payload = _strict_json_snapshot(

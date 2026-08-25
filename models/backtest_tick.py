@@ -23,6 +23,7 @@ import heapq
 import hashlib
 import json
 import math
+import operator
 import os
 import random
 import re
@@ -35,6 +36,13 @@ from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any, Mapping, Optional
 from zoneinfo import ZoneInfo
+
+# These paths are populated by ``update_symbol_globals`` below before any
+# replay entrypoint can call a function that consumes them.  Keep explicit
+# module bindings so static checks cover the same maintained runtime surface.
+FEATURES_DIR: Path
+MODEL_DIR: Path
+RESULTS_DIR: Path
 
 
 def _lexical_checkout_root(script_file):
@@ -85,8 +93,10 @@ from models.replay.order_lifecycle_v2_replay_adapter import (
 from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
     OrderLifecycleV2ReplayAdapter as StrictNativeOrderLifecycleV2ReplayAdapter,
 )
+from models.replay.continuous_accounting import FEE_ACCOUNTING_SEMANTICS
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
+    LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
     SYNC_CENSOR_CODE,
     SYNC_DEGRADE_SEMANTICS,
     SYNC_EVENT_CODE,
@@ -115,6 +125,7 @@ from strategy.buy_soft_widen_release import evaluate_buy_soft_widen_release
 # Force unbuffered output for progress reporting
 os.environ["PYTHONUNBUFFERED"] = "1"
 VERBOSE = False
+CAMPAIGN_ACCOUNTING_SEMANTICS = "zero_boundary_flip_fee_split_v2"
 
 # Ex-ante cross-market fields carried alongside ML predictions for research
 # replay.  These are quote-time features only; offline shock labels remain
@@ -141,6 +152,165 @@ XMARKET_REPLAY_FEATURE_COLUMNS = (
 def qprint(*args, **kwargs):
     if VERBOSE:
         print(*args, **kwargs)
+
+
+def campaign_flip_zero_boundary_equity(
+    *,
+    post_fill_cash: float,
+    post_fill_position: float,
+    fill_price: float,
+    opening_quantity: float,
+    fee_rate: float,
+) -> float:
+    """Value the closing campaign at zero, excluding the new leg's fee."""
+    opening_fee = float(fill_price) * float(opening_quantity) * float(fee_rate)
+    return (
+        float(post_fill_cash)
+        + float(post_fill_position) * float(fill_price)
+        + opening_fee
+    )
+
+
+def campaign_fill_economic_legs(
+    *,
+    physical_fill_identity: str,
+    side: str,
+    inventory_before: float,
+    inventory_after: float,
+    fill_quantity: float,
+    fill_price: float,
+    fee_rate: float,
+    closing_campaign_id: int,
+    opening_campaign_id: int,
+) -> tuple[dict[str, Any], ...]:
+    """Project one physical fill into campaign-local economic legs.
+
+    A cross-zero exchange trade remains one physical fill/order transition,
+    while its closing and opening quantities are represented as two records
+    sharing the same immutable physical identity.
+    """
+    identity = str(physical_fill_identity).strip()
+    normalized_side = str(side).upper()
+    before = float(inventory_before)
+    after = float(inventory_after)
+    quantity = float(fill_quantity)
+    price = float(fill_price)
+    rate = float(fee_rate)
+    if (
+        not identity
+        or normalized_side not in {"BUY", "SELL"}
+        or not all(
+            math.isfinite(value)
+            for value in (before, after, quantity, price, rate)
+        )
+        or quantity <= 0.0
+        or price <= 0.0
+    ):
+        raise ValueError("campaign economic fill identity is invalid")
+    physical_fee = price * quantity * rate
+    crossed_side = before * after < -1e-20
+    if not crossed_side:
+        campaign_id = (
+            int(opening_campaign_id)
+            if abs(before) <= 1e-10 and abs(after) > 1e-10
+            else int(closing_campaign_id)
+        )
+        if campaign_id <= 0:
+            raise ValueError("economic fill leg requires a campaign id")
+        role = (
+            "opening"
+            if abs(before) <= 1e-10
+            else "closing"
+            if abs(after) < abs(before) - 1e-10
+            else "adding"
+        )
+        return (
+            {
+                "schema_version": "campaign_fill_economic_leg.v1",
+                "physical_fill_identity": identity,
+                "physical_fill_leg_count": 1,
+                "economic_leg_index": 0,
+                "economic_leg_role": role,
+                "campaign_id": campaign_id,
+                "side": normalized_side,
+                "quantity_btc": quantity,
+                "price_usdc_per_btc": price,
+                "fee_usdc": physical_fee,
+                "inventory_before_btc": before,
+                "inventory_after_btc": after,
+            },
+        )
+
+    closing_qty = abs(before)
+    opening_qty = abs(after)
+    if (
+        int(closing_campaign_id) <= 0
+        or int(opening_campaign_id) <= int(closing_campaign_id)
+        or not math.isclose(
+            closing_qty + opening_qty,
+            quantity,
+            rel_tol=0.0,
+            abs_tol=1e-10,
+        )
+    ):
+        raise ValueError("cross-zero physical fill cannot be split exactly")
+    closing_fee = physical_fee * closing_qty / quantity
+    opening_fee = physical_fee - closing_fee
+    return (
+        {
+            "schema_version": "campaign_fill_economic_leg.v1",
+            "physical_fill_identity": identity,
+            "physical_fill_leg_count": 2,
+            "economic_leg_index": 0,
+            "economic_leg_role": "closing",
+            "campaign_id": int(closing_campaign_id),
+            "side": normalized_side,
+            "quantity_btc": closing_qty,
+            "price_usdc_per_btc": price,
+            "fee_usdc": closing_fee,
+            "inventory_before_btc": before,
+            "inventory_after_btc": 0.0,
+        },
+        {
+            "schema_version": "campaign_fill_economic_leg.v1",
+            "physical_fill_identity": identity,
+            "physical_fill_leg_count": 2,
+            "economic_leg_index": 1,
+            "economic_leg_role": "opening",
+            "campaign_id": int(opening_campaign_id),
+            "side": normalized_side,
+            "quantity_btc": opening_qty,
+            "price_usdc_per_btc": price,
+            "fee_usdc": opening_fee,
+            "inventory_before_btc": 0.0,
+            "inventory_after_btc": after,
+        },
+    )
+
+
+def loss_cooldown_config_values(
+    params: Mapping[str, Any],
+) -> tuple[int, float, int]:
+    """Return strict loss-cooldown config without numeric truncation/clamping."""
+    raw_limit = params.get("max_consecutive_losses", 0)
+    if isinstance(raw_limit, bool):
+        raise ValueError("max_consecutive_losses must be a non-negative integer")
+    try:
+        limit = operator.index(raw_limit)
+    except TypeError as exc:
+        raise ValueError(
+            "max_consecutive_losses must be a non-negative integer"
+        ) from exc
+    raw_cooldown = params.get("cooldown_after_loss", 0.0)
+    try:
+        cooldown_s = float(raw_cooldown)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            "cooldown_after_loss must be finite and non-negative"
+        ) from exc
+    if limit < 0 or not math.isfinite(cooldown_s) or cooldown_s < 0.0:
+        raise ValueError("loss-cooldown config must be finite and non-negative")
+    return limit, cooldown_s, int(round(cooldown_s * 1_000.0))
 
 
 def _resolve_fill_cooldown_reset_policy(params: Mapping[str, Any]) -> tuple[str, bool]:
@@ -682,7 +852,7 @@ try:
         lookup_queue_regime_multiplier,
         reason_bucket_from_flags,
     )
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
+    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, paths_for
     from research.families.f05_fill_quality_quote_ev.quote_ev import materialize_quote_ev_feature_values
     from models.replay_policies import (
         LOCAL_ACTIONS,
@@ -757,7 +927,7 @@ except ImportError:
         lookup_queue_regime_multiplier,
         reason_bucket_from_flags,
     )
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, update_symbol_globals
+    from symbol_paths import ROOT, DEFAULT_SYMBOL, data_root, paths_for
     from quote_ev import materialize_quote_ev_feature_values
     from replay_policies import (  # type: ignore
         LOCAL_ACTIONS,
@@ -1031,20 +1201,23 @@ def _default_replay_book_dirs(
 
 BBO_DIR, L2_DIR = _default_replay_book_dirs()
 
-SYMBOL = DEFAULT_SYMBOL
-update_symbol_globals(
-    globals(), SYMBOL,
-    feature_key="FEATURES_DIR", model_key="MODEL_DIR", results_key="RESULTS_DIR",
-)
+_INITIAL_SYMBOL_PATHS = paths_for(DEFAULT_SYMBOL)
+SYMBOL = _INITIAL_SYMBOL_PATHS.symbol
+FEATURES_DIR = _INITIAL_SYMBOL_PATHS.feature_dir
+MODEL_DIR = _INITIAL_SYMBOL_PATHS.model_dir
+RESULTS_DIR = _INITIAL_SYMBOL_PATHS.results_dir
 
 
 def configure_symbol(symbol=None, *, model_dir_override=None):
-    update_symbol_globals(
-        globals(), symbol,
-        feature_key="FEATURES_DIR", model_key="MODEL_DIR", results_key="RESULTS_DIR",
-    )
+    global SYMBOL, FEATURES_DIR, MODEL_DIR, RESULTS_DIR
+
+    paths = paths_for(symbol)
+    SYMBOL = paths.symbol
+    FEATURES_DIR = paths.feature_dir
+    MODEL_DIR = paths.model_dir
+    RESULTS_DIR = paths.results_dir
     if model_dir_override is not None:
-        globals()["MODEL_DIR"] = Path(model_dir_override).expanduser().resolve()
+        MODEL_DIR = Path(model_dir_override).expanduser().resolve()
 
 TICK = 0.1
 LOT_SIZE = 0.001
@@ -1153,7 +1326,7 @@ def _coverage_union_seconds(starts: np.ndarray, ends: np.ndarray) -> float:
     total_ms = 0.0
     cur_start = float(starts[0])
     cur_end = float(ends[0])
-    for start, end in zip(starts[1:], ends[1:]):
+    for start, end in zip(starts[1:], ends[1:], strict=True):
         start = float(start)
         end = float(end)
         if start <= cur_end:
@@ -2085,7 +2258,7 @@ def load_l2_data(days=None, *, quality_allowed_days=()):
         "ask_qty": ask_qty_map,
     }
     offset = 0
-    for path, row_count in zip(files, file_rows):
+    for path, row_count in zip(files, file_rows, strict=True):
         stop = offset + int(row_count)
         timestamp_columns = [
             name for name in ("timestamp", "ts_ms", "transact_time", "event_time", "time", "E", "T")
@@ -4675,6 +4848,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         inventory_before: float,
         inventory_after: float,
         campaign_id: int,
+        physical_fill_identity: str,
+        economic_legs: tuple[dict[str, Any], ...],
     ) -> None:
         local_order_lifecycle.fill(
             order,
@@ -4686,6 +4861,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             inventory_before=float(inventory_before),
             inventory_after=float(inventory_after),
             campaign_id=int(campaign_id),
+            physical_fill_identity=str(physical_fill_identity),
+            economic_legs=economic_legs,
         )
         if order_lifecycle_journal_v2_adapter is not None:
             journal_full_fill = float(remaining_after) <= 1e-12
@@ -4698,6 +4875,44 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 exchange_ts_ms=int(ts_ms),
                 full_fill=journal_full_fill,
             )
+
+    def _campaign_legs_for_order_fill(
+        order: Mapping[str, Any],
+        *,
+        ts_ms: int,
+        side: str,
+        inventory_before: float,
+        inventory_after: float,
+        fill_qty: float,
+        fill_price: float,
+        fee_rate: float,
+        remaining_before: float,
+        remaining_after: float,
+    ) -> tuple[str, tuple[dict[str, Any], ...]]:
+        trace_id = int(order.get("trace_id", -1) or -1)
+        physical_identity = (
+            f"replay_order_fill:{trace_id}:{int(ts_ms)}:"
+            f"{float(remaining_before):.12g}->{float(remaining_after):.12g}"
+        )
+        opening_campaign_id = int(campaign_count) + int(
+            (
+                abs(float(inventory_before)) <= 1e-10
+                and abs(float(inventory_after)) > 1e-10
+            )
+            or float(inventory_before) * float(inventory_after) < -1e-20
+        )
+        legs = campaign_fill_economic_legs(
+            physical_fill_identity=physical_identity,
+            side=side,
+            inventory_before=inventory_before,
+            inventory_after=inventory_after,
+            fill_quantity=fill_qty,
+            fill_price=fill_price,
+            fee_rate=fee_rate,
+            closing_campaign_id=int(campaign_count),
+            opening_campaign_id=opening_campaign_id,
+        )
+        return physical_identity, legs
 
     trace_local_order_lifecycle: list[dict[str, Any]] = []
     local_order_lifecycle_mid_change_cursor = 0
@@ -5959,7 +6174,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ret_demean_halflife = params.get("ret_demean_halflife", 0)
 
     # Regime params
-    vol_baseline = params.get("vol_baseline", 3.0)
     liq_baseline = params.get("liq_baseline", 200.0)
     vol_power = params.get("vol_power", 1.5)
 
@@ -6790,25 +7004,52 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     initial_live_state_ask_orders_restored = 0
     q = initial_inventory
     cash = -initial_inventory * initial_entry_price if initial_entry_price > 0.0 else 0.0
-    consecutive_loss_cooldown = ConsecutiveLossCooldown(
-        max_consecutive_losses=int(
-            params.get("max_consecutive_losses", 0) or 0
-        ),
-        cooldown_ms=max(
-            0,
-            int(
-                round(
-                    float(params.get("cooldown_after_loss", 0.0) or 0.0)
-                    * 1000.0
-                )
-            ),
-        ),
-        inventory=initial_inventory,
-        avg_entry=initial_entry_price,
+    (
+        expected_loss_limit,
+        _,
+        expected_loss_cooldown_ms,
+    ) = loss_cooldown_config_values(
+        params
     )
+    loss_cooldown_snapshot = initial_live_state.get(
+        "reward_path_loss_cooldown"
+    ) or initial_live_state.get("loss_cooldown_snapshot")
+    if isinstance(loss_cooldown_snapshot, Mapping) and loss_cooldown_snapshot:
+        consecutive_loss_cooldown = ConsecutiveLossCooldown.restore(
+            loss_cooldown_snapshot
+        )
+        if (
+            consecutive_loss_cooldown.max_consecutive_losses
+            != expected_loss_limit
+            or consecutive_loss_cooldown.cooldown_ms
+            != expected_loss_cooldown_ms
+        ):
+            raise ValueError(
+                "restored loss-cooldown config disagrees with replay params"
+            )
+        if not math.isclose(
+            consecutive_loss_cooldown.inventory,
+            initial_inventory,
+            rel_tol=0.0,
+            abs_tol=1e-10,
+        ) or not math.isclose(
+            consecutive_loss_cooldown.avg_entry,
+            initial_entry_price,
+            rel_tol=0.0,
+            abs_tol=1e-10,
+        ):
+            raise ValueError(
+                "restored loss-cooldown inventory disagrees with replay initial state"
+            )
+    else:
+        consecutive_loss_cooldown = ConsecutiveLossCooldown(
+            max_consecutive_losses=expected_loss_limit,
+            cooldown_ms=expected_loss_cooldown_ms,
+            inventory=initial_inventory,
+            avg_entry=initial_entry_price,
+        )
     consecutive_loss_cooldown_block_count = 0
     consecutive_loss_cooldown_cancel_count = 0
-    consecutive_loss_cooldown_last_cancel_ts = -10**18
     sync_adjust_degrade_until_ms = 0
     sync_adjust_degrade_trigger_count = 0
     sync_adjust_degrade_block_bid_count = 0
@@ -6826,9 +7067,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             side=side,
             quantity=float(fill_qty),
             price=float(fill_price),
-            commission=(
-                float(fill_price) * float(fill_qty) * max(0.0, float(fee_rate))
-            ),
+            commission=float(fill_price) * float(fill_qty) * float(fee_rate),
         )
         if abs(float(consecutive_loss_cooldown.inventory) - float(q)) > max(
             1e-10,
@@ -6930,14 +7169,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     campaign_reducing_fills = 0
     campaign_buy_fills = 0
     campaign_sell_fills = 0
+    # Campaign-local counters feed decision covariates and reset at every
+    # flat/flip boundary.  Separate run totals preserve the historical summary
+    # denominator and start from zero for each replay segment.
+    campaign_run_exposure_increasing_fills = 0
+    campaign_run_reducing_fills = 0
+    campaign_run_buy_fills = 0
+    campaign_run_sell_fills = 0
+    campaign_economic_fill_leg_trace: list[dict[str, Any]] = []
     campaign_inventory_time_to_date_btc_s = 0.0
     campaign_inventory_time_last_ts_ms = (
         int(trade_ts[0]) if campaign_active and n_trades > 0 else 0
     )
     campaign_inventory_time_last_inventory_btc = float(q)
-    # Keep F10 campaign-local counters isolated from historical replay/action
-    # identities whose legacy counters persist across campaign boundaries.
-    # This fixes diagnostic covariates without changing quotes or q90 actions.
+    # Keep F10 campaign-local counters aligned with live InventoryManager.
+    # Run-total counters above remain isolated summary/denominator fields.
     first_add_campaign_exposure_increasing_fills = 0
     first_add_campaign_reducing_fills = 0
     campaign_shadow_inv_006_blocks = 0
@@ -9520,11 +9766,131 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
         trace_first_opener_decision_to_terminal.append(record)
 
-    def _campaign_on_fill(side: str, prev_q: float, fill_qty: float, t_ms: int, mark_px: float) -> None:
-        nonlocal campaign_active, campaign_count, campaign_closed_count
+    def _finalize_campaign_boundary(
+        t_ms: int,
+        mark_px: float,
+        *,
+        terminal_reason: str,
+    ) -> None:
+        nonlocal campaign_active, campaign_closed_count
+        local_order_lifecycle.campaign_repair(
+            int(campaign_count),
+            int(t_ms),
+        )
+        _record_local_order_value_campaign_repair(
+            campaign_count,
+            int(t_ms),
+        )
+        _finalize_local_action_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_queue_value_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_sell_add_skip_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_state_conditioned_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_safe_add_rearm_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_state_conditioned_rearm_campaign(
+            campaign_count,
+            t_ms,
+            mark_px,
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_cooldown_lineage_campaign(
+            campaign_count,
+            outcome_ts_ms=int(t_ms),
+            mark_px=float(mark_px),
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_first_add_decision_campaign(
+            campaign_count,
+            int(t_ms),
+            float(mark_px),
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_first_opener_decision_campaign(
+            campaign_count,
+            int(t_ms),
+            float(mark_px),
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_sell_add_price_penalty_campaign(
+            campaign_count,
+            int(t_ms),
+            float(mark_px),
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_multi_short_repair_campaign(
+            campaign_count,
+            int(t_ms),
+            float(mark_px),
+            closed=True,
+            terminal_reason=terminal_reason,
+        )
+        _finalize_fair_center_assignment(
+            int(t_ms),
+            float(mark_px),
+            terminal_reason=terminal_reason,
+            censored=False,
+        )
+        campaign_closed_count += 1
+        campaign_active = False
+        if ranked_toxicity_guard_binding_active:
+            ranked_toxicity_guard_binding.on_campaign_terminal(
+                event_ts_ns=int(t_ms) * 1_000_000,
+                candidate_campaign_ordinal=int(campaign_count),
+            )
+
+    def _campaign_on_fill(
+        side: str,
+        prev_q: float,
+        fill_qty: float,
+        t_ms: int,
+        fill_price: float,
+        fee_rate: float,
+        *,
+        physical_fill_identity: str,
+        economic_legs: tuple[dict[str, Any], ...],
+    ) -> None:
+        nonlocal q, cash
+        nonlocal campaign_active, campaign_count
         nonlocal campaign_start_ts, campaign_start_pnl, campaign_cur_max_abs, campaign_cur_min_pnl
         nonlocal campaign_exposure_increasing_fills, campaign_reducing_fills
         nonlocal campaign_buy_fills, campaign_sell_fills
+        nonlocal campaign_run_exposure_increasing_fills
+        nonlocal campaign_run_reducing_fills
+        nonlocal campaign_run_buy_fills, campaign_run_sell_fills
         nonlocal campaign_inventory_time_to_date_btc_s
         nonlocal campaign_inventory_time_last_ts_ms
         nonlocal campaign_inventory_time_last_inventory_btc
@@ -9534,15 +9900,137 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal campaign_shadow_age_20m_blocks, campaign_shadow_age_40m_blocks, campaign_shadow_age_60m_blocks
         nonlocal campaign_shadow_reducing_only_blocks
         new_q = q
+        crossed_side = prev_q * new_q < -1e-20
+        if (
+            not economic_legs
+            or any(
+                str(leg.get("physical_fill_identity", ""))
+                != str(physical_fill_identity)
+                for leg in economic_legs
+            )
+            or not math.isclose(
+                sum(float(leg["quantity_btc"]) for leg in economic_legs),
+                float(fill_qty),
+                rel_tol=0.0,
+                abs_tol=1e-10,
+            )
+        ):
+            raise RuntimeError("campaign economic legs lost physical fill identity")
+        campaign_economic_fill_leg_trace.extend(
+            dict(leg) for leg in economic_legs
+        )
+        if crossed_side:
+            # Attribute a flip at the exact zero-inventory boundary.  The cash
+            # state after the full fill contains both fee legs; add back only
+            # the opening leg when valuing the old campaign.
+            final_q = q
+            final_cash = cash
+            if (
+                len(economic_legs) != 2
+                or economic_legs[0]["economic_leg_role"] != "closing"
+                or economic_legs[1]["economic_leg_role"] != "opening"
+            ):
+                raise RuntimeError("cross-zero fill requires closing/opening legs")
+            closing_qty = float(economic_legs[0]["quantity_btc"])
+            opening_qty = float(economic_legs[1]["quantity_btc"])
+            zero_equity = campaign_flip_zero_boundary_equity(
+                post_fill_cash=final_cash,
+                post_fill_position=final_q,
+                fill_price=fill_price,
+                opening_quantity=opening_qty,
+                fee_rate=fee_rate,
+            )
+
+            if side == "BUY":
+                campaign_buy_fills += 1
+                campaign_run_buy_fills += 1
+            else:
+                campaign_sell_fills += 1
+                campaign_run_sell_fills += 1
+            campaign_reducing_fills += 1
+            campaign_run_reducing_fills += 1
+            first_add_campaign_reducing_fills += 1
+
+            q = 0.0
+            cash = zero_equity
+            _sell_add_price_penalty_on_fill(side, prev_q, closing_qty)
+            _multi_short_repair_on_campaign_fill(
+                side,
+                prev_q,
+                closing_qty,
+                int(t_ms),
+                float(fill_price),
+            )
+            _fair_center_note_fill(side, closing_qty, int(t_ms))
+            _campaign_update_path(t_ms, fill_price)
+            campaign_inventory_time_last_inventory_btc = 0.0
+            _maybe_release_multi_short_repair(int(t_ms), float(fill_price))
+            _finalize_campaign_boundary(
+                int(t_ms),
+                float(fill_price),
+                terminal_reason="flip",
+            )
+
+            q = final_q
+            cash = final_cash
+            campaign_active = True
+            campaign_count += 1
+            campaign_exposure_increasing_fills = 0
+            campaign_reducing_fills = 0
+            campaign_buy_fills = 0
+            campaign_sell_fills = 0
+            first_add_campaign_exposure_increasing_fills = 0
+            first_add_campaign_reducing_fills = 0
+            campaign_start_ts = int(t_ms)
+            campaign_start_pnl = float(zero_equity)
+            campaign_cur_max_abs = abs(new_q)
+            campaign_cur_min_pnl = 0.0
+            campaign_inventory_time_to_date_btc_s = 0.0
+            campaign_inventory_time_last_ts_ms = int(t_ms)
+            campaign_inventory_time_last_inventory_btc = float(new_q)
+            if side == "BUY":
+                campaign_buy_fills += 1
+                campaign_run_buy_fills += 1
+            else:
+                campaign_sell_fills += 1
+                campaign_run_sell_fills += 1
+            campaign_exposure_increasing_fills += 1
+            campaign_run_exposure_increasing_fills += 1
+            first_add_campaign_exposure_increasing_fills += 1
+            _fair_center_on_campaign_open(side, int(t_ms))
+            _sell_add_price_penalty_on_fill(side, 0.0, opening_qty)
+            _multi_short_repair_on_campaign_fill(
+                side,
+                0.0,
+                opening_qty,
+                int(t_ms),
+                float(fill_price),
+            )
+            _fair_center_note_fill(side, opening_qty, int(t_ms))
+            for live_order in (*bid_orders, *ask_orders):
+                local_order_lifecycle.bind_campaign(
+                    live_order,
+                    int(campaign_count),
+                )
+            _campaign_update_path(t_ms, fill_price)
+            _maybe_release_multi_short_repair(int(t_ms), float(fill_price))
+            return
+
         opened_campaign = False
         if not campaign_active and abs(prev_q) < 1e-10 and abs(new_q) >= 1e-10:
             campaign_active = True
             campaign_count += 1
             opened_campaign = True
+            campaign_exposure_increasing_fills = 0
+            campaign_reducing_fills = 0
+            campaign_buy_fills = 0
+            campaign_sell_fills = 0
             first_add_campaign_exposure_increasing_fills = 0
             first_add_campaign_reducing_fills = 0
             campaign_start_ts = int(t_ms)
-            campaign_start_pnl = _campaign_pnl(mark_px)
+            campaign_start_pnl = _campaign_pnl(fill_price) + (
+                float(fill_price) * float(fill_qty) * float(fee_rate)
+            )
             campaign_cur_max_abs = abs(new_q)
             campaign_cur_min_pnl = 0.0
             campaign_inventory_time_to_date_btc_s = 0.0
@@ -9560,15 +10048,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
         if side == "BUY":
             campaign_buy_fills += 1
+            campaign_run_buy_fills += 1
         else:
             campaign_sell_fills += 1
+            campaign_run_sell_fills += 1
         exposure_increasing = abs(new_q) > abs(prev_q) + 1e-10
         reducing = abs(new_q) < abs(prev_q) - 1e-10
         if exposure_increasing:
             campaign_exposure_increasing_fills += 1
+            campaign_run_exposure_increasing_fills += 1
             first_add_campaign_exposure_increasing_fills += 1
         if reducing:
             campaign_reducing_fills += 1
+            campaign_run_reducing_fills += 1
             first_add_campaign_reducing_fills += 1
         _sell_add_price_penalty_on_fill(side, prev_q, fill_qty)
         _multi_short_repair_on_campaign_fill(
@@ -9576,7 +10068,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             prev_q,
             fill_qty,
             int(t_ms),
-            float(mark_px),
+            float(fill_price),
         )
         _fair_center_note_fill(side, fill_qty, int(t_ms))
         if exposure_increasing and abs(prev_q) > 1e-10:
@@ -9595,108 +10087,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if age_s >= 60.0 * 60.0:
                 campaign_shadow_age_60m_blocks += 1
 
-        _campaign_update_path(t_ms, mark_px)
+        _campaign_update_path(t_ms, fill_price)
         campaign_inventory_time_last_inventory_btc = float(new_q)
-        _maybe_release_multi_short_repair(int(t_ms), float(mark_px))
+        _maybe_release_multi_short_repair(int(t_ms), float(fill_price))
         if abs(new_q) < 1e-10:
-            local_order_lifecycle.campaign_repair(
-                int(campaign_count),
+            _finalize_campaign_boundary(
                 int(t_ms),
-            )
-            _record_local_order_value_campaign_repair(
-                campaign_count,
-                int(t_ms),
-            )
-            _finalize_local_action_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
+                float(fill_price),
                 terminal_reason="flat",
             )
-            _finalize_queue_value_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_sell_add_skip_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_state_conditioned_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_safe_add_rearm_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_state_conditioned_rearm_campaign(
-                campaign_count,
-                t_ms,
-                mark_px,
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_cooldown_lineage_campaign(
-                campaign_count,
-                outcome_ts_ms=int(t_ms),
-                mark_px=float(mark_px),
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_first_add_decision_campaign(
-                campaign_count,
-                int(t_ms),
-                float(mark_px),
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_first_opener_decision_campaign(
-                campaign_count,
-                int(t_ms),
-                float(mark_px),
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_sell_add_price_penalty_campaign(
-                campaign_count,
-                int(t_ms),
-                float(mark_px),
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_multi_short_repair_campaign(
-                campaign_count,
-                int(t_ms),
-                float(mark_px),
-                closed=True,
-                terminal_reason="flat",
-            )
-            _finalize_fair_center_assignment(
-                int(t_ms),
-                float(mark_px),
-                terminal_reason="flat",
-                censored=False,
-            )
-            campaign_closed_count += 1
-            campaign_active = False
-            if ranked_toxicity_guard_binding_active:
-                ranked_toxicity_guard_binding.on_campaign_terminal(
-                    event_ts_ns=int(t_ms) * 1_000_000,
-                    candidate_campaign_ordinal=int(campaign_count),
-                )
 
     def _campaign_exposure_risk_active(
         side: str,
@@ -11103,7 +11502,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         fill_qty = abs(float(q) - float(prev_q))
         order_qty = float(order.get("quantity", 0.0) or 0.0)
         remaining_after = max(0.0, float(order.get("remaining", 0.0) or 0.0))
-        remaining_before = remaining_after + fill_qty
         cumulative_after = max(0.0, order_qty - remaining_after)
         cumulative_before = max(0.0, cumulative_after - fill_qty)
         partial_ordinal = int(
@@ -21312,7 +21710,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         markout_20s = _markout_at(20_000)
         markout_30s = _markout_at(30_000)
         effective_fee_rate = (
-            maker_fee if fee_rate is None else max(0.0, float(fee_rate))
+            float(maker_fee) if fee_rate is None else float(fee_rate)
         )
         window120_min = float(px60.min())
         window120_max = float(px60.max())
@@ -21323,6 +21721,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         else:
             window120_rank = 0.5
         row = {
+            # Result-local physical execution order.  Timestamp and order id
+            # are not tie-breakers because IOC and passive fills can share a
+            # replay tick while executing in the opposite id order.
+            "fill_sequence": len(trace_fills),
             "side": side,
             "fill_ts": int(t_fill),
             "quote_ts": int(quote_ts),
@@ -21351,6 +21753,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 * max(0.0, float(quote_px))
                 * effective_fee_rate
             ),
+            "fill_fee_asset": "USDC",
+            "fill_fee_semantics": FEE_ACCOUNTING_SEMANTICS,
             "inventory_before_fill": float(inventory_before_fill),
             "inventory_after_fill": float(
                 inventory_before_fill + (fill_qty if side == "BUY" else -fill_qty)
@@ -21638,18 +22042,36 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 fill_qty_btc=float(fill_qty),
                 now_ts=int(now_ts),
             )
+            lifecycle_remaining_before = float(
+                order.get("remaining", 0.0) + fill_qty
+            )
+            (
+                physical_fill_identity,
+                economic_fill_legs,
+            ) = _campaign_legs_for_order_fill(
+                order,
+                ts_ms=int(now_ts),
+                side=side,
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                fill_qty=float(fill_qty),
+                fill_price=float(fill_price),
+                fee_rate=float(taker_fee),
+                remaining_before=lifecycle_remaining_before,
+                remaining_after=float(order.get("remaining", 0.0)),
+            )
             _record_order_lifecycle_fill(
                 order,
                 int(now_ts),
                 fill_qty=float(fill_qty),
-                remaining_before=float(
-                    order.get("remaining", 0.0) + fill_qty
-                ),
+                remaining_before=lifecycle_remaining_before,
                 remaining_after=float(order.get("remaining", 0.0)),
                 fill_price=float(fill_price),
                 inventory_before=float(q_before_fill),
                 inventory_after=float(q),
-                campaign_id=int(campaign_count),
+                campaign_id=int(economic_fill_legs[0]["campaign_id"]),
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
             )
             ioc_binding_full_fill = float(
                 order.get("remaining", 0.0) or 0.0
@@ -21696,6 +22118,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 fill_qty,
                 int(now_ts),
                 fill_price,
+                taker_fee,
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
             )
             if float(order.get("remaining", 0.0) or 0.0) >= LOT_SIZE:
                 _record_order_lifecycle_cancel_request(
@@ -22638,13 +23063,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             cpp_transition=cpp_transition,
                         )
                 trade_remaining -= fill_qty
-                lifecycle_campaign_id = int(
-                    campaign_count
-                    + int(
-                        not campaign_active
-                        and abs(q_before_fill) < 1e-10
-                        and abs(q) >= 1e-10
-                    )
+                (
+                    physical_fill_identity,
+                    economic_fill_legs,
+                ) = _campaign_legs_for_order_fill(
+                    order,
+                    ts_ms=int(t),
+                    side="BUY",
+                    inventory_before=float(q_before_fill),
+                    inventory_after=float(q),
+                    fill_qty=float(fill_qty),
+                    fill_price=float(order["price"]),
+                    fee_rate=float(maker_fee),
+                    remaining_before=float(rem_before),
+                    remaining_after=float(order["remaining"]),
                 )
                 _record_order_lifecycle_fill(
                     order,
@@ -22655,7 +23087,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     fill_price=float(order["price"]),
                     inventory_before=float(q_before_fill),
                     inventory_after=float(q),
-                    campaign_id=lifecycle_campaign_id,
+                    campaign_id=int(economic_fill_legs[0]["campaign_id"]),
+                    physical_fill_identity=physical_fill_identity,
+                    economic_legs=economic_fill_legs,
                 )
                 ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
                 _ranked_guard_order_fill(
@@ -22834,7 +23268,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     fill_ts_ms=int(t),
                     fill_price=float(order["price"]),
                 )
-                _campaign_on_fill("BUY", q_before_fill, fill_qty, int(t), p)
+                _campaign_on_fill(
+                    "BUY",
+                    q_before_fill,
+                    fill_qty,
+                    int(t),
+                    float(order["price"]),
+                    maker_fee,
+                    physical_fill_identity=physical_fill_identity,
+                    economic_legs=economic_fill_legs,
+                )
                 _sync_local_order_lifecycle_repair(int(t))
                 if order["remaining"] < LOT_SIZE:
                     _dynamic_fill_hazard_order_terminal(
@@ -22978,13 +23421,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     now_ts=int(t),
                 )
                 trade_remaining -= fill_qty
-                lifecycle_campaign_id = int(
-                    campaign_count
-                    + int(
-                        not campaign_active
-                        and abs(q_before_fill) < 1e-10
-                        and abs(q) >= 1e-10
-                    )
+                (
+                    physical_fill_identity,
+                    economic_fill_legs,
+                ) = _campaign_legs_for_order_fill(
+                    order,
+                    ts_ms=int(t),
+                    side="SELL",
+                    inventory_before=float(q_before_fill),
+                    inventory_after=float(q),
+                    fill_qty=float(fill_qty),
+                    fill_price=float(order["price"]),
+                    fee_rate=float(maker_fee),
+                    remaining_before=float(rem_before),
+                    remaining_after=float(order["remaining"]),
                 )
                 _record_order_lifecycle_fill(
                     order,
@@ -22995,7 +23445,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     fill_price=float(order["price"]),
                     inventory_before=float(q_before_fill),
                     inventory_after=float(q),
-                    campaign_id=lifecycle_campaign_id,
+                    campaign_id=int(economic_fill_legs[0]["campaign_id"]),
+                    physical_fill_identity=physical_fill_identity,
+                    economic_legs=economic_fill_legs,
                 )
                 ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
                 _ranked_guard_order_fill(
@@ -23151,7 +23603,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     fill_ts_ms=int(t),
                     fill_price=float(order["price"]),
                 )
-                _campaign_on_fill("SELL", q_before_fill, fill_qty, int(t), p)
+                _campaign_on_fill(
+                    "SELL",
+                    q_before_fill,
+                    fill_qty,
+                    int(t),
+                    float(order["price"]),
+                    maker_fee,
+                    physical_fill_identity=physical_fill_identity,
+                    economic_legs=economic_fill_legs,
+                )
                 _sync_local_order_lifecycle_repair(int(t))
                 if markout_ema_span_fills > 0:
                     mo_pending.append((t, order["price"], False, {
@@ -23410,7 +23871,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             consecutive_loss_cooldown_block_count += 1
             if (
-                int(t) - int(consecutive_loss_cooldown_last_cancel_ts)
+                int(t) - int(consecutive_loss_cooldown.last_cancel_ts_ms)
                 >= 5_000
             ):
                 _request_cancel_all(
@@ -23426,7 +23887,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _process_order_transitions(bid_orders, "BUY", t, p)
                 _process_order_transitions(ask_orders, "SELL", t, p)
                 consecutive_loss_cooldown_cancel_count += 1
-                consecutive_loss_cooldown_last_cancel_ts = int(t)
+                consecutive_loss_cooldown.last_cancel_ts_ms = int(t)
             continue
 
         # ── Requote ──
@@ -23479,7 +23940,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _process_order_transitions(bid_orders, "BUY", t, p)
                 _process_order_transitions(ask_orders, "SELL", t, p)
                 consecutive_loss_cooldown_cancel_count += 1
-                consecutive_loss_cooldown_last_cancel_ts = int(t)
+                consecutive_loss_cooldown.last_cancel_ts_ms = int(t)
                 continue
             # Live main loop wakes on a wall-clock cadence. If replay resets the
             # next quote time to the current trade timestamp, sparse trade
@@ -23879,8 +24340,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             nbid = quote_result.bid_price
             nask = quote_result.ask_price
             fair = float(diag.get("fair", mid))
-            pre_guard_bid = float(diag.get("pre_guard_bid", nbid))
-            pre_guard_ask = float(diag.get("pre_guard_ask", nask))
             d_pre_cap = float(diag.get("delta_pre_cap", 0.0))
             d = float(diag.get("delta_after_cap", quote_result.spread))
             cap_bps = float(diag.get("cap_bps", 0.0))
@@ -27459,11 +27918,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         if exchange_book_scheduler is not None
         else None
     )
-    dynamic_fill_hazard_visibility_stats = (
-        dynamic_fill_hazard_visibility_scheduler.stats()
-        if dynamic_fill_hazard_visibility_scheduler is not None
-        else None
-    )
     dynamic_fill_hazard_visibility_book_stats = (
         dynamic_fill_hazard_visibility_scheduler.book_stats()
         if dynamic_fill_hazard_visibility_scheduler is not None
@@ -28488,15 +28942,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "pnl_per_abs_inventory_hour": pnl_per_abs_inventory_hour,
         "inv_adj_pnl_per_abs_inventory_hour": inv_adj_pnl_per_abs_inventory_hour,
         "campaign_count": campaign_count,
+        "campaign_accounting_semantics": CAMPAIGN_ACCOUNTING_SEMANTICS,
         "campaign_closed_count": campaign_closed_count,
         "campaign_open_count": campaign_open_count,
         "campaign_max_abs_inventory": campaign_max_abs_inventory,
         "campaign_max_duration_s": campaign_max_duration_s,
         "campaign_max_adverse_excursion": campaign_max_adverse_excursion,
-        "campaign_exposure_increasing_fills": campaign_exposure_increasing_fills,
-        "campaign_reducing_fills": campaign_reducing_fills,
-        "campaign_buy_fills": campaign_buy_fills,
-        "campaign_sell_fills": campaign_sell_fills,
+        "campaign_exposure_increasing_fills": campaign_run_exposure_increasing_fills,
+        "campaign_reducing_fills": campaign_run_reducing_fills,
+        "campaign_buy_fills": campaign_run_buy_fills,
+        "campaign_sell_fills": campaign_run_sell_fills,
         "campaign_shadow_inv_006_blocks": campaign_shadow_inv_006_blocks,
         "campaign_shadow_inv_008_blocks": campaign_shadow_inv_008_blocks,
         "campaign_shadow_inv_010_blocks": campaign_shadow_inv_010_blocks,
@@ -28762,6 +29217,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "n_days": n_days,
         "avg_rq_ms": rq_sum / max(nrq, 1),
         "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        "consecutive_loss_cooldown_state": consecutive_loss_cooldown.snapshot(),
         "max_consecutive_losses": int(
             consecutive_loss_cooldown.max_consecutive_losses
         ),
@@ -28886,6 +29342,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         ),
                         (0.01, 0.10, 0.25, 0.50, 0.75, 0.90, 0.99),
                     ),
+                    strict=True,
                 )
             }
             if dynamic_fill_hazard_valid_scores
@@ -29292,6 +29749,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             else []
         ),
         "_local_order_lifecycle_trace": trace_local_order_lifecycle,
+        "_campaign_economic_fill_leg_trace": list(
+            campaign_economic_fill_leg_trace
+        ),
         "_dynamic_fill_hazard_lifecycle_journal": list(
             dynamic_fill_hazard_lifecycle_journal
         ),
@@ -30536,13 +30996,12 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         raise RuntimeError(
             "narrowgate_cpp lacks path-dependent replay controls; rebuild it"
         )
-    cpp_params.max_consecutive_losses = max(
-        0,
-        int(params.get("max_consecutive_losses", 0) or 0),
-    )
-    cpp_params.cooldown_after_loss_s = max(
-        0.0,
-        float(params.get("cooldown_after_loss", 0.0) or 0.0),
+    (
+        cpp_params.max_consecutive_losses,
+        cpp_params.cooldown_after_loss_s,
+        _,
+    ) = loss_cooldown_config_values(
+        params
     )
     cpp_params.consecutive_loss_cooldown_semantics = LOSS_COOLDOWN_SEMANTICS
     cpp_params.sync_adjust_degrade_enabled = bool(
@@ -30589,6 +31048,64 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params.ret_demean_halflife = max(0, int(params.get("ret_demean_halflife", 0) or 0))
     cpp_params.initial_inventory = float(params.get("initial_inventory", 0.0) or 0.0)
     cpp_params.initial_entry_price = float(params.get("initial_entry_price", 0.0) or 0.0)
+    raw_initial_live_state = params.get("initial_live_state") or {}
+    raw_loss_snapshot = None
+    if isinstance(raw_initial_live_state, Mapping):
+        raw_loss_snapshot = raw_initial_live_state.get(
+            "reward_path_loss_cooldown"
+        ) or raw_initial_live_state.get("loss_cooldown_snapshot")
+    if isinstance(raw_loss_snapshot, Mapping) and raw_loss_snapshot:
+        if not hasattr(cpp_params, "consecutive_loss_snapshot_enabled"):
+            raise RuntimeError(
+                "narrowgate_cpp lacks loss-cooldown snapshot ABI; rebuild it"
+            )
+        restored_loss = ConsecutiveLossCooldown.restore(raw_loss_snapshot)
+        if (
+            restored_loss.max_consecutive_losses
+            != cpp_params.max_consecutive_losses
+            or restored_loss.cooldown_ms
+            != int(round(cpp_params.cooldown_after_loss_s * 1_000.0))
+            or not math.isclose(
+                restored_loss.inventory,
+                cpp_params.initial_inventory,
+                rel_tol=0.0,
+                abs_tol=1e-10,
+            )
+            or not math.isclose(
+                restored_loss.avg_entry,
+                cpp_params.initial_entry_price,
+                rel_tol=0.0,
+                abs_tol=1e-10,
+            )
+        ):
+            raise ValueError(
+                "restored C++ loss-cooldown state disagrees with replay params"
+            )
+        cpp_params.consecutive_loss_snapshot_enabled = True
+        cpp_params.consecutive_loss_snapshot_schema = (
+            LOSS_COOLDOWN_SNAPSHOT_SCHEMA
+        )
+        cpp_params.initial_loss_open_commission = restored_loss.open_commission
+        cpp_params.initial_loss_round_trip_pnl = restored_loss.round_trip_pnl
+        cpp_params.initial_loss_consecutive_losses = (
+            restored_loss.consecutive_losses
+        )
+        cpp_params.initial_loss_cooldown_until_ms = (
+            restored_loss.cooldown_until_ms
+        )
+        cpp_params.initial_loss_last_cancel_ts_ms = restored_loss.last_cancel_ts_ms
+        cpp_params.initial_loss_threshold_pending = restored_loss.threshold_pending
+        cpp_params.initial_loss_trigger_count = restored_loss.trigger_count
+        cpp_params.initial_loss_expiry_count = restored_loss.expiry_count
+        cpp_params.initial_loss_losing_round_trips = (
+            restored_loss.losing_round_trips
+        )
+        cpp_params.initial_loss_winning_or_flat_round_trips = (
+            restored_loss.winning_or_flat_round_trips
+        )
+        cpp_params.initial_loss_max_observed_consecutive_losses = (
+            restored_loss.max_observed_consecutive_losses
+        )
     if not hasattr(cpp_params, "planned_quote_stop_ts_ms"):
         if int(params.get("planned_quote_stop_ts_ms", 0) or 0) > 0:
             raise RuntimeError(
@@ -31158,7 +31675,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "pending_cancel",
     ]
     fill_trace_fields = [
-        "side", "fill_ts", "quote_ts", "age_ms", "quote_mid", "quote_px",
+        "fill_sequence", "side", "fill_ts", "quote_ts", "age_ms", "quote_mid", "quote_px",
         "fill_trade_px", "quote_dist", "quote_window_extreme", "quote_window_move",
         "window5_min", "window5_max", "window10_min", "window10_max",
         "window120_min", "window120_max", "window120_rank",
@@ -31177,6 +31694,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     fill_trace = []
     for row in getattr(cpp_result, "fill_trace", []):
         out = _cpp_row_to_dict(row, fill_trace_fields)
+        out["fill_fee_asset"] = "USDC"
+        out["fill_fee_semantics"] = FEE_ACCOUNTING_SEMANTICS
         order_row = getattr(row, "order", None)
         if order_row is not None:
             merged = _cpp_row_to_dict(order_row, order_trace_fields)
@@ -31783,6 +32302,47 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             sync_degrade_events.promotion_eligible
         ),
         "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        "consecutive_loss_cooldown_state": {
+            "schema_version": str(summary.consecutive_loss_snapshot_schema),
+            "semantics": LOSS_COOLDOWN_SEMANTICS,
+            "max_consecutive_losses": int(cpp_params.max_consecutive_losses),
+            "cooldown_ms": int(
+                round(float(cpp_params.cooldown_after_loss_s) * 1_000.0)
+            ),
+            "inventory": float(summary.consecutive_loss_inventory_end),
+            "avg_entry": float(summary.consecutive_loss_avg_entry_end),
+            "open_commission": float(
+                summary.consecutive_loss_open_commission_end
+            ),
+            "round_trip_pnl": float(
+                summary.consecutive_loss_round_trip_pnl_end
+            ),
+            "consecutive_losses": int(summary.consecutive_loss_count_end),
+            "cooldown_until_ms": int(
+                summary.consecutive_loss_cooldown_until_ms
+            ),
+            "last_cancel_ts_ms": int(
+                summary.consecutive_loss_last_cancel_ts_end
+            ),
+            "threshold_pending": bool(
+                summary.consecutive_loss_threshold_pending_end
+            ),
+            "trigger_count": int(
+                summary.consecutive_loss_cooldown_trigger_count
+            ),
+            "expiry_count": int(
+                summary.consecutive_loss_cooldown_expiry_count
+            ),
+            "losing_round_trips": int(
+                summary.consecutive_loss_round_trip_loss_count
+            ),
+            "winning_or_flat_round_trips": int(
+                summary.consecutive_loss_round_trip_nonloss_count
+            ),
+            "max_observed_consecutive_losses": int(
+                summary.consecutive_loss_count_max
+            ),
+        },
         "max_consecutive_losses": int(cpp_params.max_consecutive_losses),
         "cooldown_after_loss_s": float(cpp_params.cooldown_after_loss_s),
         "consecutive_loss_cooldown_trigger_count": int(
@@ -32364,7 +32924,6 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "n_days": n_days,
         "avg_rq_ms": float(summary.avg_rq_ms),
         "fill_cooldown": float(params.get("fill_cooldown", 0.0)),
-        "thin_depth_threshold": max(0.0, float(params.get("thin_depth_threshold", 0.0))),
         "_pnl_ts": pnl_arr,
         "_inv_ts": inv_arr,
         "_ts": ts_arr,
@@ -32535,7 +33094,7 @@ def _reexec_implicit_current_default_day():
     )
 
     before = mechanics.capture_cold_publisher(
-        ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG
+        ROOT, annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
     )
     required = (
         "NARROWGATE_PRIVATE_EVIDENCE_ROOT",
@@ -32594,7 +33153,7 @@ def _reexec_implicit_current_default_day():
             check=False,
         )
     after = mechanics.capture_cold_publisher(
-        ROOT, annotated_tag=mechanics.V14_COLD_PUBLISHER_TAG
+        ROOT, annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
     )
     if after != before:
         raise RuntimeError("Tagged default mechanics source changed across CLI execution")
@@ -32898,7 +33457,11 @@ def _quality_segment_bounds(trades_df: pd.DataFrame, max_gap_s: float) -> list[t
     breaks = np.flatnonzero(seg[1:] != seg[:-1]) + 1
     starts = np.r_[0, breaks]
     ends = np.r_[breaks, len(seg)]
-    return [(int(s), int(e)) for s, e in zip(starts, ends) if int(e) > int(s)]
+    return [
+        (int(s), int(e))
+        for s, e in zip(starts, ends, strict=True)
+        if int(e) > int(s)
+    ]
 
 
 def _daily_segment_bounds(trades_df: pd.DataFrame) -> list[tuple[str, int, int]]:
@@ -32912,7 +33475,7 @@ def _daily_segment_bounds(trades_df: pd.DataFrame) -> list[tuple[str, int, int]]
     starts = np.r_[0, breaks]
     ends = np.r_[breaks, len(ts)]
     out: list[tuple[str, int, int]] = []
-    for start, end in zip(starts, ends):
+    for start, end in zip(starts, ends, strict=True):
         if int(end) <= int(start):
             continue
         label = pd.to_datetime(int(day_ids[int(start)] * day_ms), unit="ms", utc=True).strftime("%Y-%m-%d")
@@ -32994,6 +33557,10 @@ def _is_additive_segment_key(key: str) -> bool:
         "gtx_rejects",
         "fills_while_pending_cancel",
         "queue_l2_cancel_ahead_qty",
+        "campaign_exposure_increasing_fills",
+        "campaign_reducing_fills",
+        "campaign_buy_fills",
+        "campaign_sell_fills",
     }:
         return True
     if key.endswith(("_count", "_hits", "_rejects")):
@@ -33031,7 +33598,16 @@ def _aggregate_quality_segment_results(
                 if (
                     key.startswith("n_")
                     or key.endswith(("_count", "_hits", "_rejects"))
-                    or key in {"quote_attempts", "fills_bid", "fills_ask", "fills_total"}
+                    or key in {
+                        "quote_attempts",
+                        "fills_bid",
+                        "fills_ask",
+                        "fills_total",
+                        "campaign_exposure_increasing_fills",
+                        "campaign_reducing_fills",
+                        "campaign_buy_fills",
+                        "campaign_sell_fills",
+                    }
                     or key.startswith(("fills_bid_", "fills_ask_"))
                 ):
                     out[key] = int(round(total))
@@ -33358,6 +33934,11 @@ def _aggregate_quality_segment_results(
         row
         for r in results
         for row in r.get("_local_order_lifecycle_trace", [])
+    ]
+    out["_campaign_economic_fill_leg_trace"] = [
+        row
+        for r in results
+        for row in r.get("_campaign_economic_fill_leg_trace", [])
     ]
     out["_dynamic_fill_hazard_lifecycle_journal"] = [
         row
@@ -33698,7 +34279,7 @@ def run_sweep(trades_df, var_ts_ms, var_ssq, base, n_workers=None,
         p = dict(base)
         if engine == "cpp":
             p["collect_curves"] = False
-        for k, v in zip(keys, combo):
+        for k, v in zip(keys, combo, strict=True):
             p[k] = v
         params_list.append(p)
 
@@ -33913,7 +34494,7 @@ def print_results(results, top_n=30, sort_by="selection_score"):
         ml_sharpe = _best_result(ml_results, "sharpe")
         bl_pnl = _best_result(baseline, "pnl")
         ml_pnl = _best_result(ml_results, "pnl")
-        print(f"\n  ── ML vs Baseline comparison ──")
+        print("\n  ── ML vs Baseline comparison ──")
         print(f"  By {metric_label}: baseline PnL=${bl_metric['pnl']:.2f}, "
               f"Sharpe={bl_metric['sharpe']:.2f}, $/day=${bl_metric['pnl_per_day']:.2f} | "
               f"ML PnL=${ml_metric['pnl']:.2f}, "
@@ -34673,7 +35254,7 @@ def main():
                 p = dict(base)
                 if args.engine == "cpp":
                     p["collect_curves"] = False
-                for k, v in zip(cd_grid.keys(), combo):
+                for k, v in zip(cd_grid.keys(), combo, strict=True):
                     p[k] = v
                 params_list.append(p)
             import multiprocessing as mp

@@ -204,8 +204,9 @@ class QuoteCoreConfig:
     dynamic_cap_liq_beta: float = 0.0
     dynamic_cap_liq_baseline: float = 0.0
     dynamic_cap_min_mult: float = 1.0
-    # 0=compress (historical), 1=pause exposure-increasing side, 2=observe only.
-    spread_cap_mode: int = SPREAD_CAP_COMPRESS
+    # 0=compress (explicit research arm), 1=pause exposure-increasing side,
+    # 2=observe only. Runtime/replay adapters default to the fail-closed mode.
+    spread_cap_mode: int = SPREAD_CAP_PAUSE_EXPOSURE
 
     exit_urgency_strength: float = 0.0
     urgency_time_weight: float = 0.3
@@ -547,7 +548,7 @@ def quote_depth_from_l2_rows(
     asks: list[tuple[float, float]] = []
     seen_bids: set[float] = set()
     seen_asks: set[float] = set()
-    for px, qty in zip(bid_px_row, bid_qty_row):
+    for px, qty in zip(bid_px_row, bid_qty_row, strict=True):
         p = _float(px)
         q = _float(qty)
         # Historical L2 files can contain repeated price columns when the exact
@@ -557,7 +558,7 @@ def quote_depth_from_l2_rows(
         if p > 0.0 and q > 0.0 and p not in seen_bids:
             bids.append((p, q))
             seen_bids.add(p)
-    for px, qty in zip(ask_px_row, ask_qty_row):
+    for px, qty in zip(ask_px_row, ask_qty_row, strict=True):
         p = _float(px)
         q = _float(qty)
         if p > 0.0 and q > 0.0 and p not in seen_asks:
@@ -715,18 +716,51 @@ def _near_depth_total(depth: DepthSnapshot, levels: int) -> float:
     return sum(q for _, q in depth.bids[:n]) + sum(q for _, q in depth.asks[:n])
 
 
-def _exposure_increasing(side: str, inventory: float, lot_size: float) -> bool:
-    """Return whether posting this side can increase inventory exposure."""
-    lot = max(float(lot_size), 1e-12)
-    if side == "BUY":
-        return inventory >= -lot
-    return inventory <= lot
+def _exposure_increasing(
+    side: str,
+    inventory: float,
+    quantity: float,
+    lot_size: float,
+) -> bool:
+    """Classify the full posted quantity, failing closed on invalid or flip risk.
+
+    A partial or exact close is reducing.  A quote that crosses through flat has
+    both a reducing and an opening component, so the whole quote is treated as
+    exposure-increasing until execution is split into explicit reduce/open legs.
+    """
+
+    try:
+        inventory = float(inventory)
+        quantity = float(quantity)
+        lot = abs(float(lot_size))
+    except (TypeError, ValueError):
+        return True
+    if (
+        not math.isfinite(inventory)
+        or not math.isfinite(quantity)
+        or not math.isfinite(lot)
+        or quantity <= 0.0
+        or lot <= 0.0
+    ):
+        return True
+    tolerance = max(lot * 1e-9, 1e-12)
+    normalized_side = str(side).strip().upper()
+    if normalized_side == "BUY":
+        if inventory >= -tolerance:
+            return True
+        return inventory + quantity > tolerance
+    if normalized_side == "SELL":
+        if inventory <= tolerance:
+            return True
+        return inventory - quantity < -tolerance
+    return True
 
 
 def _side_adverse_state(
     side: str,
     *,
     inventory: float,
+    quantity: float,
     lot_size: float,
     dir_signal: float,
     pred_ret: float,
@@ -743,7 +777,7 @@ def _side_adverse_state(
     已有 short 时 BUY 是减库存，这些方向不能被这里的 adverse pause 锁死。
     hybrid pause 的 wall-clock TTL/latch 由 MakerEngine 维护，这里只消费 latch。
     """
-    exposure_inc = _exposure_increasing(side, inventory, lot_size)
+    exposure_inc = _exposure_increasing(side, inventory, quantity, lot_size)
     if not cfg.adverse_guard_enabled:
         return {
             "active": False,
@@ -989,7 +1023,7 @@ def quote_core_config_from_live_config(
         dynamic_cap_liq_baseline=max(0.0, float(getattr(strategy, "dynamic_cap_liq_baseline", 0.0))),
         dynamic_cap_min_mult=max(0.0, min(1.0, float(getattr(strategy, "dynamic_cap_min_mult", 1.0)))),
         spread_cap_mode=spread_cap_mode_code(
-            getattr(strategy, "spread_cap_mode", "compress")
+            getattr(strategy, "spread_cap_mode", "pause_exposure")
         ),
         exit_urgency_strength=float(getattr(risk, "exit_urgency_strength", 0.0)),
         urgency_time_weight=float(getattr(risk, "urgency_time_weight", 0.3)),
@@ -1102,7 +1136,9 @@ def quote_core_config_from_params(
         dynamic_cap_liq_beta=max(0.0, float(params.get("dynamic_cap_liq_beta", 0.0))),
         dynamic_cap_liq_baseline=max(0.0, float(params.get("dynamic_cap_liq_baseline", 0.0))),
         dynamic_cap_min_mult=max(0.0, min(1.0, float(params.get("dynamic_cap_min_mult", 1.0)))),
-        spread_cap_mode=spread_cap_mode_code(params.get("spread_cap_mode", "compress")),
+        spread_cap_mode=spread_cap_mode_code(
+            params.get("spread_cap_mode", "pause_exposure")
+        ),
         exit_urgency_strength=float(params.get("exit_urgency_strength", 0.0)),
         urgency_time_weight=float(params.get("urgency_time_weight", 0.3)),
         urgency_pnl_weight=float(params.get("urgency_pnl_weight", 0.3)),
@@ -1379,6 +1415,7 @@ def _compute_quote_core_py(
     bid_side_adverse = _side_adverse_state(
         "BUY",
         inventory=q,
+        quantity=cfg.order_size,
         lot_size=cfg.lot_size,
         dir_signal=dir_signal,
         pred_ret=pred_ret,
@@ -1392,6 +1429,7 @@ def _compute_quote_core_py(
     ask_side_adverse = _side_adverse_state(
         "SELL",
         inventory=q,
+        quantity=cfg.order_size,
         lot_size=cfg.lot_size,
         dir_signal=dir_signal,
         pred_ret=pred_ret,
@@ -1621,7 +1659,10 @@ def _compute_quote_core_py(
                 delta_cap_hit or final_compressed or bid_final_guard_changed
                 or cap_exposure_block or bid_adverse_active or bool(bid_defense["active"])
             ),
-            "cap_exposure_block": bool(cap_exposure_block and q >= 0.0),
+            "cap_exposure_block": bool(
+                cap_exposure_block
+                and bid_side_adverse["exposure_increasing"]
+            ),
         },
         "SELL": {
             **common_ctx,
@@ -1661,7 +1702,10 @@ def _compute_quote_core_py(
                 delta_cap_hit or final_compressed or ask_final_guard_changed
                 or cap_exposure_block or ask_adverse_active or bool(ask_defense["active"])
             ),
-            "cap_exposure_block": bool(cap_exposure_block and q <= 0.0),
+            "cap_exposure_block": bool(
+                cap_exposure_block
+                and ask_side_adverse["exposure_increasing"]
+            ),
         },
     }
     quote_flags = {

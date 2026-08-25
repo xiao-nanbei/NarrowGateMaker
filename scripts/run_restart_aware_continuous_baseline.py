@@ -32,6 +32,7 @@ from data_paths import (  # noqa: E402
     window_cache_root,
 )
 from models.backtest_config import load_operational_baseline_binding  # noqa: E402
+from models.replay import continuous_accounting  # noqa: E402
 
 DATA_ROOT = data_root(ROOT)
 CALENDAR_MANIFEST = (
@@ -60,6 +61,11 @@ COVERAGE_REPORT = (
 FRESH_BASELINE_REPORT = (
     ROOT / "research/families/f10_live_replay_attribution/docs/"
     "current_live_held_ber_replay_baseline_40d_20260809.json"
+)
+CONTINUOUS_ACCOUNTING_CONTRACT = (
+    ROOT
+    / "research/shared/replay_lifecycle/docs/"
+    "continuous_accounting_contract_v2.json"
 )
 CACHE_DIR = window_cache_root(ROOT)
 DEFAULT_OUTPUT = (
@@ -95,6 +101,186 @@ def require_sha256(path: Path, expected: str, label: str) -> None:
     observed = sha256_file(path)
     if observed != expected:
         raise RuntimeError(f"{label} hash mismatch: {observed} != {expected}")
+
+
+def validate_continuous_accounting_fee_binding(
+    contract_path: Path = CONTINUOUS_ACCOUNTING_CONTRACT,
+) -> dict[str, str]:
+    """Bind signed quote-asset fees to the prospective accounting v2 ABI."""
+    path = contract_path.expanduser().resolve()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("continuous accounting fee contract is unreadable") from exc
+    implementation = payload.get("implementation")
+    if not isinstance(implementation, dict):
+        raise RuntimeError("continuous accounting fee implementation is unbound")
+    implementation_path = (ROOT / str(implementation.get("path", ""))).resolve()
+    expected_implementation_sha = str(implementation.get("sha256", ""))
+    if (
+        payload.get("contract_id") != continuous_accounting.SCHEMA_VERSION
+        or payload.get("fee_accounting_semantics")
+        != continuous_accounting.FEE_ACCOUNTING_SEMANTICS
+        or implementation_path != Path(continuous_accounting.__file__).resolve()
+        or len(expected_implementation_sha) != 64
+        or sha256_file(implementation_path) != expected_implementation_sha
+    ):
+        raise RuntimeError("continuous accounting signed-fee binding drifted")
+    return {
+        "contract_id": str(payload["contract_id"]),
+        "contract_path": str(path),
+        "contract_sha256": sha256_file(path),
+        "fee_asset": "USDC",
+        "fee_accounting_semantics": str(payload["fee_accounting_semantics"]),
+        "implementation_sha256": expected_implementation_sha,
+    }
+
+
+def bound_fill_fee_usdc(
+    fill: dict[str, Any],
+    *,
+    fee_binding: dict[str, str],
+) -> float:
+    """Accept a signed fee only when trace and accounting identities agree."""
+    if (
+        fee_binding.get("contract_id") != continuous_accounting.SCHEMA_VERSION
+        or fee_binding.get("fee_asset") != "USDC"
+        or fee_binding.get("fee_accounting_semantics")
+        != continuous_accounting.FEE_ACCOUNTING_SEMANTICS
+        or str(fill.get("fill_fee_asset", "")) != "USDC"
+        or str(fill.get("fill_fee_semantics", ""))
+        != continuous_accounting.FEE_ACCOUNTING_SEMANTICS
+    ):
+        raise RuntimeError("fill fee lacks the signed USDC accounting v2 binding")
+    fee = float(fill["fill_fee_usdc"])
+    if not math.isfinite(fee):
+        raise RuntimeError("continuous accounting fill fee is not finite")
+    return fee
+
+
+def apply_native_fill_trace(
+    *,
+    ledger: Any,
+    fill_trace: list[dict[str, Any]],
+    expected_fill_count: int,
+    fee_binding: dict[str, str],
+    campaign_ordinal: int,
+    segment_id: str,
+) -> int:
+    """Apply one replay result in its immutable physical execution order."""
+    rows = list(fill_trace)
+    if len(rows) != int(expected_fill_count):
+        raise RuntimeError(f"{segment_id} fill trace was truncated")
+
+    sequenced_rows: list[tuple[int, dict[str, Any]]] = []
+    for row in rows:
+        sequence = row.get("fill_sequence")
+        if type(sequence) is not int:  # bool and lossy coercions are invalid.
+            raise RuntimeError(
+                f"{segment_id} fill sequence is missing or not an integer"
+            )
+        sequenced_rows.append((sequence, row))
+    sequenced_rows.sort(key=lambda item: item[0])
+    if [sequence for sequence, _ in sequenced_rows] != list(range(len(rows))):
+        raise RuntimeError(f"{segment_id} fill sequence is not contiguous from zero")
+
+    # Validate the complete path before mutating the ledger.  This makes a
+    # malformed later row fail closed without partially consuming the trace.
+    expected_position = float(ledger.state.position_btc)
+    previous_ts = int(ledger.state.checkpoint_ts_ms)
+    normalized: list[dict[str, Any]] = []
+    for sequence, fill in sequenced_rows:
+        fill_ts = fill.get("fill_ts")
+        if type(fill_ts) is not int:
+            raise RuntimeError(f"{segment_id} fill {sequence} timestamp is not an integer")
+        side = str(fill.get("side", "")).upper()
+        if side not in {"BUY", "SELL"}:
+            raise RuntimeError(f"{segment_id} fill {sequence} side is invalid")
+        try:
+            quantity = float(fill["fill_qty"])
+            price = float(fill["quote_px"])
+            inventory_before = float(fill["inventory_before_fill"])
+            inventory_after = float(fill["inventory_after_fill"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"{segment_id} fill {sequence} numeric path is invalid"
+            ) from exc
+        if (
+            not math.isfinite(quantity)
+            or quantity <= 0.0
+            or not math.isfinite(price)
+            or price <= 0.0
+            or not math.isfinite(inventory_before)
+            or not math.isfinite(inventory_after)
+        ):
+            raise RuntimeError(f"{segment_id} fill {sequence} numeric path is invalid")
+        if fill_ts < previous_ts:
+            raise RuntimeError(f"{segment_id} fill {sequence} timestamp moved backward")
+        if not math.isclose(
+            inventory_before,
+            expected_position,
+            rel_tol=0.0,
+            abs_tol=EPS,
+        ):
+            raise RuntimeError(
+                f"{segment_id} fill {sequence} inventory_before does not match ledger path"
+            )
+        signed_quantity = quantity if side == "BUY" else -quantity
+        path_after = inventory_before + signed_quantity
+        if abs(path_after) <= EPS:
+            path_after = 0.0
+        if not math.isclose(
+            inventory_after,
+            path_after,
+            rel_tol=0.0,
+            abs_tol=EPS,
+        ):
+            raise RuntimeError(
+                f"{segment_id} fill {sequence} inventory_after does not match fill path"
+            )
+        fee_usdc = bound_fill_fee_usdc(fill, fee_binding=fee_binding)
+        normalized.append(
+            {
+                "fill_ts": fill_ts,
+                "side": side,
+                "quantity": quantity,
+                "price": price,
+                "fee_usdc": fee_usdc,
+                "inventory_after": inventory_after,
+            }
+        )
+        expected_position = inventory_after
+        previous_ts = fill_ts
+
+    from models.replay.continuous_tick_runner import requires_new_campaign_id
+
+    for sequence, fill in enumerate(normalized):
+        new_id = None
+        if requires_new_campaign_id(
+            ledger.state.position_btc,
+            side=fill["side"],
+            quantity_btc=fill["quantity"],
+        ):
+            campaign_ordinal += 1
+            new_id = f"EC-{campaign_ordinal:08d}"
+        ledger.fill(
+            ts_ms=fill["fill_ts"],
+            side=fill["side"],
+            quantity_btc=fill["quantity"],
+            price=fill["price"],
+            fee_usdc=fill["fee_usdc"],
+            new_campaign_id=new_id,
+        )
+        if not math.isclose(
+            ledger.state.position_btc,
+            fill["inventory_after"],
+            rel_tol=0.0,
+            abs_tol=EPS,
+        ):
+            raise RuntimeError(
+                f"{segment_id} fill {sequence} ledger inventory diverged after apply"
+            )
+    return campaign_ordinal
 
 
 class CausalMarkStore:
@@ -345,12 +531,12 @@ def main() -> int:
         assert_planned_shutdown_drained,
         build_active_segments,
         expected_segment_local_pnl_delta,
-        requires_new_campaign_id,
     )
     from models.replay.replay_state_checkpoint import ContinuousReplayState
 
     started = time.perf_counter()
     identities = validate_identities()
+    fee_binding = validate_continuous_accounting_fee_binding()
     calendar_payload = json.loads(CALENDAR_MANIFEST.read_text(encoding="utf-8"))
     plan = CalendarReplayPlan.from_manifest(
         CALENDAR_MANIFEST,
@@ -518,35 +704,14 @@ def main() -> int:
         )
         if not segment.terminal_censor:
             assert_planned_shutdown_drained(result)
-        fill_trace = sorted(
-            list(result.get("_fill_trace") or []),
-            key=lambda row: (int(row["fill_ts"]), int(row.get("order_id", -1))),
+        campaign_ordinal = apply_native_fill_trace(
+            ledger=ledger,
+            fill_trace=list(result.get("_fill_trace") or []),
+            expected_fill_count=int(result["fills_total"]),
+            fee_binding=fee_binding,
+            campaign_ordinal=campaign_ordinal,
+            segment_id=segment.segment_id,
         )
-        if len(fill_trace) != int(result["fills_total"]):
-            raise RuntimeError(f"{segment.segment_id} fill trace was truncated")
-        for fill in fill_trace:
-            side = str(fill["side"]).upper()
-            quantity = float(fill["fill_qty"])
-            price = float(fill["quote_px"])
-            fee_usdc = float(fill["fill_fee_usdc"])
-            if fee_usdc < 0:
-                raise RuntimeError("continuous accounting does not accept an unbound rebate")
-            new_id = None
-            if requires_new_campaign_id(
-                ledger.state.position_btc,
-                side=side,
-                quantity_btc=quantity,
-            ):
-                campaign_ordinal += 1
-                new_id = f"EC-{campaign_ordinal:08d}"
-            ledger.fill(
-                ts_ms=int(fill["fill_ts"]),
-                side=side,
-                quantity_btc=quantity,
-                price=price,
-                fee_usdc=fee_usdc,
-                new_campaign_id=new_id,
-            )
         final_mark = float(result["terminal_mark_price"])
         final_event_ts = int(segment_trades["transact_time"].iloc[-1])
         ledger.mark(final_event_ts, final_mark)
@@ -625,7 +790,7 @@ def main() -> int:
             f"runtime={row['runtime_s']:.2f}s",
             flush=True,
         )
-        del result, fill_trace, segment_trades
+        del result, segment_trades
         gc.collect()
 
     assert ledger is not None
@@ -808,6 +973,7 @@ def main() -> int:
                 "path": str(MODEL_DIR / "bundle_meta.json"),
                 "sha256": sha256_file(MODEL_DIR / "bundle_meta.json"),
             },
+            "continuous_accounting_fee_binding": dict(fee_binding),
             "queue_calibration": {
                 "path": str(QUEUE_PATH),
                 "sha256": sha256_file(QUEUE_PATH),

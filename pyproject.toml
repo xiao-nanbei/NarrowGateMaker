@@ -115,9 +115,11 @@ packages = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# Reconstructed research and runtime modules retain frozen byte identities.
-# The maintained public package and examples are the formatting/lint surface;
-# historical imports remain covered by syntax, tests, hashes, and replay audits.
+# Reconstructed research modules retain frozen byte identities.  The public
+# package keeps the complete E/F/I/UP/B gate below; CI separately runs an F/B
+# correctness gate over the maintained live, strategy, execution, replay, and
+# active action-uplift runtime surface.  Historical frozen imports remain
+# covered by syntax, tests, hashes, and replay audits.
 include = [
   "narrowgate/**/*.py",
   "examples/**/*.py",

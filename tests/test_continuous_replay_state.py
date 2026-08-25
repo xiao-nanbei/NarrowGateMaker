@@ -2,12 +2,20 @@ from dataclasses import replace
 
 import pytest
 
+from models.replay.continuous_accounting import (
+    SCHEMA_VERSION as ACCOUNTING_SCHEMA_VERSION,
+)
 from models.replay.replay_state_checkpoint import (
     RESTART_RESET_FIELDS,
+    SCHEMA_VERSION,
     ContinuousReplayState,
     EconomicCampaignState,
     read_checkpoint,
     write_checkpoint,
+)
+from models.replay.restart_aware_continuous_ab import (
+    CONTINUOUS_ACCOUNTING_CONTRACT_ID,
+    PairedExecutionRequest,
 )
 
 
@@ -89,3 +97,40 @@ def test_nonflat_state_requires_economic_campaign() -> None:
     )
     with pytest.raises(ValueError, match="economic campaign"):
         state.validate()
+
+
+def test_signed_rebate_checkpoint_roundtrip_and_legacy_schema_fail_closed(
+    tmp_path,
+) -> None:
+    state = replace(
+        _flat_state(),
+        cash_usdc=0.025,
+        cumulative_fees_usdc=-0.025,
+        cumulative_pnl_usdc=0.025,
+    ).for_planned_restart(2_000)
+    path = tmp_path / "signed-rebate-state.json"
+
+    write_checkpoint(path, state)
+    assert read_checkpoint(path) == state
+    assert state.schema_version == SCHEMA_VERSION == "continuous_replay_state.v2"
+
+    legacy = state.to_dict()
+    legacy["schema_version"] = "continuous_replay_state.v1"
+    with pytest.raises(ValueError, match="unsupported continuous replay state schema"):
+        ContinuousReplayState.from_dict(legacy)
+
+
+@pytest.mark.parametrize("rebate", [float("nan"), float("inf"), -float("inf")])
+def test_nonfinite_signed_fee_state_is_rejected(rebate: float) -> None:
+    state = replace(_flat_state(), cumulative_fees_usdc=rebate)
+    with pytest.raises(ValueError, match="non-finite"):
+        state.validate()
+
+
+def test_new_restart_aware_requests_bind_signed_fee_accounting_v2() -> None:
+    assert CONTINUOUS_ACCOUNTING_CONTRACT_ID == ACCOUNTING_SCHEMA_VERSION
+    assert ACCOUNTING_SCHEMA_VERSION == "continuous_accounting_contract.v2"
+    field = PairedExecutionRequest.__dataclass_fields__[
+        "continuous_accounting_contract_id"
+    ]
+    assert field.default == ACCOUNTING_SCHEMA_VERSION

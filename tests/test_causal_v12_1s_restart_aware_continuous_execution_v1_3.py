@@ -195,6 +195,7 @@ def _params() -> dict[str, object]:
         "use_bar_pricing": True,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 0.0,
         "ml_enabled": True,
         "adverse_guard_enabled": True,

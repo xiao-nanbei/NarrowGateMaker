@@ -20,7 +20,6 @@ import os
 import time
 import uuid
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any
 
 from execution.order_lifecycle_journal_v2_strict_native import (

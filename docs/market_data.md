@@ -19,7 +19,7 @@ The `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` volume is APFS and must be mounted at 
 
 Public placeholders, private-path restrictions, and canonical root naming are defined in [Path Conventions](path_conventions.md).
 
-The current live host is AWS Tokyo `<current-live-host>`. Original AWS, intermediate Vultr, and reactivated-AWS predecessor logs are queried from separate verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. Historical transport profiles retain their exact host/epoch labels and are sensitivities, not current-host measurements. The completed seven-tape program remains closed on the predecessor capture source; the current host has no inherited capture authority. See the [live-host and historical-data routing contract](live_host_and_historical_data_access_20260811.md).
+The public repository does not publish a current live host. `<current-live-host>` is a logical field resolved only through the owner-private pointer, not a usable endpoint in this document. Original AWS, intermediate Vultr, and reactivated-AWS predecessor logs are queried from separate verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. Historical transport profiles retain their exact host/epoch labels and are sensitivities, not current-host measurements. The completed seven-tape program remains closed on the predecessor capture source; a privately resolved successor host has no inherited capture authority. See the [live-host and historical-data routing contract](live_host_and_historical_data_access_20260811.md).
 
 ## Canonical Layout
 

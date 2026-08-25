@@ -31,6 +31,10 @@ def _make_params():
     params.quote.max_inventory = params.max_inventory
     params.quote.maker_fee = params.maker_fee
     params.quote.max_spread_bps = 20.0
+    # The mechanics fixture preserves the historical inward-cap research arm
+    # explicitly. Production/missing-field defaults are tested as fail-closed
+    # pause_exposure in test_cpp_quote_core_parity.py.
+    params.quote.spread_cap_mode = qc.SPREAD_CAP_COMPRESS
     params.quote.dynamic_cap_enabled = True
     params.quote.dynamic_cap_base_bps = 20.0
     return params
@@ -52,6 +56,7 @@ def _python_replay(ts, price, qty, is_buyer_maker, params):
         max_spread_bps=params.quote.max_spread_bps,
         dynamic_cap_enabled=params.quote.dynamic_cap_enabled,
         dynamic_cap_base_bps=params.quote.dynamic_cap_base_bps,
+        spread_cap_mode=params.quote.spread_cap_mode,
     )
     cash = 0.0
     inv = params.initial_inventory
@@ -668,6 +673,7 @@ def test_python_cpp_l2_cancel_ahead_synthetic_parity():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 20.0,
+        "spread_cap_mode": "compress",
         "ml_enabled": False,
         "trace_quotes_max": 100,
         "trace_fills_max": 100,
@@ -744,6 +750,7 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 20.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 5.0,
         "ml_enabled": False,
         "trace_quotes_max": 100,
@@ -1401,6 +1408,7 @@ def test_python_cpp_random_passive_uses_identical_action_path():
         "use_bar_pricing": True,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 20.0,
+        "spread_cap_mode": "compress",
         "ml_enabled": False,
         "max_exec_book_age_s": 0.0,
         "random_passive_enabled": True,
@@ -1487,6 +1495,7 @@ def test_python_cpp_random_passive_mirror_preserves_raw_tick_rounding():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "ml_enabled": False,
         "max_exec_book_age_s": 5.0,
         "random_passive_enabled": True,
@@ -1616,6 +1625,7 @@ def test_python_cpp_l2_path_metrics_use_same_wall_clock_frames():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 20.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 5.0,
         "ml_enabled": False,
         "l2_refill_cancel_lookback_s": 2.0,
@@ -1714,6 +1724,7 @@ def test_python_cpp_common_policy_prefers_wall_clock_l2_thin_depth():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 5.0,
         "ml_enabled": False,
         "markout_horizon_s": 1.0,
@@ -1836,6 +1847,7 @@ def test_python_cpp_queue_regime_rank_is_sampled_at_order_activation():
         "use_bar_pricing": True,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 0.0,
         "ml_enabled": False,
         "trace_quotes_max": 100,
@@ -1932,6 +1944,7 @@ def test_python_cpp_fallback_queue_distance_is_sampled_at_order_activation():
         "use_bar_pricing": False,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 5.0,
         "ml_enabled": False,
         "trace_quotes_max": 100,
@@ -2009,6 +2022,7 @@ def test_python_cpp_adverse_pause_preserves_reducing_side():
         "use_bar_pricing": True,
         "dynamic_cap_enabled": False,
         "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
         "max_exec_book_age_s": 0.0,
         "ml_enabled": True,
         "adverse_guard_enabled": True,
@@ -2067,7 +2081,7 @@ def test_python_cpp_adverse_pause_preserves_reducing_side():
         for row in cpp["_quote_trace"]
         if row["submit_ts"] == 1_000 and row["side"] == "BUY"
     )
-    assert py_buy["side_adverse_pause"] is True
+    assert py_buy["side_adverse_pause"] is False
     assert cpp_buy["price"] == pytest.approx(py_buy["price"], abs=1e-12)
 
 
@@ -2115,6 +2129,9 @@ def test_cpp_policy_trace_reasons_include_fill_requote_and_open_end():
     assert ("cancel", "requote_replace") in reasons
     assert ("open_end", "end_of_window") in reasons
     assert result.fill_trace
+    assert [fill.fill_sequence for fill in result.fill_trace] == list(
+        range(len(result.fill_trace))
+    )
     for fill in result.fill_trace:
         expected_after = fill.inventory_before_fill + (fill.fill_qty if fill.side == "BUY" else -fill.fill_qty)
         assert fill.inventory_after_fill == pytest.approx(expected_after, abs=1e-12)

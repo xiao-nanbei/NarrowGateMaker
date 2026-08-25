@@ -30,6 +30,8 @@ api:
   key: ""
   secret: ""
   testnet: true
+  # Every synchronous REST call inherits this finite network deadline.
+  timeout_s: 5.0
 
 strategy:
   # Core AS/GLFT-style quote controls. Values here are safe examples, not a
@@ -45,9 +47,9 @@ strategy:
   # absolute-price variance. Deploy configs must set this field explicitly.
   quote_horizon_s: 1.0
   max_spread_bps: 12.0
-  # Historical behavior compresses quotes inward when the desired pair spread
-  # exceeds the cap. Research A/B may use pause_exposure or observe explicitly.
-  spread_cap_mode: "compress"
+  # Protective widening beyond this limit pauses only the side that adds
+  # exposure. Inward compression is an explicit research arm.
+  spread_cap_mode: "pause_exposure"
   rq_min: 5.0
   rq_max: 10.0
   kappa_ratio: 1.0

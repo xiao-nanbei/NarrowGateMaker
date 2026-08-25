@@ -10,15 +10,36 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import operator
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
-
 SYNC_DEGRADE_TAPE_SCHEMA = "narrowgate_sync_degrade_event_tape.v1"
-LOSS_COOLDOWN_SEMANTICS = "round_trip_realized_pnl_policy_clock_v1"
+LOSS_COOLDOWN_SEMANTICS = (
+    "round_trip_realized_pnl_policy_clock_flip_fee_split_v2"
+)
+LOSS_COOLDOWN_SNAPSHOT_SCHEMA = "narrowgate_loss_cooldown_snapshot.v2"
+LOSS_COOLDOWN_SNAPSHOT_STATE_FIELDS = (
+    "max_consecutive_losses",
+    "cooldown_ms",
+    "inventory",
+    "avg_entry",
+    "open_commission",
+    "round_trip_pnl",
+    "consecutive_losses",
+    "cooldown_until_ms",
+    "last_cancel_ts_ms",
+    "threshold_pending",
+    "trigger_count",
+    "expiry_count",
+    "losing_round_trips",
+    "winning_or_flat_round_trips",
+    "max_observed_consecutive_losses",
+)
 SYNC_DEGRADE_SEMANTICS = "system_event_after_market_same_ms_v1"
 SYNC_EVENT_CODE = 4
 SYNC_CENSOR_CODE = 5
@@ -60,6 +81,7 @@ class ConsecutiveLossCooldown:
     round_trip_pnl: float = 0.0
     consecutive_losses: int = 0
     cooldown_until_ms: int = 0
+    last_cancel_ts_ms: int = -1
     threshold_pending: bool = False
     trigger_count: int = 0
     expiry_count: int = 0
@@ -68,19 +90,166 @@ class ConsecutiveLossCooldown:
     max_observed_consecutive_losses: int = 0
 
     def __post_init__(self) -> None:
-        self.max_consecutive_losses = max(0, int(self.max_consecutive_losses))
-        self.cooldown_ms = max(0, int(self.cooldown_ms))
+        for field_name in ("max_consecutive_losses", "cooldown_ms"):
+            raw_value = getattr(self, field_name)
+            if isinstance(raw_value, bool):
+                raise ValueError(f"loss-cooldown {field_name} must be an integer")
+            try:
+                value = operator.index(raw_value)
+            except TypeError as exc:
+                raise ValueError(
+                    f"loss-cooldown {field_name} must be an integer"
+                ) from exc
+            if value < 0:
+                raise ValueError(
+                    f"loss-cooldown {field_name} must be non-negative"
+                )
+            setattr(self, field_name, value)
         self.inventory = float(self.inventory)
         self.avg_entry = float(self.avg_entry)
+        if not math.isfinite(self.inventory) or not math.isfinite(self.avg_entry):
+            raise ValueError("loss-cooldown inventory and avg_entry must be finite")
         if abs(self.inventory) <= 1e-10:
+            if abs(self.avg_entry) > 1e-10:
+                raise ValueError("flat loss-cooldown state requires avg_entry == 0")
             self.inventory = 0.0
             self.avg_entry = 0.0
-        elif self.enabled and (
-            not math.isfinite(self.avg_entry) or self.avg_entry <= 0.0
-        ):
+        elif self.avg_entry <= 0.0:
             raise ValueError("non-flat loss-cooldown state requires avg_entry > 0")
-        elif not math.isfinite(self.avg_entry):
-            self.avg_entry = 0.0
+        for field_name in ("open_commission", "round_trip_pnl"):
+            value = float(getattr(self, field_name))
+            if not math.isfinite(value):
+                raise ValueError(f"loss-cooldown {field_name} must be finite")
+            setattr(self, field_name, value)
+        for field_name in (
+            "consecutive_losses",
+            "cooldown_until_ms",
+            "trigger_count",
+            "expiry_count",
+            "losing_round_trips",
+            "winning_or_flat_round_trips",
+            "max_observed_consecutive_losses",
+        ):
+            raw_value = getattr(self, field_name)
+            if isinstance(raw_value, bool):
+                raise ValueError(f"loss-cooldown {field_name} must be an integer")
+            try:
+                value = operator.index(raw_value)
+            except TypeError as exc:
+                raise ValueError(
+                    f"loss-cooldown {field_name} must be an integer"
+                ) from exc
+            if value < 0:
+                raise ValueError(f"loss-cooldown {field_name} must be non-negative")
+            setattr(self, field_name, value)
+        if isinstance(self.last_cancel_ts_ms, bool):
+            raise ValueError("loss-cooldown last_cancel_ts_ms must be an integer")
+        try:
+            self.last_cancel_ts_ms = operator.index(self.last_cancel_ts_ms)
+        except TypeError as exc:
+            raise ValueError(
+                "loss-cooldown last_cancel_ts_ms must be an integer"
+            ) from exc
+        if self.last_cancel_ts_ms < -1:
+            raise ValueError(
+                "loss-cooldown last_cancel_ts_ms must be -1 or non-negative"
+            )
+        if type(self.threshold_pending) is not bool:
+            raise ValueError("loss-cooldown threshold_pending must be a boolean")
+
+    def _validate_snapshot_policy_state(self) -> None:
+        reached = bool(
+            self.enabled
+            and self.consecutive_losses >= self.max_consecutive_losses
+        )
+        active_clock = self.cooldown_until_ms > 0
+        if self.consecutive_losses > self.max_observed_consecutive_losses:
+            raise ValueError("loss-cooldown snapshot maximum streak regressed")
+        if self.max_observed_consecutive_losses > self.losing_round_trips:
+            raise ValueError(
+                "loss-cooldown snapshot maximum streak exceeds losing rounds"
+            )
+        if self.trigger_count > self.losing_round_trips:
+            raise ValueError(
+                "loss-cooldown snapshot triggers exceed losing rounds"
+            )
+        expected_trigger_count = self.expiry_count + int(active_clock)
+        if self.trigger_count != expected_trigger_count:
+            raise ValueError(
+                "loss-cooldown snapshot trigger/expiry clock is inconsistent"
+            )
+        if not self.enabled:
+            if (
+                self.consecutive_losses != 0
+                or active_clock
+                or self.last_cancel_ts_ms != -1
+                or self.threshold_pending
+                or self.max_observed_consecutive_losses != 0
+                or self.trigger_count != 0
+                or self.expiry_count != 0
+            ):
+                raise ValueError(
+                    "disabled loss-cooldown snapshot retained policy state"
+                )
+            return
+        if active_clock:
+            return
+        if self.threshold_pending != reached:
+            raise ValueError(
+                "loss-cooldown snapshot pending threshold is inconsistent"
+            )
+
+    def snapshot(self) -> dict[str, Any]:
+        """Serialize every state field that affects the next policy decision."""
+        self._validate_snapshot_policy_state()
+        return {
+            "schema_version": LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
+            "semantics": LOSS_COOLDOWN_SEMANTICS,
+            "max_consecutive_losses": self.max_consecutive_losses,
+            "cooldown_ms": self.cooldown_ms,
+            "inventory": self.inventory,
+            "avg_entry": self.avg_entry,
+            "open_commission": self.open_commission,
+            "round_trip_pnl": self.round_trip_pnl,
+            "consecutive_losses": self.consecutive_losses,
+            "cooldown_until_ms": self.cooldown_until_ms,
+            "last_cancel_ts_ms": self.last_cancel_ts_ms,
+            "threshold_pending": self.threshold_pending,
+            "trigger_count": self.trigger_count,
+            "expiry_count": self.expiry_count,
+            "losing_round_trips": self.losing_round_trips,
+            "winning_or_flat_round_trips": self.winning_or_flat_round_trips,
+            "max_observed_consecutive_losses": (
+                self.max_observed_consecutive_losses
+            ),
+        }
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any]) -> ConsecutiveLossCooldown:
+        """Restore only a fully semantics-bound snapshot; legacy state is stale."""
+        if payload.get("schema_version") != LOSS_COOLDOWN_SNAPSHOT_SCHEMA:
+            raise ValueError("loss-cooldown snapshot schema is stale")
+        if payload.get("semantics") != LOSS_COOLDOWN_SEMANTICS:
+            raise ValueError("loss-cooldown snapshot semantics are stale")
+        required = set(LOSS_COOLDOWN_SNAPSHOT_STATE_FIELDS)
+        missing = sorted(required.difference(payload))
+        if missing:
+            raise ValueError(
+                "loss-cooldown snapshot fields are missing: " + ", ".join(missing)
+            )
+        restored = cls(**{field: payload[field] for field in required})
+        if abs(restored.inventory) <= 1e-10 and (
+            abs(restored.open_commission) > 1e-10
+            or abs(restored.round_trip_pnl) > 1e-10
+        ):
+            raise ValueError("flat loss-cooldown snapshot retained open economics")
+        if (
+            restored.max_observed_consecutive_losses
+            < restored.consecutive_losses
+        ):
+            raise ValueError("loss-cooldown snapshot maximum streak regressed")
+        restored._validate_snapshot_policy_state()
+        return restored
 
     @property
     def enabled(self) -> bool:
@@ -128,7 +297,6 @@ class ConsecutiveLossCooldown:
             or not math.isfinite(fee)
             or qty <= 0.0
             or fill_price <= 0.0
-            or fee < 0.0
         ):
             raise ValueError("loss-cooldown fill values are invalid")
 
@@ -154,6 +322,8 @@ class ConsecutiveLossCooldown:
             old_inventory = self.inventory
             old_abs = abs(old_inventory)
             close_qty = min(qty, old_abs)
+            closing_fee = fee * close_qty / qty
+            opening_fee = fee - closing_fee
             open_fee_share = (
                 self.open_commission * close_qty / old_abs
                 if old_abs > 1e-10
@@ -162,27 +332,27 @@ class ConsecutiveLossCooldown:
             if old_inventory > 0.0:
                 realized = (
                     (fill_price - self.avg_entry) * close_qty
-                    - fee
+                    - closing_fee
                     - open_fee_share
                 )
             else:
                 realized = (
                     (self.avg_entry - fill_price) * close_qty
-                    - fee
+                    - closing_fee
                     - open_fee_share
                 )
-            self.open_commission = max(
-                0.0,
-                self.open_commission - open_fee_share,
-            )
+            self.open_commission -= open_fee_share
             self.round_trip_pnl += realized
             remaining = old_abs - close_qty
             if remaining < 1e-10:
                 closed = True
                 closed_pnl = float(self.round_trip_pnl)
                 if closed_pnl < 0.0:
-                    self.consecutive_losses += 1
                     self.losing_round_trips += 1
+                    if self.enabled:
+                        self.consecutive_losses += 1
+                    else:
+                        self.consecutive_losses = 0
                 else:
                     self.consecutive_losses = 0
                     self.winning_or_flat_round_trips += 1
@@ -199,9 +369,7 @@ class ConsecutiveLossCooldown:
                 if flip_qty > 1e-10:
                     self.inventory = flip_qty if signed_qty > 0.0 else -flip_qty
                     self.avg_entry = fill_price
-                    # InventoryManager charges the full fill commission to the
-                    # closing round trip and starts the flipped leg at zero.
-                    self.open_commission = 0.0
+                    self.open_commission = opening_fee
                 else:
                     self.inventory = 0.0
                     self.avg_entry = 0.0

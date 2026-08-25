@@ -514,6 +514,19 @@ struct TickReplayParams {
     int max_consecutive_losses = 0;
     double cooldown_after_loss_s = 0.0;
     std::string consecutive_loss_cooldown_semantics;
+    bool consecutive_loss_snapshot_enabled = false;
+    std::string consecutive_loss_snapshot_schema;
+    double initial_loss_open_commission = 0.0;
+    double initial_loss_round_trip_pnl = 0.0;
+    int initial_loss_consecutive_losses = 0;
+    std::int64_t initial_loss_cooldown_until_ms = 0;
+    std::int64_t initial_loss_last_cancel_ts_ms = -1;
+    bool initial_loss_threshold_pending = false;
+    std::int64_t initial_loss_trigger_count = 0;
+    std::int64_t initial_loss_expiry_count = 0;
+    std::int64_t initial_loss_losing_round_trips = 0;
+    std::int64_t initial_loss_winning_or_flat_round_trips = 0;
+    int initial_loss_max_observed_consecutive_losses = 0;
     bool sync_adjust_degrade_enabled = false;
     double sync_adjust_pause_s = 0.0;
     bool sync_adjust_cancel_orders = true;
@@ -776,6 +789,9 @@ struct TraceOrderRow {
 };
 
 struct TraceFillRow {
+    // Zero-based, result-local execution order.  Unlike timestamps or order
+    // identifiers this is assigned only when the physical fill is appended.
+    std::int64_t fill_sequence = -1;
     Side side = Side::Buy;
     std::int64_t fill_ts = 0;
     std::int64_t quote_ts = 0;
@@ -1096,6 +1112,13 @@ struct TickReplaySummary {
     std::int64_t consecutive_loss_count_end = 0;
     std::int64_t consecutive_loss_count_max = 0;
     std::int64_t consecutive_loss_cooldown_until_ms = 0;
+    std::int64_t consecutive_loss_last_cancel_ts_end = -1;
+    std::string consecutive_loss_snapshot_schema;
+    double consecutive_loss_inventory_end = 0.0;
+    double consecutive_loss_avg_entry_end = 0.0;
+    double consecutive_loss_open_commission_end = 0.0;
+    double consecutive_loss_round_trip_pnl_end = 0.0;
+    bool consecutive_loss_threshold_pending_end = false;
     std::int64_t sync_adjust_degrade_trigger_count = 0;
     std::int64_t sync_adjust_degrade_block_bid_count = 0;
     std::int64_t sync_adjust_degrade_block_ask_count = 0;

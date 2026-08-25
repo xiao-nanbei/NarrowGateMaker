@@ -383,6 +383,59 @@ def test_segment_markout_is_fill_quantity_weighted() -> None:
     assert result["avg_markout_bid"] == pytest.approx(4.0)
 
 
+def test_segment_campaign_run_totals_are_additive_integers() -> None:
+    common = {
+        "pnl": 0.0,
+        "inventory_adjusted_pnl": 0.0,
+        "n_days": 1.0,
+        "fills_total": 1,
+        "fills_bid": 1,
+        "fills_ask": 0,
+        "n_requotes": 1,
+        "n_final_spread": 1,
+        "_ts": np.array([], dtype=np.int64),
+        "_pnl_ts": np.array([], dtype=np.float64),
+        "_inv_ts": np.array([], dtype=np.float64),
+    }
+    first = {
+        **common,
+        "campaign_exposure_increasing_fills": 2,
+        "campaign_reducing_fills": 1,
+        "campaign_buy_fills": 1,
+        "campaign_sell_fills": 2,
+    }
+    second = {
+        **common,
+        "campaign_exposure_increasing_fills": 3,
+        "campaign_reducing_fills": 2,
+        "campaign_buy_fills": 4,
+        "campaign_sell_fills": 1,
+    }
+
+    result = _aggregate_quality_segment_results(
+        [first, second],
+        full_calendar_days=2.0,
+        quality_days=2.0,
+        max_gap_s=300.0,
+    )
+
+    assert (
+        result["campaign_exposure_increasing_fills"],
+        result["campaign_reducing_fills"],
+        result["campaign_buy_fills"],
+        result["campaign_sell_fills"],
+    ) == (5, 3, 5, 3)
+    assert all(
+        isinstance(result[key], int)
+        for key in (
+            "campaign_exposure_increasing_fills",
+            "campaign_reducing_fills",
+            "campaign_buy_fills",
+            "campaign_sell_fills",
+        )
+    )
+
+
 def test_live_markout_resolves_at_configured_wallclock_horizon() -> None:
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(

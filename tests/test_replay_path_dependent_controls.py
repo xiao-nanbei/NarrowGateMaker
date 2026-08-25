@@ -21,7 +21,6 @@ from strategy.replay_controls import (
     load_sync_degrade_events,
 )
 
-
 BASE_MS = 1_700_000_000_000
 
 
@@ -306,6 +305,922 @@ def test_profitable_round_trip_resets_consecutive_loss_streak():
     assert not result.threshold_pending
 
 
+def test_loss_cooldown_flip_splits_fee_and_restores_full_state() -> None:
+    state = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+    )
+    state.on_fill(
+        side="BUY",
+        quantity=0.001,
+        price=100.0,
+        commission=0.005,
+    )
+    result = state.on_fill(
+        side="SELL",
+        quantity=0.002,
+        price=120.0,
+        commission=0.02,
+    )
+
+    assert result.closed_round_trip
+    assert result.round_trip_pnl == pytest.approx(0.005)
+    assert state.inventory == pytest.approx(-0.001)
+    assert state.avg_entry == pytest.approx(120.0)
+    assert state.open_commission == pytest.approx(0.01)
+    assert state.round_trip_pnl == pytest.approx(0.0)
+    restored = ConsecutiveLossCooldown.restore(state.snapshot())
+    assert restored.snapshot() == state.snapshot()
+
+
+def test_loss_cooldown_flip_preserves_signed_rebate() -> None:
+    state = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+    )
+    state.on_fill(
+        side="BUY",
+        quantity=0.001,
+        price=100.0,
+        commission=-0.005,
+    )
+    result = state.on_fill(
+        side="SELL",
+        quantity=0.002,
+        price=120.0,
+        commission=-0.02,
+    )
+
+    assert result.round_trip_pnl == pytest.approx(0.035)
+    assert state.open_commission == pytest.approx(-0.01)
+
+
+def test_legacy_partial_loss_cooldown_snapshot_fails_closed() -> None:
+    with pytest.raises(ValueError, match="snapshot schema is stale"):
+        ConsecutiveLossCooldown.restore(
+            {
+                "consecutive_losses": 1,
+                "cooldown_until_ms": BASE_MS + 30_000,
+            }
+        )
+
+
+def test_nonflat_loss_cooldown_snapshot_requires_entry_when_disabled() -> None:
+    snapshot = ConsecutiveLossCooldown(
+        max_consecutive_losses=0,
+        cooldown_ms=0,
+    ).snapshot()
+    snapshot["inventory"] = 0.001
+    with pytest.raises(ValueError, match="requires avg_entry"):
+        ConsecutiveLossCooldown.restore(snapshot)
+
+
+def test_loss_cooldown_snapshot_rejects_unreachable_policy_states() -> None:
+    reached_without_transition = ConsecutiveLossCooldown(
+        max_consecutive_losses=1,
+        cooldown_ms=30_000,
+    ).snapshot()
+    reached_without_transition.update(
+        consecutive_losses=1,
+        max_observed_consecutive_losses=1,
+        losing_round_trips=1,
+        threshold_pending=False,
+    )
+    with pytest.raises(ValueError, match="pending threshold is inconsistent"):
+        ConsecutiveLossCooldown.restore(reached_without_transition)
+
+    active_without_trigger = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+    ).snapshot()
+    active_without_trigger.update(
+        cooldown_until_ms=BASE_MS + 30_000,
+        losing_round_trips=1,
+    )
+    with pytest.raises(ValueError, match="trigger/expiry clock is inconsistent"):
+        ConsecutiveLossCooldown.restore(active_without_trigger)
+
+    expiry_without_trigger = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+    ).snapshot()
+    expiry_without_trigger["expiry_count"] = 1
+    with pytest.raises(ValueError, match="trigger/expiry clock is inconsistent"):
+        ConsecutiveLossCooldown.restore(expiry_without_trigger)
+
+    streak_without_losses = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+    ).snapshot()
+    streak_without_losses.update(
+        consecutive_losses=1,
+        max_observed_consecutive_losses=1,
+    )
+    with pytest.raises(ValueError, match="maximum streak exceeds losing rounds"):
+        ConsecutiveLossCooldown.restore(streak_without_losses)
+
+    disabled_with_cancel_clock = ConsecutiveLossCooldown(
+        max_consecutive_losses=0,
+        cooldown_ms=0,
+    ).snapshot()
+    disabled_with_cancel_clock["last_cancel_ts_ms"] = BASE_MS
+    with pytest.raises(ValueError, match="disabled.*retained policy state"):
+        ConsecutiveLossCooldown.restore(disabled_with_cancel_clock)
+
+
+def test_active_cooldown_allows_reachable_residual_fill_streak_changes() -> None:
+    def triggered_state() -> ConsecutiveLossCooldown:
+        state = ConsecutiveLossCooldown(
+            max_consecutive_losses=2,
+            cooldown_ms=30_000,
+        )
+        for entry, exit_price in ((100.0, 99.0), (100.0, 99.0)):
+            state.on_fill(
+                side="BUY",
+                quantity=0.001,
+                price=entry,
+                commission=0.0,
+            )
+            state.on_fill(
+                side="SELL",
+                quantity=0.001,
+                price=exit_price,
+                commission=0.0,
+            )
+        assert state.on_policy_clock(BASE_MS) == "triggered"
+        return state
+
+    state = triggered_state()
+
+    # A pending-cancel residual order can complete profitably while the clock
+    # remains active, resetting the streak without expiring the cooldown.
+    state.on_fill(
+        side="BUY",
+        quantity=0.001,
+        price=100.0,
+        commission=0.0,
+    )
+    state.on_fill(
+        side="SELL",
+        quantity=0.001,
+        price=101.0,
+        commission=0.0,
+    )
+    assert state.cooldown_until_ms == BASE_MS + 30_000
+    assert state.consecutive_losses == 0
+    assert not state.threshold_pending
+    assert ConsecutiveLossCooldown.restore(state.snapshot()).snapshot() == (
+        state.snapshot()
+    )
+
+    # A different residual order can close at a loss during the same active
+    # clock, advancing the streak and setting pending again without a trigger.
+    residual_loss = triggered_state()
+    residual_loss.on_fill(
+        side="BUY",
+        quantity=0.001,
+        price=100.0,
+        commission=0.0,
+    )
+    residual_loss.on_fill(
+        side="SELL",
+        quantity=0.001,
+        price=99.0,
+        commission=0.0,
+    )
+    assert residual_loss.consecutive_losses == 3
+    assert residual_loss.threshold_pending
+    assert ConsecutiveLossCooldown.restore(
+        residual_loss.snapshot()
+    ).snapshot() == residual_loss.snapshot()
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_consecutive_losses", -1),
+        ("cooldown_ms", -1),
+        ("max_consecutive_losses", 1.0),
+        ("cooldown_ms", True),
+        ("consecutive_losses", 0.5),
+        ("trigger_count", False),
+    ],
+)
+def test_loss_cooldown_rejects_negative_or_noninteger_counts(
+    field: str,
+    value: object,
+) -> None:
+    kwargs = {
+        "max_consecutive_losses": 1,
+        "cooldown_ms": 30_000,
+        field: value,
+    }
+    with pytest.raises(ValueError, match="integer|non-negative"):
+        ConsecutiveLossCooldown(**kwargs)
+
+
+@pytest.mark.parametrize(
+    ("inventory", "avg_entry"),
+    [
+        (float("nan"), 0.0),
+        (float("inf"), 100.0),
+        (0.0, float("nan")),
+        (0.0, 100.0),
+        (0.001, 0.0),
+    ],
+)
+def test_loss_cooldown_rejects_invalid_inventory_entry_state(
+    inventory: float,
+    avg_entry: float,
+) -> None:
+    with pytest.raises(ValueError, match="finite|avg_entry"):
+        ConsecutiveLossCooldown(
+            max_consecutive_losses=1,
+            cooldown_ms=30_000,
+            inventory=inventory,
+            avg_entry=avg_entry,
+        )
+
+
+def test_loss_cooldown_rejects_nonboolean_pending_state() -> None:
+    with pytest.raises(ValueError, match="must be a boolean"):
+        ConsecutiveLossCooldown(
+            max_consecutive_losses=1,
+            cooldown_ms=30_000,
+            threshold_pending="false",  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"max_consecutive_losses": -1, "cooldown_after_loss": 30.0},
+        {"max_consecutive_losses": 1.5, "cooldown_after_loss": 30.0},
+        {"max_consecutive_losses": True, "cooldown_after_loss": 30.0},
+        {"max_consecutive_losses": 1, "cooldown_after_loss": -1.0},
+        {"max_consecutive_losses": 1, "cooldown_after_loss": float("nan")},
+    ],
+)
+def test_backtest_loss_cooldown_config_does_not_clamp_or_truncate(
+    params: dict[str, object],
+) -> None:
+    with pytest.raises(ValueError, match="non-negative|integer"):
+        bt.loss_cooldown_config_values(params)
+
+
+def test_cpp_loss_snapshot_partial_abi_fails_closed() -> None:
+    cpp = pytest.importorskip("narrowgate_cpp")
+    ts = np.asarray([BASE_MS], dtype=np.int64)
+    price = np.asarray([100.0], dtype=np.float64)
+    quantity = np.asarray([0.0], dtype=np.float64)
+    maker = np.asarray([0], dtype=np.uint8)
+
+    partial = cpp.TickReplayParams()
+    partial.initial_loss_consecutive_losses = 1
+    with pytest.raises(ValueError, match="snapshot state supplied while disabled"):
+        cpp.simulate_tick_arrays(ts, price, quantity, maker, partial)
+
+    stale = cpp.TickReplayParams()
+    stale.consecutive_loss_snapshot_enabled = True
+    stale.consecutive_loss_snapshot_schema = (
+        "narrowgate_loss_cooldown_snapshot.v2"
+    )
+    stale.consecutive_loss_cooldown_semantics = "legacy_fill_count_v0"
+    with pytest.raises(ValueError, match="snapshot semantics are stale"):
+        cpp.simulate_tick_arrays(ts, price, quantity, maker, stale)
+
+    impossible = cpp.TickReplayParams()
+    impossible.max_consecutive_losses = 1
+    impossible.cooldown_after_loss_s = 30.0
+    impossible.consecutive_loss_cooldown_semantics = LOSS_COOLDOWN_SEMANTICS
+    impossible.consecutive_loss_snapshot_enabled = True
+    impossible.consecutive_loss_snapshot_schema = (
+        "narrowgate_loss_cooldown_snapshot.v2"
+    )
+    impossible.initial_loss_consecutive_losses = 1
+    impossible.initial_loss_max_observed_consecutive_losses = 1
+    impossible.initial_loss_losing_round_trips = 1
+    with pytest.raises(ValueError, match="pending threshold is inconsistent"):
+        cpp.simulate_tick_arrays(ts, price, quantity, maker, impossible)
+
+    def snapshot_params() -> object:
+        params = cpp.TickReplayParams()
+        params.max_consecutive_losses = 2
+        params.cooldown_after_loss_s = 30.0
+        params.consecutive_loss_cooldown_semantics = LOSS_COOLDOWN_SEMANTICS
+        params.consecutive_loss_snapshot_enabled = True
+        params.consecutive_loss_snapshot_schema = (
+            "narrowgate_loss_cooldown_snapshot.v2"
+        )
+        return params
+
+    active_without_trigger = snapshot_params()
+    active_without_trigger.initial_loss_cooldown_until_ms = BASE_MS + 30_000
+    active_without_trigger.initial_loss_losing_round_trips = 1
+    with pytest.raises(ValueError, match="trigger/expiry history is inconsistent"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            active_without_trigger,
+        )
+
+    expiry_without_trigger = snapshot_params()
+    expiry_without_trigger.initial_loss_expiry_count = 1
+    with pytest.raises(ValueError, match="trigger/expiry history is inconsistent"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            expiry_without_trigger,
+        )
+
+    streak_without_losses = snapshot_params()
+    streak_without_losses.initial_loss_consecutive_losses = 1
+    streak_without_losses.initial_loss_max_observed_consecutive_losses = 1
+    with pytest.raises(ValueError, match="trigger/expiry history is inconsistent"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            streak_without_losses,
+        )
+
+    nonfinite_inventory = snapshot_params()
+    nonfinite_inventory.initial_inventory = float("nan")
+    with pytest.raises(ValueError, match="snapshot fields are invalid"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            nonfinite_inventory,
+        )
+
+    flat_with_entry = snapshot_params()
+    flat_with_entry.initial_entry_price = 100.0
+    with pytest.raises(ValueError, match="inventory/entry is inconsistent"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            flat_with_entry,
+        )
+
+    nonflat_without_entry = snapshot_params()
+    nonflat_without_entry.initial_inventory = 0.001
+    with pytest.raises(ValueError, match="inventory/entry is inconsistent"):
+        cpp.simulate_tick_arrays(
+            ts,
+            price,
+            quantity,
+            maker,
+            nonflat_without_entry,
+        )
+
+    negative_limit = cpp.TickReplayParams()
+    negative_limit.max_consecutive_losses = -1
+    with pytest.raises(ValueError, match="config must be finite and non-negative"):
+        cpp.simulate_tick_arrays(ts, price, quantity, maker, negative_limit)
+
+    negative_cooldown = cpp.TickReplayParams()
+    negative_cooldown.cooldown_after_loss_s = -1.0
+    with pytest.raises(ValueError, match="config must be finite and non-negative"):
+        cpp.simulate_tick_arrays(ts, price, quantity, maker, negative_cooldown)
+
+def test_signed_rebate_can_turn_gross_loss_into_nonloss_python_cpp() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "position_timeout": 0.5,
+            "replay_clock_interval_ms": 1_000,
+            "maker_fee": -0.2,
+            "taker_fee": -0.2,
+            "max_consecutive_losses": 1,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000, BASE_MS + 2_000],
+        [100.0, 90.0, 90.0],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp", trades, empty_i64, empty_f64, params
+    )
+
+    for result in (py, cpp):
+        assert result["pnl"] == pytest.approx(0.008)
+        assert result["consecutive_loss_round_trip_loss_count"] == 0
+        assert result["consecutive_loss_round_trip_nonloss_count"] == 1
+        assert result["consecutive_loss_cooldown_trigger_count"] == 0
+        assert result["consecutive_loss_count_end"] == 0
+    assert cpp["consecutive_loss_cooldown_state"] == (
+        py["consecutive_loss_cooldown_state"]
+    )
+
+
+def test_signed_rebate_fill_trace_is_bound_for_continuous_accounting() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "order_size": 0.002,
+            "maker_fee": -0.0001,
+            "trace_fills_max": 4,
+            "max_consecutive_losses": 2,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000, BASE_MS + 2_000],
+        [120.0, 200.0, 200.0],
+        quantities=[0.0, 0.002, 0.0],
+        maker_flags=[False, False, False],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    for engine in ("python", "cpp"):
+        result = bt._simulate_tick_with_engine(
+            engine,
+            trades,
+            empty_i64,
+            empty_f64,
+            params,
+        )
+        assert len(result["_fill_trace"]) == 1
+        fill = result["_fill_trace"][0]
+        assert fill["fill_sequence"] == 0
+        assert fill["fill_fee_usdc"] < 0.0
+        assert fill["fill_fee_asset"] == "USDC"
+        assert fill["fill_fee_semantics"] == (
+            "signed_fee_positive_cost_negative_rebate_v2"
+        )
+
+
+def test_active_cooldown_resume_preserves_cancel_throttle_python_cpp() -> None:
+    resumed = ConsecutiveLossCooldown(
+        max_consecutive_losses=1,
+        cooldown_ms=30_000,
+        consecutive_losses=1,
+        cooldown_until_ms=BASE_MS + 30_000,
+        last_cancel_ts_ms=BASE_MS,
+        trigger_count=1,
+        losing_round_trips=1,
+        max_observed_consecutive_losses=1,
+    )
+    params = _base_params()
+    params.update(
+        {
+            "max_consecutive_losses": 1,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+            "initial_live_state": {
+                "reward_path_loss_cooldown": resumed.snapshot(),
+            },
+        }
+    )
+    trades = _trades(
+        [BASE_MS + 1_000, BASE_MS + 6_000],
+        [100.0, 100.0],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp", trades, empty_i64, empty_f64, params
+    )
+
+    assert py["consecutive_loss_cooldown_cancel_count"] == 1
+    assert cpp["consecutive_loss_cooldown_cancel_count"] == 1
+    assert py["consecutive_loss_cooldown_state"]["last_cancel_ts_ms"] == (
+        cpp["consecutive_loss_cooldown_state"]["last_cancel_ts_ms"]
+    )
+    assert py["consecutive_loss_cooldown_state"]["last_cancel_ts_ms"] == (
+        BASE_MS + 5_000
+    )
+
+
+@pytest.mark.parametrize(
+    ("consecutive_losses", "pending", "losing", "winning", "maximum"),
+    [
+        (0, False, 2, 1, 2),
+        (3, True, 3, 0, 3),
+    ],
+    ids=("residual_nonloss_resets_streak", "residual_loss_sets_pending"),
+)
+def test_active_cooldown_residual_fills_resume_python_cpp(
+    consecutive_losses: int,
+    pending: bool,
+    losing: int,
+    winning: int,
+    maximum: int,
+) -> None:
+    resumed = ConsecutiveLossCooldown(
+        max_consecutive_losses=2,
+        cooldown_ms=30_000,
+        consecutive_losses=consecutive_losses,
+        cooldown_until_ms=BASE_MS + 30_000,
+        last_cancel_ts_ms=-1,
+        threshold_pending=pending,
+        trigger_count=1,
+        losing_round_trips=losing,
+        winning_or_flat_round_trips=winning,
+        max_observed_consecutive_losses=maximum,
+    )
+    assert ConsecutiveLossCooldown.restore(
+        resumed.snapshot()
+    ).last_cancel_ts_ms == -1
+    params = _base_params()
+    params.update(
+        {
+            "max_consecutive_losses": 2,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+            "initial_live_state": {
+                "reward_path_loss_cooldown": resumed.snapshot(),
+            },
+        }
+    )
+    trades = _trades([BASE_MS + 1_000], [100.0])
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp", trades, empty_i64, empty_f64, params
+    )
+    assert cpp["consecutive_loss_cooldown_state"] == (
+        py["consecutive_loss_cooldown_state"]
+    )
+    assert py["consecutive_loss_cooldown_state"]["consecutive_losses"] == (
+        consecutive_losses
+    )
+    assert py["consecutive_loss_cooldown_state"]["threshold_pending"] is pending
+    assert py["consecutive_loss_cooldown_state"]["trigger_count"] == 1
+
+
+def test_loss_cooldown_resume_snapshot_is_python_cpp_equal() -> None:
+    resumed = ConsecutiveLossCooldown(
+        max_consecutive_losses=1,
+        cooldown_ms=30_000,
+        inventory=0.001,
+        avg_entry=100.0,
+        open_commission=0.005,
+        round_trip_pnl=0.002,
+    )
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "position_timeout": 0.5,
+            "replay_clock_interval_ms": 1_000,
+            "max_consecutive_losses": 1,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+            "initial_live_state": {
+                "reward_path_loss_cooldown": resumed.snapshot(),
+            },
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000, BASE_MS + 2_000],
+        [100.0, 90.0, 90.0],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp", trades, empty_i64, empty_f64, params
+    )
+
+    py_state = py["consecutive_loss_cooldown_state"]
+    cpp_state = cpp["consecutive_loss_cooldown_state"]
+    assert cpp_state.keys() == py_state.keys()
+    for key in py_state:
+        if isinstance(py_state[key], float):
+            assert cpp_state[key] == pytest.approx(py_state[key]), key
+        else:
+            assert cpp_state[key] == py_state[key], key
+    assert py_state["inventory"] == pytest.approx(0.0)
+    assert py_state["open_commission"] == pytest.approx(0.0)
+    assert py_state["round_trip_pnl"] == pytest.approx(0.0)
+    assert py_state["losing_round_trips"] == 1
+
+
+def test_loss_cooldown_flip_fee_path_is_python_cpp_equal() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "order_size": 0.002,
+            "maker_fee": 0.0001,
+            "max_consecutive_losses": 2,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000, BASE_MS + 2_000],
+        [120.0, 200.0, 200.0],
+        quantities=[0.0, 0.002, 0.0],
+        maker_flags=[False, False, False],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp", trades, empty_i64, empty_f64, params
+    )
+
+    assert py["fills_ask"] == cpp["fills_ask"] == 1
+    py_state = py["consecutive_loss_cooldown_state"]
+    cpp_state = cpp["consecutive_loss_cooldown_state"]
+    for key in py_state:
+        if isinstance(py_state[key], float):
+            assert cpp_state[key] == pytest.approx(py_state[key]), key
+        else:
+            assert cpp_state[key] == py_state[key], key
+    assert py_state["inventory"] == pytest.approx(-0.001)
+    assert py_state["avg_entry"] > 120.0
+    assert py_state["open_commission"] > 0.0
+    expected_opening_fee = (
+        abs(py_state["inventory"])
+        * py_state["avg_entry"]
+        * params["maker_fee"]
+    )
+    assert py_state["open_commission"] == pytest.approx(expected_opening_fee)
+    assert py_state["round_trip_pnl"] == pytest.approx(0.0)
+
+
+def test_backtest_flip_zero_boundary_fee_oracle() -> None:
+    # BUY 0.001@100 fee .005, then SELL 0.002@120 fee .02.
+    post_fill_cash = -0.105 + 0.240 - 0.020
+    boundary = bt.campaign_flip_zero_boundary_equity(
+        post_fill_cash=post_fill_cash,
+        post_fill_position=-0.001,
+        fill_price=120.0,
+        opening_quantity=0.001,
+        fee_rate=0.02 / (0.002 * 120.0),
+    )
+    assert boundary == pytest.approx(0.005)
+
+
+def test_backtest_flip_projects_two_campaign_economic_legs() -> None:
+    legs = bt.campaign_fill_economic_legs(
+        physical_fill_identity="order:17:fill:1",
+        side="SELL",
+        inventory_before=0.001,
+        inventory_after=-0.001,
+        fill_quantity=0.002,
+        fill_price=120.0,
+        fee_rate=0.02 / (0.002 * 120.0),
+        closing_campaign_id=4,
+        opening_campaign_id=5,
+    )
+
+    assert [leg["economic_leg_role"] for leg in legs] == [
+        "closing",
+        "opening",
+    ]
+    assert [leg["campaign_id"] for leg in legs] == [4, 5]
+    assert [leg["quantity_btc"] for leg in legs] == pytest.approx(
+        [0.001, 0.001]
+    )
+    assert [leg["fee_usdc"] for leg in legs] == pytest.approx([0.01, 0.01])
+    assert len({leg["physical_fill_identity"] for leg in legs}) == 1
+    assert sum(leg["quantity_btc"] for leg in legs) == pytest.approx(0.002)
+    assert sum(leg["fee_usdc"] for leg in legs) == pytest.approx(0.02)
+
+
+def test_backtest_flip_lifecycle_keeps_one_physical_fill_with_two_legs() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "order_size": 0.002,
+            "maker_fee": 0.0001,
+            "max_consecutive_losses": 2,
+            "cooldown_after_loss": 30.0,
+            "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+            "trace_local_order_lifecycle_max": 16,
+            "trace_decisions_max": 200,
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000, BASE_MS + 2_000],
+        [120.0, 200.0, 200.0],
+        quantities=[0.0, 0.002, 0.0],
+        maker_flags=[False, False, False],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    result = bt._simulate_tick_with_engine(
+        "python", trades, empty_i64, empty_f64, params
+    )
+
+    flip_legs = [
+        row
+        for row in result["_campaign_economic_fill_leg_trace"]
+        if row["physical_fill_leg_count"] == 2
+    ]
+    assert len(flip_legs) == 2
+    assert [row["economic_leg_role"] for row in flip_legs] == [
+        "closing",
+        "opening",
+    ]
+    assert [row["campaign_id"] for row in flip_legs] == [1, 2]
+    assert [row["quantity_btc"] for row in flip_legs] == pytest.approx(
+        [0.001, 0.001]
+    )
+    assert len({row["physical_fill_identity"] for row in flip_legs}) == 1
+
+    lifecycle_fills = [
+        row
+        for row in result["_local_order_lifecycle_trace"]
+        if row["event_type"] in {"partial_fill", "full_fill"}
+        and row.get("economic_leg_count") == 2
+    ]
+    assert len(lifecycle_fills) == 1
+    physical = lifecycle_fills[0]
+    assert physical["fill_qty"] == pytest.approx(0.002)
+    assert physical["campaign_id"] == 1
+    assert [leg["campaign_id"] for leg in physical["economic_legs"]] == [1, 2]
+    assert physical["physical_fill_identity"] == flip_legs[0][
+        "physical_fill_identity"
+    ]
+    short_trace = [
+        row
+        for row in result["_decision_trace"]
+        if row["campaign_active"] and row["inventory"] < 0.0
+    ]
+    assert short_trace
+    assert {
+        (
+            row["campaign_side"],
+            row["campaign_exposure_increasing_fills_so_far"],
+            row["campaign_reducing_fills_so_far"],
+        )
+        for row in short_trace
+    } == {("SHORT", 1, 0)}
+    assert (
+        result["campaign_exposure_increasing_fills"],
+        result["campaign_reducing_fills"],
+        result["campaign_buy_fills"],
+        result["campaign_sell_fills"],
+    ) == (1, 1, 0, 2)
+
+
+def test_backtest_flat_new_campaign_resets_trace_and_policy_counters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed_policy_contexts = []
+    original_evaluate = bt.MultiMarketPolicy.evaluate
+
+    def capture_context(policy, context):
+        observed_policy_contexts.append(context)
+        return original_evaluate(policy, context)
+
+    monkeypatch.setattr(bt.MultiMarketPolicy, "evaluate", capture_context)
+    params = _base_params()
+    params["trace_decisions_max"] = 200
+    trades = _trades(
+        [BASE_MS + offset * 1_000 for offset in range(6)],
+        [100.0, 50.0, 200.0, 200.0, 400.0, 400.0],
+        quantities=[0.0, 0.001, 0.001, 0.0, 0.001, 0.0],
+        maker_flags=[False, True, False, False, False, False],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    result = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        params,
+    )
+
+    assert [
+        (row["campaign_id"], row["economic_leg_role"], row["side"])
+        for row in result["_campaign_economic_fill_leg_trace"]
+    ] == [
+        (1, "opening", "BUY"),
+        (1, "closing", "SELL"),
+        (2, "opening", "SELL"),
+    ]
+    short_trace = [
+        row
+        for row in result["_decision_trace"]
+        if row["campaign_active"] and row["inventory"] < 0.0
+    ]
+    assert short_trace
+    assert {
+        (
+            row["campaign_side"],
+            row["campaign_exposure_increasing_fills_so_far"],
+            row["campaign_reducing_fills_so_far"],
+        )
+        for row in short_trace
+    } == {("SHORT", 1, 0)}
+    short_policy_contexts = [
+        context
+        for context in observed_policy_contexts
+        if context.campaign_active and context.inventory < 0.0
+    ]
+    assert short_policy_contexts
+    assert {context.campaign_fills for context in short_policy_contexts} == {1}
+    assert (
+        result["campaign_exposure_increasing_fills"],
+        result["campaign_reducing_fills"],
+        result["campaign_buy_fills"],
+        result["campaign_sell_fills"],
+    ) == (2, 1, 1, 2)
+
+
+def test_backtest_resume_restores_local_campaign_but_run_totals_start_at_zero() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "initial_inventory": 0.001,
+            "initial_entry_price": 100.0,
+            "trace_decisions_max": 20,
+            "initial_live_state": {
+                "campaign": {
+                    "active": True,
+                    "start_ts_ms": BASE_MS - 10_000,
+                    "pnl": 0.0,
+                    "max_inventory": 0.001,
+                    "mae": 0.0,
+                    "inc_fills": 5,
+                    "red_fills": 2,
+                    "buy_fills": 5,
+                    "sell_fills": 2,
+                }
+            },
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000],
+        [100.0, 100.0],
+    )
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    result = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        params,
+    )
+
+    assert result["_decision_trace"]
+    assert {
+        (
+            row["campaign_exposure_increasing_fills_so_far"],
+            row["campaign_reducing_fills_so_far"],
+        )
+        for row in result["_decision_trace"]
+    } == {(5, 2)}
+    assert (
+        result["campaign_exposure_increasing_fills"],
+        result["campaign_reducing_fills"],
+        result["campaign_buy_fills"],
+        result["campaign_sell_fills"],
+    ) == (0, 0, 0, 0)
+
+
 def test_sync_tape_is_hashed_outcome_blind_and_stress_is_deterministic(tmp_path):
     tape, digest = _write_sync_tape(tmp_path, [BASE_MS + 1_000])
     frozen = load_sync_degrade_events(
@@ -515,6 +1430,9 @@ def test_consecutive_loss_cooldown_is_path_dependent_and_python_cpp_equal():
     assert py["consecutive_loss_cooldown_expiry_count"] == 1
     assert py["consecutive_loss_round_trip_loss_count"] == 1
     assert cpp["pnl"] == pytest.approx(py["pnl"], abs=1e-12)
+    assert cpp["consecutive_loss_cooldown_state"] == (
+        py["consecutive_loss_cooldown_state"]
+    )
 
 
 def test_buy_q90_replays_cancel_pre_ack_fill_then_requires_new_placement(tmp_path):

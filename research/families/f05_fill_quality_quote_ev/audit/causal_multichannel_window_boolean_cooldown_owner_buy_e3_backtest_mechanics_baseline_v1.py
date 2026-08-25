@@ -1,11 +1,15 @@
-"""Executable, fail-closed BUY-E3 backtest mechanics baseline.
+"""Executable, fail-closed BUY-E3 mechanics safety successor.
 
-This module is deliberately narrower than an operational-baseline pointer.  It
-binds the exact owner-selected BUY E3 bytes, the exact active configuration,
-the frozen 30-day Development mechanics evidence, and the existing repeated
-policy ABI.  It grants mechanics/config replay availability only.  It neither
+The module path is retained for import compatibility, but its current identity
+is the single material successor to the frozen 2026-08-25 v1 contract.  It
+binds the same exact owner-selected BUY E3 and B0 bytes and unchanged 30-day
+reduced-support panel together with the repaired spread, exposure-role, order
+ledger, campaign-flip, signed-commission, and cooldown-v2 mechanics.  The old
+public contract, private bundle, and annotated tag are immutable predecessors.
+This successor grants mechanics/config replay availability only.  It neither
 reads economic outputs nor grants research, action, live, occurrence, or
-promotion authority.
+promotion authority; the old v12 50-day economics are a stale historical
+comparator under the repaired mechanics.
 
 Private locators are caller supplied.  No host-absolute private path or
 private byte is a module constant, a public default, or a returned public
@@ -55,24 +59,78 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 
 IDENTITY: Final = (
-    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1"
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_safety_successor_v1"
 )
 SCHEMA_VERSION: Final = f"{IDENTITY}.contract.v1"
 DAY_OVERLAY_SCHEMA: Final = f"{IDENTITY}.day_overlay.v1"
-V14_GOVERNANCE_SCHEMA: Final = f"{IDENTITY}.v14_mechanics_governance_receipt.v1"
-V14_PRIVATE_MANIFEST_SCHEMA: Final = f"{IDENTITY}.v14_private_bundle_manifest.v1"
-V14_PRIVATE_TRANSACTION_SCHEMA: Final = f"{IDENTITY}.v14_private_transaction.v1"
+SAFETY_SUCCESSOR_GOVERNANCE_SCHEMA: Final = (
+    f"{IDENTITY}.mechanics_safety_successor_governance_receipt.v1"
+)
+SAFETY_SUCCESSOR_PRIVATE_MANIFEST_SCHEMA: Final = (
+    f"{IDENTITY}.mechanics_safety_successor_private_bundle_manifest.v1"
+)
+SAFETY_SUCCESSOR_PRIVATE_TRANSACTION_SCHEMA: Final = (
+    f"{IDENTITY}.mechanics_safety_successor_private_transaction.v1"
+)
+# Frozen predecessor bindings remain byte-for-byte named and are never
+# repurposed for the successor.
+V14_GOVERNANCE_SCHEMA: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_baseline_v1.v14_mechanics_governance_receipt.v1"
+)
+V14_PRIVATE_MANIFEST_SCHEMA: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_baseline_v1.v14_private_bundle_manifest.v1"
+)
+V14_PRIVATE_TRANSACTION_SCHEMA: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_baseline_v1.v14_private_transaction.v1"
+)
 OWNER_PRIVATE_INPUT_SCHEMA: Final = f"{IDENTITY}.owner_private_relative_inputs.v1"
 OWNER_PRIVATE_INPUT_COUNT: Final = 12
 PRIVATE_EVIDENCE_ROOT_ENV: Final = "NARROWGATE_PRIVATE_EVIDENCE_ROOT"
 METADATA_REPOSITORY_ROOT_ENV: Final = "NARROWGATE_METADATA_REPOSITORY_ROOT"
 FORMAL_PRIVATE_BUNDLE_RELATIVE: Final = PurePosixPath(
-    "direct_no_shadow_live_evidence_v6_20260824/backtest_mechanics_default_v1"
+    "mechanics_safety_successor_v1_20260825/backtest_mechanics_default_v1"
 )
-V14_COLD_PUBLISHER_TAG: Final = "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
+SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG: Final = (
+    "f05-owner-buy-e3-backtest-mechanics-safety-successor-v1-final-20260825"
+)
+SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC: Final = "2026-08-25T03:45:34Z"
+SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256: Final = (
+    "a3469af71276d0681dbee1bd1dc9336dac8f29e912bc40c70cab3d2802efd853"
+)
+V14_COLD_PUBLISHER_TAG: Final = (
+    "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
+)
 V14_EFFECTIVE_AT_UTC: Final = "2026-08-25T00:00:01Z"
 V14_PUBLIC_CONTRACT_FILE_SHA256: Final = (
     "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699"
+)
+PREDECESSOR_MECHANICS_IDENTITY: Final = (
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_baseline_v1"
+)
+PREDECESSOR_MECHANICS_CONTRACT_RELATIVE: Final = (
+    "research/families/f05_fill_quality_quote_ev/docs/"
+    "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
+    "backtest_mechanics_baseline_v1_20260825.json"
+)
+PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256: Final = (
+    "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699"
+)
+PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256: Final = (
+    "c2f680c79ca2946c66a5f6d6732792fb7b61c4285630e7a951944dfeac9bc968"
+)
+PREDECESSOR_MECHANICS_ANNOTATED_TAG: Final = (
+    "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
+)
+PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT: Final = (
+    "6180725e03e38a8580ce86f14959acf0946d8b90"
+)
+PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE: Final = (
+    "direct_no_shadow_live_evidence_v6_20260824/backtest_mechanics_default_v1"
 )
 V13_PREDECESSOR_FILE_SHA256: Final = (
     "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079"
@@ -350,6 +408,17 @@ RESEARCH_ACTION_FLAGS: Final = (
     "state_conditioned_rearm_enabled",
     "variance_time_lineage_randomized_enabled",
 )
+SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA: Final = MappingProxyType(
+    {
+        "source_config_path": "strategy.spread_cap_mode",
+        "final_replay_abi_path": "spread_cap_mode",
+        "predecessor_effective_default": "compress",
+        "successor_cold_default": "pause_exposure",
+        "explicit_research_arm": "compress",
+        "explicit_research_arm_can_override_cold_default": False,
+        "active_source_config_bytes_modified": False,
+    }
+)
 REPLAY_ENGINE_OVERLAY: Final = MappingProxyType(
     {
         "ml_enabled": True,
@@ -367,14 +436,19 @@ REPLAY_ENGINE_OVERLAY: Final = MappingProxyType(
         "buy_fill_selection_shadow_enabled": False,
         "sync_adjust_replay_mode": "disabled",
         "markout_side_asymmetry_sign": 1.0,
+        # The predecessor private config omitted this field and therefore
+        # inherited the historical inward-compression default.  The formal
+        # successor cold path is invariant to both omission and an explicit
+        # research-arm value in those predecessor bytes.
+        "spread_cap_mode": "pause_exposure",
         **{name: False for name in RESEARCH_ACTION_FLAGS},
     }
 )
 REPLAY_ENGINE_OVERLAY_SHA256: Final = (
-    "1a05187343aa57fa2924bb78068126c2487177bf93e40bd335331608ce89eea2"
+    "221fd3bd92db9b407c21668dd48b837b5e2699645bb6add5fb7618bfb07bc544"
 )
 EXACT_ACTIVE_REPLAY_ABI_SHA256: Final = (
-    "6a15b4d7933dfe036efed649cd6220667d45f45073a66eab4651461031291337"
+    "3c08d43142e1b855e48ec5f8324694e4a3ce284fafd95957663345c9ad5711f7"
 )
 
 AVAILABILITY: Final = MappingProxyType(
@@ -396,11 +470,88 @@ PERMISSIONS: Final = MappingProxyType(
         "shadow_or_companion_authority": False,
     }
 )
-V14_PERMISSIONS: Final = MappingProxyType(
+SAFETY_SUCCESSOR_PERMISSIONS: Final = MappingProxyType(
     {
         "backtest_mechanics_available": True,
         "backtest_default_arm_resolution_authorized": True,
         **dict(PERMISSIONS),
+    }
+)
+V14_PERMISSIONS: Final = SAFETY_SUCCESSOR_PERMISSIONS
+RUNTIME_SOURCE_BINDING_SCOPE: Final = (
+    "explicit_successor_safety_and_economic_implementation_set_not_automatic_"
+    "transitive_closure"
+)
+MECHANICS_SAFETY_SEMANTICS: Final = MappingProxyType(
+    {
+        "spread_cap": (
+            "pause_exposure_is_the_safe_default;_compress_is_an_explicit_research_arm_only"
+        ),
+        "exposure_role": (
+            "exact_close_and_partial_reduce_are_reducing;_only_cross_zero_residual_is_increasing"
+        ),
+        "order_ledger": (
+            "finite_nonnegative_bounded_monotone_cumulative_fills;_exact_trade_and_order_"
+            "identity;_terminal_corrections_fail_closed"
+        ),
+        "campaign_flip": (
+            "zero_crossing_closes_the_old_campaign_and_opens_a_new_opposite_side_campaign"
+        ),
+        "commission": (
+            "signed_commission_and_rebates_are_preserved_and_split_by_economic_leg"
+        ),
+        "same_timestamp_fill_order": (
+            "preserve_source_exchange_sequence;_never_reorder_equal_timestamp_fills_by_order_id"
+        ),
+        "cooldown_checkpoint": (
+            "full_cooldown_v2_snapshot_is_required;_legacy_partial_state_fails_closed"
+        ),
+        "live_liveness": (
+            "websocket_and_main_loop_fail_closed;_fatal_runtime_errors_propagate_and_"
+            "network_calls_are_bounded"
+        ),
+        "economic_status": (
+            "predecessor_v12_50_day_results_are_historical_stale_comparator_only"
+        ),
+    }
+)
+MECHANICS_SAFETY_SOURCE_COVERAGE: Final = MappingProxyType(
+    {
+        "spread_and_exposure": (
+            "live/config.py;live/config.yaml;models/backtest_config.py;strategy/quote_core.py;"
+            "cpp/narrowgate_cpp/quote_core.cpp;cpp/narrowgate_cpp/quote_core.hpp;"
+            "cpp/narrowgate_cpp/bindings.cpp"
+        ),
+        "ledger_and_reconciliation": (
+            "strategy/order_manager.py;strategy/inventory_manager.py;strategy/maker_engine.py;"
+            "live/ws_handler.py;live/main.py"
+        ),
+        "campaign_economic_legs": (
+            "strategy/inventory_manager.py;models/backtest_tick.py;"
+            "models/audit/order_lifecycle.py;"
+            "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py"
+        ),
+        "fill_event_sequence": (
+            "models/backtest_tick.py;models/audit/order_lifecycle.py;"
+            "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py"
+        ),
+        "continuous_accounting_and_state": (
+            "models/replay/continuous_accounting.py;"
+            "models/replay/replay_state_checkpoint.py;"
+            "models/replay/restart_aware_continuous_ab.py;"
+            "research/shared/replay_lifecycle/docs/continuous_accounting_contract_v2.json;"
+            "research/shared/replay_lifecycle/docs/continuous_replay_state_v2_contract.json"
+        ),
+        "continuous_runner_sequence": (
+            "research/families/f03_causal_13_head/audit/"
+            "causal_v12_1s_restart_aware_continuous_ab.py;"
+            "scripts/run_restart_aware_continuous_baseline.py"
+        ),
+        "cooldown_v2": (
+            "strategy/replay_controls.py;models/backtest_tick.py;"
+            "cpp/narrowgate_cpp/tick_replay.cpp;cpp/narrowgate_cpp/tick_replay.hpp;"
+            "cpp/narrowgate_cpp/bindings.cpp"
+        ),
     }
 )
 
@@ -504,15 +655,82 @@ OWNER_PRIVATE_FILE_SHA256: Final = MappingProxyType(
 
 RUNTIME_SOURCE_SHA256: Final = MappingProxyType(
     {
-        "live/config.py": ("9160b8884e877e4230efee1505d569dbf349c6e4e41e4f95192e95b95b3df425"),
+        "live/config.py": ("3bdc47d2647163c920e3cd20596afb1e030a11b36062636e17f1880253953b6d"),
+        "live/config.yaml": (
+            "5362d12d6fdc7731c3a7df9d9508f91b2c7f7b0467ed540c0511c9292abfcb04"
+        ),
         "live/runtime_policy.py": (
             "23bf62c1e0bfdd0bcc94ef203d39e22f61f9296bf3545157c373ca4f45912964"
         ),
+        "live/ws_handler.py": (
+            "fe157a5d6d472e02551f9eea4a4382873af02f7bd4da825a4ee53fc50027454f"
+        ),
+        "live/main.py": (
+            "5889ac75729e1d9eefe2734c2175e09b4470cb8ad0457e8109deeb1e180d34f7"
+        ),
         "models/backtest_config.py": (
-            "13833cf65f6245539d72e318c8ebc66d047d60e2df28dc5b6c66d514f18becdc"
+            "d75314d3fa7bb255b029be3f6268af22b50c0d31fd0ba4776db53b81219d035c"
         ),
         "models/backtest_tick.py": (
-            "55f3a64572444ad0ea26bdbf0525b691b3bba74d9a602eae35af2ca29ea72c0f"
+            "6ba97e72ea8e59b27ebdcdc198849f490836f0df24cdc179579cfae28d55b1cb"
+        ),
+        "strategy/inventory_manager.py": (
+            "af679f5ac4cccdabbb6c0b1bb382942d9d3e5e1e686775c946ce574df61e3ed6"
+        ),
+        "strategy/replay_controls.py": (
+            "b266342dae42448d8bac52ad8d6130cf535c49fb7de2b22b9f9ddff15770353f"
+        ),
+        "strategy/order_manager.py": (
+            "b09f5766a8c3a597e3fc24a10ff7565969542c6dc50c734913d75cf73c43d8be"
+        ),
+        "strategy/maker_engine.py": (
+            "ce16930a12deb5a31251b3e439fb8e2242d8434cd02dc33993a3bb4977e005d6"
+        ),
+        "strategy/quote_core.py": (
+            "d62f6edb4e926709ad04bb394495f4a17894722a53d2a7fcbc7626eeff641627"
+        ),
+        "models/replay/continuous_accounting.py": (
+            "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
+        ),
+        "models/replay/replay_state_checkpoint.py": (
+            "8b092950eaf4b620be8b2148a6207f7abb37f8a692cfbbeaa90013c75bcd73e3"
+        ),
+        "models/replay/restart_aware_continuous_ab.py": (
+            "710caefff525a4a09d8eaadcefddddf4f2aa7ca28d330217879d6f1a44129622"
+        ),
+        "research/families/f03_causal_13_head/audit/"
+        "causal_v12_1s_restart_aware_continuous_ab.py": (
+            "c5c35e243c55ed42af4a1f5c5a815a8ca087b2598d4360236bfbb189982e1305"
+        ),
+        "scripts/run_restart_aware_continuous_baseline.py": (
+            "e2cdc014602f934c39321a48821fd006e9beac704977ac38dfe9ea9a18f4f7ca"
+        ),
+        "research/shared/replay_lifecycle/docs/continuous_accounting_contract_v2.json": (
+            "763532a9963700f267e57eb582c38830da8f158288ed900be49b9d7ed96d40ad"
+        ),
+        "research/shared/replay_lifecycle/docs/continuous_replay_state_v2_contract.json": (
+            "5b564e204438389f4fa306be9be2baf5d676c38d1d6a2e57517af36c46470364"
+        ),
+        "models/audit/order_lifecycle.py": (
+            "5576cd81204d0f0ba14630d1f1d8138ff2bcecad6914b6e72ff60bb893889cf6"
+        ),
+        "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py": (
+            "97dace012a6c3a261062ae2131962c9cae01d598b803eda65e25272a7da0cb19"
+        ),
+        "cpp/narrowgate_cpp/tick_replay.cpp": (
+            "dd6d2cdcede255549b755129b14396fdc04b3be9cf7ddf6f6cddf5017315e149"
+        ),
+        "cpp/narrowgate_cpp/tick_replay.hpp": (
+            "fe82ed65004bb633d42c7c4e1cff98915339e37ebc81d82d1f43df92df80db30"
+        ),
+        "cpp/narrowgate_cpp/bindings.cpp": (
+            "acca4197927148333a3a456253f41481b9b6ec76f1edba622e16e4942b44156c"
+        ),
+        "cpp/narrowgate_cpp/quote_core.cpp": (
+            "f2ce31f59cfcb21a57d1d164961b63b436e046bba344143fb1e0e6d951d2408c"
+        ),
+        "cpp/narrowgate_cpp/quote_core.hpp": (
+            "a5f479b0861e57bc5870b24315694f5528617a4c7a7c8b2ddae62b78f52bf313"
         ),
         "strategy/boolean_cooldown_buy_e3.py": (
             "85cd44c6695caa3f50942b2dc1cf489f6d1af113db53cd07b891d44d1ccfaf94"
@@ -1244,6 +1462,29 @@ def _verify_execution_module_origins(repository_root: Path) -> Mapping[str, str]
         "live/runtime_policy.py": importlib.import_module("live.runtime_policy"),
         "models/backtest_config.py": backtest_config,
         "models/backtest_tick.py": importlib.import_module("models.backtest_tick"),
+        "strategy/inventory_manager.py": importlib.import_module(
+            "strategy.inventory_manager"
+        ),
+        "strategy/replay_controls.py": importlib.import_module("strategy.replay_controls"),
+        "strategy/order_manager.py": importlib.import_module("strategy.order_manager"),
+        "strategy/quote_core.py": importlib.import_module("strategy.quote_core"),
+        "models/replay/continuous_accounting.py": importlib.import_module(
+            "models.replay.continuous_accounting"
+        ),
+        "models/replay/replay_state_checkpoint.py": importlib.import_module(
+            "models.replay.replay_state_checkpoint"
+        ),
+        "models/replay/restart_aware_continuous_ab.py": importlib.import_module(
+            "models.replay.restart_aware_continuous_ab"
+        ),
+        "models/audit/order_lifecycle.py": importlib.import_module(
+            "models.audit.order_lifecycle"
+        ),
+        "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py": (
+            importlib.import_module(
+                "execution.order_lifecycle_journal_writer_v2_replay_day_buffered"
+            )
+        ),
         "research/families/f05_fill_quality_quote_ev/audit/"
         "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_"
         "offline_predicate_view_v1.py": predicate_view,
@@ -2973,6 +3214,9 @@ def _baseline_capability_receipt(
         "factory_class_exact": True,
         "factory_closed": False,
         "active_replay_abi_sha256": EXACT_ACTIVE_REPLAY_ABI_SHA256,
+        "material_mechanics_config_delta": dict(
+            SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+        ),
         "runtime_source_set_sha256": canonical_sha256(dict(baseline.runtime_sources)),
         "execution_module_origin_keyset_sha256": canonical_sha256(sorted(baseline._module_origins)),
         "artifact_sha256": EXACT_E3_ARTIFACT_SHA256,
@@ -3681,7 +3925,7 @@ def _public_contract_binding(
     contract_path: Path, *, expected_file_sha256: str
 ) -> Mapping[str, Any]:
     expected = _require_sha(expected_file_sha256, "public contract file SHA256")
-    if expected != V14_PUBLIC_CONTRACT_FILE_SHA256:
+    if expected != SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256:
         raise OwnerBuyE3MechanicsBaselineError(
             "public mechanics contract caller SHA256 is not the frozen contract"
         )
@@ -3696,18 +3940,48 @@ def _public_contract_binding(
     if (
         document.get("schema_version") != SCHEMA_VERSION
         or document.get("identity") != IDENTITY
-        or document.get("status") != "executable_fail_closed_mechanics_factory_contract"
+        or document.get("status")
+        != "executable_fail_closed_mechanics_safety_successor_contract"
         or document.get("canonical_contract_sha256")
         != document_sha256(document, "canonical_contract_sha256")
         or document.get("runtime_source_sha256") != RUNTIME_SOURCE_SHA256
+        or document.get("runtime_source_binding_scope")
+        != RUNTIME_SOURCE_BINDING_SCOPE
+        or document.get("mechanics_safety_semantics") != MECHANICS_SAFETY_SEMANTICS
+        or document.get("mechanics_safety_source_coverage")
+        != MECHANICS_SAFETY_SOURCE_COVERAGE
+        or document.get("successor_material_mechanics_config_delta")
+        != SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+        or document.get("predecessor_mechanics_contract")
+        != {
+            "identity": PREDECESSOR_MECHANICS_IDENTITY,
+            "repository_relative_path": PREDECESSOR_MECHANICS_CONTRACT_RELATIVE,
+            "file_sha256": PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256,
+            "canonical_sha256": PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256,
+            "annotated_tag": PREDECESSOR_MECHANICS_ANNOTATED_TAG,
+            "annotated_tag_object": PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT,
+            "private_bundle_relative_identity": (
+                PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE
+            ),
+            "availability": "public_repository_historical_contract",
+            "historical_contract_modified": False,
+            "historical_private_bundle_modified": False,
+            "historical_annotated_tag_modified": False,
+        }
         or document.get("availability") != AVAILABILITY
         or document.get("permissions") != PERMISSIONS
         or document.get("support", {}).get("reduced_support") is not True
         or document.get("support", {}).get("day_count") != 30
+        or document.get("support", {}).get("v12_50_day_economics_status")
+        != "historical_comparator_stale_under_current_safety_mechanics"
         or document.get("configuration", {}).get("active_source_file_sha256")
         != ACTIVE_SOURCE_CONFIG_FILE_SHA256
         or document.get("configuration", {}).get("host_neutral_projection_file_sha256")
         != HOST_NEUTRAL_CONFIG_FILE_SHA256
+        or document.get("configuration", {}).get("replay_engine_overlay_sha256")
+        != REPLAY_ENGINE_OVERLAY_SHA256
+        or document.get("configuration", {}).get("active_final_replay_abi_sha256")
+        != EXACT_ACTIVE_REPLAY_ABI_SHA256
     ):
         raise OwnerBuyE3MechanicsBaselineError("public mechanics contract drifted")
     return {
@@ -3758,12 +4032,12 @@ def _validate_v13_predecessor(
         or backtest_default.get("current_live_evidence_is_backtest_economic_authority") is not False
     ):
         raise OwnerBuyE3MechanicsBaselineError(
-            "v14 predecessor is not the active locator-only v13 identity"
+            "safety successor predecessor is not the active locator-only v13 identity"
         )
     return document, snapshot
 
 
-def create_v14_mechanics_governance_receipt(
+def create_mechanics_safety_successor_governance_receipt(
     *,
     predecessor_v13_identity_path: Path,
     predecessor_v13_file_sha256: str,
@@ -3771,12 +4045,15 @@ def create_v14_mechanics_governance_receipt(
     public_contract_file_sha256: str,
     effective_at_utc: str,
 ) -> Mapping[str, Any]:
-    """Build, but do not publish, the sequential v14 mechanics receipt."""
+    """Build, but do not publish, the one material mechanics safety successor."""
 
-    effective = _strict_utc_z(effective_at_utc, label="v14 effective_at_utc")
-    if effective != V14_EFFECTIVE_AT_UTC:
+    effective = _strict_utc_z(
+        effective_at_utc,
+        label="mechanics safety successor effective_at_utc",
+    )
+    if effective != SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC:
         raise OwnerBuyE3MechanicsBaselineError(
-            "v14 effective_at_utc is not the frozen sequential activation instant"
+            "mechanics safety successor effective_at_utc is not the frozen activation instant"
         )
     predecessor, predecessor_snapshot = _validate_v13_predecessor(
         predecessor_v13_identity_path,
@@ -3787,11 +4064,11 @@ def create_v14_mechanics_governance_receipt(
         expected_file_sha256=public_contract_file_sha256,
     )
     receipt: dict[str, Any] = {
-        "schema_version": V14_GOVERNANCE_SCHEMA,
-        "identity": f"{IDENTITY}.v14_owner_requested_mechanics_only",
-        "status": "sequential_v14_mechanics_default_active",
-        "successor_baseline_version": "v14",
-        "promotion_class": "owner_requested_mechanics_only",
+        "schema_version": SAFETY_SUCCESSOR_GOVERNANCE_SCHEMA,
+        "identity": f"{IDENTITY}.mechanics_safety_successor",
+        "status": "mechanics_safety_successor_default_active",
+        "successor_baseline_version": "mechanics_safety_successor_v1",
+        "promotion_class": "material_mechanics_safety_repair_no_economic_authority",
         "effective_at_utc": effective,
         "predecessor": {
             "schema_version": predecessor["schema_version"],
@@ -3809,7 +4086,24 @@ def create_v14_mechanics_governance_receipt(
             "locator_reconciliation_only_predecessor": True,
             "historical_identity_modified": False,
         },
+        "mechanics_predecessor_contract": {
+            "identity": PREDECESSOR_MECHANICS_IDENTITY,
+            "repository_relative_path": PREDECESSOR_MECHANICS_CONTRACT_RELATIVE,
+            "file_sha256": PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256,
+            "canonical_sha256": PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256,
+            "annotated_tag": PREDECESSOR_MECHANICS_ANNOTATED_TAG,
+            "annotated_tag_object": PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT,
+            "private_bundle_relative_identity": (
+                PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE
+            ),
+            "historical_contract_modified": False,
+            "historical_private_bundle_modified": False,
+            "historical_annotated_tag_modified": False,
+        },
         "mechanics_contract": dict(contract),
+        "material_mechanics_config_delta": dict(
+            SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+        ),
         "default_arm": {
             "identity": IDENTITY,
             "candidate_only": False,
@@ -3818,7 +4112,11 @@ def create_v14_mechanics_governance_receipt(
             "opposite_side_delegation": "exact_owner_B0",
             "formal_e3_mechanics_panel_day_count": len(FORMAL_E3_MECHANICS_DAYS),
             "reduced_support": True,
-            "current_v12_50_day_economic_control_replaced": False,
+            "historical_v12_50_day_economic_artifact_rewritten": False,
+            "v12_50_day_current_economic_authority": False,
+            "v12_50_day_economic_results_status": (
+                "historical_comparator_stale_under_current_safety_mechanics"
+            ),
         },
         "config": {
             "active_source_file_sha256": ACTIVE_SOURCE_CONFIG_FILE_SHA256,
@@ -3829,7 +4127,7 @@ def create_v14_mechanics_governance_receipt(
             "final_replay_abi_delta_paths_sha256": (REPLAY_ABI_FINAL_DELTA_PATHS_SHA256),
             "projection_availability": "private_not_distributed",
         },
-        "permissions": dict(V14_PERMISSIONS),
+        "permissions": dict(SAFETY_SUCCESSOR_PERMISSIONS),
     }
     receipt["canonical_governance_receipt_sha256"] = document_sha256(
         receipt, "canonical_governance_receipt_sha256"
@@ -3837,7 +4135,7 @@ def create_v14_mechanics_governance_receipt(
     return MappingProxyType(receipt)
 
 
-def validate_v14_mechanics_governance_receipt(
+def validate_mechanics_safety_successor_governance_receipt(
     receipt: Mapping[str, Any],
     *,
     predecessor_v13_identity_path: Path,
@@ -3859,12 +4157,16 @@ def validate_v14_mechanics_governance_receipt(
     contract = receipt.get("mechanics_contract")
     default_arm = receipt.get("default_arm")
     config = receipt.get("config")
-    effective = _strict_utc_z(receipt.get("effective_at_utc"), label="v14 effective_at_utc")
+    effective = _strict_utc_z(
+        receipt.get("effective_at_utc"),
+        label="mechanics safety successor effective_at_utc",
+    )
     if (
-        receipt.get("schema_version") != V14_GOVERNANCE_SCHEMA
-        or receipt.get("status") != "sequential_v14_mechanics_default_active"
-        or receipt.get("successor_baseline_version") != "v14"
-        or receipt.get("promotion_class") != "owner_requested_mechanics_only"
+        receipt.get("schema_version") != SAFETY_SUCCESSOR_GOVERNANCE_SCHEMA
+        or receipt.get("status") != "mechanics_safety_successor_default_active"
+        or receipt.get("successor_baseline_version") != "mechanics_safety_successor_v1"
+        or receipt.get("promotion_class")
+        != "material_mechanics_safety_repair_no_economic_authority"
         or not isinstance(predecessor, Mapping)
         or predecessor.get("schema_version") != V13_SCHEMA_VERSION
         or predecessor.get("baseline_id") != V13_BASELINE_ID
@@ -3890,16 +4192,38 @@ def validate_v14_mechanics_governance_receipt(
         or default_arm.get("resolver_activated") is not True
         or default_arm.get("reduced_support") is not True
         or default_arm.get("formal_e3_mechanics_panel_day_count") != 30
-        or default_arm.get("current_v12_50_day_economic_control_replaced") is not False
+        or default_arm.get("historical_v12_50_day_economic_artifact_rewritten") is not False
+        or default_arm.get("v12_50_day_current_economic_authority") is not False
+        or default_arm.get("v12_50_day_economic_results_status")
+        != "historical_comparator_stale_under_current_safety_mechanics"
         or not isinstance(config, Mapping)
         or config.get("active_source_file_sha256") != ACTIVE_SOURCE_CONFIG_FILE_SHA256
         or config.get("host_neutral_projection_file_sha256") != HOST_NEUTRAL_CONFIG_FILE_SHA256
-        or receipt.get("permissions") != V14_PERMISSIONS
+        or receipt.get("mechanics_predecessor_contract")
+        != {
+            "identity": PREDECESSOR_MECHANICS_IDENTITY,
+            "repository_relative_path": PREDECESSOR_MECHANICS_CONTRACT_RELATIVE,
+            "file_sha256": PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256,
+            "canonical_sha256": PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256,
+            "annotated_tag": PREDECESSOR_MECHANICS_ANNOTATED_TAG,
+            "annotated_tag_object": PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT,
+            "private_bundle_relative_identity": (
+                PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE
+            ),
+            "historical_contract_modified": False,
+            "historical_private_bundle_modified": False,
+            "historical_annotated_tag_modified": False,
+        }
+        or receipt.get("material_mechanics_config_delta")
+        != SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+        or receipt.get("permissions") != SAFETY_SUCCESSOR_PERMISSIONS
         or receipt.get("canonical_governance_receipt_sha256")
         != document_sha256(receipt, "canonical_governance_receipt_sha256")
     ):
-        raise OwnerBuyE3MechanicsBaselineError("v14 mechanics governance receipt drifted")
-    expected_receipt = create_v14_mechanics_governance_receipt(
+        raise OwnerBuyE3MechanicsBaselineError(
+            "mechanics safety successor governance receipt drifted"
+        )
+    expected_receipt = create_mechanics_safety_successor_governance_receipt(
         predecessor_v13_identity_path=predecessor_v13_identity_path,
         predecessor_v13_file_sha256=expected_predecessor,
         public_contract_path=public_contract_path,
@@ -3908,7 +4232,7 @@ def validate_v14_mechanics_governance_receipt(
     )
     if dict(receipt) != dict(expected_receipt):
         raise OwnerBuyE3MechanicsBaselineError(
-            "v14 mechanics governance receipt has extra or missing fields"
+            "mechanics safety successor governance receipt has extra or missing fields"
         )
     return dict(receipt)
 
@@ -3924,7 +4248,10 @@ def _validate_cold_publisher(value: Mapping[str, Any]) -> Mapping[str, str]:
         "runtime_source_set_sha256",
         "execution_module_origin_keyset_sha256",
     }
-    if set(value) != expected_keys or value.get("annotated_tag") != V14_COLD_PUBLISHER_TAG:
+    if (
+        set(value) != expected_keys
+        or value.get("annotated_tag") != SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
+    ):
         raise OwnerBuyE3MechanicsBaselineError("cold publisher identity drifted")
     git_object_re = re.compile(r"^[0-9a-f]{40,64}$")
     for field in (
@@ -3951,7 +4278,7 @@ def capture_cold_publisher(repository_root: Path, *, annotated_tag: str) -> Mapp
 
     root = Path(repository_root).absolute()
     _lexical_parts(root, label="cold publisher repository root")
-    if annotated_tag != V14_COLD_PUBLISHER_TAG:
+    if annotated_tag != SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG:
         raise OwnerBuyE3MechanicsBaselineError("cold publisher tag identity drifted")
     git_environment = {
         key: value
@@ -4059,7 +4386,7 @@ _DEFAULT_BUNDLE_FILE_NAMES: Final = (
     "owner_private_inputs.json",
     "config.host_neutral.replay_projection.json",
     "loaded_capability_receipt.json",
-    "v14_mechanics_governance_receipt.json",
+    "mechanics_safety_successor_governance_receipt.json",
     "manifest.json",
 )
 
@@ -4083,10 +4410,10 @@ def _default_bundle_payloads(
     ):
         raise OwnerBuyE3MechanicsBaselineError("published host-neutral projection drifted")
     transaction: dict[str, Any] = {
-        "schema_version": V14_PRIVATE_TRANSACTION_SCHEMA,
+        "schema_version": SAFETY_SUCCESSOR_PRIVATE_TRANSACTION_SCHEMA,
         "identity": IDENTITY,
         "state_machine": "locked_create_only_files_then_manifest_last",
-        "effective_at_utc": V14_EFFECTIVE_AT_UTC,
+        "effective_at_utc": SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
         "owner_private_inputs_file_sha256": hashlib.sha256(owner_inputs_bytes).hexdigest(),
         "loaded_capability_file_sha256": hashlib.sha256(capability_bytes).hexdigest(),
         "governance_receipt_file_sha256": hashlib.sha256(governance_bytes).hexdigest(),
@@ -4104,7 +4431,7 @@ def _default_bundle_payloads(
         "owner_private_inputs.json": owner_inputs_bytes,
         "config.host_neutral.replay_projection.json": projection_bytes,
         "loaded_capability_receipt.json": capability_bytes,
-        "v14_mechanics_governance_receipt.json": governance_bytes,
+        "mechanics_safety_successor_governance_receipt.json": governance_bytes,
     }
     artifacts = {
         name.removesuffix(".json"): {
@@ -4117,10 +4444,10 @@ def _default_bundle_payloads(
         for name, data in pre_manifest.items()
     }
     manifest: dict[str, Any] = {
-        "schema_version": V14_PRIVATE_MANIFEST_SCHEMA,
+        "schema_version": SAFETY_SUCCESSOR_PRIVATE_MANIFEST_SCHEMA,
         "identity": IDENTITY,
-        "status": "current_default_buy_e3_mechanics_bundle_complete",
-        "effective_at_utc": V14_EFFECTIVE_AT_UTC,
+        "status": "current_default_buy_e3_mechanics_safety_successor_bundle_complete",
+        "effective_at_utc": SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
         "publisher": dict(publisher),
         "mechanics_contract": dict(public_contract_binding),
         "owner_private_inputs": {
@@ -4135,6 +4462,12 @@ def _default_bundle_payloads(
         "governance": {
             "canonical_sha256": governance_receipt["canonical_governance_receipt_sha256"],
             "predecessor_v13_committed": True,
+            "predecessor_mechanics_contract_file_sha256": (
+                PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256
+            ),
+            "predecessor_mechanics_contract_canonical_sha256": (
+                PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256
+            ),
             "resolver_activated": True,
         },
         "artifacts": artifacts,
@@ -4142,10 +4475,18 @@ def _default_bundle_payloads(
             "formal_e3_mechanics_panel": True,
             "reduced_support": True,
             "day_count": 30,
-            "v12_50_day_economic_control_retained": True,
+            "v12_50_day_economic_comparator_retained": True,
+            "v12_50_day_economic_results_status": (
+                "historical_comparator_stale_under_current_safety_mechanics"
+            ),
         },
+        "mechanics_safety_semantics": dict(MECHANICS_SAFETY_SEMANTICS),
+        "mechanics_safety_source_coverage": dict(MECHANICS_SAFETY_SOURCE_COVERAGE),
+        "material_mechanics_config_delta": dict(
+            SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+        ),
         "availability": "private_not_distributed",
-        "permissions": dict(V14_PERMISSIONS),
+        "permissions": dict(SAFETY_SUCCESSOR_PERMISSIONS),
     }
     manifest["canonical_manifest_sha256"] = document_sha256(manifest, "canonical_manifest_sha256")
     all_files = dict(pre_manifest)
@@ -4303,21 +4644,24 @@ def _validate_default_bundle_documents(
             raise OwnerBuyE3MechanicsBaselineError("published loaded capability receipt drifted")
         capability = published_capability
         governance = _parse_strict_json(
-            observed["v14_mechanics_governance_receipt.json"],
-            label="published v14 mechanics governance receipt",
+            observed["mechanics_safety_successor_governance_receipt.json"],
+            label="published mechanics safety successor governance receipt",
         )
-        validated_governance = validate_v14_mechanics_governance_receipt(
+        validated_governance = validate_mechanics_safety_successor_governance_receipt(
             governance,
             predecessor_v13_identity_path=predecessor_v13_identity_path,
             predecessor_v13_file_sha256=V13_PREDECESSOR_FILE_SHA256,
             public_contract_path=public_contract_path,
-            public_contract_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
+            public_contract_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
         )
         public_contract = _public_contract_binding(
             public_contract_path,
-            expected_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
+            expected_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
         )
-        cold = capture_cold_publisher(cold_repository_root, annotated_tag=V14_COLD_PUBLISHER_TAG)
+        cold = capture_cold_publisher(
+            cold_repository_root,
+            annotated_tag=SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+        )
         expected, manifest = _default_bundle_payloads(
             private_input_contract=rebound_inputs,
             projection_bytes=loaded.projected_config_bytes,
@@ -4336,7 +4680,7 @@ def _validate_default_bundle_documents(
         raise
 
 
-def validate_v14_private_bundle(
+def validate_mechanics_safety_successor_private_bundle(
     *,
     runtime_repository_root: Path,
     durable_evidence_root: Path,
@@ -4404,7 +4748,7 @@ def load_published_owner_buy_e3_default(
         raise
 
 
-def publish_v14_private_bundle(
+def publish_mechanics_safety_successor_private_bundle(
     *,
     runtime_repository_root: Path,
     durable_evidence_root: Path,
@@ -4423,7 +4767,7 @@ def publish_v14_private_bundle(
     )
     os.close(durable_fd)
     destination = durable_root.joinpath(*FORMAL_PRIVATE_BUNDLE_RELATIVE.parts)
-    if destination.parent.name != "direct_no_shadow_live_evidence_v6_20260824":
+    if destination.parent.name != "mechanics_safety_successor_v1_20260825":
         raise OwnerBuyE3MechanicsBaselineError("formal private bundle locator drifted")
     parts = _lexical_parts(destination, label="formal default mechanics bundle")
     parent_fd = _open_trusted_directory(
@@ -4436,7 +4780,10 @@ def publish_v14_private_bundle(
     loaded: OwnerBuyE3MechanicsBaseline | None = None
     try:
         bundle_fd, binding, _created = _open_bundle_directory(parent_fd, parts[-1], create=True)
-        cold = capture_cold_publisher(cold_repository_root, annotated_tag=V14_COLD_PUBLISHER_TAG)
+        cold = capture_cold_publisher(
+            cold_repository_root,
+            annotated_tag=SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+        )
         loaded, private_inputs, capability = load_owner_buy_e3_default_from_private_inputs(
             runtime_repository_root=runtime_repository_root,
             durable_evidence_root=durable_evidence_root,
@@ -4452,16 +4799,16 @@ def publish_v14_private_bundle(
                 relative_locators=relative_locators,
             ),
         )
-        governance = create_v14_mechanics_governance_receipt(
+        governance = create_mechanics_safety_successor_governance_receipt(
             predecessor_v13_identity_path=predecessor_v13_identity_path,
             predecessor_v13_file_sha256=V13_PREDECESSOR_FILE_SHA256,
             public_contract_path=public_contract_path,
-            public_contract_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
-            effective_at_utc=V14_EFFECTIVE_AT_UTC,
+            public_contract_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
+            effective_at_utc=SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
         )
         public_contract = _public_contract_binding(
             public_contract_path,
-            expected_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
+            expected_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
         )
         files, manifest = _default_bundle_payloads(
             private_input_contract=private_inputs,
@@ -4539,18 +4886,19 @@ def publish_v14_private_bundle(
                 ),
             )
             second_cold = capture_cold_publisher(
-                cold_repository_root, annotated_tag=V14_COLD_PUBLISHER_TAG
+                cold_repository_root,
+                annotated_tag=SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
             )
-            second_governance = create_v14_mechanics_governance_receipt(
+            second_governance = create_mechanics_safety_successor_governance_receipt(
                 predecessor_v13_identity_path=predecessor_v13_identity_path,
                 predecessor_v13_file_sha256=V13_PREDECESSOR_FILE_SHA256,
                 public_contract_path=public_contract_path,
-                public_contract_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
-                effective_at_utc=V14_EFFECTIVE_AT_UTC,
+                public_contract_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
+                effective_at_utc=SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
             )
             second_contract = _public_contract_binding(
                 public_contract_path,
-                expected_file_sha256=V14_PUBLIC_CONTRACT_FILE_SHA256,
+                expected_file_sha256=SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256,
             )
             second_files, second_manifest = _default_bundle_payloads(
                 private_input_contract=second_inputs,
@@ -4569,7 +4917,10 @@ def publish_v14_private_bundle(
             if _failure_hook is not None:
                 _failure_hook("manifest.json")
             if (
-                capture_cold_publisher(cold_repository_root, annotated_tag=V14_COLD_PUBLISHER_TAG)
+                capture_cold_publisher(
+                    cold_repository_root,
+                    annotated_tag=SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+                )
                 != second_cold
             ):
                 raise OwnerBuyE3MechanicsBaselineError(
@@ -4588,6 +4939,21 @@ def publish_v14_private_bundle(
         os.close(parent_fd)
 
 
+# Historical function names remain compatibility aliases only.  Reproducing
+# the frozen v14 evidence still requires its old annotated-tag checkout.
+create_owner_buy_e3_backtest_mechanics_safety_successor = (
+    create_owner_buy_e3_backtest_mechanics_baseline
+)
+create_v14_mechanics_governance_receipt = (
+    create_mechanics_safety_successor_governance_receipt
+)
+validate_v14_mechanics_governance_receipt = (
+    validate_mechanics_safety_successor_governance_receipt
+)
+publish_v14_private_bundle = publish_mechanics_safety_successor_private_bundle
+validate_v14_private_bundle = validate_mechanics_safety_successor_private_bundle
+
+
 __all__ = [
     "AVAILABILITY",
     "DayMechanicsOverlay",
@@ -4597,18 +4963,38 @@ __all__ = [
     "HOST_NEUTRAL_CONFIG_FILE_SHA256",
     "HOST_NEUTRAL_CONFIG_MAPPING_SHA256",
     "IDENTITY",
+    "MECHANICS_SAFETY_SOURCE_COVERAGE",
+    "MECHANICS_SAFETY_SEMANTICS",
     "OwnerBuyE3MechanicsBaseline",
     "OwnerBuyE3MechanicsBaselineError",
     "PERMISSIONS",
     "ParityEvidencePaths",
+    "PREDECESSOR_MECHANICS_ANNOTATED_TAG",
+    "PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT",
+    "PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256",
+    "PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256",
+    "PREDECESSOR_MECHANICS_CONTRACT_RELATIVE",
+    "PREDECESSOR_MECHANICS_IDENTITY",
+    "PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE",
+    "RUNTIME_SOURCE_BINDING_SCOPE",
     "SOURCE_CONFIG_DELTA_PATHS_SHA256",
+    "SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG",
+    "SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC",
+    "SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA",
+    "SAFETY_SUCCESSOR_PERMISSIONS",
+    "SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256",
     "V13_PREDECESSOR_FILE_SHA256",
     "V14_COLD_PUBLISHER_TAG",
     "V14_PUBLIC_CONTRACT_FILE_SHA256",
     "capture_cold_publisher",
+    "create_mechanics_safety_successor_governance_receipt",
     "create_owner_buy_e3_backtest_mechanics_baseline",
+    "create_owner_buy_e3_backtest_mechanics_safety_successor",
     "create_v14_mechanics_governance_receipt",
     "publish_v14_private_bundle",
+    "publish_mechanics_safety_successor_private_bundle",
     "validate_v14_private_bundle",
     "validate_v14_mechanics_governance_receipt",
+    "validate_mechanics_safety_successor_governance_receipt",
+    "validate_mechanics_safety_successor_private_bundle",
 ]

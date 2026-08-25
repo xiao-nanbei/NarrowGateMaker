@@ -443,7 +443,7 @@ def test_shadow_flags_are_restart_only_before_engine_mutation() -> None:
         live_config.require_multi_market_shadow_restart(previous, candidate)
 
 
-def test_buy_e3_and_sell_decision_asts_are_unchanged_from_exact_07ef() -> None:
+def test_buy_e3_and_sell_decision_asts_preserve_exact_07ef_policy_boundary() -> None:
     expected = {
         (
             "strategy/boolean_cooldown_buy_e3.py",
@@ -486,4 +486,41 @@ def test_buy_e3_and_sell_decision_asts_are_unchanged_from_exact_07ef() -> None:
             "_on_fill",
         ): "0e33055db2ccd57fb3e04968b5a5112bbd31d4017649d6d938c66e9954a61bed",
     }
-    assert {key: _function_ast_sha256(*key) for key in expected} == expected
+    observed = {key: _function_ast_sha256(*key) for key in expected}
+    fill_key = ("strategy/maker_engine.py", "MakerEngine", "_on_fill")
+
+    # Keep the historical 07ef hash immutable.  The fill dispatcher now has
+    # identity-aware reconciliation and applied-quantity deduplication; direct
+    # ledger/campaign tests govern that intentional safety successor.  The BUY
+    # E3/SELL policy selectors themselves must remain byte-for-byte structural
+    # matches with the frozen predecessor.
+    assert observed[fill_key] != expected[fill_key]
+    assert {key: value for key, value in observed.items() if key != fill_key} == {
+        key: value for key, value in expected.items() if key != fill_key
+    }
+
+    tree = ast.parse((ROOT / fill_key[0]).read_text(encoding="utf-8"))
+    maker = next(
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == fill_key[1]
+    )
+    fill = next(
+        node
+        for node in maker.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fill_key[2]
+    )
+    referenced_names = {
+        name
+        for node in ast.walk(fill)
+        for name in (
+            [node.id]
+            if isinstance(node, ast.Name)
+            else [node.attr]
+            if isinstance(node, ast.Attribute)
+            else []
+        )
+    }
+    assert not {
+        name
+        for name in referenced_names
+        if name in {"global_flow", "global_reference"} or "shadow" in name
+    }

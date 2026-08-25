@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
 
+from strategy.quote_core import SPREAD_CAP_COMPRESS
+
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
 
 
@@ -22,6 +24,7 @@ def _params(*, cancel_latency_ms: int = 500):
     params.quote.order_size = params.order_size
     params.quote.max_inventory = params.max_inventory
     params.quote.max_spread_bps = 20.0
+    params.quote.spread_cap_mode = SPREAD_CAP_COMPRESS
     return params
 
 

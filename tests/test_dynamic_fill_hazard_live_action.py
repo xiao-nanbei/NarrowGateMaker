@@ -198,6 +198,9 @@ def _engine() -> tuple[MakerEngine, str, _Rest, _Ws]:
     engine._dynamic_fill_hazard_action_invalid_hold_count = 0
     engine._dynamic_fill_hazard_action_last_score = float("nan")
     engine._last_requote_time = 123.0
+    engine._order_ref_lock = threading.RLock()
+    engine._bid_cid = None
+    engine._ask_cid = None
     engine._log_dynamic_fill_hazard_action = lambda **_kwargs: None
     engine._log_order_outcome = lambda *_args, **_kwargs: None
     engine._pop_order_context = lambda *_args, **_kwargs: None
@@ -243,9 +246,14 @@ def test_buy_exposure_cancel_ack_enters_independent_recovery_state() -> None:
 
     engine.orders.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
+            "o": "LIMIT",
             "X": "CANCELED",
             "i": 42,
+            "p": "99.0",
+            "q": "0.001",
         }
     )
     hold = engine._dynamic_fill_hazard_action_hold
@@ -271,9 +279,14 @@ def test_fresh_prospective_recovery_rebuilds_age_and_queue_without_old_path() ->
     assert engine._apply_dynamic_fill_hazard_action(_observation(cid)) == "cancel"
     engine.orders.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
+            "o": "LIMIT",
             "X": "CANCELED",
             "i": 42,
+            "p": "99.0",
+            "q": "0.001",
         }
     )
     assert runtime.dropped == [cid]
@@ -319,9 +332,14 @@ def test_full_fill_releases_hold_without_post_cancel_reentry() -> None:
 
     engine.orders.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
+            "o": "LIMIT",
             "X": "FILLED",
             "i": 42,
+            "p": "99.0",
+            "q": "0.001",
             "z": "0.001",
             "l": "0.001",
             "L": "99.0",
@@ -345,9 +363,14 @@ def test_reject_or_expiry_returns_to_baseline_resubmit(status: str) -> None:
 
     engine.orders.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
+            "o": "LIMIT",
             "X": status,
             "i": 42,
+            "p": "99.0",
+            "q": "0.001",
         }
     )
 

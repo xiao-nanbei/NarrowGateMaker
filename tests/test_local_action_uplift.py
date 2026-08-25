@@ -11,6 +11,7 @@ from research.families.f09_campaign_action_uplift.audit.local_action_ope_report 
 from research.families.f09_campaign_action_uplift.audit.local_action_uplift import (
     OPE_FEATURES,
     QUEUE_VALUE_OPE_FEATURES,
+    _run_day,
     native_censoring_reward_bounds,
     parse_args,
     validate_action_panel,
@@ -102,6 +103,23 @@ def test_unfrozen_smoke_cli_can_name_new_queue_family(tmp_path) -> None:
     assert args.panel_role == "smoke"
     assert args.action_family == "queue_value_keep_cancel"
     assert args.eligible_sides == "BUY,SELL"
+
+
+def test_run_day_uses_serialized_bundle_binding_not_main_local_args() -> None:
+    with pytest.raises(
+        SystemExit,
+        match="--queue-competing-risk-bundle is valid only",
+    ):
+        _run_day(
+            (
+                "2026-06-05",
+                "BTCUSDC",
+                {
+                    "_randomized_action_family": "queue_value_keep_cancel",
+                    "queue_value_competing_risk_bundle_path": "unexpected.json",
+                },
+            )
+        )
 
 
 def test_ope_outcomes_keep_terminal_and_tail_targets_separate() -> None:

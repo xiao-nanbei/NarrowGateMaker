@@ -35,6 +35,7 @@ def test_v2_identity_is_preserved_as_a_historical_implementation() -> None:
         "features/feature_dag.py",
         "live/config.py",
         "live/config.yaml",
+        "live/ws_handler.py",
         "models/backtest_tick.py",
         "strategy/dynamic_fill_hazard_model.py",
         "strategy/maker_engine.py",
@@ -43,6 +44,7 @@ def test_v2_identity_is_preserved_as_a_historical_implementation() -> None:
         "tests/test_dynamic_fill_hazard_cpp_parity.py",
         "tests/test_dynamic_fill_hazard_live_action.py",
         "tests/test_execution_order_lifecycle.py",
+        "tests/test_replay_path_dependent_controls.py",
     }
 
 

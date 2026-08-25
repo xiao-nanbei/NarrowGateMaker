@@ -115,9 +115,7 @@ def test_exact_tape_validates_native_opener_denominator() -> None:
     assert report["candidate_quote_changes"] == 1
     assert report["candidate_rate"] == pytest.approx(0.5)
     assert report["pooled_candidate_rate_supported_diagnostic"] is True
-    assert report["candidate_rate_gate_scope"] == (
-        "BUY_and_SELL_each_independently"
-    )
+    assert report["candidate_rate_gate_scope"] == ("BUY_and_SELL_each_independently")
     assert report["candidate_rate_supported"] is False
     assert report["action_experiment_authorized"] is False
 
@@ -133,10 +131,7 @@ def test_exact_tape_requires_each_side_to_pass_candidate_rate() -> None:
     report = validate_exact_opportunity_tape(frame)
 
     assert report["candidate_rate_supported"] is True
-    assert all(
-        summary["candidate_rate_supported"]
-        for summary in report["side_summaries"]
-    )
+    assert all(summary["candidate_rate_supported"] for summary in report["side_summaries"])
 
 
 def test_exact_tape_rejects_future_feature_clock() -> None:
@@ -273,10 +268,15 @@ def test_order_manager_emits_native_lifecycle_callbacks(
     manager.confirm_new(cid, 42)
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "PARTIALLY_FILLED",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "z": "0.0004",
+            "l": "0.0004",
             "L": "100.0",
             "ap": "100.0",
             "T": 3_500,
@@ -286,9 +286,13 @@ def test_order_manager_emits_native_lifecycle_callbacks(
     manager.mark_pending_cancel(cid)
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "CANCELED",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "T": 4_500,
             "_local_receive_ts_ns": 5_000_000_000,
         }
@@ -308,7 +312,15 @@ class _Rest:
 
     def new_order(self, **kwargs):
         self.calls.append(dict(kwargs))
-        return {"orderId": 42, "status": "NEW"}
+        return {
+            "orderId": 42,
+            "status": "NEW",
+            "clientOrderId": kwargs["newClientOrderId"],
+            "symbol": kwargs["symbol"],
+            "side": kwargs["side"],
+            "origQty": kwargs["quantity"],
+            "executedQty": "0",
+        }
 
     def cancel_order(self, **_kwargs):
         return {}
@@ -393,7 +405,15 @@ class _BlockingSubmitRest:
         self.calls.append(dict(kwargs))
         self.entered.set()
         assert self.release.wait(timeout=5.0)
-        return {"orderId": 43, "status": "NEW"}
+        return {
+            "orderId": 43,
+            "status": "NEW",
+            "clientOrderId": kwargs["newClientOrderId"],
+            "symbol": kwargs["symbol"],
+            "side": kwargs["side"],
+            "origQty": kwargs["quantity"],
+            "executedQty": "0",
+        }
 
 
 def _bare_engine(rest) -> MakerEngine:
@@ -416,6 +436,40 @@ def _bare_engine(rest) -> MakerEngine:
     return engine
 
 
+def _install_exact_account_trade_sync(
+    engine: MakerEngine,
+    *,
+    cid: str,
+    exchange_order_id: int,
+    cumulative_fill: float,
+    price: float,
+    commission: float = 0.01,
+    commission_asset: str = "USDC",
+) -> None:
+    """Model an independent accountTrades row, not query-order fill economics."""
+
+    def _sync_position(*, required: bool = False) -> bool:
+        order = engine.orders.get_order(cid)
+        assert order is not None
+        delta = cumulative_fill - float(order.filled_qty)
+        if delta > 1e-12:
+            engine.orders.reconcile_exchange_trade(
+                exchange_order_id=exchange_order_id,
+                trade_id=9_001,
+                symbol=order.symbol,
+                side=order.side,
+                quantity=delta,
+                price=price,
+                commission=commission,
+                commission_asset=commission_asset,
+                cumulative_fill=cumulative_fill,
+                trade_time_ms=1_900_000_000_000,
+            )
+        return True
+
+    engine.sync_position = _sync_position
+
+
 def test_submit_timeout_stays_pending_for_reconcile_instead_of_zero_exposure() -> None:
     engine = _bare_engine(_SubmitTimeoutRest())
 
@@ -433,9 +487,7 @@ def test_submit_timeout_stays_pending_for_reconcile_instead_of_zero_exposure() -
 
 @pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
 def test_structured_gtx_minus_5022_is_exact_zero_exposure(side: Side) -> None:
-    engine = _bare_engine(
-        _StructuredRejectRest(-5022, "Post Only order will be rejected")
-    )
+    engine = _bare_engine(_StructuredRejectRest(-5022, "Post Only order will be rejected"))
 
     cid = engine._place_order("BTCUSDC", side, 99.9, 0.001)
 
@@ -492,9 +544,7 @@ def test_malformed_submit_response_remains_pending_and_owned(
 
 @pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
 def test_structured_gtx_minus_5022_close_is_exact_zero_exposure(side: Side) -> None:
-    engine = _bare_engine(
-        _StructuredRejectRest(-5022, "Post Only order will be rejected")
-    )
+    engine = _bare_engine(_StructuredRejectRest(-5022, "Post Only order will be rejected"))
     price = 99.9 if side == Side.BUY else 100.1
 
     engine._place_close_order("BTCUSDC", side, price, 0.001)
@@ -554,9 +604,7 @@ def test_rest_minus_2013_cannot_release_unknown_submit_ownership(
     else:
         cid = engine._place_order("BTCUSDC", side, price, 0.001)
     assert cid is not None
-    engine.rest = _QueryRest(
-        error=_ExchangeError(-2013, "Order does not exist")
-    )
+    engine.rest = _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
 
     resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
 
@@ -584,9 +632,7 @@ def test_rest_minus_2013_cannot_release_pending_cancel_ownership(
         cid = engine._place_order("BTCUSDC", side, price, 0.001)
     assert cid is not None
     engine.orders.mark_pending_cancel(cid)
-    engine.rest = _QueryRest(
-        error=_ExchangeError(-2013, "Order does not exist")
-    )
+    engine.rest = _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
 
     resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
 
@@ -666,7 +712,7 @@ def test_malformed_query_response_keeps_pending_ownership(
 
 
 @pytest.mark.parametrize("status", ["PARTIALLY_FILLED", "FILLED"])
-def test_reconcile_derives_fill_price_from_cumulative_quote_quantity(status: str) -> None:
+def test_reconcile_uses_exact_account_trade_not_query_order_average(status: str) -> None:
     engine = _bare_engine(_SubmitTimeoutRest())
     cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
     assert cid is not None
@@ -684,6 +730,13 @@ def test_reconcile_derives_fill_price_from_cumulative_quote_quantity(status: str
             "avgPrice": None,
         }
     )
+    _install_exact_account_trade_sync(
+        engine,
+        cid=cid,
+        exchange_order_id=77,
+        cumulative_fill=float(executed_qty),
+        price=99.7,
+    )
 
     resolution = engine.reconcile_pending_new_order(order)
 
@@ -696,6 +749,36 @@ def test_reconcile_derives_fill_price_from_cumulative_quote_quantity(status: str
         assert retained is not None
         assert retained.state == OrderState.FILLED
         assert retained.filled_qty == pytest.approx(0.001)
+    assert retained.avg_fill_price == pytest.approx(99.7)
+
+
+def test_query_positive_fill_without_account_trades_latches_and_retains_ownership() -> None:
+    engine = _bare_engine(_SubmitTimeoutRest())
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    engine.rest = _RawQueryRest(
+        _query_response_for_order(
+            order,
+            status="FILLED",
+            executedQty="0.001",
+            avgPrice="99.8",
+        )
+    )
+    engine.sync_position = lambda *, required=False: (_ for _ in ()).throw(
+        RuntimeError("accountTrades evidence unavailable")
+    )
+
+    with pytest.raises(RuntimeError, match="exact accountTrades reconciliation"):
+        engine.reconcile_pending_new_order(order)
+
+    retained = engine.orders.get_order(cid)
+    assert retained is not None
+    assert retained.filled_qty == 0.0
+    assert retained.order_id == 77
+    assert engine._bid_cid == cid
+    assert engine._runtime_reconciliation_required is True
 
 
 @pytest.mark.parametrize("route", ["opening", "reducing"])
@@ -715,9 +798,7 @@ def test_pending_cancel_query_order_id_mismatch_keeps_ownership(
     engine.orders.mark_pending_cancel(cid)
     order = engine.orders.get_order(cid)
     assert order is not None
-    engine.rest = _RawQueryRest(
-        _query_response_for_order(order, orderId=order.order_id + 1)
-    )
+    engine.rest = _RawQueryRest(_query_response_for_order(order, orderId=order.order_id + 1))
 
     resolution = engine.reconcile_pending_cancel_order(order)
 
@@ -748,6 +829,13 @@ def test_pending_cancel_reconcile_applies_fill_before_releasing_ownership() -> N
     engine.orders.confirm_new(cid, 72)
     engine.orders.mark_pending_cancel(cid)
     engine._bid_cid = cid
+    _install_exact_account_trade_sync(
+        engine,
+        cid=cid,
+        exchange_order_id=72,
+        cumulative_fill=0.001,
+        price=99.7,
+    )
 
     resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
 
@@ -783,9 +871,60 @@ def test_same_side_orphan_conflict_stops_quoting_and_keeps_both_orders() -> None
 
     assert engine.is_running is False
     assert engine._bid_cid == tracked
-    assert {
-        order.client_order_id for order in engine.orders.get_active_by_side(Side.BUY)
-    } == {tracked, "mm_B_conflicting_orphan"}
+    assert {order.client_order_id for order in engine.orders.get_active_by_side(Side.BUY)} == {
+        tracked,
+        "mm_B_conflicting_orphan",
+    }
+
+
+@pytest.mark.parametrize("phase", ("reserve", "verify"))
+def test_ownership_conflict_fatal_cancel_runs_outside_nonreentrant_ref_lock(
+    phase: str,
+) -> None:
+    engine = _bare_engine(_Rest())
+    engine._order_ref_lock = threading.Lock()
+    engine._running = True
+    tracked = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(tracked, 41)
+    candidate = engine.orders.create_order("BTCUSDC", Side.BUY, 99.8, 0.001)
+    engine._bid_cid = tracked
+    cancel_calls = []
+
+    def _reentrant_cancel_open_orders(**_kwargs) -> dict:
+        with engine._order_ref_lock:
+            cancel_calls.append(True)
+        return {}
+
+    engine.rest = SimpleNamespace(cancel_open_orders=_reentrant_cancel_open_orders)
+    engine.sync_position = lambda *, required=False: True
+    result: list[bool] = []
+
+    def _run_conflict() -> None:
+        if phase == "reserve":
+            result.append(
+                engine._reserve_side_order_ownership(
+                    side=Side.BUY,
+                    cid=candidate,
+                )
+            )
+        else:
+            result.append(
+                engine._verify_side_order_ownership(
+                    side=Side.BUY,
+                    cid=candidate,
+                    phase="test_reentrant_cancel",
+                )
+            )
+
+    worker = threading.Thread(target=_run_conflict)
+    worker.start()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive()
+    assert result == [False]
+    assert cancel_calls == [True]
+    assert engine._bid_cid == tracked
+    assert engine._runtime_reconciliation_required is True
 
 
 def test_rest_in_flight_orphan_cannot_escape_same_side_ownership_guard() -> None:
@@ -827,9 +966,10 @@ def test_rest_in_flight_orphan_cannot_escape_same_side_ownership_guard() -> None
     assert result["cid"] == reserved_cid
     assert engine.is_running is False
     assert engine._ask_cid == reserved_cid
-    assert {
-        order.client_order_id for order in engine.orders.get_active_by_side(Side.SELL)
-    } == {reserved_cid, "mm_S_inflight_orphan"}
+    assert {order.client_order_id for order in engine.orders.get_active_by_side(Side.SELL)} == {
+        reserved_cid,
+        "mm_S_inflight_orphan",
+    }
     assert len(rest.calls) == 1
 
     assert engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001) is None
@@ -908,6 +1048,14 @@ def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
             "updateTime": 1_900_000_000_000,
         }
     )
+    if float(executed_qty) > 0.0:
+        _install_exact_account_trade_sync(
+            engine,
+            cid=cid,
+            exchange_order_id=77,
+            cumulative_fill=float(executed_qty),
+            price=price,
+        )
 
     resolution = engine.reconcile_pending_new_order(submitted)
 
@@ -919,8 +1067,13 @@ def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
     assert order.filled_qty == pytest.approx(float(executed_qty))
     assert snapshot["activation_ts_ns"] == 0
     assert snapshot["activation_exchange_ts_ns"] == 0
-    assert snapshot["first_fill_exchange_ts_ns"] == 0
-    assert snapshot["terminal_exchange_ts_ns"] == 0
+    exact_trade_ts_ns = 1_900_000_000_000_000_000
+    assert snapshot["first_fill_exchange_ts_ns"] == (
+        exact_trade_ts_ns if float(executed_qty) > 0.0 else 0
+    )
+    assert snapshot["terminal_exchange_ts_ns"] == (
+        exact_trade_ts_ns if status == "FILLED" else 0
+    )
     assert snapshot["visible_exposure_valid"] is False
     assert snapshot["exchange_exposure_valid"] is False
     assert snapshot["visible_exposure_complete"] is False
@@ -966,6 +1119,14 @@ def test_pending_cancel_reconcile_keeps_known_activation_but_not_rest_event_cloc
             updateTime=1_900_000_000_000,
         )
     )
+    if float(executed_qty) > 0.0:
+        _install_exact_account_trade_sync(
+            engine,
+            cid=cid,
+            exchange_order_id=int(pending.order_id),
+            cumulative_fill=float(executed_qty),
+            price=price,
+        )
 
     resolution = engine.reconcile_pending_cancel_order(pending)
 
@@ -977,8 +1138,13 @@ def test_pending_cancel_reconcile_keeps_known_activation_but_not_rest_event_cloc
     assert order.filled_qty == pytest.approx(float(executed_qty))
     assert snapshot["activation_ts_ns"] == activation_ts_ns
     assert snapshot["activation_exchange_ts_ns"] == 0
-    assert snapshot["first_fill_exchange_ts_ns"] == 0
-    assert snapshot["terminal_exchange_ts_ns"] == 0
+    exact_trade_ts_ns = 1_900_000_000_000_000_000
+    assert snapshot["first_fill_exchange_ts_ns"] == (
+        exact_trade_ts_ns if float(executed_qty) > 0.0 else 0
+    )
+    assert snapshot["terminal_exchange_ts_ns"] == (
+        exact_trade_ts_ns if status == "FILLED" else 0
+    )
     if expected_state in {OrderState.OPEN, OrderState.PENDING_CANCEL}:
         assert (engine._bid_cid if side == Side.BUY else engine._ask_cid) == cid
 
@@ -1059,9 +1225,13 @@ def test_live_producer_links_submit_and_cancel_to_origin_decision(
     exchange_ts_ns = time.time_ns()
     engine.orders.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "CANCELED",
             "i": 42,
+            "p": "99.9",
+            "q": "0.001",
             "T": exchange_ts_ns // 1_000_000,
             "_local_receive_ts_ns": exchange_ts_ns + 1_000_000,
         }

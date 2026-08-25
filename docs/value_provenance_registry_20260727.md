@@ -48,7 +48,7 @@ The table below records the state understood on 2026-07-27. Its values and `live
 | maximum inventory | `0.026 BTC` | Hybrid | Historically selected plus accepted risk budget |
 | requote interval | `5s` | Hybrid | Historical operating choice and churn budget |
 | add-side fill cooldown | `85s` | Empirical policy selection | No paper or theorem implies 85 seconds |
-| total pair-spread cap | `20 bps` | Hybrid | Historical selection plus safety cap |
+| total pair-spread threshold | `20 bps` | Hybrid | Historical inward-compression trigger, not a risk-safety guarantee |
 | BUY fill-selection threshold | `0.44 score` | Empirical policy selection | A ranking score, not absolute fill probability |
 | BUY active-order hazard | frozen adverse-value `q90` cancel/re-enter | Hybrid | Separate from the new placement-fill CIF |
 | 13-head ML | disabled | Engineering runtime state | Empirical P3 remains active |

@@ -4,6 +4,7 @@ import pytest
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
 
 from strategy import quote_core as qc
+from strategy.policy_guards import CommonSidePolicyInput, evaluate_common_side_policy
 
 
 def _cfg(**overrides):
@@ -33,6 +34,109 @@ def _cfg(**overrides):
 def test_markout_asymmetry_default_uses_maker_signed_direction():
     assert _cfg().markout_side_asymmetry_sign == 1.0
     assert narrowgate_cpp.QuoteCoreConfig().markout_side_asymmetry_sign == 1.0
+
+
+def test_spread_cap_missing_field_defaults_fail_closed_in_python_and_cpp():
+    assert _cfg().spread_cap_mode == qc.SPREAD_CAP_PAUSE_EXPOSURE
+    assert narrowgate_cpp.QuoteCoreConfig().spread_cap_mode == (
+        qc.SPREAD_CAP_PAUSE_EXPOSURE
+    )
+    assert qc.quote_core_config_from_params(
+        {
+            "gamma": 0.01,
+            "kappa": 1.0,
+            "maker_fee": 0.0,
+            "order_size": 0.001,
+            "max_inventory": 0.01,
+        },
+        tick_size=0.1,
+        lot_size=0.001,
+        use_ml=False,
+        use_depth_microprice=False,
+        use_depth_kappa=False,
+    ).spread_cap_mode == (
+        qc.SPREAD_CAP_PAUSE_EXPOSURE
+    )
+
+
+@pytest.mark.parametrize(
+    ("side", "inventory", "quantity", "expected"),
+    (
+        ("BUY", 0.0, 0.001, True),
+        ("BUY", -0.002, 0.001, False),
+        ("BUY", -0.001, 0.001, False),
+        ("BUY", -0.0005, 0.001, True),
+        ("SELL", 0.0, 0.001, True),
+        ("SELL", 0.002, 0.001, False),
+        ("SELL", 0.001, 0.001, False),
+        ("SELL", 0.0005, 0.001, True),
+    ),
+)
+def test_exposure_role_is_quantity_aware_and_cross_zero_fails_closed(
+    side, inventory, quantity, expected
+):
+    assert qc._exposure_increasing(side, inventory, quantity, 0.001) is expected
+
+
+@pytest.mark.parametrize("lot_size", (0.0, float("nan"), float("inf")))
+def test_exposure_role_fails_closed_when_lot_size_is_invalid(lot_size):
+    assert qc._exposure_increasing("BUY", -0.001, 0.001, lot_size) is True
+    assert qc._exposure_increasing("SELL", 0.001, 0.001, lot_size) is True
+
+
+def test_exact_one_lot_close_avoids_adverse_price_size_and_reason_with_cpp_parity(
+    monkeypatch,
+):
+    cfg = _cfg(
+        ml_enabled=False,
+        dynamic_cap_enabled=False,
+        max_spread_bps=0.0,
+        adverse_guard_enabled=True,
+        adverse_toxicity_threshold=0.7,
+        adverse_spread_mult=2.0,
+        adverse_pause=False,
+        markout_spread_scale=0.0,
+    )
+    pred = qc.QuotePrediction(tox_bid=1.0, tox_ask=0.0)
+    exact_close = _state(inventory=-0.001, mo_ema_bid=0.0, mo_ema_ask=0.0)
+    cross_zero = _state(inventory=-0.0005, mo_ema_bid=0.0, mo_ema_ask=0.0)
+
+    monkeypatch.delenv("NARROWGATE_CPP_QUOTE_CORE", raising=False)
+    exact_py = qc.compute_quote_core(exact_close, cfg, pred, qc.DepthSnapshot())
+    cross_py = qc.compute_quote_core(cross_zero, cfg, pred, qc.DepthSnapshot())
+    exact_context = exact_py.quote_context["BUY"]
+    cross_context = cross_py.quote_context["BUY"]
+    exact_policy = evaluate_common_side_policy(
+        CommonSidePolicyInput(
+            exposure_increasing=False,
+            side_adverse=exact_context["side_adverse"],
+            side_adverse_pause=exact_context["side_adverse_pause"],
+        )
+    )
+    cross_policy = evaluate_common_side_policy(
+        CommonSidePolicyInput(
+            exposure_increasing=True,
+            side_adverse=cross_context["side_adverse"],
+            side_adverse_pause=cross_context["side_adverse_pause"],
+        )
+    )
+
+    assert exact_context["side_adverse"] is False
+    assert exact_policy.size_mult == 1.0
+    assert exact_policy.reason_mask == 0
+    assert cross_context["side_adverse"] is True
+    assert cross_policy.size_mult == pytest.approx(0.7)
+    assert cross_policy.reason_mask != 0
+    assert cross_py.bid_price < exact_py.bid_price
+
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    exact_cpp = qc.compute_quote_core(exact_close, cfg, pred, qc.DepthSnapshot())
+    cross_cpp = qc.compute_quote_core(cross_zero, cfg, pred, qc.DepthSnapshot())
+    assert exact_cpp.quote_context["BUY"]["side_adverse"] is False
+    assert cross_cpp.quote_context["BUY"]["side_adverse"] is True
+    assert exact_cpp.bid_price == pytest.approx(exact_py.bid_price, abs=cfg.tick_size * 0.51)
+    assert cross_cpp.bid_price == pytest.approx(cross_py.bid_price, abs=cfg.tick_size * 0.51)
 
 
 def _state(i=0, **overrides):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import subprocess
@@ -531,33 +532,38 @@ def test_schema_surface_and_cycle_break_are_explicit() -> None:
     }
 
 
-def test_runtime_source_binding_includes_no_shadow_modules_and_rejects_old_bytes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_predecessor_runtime_binding_is_immutable_and_safety_overlay_fails_closed() -> None:
     root = Path(__file__).resolve().parents[1]
-    binding = subject.bind_current_successor_runtime_sources(
-        runtime_repository_root=root,
-        collector_repository_root=root,
-    )
-    assert binding["sparse_window_repair_bound"] is True
-    assert {
+    current_mismatches = set()
+    for role, frozen in subject.CURRENT_SUCCESSOR_RUNTIME_SOURCE_SHA256.items():
+        relative = str(frozen["path"])
+        expected = str(frozen["sha256"])
+        predecessor_raw = subprocess.run(
+            (
+                "git",
+                "show",
+                f"{subject.DIRECT_SUCCESSOR_EXECUTION_COMMIT}:{relative}",
+            ),
+            cwd=root,
+            check=True,
+            capture_output=True,
+        ).stdout
+        assert hashlib.sha256(predecessor_raw).hexdigest() == expected
+        if subject.file_sha256(root / relative) != expected:
+            current_mismatches.add(role)
+
+    # Preserve the release-v3 hashes as immutable historical evidence.  The
+    # current safety repair intentionally changes only these live host/runtime
+    # surfaces; trying to present it as the predecessor must fail closed until
+    # its own successor receipt is published.
+    assert current_mismatches == {
+        "maker_engine",
         "signal_engine",
-        "global_flow",
-        "global_reference",
-    }.issubset(binding["files"])
-    assert (
-        binding["files"]["buy_e3_runtime"]["sha256"]
-        == "85cd44c6695caa3f50942b2dc1cf489f6d1af113db53cd07b891d44d1ccfaf94"
-    )
-
-    real_hash = subject.file_sha256
-
-    def drift(path: Path) -> str:
-        if path.as_posix().endswith("strategy/boolean_cooldown_buy_e3.py"):
-            return "0" * 64
-        return real_hash(path)
-
-    monkeypatch.setattr(subject, "file_sha256", drift)
+        "live_config",
+        "live_main",
+        "live_run",
+        "live_ws_handler",
+    }
     with pytest.raises(subject.BuyE3CurrentHostResourceGateError, match="source drifted"):
         subject.bind_current_successor_runtime_sources(
             runtime_repository_root=root,

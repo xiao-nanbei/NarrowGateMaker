@@ -28,7 +28,9 @@ constexpr std::int64_t kP3ReachBudgetBucketMs = 10'000;
 constexpr std::size_t kP3ReachBudgetGridSize = 1'180;
 constexpr int kP3ReachBudgetGridMinTicks = 5;
 constexpr std::string_view kLossCooldownSemantics =
-    "round_trip_realized_pnl_policy_clock_v1";
+    "round_trip_realized_pnl_policy_clock_flip_fee_split_v2";
+constexpr std::string_view kLossCooldownSnapshotSchema =
+    "narrowgate_loss_cooldown_snapshot.v2";
 constexpr std::string_view kSyncAdjustSemantics =
     "system_event_after_market_same_ms_v1";
 constexpr std::string_view kF05ShortCrossPredicate =
@@ -602,6 +604,7 @@ struct ConsecutiveLossCooldownState {
     double round_trip_pnl = 0.0;
     int consecutive_losses = 0;
     std::int64_t cooldown_until_ms = 0;
+    std::int64_t last_cancel_ts_ms = -1;
     bool threshold_pending = false;
     std::int64_t trigger_count = 0;
     std::int64_t expiry_count = 0;
@@ -641,7 +644,7 @@ struct ConsecutiveLossCooldownState {
     void on_fill(double quantity, double price, double commission) {
         if (!std::isfinite(quantity) || !std::isfinite(price) ||
             !std::isfinite(commission) || quantity <= 0.0 ||
-            price <= 0.0 || commission < 0.0) {
+            price <= 0.0) {
             throw std::invalid_argument("invalid consecutive-loss fill");
         }
         const double signed_qty = is_buy_v<S> ? quantity : -quantity;
@@ -665,19 +668,25 @@ struct ConsecutiveLossCooldownState {
         const double old_inventory = inventory;
         const double old_abs = std::abs(old_inventory);
         const double close_qty = std::min(quantity, old_abs);
+        const double closing_fee = commission * close_qty / quantity;
+        const double opening_fee = commission - closing_fee;
         const double open_fee_share = old_abs > 1e-10
             ? open_commission * close_qty / old_abs
             : open_commission;
         const double realized = old_inventory > 0.0
-            ? (price - avg_entry) * close_qty - commission - open_fee_share
-            : (avg_entry - price) * close_qty - commission - open_fee_share;
-        open_commission = std::max(0.0, open_commission - open_fee_share);
+            ? (price - avg_entry) * close_qty - closing_fee - open_fee_share
+            : (avg_entry - price) * close_qty - closing_fee - open_fee_share;
+        open_commission -= open_fee_share;
         round_trip_pnl += realized;
         const double remaining = old_abs - close_qty;
         if (remaining < 1e-10) {
             if (round_trip_pnl < 0.0) {
-                ++consecutive_losses;
                 ++losing_round_trips;
+                if (enabled()) {
+                    ++consecutive_losses;
+                } else {
+                    consecutive_losses = 0;
+                }
             } else {
                 consecutive_losses = 0;
                 ++winning_or_flat_round_trips;
@@ -693,7 +702,7 @@ struct ConsecutiveLossCooldownState {
             if (flip_qty > 1e-10) {
                 inventory = is_buy_v<S> ? flip_qty : -flip_qty;
                 avg_entry = price;
-                open_commission = 0.0;
+                open_commission = opening_fee;
             } else {
                 inventory = 0.0;
                 avg_entry = 0.0;
@@ -1435,6 +1444,7 @@ void append_fill_trace(
         return;
     }
     TraceFillRow row;
+    row.fill_sequence = static_cast<std::int64_t>(result.fill_trace.size());
     row.side = order.side;
     row.fill_ts = input.trade_ts_ms.data()[fill_idx];
     row.quote_ts = order.quote_ts;
@@ -3731,7 +3741,7 @@ void process_side_fill(
         loss_cooldown.template on_fill<S>(
             fill_qty,
             order.price,
-            order.price * fill_qty * std::max(0.0, maker_fee)
+            order.price * fill_qty * maker_fee
         );
         if (std::abs(loss_cooldown.inventory - inventory) >
             std::max(1e-10, lot_size * 1e-7)) {
@@ -3970,7 +3980,7 @@ bool process_ioc_close_orders(
         loss_cooldown.template on_fill<S>(
             fill_qty,
             touch,
-            touch * fill_qty * std::max(0.0, taker_fee)
+            touch * fill_qty * taker_fee
         );
         if (std::abs(loss_cooldown.inventory - inventory) >
             std::max(1e-10, lot_size * 1e-7)) {
@@ -5072,11 +5082,120 @@ TickReplayResult simulate_tick_arrays(
             "C++ replay requires latency_sampler_version=keyed_splitmix64_v1"
         );
     }
+    if (params.max_consecutive_losses < 0 ||
+        !std::isfinite(params.cooldown_after_loss_s) ||
+        params.cooldown_after_loss_s < 0.0) {
+        throw std::invalid_argument(
+            "C++ replay loss-cooldown config must be finite and non-negative"
+        );
+    }
     if ((params.max_consecutive_losses > 0 ||
          params.cooldown_after_loss_s > 0.0) &&
         params.consecutive_loss_cooldown_semantics != kLossCooldownSemantics) {
         throw std::invalid_argument(
             "C++ replay requires the frozen consecutive-loss semantics"
+        );
+    }
+    if (params.consecutive_loss_snapshot_enabled) {
+        if (params.consecutive_loss_cooldown_semantics !=
+            kLossCooldownSemantics) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown snapshot semantics are stale"
+            );
+        }
+        if (params.consecutive_loss_snapshot_schema !=
+            kLossCooldownSnapshotSchema) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown snapshot schema is stale"
+            );
+        }
+        if (!std::isfinite(params.initial_inventory) ||
+            !std::isfinite(params.initial_entry_price) ||
+            !std::isfinite(params.initial_loss_open_commission) ||
+            !std::isfinite(params.initial_loss_round_trip_pnl) ||
+            params.initial_loss_consecutive_losses < 0 ||
+            params.initial_loss_cooldown_until_ms < 0 ||
+            params.initial_loss_last_cancel_ts_ms < -1 ||
+            params.initial_loss_trigger_count < 0 ||
+            params.initial_loss_expiry_count < 0 ||
+            params.initial_loss_losing_round_trips < 0 ||
+            params.initial_loss_winning_or_flat_round_trips < 0 ||
+            params.initial_loss_max_observed_consecutive_losses <
+                params.initial_loss_consecutive_losses) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown snapshot fields are invalid"
+            );
+        }
+        if ((std::abs(params.initial_inventory) <= 1e-10 &&
+             std::abs(params.initial_entry_price) > 1e-10) ||
+            (std::abs(params.initial_inventory) > 1e-10 &&
+             params.initial_entry_price <= 0.0)) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown inventory/entry is inconsistent"
+            );
+        }
+        if (std::abs(params.initial_inventory) <= 1e-10 &&
+            (std::abs(params.initial_loss_open_commission) > 1e-10 ||
+             std::abs(params.initial_loss_round_trip_pnl) > 1e-10)) {
+            throw std::invalid_argument(
+                "flat C++ loss-cooldown snapshot retained open economics"
+            );
+        }
+        const bool snapshot_enabled = params.max_consecutive_losses > 0 &&
+            params.cooldown_after_loss_s > 0.0;
+        const bool threshold_reached = snapshot_enabled &&
+            params.initial_loss_consecutive_losses >=
+                params.max_consecutive_losses;
+        const bool active_clock =
+            params.initial_loss_cooldown_until_ms > 0;
+        if ((active_clock &&
+             (params.initial_loss_trigger_count <= 0 ||
+              params.initial_loss_trigger_count - 1 !=
+                  params.initial_loss_expiry_count)) ||
+            (!active_clock &&
+             params.initial_loss_trigger_count !=
+                 params.initial_loss_expiry_count) ||
+            params.initial_loss_trigger_count >
+                params.initial_loss_losing_round_trips ||
+            params.initial_loss_max_observed_consecutive_losses >
+                params.initial_loss_losing_round_trips) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown trigger/expiry history is inconsistent"
+            );
+        }
+        if (!snapshot_enabled &&
+            (params.initial_loss_consecutive_losses != 0 ||
+             active_clock ||
+             params.initial_loss_last_cancel_ts_ms != -1 ||
+             params.initial_loss_threshold_pending ||
+             params.initial_loss_max_observed_consecutive_losses != 0 ||
+             params.initial_loss_trigger_count != 0 ||
+             params.initial_loss_expiry_count != 0)) {
+            throw std::invalid_argument(
+                "disabled C++ loss-cooldown snapshot retained policy state"
+            );
+        }
+        if (!active_clock &&
+            params.initial_loss_threshold_pending != threshold_reached) {
+            throw std::invalid_argument(
+                "C++ replay loss-cooldown pending threshold is inconsistent"
+            );
+        }
+    } else if (
+        !params.consecutive_loss_snapshot_schema.empty() ||
+        std::abs(params.initial_loss_open_commission) > 1e-10 ||
+        std::abs(params.initial_loss_round_trip_pnl) > 1e-10 ||
+        params.initial_loss_consecutive_losses != 0 ||
+        params.initial_loss_cooldown_until_ms != 0 ||
+        params.initial_loss_last_cancel_ts_ms != -1 ||
+        params.initial_loss_threshold_pending ||
+        params.initial_loss_trigger_count != 0 ||
+        params.initial_loss_expiry_count != 0 ||
+        params.initial_loss_losing_round_trips != 0 ||
+        params.initial_loss_winning_or_flat_round_trips != 0 ||
+        params.initial_loss_max_observed_consecutive_losses != 0) {
+        throw std::invalid_argument(
+            "C++ replay loss-cooldown snapshot state supplied while disabled"
         );
     }
     if (params.sync_adjust_replay_mode != "disabled" &&
@@ -5316,26 +5435,44 @@ TickReplayResult simulate_tick_arrays(
         );
     }
     ConsecutiveLossCooldownState loss_cooldown{
-        std::max(0, params.max_consecutive_losses),
-        std::max<std::int64_t>(
-            0,
-            static_cast<std::int64_t>(
-                std::llround(params.cooldown_after_loss_s * 1000.0)
-            )
+        params.max_consecutive_losses,
+        static_cast<std::int64_t>(
+            std::llround(params.cooldown_after_loss_s * 1000.0)
         ),
         inventory,
         entry_price,
     };
-    std::int64_t loss_cooldown_last_cancel_ts =
-        std::numeric_limits<std::int64_t>::min() / 2;
+    if (params.consecutive_loss_snapshot_enabled) {
+        loss_cooldown.open_commission =
+            params.initial_loss_open_commission;
+        loss_cooldown.round_trip_pnl =
+            params.initial_loss_round_trip_pnl;
+        loss_cooldown.consecutive_losses =
+            params.initial_loss_consecutive_losses;
+        loss_cooldown.cooldown_until_ms =
+            params.initial_loss_cooldown_until_ms;
+        loss_cooldown.last_cancel_ts_ms =
+            params.initial_loss_last_cancel_ts_ms;
+        loss_cooldown.threshold_pending =
+            params.initial_loss_threshold_pending;
+        loss_cooldown.trigger_count =
+            params.initial_loss_trigger_count;
+        loss_cooldown.expiry_count =
+            params.initial_loss_expiry_count;
+        loss_cooldown.losing_round_trips =
+            params.initial_loss_losing_round_trips;
+        loss_cooldown.winning_or_flat_round_trips =
+            params.initial_loss_winning_or_flat_round_trips;
+        loss_cooldown.max_observed_consecutive_losses =
+            params.initial_loss_max_observed_consecutive_losses;
+    }
     std::int64_t sync_adjust_degrade_until_ms = 0;
     const auto record_loss_fill = [&](bool buy,
                                       double quantity,
                                       double fill_price,
                                       double fee_rate,
                                       double expected_inventory) {
-        const double commission = fill_price * quantity *
-            std::max(0.0, fee_rate);
+        const double commission = fill_price * quantity * fee_rate;
         if (buy) {
             loss_cooldown.on_fill<Side::Buy>(
                 quantity, fill_price, commission
@@ -6727,7 +6864,7 @@ TickReplayResult simulate_tick_arrays(
 
         if (loss_cooldown.active(ts)) {
             ++summary.consecutive_loss_cooldown_block_count;
-            if (ts - loss_cooldown_last_cancel_ts >= 5'000) {
+            if (ts - loss_cooldown.last_cancel_ts_ms >= 5'000) {
                 request_cancel_all(
                     bid_orders, ts, params.cancel_order_latency_ms,
                     params.latency_jitter_ms,
@@ -6743,7 +6880,7 @@ TickReplayResult simulate_tick_arrays(
                     CancelReason::ConsecutiveLossCooldown
                 );
                 ++summary.consecutive_loss_cooldown_cancel_count;
-                loss_cooldown_last_cancel_ts = ts;
+                loss_cooldown.last_cancel_ts_ms = ts;
             }
             continue;
         }
@@ -6785,7 +6922,7 @@ TickReplayResult simulate_tick_arrays(
                 CancelReason::ConsecutiveLossCooldown
             );
             ++summary.consecutive_loss_cooldown_cancel_count;
-            loss_cooldown_last_cancel_ts = ts;
+            loss_cooldown.last_cancel_ts_ms = ts;
             continue;
         }
         if (params.empirical_requote_clock) {
@@ -9328,6 +9465,18 @@ TickReplayResult simulate_tick_arrays(
         loss_cooldown.max_observed_consecutive_losses;
     summary.consecutive_loss_cooldown_until_ms =
         loss_cooldown.cooldown_until_ms;
+    summary.consecutive_loss_last_cancel_ts_end =
+        loss_cooldown.last_cancel_ts_ms;
+    summary.consecutive_loss_snapshot_schema =
+        std::string(kLossCooldownSnapshotSchema);
+    summary.consecutive_loss_inventory_end = loss_cooldown.inventory;
+    summary.consecutive_loss_avg_entry_end = loss_cooldown.avg_entry;
+    summary.consecutive_loss_open_commission_end =
+        loss_cooldown.open_commission;
+    summary.consecutive_loss_round_trip_pnl_end =
+        loss_cooldown.round_trip_pnl;
+    summary.consecutive_loss_threshold_pending_end =
+        loss_cooldown.threshold_pending;
     summary.sync_adjust_degrade_until_ms = sync_adjust_degrade_until_ms;
     if (f05_cooldown_runtime.has_value()) {
         if (f05_cooldown_predicate_cursor !=

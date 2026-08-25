@@ -74,7 +74,7 @@ struct QuoteCoreConfig {
     double dynamic_cap_liq_beta = 0.0;
     double dynamic_cap_liq_baseline = 0.0;
     double dynamic_cap_min_mult = 1.0;
-    int spread_cap_mode = 0;  // 0 compress, 1 pause exposure, 2 observe
+    int spread_cap_mode = 1;  // 0 explicit compress arm, 1 pause exposure, 2 observe
 
     double exit_urgency_strength = 0.0;
     double urgency_time_weight = 0.3;

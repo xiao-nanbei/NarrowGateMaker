@@ -76,6 +76,8 @@ CPP_RUNTIME_FLAGS = (
 FORMAL_DRY_RUN_SCHEMA = "narrowgate.live_dry_run.v1"
 DEFAULT_DRY_RUN_TIMEOUT_S = 30.0
 DRY_RUN_TIMEOUT_EXIT_CODE = 124
+EXECUTION_STATE_UNCERTAIN_EXIT_CODE = 78
+RUNTIME_HEALTH_SCHEMA = "narrowgate.live_runtime_health.v1"
 
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
@@ -1256,10 +1258,9 @@ def start_engine_with_prospective_collection(
     startup_open_orders = _initial_exchange_open_orders(rest, symbol=cfg.symbol)
     if startup_open_orders:
         raise RuntimeError("startup open-order ownership did not converge after cancel")
-    # The pre-start position sync can become stale if a predecessor order fills
-    # while startup cancellation is converging.  Once zero open orders is
-    # authoritative, require one more account-position snapshot before the
-    # epoch or user stream can become visible.
+    # Install the one and only startup seed after stale-order cancellation is
+    # authoritatively complete.  Seeding before this point could hide a fill in
+    # the cancellation window or create an unknown predecessor-order cursor.
     engine.sync_position(required=True)
     epoch, writer = initialize_prospective_lifecycle_collection(
         cfg=cfg,
@@ -1292,6 +1293,7 @@ def create_rest_client(cfg, dry_run=False):
         key=cfg.api.key,
         secret=cfg.api.secret,
         base_url=base_url,
+        timeout=float(cfg.api.timeout_s),
     )
     return client
 
@@ -1316,6 +1318,129 @@ def resolve_logging_paths(cfg):
         value = getattr(cfg.logging, field, None)
         if value and not Path(value).is_absolute():
             setattr(cfg.logging, field, str(ROOT / value))
+
+
+def runtime_health_state_path(cfg) -> Path:
+    """Use the operational log directory so run.sh status can read one fact file."""
+
+    log_file = Path(str(getattr(cfg.logging, "file", "") or "logs/maker.log"))
+    if not log_file.is_absolute():
+        log_file = ROOT / log_file
+    return log_file.parent / "runtime_health.json"
+
+
+def collect_runtime_safety_health(
+    *,
+    engine,
+    ws,
+    now_monotonic_s: float | None = None,
+) -> dict[str, object]:
+    """Collect only general process/stream safety facts, never research state."""
+
+    now_monotonic_s = (
+        time.monotonic()
+        if now_monotonic_s is None
+        else float(now_monotonic_s)
+    )
+    quote = engine.runtime_safety_snapshot(now_monotonic_s=now_monotonic_s)
+    user = ws.user_event_safety_snapshot(now_monotonic_s=now_monotonic_s)
+    return {
+        "schemaVersion": RUNTIME_HEALTH_SCHEMA,
+        "recordedAtNs": time.time_ns(),
+        "pid": os.getpid(),
+        "quoteLoopRunning": bool(quote["quote_loop_running"]),
+        "ownershipConflictLatched": bool(
+            quote["ownership_conflict_latched"]
+        ),
+        "fatalRuntimeLatched": bool(quote["fatal_runtime_latched"]),
+        "reconciliationRequired": bool(quote["reconciliation_required"]),
+        "reconciliationPending": bool(
+            quote.get("reconciliation_pending", False)
+        ),
+        "fatalReason": str(quote["fatal_runtime_reason"]),
+        "lastTickAge": quote["last_tick_age_s"],
+        "lastUserEventAge": user["last_user_event_age_s"],
+        "userEventCount": int(user["user_event_count"]),
+    }
+
+
+def shutdown_requires_operator_reconciliation(
+    final_safety: dict[str, object],
+) -> bool:
+    """Return whether shutdown must use the non-restarting uncertainty exit."""
+
+    return bool(
+        final_safety.get("reconciliation_required")
+        or final_safety.get("reconciliation_pending")
+        or final_safety.get("ownership_conflict_latched")
+    )
+
+
+def resolve_live_shutdown_exit(
+    *,
+    engine,
+    fatal_error: BaseException | None,
+    fatal_traceback,
+    cleanup_errors: list[BaseException],
+) -> int:
+    """Resolve the process exit only after every shutdown component has run."""
+
+    logger = logging.getLogger("main")
+    final_safety = engine.runtime_safety_snapshot()
+    if shutdown_requires_operator_reconciliation(final_safety):
+        if cleanup_errors:
+            logger.critical(
+                "Execution-state uncertainty also encountered %d cleanup error(s)",
+                len(cleanup_errors),
+            )
+        logger.critical(
+            "Execution state is uncertain at shutdown; exiting %d for "
+            "operator-gated reconciliation (reason=%s pending=%d)",
+            EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
+            final_safety.get("fatal_runtime_reason", "unknown"),
+            int(bool(final_safety.get("reconciliation_pending"))),
+        )
+        return EXECUTION_STATE_UNCERTAIN_EXIT_CODE
+
+    if fatal_error is not None:
+        if cleanup_errors:
+            logger.critical(
+                "Fatal exit also encountered %d cleanup error(s)",
+                len(cleanup_errors),
+            )
+        raise fatal_error.with_traceback(fatal_traceback)
+    if cleanup_errors:
+        raise RuntimeError(
+            f"live shutdown failed with {len(cleanup_errors)} cleanup error(s)"
+        ) from cleanup_errors[0]
+    return 0
+
+
+def write_runtime_safety_health(cfg, payload: dict[str, object]) -> Path:
+    """Atomically publish the latest operational health snapshot with mode 0600."""
+
+    path = runtime_health_state_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink():
+        raise ValueError(f"runtime health path must not be a symlink: {path}")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temporary.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+    return path
+
+
+def _runtime_age_text(value: object) -> str:
+    return "unknown" if value is None else f"{float(value):.1f}s"
 
 
 def main():
@@ -1454,11 +1579,10 @@ def main():
     set_engine_ref(engine)
     install_reload_handler()
 
+    fatal_error: BaseException | None = None
+    fatal_traceback = None
+    cleanup_errors: list[BaseException] = []
     try:
-        # Sync position
-        logger.info("Syncing exchange position...")
-        engine.sync_position()
-
         # Check account
         if not args.dry_run:
             try:
@@ -1557,6 +1681,8 @@ def main():
         last_health = time.time()
         stale_interval = 30  # check stale orders every 30s
         last_stale = time.time()
+        safety_state_interval = 1.0
+        last_safety_state = 0.0
 
         while not shutdown_event:
             now = time.time()
@@ -1569,6 +1695,15 @@ def main():
             # Engine tick (handles requote interval internally)
             if engine.is_running:
                 engine.tick()
+            engine.raise_if_runtime_fatal()
+
+            if now - last_safety_state >= safety_state_interval:
+                runtime_safety = collect_runtime_safety_health(
+                    engine=engine,
+                    ws=ws,
+                )
+                write_runtime_safety_health(cfg, runtime_safety)
+                last_safety_state = now
 
             # Periodic position sync
             if now - last_sync >= sync_interval:
@@ -1691,8 +1826,20 @@ def main():
                     )
                 )
                 global_flow_values = global_flow_backend_values
+                runtime_safety = collect_runtime_safety_health(
+                    engine=engine,
+                    ws=ws,
+                )
+                write_runtime_safety_health(cfg, runtime_safety)
                 logger.info(
                     f"HEALTH pos={snap.qty:+.4f} "
+                    f"quoteLoopRunning={int(runtime_safety['quoteLoopRunning'])} "
+                    f"ownershipConflictLatched={int(runtime_safety['ownershipConflictLatched'])} "
+                    f"fatalRuntimeLatched={int(runtime_safety['fatalRuntimeLatched'])} "
+                    f"reconciliationRequired={int(runtime_safety['reconciliationRequired'])} "
+                    f"fatalReason={runtime_safety['fatalReason'] or 'none'} "
+                    f"lastTickAge={_runtime_age_text(runtime_safety['lastTickAge'])} "
+                    f"lastUserEventAge={_runtime_age_text(runtime_safety['lastUserEventAge'])} "
                     f"rpnl={snap.realized_pnl:.2f} "
                     f"upnl={snap.unrealized_pnl:.2f} "
                     f"daily={engine.inventory.daily_pnl:.2f} "
@@ -1893,13 +2040,52 @@ def main():
             # Sleep to avoid busy loop (short sleep, events arrive via WS callbacks)
             time.sleep(0.1)
 
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}", exc_info=True)
+    except BaseException as exc:
+        fatal_error = exc
+        fatal_traceback = exc.__traceback__
+        logger.critical("Fatal error: %s", exc, exc_info=True)
+        if not isinstance(exc, (SystemExit, KeyboardInterrupt)):
+            engine.latch_runtime_fatal(
+                reason="UNCAUGHT_LIVE_FATAL",
+                error=exc,
+                reconciliation_required=False,
+            )
     finally:
         logger.info("Shutting down...")
-        ws.stop()
-        engine.stop()
+        for component_name, stop_component in (
+            ("websocket", ws.stop),
+            ("engine", engine.stop),
+        ):
+            try:
+                stop_component()
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+                logger.critical(
+                    "Shutdown %s cleanup failed: %s",
+                    component_name,
+                    exc,
+                    exc_info=True,
+                )
+        try:
+            write_runtime_safety_health(
+                cfg,
+                collect_runtime_safety_health(engine=engine, ws=ws),
+            )
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+            logger.critical(
+                "Final runtime health publication failed: %s",
+                exc,
+                exc_info=True,
+            )
         logger.info("Shutdown complete")
+
+    return resolve_live_shutdown_exit(
+        engine=engine,
+        fatal_error=fatal_error,
+        fatal_traceback=fatal_traceback,
+        cleanup_errors=cleanup_errors,
+    )
 
 
 if __name__ == "__main__":

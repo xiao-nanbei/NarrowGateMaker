@@ -116,6 +116,9 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
     bundle_meta.write_text("{}\n", encoding="utf-8")
     training_summary.write_text("{}\n", encoding="utf-8")
     p3.write_text("{}\n", encoding="utf-8")
+    bundle_meta.chmod(0o600)
+    training_summary.chmod(0o600)
+    p3.chmod(0o600)
 
     docs = root / "research" / "families" / "f10_live_replay_attribution" / "docs"
     docs.mkdir(parents=True)
@@ -602,6 +605,22 @@ def test_operational_config_rejects_hardlink_identity(tmp_path: Path) -> None:
 def test_v2_private_archive_rejects_world_readable_mode(tmp_path: Path) -> None:
     pointer, archive, _alias = _write_split_v2_binding(tmp_path)
     archive.chmod(0o644)
+    with pytest.raises(RuntimeError, match="unsafe"):
+        load_operational_baseline_binding(root=tmp_path, pointer_path=pointer)
+
+
+def test_v2_private_model_authority_rejects_world_readable_mode(tmp_path: Path) -> None:
+    pointer, _archive, _alias = _write_split_v2_binding(tmp_path)
+    bundle_meta = tmp_path / "models" / "v12" / "bundle_meta.json"
+    bundle_meta.chmod(0o644)
+    with pytest.raises(RuntimeError, match="unsafe"):
+        load_operational_baseline_binding(root=tmp_path, pointer_path=pointer)
+
+
+def test_v1_public_model_authority_rejects_private_mode(tmp_path: Path) -> None:
+    pointer, _config = _write_binding(tmp_path)
+    bundle_meta = tmp_path / "models" / "v12" / "bundle_meta.json"
+    bundle_meta.chmod(0o600)
     with pytest.raises(RuntimeError, match="unsafe"):
         load_operational_baseline_binding(root=tmp_path, pointer_path=pointer)
 

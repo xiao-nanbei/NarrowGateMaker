@@ -81,16 +81,16 @@ There are 70 maintained Markdown files without a material-modification tag and 3
 
 ## Current operational and research authority
 
-The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointer was reconciled on 2026-08-25 to separate current live authority from the immutable replay default.
+The original audit's causal-v7/ML-OFF and pre-v7 baseline wording is historical. The current registry is `research/registry.json`; the operational pointers were reconciled on 2026-08-25 to separate current-live authority from owner-private backtest mechanics.
 
-### Operational governance v13 and backtest baseline v12
+### Operational governance v13 and backtest mechanics safety successor
 
-The mutable pointer `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json` resolves the public v13 governance identity. v13 has two non-substitutable bindings:
+The mutable pointer `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json` resolves the public v13 governance identity for current-live config. Backtest mechanics use the separate `operational_backtest_mechanics_current.json` pointer. The bindings are non-substitutable:
 
 - `current_live` resolves the ignored private current-host pointer, stable live-config alias, and owner release/evidence chain. The active release is BUY E3 release-v3 with the SELL owner policy unchanged and every shadow or companion surface disabled. Its admitted post-lifecycle receipt is frozen operational evidence, not latest-liveness, action-occurrence, economic, or replay authority.
-- `backtest_default` retains immutable `research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json` and its create-only private config as the control until an exact BUY E3 replay baseline exists. The current live alias is forbidden as a fallback.
+- Backtest mechanics resolve a create-only owner-private safety successor with exact BUY E3, exact SELL/D+1 B0 delegation, and a reduced-support 30-Development-day mechanics panel. It grants mechanics availability only; every economic, research, action, live, occurrence, validation/holdout, and promotion authority remains false. The current-live alias and v12 are forbidden fallbacks.
 
-v13 reconciles locators only and grants no new strategy, research, action, live, or economic permission. v12 remains unchanged historical/backtest control evidence: it keeps causal-v12 feature semantics v6, empirical P3 v2, q90 action OFF, BUY fill-selection action/shadow OFF, active depth imbalance asymmetry, and the SELL Boolean cooldown policy under its permanent `owner_risk_accepted_promotion` label. No v12 economic result is reinterpreted as BUY E3 evidence.
+v13 reconciles live/config locators only and grants no new strategy, research, action, live, or economic permission. v12 remains unchanged historical control evidence: it keeps causal-v12 feature semantics v6, empirical P3 v2, q90 action OFF, BUY fill-selection action/shadow OFF, active depth imbalance asymmetry, and the SELL Boolean cooldown policy under its permanent `owner_risk_accepted_promotion` label. Its 50-day economics are stale under the repaired ledger, fee, campaign, spread-cap, cooldown, and same-timestamp fill-order mechanics; no v12 result is reinterpreted as BUY E3 evidence.
 
 ### F02 P3
 

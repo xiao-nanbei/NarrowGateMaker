@@ -411,6 +411,9 @@ def test_provider_requests_explicitly_deny_exact_queue_and_lifecycle_authority(
     assert all(not request.exact_queue_authority for request in providers)
     assert all(not request.exact_lifecycle_authority for request in providers)
     assert all(request.continuous_economic_sensitivity_authority for request in providers)
+    assert {
+        request.continuous_accounting_contract_id for request in providers
+    } == {"continuous_accounting_contract.v2"}
     assert all(request.cancel_drain_requires_terminal_ack_or_fill for request in providers)
     assert all(request.warmup_requires_source_coverage for request in providers)
     assert all(request.feature_ready_not_after_decision for request in providers)

@@ -12,7 +12,9 @@ from .replay_state_checkpoint import (
     EconomicCampaignState,
 )
 
-SCHEMA_VERSION = "continuous_accounting_contract.v1"
+SCHEMA_VERSION = "continuous_accounting_contract.v2"
+CAMPAIGN_ACCOUNTING_SEMANTICS = "zero_boundary_flip_fee_split_v2"
+FEE_ACCOUNTING_SEMANTICS = "signed_fee_positive_cost_negative_rebate_v2"
 _EPS = 1e-10
 
 
@@ -37,6 +39,7 @@ class ClosedCampaign:
     end_equity_usdc: float
     value_usdc: float
     peak_abs_inventory_btc: float
+    terminal_reason: str = "flat"
 
 
 @dataclass(frozen=True)
@@ -127,8 +130,8 @@ class ContinuousAccountingLedger:
         fee = float(fee_usdc)
         if not math.isfinite(qty) or qty <= 0 or not math.isfinite(px) or px <= 0:
             raise ValueError("fill quantity and price must be positive and finite")
-        if not math.isfinite(fee) or fee < 0:
-            raise ValueError("fill fee must be finite and non-negative")
+        if not math.isfinite(fee):
+            raise ValueError("fill fee must be finite")
 
         before = self._state
         signed_qty = qty if side == "BUY" else -qty
@@ -169,6 +172,8 @@ class ContinuousAccountingLedger:
                 )
         else:
             closed_qty = min(abs(q0), qty)
+            closing_fee = fee * closed_qty / qty
+            opening_fee = fee - closing_fee
             realized += closed_qty * (px - entry) * (1.0 if q0 > 0 else -1.0)
             if abs(q1) <= _EPS:
                 if campaign is None:
@@ -183,6 +188,7 @@ class ContinuousAccountingLedger:
                     end_equity_usdc=end_equity,
                     value_usdc=end_equity - campaign.start_equity_usdc,
                     peak_abs_inventory_btc=campaign.peak_abs_inventory_btc,
+                    terminal_reason="flat",
                 )
                 entry = 0.0
                 campaign = None
@@ -192,7 +198,11 @@ class ContinuousAccountingLedger:
             else:
                 if campaign is None:
                     raise ValueError("inventory flip lost its closing campaign")
-                close_equity = cash + q1 * px
+                # Value the old campaign exactly at zero inventory.  The full
+                # fill cash already paid both fee legs, so add the opening leg
+                # back before closing the old campaign.  The new campaign then
+                # starts before its opening fee and therefore carries that fee.
+                close_equity = cash + q1 * px + opening_fee
                 closed_campaign = ClosedCampaign(
                     campaign_id=campaign.campaign_id,
                     side=campaign.side,
@@ -202,6 +212,7 @@ class ContinuousAccountingLedger:
                     end_equity_usdc=close_equity,
                     value_usdc=close_equity - campaign.start_equity_usdc,
                     peak_abs_inventory_btc=campaign.peak_abs_inventory_btc,
+                    terminal_reason="flip",
                 )
                 if not new_campaign_id or not str(new_campaign_id).strip():
                     raise ValueError("inventory flip requires a new economic campaign id")
@@ -285,6 +296,8 @@ class ContinuousAccountingLedger:
         closed_days_pnl = self._day_start_equity - self._state.equity_anchor_usdc
         return {
             "schema_version": f"{SCHEMA_VERSION}.audit",
+            "campaign_accounting_semantics": CAMPAIGN_ACCOUNTING_SEMANTICS,
+            "fee_accounting_semantics": FEE_ACCOUNTING_SEMANTICS,
             "daily_slice_count": len(self.daily_slices),
             "closed_daily_pnl_sum_usdc": daily_sum,
             "closed_daily_equity_change_usdc": closed_days_pnl,

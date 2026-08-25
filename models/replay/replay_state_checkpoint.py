@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "continuous_replay_state.v1"
+SCHEMA_VERSION = "continuous_replay_state.v2"
 RESTART_RESET_FIELDS = (
     "active_orders",
     "pending_cancel",
@@ -135,8 +135,8 @@ class ContinuousReplayState:
             raise ValueError("continuous replay state contains a non-finite value")
         if self.last_mark_price <= 0:
             raise ValueError("continuous replay mark price must be positive")
-        if self.cumulative_fees_usdc < -_EPS:
-            raise ValueError("cumulative fees cannot be negative")
+        # Signed transaction costs: positive is a fee paid; negative is an
+        # exchange rebate received.  Finiteness is enforced by ``numeric``.
         if abs(self.position_btc) <= _EPS:
             if abs(self.average_entry_price) > _EPS:
                 raise ValueError("flat state must have zero average entry price")

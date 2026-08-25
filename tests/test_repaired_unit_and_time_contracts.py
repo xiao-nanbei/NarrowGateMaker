@@ -109,11 +109,28 @@ def test_label_horizon_excludes_bar_starting_at_right_endpoint() -> None:
     ask = np.asarray([101.0])
 
     ret, direction, variance = _compute_label_triplet(
-        ts, close, high, low, diff, quote_time, start, bid, ask,
-        close[:1], 10 * _TS_NS,
+        ts,
+        close,
+        high,
+        low,
+        diff,
+        quote_time,
+        start,
+        bid,
+        ask,
+        close[:1],
+        10 * _TS_NS,
     )
     tox_bid, tox_ask = _compute_toxicity_pair(
-        ts, close, high, low, quote_time, start, bid, ask, 10 * _TS_NS,
+        ts,
+        close,
+        high,
+        low,
+        quote_time,
+        start,
+        bid,
+        ask,
+        10 * _TS_NS,
     )
 
     assert np.isnan(ret[0])
@@ -147,9 +164,7 @@ def test_utc_daily_pnl_rolls_marked_equity_without_recounting_open_pnl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = {"now": 86_400.0 - 10.0}
-    monkeypatch.setattr(
-        "strategy.inventory_manager.time.time", lambda: clock["now"]
-    )
+    monkeypatch.setattr("strategy.inventory_manager.time.time", lambda: clock["now"])
     inventory = InventoryManager(max_inventory=1.0)
     inventory.on_fill("BUY", 1.0, 100.0)
     inventory.update_mark_price(90.0)
@@ -188,10 +203,16 @@ def test_order_manager_preserves_commission_asset_for_fill_callback() -> None:
     manager.confirm_new(cid, 7)
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
+            "o": "LIMIT",
             "X": "FILLED",
             "i": 7,
+            "p": "100.0",
+            "q": "0.001",
             "z": "0.001",
+            "l": "0.001",
             "L": "100.0",
             "ap": "100.0",
             "n": "0.000001",
@@ -219,16 +240,12 @@ def _write_contract_bundle(root: Path, *, vol_semantics: str) -> None:
         }
         if head.startswith("vol_"):
             metadata["label_semantics"] = vol_semantics
-        (root / f"{head}_meta.json").write_text(
-            json.dumps(metadata), encoding="utf-8"
-        )
+        (root / f"{head}_meta.json").write_text(json.dumps(metadata), encoding="utf-8")
 
 
 def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path) -> None:
     valid = tmp_path / "valid"
-    _write_contract_bundle(
-        valid, vol_semantics="fixed_forward_h_absolute_price_variance"
-    )
+    _write_contract_bundle(valid, vol_semantics="fixed_forward_h_absolute_price_variance")
     assert set(validate_model_bundle(valid)) == set(REQUIRED_MODEL_HEADS)
 
     invalid = tmp_path / "invalid"
@@ -237,9 +254,7 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
         validate_model_bundle(invalid)
 
     mixed = tmp_path / "mixed"
-    _write_contract_bundle(
-        mixed, vol_semantics="fixed_forward_h_absolute_price_variance"
-    )
+    _write_contract_bundle(mixed, vol_semantics="fixed_forward_h_absolute_price_variance")
     meta_path = mixed / "dir_10s_meta.json"
     metadata = json.loads(meta_path.read_text(encoding="utf-8"))
     metadata["feature_manifest_sha256"] = "different-feature-manifest"

@@ -76,10 +76,16 @@ except ImportError:
     from backtest_config import DEFAULT_LIQ_BASELINE
 
 SYMBOL = DEFAULT_SYMBOL
+MODEL_DIR: Path
+RESULTS_DIR: Path
+PREDICTIONS_PATH: Path
 update_symbol_globals(
     globals(), SYMBOL,
     model_key="MODEL_DIR", results_key="RESULTS_DIR", predictions_key="PREDICTIONS_PATH",
 )
+MODEL_DIR = Path(globals()["MODEL_DIR"])
+RESULTS_DIR = Path(globals()["RESULTS_DIR"])
+PREDICTIONS_PATH = Path(globals()["PREDICTIONS_PATH"])
 
 
 def configure_symbol(symbol=None):
@@ -1999,7 +2005,7 @@ def run_sweep(ts, hi, lo, cl, ssq, pred_dir, pred_vol, pred_ret,
     params_list = []
     for idx, combo in enumerate(combos):
         p = dict(base)
-        for k, v in zip(keys, combo):
+        for k, v in zip(keys, combo, strict=True):
             p[k] = v
         if "rng_seed" not in p:
             p["rng_seed"] = 42 + (idx * 7919)

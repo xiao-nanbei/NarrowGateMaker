@@ -59,7 +59,9 @@ except ImportError:
 BARS_DIR = data_root(ROOT) / "bars_1s"
 
 SYMBOL = DEFAULT_SYMBOL
+RESULTS_DIR: Path
 update_symbol_globals(globals(), SYMBOL, results_key="RESULTS_DIR")
+RESULTS_DIR = Path(globals()["RESULTS_DIR"])
 
 
 def configure_symbol(symbol=None):
@@ -322,7 +324,7 @@ def run_sweep(ts, hi, lo, cl, ssq, base_params,
     params_list = []
     for combo in combos:
         p = dict(base_params)
-        for k, v in zip(keys, combo):
+        for k, v in zip(keys, combo, strict=True):
             p[k] = v
         params_list.append(p)
 

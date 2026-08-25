@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import csv
 import hashlib
 import json
 import os

@@ -127,12 +127,23 @@ double depth_tox_mult(double mid, const DepthView& depth, const QuoteCoreConfig&
 }
 
 template <Side S>
-bool exposure_increasing(double inventory, double lot_size) {
-    const double lot = std::max(std::abs(lot_size), 1e-12);
+bool exposure_increasing(double inventory, double quantity, double lot_size) {
+    const double lot = std::abs(lot_size);
+    if (!std::isfinite(inventory) || !std::isfinite(quantity) ||
+        !std::isfinite(lot) || quantity <= 0.0 || lot <= 0.0) {
+        return true;
+    }
+    const double tolerance = std::max(lot * 1e-9, 1e-12);
     if constexpr (is_buy_v<S>) {
-        return inventory >= -lot;
+        if (inventory >= -tolerance) {
+            return true;
+        }
+        return inventory + quantity > tolerance;
     } else {
-        return inventory <= lot;
+        if (inventory <= tolerance) {
+            return true;
+        }
+        return inventory - quantity < -tolerance;
     }
 }
 
@@ -152,6 +163,7 @@ struct SideAdverseState {
 template <Side S>
 SideAdverseState side_adverse_state(
     double inventory,
+    double quantity,
     double lot_size,
     double dir_signal,
     double pred_ret,
@@ -163,7 +175,7 @@ SideAdverseState side_adverse_state(
     const QuoteCoreConfig& cfg
 ) {
     SideAdverseState out;
-    out.exposure_increasing = exposure_increasing<S>(inventory, lot_size);
+    out.exposure_increasing = exposure_increasing<S>(inventory, quantity, lot_size);
     // adverse 只作用于增加该侧库存风险的报价；减库存方向不应因为 toxicity/markout 被挡掉。
     if (!cfg.adverse_guard_enabled) {
         return out;
@@ -450,8 +462,10 @@ LiveRoutingResult compute_live_routing_decision(
 
     out.can_bid_after_inventory = input.inventory < input.max_inventory;
     out.can_ask_after_inventory = input.inventory > -input.max_inventory;
-    const bool bid_exposure_increasing = input.inventory >= 0.0;
-    const bool ask_exposure_increasing = input.inventory <= 0.0;
+    const bool bid_exposure_increasing = exposure_increasing<Side::Buy>(
+        input.inventory, input.order_size, input.lot_size);
+    const bool ask_exposure_increasing = exposure_increasing<Side::Sell>(
+        input.inventory, input.order_size, input.lot_size);
     out.can_bid = out.can_bid_after_inventory && bid_policy.allow_post &&
         (bid_policy.allow_exposure_increase || !bid_exposure_increasing);
     out.can_ask = out.can_ask_after_inventory && ask_policy.allow_post &&
@@ -844,11 +858,11 @@ QuoteCoreResult compute_quote_core(
     out.final_cap_excess = cap_excess;
 
     const auto bid_adverse = side_adverse_state<Side::Buy>(
-        q, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_bid, state.mo_ema_bid,
+        q, cfg.order_size, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_bid, state.mo_ema_bid,
         state.bid_adverse_markout_pause_latch, micro_shift_bps, near_depth, cfg
     );
     const auto ask_adverse = side_adverse_state<Side::Sell>(
-        q, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_ask, state.mo_ema_ask,
+        q, cfg.order_size, cfg.lot_size, dir_signal, pred.ret_10s, pred.tox_ask, state.mo_ema_ask,
         state.ask_adverse_markout_pause_latch, micro_shift_bps, near_depth, cfg
     );
     const auto bid_defense = side_defense_state<Side::Buy>(
@@ -898,8 +912,8 @@ QuoteCoreResult compute_quote_core(
     out.sell.final_quote_skew = final_quote_skew;
     out.buy.near_depth_total = near_depth;
     out.sell.near_depth_total = near_depth;
-    out.buy.cap_exposure_block = cap_exposure_block && q >= 0.0;
-    out.sell.cap_exposure_block = cap_exposure_block && q <= 0.0;
+    out.buy.cap_exposure_block = cap_exposure_block && bid_adverse.exposure_increasing;
+    out.sell.cap_exposure_block = cap_exposure_block && ask_adverse.exposure_increasing;
 
     out.bid_price = bid_price;
     out.ask_price = ask_price;

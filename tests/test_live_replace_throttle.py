@@ -1,8 +1,16 @@
 import time
 
+import pytest
+
 from live.config import Config
 from strategy.maker_engine import MakerEngine
-from strategy.order_manager import Order, OrderManager, OrderState, Side
+from strategy.order_manager import (
+    Order,
+    OrderManager,
+    OrderReconciliationRequired,
+    OrderState,
+    Side,
+)
 
 
 def _engine() -> MakerEngine:
@@ -141,18 +149,20 @@ def test_stale_pending_cancel_open_order_absence_keeps_ownership() -> None:
     assert orders.get_order(cid).state == OrderState.PENDING_CANCEL
 
 
-def test_stale_pending_cancel_reconcile_reopens_exchange_order() -> None:
+def test_stale_pending_cancel_rejects_exchange_order_id_change() -> None:
     orders = OrderManager()
     cid = orders.create_order("BTCUSDC", Side.SELL, price=100.0, quantity=0.001)
     orders.confirm_new(cid, 123)
     orders.mark_pending_cancel(cid)
     orders._orders[cid].update_time = time.time() - 31.0
 
-    assert orders.reconcile_pending_cancel(cid, exchange_open=True, exchange_oid=456)
+    with pytest.raises(OrderReconciliationRequired):
+        orders.reconcile_pending_cancel(cid, exchange_open=True, exchange_oid=456)
     order = orders.get_order(cid)
-    assert order.state == OrderState.OPEN
-    assert order.order_id == 456
+    assert order.state == OrderState.PENDING_CANCEL
+    assert order.order_id == 123
     assert orders.active_count() == 1
+    assert orders.reconciliation_required is True
 
 
 def test_cancel_first_only_applies_to_exposure_increasing_replaces() -> None:

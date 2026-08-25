@@ -1,0 +1,35 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "economic_result_authority": false,
+    "economic_state_carry": true
+  },
+  "contract_id": "continuous_replay_state.v2",
+  "implementation": {
+    "path": "models/replay/replay_state_checkpoint.py",
+    "sha256": "8b092950eaf4b620be8b2148a6207f7abb37f8a692cfbbeaa90013c75bcd73e3"
+  },
+  "last_materially_modified": "2026-08-25",
+  "predecessor": {
+    "checkpoint_compatibility": "fail_closed",
+    "contract_id": "continuous_replay_state.v1",
+    "status": "immutable_superseded_semantics"
+  },
+  "preserved_state": [
+    "cash_usdc",
+    "position_btc",
+    "average_entry_price",
+    "cumulative_realized_pnl_usdc",
+    "finite_signed_cumulative_fees_usdc",
+    "economic_campaign",
+    "restart_generation",
+    "explicit_runtime_reset_fields"
+  ],
+  "requirements": [
+    "v1 checkpoints are rejected rather than silently upgraded",
+    "non-flat inventory has exactly one side-consistent economic campaign",
+    "finite signed cumulative fees preserve rebates",
+    "transient order queue and policy runtime state reset only at an explicit restart boundary"
+  ],
+  "schema_version": "continuous_replay_state.v2"
+}

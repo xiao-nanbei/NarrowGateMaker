@@ -36,6 +36,7 @@ class ApiConfig:
     key: str = ""
     secret: str = ""
     testnet: bool = True
+    timeout_s: float = 5.0
 
 
 @dataclass
@@ -48,7 +49,7 @@ class StrategyConfig:
     requote_interval: float = 10.0
     position_timeout: float = 0.0
     quote_horizon_s: float = 1.0           # AS variance integration horizon; sigma_sq input is per second
-    max_spread_bps: float = 8.0           # v2.0: 8 bps safety cap
+    max_spread_bps: float = 8.0           # pair-spread threshold; action is spread_cap_mode
     replace_min_price_change_ticks: float = 0.0      # live order lifecycle: min price delta before cancel/new; 0=disabled
     replace_min_price_change_ticks_reducing: float = 0.0
     replace_min_interval_ms: float = 0.0             # min active order age before replace; 0=disabled
@@ -86,7 +87,9 @@ class StrategyConfig:
     markout_ema_span_fills: int = 50       # EMA span N; alpha=2/(N+1)
     markout_spread_scale: float = 0.2     # markout → spread/asymmetry scale (0=disabled)
     markout_side_asymmetry_sign: float = 1.0  # maker-signed BUY/SELL EMA semantics require +1
-    spread_cap_mode: str = "compress"     # compress | pause_exposure | observe
+    # Safety default: protective widening pauses the side that adds exposure.
+    # Inward compression remains available only as an explicit research arm.
+    spread_cap_mode: str = "pause_exposure"  # pause_exposure | observe | compress
     adverse_guard_enabled: bool = False   # side-aware adverse-selection guard
     adverse_toxicity_threshold: float = 0.70
     adverse_markout_threshold: float = 5.0
@@ -849,6 +852,19 @@ def _validate_config(cfg: Config) -> None:
     )
     from strategy.fill_cooldown import normalize_consecutive_reset_policy
 
+    api_timeout = getattr(cfg.api, "timeout_s", None)
+    if isinstance(api_timeout, bool):
+        raise ValueError("api.timeout_s must be a finite number greater than zero")
+    try:
+        api_timeout = float(api_timeout)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "api.timeout_s must be a finite number greater than zero"
+        ) from exc
+    if not math.isfinite(api_timeout) or api_timeout <= 0.0:
+        raise ValueError("api.timeout_s must be a finite number greater than zero")
+    cfg.api.timeout_s = api_timeout
+
     for name in (
         "global_flow_shadow_enabled",
         "global_reference_shadow_enabled",
@@ -1105,7 +1121,10 @@ def _validate_config(cfg: Config) -> None:
                 raise ValueError(
                     f"enabled F05 BUY E3 requires SHA256 field {field_name}"
                 )
-    cap_mode = str(getattr(cfg.strategy, "spread_cap_mode", "compress") or "compress").strip().lower()
+    cap_mode = str(
+        getattr(cfg.strategy, "spread_cap_mode", "pause_exposure")
+        or "pause_exposure"
+    ).strip().lower()
     if cap_mode not in {"compress", "pause_exposure", "observe"}:
         raise ValueError(
             "strategy.spread_cap_mode must be compress, pause_exposure, or observe"

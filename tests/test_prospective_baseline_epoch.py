@@ -22,6 +22,10 @@ from models.replay.prospective_baseline_epoch import (
     validate_initial_runtime_state_completeness,
 )
 from strategy.maker_engine import MakerEngine
+from strategy.replay_controls import (
+    LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
+    ConsecutiveLossCooldown,
+)
 from strategy.signal import Bar1s
 
 
@@ -65,6 +69,14 @@ def _complete_initial_state(*, unsupported: tuple[str, ...] = ()) -> dict:
         for field in PROSPECTIVE_INITIAL_STATE_REQUIRED_FIELDS[domain]:
             payload[field] = [] if field.endswith("orders") else 0
         state[domain] = payload
+    state["reward_path_loss_cooldown"] = {
+        **ConsecutiveLossCooldown(
+            max_consecutive_losses=0,
+            cooldown_ms=0,
+        ).snapshot(),
+        "cooldown_until_wall_s": 0.0,
+        "last_cooldown_cancel_time_wall_s": 0.0,
+    }
     state["signal_feature_dag_warmup"].update(
         {
             "feature_dag_sha256": "a" * 64,
@@ -107,7 +119,13 @@ def _complete_initial_state(*, unsupported: tuple[str, ...] = ()) -> dict:
 
 def _engine_for_initial_state_test() -> MakerEngine:
     engine = MakerEngine.__new__(MakerEngine)
-    engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine.cfg = SimpleNamespace(
+        symbol="BTCUSDC",
+        risk=SimpleNamespace(
+            max_consecutive_losses=2,
+            cooldown_after_loss=30.0,
+        ),
+    )
     engine.orders = SimpleNamespace(get_active_orders=lambda: [])
     inventory = SimpleNamespace(_lock=threading.Lock())
     inventory_defaults = {
@@ -132,7 +150,6 @@ def _engine_for_initial_state_test() -> MakerEngine:
         "_day_sell_fill_qty": 0.0,
         "_day_buy_fill_notional": 65.0,
         "_day_sell_fill_notional": 0.0,
-        "_last_sync_request_time": 2.0,
         "_sync_adjust_seq": 3,
         "_last_sync_adjust_time": 2.5,
         "_last_sync_adjust_delta": 0.0,
@@ -164,6 +181,12 @@ def _engine_for_initial_state_test() -> MakerEngine:
     }
     for name, value in inventory_defaults.items():
         setattr(inventory, name, value)
+    inventory.reconciliation_snapshot = lambda: {
+        "snapshot_update_time_ms": 2_000,
+        "order_cumulative_filled_qty": {"10": 0.001},
+        "local_order_cumulative_filled_qty": {"10": 0.001},
+        "retained_post_snapshot_fill_count": 0,
+    }
     engine.inventory = inventory
 
     global_flow = SimpleNamespace(
@@ -250,6 +273,11 @@ def _engine_for_initial_state_test() -> MakerEngine:
     engine._order_policy_context = {}
     engine._cooldown_until = 20.0
     engine._last_cooldown_cancel_time = 19.0
+    engine._loss_cooldown_trigger_count = 1
+    engine._loss_cooldown_expiry_count = 0
+    engine._loss_cooldown_losing_round_trips = 2
+    engine._loss_cooldown_winning_or_flat_round_trips = 0
+    engine._loss_cooldown_max_observed_consecutive_losses = 2
     engine._mo_ema_bid = -0.1
     engine._mo_ema_ask = 0.0
     engine._mo_ema_all = -0.05
@@ -410,6 +438,26 @@ def test_missing_initial_state_domain_fails_before_publication(tmp_path: Path) -
     assert not (paths["mount"] / "epochs").exists()
 
 
+def test_loss_cooldown_domain_requires_full_v2_snapshot() -> None:
+    state = _complete_initial_state()
+    snapshot = state["reward_path_loss_cooldown"]
+    assert snapshot["schema_version"] == LOSS_COOLDOWN_SNAPSHOT_SCHEMA
+    ConsecutiveLossCooldown.restore(snapshot)
+
+    snapshot.pop("open_commission")
+    with pytest.raises(ValueError, match="domain fields are missing"):
+        validate_initial_runtime_state_completeness(state)
+
+
+def test_legacy_loss_cooldown_domain_fails_closed() -> None:
+    state = _complete_initial_state()
+    state["reward_path_loss_cooldown"]["schema_version"] = (
+        "narrowgate_initial_state_reward_path_loss_cooldown.v1"
+    )
+    with pytest.raises(ValueError, match="domain schema mismatch"):
+        validate_initial_runtime_state_completeness(state)
+
+
 def test_captured_domain_placeholder_is_rejected(tmp_path: Path) -> None:
     paths = _fixture(tmp_path)
     state = _complete_initial_state()
@@ -447,6 +495,7 @@ def test_real_engine_state_covers_policy_accounting_and_signal_domains() -> None
     validate_initial_runtime_state_completeness(state)
     assert state["completeness"]["binding_status"] == "fully_bound"
     assert state["reward_path_loss_cooldown"]["consecutive_losses"] == 2
+    assert state["reward_path_loss_cooldown"]["last_cancel_ts_ms"] == 19_000
     assert state["adverse_markout_pause"]["pause_until_wall_s"]["BUY"] == 30.0
     assert state["sync_degrade"]["degrade_until_wall_s"] == 40.0
     assert state["inventory_accounting"]["abs_inventory_time_s"] == 0.01
@@ -455,6 +504,24 @@ def test_real_engine_state_covers_policy_accounting_and_signal_domains() -> None
     assert signal["last_emitted_bucket_ms"] == 0
     assert signal["bar_history_coverage"]["row_count"] == 0
     assert len(signal["state_sha256"]) == 64
+
+
+def test_disabled_live_loss_cooldown_exports_no_cancel_clock() -> None:
+    engine = _engine_for_initial_state_test()
+    engine.cfg.risk.max_consecutive_losses = 0
+    engine.cfg.risk.cooldown_after_loss = 0.0
+    engine.inventory._consecutive_losses = 0
+    engine._cooldown_until = 0.0
+    engine._loss_cooldown_trigger_count = 0
+    engine._loss_cooldown_expiry_count = 0
+    engine._loss_cooldown_max_observed_consecutive_losses = 0
+
+    state = engine.prospective_epoch_initial_runtime_state(
+        account_snapshot={},
+        exchange_open_orders=[],
+    )
+
+    assert state["reward_path_loss_cooldown"]["last_cancel_ts_ms"] == -1
 
 
 def test_cpp_reconstruction_and_zero_native_boundary_are_fully_bound() -> None:

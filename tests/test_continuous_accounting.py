@@ -2,7 +2,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from models.replay.continuous_accounting import ContinuousAccountingLedger
+from models.replay.continuous_accounting import (
+    CAMPAIGN_ACCOUNTING_SEMANTICS,
+    FEE_ACCOUNTING_SEMANTICS,
+    ContinuousAccountingLedger,
+)
 from models.replay.replay_state_checkpoint import ContinuousReplayState
 
 
@@ -111,3 +115,83 @@ def test_restart_transition_preserves_economics_and_waits_for_warmup() -> None:
     assert ready.restart_generation == 1
     assert ready.cash_usdc == cash
     assert ready.position_btc == position
+
+
+def test_flip_closes_at_zero_and_carries_opening_fee_to_new_campaign() -> None:
+    ledger = _ledger()
+    ledger.fill(
+        ts_ms=_ts(1) + 1_000,
+        side="BUY",
+        quantity_btc=0.001,
+        price=100.0,
+        fee_usdc=0.005,
+        new_campaign_id="LONG-1",
+    )
+    ledger.fill(
+        ts_ms=_ts(1) + 2_000,
+        side="SELL",
+        quantity_btc=0.002,
+        price=120.0,
+        fee_usdc=0.02,
+        new_campaign_id="SHORT-2",
+    )
+
+    assert ledger.state.position_btc == pytest.approx(-0.001)
+    assert len(ledger.closed_campaigns) == 1
+    closed = ledger.closed_campaigns[0]
+    assert closed.terminal_reason == "flip"
+    assert closed.end_equity_usdc == pytest.approx(0.005)
+    assert closed.value_usdc == pytest.approx(0.005)
+    assert ledger.state.economic_campaign is not None
+    assert ledger.state.economic_campaign.campaign_id == "SHORT-2"
+    assert ledger.state.economic_campaign.start_ts_ms == _ts(1) + 2_000
+    assert ledger.state.economic_campaign.start_equity_usdc == pytest.approx(0.005)
+
+    ledger.mark(_ts(1) + 2_001, 120.0)
+    assert ledger.state.equity_usdc == pytest.approx(-0.005)
+    assert (
+        ledger.state.equity_usdc
+        - ledger.state.economic_campaign.start_equity_usdc
+    ) == pytest.approx(-0.01)
+    assert ledger.accounting_audit()["campaign_accounting_semantics"] == (
+        CAMPAIGN_ACCOUNTING_SEMANTICS
+    )
+    assert ledger.state.cumulative_fees_usdc == pytest.approx(0.025)
+
+
+def test_flip_preserves_signed_rebate_and_campaign_additivity() -> None:
+    ledger = _ledger()
+    ledger.fill(
+        ts_ms=_ts(1) + 1_000,
+        side="BUY",
+        quantity_btc=0.001,
+        price=100.0,
+        fee_usdc=-0.005,
+        new_campaign_id="LONG-REBATE",
+    )
+    ledger.fill(
+        ts_ms=_ts(1) + 2_000,
+        side="SELL",
+        quantity_btc=0.002,
+        price=120.0,
+        fee_usdc=-0.02,
+        new_campaign_id="SHORT-REBATE",
+    )
+
+    closed = ledger.closed_campaigns[0]
+    assert closed.terminal_reason == "flip"
+    assert closed.value_usdc == pytest.approx(0.035)
+    assert ledger.state.cumulative_fees_usdc == pytest.approx(-0.025)
+    ledger.mark(_ts(1) + 2_001, 120.0)
+    assert ledger.state.equity_usdc == pytest.approx(0.045)
+    assert ledger.state.economic_campaign is not None
+    assert (
+        ledger.state.equity_usdc
+        - ledger.state.economic_campaign.start_equity_usdc
+    ) == pytest.approx(0.01)
+    assert closed.value_usdc + 0.01 == pytest.approx(
+        ledger.state.equity_usdc
+    )
+    assert ledger.accounting_audit()["fee_accounting_semantics"] == (
+        FEE_ACCOUNTING_SEMANTICS
+    )

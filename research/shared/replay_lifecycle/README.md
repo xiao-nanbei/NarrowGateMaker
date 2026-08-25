@@ -1,6 +1,6 @@
 # R: Replay, Queue, And Lifecycle
 
-Last materially modified: 2026-08-13
+Last materially modified: 2026-08-25
 
 Documentation boundary: this README and the unit's tracked `docs/` are public. Owner-only artifact locators, unpublished evidence indexes, and private research context are resolved through this unit's ignored local `private/` catalog and are not distributed with the public repository. See the [public/private research layout](../../PRIVATE_EVIDENCE.md).
 
@@ -25,7 +25,7 @@ The first 360-hour epoch draft is intentionally unauthorized: its historical ide
 
 It preserves arm-specific cash, inventory, entry price, economic campaign, fees, and cumulative PnL across UTC midnight and planned restart intervals. Process-local orders, queues, cursors, cooldowns, and feature runtime are cleared only at an explicit restart boundary after observable order terminality. UTC midnight is an accounting slice, not a flatten or reset.
 
-The current substrate is contract-complete but is not yet bound to the authoritative tick runner (`full_tick_runner_binding=false`). It grants no strategy, action, exact-queue, or live authority by itself.
+The current implementation contracts are [`continuous_replay_state.v2`](docs/continuous_replay_state_v2_contract.json) and [`continuous_accounting_contract.v2`](docs/continuous_accounting_contract_v2.json). They add fail-closed v1 checkpoint rejection, finite signed fee/rebate carry, and a zero-inventory campaign boundary for fills that cross from long to short or short to long. The v1 contracts remain immutable historical predecessors; results and checkpoints that depend on their old fee/campaign semantics are stale until rerun under v2. This correctness repair grants no strategy, economic, action, exact-queue, or live authority by itself.
 
 See `docs/versioned_continuous_replay_substrate_v1.md` for modes, state ownership, and the distinction between continuity effects and tail-governance effects.
 

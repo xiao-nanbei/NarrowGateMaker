@@ -1,0 +1,31 @@
+{
+  "authority": {
+    "action_or_live_authority": false,
+    "continuous_accounting": true,
+    "economic_result_authority": false
+  },
+  "campaign_accounting_semantics": "zero_boundary_flip_fee_split_v2",
+  "contract_id": "continuous_accounting_contract.v2",
+  "fee_accounting_semantics": "signed_fee_positive_cost_negative_rebate_v2",
+  "implementation": {
+    "path": "models/replay/continuous_accounting.py",
+    "sha256": "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
+  },
+  "last_materially_modified": "2026-08-25",
+  "predecessor": {
+    "contract_id": "continuous_accounting_contract.v1",
+    "status": "immutable_superseded_semantics"
+  },
+  "requirements": [
+    "equity equals cash plus marked inventory",
+    "daily slices add to continuous equity change",
+    "UTC midnight does not flatten or reset state",
+    "inventory remains marked through offline intervals",
+    "final open inventory is retained and marked",
+    "finite signed fees preserve maker rebates",
+    "a cross-zero fill closes the old campaign at zero inventory",
+    "cross-zero closing and opening fees are split in proportion to leg quantity",
+    "the new-side campaign starts at the same exchange timestamp and carries its opening fee"
+  ],
+  "schema_version": "continuous_accounting_contract.v2"
+}

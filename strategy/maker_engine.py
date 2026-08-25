@@ -27,7 +27,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, NoReturn, Optional, Tuple
 
 from execution.order_lifecycle import (
     OrderLifecyclePhase,
@@ -70,6 +70,7 @@ from strategy.quote_core import (
     quote_core_config_from_live_config,
     quote_depth_from_book,
     spread_cap_mode_code,
+    _exposure_increasing,
 )
 from strategy.policy_guards import (
     CommonSidePolicyInput,
@@ -135,6 +136,7 @@ from strategy.state_conditioned_quote_policy import (
     apply_local_add_action,
     inventory_role_for_quote,
 )
+from strategy.replay_controls import ConsecutiveLossCooldown
 from market_fusion import default_reference_symbol, normalize_symbol
 from models.replay.prospective_baseline_epoch import (
     CPP_FEATURE_RECONSTRUCTION_CONTRACT,
@@ -1091,6 +1093,8 @@ class MakerEngine:
         self._csv_log_lock = threading.Lock()
         self._order_ref_lock = threading.RLock()
         self._order_context_lock = threading.RLock()
+        self._reconciliation_lock = threading.Lock()
+        self._runtime_fatal_lock = threading.Lock()
         self._order_lifecycle_journal_lock = threading.Lock()
         self._journaled_lifecycle_sequence: dict[str, int] = {}
         self._order_lifecycle_live_writer_v2 = None
@@ -1139,6 +1143,7 @@ class MakerEngine:
             on_cancel=self._on_cancel,
             on_terminal=self._on_order_terminal,
             on_lifecycle_event=self._on_order_lifecycle_event,
+            allowed_symbols={cfg.symbol},
         )
         self._exact_opportunity_tape_runtime: Optional[
             ExactOpportunityDailyWriter
@@ -1169,8 +1174,24 @@ class MakerEngine:
         # State
         self._running = False
         self._order_submit_fail_closed = False
+        self._runtime_fatal_reason = ""
+        self._runtime_fatal_error: Optional[BaseException] = None
+        self._runtime_reconciliation_required = False
+        self._runtime_reconciliation_pending = False
+        self._runtime_reconciliation_inflight = False
+        self._runtime_reconciliation_generation = 0
+        self._runtime_reconciliation_quiescence_blocked = False
+        self._last_tick_monotonic_s = 0.0
+        # A trade ID alone is not an idempotency proof: a later REST response
+        # carrying the same ID with changed identity/economics must fail closed.
+        self._reconciliation_trade_identity_by_id: dict[str, tuple[Any, ...]] = {}
         self._last_requote_time = 0.0
         self._cooldown_until = 0.0
+        self._loss_cooldown_trigger_count = 0
+        self._loss_cooldown_expiry_count = 0
+        self._loss_cooldown_losing_round_trips = 0
+        self._loss_cooldown_winning_or_flat_round_trips = 0
+        self._loss_cooldown_max_observed_consecutive_losses = 0
         self._requote_count = 0
 
         # Dynamic RQ state
@@ -1441,6 +1462,7 @@ class MakerEngine:
                     "lifecycle": lifecycle.snapshot() if lifecycle is not None else None,
                 }
             )
+        reconciliation = self.inventory.reconciliation_snapshot()
         with self.inventory._lock:
             inventory_accounting = {
                 "quantity_btc": float(self.inventory._qty),
@@ -1464,7 +1486,18 @@ class MakerEngine:
                 "day_sell_fill_qty": float(self.inventory._day_sell_fill_qty),
                 "day_buy_fill_notional": float(self.inventory._day_buy_fill_notional),
                 "day_sell_fill_notional": float(self.inventory._day_sell_fill_notional),
-                "last_sync_request_time": float(self.inventory._last_sync_request_time),
+                "reconciliation_snapshot_update_time_ms": int(
+                    reconciliation["snapshot_update_time_ms"]
+                ),
+                "reconciliation_order_cumulative_filled_qty": dict(
+                    reconciliation["order_cumulative_filled_qty"]
+                ),
+                "reconciliation_local_order_cumulative_filled_qty": dict(
+                    reconciliation["local_order_cumulative_filled_qty"]
+                ),
+                "reconciliation_retained_post_snapshot_fill_count": int(
+                    reconciliation["retained_post_snapshot_fill_count"]
+                ),
                 "sync_adjust_seq": int(self.inventory._sync_adjust_seq),
                 "last_sync_adjust_time": float(self.inventory._last_sync_adjust_time),
                 "last_sync_adjust_delta": float(self.inventory._last_sync_adjust_delta),
@@ -1507,6 +1540,70 @@ class MakerEngine:
                 "volume": float(self.inventory._campaign_volume),
             }
             consecutive_losses = int(self.inventory._consecutive_losses)
+            loss_cooldown_inventory = float(self.inventory._qty)
+            loss_cooldown_avg_entry = float(self.inventory._avg_entry)
+            loss_cooldown_open_commission = float(self.inventory._open_commission)
+            loss_cooldown_round_trip_pnl = float(self.inventory._round_trip_rpnl)
+            if abs(loss_cooldown_inventory) <= 1e-10:
+                loss_cooldown_inventory = 0.0
+                loss_cooldown_avg_entry = 0.0
+                loss_cooldown_open_commission = 0.0
+                loss_cooldown_round_trip_pnl = 0.0
+        risk_cfg = getattr(self.cfg, "risk", None)
+        loss_limit = int(getattr(risk_cfg, "max_consecutive_losses", 0) or 0)
+        loss_cooldown_ms = max(
+            0,
+            int(
+                round(
+                    float(getattr(risk_cfg, "cooldown_after_loss", 0.0) or 0.0)
+                    * 1_000.0
+                )
+            ),
+        )
+        loss_cooldown_enabled = bool(loss_limit > 0 and loss_cooldown_ms > 0)
+        loss_cooldown_state = ConsecutiveLossCooldown(
+            max_consecutive_losses=loss_limit,
+            cooldown_ms=loss_cooldown_ms,
+            inventory=loss_cooldown_inventory,
+            avg_entry=loss_cooldown_avg_entry,
+            open_commission=loss_cooldown_open_commission,
+            round_trip_pnl=loss_cooldown_round_trip_pnl,
+            consecutive_losses=consecutive_losses,
+            cooldown_until_ms=max(0, int(round(self._cooldown_until * 1_000.0))),
+            last_cancel_ts_ms=(
+                max(
+                    0,
+                    int(round(self._last_cooldown_cancel_time * 1_000.0)),
+                )
+                if loss_cooldown_enabled
+                else -1
+            ),
+            threshold_pending=bool(
+                self._cooldown_until <= 0.0
+                and loss_limit > 0
+                and consecutive_losses >= loss_limit
+            ),
+            trigger_count=int(getattr(self, "_loss_cooldown_trigger_count", 0)),
+            expiry_count=int(getattr(self, "_loss_cooldown_expiry_count", 0)),
+            losing_round_trips=int(
+                getattr(self, "_loss_cooldown_losing_round_trips", 0)
+            ),
+            winning_or_flat_round_trips=int(
+                getattr(self, "_loss_cooldown_winning_or_flat_round_trips", 0)
+            ),
+            max_observed_consecutive_losses=int(
+                max(
+                    int(
+                        getattr(
+                            self,
+                            "_loss_cooldown_max_observed_consecutive_losses",
+                            0,
+                        )
+                    ),
+                    consecutive_losses,
+                )
+            ),
+        ).snapshot()
         hold = getattr(self, "_dynamic_fill_hazard_action_hold", None)
         hold_state, _ = _prospective_state_fingerprint(
             hold,
@@ -1716,7 +1813,7 @@ class MakerEngine:
                 "schema_version": PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS[
                     "reward_path_loss_cooldown"
                 ],
-                "consecutive_losses": consecutive_losses,
+                **loss_cooldown_state,
                 "cooldown_until_wall_s": float(self._cooldown_until),
                 "last_cooldown_cancel_time_wall_s": float(
                     self._last_cooldown_cancel_time
@@ -2657,6 +2754,7 @@ class MakerEngine:
         event_type: str,
         event: dict[str, Any],
     ) -> None:
+        ownership_conflict: Optional[RuntimeError] = None
         if bool(getattr(order, "orphan_adoption", False)) and not bool(
             getattr(order, "is_terminal", False)
         ):
@@ -2681,6 +2779,16 @@ class MakerEngine:
                         current_cid,
                         orphan_cid,
                     )
+                    ownership_conflict = RuntimeError(
+                        f"same-side orphan conflict for {order.side.value}: "
+                        f"tracked={current_cid} orphan={orphan_cid}"
+                    )
+        if ownership_conflict is not None:
+            self.latch_runtime_fatal(
+                reason="ORDER_OWNERSHIP_CONFLICT",
+                error=ownership_conflict,
+                reconciliation_required=True,
+            )
         self._record_exact_order_event(order, event_type, event)
 
     def record_reconciled_order_lifecycle(
@@ -5207,6 +5315,7 @@ class MakerEngine:
         Called every iteration of the main event loop.
         Checks if it's time to requote and executes if so.
         """
+        self._last_tick_monotonic_s = time.monotonic()
         now = time.time()
 
         # Markout is a wall-clock observation, not a requote-side effect.  The
@@ -5229,6 +5338,7 @@ class MakerEngine:
             self.inventory.reset_consecutive_losses()
             self._cooldown_until = 0.0
             self._last_cooldown_cancel_time = 0.0
+            self._loss_cooldown_expiry_count += 1
 
         # Requote interval check (dynamic or static)
         rq_interval = self._effective_rq_interval()
@@ -5395,8 +5505,10 @@ class MakerEngine:
 
         if snap.state == PositionState.TIMEOUT_CLOSING:
             # Still closing — only allow orders that reduce position
-            if abs(q) < 1e-8:
-                # Fully closed, reset state
+            if q == 0.0:
+                # Only an exact exchange-reconciled zero is flat.  A non-zero
+                # residual below the lot size is execution-state uncertainty,
+                # not permission to erase the local position.
                 self.inventory._update_state()
                 self._close_start_time = 0.0
                 self._log_live_perf_telemetry(
@@ -6157,21 +6269,31 @@ class MakerEngine:
                 f"spread={ask_price - bid_price:.1f}"
             )
 
-        cap_mode = spread_cap_mode_code(getattr(cfg.strategy, "spread_cap_mode", "compress"))
+        base_size = float(cfg.strategy.order_size)
+        lot = float(cfg.lot_size)
+        bid_exposure_increasing = _exposure_increasing(
+            "BUY", q, base_size, lot
+        )
+        ask_exposure_increasing = _exposure_increasing(
+            "SELL", q, base_size, lot
+        )
+        cap_mode = spread_cap_mode_code(
+            getattr(cfg.strategy, "spread_cap_mode", "pause_exposure")
+        )
         if cap_mode == SPREAD_CAP_PAUSE_EXPOSURE:
             bid_cap_block = bool(self._last_quote_context.get("BUY", {}).get("cap_exposure_block", False))
             ask_cap_block = bool(self._last_quote_context.get("SELL", {}).get("cap_exposure_block", False))
             # Policy multipliers can create a second cap hit after quote-core.
             # In pause mode that hit blocks only the side that would add risk.
             if post_policy_cap_hit:
-                bid_cap_block = bid_cap_block or q >= 0.0
-                ask_cap_block = ask_cap_block or q <= 0.0
-            if bid_cap_block and q >= 0.0:
+                bid_cap_block = bid_cap_block or bid_exposure_increasing
+                ask_cap_block = ask_cap_block or ask_exposure_increasing
+            if bid_cap_block and bid_exposure_increasing:
                 bid_policy.allow_exposure_increase = False
                 bid_policy.reason_mask |= POLICY_REASON_SPREAD_CAP | POLICY_REASON_EXPOSURE_ONLY
                 bid_policy.mode = "defend"
                 bid_policy.reason_text = self._policy_reason_text(bid_policy.reason_mask)
-            if ask_cap_block and q <= 0.0:
+            if ask_cap_block and ask_exposure_increasing:
                 ask_policy.allow_exposure_increase = False
                 ask_policy.reason_mask |= POLICY_REASON_SPREAD_CAP | POLICY_REASON_EXPOSURE_ONLY
                 ask_policy.mode = "defend"
@@ -6179,8 +6301,6 @@ class MakerEngine:
 
         can_bid_after_inventory = q < cfg.strategy.max_inventory
         can_ask_after_inventory = q > -cfg.strategy.max_inventory
-        bid_exposure_increasing = q >= 0.0
-        ask_exposure_increasing = q <= 0.0
 
         can_bid = (
             can_bid_after_inventory
@@ -6198,8 +6318,8 @@ class MakerEngine:
         bid_order = self.orders.get_order(self._bid_cid) if self._bid_cid else None
         bid_pending_lifecycle = self._order_lifecycle_pending(bid_order)
         bid_alive = bid_order and bid_order.is_active
-        if not bid_alive and not bid_pending_lifecycle:
-            self._bid_cid = None  # clear stale reference (e.g. GTX expired)
+        if self._bid_cid and not bid_alive and not bid_pending_lifecycle:
+            self._prune_terminal_side_order_reference(Side.BUY)
         bid_needs_update = True
         bid_force_update = False
         if bid_alive and bid_order.price > 0:
@@ -6216,8 +6336,10 @@ class MakerEngine:
         ask_order = self.orders.get_order(self._ask_cid) if self._ask_cid else None
         ask_pending_lifecycle = self._order_lifecycle_pending(ask_order)
         ask_alive = ask_order and ask_order.is_active
-        if not ask_alive and not ask_pending_lifecycle:
-            self._ask_cid = None  # clear stale reference (e.g. GTX expired)
+        if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
+            self._prune_terminal_side_order_reference(Side.SELL)
+        if self._order_submit_fail_closed:
+            return
         ask_needs_update = True
         ask_force_update = False
         if ask_alive and ask_order.price > 0:
@@ -6232,8 +6354,6 @@ class MakerEngine:
 
         # Base size controls first (legacy eta / symmetric sizing), then per-side policy.
         eta = getattr(cfg.strategy, 'eta', 0.0)
-        base_size = cfg.strategy.order_size
-        lot = cfg.lot_size
         min_notional = cfg.min_notional
         min_qty = getattr(self, '_min_qty', lot)
         symmetric_size = getattr(cfg.strategy, 'symmetric_size', False)
@@ -6639,7 +6759,7 @@ class MakerEngine:
                 trigger_decision_id=bid_decision_id,
             )
             if bid_cancel_requested:
-                self._bid_cid = None
+                self._prune_terminal_side_order_reference(Side.BUY)
             else:
                 bid_needs_update = False
                 bid_pending_coalesce = True
@@ -6655,7 +6775,7 @@ class MakerEngine:
                 trigger_decision_id=ask_decision_id,
             )
             if ask_cancel_requested:
-                self._ask_cid = None
+                self._prune_terminal_side_order_reference(Side.SELL)
             else:
                 ask_needs_update = False
                 ask_pending_coalesce = True
@@ -7370,7 +7490,9 @@ class MakerEngine:
         if not cap_hit:
             return bid_price, ask_price, False
 
-        cap_mode = spread_cap_mode_code(getattr(self.cfg.strategy, "spread_cap_mode", "compress"))
+        cap_mode = spread_cap_mode_code(
+            getattr(self.cfg.strategy, "spread_cap_mode", "pause_exposure")
+        )
         if cap_mode != SPREAD_CAP_COMPRESS:
             return bid_price, ask_price, True
 
@@ -7458,33 +7580,123 @@ class MakerEngine:
                 pass
         return None
 
-    @staticmethod
     def _validated_submit_response(
+        self,
         response: Any,
         *,
         route: str,
+        cid: str,
+        symbol: str,
+        side: Side,
+        quantity: float,
     ) -> tuple[dict[str, Any], int, str]:
-        """Require an explicit exchange order identity and status after submit."""
+        """Validate a RESULT acknowledgement before mutating the local ledger.
+
+        A structurally incomplete acknowledgement remains an unknown ACK.  An
+        explicit identity or quantity disagreement is stronger evidence of an
+        unsafe association, so it permanently latches reconciliation-required.
+        """
 
         if not isinstance(response, Mapping):
             raise RuntimeError(f"malformed {route} response: expected mapping")
         normalized = dict(response)
-        status = str(normalized.get("status") or "").strip().upper()
+        status_value = normalized.get("status")
+        if not isinstance(status_value, str):
+            raise RuntimeError(f"malformed {route} response: invalid status")
+        status = status_value.strip().upper()
         try:
-            order_id = int(normalized.get("orderId") or 0)
-        except (TypeError, ValueError) as exc:
+            order_id = self._rest_reconcile_order_id(normalized.get("orderId"))
+        except ValueError as exc:
             raise RuntimeError(
                 f"malformed {route} response: invalid orderId"
             ) from exc
-        missing = []
+        missing: list[str] = []
         if not status:
             missing.append("status")
-        if order_id <= 0:
-            missing.append("orderId")
+        for field_name in (
+            "clientOrderId",
+            "symbol",
+            "side",
+            "origQty",
+            "executedQty",
+        ):
+            if field_name not in normalized or normalized[field_name] is None:
+                missing.append(field_name)
         if missing:
             raise RuntimeError(
                 f"malformed {route} response: missing {','.join(missing)}"
             )
+
+        expected_side = side.value
+
+        def _fatal_mismatch(
+            detail: str,
+            *,
+            cause: BaseException | None = None,
+        ) -> NoReturn:
+            error = RuntimeError(f"unsafe {route} RESULT response: {detail}")
+            self.latch_runtime_fatal(
+                reason="SUBMIT_RESULT_IDENTITY_OR_QUANTITY_MISMATCH",
+                error=error,
+                reconciliation_required=True,
+            )
+            if cause is not None:
+                raise error from cause
+            raise error
+
+        response_cid = normalized.get("clientOrderId")
+        if not isinstance(response_cid, str) or response_cid.strip() != cid:
+            _fatal_mismatch("clientOrderId does not match the submitted order")
+        response_symbol = normalized.get("symbol")
+        if (
+            not isinstance(response_symbol, str)
+            or response_symbol.strip() != symbol
+        ):
+            _fatal_mismatch("symbol does not match the submitted order")
+        response_side = normalized.get("side")
+        if (
+            not isinstance(response_side, str)
+            or response_side.strip().upper() != expected_side
+        ):
+            _fatal_mismatch("side does not match the submitted order")
+
+        try:
+            original_quantity = self._rest_reconcile_number(
+                normalized.get("origQty"),
+                field="origQty",
+                strictly_positive=True,
+            )
+            executed_quantity = self._rest_reconcile_number(
+                normalized.get("executedQty"),
+                field="executedQty",
+                strictly_positive=False,
+            )
+        except ValueError as exc:
+            _fatal_mismatch(str(exc), cause=exc)
+
+        expected_quantity = float(quantity)
+        quantity_tolerance = max(1e-12, abs(expected_quantity) * 1e-9)
+        if not math.isclose(
+            original_quantity,
+            expected_quantity,
+            rel_tol=1e-9,
+            abs_tol=quantity_tolerance,
+        ):
+            _fatal_mismatch("origQty does not match the submitted quantity")
+        if executed_quantity > original_quantity:
+            _fatal_mismatch("executedQty exceeds origQty")
+
+        normalized.update(
+            {
+                "status": status,
+                "orderId": order_id,
+                "clientOrderId": cid,
+                "symbol": symbol,
+                "side": expected_side,
+                "origQty": original_quantity,
+                "executedQty": executed_quantity,
+            }
+        )
         return normalized, order_id, status
 
     def _hold_submit_with_unknown_ack(
@@ -7519,6 +7731,55 @@ class MakerEngine:
             if not bool(getattr(order, "is_terminal", False))
         )
 
+    def _prune_terminal_side_order_reference(self, side: Side) -> bool:
+        """Release a side pointer only from a non-evicting terminal proof."""
+
+        with self._order_ref_lock:
+            cid = self._side_order_reference(side)
+        if not cid:
+            return False
+        terminal_identity = self.orders.terminal_identity(cid)
+        if terminal_identity is None:
+            order = self.orders.get_order(cid)
+            if order is not None and not bool(getattr(order, "is_terminal", False)):
+                return False
+            # Missing history is not terminal evidence: history can be evicted,
+            # and releasing an unknown CID could admit a second same-side order.
+            self._order_submit_fail_closed = True
+            self._running = False
+            self.latch_runtime_fatal(
+                reason="ORDER_OWNERSHIP_TERMINAL_PROOF_MISSING",
+                error=RuntimeError(
+                    f"cannot prove terminal ownership for {side.value} cid={cid}"
+                ),
+                reconciliation_required=True,
+            )
+            return False
+        if terminal_identity.get("side") != side.value:
+            self._order_submit_fail_closed = True
+            self._running = False
+            self.latch_runtime_fatal(
+                reason="ORDER_OWNERSHIP_TERMINAL_IDENTITY_MISMATCH",
+                error=RuntimeError(
+                    f"terminal side mismatch for {side.value} cid={cid}: "
+                    f"{terminal_identity.get('side')!r}"
+                ),
+                reconciliation_required=True,
+            )
+            return False
+        with self._order_ref_lock:
+            if self._side_order_reference(side) != cid:
+                return False
+            self._set_side_order_reference(side, None)
+        self._pop_order_context(cid)
+        logger.info(
+            "ORDER_OWNERSHIP_RELEASED side=%s cid=%s terminal_state=%s",
+            side.value,
+            cid,
+            terminal_identity.get("terminal_state", "UNKNOWN"),
+        )
+        return True
+
     def _stop_for_side_ownership_conflict(
         self,
         *,
@@ -7539,43 +7800,68 @@ class MakerEngine:
             current_cid or "none",
             ",".join(active_cids) or "none",
         )
+        self.latch_runtime_fatal(
+            reason="ORDER_OWNERSHIP_CONFLICT",
+            error=RuntimeError(
+                f"same-side ownership conflict for {side.value}: {cid}"
+            ),
+            reconciliation_required=True,
+        )
 
     def _reserve_side_order_ownership(self, *, side: Side, cid: str) -> bool:
         """Reserve the single-owner side before the REST request can become visible."""
 
+        self._prune_terminal_side_order_reference(side)
         active_cids = self._same_side_nonterminal_cids(side)
         other_active = tuple(value for value in active_cids if value != cid)
+        conflict = False
         with self._order_ref_lock:
             current_cid = self._side_order_reference(side)
             if current_cid not in {None, cid} or other_active:
-                self._stop_for_side_ownership_conflict(
-                    side=side,
-                    cid=cid,
-                    phase="pre_submit_reservation",
-                    current_cid=current_cid,
-                    active_cids=active_cids,
-                )
-                return False
-            self._set_side_order_reference(side, cid)
+                conflict = True
+            else:
+                self._set_side_order_reference(side, cid)
+        if conflict:
+            # Fatal handling performs REST cancellation and may re-enter order
+            # ownership callbacks.  It must never run while the ref lock is held.
+            self._stop_for_side_ownership_conflict(
+                side=side,
+                cid=cid,
+                phase="pre_submit_reservation",
+                current_cid=current_cid,
+                active_cids=active_cids,
+            )
+            return False
         return True
 
     def _verify_side_order_ownership(self, *, side: Side, cid: str, phase: str) -> bool:
         """Recheck the pointer and all same-side lifecycles after a submit transition."""
 
+        candidate = self.orders.get_order(cid)
+        if candidate is None:
+            self._prune_terminal_side_order_reference(side)
+            return False
+        if bool(getattr(candidate, "is_terminal", False)):
+            return self._prune_terminal_side_order_reference(side)
+        self._prune_terminal_side_order_reference(side)
         active_cids = self._same_side_nonterminal_cids(side)
         other_active = tuple(value for value in active_cids if value != cid)
+        conflict = False
         with self._order_ref_lock:
             current_cid = self._side_order_reference(side)
             if current_cid not in {None, cid} or other_active:
-                self._stop_for_side_ownership_conflict(
-                    side=side,
-                    cid=cid,
-                    phase=phase,
-                    current_cid=current_cid,
-                    active_cids=active_cids,
-                )
-                return False
-            self._set_side_order_reference(side, cid)
+                conflict = True
+            else:
+                self._set_side_order_reference(side, cid)
+        if conflict:
+            self._stop_for_side_ownership_conflict(
+                side=side,
+                cid=cid,
+                phase=phase,
+                current_cid=current_cid,
+                active_cids=active_cids,
+            )
+            return False
         return True
 
     def _release_side_order_ownership(self, *, side: Side, cid: str) -> None:
@@ -7613,6 +7899,13 @@ class MakerEngine:
                      decision_context: Optional[dict] = None,
                      record_requote_perf: bool = True) -> Optional[str]:
         """Send limit order to exchange."""
+        if self._execution_state_uncertain():
+            logger.critical(
+                "ORDER_SUBMIT_BLOCKED_RUNTIME_FATAL side=%s; exact operator "
+                "reconciliation required",
+                side.value,
+            )
+            return None
         if getattr(self, "_order_submit_fail_closed", False):
             logger.critical(
                 "ORDER_SUBMIT_BLOCKED_FAIL_CLOSED side=%s; operator reconciliation required",
@@ -7662,11 +7955,17 @@ class MakerEngine:
             resp, oid, status = self._validated_submit_response(
                 resp,
                 route="limit-order submit",
+                cid=cid,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
             )
 
-            if status != "NEW":
+            executed_quantity = float(resp["executedQty"])
+            if status != "NEW" or executed_quantity > 0.0:
                 order = self.orders.get_order(cid)
                 if status not in {
+                    "NEW",
                     "PARTIALLY_FILLED",
                     "FILLED",
                     "CANCELED",
@@ -7677,13 +7976,12 @@ class MakerEngine:
                         f"unrecognized new-order response status: {status or 'missing'}"
                     ))
                     return cid
-                self.orders.on_order_update(
-                    self._rest_reconciled_order_event(
-                        response=resp,
-                        order=order,
-                        cid=cid,
-                        status=status,
-                    )
+                self._apply_rest_reconciled_order_status(
+                    response=resp,
+                    order=order,
+                    cid=cid,
+                    status=status,
+                    submit_ack_reconciled=True,
                 )
                 order = self.orders.get_order(cid)
                 if order is not None:
@@ -7691,7 +7989,7 @@ class MakerEngine:
                         f"submit_result_{status.lower()}",
                         order,
                     )
-                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                if self.orders.terminal_identity(cid) is not None:
                     self._pop_order_context(cid)
                     self._release_side_order_ownership(side=side, cid=cid)
                     return None
@@ -7715,6 +8013,13 @@ class MakerEngine:
             return cid
 
         except Exception as e:
+            if self._execution_state_uncertain():
+                logger.critical(
+                    "Order submit stopped after exact-fill reconciliation fatal; "
+                    "ownership retained cid=%s",
+                    cid,
+                )
+                return cid
             error_code = self._exchange_error_code(e)
             if not request_started or error_code == -5022:
                 self.orders.confirm_rejected(cid, str(e))
@@ -7799,11 +8104,17 @@ class MakerEngine:
             resp, oid, status = self._validated_submit_response(
                 resp,
                 route="close-order submit",
+                cid=cid,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
             )
 
-            if status != "NEW":
+            executed_quantity = float(resp["executedQty"])
+            if status != "NEW" or executed_quantity > 0.0:
                 order = self.orders.get_order(cid)
                 if status not in {
+                    "NEW",
                     "PARTIALLY_FILLED",
                     "FILLED",
                     "CANCELED",
@@ -7814,13 +8125,12 @@ class MakerEngine:
                         f"unrecognized close-order response status: {status or 'missing'}"
                     ))
                     return
-                self.orders.on_order_update(
-                    self._rest_reconciled_order_event(
-                        response=resp,
-                        order=order,
-                        cid=cid,
-                        status=status,
-                    )
+                self._apply_rest_reconciled_order_status(
+                    response=resp,
+                    order=order,
+                    cid=cid,
+                    status=status,
+                    submit_ack_reconciled=True,
                 )
                 order = self.orders.get_order(cid)
                 if order is not None:
@@ -7835,7 +8145,9 @@ class MakerEngine:
                     )
                 elif status == "EXPIRED":
                     self._close_gtx_rejects += 1
-                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                elif status == "NEW":
+                    self._close_gtx_rejects = 0
+                if self.orders.terminal_identity(cid) is not None:
                     self._pop_order_context(cid)
                     self._release_side_order_ownership(side=side, cid=cid)
                     return
@@ -7870,6 +8182,13 @@ class MakerEngine:
                 logger.info(f"IOC close placed: {side.value} {quantity}@{price}")
 
         except Exception as e:
+            if self._execution_state_uncertain():
+                logger.critical(
+                    "Close submit stopped after exact-fill reconciliation fatal; "
+                    "ownership retained cid=%s",
+                    cid,
+                )
+                return
             error_code = self._exchange_error_code(e)
             exact_gtx_reject = error_code == -5022 and not use_ioc
             if not request_started or exact_gtx_reject:
@@ -7922,24 +8241,32 @@ class MakerEngine:
         cid: str,
         status: str,
     ) -> dict[str, Any]:
-        """Translate a REST status without treating updateTime as an event clock."""
+        """Translate only a zero-economic-delta REST status transition."""
 
         current_filled = float(getattr(order, "filled_qty", 0.0) or 0.0)
         cumulative_fill = float(response.get("executedQty", current_filled) or 0.0)
-        incremental_fill = max(0.0, cumulative_fill - current_filled)
-        average_fill_price = float(response.get("avgPrice", 0.0) or 0.0)
+        quantity = float(getattr(order, "quantity", 0.0) or 0.0)
+        tolerance = max(1e-12, abs(quantity) * 1e-9)
+        if not math.isclose(
+            cumulative_fill,
+            current_filled,
+            rel_tol=1e-9,
+            abs_tol=tolerance,
+        ):
+            raise RuntimeError(
+                "REST status cannot synthesize a positive fill delta; "
+                "exact accountTrades evidence is required"
+            )
         return {
             "s": str(response.get("symbol") or self.cfg.symbol),
             "c": str(response.get("clientOrderId") or cid),
             "S": str(response.get("side") or order.side.value),
             "X": str(status).upper(),
             "i": int(response.get("orderId", 0) or 0),
-            "l": str(incremental_fill),
-            "L": str(average_fill_price),
-            "z": str(cumulative_fill),
-            "ap": str(average_fill_price),
+            "l": "0",
+            "z": str(current_filled),
             "n": "0",
-            "N": "USDC",
+            "N": "",
             "p": str(response.get("price", order.price)),
             "q": str(response.get("origQty", order.quantity)),
             "T": 0,
@@ -7947,6 +8274,92 @@ class MakerEngine:
             "_exchange_ts_ns": 0,
             "_submit_ack_reconciled": True,
         }
+
+    def _apply_rest_reconciled_order_status(
+        self,
+        *,
+        response: Mapping[str, Any],
+        order: Any,
+        cid: str,
+        status: str,
+        submit_ack_reconciled: bool,
+    ) -> None:
+        """Bind REST identity/status, but source every fill from accountTrades."""
+
+        current_filled = float(getattr(order, "filled_qty", 0.0) or 0.0)
+        quantity = float(getattr(order, "quantity", 0.0) or 0.0)
+        tolerance = max(1e-12, abs(quantity) * 1e-9)
+        cumulative_fill = self._rest_reconcile_number(
+            response.get("executedQty", current_filled),
+            field="executedQty",
+            strictly_positive=False,
+        )
+        positive_delta = cumulative_fill > current_filled
+
+        if positive_delta:
+            try:
+                order_id = self._rest_reconcile_order_id(response.get("orderId"))
+                existing_order_id = int(getattr(order, "order_id", 0) or 0)
+                if existing_order_id <= 0:
+                    self.orders.bind_exchange_order_identity(
+                        cid,
+                        order_id,
+                        activation_unknown=True,
+                    )
+                elif existing_order_id != order_id:
+                    raise RuntimeError(
+                        "REST positive fill order identity disagrees with local ledger"
+                    )
+
+                # P1→accountTrades→P2 supplies exact price, signed commission,
+                # commission asset, trade ID, and cumulative order quantity.
+                self.sync_position(required=True)
+                order_status = self.orders.fatal_status()
+                if bool(order_status.get("latched")):
+                    raise RuntimeError(
+                        "order manager became fatal during exact REST fill delivery: "
+                        + str(order_status.get("reason", "unknown"))
+                    )
+                reconciled = self.orders.get_order(cid)
+                if reconciled is None:
+                    raise RuntimeError(
+                        "exact REST fill delivery lost the bound order identity"
+                    )
+                reconciled_fill = float(
+                    getattr(reconciled, "filled_qty", 0.0) or 0.0
+                )
+                if reconciled_fill <= current_filled or not math.isclose(
+                    reconciled_fill,
+                    cumulative_fill,
+                    rel_tol=1e-9,
+                    abs_tol=tolerance,
+                ):
+                    raise RuntimeError(
+                        "accountTrades did not prove REST cumulative fill: "
+                        f"rest={cumulative_fill:.17g} "
+                        f"ledger={reconciled_fill:.17g}"
+                    )
+                order = reconciled
+            except Exception as exc:
+                failure = RuntimeError(
+                    "positive REST cumulative fill lacks complete exact "
+                    "accountTrades reconciliation"
+                )
+                self.latch_runtime_fatal(
+                    reason="REST_POSITIVE_FILL_EVIDENCE_MISSING",
+                    error=failure,
+                    reconciliation_required=True,
+                )
+                raise failure from exc
+
+        event = self._rest_reconciled_order_event(
+            response=response,
+            order=order,
+            cid=cid,
+            status=status,
+        )
+        event["_submit_ack_reconciled"] = bool(submit_ack_reconciled)
+        self.orders.on_order_update(event)
 
     @staticmethod
     def _rest_reconcile_number(
@@ -8162,13 +8575,13 @@ class MakerEngine:
             return "query_malformed_still_unknown"
         response, status = validated
 
-        event = self._rest_reconciled_order_event(
+        self._apply_rest_reconciled_order_status(
             response=response,
             order=order,
             cid=cid,
             status=status,
+            submit_ack_reconciled=True,
         )
-        self.orders.on_order_update(event)
         if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
             self._pop_order_context(cid)
         return f"exchange_status_{status.lower()}_reconciled"
@@ -8206,23 +8619,24 @@ class MakerEngine:
             return "query_malformed_still_unknown"
         response, status = validated
 
-        event = self._rest_reconciled_order_event(
+        self._apply_rest_reconciled_order_status(
             response=response,
             order=order,
             cid=cid,
             status=status,
+            submit_ack_reconciled=False,
         )
-        event["_submit_ack_reconciled"] = False
-        self.orders.on_order_update(event)
         if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
             self._pop_order_context(cid)
         return f"exchange_status_{status.lower()}_reconciled"
 
-    def _cancel_all_orders(self):
+    def _cancel_all_orders(self) -> bool:
         """Cancel all active orders."""
+        self._prune_terminal_side_order_reference(Side.BUY)
+        self._prune_terminal_side_order_reference(Side.SELL)
         active = self.orders.get_active_orders()
         if not active:
-            return
+            return True
 
         marked_ids: list[str] = []
         for order in active:
@@ -8240,10 +8654,20 @@ class MakerEngine:
                     "cancel_all", (time.perf_counter() - rest_start) * 1_000_000.0
                 )
             logger.debug(f"Canceled {len(active)} orders")
+            return True
         except Exception as e:
             for cid in marked_ids:
                 self.orders.cancel_rejected(cid, str(e))
             logger.error(f"Cancel all orders failed: {e}")
+            self.latch_runtime_fatal(
+                reason="CANCEL_ALL_NOT_AUTHORITATIVE",
+                error=RuntimeError(f"cancel-all did not complete: {e}"),
+                reconciliation_required=True,
+            )
+            return False
+        finally:
+            self._prune_terminal_side_order_reference(Side.BUY)
+            self._prune_terminal_side_order_reference(Side.SELL)
 
     def _cancel_order(
         self,
@@ -8254,7 +8678,16 @@ class MakerEngine:
     ) -> bool:
         """Cancel a single order by client order id."""
         order = self.orders.get_order(cid)
-        if not order or order.is_terminal:
+        if order is None:
+            for side in (Side.BUY, Side.SELL):
+                if self._side_order_reference(side) == cid:
+                    self._prune_terminal_side_order_reference(side)
+            return False
+        if order.is_terminal:
+            if self.orders.terminal_identity(cid) is None:
+                self._prune_terminal_side_order_reference(order.side)
+                return False
+            self._release_side_order_ownership(side=order.side, cid=cid)
             return True
 
         if order.state == OrderState.PENDING_NEW:
@@ -8285,7 +8718,14 @@ class MakerEngine:
                         "cancel", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
             resolved = self.orders.get_order(cid)
-            return bool(resolved is None or resolved.is_terminal)
+            if (
+                resolved is not None
+                and resolved.is_terminal
+                and self.orders.terminal_identity(cid) is not None
+            ):
+                self._prune_terminal_side_order_reference(resolved.side)
+                return True
+            return False
         except Exception as e:
             self.orders.cancel_rejected(cid, str(e))
             logger.error(f"Cancel order {cid} failed: {e}")
@@ -8311,11 +8751,7 @@ class MakerEngine:
             seen.add(cid)
             resolved = self._cancel_order(cid)
             if resolved:
-                with self._order_ref_lock:
-                    if side == "BUY" and self._bid_cid == cid:
-                        self._bid_cid = None
-                    elif side == "SELL" and self._ask_cid == cid:
-                        self._ask_cid = None
+                self._prune_terminal_side_order_reference(order.side)
             canceled += 1
 
         if canceled:
@@ -8324,17 +8760,39 @@ class MakerEngine:
     def _cancel_tracked_order_before_replacement(self, side: Side) -> bool:
         """Return true only after the tracked order is authoritatively terminal."""
 
+        self._prune_terminal_side_order_reference(side)
         cid = self._bid_cid if side == Side.BUY else self._ask_cid
         if not cid:
             return True
         if not self._cancel_order(cid):
             return False
-        with self._order_ref_lock:
-            if side == Side.BUY and self._bid_cid == cid:
-                self._bid_cid = None
-            elif side == Side.SELL and self._ask_cid == cid:
-                self._ask_cid = None
-        return True
+        self._prune_terminal_side_order_reference(side)
+        return self._side_order_reference(side) is None
+
+    def _closing_side_ready_for_replacement(
+        self,
+        side: Side,
+        close_price: float,
+    ) -> bool:
+        """Wait for unresolved lifecycle ownership; replace only after terminal ACK."""
+
+        self._prune_terminal_side_order_reference(side)
+        cid = self._side_order_reference(side)
+        if not cid:
+            return True
+        order = self.orders.get_order(cid)
+        if order is None or order.is_terminal:
+            self._prune_terminal_side_order_reference(side)
+            return self._side_order_reference(side) is None
+        if not order.is_active:
+            # PENDING_NEW/PENDING_CANCEL still owns the side.  A second close
+            # candidate here would create the false conflict seen in production.
+            return False
+        if order.price > 0.0:
+            drift = abs(close_price - order.price) / order.price
+            if drift <= self.cfg.strategy.requote_threshold_bps / 10000.0:
+                return False
+        return self._cancel_tracked_order_before_replacement(side)
 
     def _block_stale_quote_data(self, book_age: float, max_age: float):
         """Cancel live quotes and skip requote when execution book data is stale."""
@@ -8394,10 +8852,30 @@ class MakerEngine:
                 f"RISK: {self.inventory.consecutive_losses} consecutive losses, cooling down"
             )
             self._cooldown_until = time.time() + cfg.cooldown_after_loss
+            self._loss_cooldown_trigger_count += 1
             self._cancel_all_orders()
             return False
 
         return True
+
+    def _latch_dust_position_reconciliation(self, q: float, lot: float) -> None:
+        """Retain an uncloseable residual until exact exchange reconciliation."""
+
+        error = RuntimeError(
+            "non-zero position is below the exchange lot size: "
+            f"quantity={q:.17g} lot_size={lot:.17g}"
+        )
+        logger.critical(
+            "DUST_POSITION_RECONCILIATION_REQUIRED quantity=%+.17g "
+            "lot_size=%.17g; canceling exposure and stopping quotes",
+            q,
+            lot,
+        )
+        self.latch_runtime_fatal(
+            reason="DUST_POSITION_RECONCILIATION_REQUIRED",
+            error=error,
+            reconciliation_required=True,
+        )
 
     def _handle_closing_requote(
         self,
@@ -8436,10 +8914,12 @@ class MakerEngine:
         close_side = Side.SELL if q > 0 else Side.BUY
         qty = abs(q)
 
-        # Dust position below lot_size — can't close, treat as flat
-        if qty < lot:
-            logger.info(f"CLOSING dust position {q:+.4f} < lot_size {lot}, resetting to FLAT")
-            self.inventory.force_flat()
+        # A real residual below the exchange lot cannot be submitted, but it
+        # must never be erased locally.  Stop exposure, retain TIMEOUT_CLOSING
+        # and the exact quantity, then require a stable REST reconciliation to
+        # prove an exchange-flat position.
+        if 0.0 < qty < lot:
+            self._latch_dust_position_reconciliation(q, lot)
             return
 
         # Cancel any order on the opening side (should not exist, but safety)
@@ -8494,14 +8974,11 @@ class MakerEngine:
             if aggressive_passive:
                 close_price -= tick  # slide 1 tick into spread
                 close_price = round(close_price, 1)
-            if self._ask_cid:
-                ask_order = self.orders.get_order(self._ask_cid)
-                if ask_order and ask_order.is_active:
-                    drift = abs(close_price - ask_order.price) / ask_order.price
-                    if drift <= cfg.strategy.requote_threshold_bps / 10000.0:
-                        return  # keep existing close order
-                    if not self._cancel_tracked_order_before_replacement(Side.SELL):
-                        return
+            if not self._closing_side_ready_for_replacement(
+                Side.SELL,
+                close_price,
+            ):
+                return
             self._place_close_order(
                 cfg.symbol,
                 Side.SELL,
@@ -8514,14 +8991,11 @@ class MakerEngine:
             if aggressive_passive:
                 close_price += tick  # slide 1 tick into spread
                 close_price = round(close_price, 1)
-            if self._bid_cid:
-                bid_order = self.orders.get_order(self._bid_cid)
-                if bid_order and bid_order.is_active:
-                    drift = abs(close_price - bid_order.price) / bid_order.price
-                    if drift <= cfg.strategy.requote_threshold_bps / 10000.0:
-                        return
-                    if not self._cancel_tracked_order_before_replacement(Side.BUY):
-                        return
+            if not self._closing_side_ready_for_replacement(
+                Side.BUY,
+                close_price,
+            ):
+                return
             self._place_close_order(
                 cfg.symbol,
                 Side.BUY,
@@ -8557,15 +9031,31 @@ class MakerEngine:
     def _emergency_close(self, mid: float):
         """Emergency: cancel all orders and close position at market."""
         self._running = False
-        self._cancel_all_orders()
+        if not self._cancel_all_orders():
+            logger.critical(
+                "EMERGENCY_CLOSE_BLOCKED: existing exchange orders were not "
+                "authoritatively canceled"
+            )
+            return
         q = self.inventory.net_position
+        qty = abs(q)
+        lot = float(self.cfg.lot_size)
+        if 0.0 < qty < lot:
+            self._latch_dust_position_reconciliation(q, lot)
+            return
 
-        if abs(q) > 1e-8:
+        if q != 0.0:
             side_str = "SELL" if q > 0 else "BUY"
             side = Side.SELL if q > 0 else Side.BUY
-            qty = abs(q)
+            qty_str = self._fmt_qty(qty)
+            submitted_qty = float(qty_str)
             logger.critical(f"EMERGENCY_CLOSE: {side_str} {qty:.4f}")
-            cid = self.orders.create_order(self.cfg.symbol, side, 0.0, qty)
+            cid = self.orders.create_order(
+                self.cfg.symbol,
+                side,
+                0.0,
+                submitted_qty,
+            )
             if not self._reserve_side_order_ownership(side=side, cid=cid):
                 self.orders.confirm_rejected(
                     cid,
@@ -8593,7 +9083,7 @@ class MakerEngine:
                         symbol=self.cfg.symbol,
                         side=side_str,
                         type="MARKET",
-                        quantity=self._fmt_qty(qty),
+                        quantity=qty_str,
                         newClientOrderId=cid,
                         reduceOnly=True,
                         newOrderRespType="RESULT",
@@ -8605,8 +9095,13 @@ class MakerEngine:
                 resp, oid, status = self._validated_submit_response(
                     resp,
                     route="emergency-close submit",
+                    cid=cid,
+                    symbol=self.cfg.symbol,
+                    side=side,
+                    quantity=submitted_qty,
                 )
-                if status == "NEW":
+                executed_quantity = float(resp["executedQty"])
+                if status == "NEW" and executed_quantity == 0.0:
                     self.orders.confirm_new(
                         cid,
                         oid,
@@ -8622,6 +9117,7 @@ class MakerEngine:
                     )
                     return
                 if status not in {
+                    "NEW",
                     "PARTIALLY_FILLED",
                     "FILLED",
                     "CANCELED",
@@ -8632,13 +9128,12 @@ class MakerEngine:
                         f"unrecognized emergency-close response status: {status}"
                     )
                 order = self.orders.get_order(cid)
-                self.orders.on_order_update(
-                    self._rest_reconciled_order_event(
-                        response=resp,
-                        order=order,
-                        cid=cid,
-                        status=status,
-                    )
+                self._apply_rest_reconciled_order_status(
+                    response=resp,
+                    order=order,
+                    cid=cid,
+                    status=status,
+                    submit_ack_reconciled=True,
                 )
                 order = self.orders.get_order(cid)
                 if order is not None:
@@ -8646,7 +9141,7 @@ class MakerEngine:
                         f"emergency_submit_result_{status.lower()}",
                         order,
                     )
-                if status in {"FILLED", "CANCELED", "EXPIRED", "REJECTED"}:
+                if self.orders.terminal_identity(cid) is not None:
                     self._pop_order_context(cid)
                     self._release_side_order_ownership(side=side, cid=cid)
                 else:
@@ -8656,6 +9151,13 @@ class MakerEngine:
                         phase=f"emergency_submit_result_{status.lower()}",
                     )
             except Exception as e:
+                if self._execution_state_uncertain():
+                    logger.critical(
+                        "Emergency close stopped after exact-fill reconciliation "
+                        "fatal; ownership retained cid=%s",
+                        cid,
+                    )
+                    return
                 error_code = self._exchange_error_code(e)
                 if not request_started or error_code == -5022:
                     self.orders.confirm_rejected(cid, str(e))
@@ -8757,6 +9259,11 @@ class MakerEngine:
     def _on_order_terminal(self, order: Any, reason: str) -> None:
         """Route every exchange terminal outcome through one cleanup path."""
 
+        self._release_side_order_ownership(
+            side=order.side,
+            cid=order.client_order_id,
+        )
+        self._pop_order_context(order.client_order_id)
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
             runtime.observe_order_terminal(order.client_order_id)
@@ -8780,6 +9287,7 @@ class MakerEngine:
             logger.warning(f"ORDER_FILL ignored non-positive qty: {side} qty={qty} event={event}")
             return
 
+        commission_error: Optional[ValueError] = None
         try:
             commission_quote = _commission_in_quote_asset(
                 commission,
@@ -8790,22 +9298,80 @@ class MakerEngine:
                 settlement_asset=self._settlement_asset,
             )
         except ValueError as exc:
-            self._commission_unit_error = str(exc)
+            commission_error = exc
             commission_quote = 0.0
+
+        prev_q = float(self.inventory.snapshot.qty)
+        previous_consecutive_losses = int(self.inventory.consecutive_losses)
+        order_id = event.get("i") or getattr(order, "order_id", None)
+        trade_id = event.get("t")
+        cumulative_filled_qty = event.get("z", getattr(order, "filled_qty", None))
+        applied_qty = float(self.inventory.on_fill(
+            side,
+            qty,
+            price,
+            commission_quote,
+            trade_time_ms,
+            order_id=order_id,
+            trade_id=trade_id,
+            cumulative_filled_qty=(
+                float(cumulative_filled_qty)
+                if cumulative_filled_qty is not None
+                else None
+            ),
+        ))
+        if applied_qty <= 1e-10:
+            logger.info(
+                "ORDER_FILL_RECONCILED_NOOP side=%s order_id=%s trade_id=%s cumulative=%s",
+                side,
+                order_id,
+                trade_id,
+                cumulative_filled_qty,
+            )
+            return
+        qty = applied_qty
+        if commission_error is not None:
+            self._commission_unit_error = str(commission_error)
             logger.critical(
                 "COMMISSION_UNIT_ERROR amount=%s asset=%s fill=%s@%s: %s; "
-                "inventory will update without mixing currencies and quoting is blocked",
+                "inventory updated without mixing currencies and quoting is blocked",
                 commission,
                 commission_asset or "<missing>",
                 qty,
                 price,
-                exc,
+                commission_error,
             )
 
         self._log_order_outcome("filled", order, filled_qty=qty, avg_fill_price=price)
-        prev_q = float(self.inventory.snapshot.qty)
-        self.inventory.on_fill(side, qty, price, commission_quote, trade_time_ms)
         new_q = float(self.inventory.snapshot.qty)
+        current_consecutive_losses = int(self.inventory.consecutive_losses)
+        self._loss_cooldown_max_observed_consecutive_losses = max(
+            int(
+                getattr(
+                    self,
+                    "_loss_cooldown_max_observed_consecutive_losses",
+                    0,
+                )
+            ),
+            current_consecutive_losses,
+        )
+        closed_round_trip = bool(
+            abs(prev_q) > 1e-10
+            and (abs(new_q) <= 1e-10 or prev_q * new_q < 0.0)
+        )
+        if closed_round_trip:
+            if current_consecutive_losses > previous_consecutive_losses:
+                self._loss_cooldown_losing_round_trips = int(
+                    getattr(self, "_loss_cooldown_losing_round_trips", 0)
+                ) + 1
+            else:
+                self._loss_cooldown_winning_or_flat_round_trips = int(
+                    getattr(
+                        self,
+                        "_loss_cooldown_winning_or_flat_round_trips",
+                        0,
+                    )
+                ) + 1
         self._post_fill_quote_response.record_fill(
             side=side,
             inventory_before=prev_q,
@@ -8834,13 +9400,12 @@ class MakerEngine:
         )
         self._last_fill_side = side
 
-        if side == "BUY":
-            exposure_increasing_fill = abs(new_q) > abs(prev_q) + 1e-10
-        else:
-            # Preserve the existing SELL routing contract. BUY uses the
-            # campaign ledger's authoritative absolute-exposure rule because
-            # a single BUY fill can cross through zero.
-            exposure_increasing_fill = prev_q <= 0.0
+        exposure_increasing_fill = _exposure_increasing(
+            side,
+            prev_q,
+            qty,
+            self.cfg.lot_size,
+        )
         fc_add = float(getattr(self.cfg.strategy, 'fill_cooldown', 0.0) or 0.0)
         fc_reduce = float(getattr(self.cfg.strategy, 'fill_cooldown_reducing', 0.0) or 0.0)
         if side == "BUY":
@@ -9006,6 +9571,10 @@ class MakerEngine:
 
     def _on_cancel(self, order):
         """Called when an order is canceled."""
+        self._release_side_order_ownership(
+            side=order.side,
+            cid=order.client_order_id,
+        )
         self._log_order_outcome("canceled", order)
         self._pop_order_context(order.client_order_id)
         logger.debug(f"ORDER_CANCELED: {order.client_order_id}")
@@ -9141,15 +9710,37 @@ class MakerEngine:
         self._running = False
         logger.info("MakerEngine stopping...")
         checkpoint_error: Optional[Exception] = None
+        shutdown_reconciliation_error: Optional[Exception] = None
         try:
             self._persist_fill_cooldown_checkpoint()
         except Exception as exc:
             checkpoint_error = exc
             logger.critical("Fill cooldown checkpoint flush failed during shutdown", exc_info=True)
         self.signal.stop()
-        self._cancel_all_orders()
-
-        self.orders.cancel_all_local()
+        if self._execution_state_uncertain():
+            # A fatal OrderManager refuses further ledger mutations by design.
+            # Cancel exposure directly at the exchange and preserve unresolved
+            # local ownership for postmortem/exact operator reconciliation.
+            self._emergency_cancel_all_exchange_orders()
+            self._drain_deferred_runtime_reconciliation()
+        else:
+            # A successful cancel-all request is not per-order terminal proof;
+            # a fill can race the request/response.  Keep ownership unresolved
+            # and deliver any accountTrades through the normal callback path.
+            cancel_accepted = self._cancel_all_orders()
+            try:
+                if not cancel_accepted:
+                    raise RuntimeError(
+                        "shutdown cancel-all was not authoritatively accepted"
+                    )
+                self.sync_position(required=True)
+            except Exception as exc:
+                shutdown_reconciliation_error = exc
+                self.latch_runtime_fatal(
+                    reason="SHUTDOWN_EXACT_RECONCILIATION_FAILED",
+                    error=exc,
+                    reconciliation_required=True,
+                )
         lifecycle_runtime = getattr(self, "_order_lifecycle_live_writer_v2", None)
         if lifecycle_runtime is not None:
             health = lifecycle_runtime.close(
@@ -9173,41 +9764,726 @@ class MakerEngine:
                 int(health.get("error_count", 0)),
             )
             self._exact_opportunity_tape_runtime = None
+        if not self._drain_deferred_runtime_reconciliation():
+            logger.critical(
+                "MakerEngine shutdown ended with exact reconciliation pending"
+            )
         logger.info("MakerEngine stopped")
         if checkpoint_error is not None:
             raise RuntimeError("fill cooldown checkpoint flush failed") from checkpoint_error
+        if shutdown_reconciliation_error is not None:
+            raise RuntimeError(
+                "shutdown exact execution reconciliation failed"
+            ) from shutdown_reconciliation_error
 
     @property
     def is_running(self) -> bool:
         return self._running
 
+    def latch_runtime_fatal(
+        self,
+        *,
+        reason: str,
+        error: BaseException,
+        reconciliation_required: bool,
+        defer_reconciliation: bool = False,
+    ) -> None:
+        """Permanently stop this process after execution-state uncertainty."""
+
+        fatal_lock = getattr(self, "_runtime_fatal_lock", None)
+        if fatal_lock is None:
+            fatal_lock = threading.Lock()
+            self._runtime_fatal_lock = fatal_lock
+        with fatal_lock:
+            first_latch = getattr(self, "_runtime_fatal_error", None) is None
+            if first_latch:
+                self._runtime_fatal_reason = str(reason)
+                self._runtime_fatal_error = error
+            self._runtime_reconciliation_required = bool(
+                getattr(self, "_runtime_reconciliation_required", False)
+                or reconciliation_required
+            )
+            if reconciliation_required:
+                self._runtime_reconciliation_pending = True
+                self._runtime_reconciliation_generation = int(
+                    getattr(self, "_runtime_reconciliation_generation", 0)
+                ) + 1
+                self._runtime_reconciliation_quiescence_blocked = bool(
+                    getattr(
+                        self,
+                        "_runtime_reconciliation_quiescence_blocked",
+                        False,
+                    )
+                    or defer_reconciliation
+                )
+            self._running = False
+        if not first_latch:
+            if (
+                reconciliation_required
+                and not defer_reconciliation
+                and not self._in_order_manager_callback_dispatch()
+            ):
+                self._drain_deferred_runtime_reconciliation()
+            return
+
+        logger.critical(
+            "RUNTIME_FATAL_LATCH reason=%s reconciliation_required=%d error=%s",
+            reason,
+            int(reconciliation_required),
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        # Stop exchange exposure without touching a ledger that may already be
+        # fatal. Ownership references remain until terminal identity is proven;
+        # this latch is never cleared in-process.
+        self._emergency_cancel_all_exchange_orders()
+        if reconciliation_required:
+            if defer_reconciliation:
+                logger.critical(
+                    "Fatal-latch exact reconciliation deferred because callback "
+                    "quiescence was not established"
+                )
+            elif self._in_order_manager_callback_dispatch():
+                logger.critical(
+                    "Fatal-latch exact reconciliation deferred until the "
+                    "OrderManager callback stack unwinds"
+                )
+            else:
+                self._drain_deferred_runtime_reconciliation()
+
+    def _in_order_manager_callback_dispatch(self) -> bool:
+        checker = getattr(getattr(self, "orders", None), "in_callback_dispatch", None)
+        if not callable(checker):
+            return False
+        try:
+            return bool(checker())
+        except BaseException:
+            logger.critical(
+                "OrderManager callback-dispatch state check failed",
+                exc_info=True,
+            )
+            return True
+
+    def _order_manager_callback_dispatch_active(self) -> bool:
+        checker = getattr(
+            getattr(self, "orders", None),
+            "callback_dispatch_active",
+            None,
+        )
+        if not callable(checker):
+            return self._in_order_manager_callback_dispatch()
+        try:
+            return bool(checker())
+        except BaseException:
+            logger.critical(
+                "OrderManager callback-dispatch quiescence check failed",
+                exc_info=True,
+            )
+            return True
+
+    def _drain_deferred_runtime_reconciliation(
+        self,
+        *,
+        max_stable_generations: int = 3,
+    ) -> bool:
+        """Run a latched exact sync only after external callbacks unwind."""
+
+        if self._order_manager_callback_dispatch_active():
+            return False
+        max_stable_generations = max(1, int(max_stable_generations))
+        fatal_lock = getattr(self, "_runtime_fatal_lock", None)
+        if fatal_lock is None:
+            fatal_lock = threading.Lock()
+            self._runtime_fatal_lock = fatal_lock
+        with fatal_lock:
+            if bool(
+                getattr(
+                    self,
+                    "_runtime_reconciliation_quiescence_blocked",
+                    False,
+                )
+            ):
+                return False
+            if not bool(getattr(self, "_runtime_reconciliation_pending", False)):
+                return True
+            if bool(getattr(self, "_runtime_reconciliation_inflight", False)):
+                return False
+            self._runtime_reconciliation_inflight = True
+
+        for attempt in range(1, max_stable_generations + 1):
+            with fatal_lock:
+                generation = int(
+                    getattr(self, "_runtime_reconciliation_generation", 0)
+                )
+            try:
+                self.sync_position(required=True)
+            except BaseException:
+                logger.critical(
+                    "Fatal-latch exact position reconciliation failed",
+                    exc_info=True,
+                )
+                with fatal_lock:
+                    self._runtime_reconciliation_inflight = False
+                return False
+            with fatal_lock:
+                if int(
+                    getattr(self, "_runtime_reconciliation_generation", 0)
+                ) == generation:
+                    self._runtime_reconciliation_pending = False
+                    self._runtime_reconciliation_inflight = False
+                    return True
+            logger.warning(
+                "Fatal-latch reconciliation generation changed during sync; "
+                "retrying attempt=%d/%d",
+                attempt,
+                max_stable_generations,
+            )
+
+        with fatal_lock:
+            self._runtime_reconciliation_inflight = False
+        logger.critical(
+            "Fatal-latch reconciliation did not reach a stable generation "
+            "after %d attempts; pending latch retained",
+            max_stable_generations,
+        )
+        return False
+
+    def _execution_state_uncertain(self) -> bool:
+        order_status = self._order_manager_fatal_status()
+        fatal_lock = getattr(self, "_runtime_fatal_lock", None)
+        runtime_reconciliation = False
+        runtime_fatal = False
+        if fatal_lock is not None:
+            with fatal_lock:
+                runtime_fatal = getattr(self, "_runtime_fatal_error", None) is not None
+                runtime_reconciliation = bool(
+                    getattr(self, "_runtime_reconciliation_required", False)
+                )
+        return bool(
+            runtime_fatal
+            or runtime_reconciliation
+            or order_status.get("latched")
+            or order_status.get("reconciliation_required")
+            or getattr(self, "_order_submit_fail_closed", False)
+        )
+
+    def _emergency_cancel_all_exchange_orders(self) -> bool:
+        """Cancel exchange exposure without requiring a mutable local ledger."""
+
+        try:
+            self.rest.cancel_open_orders(symbol=self.cfg.symbol)
+            logger.critical(
+                "FATAL_EXCHANGE_CANCEL_ALL_ACCEPTED symbol=%s; local ownership retained",
+                self.cfg.symbol,
+            )
+            return True
+        except BaseException:
+            logger.critical(
+                "FATAL_EXCHANGE_CANCEL_ALL_FAILED symbol=%s",
+                getattr(self.cfg, "symbol", "unknown"),
+                exc_info=True,
+            )
+            return False
+
+    def raise_if_runtime_fatal(self) -> None:
+        order_status = self._order_manager_fatal_status()
+        if bool(order_status.get("latched")):
+            order_reason = str(order_status.get("reason", "unknown"))
+            self.latch_runtime_fatal(
+                reason=f"ORDER_MANAGER_FATAL:{order_reason}",
+                error=RuntimeError(order_reason),
+                reconciliation_required=bool(
+                    order_status.get("reconciliation_required", True)
+                ),
+            )
+        self._drain_deferred_runtime_reconciliation()
+        fatal_lock = getattr(self, "_runtime_fatal_lock", None)
+        if fatal_lock is None:
+            return
+        with fatal_lock:
+            error = getattr(self, "_runtime_fatal_error", None)
+            reason = str(getattr(self, "_runtime_fatal_reason", ""))
+        if error is not None:
+            raise RuntimeError(f"live runtime fatal latch: {reason}") from error
+
+    def _order_manager_fatal_status(self) -> dict[str, Any]:
+        status_reader = getattr(getattr(self, "orders", None), "fatal_status", None)
+        if not callable(status_reader):
+            return {
+                "latched": False,
+                "reason": "",
+                "reconciliation_required": False,
+            }
+        status = status_reader()
+        return dict(status) if isinstance(status, Mapping) else {
+            "latched": True,
+            "reason": "invalid order-manager fatal status",
+            "reconciliation_required": True,
+        }
+
+    def runtime_safety_snapshot(
+        self,
+        *,
+        now_monotonic_s: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Return general quote-loop safety facts, independent of research arms."""
+
+        now_monotonic_s = (
+            time.monotonic()
+            if now_monotonic_s is None
+            else float(now_monotonic_s)
+        )
+        last_tick = float(getattr(self, "_last_tick_monotonic_s", 0.0))
+        with self._order_ref_lock:
+            conflict_latched = bool(self._order_submit_fail_closed)
+        fatal_lock = getattr(self, "_runtime_fatal_lock", None)
+        if fatal_lock is None:
+            fatal_latched = False
+            fatal_reason = ""
+            reconciliation_required = False
+            reconciliation_pending = False
+        else:
+            with fatal_lock:
+                fatal_latched = getattr(self, "_runtime_fatal_error", None) is not None
+                fatal_reason = str(getattr(self, "_runtime_fatal_reason", ""))
+                reconciliation_required = bool(
+                    getattr(self, "_runtime_reconciliation_required", False)
+                )
+                reconciliation_pending = bool(
+                    getattr(self, "_runtime_reconciliation_pending", False)
+                    or getattr(self, "_runtime_reconciliation_inflight", False)
+                )
+        order_status = self._order_manager_fatal_status()
+        order_fatal = bool(order_status.get("latched"))
+        fatal_latched = bool(fatal_latched or order_fatal)
+        reconciliation_required = bool(
+            reconciliation_required
+            or order_status.get("reconciliation_required", False)
+        )
+        if order_fatal and not fatal_reason:
+            fatal_reason = "ORDER_MANAGER_FATAL:" + str(
+                order_status.get("reason", "unknown")
+            )
+        return {
+            "quote_loop_running": bool(self._running and not order_fatal),
+            "ownership_conflict_latched": conflict_latched,
+            "fatal_runtime_latched": fatal_latched,
+            "fatal_runtime_reason": fatal_reason,
+            "reconciliation_required": reconciliation_required,
+            "reconciliation_pending": reconciliation_pending,
+            "last_tick_age_s": (
+                max(0.0, now_monotonic_s - last_tick)
+                if last_tick > 0.0
+                else None
+            ),
+        }
+
     # ── exchange sync ──
+
+    def _account_trades_through_snapshot(
+        self,
+        *,
+        snapshot_update_time_ms: int,
+        previous_snapshot_update_time_ms: int,
+    ) -> list[dict[str, Any]]:
+        """Read every account-trade page in the exact exchange-time interval."""
+
+        start_time_ms = (
+            previous_snapshot_update_time_ms
+            if previous_snapshot_update_time_ms > 0
+            else snapshot_update_time_ms
+        )
+        if start_time_ms > snapshot_update_time_ms:
+            raise RuntimeError("position snapshot clock regressed before trade query")
+
+        rows: list[dict[str, Any]] = []
+        request: dict[str, Any] = {
+            "symbol": self.cfg.symbol,
+            "startTime": start_time_ms,
+            "endTime": snapshot_update_time_ms,
+            "limit": 1000,
+        }
+        for _page in range(100):
+            page = self.rest.get_account_trades(**request)
+            if not isinstance(page, list):
+                raise RuntimeError("account-trade response was not a list")
+            if not page:
+                return rows
+            normalized_page: list[dict[str, Any]] = []
+            page_ids: list[int] = []
+            saw_after_snapshot = False
+            for raw in page:
+                if not isinstance(raw, Mapping):
+                    raise RuntimeError("account-trade row was not a mapping")
+                row = dict(raw)
+                try:
+                    trade_time_ms = int(row.get("time", 0))
+                    trade_id = int(row.get("id"))
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "account-trade row lacked exchange time/trade identity"
+                    ) from exc
+                if trade_time_ms > snapshot_update_time_ms:
+                    saw_after_snapshot = True
+                    continue
+                if trade_time_ms < start_time_ms:
+                    raise RuntimeError("account-trade row preceded requested interval")
+                normalized_page.append(row)
+                page_ids.append(trade_id)
+            rows.extend(normalized_page)
+            if len(page) < 1000 or saw_after_snapshot:
+                return rows
+            if not page_ids:
+                raise RuntimeError("account-trade pagination made no progress")
+            next_trade_id = max(page_ids) + 1
+            request = {
+                "symbol": self.cfg.symbol,
+                "fromId": next_trade_id,
+                "limit": 1000,
+            }
+        raise RuntimeError("account-trade pagination exceeded 100 pages")
+
+    def _parse_position_reconciliation_snapshot(
+        self,
+        positions: object,
+    ) -> tuple[float, float, int]:
+        """Normalize the configured symbol from one positionRisk response."""
+
+        if not isinstance(positions, list):
+            raise RuntimeError("position response was not a list")
+        position = next(
+            (
+                dict(row)
+                for row in positions
+                if isinstance(row, Mapping) and row.get("symbol") == self.cfg.symbol
+            ),
+            None,
+        )
+        if position is None:
+            raise RuntimeError("position response omitted the configured symbol")
+        try:
+            quantity = float(position.get("positionAmt", 0.0))
+            entry = float(position.get("entryPrice", 0.0))
+            snapshot_update_time_ms = int(position.get("updateTime", 0))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("position reconciliation fields were malformed") from exc
+        if (
+            not math.isfinite(quantity)
+            or not math.isfinite(entry)
+            or snapshot_update_time_ms <= 0
+            or entry < 0.0
+            or (abs(quantity) > 1e-10 and entry <= 0.0)
+        ):
+            raise RuntimeError(
+                "position snapshot quantity/entry/updateTime is invalid"
+            )
+        return quantity, entry, snapshot_update_time_ms
+
+    @staticmethod
+    def _account_trade_side(trade: Mapping[str, Any]) -> str:
+        explicit = str(trade.get("side", "") or "").strip().upper()
+        if explicit in {"BUY", "SELL"}:
+            return explicit
+        buyer = trade.get("buyer", trade.get("isBuyer"))
+        if isinstance(buyer, bool):
+            return "BUY" if buyer else "SELL"
+        normalized = str(buyer).strip().lower()
+        if normalized in {"true", "1"}:
+            return "BUY"
+        if normalized in {"false", "0"}:
+            return "SELL"
+        raise RuntimeError("account-trade row lacked an exact side/isBuyer")
+
+    def _exchange_reconciliation_payload(
+        self,
+        position_snapshot: tuple[float, float, int],
+        trades: list[dict[str, Any]],
+        *,
+        barrier: Mapping[str, Any],
+    ) -> tuple[
+        float,
+        float,
+        int,
+        dict[str, float],
+        tuple[str, ...],
+        tuple[dict[str, Any], ...],
+        dict[str, dict[str, Any]],
+        bool,
+    ]:
+        """Bind a stable position snapshot to ordered, exact account trades."""
+
+        quantity, entry, snapshot_update_time_ms = position_snapshot
+
+        previous_update_time_ms = int(
+            barrier.get("snapshot_update_time_ms", 0) or 0
+        )
+        cumulative_by_order = {
+            str(order_id): float(cumulative)
+            for order_id, cumulative in dict(
+                barrier.get("order_cumulative_filled_qty", {})
+            ).items()
+        }
+        included_trade_ids: list[str] = []
+        committed_identities: dict[str, Mapping[str, Any]] = dict(
+            getattr(self, "_reconciliation_trade_identity_by_id", {})
+        )
+        response_trade_ids: dict[str, dict[str, Any]] = {}
+        normalized_new_trades: list[dict[str, Any]] = []
+        for trade in sorted(
+            trades,
+            key=lambda row: (int(row.get("time", 0)), int(row.get("id", 0))),
+        ):
+            try:
+                trade_id = str(int(trade.get("id")))
+                order_id = str(int(trade.get("orderId")))
+                trade_qty = float(trade.get("qty"))
+                trade_price = float(trade.get("price"))
+                trade_time_ms = int(trade.get("time", 0))
+                commission = float(trade.get("commission", 0.0) or 0.0)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "account-trade row lacked exact identity/economics"
+                ) from exc
+            if int(trade_id) <= 0 or int(order_id) <= 0:
+                raise RuntimeError("account-trade order/trade identity was not positive")
+            if (
+                not math.isfinite(trade_qty)
+                or not math.isfinite(trade_price)
+                or not math.isfinite(commission)
+                or trade_qty <= 0.0
+                or trade_price <= 0.0
+                or trade_time_ms < previous_update_time_ms
+                or trade_time_ms > snapshot_update_time_ms
+            ):
+                raise RuntimeError("account-trade economics/time was invalid")
+            row_symbol = str(trade.get("symbol", self.cfg.symbol) or "").upper()
+            if row_symbol != str(self.cfg.symbol).upper():
+                raise RuntimeError("account-trade symbol disagreed with configured symbol")
+            side = self._account_trade_side(trade)
+            commission_asset = str(trade.get("commissionAsset", "") or "").upper()
+            if abs(commission) > 1e-18 and not commission_asset:
+                raise RuntimeError(
+                    "nonzero account-trade commission lacked its exchange asset"
+                )
+            try:
+                commission_quote = _commission_in_quote_asset(
+                    commission,
+                    commission_asset,
+                    fill_price=trade_price,
+                    base_asset=self._base_asset,
+                    quote_asset=self._quote_asset,
+                    settlement_asset=self._settlement_asset,
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    "account-trade commission cannot be bound to quote asset"
+                ) from exc
+            identity_base: dict[str, Any] = {
+                "order_id": order_id,
+                "symbol": row_symbol,
+                "side": side,
+                "quantity": trade_qty,
+                "price": trade_price,
+                "commission": commission_quote,
+                "commission_asset": str(self._quote_asset).upper(),
+                "raw_commission": commission,
+                "raw_commission_asset": commission_asset,
+                "trade_time_ms": trade_time_ms,
+            }
+            previous_identity = response_trade_ids.get(trade_id)
+            if previous_identity is not None:
+                if any(
+                    previous_identity.get(key) != value
+                    for key, value in identity_base.items()
+                ):
+                    raise RuntimeError("duplicate account trade ID changed identity")
+                continue
+            committed_identity = committed_identities.get(trade_id)
+            included_trade_ids.append(trade_id)
+            if committed_identity is not None:
+                if not isinstance(committed_identity, Mapping):
+                    raise RuntimeError(
+                        "committed account trade identity schema is stale"
+                    )
+                try:
+                    committed_cumulative = float(
+                        committed_identity["cumulative_filled_qty"]
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "committed account trade identity lacks cumulative proof"
+                    ) from exc
+                identity = {
+                    **identity_base,
+                    "cumulative_filled_qty": committed_cumulative,
+                }
+                if dict(committed_identity) != identity:
+                    raise RuntimeError(
+                        "account trade ID changed identity across reconciliation rounds"
+                    )
+                if (
+                    cumulative_by_order.get(order_id, 0.0)
+                    < committed_cumulative - 1e-10
+                ):
+                    raise RuntimeError(
+                        "committed account trade cumulative identity is not "
+                        "covered by the prior barrier"
+                    )
+                response_trade_ids[trade_id] = identity
+                continue
+            cumulative_by_order[order_id] = (
+                cumulative_by_order.get(order_id, 0.0) + trade_qty
+            )
+            cumulative_fill = cumulative_by_order[order_id]
+            identity = {
+                **identity_base,
+                "cumulative_filled_qty": cumulative_fill,
+            }
+            response_trade_ids[trade_id] = identity
+            normalized_new_trades.append(
+                {
+                    "exchange_order_id": int(order_id),
+                    "trade_id": int(trade_id),
+                    "symbol": str(self.cfg.symbol),
+                    "side": side,
+                    "quantity": trade_qty,
+                    "price": trade_price,
+                    "commission": commission,
+                    "commission_asset": commission_asset,
+                    "cumulative_fill": cumulative_fill,
+                    "trade_time_ms": trade_time_ms,
+                }
+            )
+
+        # Commit producer-side dedupe only after InventoryManager accepts the
+        # snapshot; sync_position performs that final assignment.
+        return (
+            quantity,
+            entry,
+            snapshot_update_time_ms,
+            cumulative_by_order,
+            tuple(included_trade_ids),
+            tuple(normalized_new_trades),
+            response_trade_ids,
+            previous_update_time_ms <= 0,
+        )
+
+    def _stable_exchange_reconciliation_payload(
+        self,
+        *,
+        max_attempts: int = 3,
+    ) -> tuple[
+        float,
+        float,
+        int,
+        dict[str, float],
+        tuple[str, ...],
+        tuple[dict[str, Any], ...],
+        dict[str, dict[str, Any]],
+        bool,
+    ]:
+        """Acquire P1→accountTrades≤T→P2 and reject a drifting snapshot."""
+
+        barrier = self.inventory.reconciliation_snapshot()
+        previous_update_time_ms = int(
+            barrier.get("snapshot_update_time_ms", 0) or 0
+        )
+        for attempt in range(1, max(1, int(max_attempts)) + 1):
+            first = self._parse_position_reconciliation_snapshot(
+                self.rest.get_position_risk(symbol=self.cfg.symbol)
+            )
+            trades = self._account_trades_through_snapshot(
+                snapshot_update_time_ms=first[2],
+                previous_snapshot_update_time_ms=previous_update_time_ms,
+            )
+            second = self._parse_position_reconciliation_snapshot(
+                self.rest.get_position_risk(symbol=self.cfg.symbol)
+            )
+            if first == second:
+                return self._exchange_reconciliation_payload(
+                    first,
+                    trades,
+                    barrier=barrier,
+                )
+            logger.warning(
+                "POSITION_RECONCILIATION_SNAPSHOT_DRIFT attempt=%d p1=%s p2=%s",
+                attempt,
+                first,
+                second,
+            )
+        raise RuntimeError("position snapshot drifted across accountTrades query")
 
     def sync_position(self, *, required: bool = False) -> bool:
         """Sync local position with exchange; optionally fail closed on error."""
+        stage = "fetch_stable_snapshot"
+        existing_barrier = False
         try:
-            sync_start = time.time()  # before REST call
-            positions = self.rest.get_position_risk(symbol=self.cfg.symbol)
-            if not isinstance(positions, list):
-                raise RuntimeError("position response was not a list")
-            # Binance USD-M positionRisk returns only symbols that currently
-            # have a position or open orders.  A successful, empty response to
-            # a symbol-scoped request is therefore the explicit flat state.
-            if not positions:
-                self.inventory.sync_from_exchange(0.0, 0.0, sync_start)
-                return True
-            for pos in positions:
-                if pos.get("symbol") == self.cfg.symbol:
-                    qty = float(pos.get("positionAmt", 0))
-                    entry = float(pos.get("entryPrice", 0))
-                    self.inventory.sync_from_exchange(qty, entry, sync_start)
-                    return True
-            if required:
-                raise RuntimeError("position response omitted the configured symbol")
-            logger.error("Position sync omitted configured symbol %s", self.cfg.symbol)
-            return False
+            with self._reconciliation_lock:
+                (
+                    qty,
+                    entry,
+                    snapshot_update_time_ms,
+                    order_cumulative_filled_qty,
+                    included_trade_ids,
+                    normalized_new_trades,
+                    trade_identities,
+                    initial_seed,
+                ) = self._stable_exchange_reconciliation_payload()
+                existing_barrier = not initial_seed
+                if not initial_seed:
+                    stage = "deliver_identified_trades"
+                    for trade in normalized_new_trades:
+                        self.orders.reconcile_exchange_trade(
+                            **trade,
+                            local_receive_ts_ns=time.time_ns(),
+                        )
+                        order_status = self.orders.fatal_status()
+                        if bool(order_status.get("latched")):
+                            raise RuntimeError(
+                                "order-manager fatal during account-trade delivery: "
+                                + str(order_status.get("reason", "unknown"))
+                            )
+                stage = "install_exact_barrier"
+                reconciliation = self.inventory.sync_from_exchange(
+                    qty,
+                    entry,
+                    snapshot_update_time_ms=snapshot_update_time_ms,
+                    order_cumulative_filled_qty=order_cumulative_filled_qty,
+                    included_trade_ids=included_trade_ids,
+                    included_trade_identities=trade_identities,
+                )
+                trade_identity_map = getattr(
+                    self,
+                    "_reconciliation_trade_identity_by_id",
+                    None,
+                )
+                if trade_identity_map is None:
+                    trade_identity_map = {}
+                    self._reconciliation_trade_identity_by_id = trade_identity_map
+                trade_identity_map.update(trade_identities)
+                logger.info(
+                    "POSITION_RECONCILIATION_COMPLETE seed=%d trades=%d result=%s",
+                    int(initial_seed),
+                    len(normalized_new_trades),
+                    reconciliation,
+                )
+            return True
         except Exception as e:
-            logger.error(f"Position sync failed: {e}")
+            logger.error("Position sync failed at %s: %s", stage, e)
+            order_status = self.orders.fatal_status()
+            reconciliation_uncertain = bool(
+                order_status.get("latched")
+                or (existing_barrier and stage in {
+                    "deliver_identified_trades",
+                    "install_exact_barrier",
+                })
+            )
+            if reconciliation_uncertain:
+                self.latch_runtime_fatal(
+                    reason="EXACT_EXECUTION_RECONCILIATION_FAILED",
+                    error=e,
+                    reconciliation_required=True,
+                )
             if required:
                 raise RuntimeError("required position sync failed") from e
             return False

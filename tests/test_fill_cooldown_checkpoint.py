@@ -158,8 +158,9 @@ def test_graceful_stop_flushes_latest_b0_state(
     )
     engine._running = True
     engine.signal = SimpleNamespace(stop=lambda: None)
-    engine._cancel_all_orders = lambda: None
+    engine._cancel_all_orders = lambda: True
     engine.orders = SimpleNamespace(cancel_all_local=lambda: None)
+    engine.sync_position = lambda *, required=False: True
     engine._order_lifecycle_live_writer_v2 = None
     engine._exact_opportunity_tape_runtime = None
 

@@ -419,6 +419,8 @@ class OrderLifecycleRecorder:
         inventory_before: float,
         inventory_after: float,
         campaign_id: int,
+        physical_fill_identity: str = "",
+        economic_legs: Iterable[dict[str, Any]] = (),
     ) -> None:
         state = self._state(order)
         if state is None or state["state"] in TERMINAL_STATES:
@@ -430,6 +432,29 @@ class OrderLifecycleRecorder:
         canonical_remaining = canonicalize_remaining_quantity(remaining_after)
         partial = canonical_remaining > 0.0
         pending = before == "pending_cancel"
+        normalized_legs = [dict(leg) for leg in economic_legs]
+        if normalized_legs:
+            identities = {
+                str(leg.get("physical_fill_identity", ""))
+                for leg in normalized_legs
+            }
+            leg_qty = sum(
+                float(leg.get("quantity_btc", 0.0))
+                for leg in normalized_legs
+            )
+            if (
+                len(identities) != 1
+                or identities != {str(physical_fill_identity)}
+                or not math.isclose(
+                    leg_qty,
+                    fill_qty,
+                    rel_tol=0.0,
+                    abs_tol=1e-10,
+                )
+            ):
+                raise ValueError(
+                    "order lifecycle economic legs do not conserve the physical fill"
+                )
         if not partial:
             state["state"] = "filled"
             self._active_order_ids.discard(int(state["order_id"]))
@@ -457,6 +482,9 @@ class OrderLifecycleRecorder:
             inventory=float(inventory_after),
             inventory_before_fill=float(inventory_before),
             campaign_id=int(campaign_id),
+            physical_fill_identity=str(physical_fill_identity),
+            economic_leg_count=len(normalized_legs),
+            economic_legs=normalized_legs,
         )
         state["last_fill_event_index"] = len(self._events) - 1
 

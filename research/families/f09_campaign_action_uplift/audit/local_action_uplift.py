@@ -662,7 +662,7 @@ def _run_day(task: tuple[str, str, dict[str, Any]]) -> dict[str, Any]:
     elif action_family in QUEUE_VALUE_ACTION_FAMILIES:
         if (
             action_family != "queue_value_net_keep_cancel"
-            and args.queue_competing_risk_bundle is not None
+            and base.get("queue_value_competing_risk_bundle_path")
         ):
             raise SystemExit(
                 "--queue-competing-risk-bundle is valid only for "

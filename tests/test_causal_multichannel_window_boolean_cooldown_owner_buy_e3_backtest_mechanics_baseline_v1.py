@@ -34,7 +34,7 @@ def _public_contract_path() -> Path:
     return (
         Path(__file__).absolute().parents[1] / "research/families/f05_fill_quality_quote_ev/docs/"
         "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-        "backtest_mechanics_baseline_v1_20260825.json"
+        "backtest_mechanics_safety_successor_v1_20260825.json"
     )
 
 
@@ -77,6 +77,9 @@ def _v14_publication_fixture(
     )
     contract_path = _public_contract_path()
     contract_sha = _sha(contract_path.read_bytes())
+    monkeypatch.setattr(
+        baseline, "SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256", contract_sha
+    )
     contract_document = json.loads(contract_path.read_text(encoding="ascii"))
     contract_binding = MappingProxyType(
         {
@@ -95,12 +98,12 @@ def _v14_publication_fixture(
         predecessor_v13_file_sha256=predecessor_sha,
         public_contract_path=contract_path,
         public_contract_file_sha256=contract_sha,
-        effective_at_utc=baseline.V14_EFFECTIVE_AT_UTC,
+        effective_at_utc=baseline.SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
     )
     cold_publisher = {
         "execution_commit": "1" * 40,
         "execution_tree": "2" * 40,
-        "annotated_tag": baseline.V14_COLD_PUBLISHER_TAG,
+        "annotated_tag": baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
         "annotated_tag_object": "3" * 40,
         "factory_git_blob": "4" * 40,
         "factory_source_sha256": "5" * 64,
@@ -1028,10 +1031,10 @@ def test_public_contract_is_canonical_private_unavailable_and_authority_false() 
     path = (
         Path(__file__).resolve().parents[1] / "research/families/f05_fill_quality_quote_ev/docs/"
         "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-        "backtest_mechanics_baseline_v1_20260825.json"
+        "backtest_mechanics_safety_successor_v1_20260825.json"
     )
     document = json.loads(path.read_text(encoding="ascii"))
-    assert _sha(path.read_bytes()) == baseline.V14_PUBLIC_CONTRACT_FILE_SHA256
+    assert _sha(path.read_bytes()) == baseline.SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256
     assert document["canonical_contract_sha256"] == baseline.document_sha256(
         document, "canonical_contract_sha256"
     )
@@ -1043,6 +1046,185 @@ def test_public_contract_is_canonical_private_unavailable_and_authority_false() 
     assert "/" + "Users/" not in text
     assert "/" + "Volumes/" not in text
     assert "terminal_mtm_pnl" not in text
+
+
+def test_safety_successor_preserves_frozen_predecessor_and_binds_all_economic_legs() -> None:
+    root = Path(__file__).resolve().parents[1]
+    predecessor_path = root / baseline.PREDECESSOR_MECHANICS_CONTRACT_RELATIVE
+    predecessor = json.loads(predecessor_path.read_text(encoding="ascii"))
+    assert _sha(predecessor_path.read_bytes()) == baseline.PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256
+    assert (
+        predecessor["canonical_contract_sha256"]
+        == baseline.PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256
+        == baseline.document_sha256(predecessor, "canonical_contract_sha256")
+    )
+
+    successor = json.loads(_public_contract_path().read_text(encoding="ascii"))
+    assert successor["factory"]["constructor"] == (
+        "create_owner_buy_e3_backtest_mechanics_safety_successor"
+    )
+    assert successor["predecessor_mechanics_contract"] == {
+        "identity": baseline.PREDECESSOR_MECHANICS_IDENTITY,
+        "repository_relative_path": baseline.PREDECESSOR_MECHANICS_CONTRACT_RELATIVE,
+        "file_sha256": baseline.PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256,
+        "canonical_sha256": baseline.PREDECESSOR_MECHANICS_CONTRACT_CANONICAL_SHA256,
+        "annotated_tag": baseline.PREDECESSOR_MECHANICS_ANNOTATED_TAG,
+        "annotated_tag_object": baseline.PREDECESSOR_MECHANICS_ANNOTATED_TAG_OBJECT,
+        "private_bundle_relative_identity": (
+            baseline.PREDECESSOR_MECHANICS_PRIVATE_BUNDLE_RELATIVE
+        ),
+        "availability": "public_repository_historical_contract",
+        "historical_contract_modified": False,
+        "historical_private_bundle_modified": False,
+        "historical_annotated_tag_modified": False,
+    }
+    assert successor["mechanics_safety_semantics"] == baseline.MECHANICS_SAFETY_SEMANTICS
+    assert (
+        successor["mechanics_safety_source_coverage"]
+        == baseline.MECHANICS_SAFETY_SOURCE_COVERAGE
+    )
+    assert successor["successor_material_mechanics_config_delta"] == (
+        baseline.SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+    )
+    assert successor["configuration"]["replay_engine_overlay_sha256"] == (
+        baseline.REPLAY_ENGINE_OVERLAY_SHA256
+    )
+    assert successor["configuration"]["active_final_replay_abi_sha256"] == (
+        baseline.EXACT_ACTIVE_REPLAY_ABI_SHA256
+    )
+    assert successor["configuration"]["common_safety_overlay_applies_to_both_arms"] is True
+    assert str(baseline.FORMAL_PRIVATE_BUNDLE_RELATIVE) == (
+        "mechanics_safety_successor_v1_20260825/backtest_mechanics_default_v1"
+    )
+    assert not str(baseline.FORMAL_PRIVATE_BUNDLE_RELATIVE).startswith(
+        "direct_no_shadow_live_evidence_v6_20260824/"
+    )
+    assert baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG != (
+        baseline.PREDECESSOR_MECHANICS_ANNOTATED_TAG
+    )
+    assert (
+        baseline.V14_PUBLIC_CONTRACT_FILE_SHA256
+        == baseline.PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256
+    )
+    assert baseline.V14_COLD_PUBLISHER_TAG == baseline.PREDECESSOR_MECHANICS_ANNOTATED_TAG
+    assert baseline.V14_EFFECTIVE_AT_UTC == "2026-08-25T00:00:01Z"
+    assert baseline.SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC > "2026-08-25T00:00:01Z"
+    assert successor["support"]["day_count"] == 30
+    assert successor["support"]["v12_50_day_economics_status"] == (
+        "historical_comparator_stale_under_current_safety_mechanics"
+    )
+
+    required_runtime_sources = {
+        "live/config.yaml",
+        "live/ws_handler.py",
+        "live/main.py",
+        "models/backtest_tick.py",
+        "models/backtest_config.py",
+        "strategy/inventory_manager.py",
+        "strategy/replay_controls.py",
+        "strategy/order_manager.py",
+        "strategy/maker_engine.py",
+        "strategy/quote_core.py",
+        "models/replay/continuous_accounting.py",
+        "models/replay/replay_state_checkpoint.py",
+        "models/replay/restart_aware_continuous_ab.py",
+        "research/families/f03_causal_13_head/audit/"
+        "causal_v12_1s_restart_aware_continuous_ab.py",
+        "scripts/run_restart_aware_continuous_baseline.py",
+        "research/shared/replay_lifecycle/docs/continuous_accounting_contract_v2.json",
+        "research/shared/replay_lifecycle/docs/continuous_replay_state_v2_contract.json",
+        "models/audit/order_lifecycle.py",
+        "execution/order_lifecycle_journal_writer_v2_replay_day_buffered.py",
+        "cpp/narrowgate_cpp/tick_replay.cpp",
+        "cpp/narrowgate_cpp/tick_replay.hpp",
+        "cpp/narrowgate_cpp/bindings.cpp",
+        "cpp/narrowgate_cpp/quote_core.cpp",
+        "cpp/narrowgate_cpp/quote_core.hpp",
+    }
+    assert required_runtime_sources <= set(successor["runtime_source_sha256"])
+    assert len(successor["runtime_source_sha256"]) == 38
+    assert successor["runtime_source_binding_scope"] == (
+        baseline.RUNTIME_SOURCE_BINDING_SCOPE
+    )
+    assert successor["runtime_source_sha256"]["live/ws_handler.py"] == (
+        "fe157a5d6d472e02551f9eea4a4382873af02f7bd4da825a4ee53fc50027454f"
+    )
+    assert successor["runtime_source_sha256"]["live/main.py"] == (
+        "5889ac75729e1d9eefe2734c2175e09b4470cb8ad0457e8109deeb1e180d34f7"
+    )
+    for relative, expected_sha256 in successor["runtime_source_sha256"].items():
+        assert _sha((root / relative).read_bytes()) == expected_sha256, relative
+    covered_paths = {
+        path
+        for encoded_paths in successor["mechanics_safety_source_coverage"].values()
+        for path in encoded_paths.split(";")
+    }
+    assert covered_paths <= set(successor["runtime_source_sha256"])
+    assert all(value is False for value in successor["permissions"].values())
+
+
+@pytest.mark.parametrize("source_mode", [None, "compress"])
+def test_safety_successor_cold_default_forces_pause_exposure(
+    source_mode: str | None,
+) -> None:
+    source: dict[str, object] = {"stable": 1}
+    if source_mode is not None:
+        source["spread_cap_mode"] = source_mode
+
+    finalized = baseline._finalized_replay_params(source)
+
+    assert finalized["spread_cap_mode"] == "pause_exposure"
+    assert source.get("spread_cap_mode") == source_mode
+    assert baseline.REPLAY_ENGINE_OVERLAY["spread_cap_mode"] == "pause_exposure"
+    assert baseline.SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA == {
+        "source_config_path": "strategy.spread_cap_mode",
+        "final_replay_abi_path": "spread_cap_mode",
+        "predecessor_effective_default": "compress",
+        "successor_cold_default": "pause_exposure",
+        "explicit_research_arm": "compress",
+        "explicit_research_arm_can_override_cold_default": False,
+        "active_source_config_bytes_modified": False,
+    }
+    assert baseline.canonical_sha256(dict(baseline.REPLAY_ENGINE_OVERLAY)) == (
+        baseline.REPLAY_ENGINE_OVERLAY_SHA256
+    )
+
+
+def test_current_mechanics_pointer_selects_only_the_safety_successor() -> None:
+    from models import backtest_config as shared
+
+    pointer = shared._current_backtest_mechanics_pointer()
+    assert pointer["schema_version"] == "narrowgate_operational_backtest_mechanics_pointer.v2"
+    assert pointer["mechanics_identity"] == baseline.IDENTITY
+    assert pointer["effective_at_utc"] == baseline.SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC
+    assert pointer["mechanics_contract_file_sha256"] == (
+        baseline.SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256
+    )
+    assert pointer["predecessor_mechanics_contract"]["file_sha256"] == (
+        baseline.PREDECESSOR_MECHANICS_CONTRACT_FILE_SHA256
+    )
+    assert pointer["private_bundle_relative_identity"] == str(
+        baseline.FORMAL_PRIVATE_BUNDLE_RELATIVE
+    )
+    assert pointer["cold_publisher_annotated_tag"] == (
+        baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
+    )
+    assert pointer["v12_50_day_economic_results_status"] == (
+        "historical_comparator_stale_under_current_safety_mechanics"
+    )
+    assert pointer["mechanics_safety_semantics"] == baseline.MECHANICS_SAFETY_SEMANTICS
+    assert pointer["material_mechanics_config_delta"] == (
+        baseline.SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+    )
+    assert all(
+        pointer["permissions"][name] is False
+        for name in (
+            "economic_authority",
+            "research_authority",
+            "action_authority",
+            "live_authority",
+        )
+    )
 
 
 def test_v14_governance_is_sequential_mechanics_only(
@@ -1078,15 +1260,18 @@ def test_v14_governance_is_sequential_mechanics_only(
     contract_path = (
         Path(__file__).resolve().parents[1] / "research/families/f05_fill_quality_quote_ev/docs/"
         "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-        "backtest_mechanics_baseline_v1_20260825.json"
+        "backtest_mechanics_safety_successor_v1_20260825.json"
     )
     contract_sha = _sha(contract_path.read_bytes())
+    monkeypatch.setattr(
+        baseline, "SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256", contract_sha
+    )
     receipt = baseline.create_v14_mechanics_governance_receipt(
         predecessor_v13_identity_path=predecessor_path,
         predecessor_v13_file_sha256=_sha(predecessor_bytes),
         public_contract_path=contract_path,
         public_contract_file_sha256=contract_sha,
-        effective_at_utc=baseline.V14_EFFECTIVE_AT_UTC,
+        effective_at_utc=baseline.SAFETY_SUCCESSOR_EFFECTIVE_AT_UTC,
     )
     validated = baseline.validate_v14_mechanics_governance_receipt(
         receipt,
@@ -1095,9 +1280,22 @@ def test_v14_governance_is_sequential_mechanics_only(
         public_contract_path=contract_path,
         public_contract_file_sha256=contract_sha,
     )
-    assert validated["successor_baseline_version"] == "v14"
-    assert validated["promotion_class"] == "owner_requested_mechanics_only"
-    assert validated["default_arm"]["current_v12_50_day_economic_control_replaced"] is False
+    assert validated["successor_baseline_version"] == "mechanics_safety_successor_v1"
+    assert (
+        validated["promotion_class"]
+        == "material_mechanics_safety_repair_no_economic_authority"
+    )
+    assert (
+        validated["default_arm"]["historical_v12_50_day_economic_artifact_rewritten"]
+        is False
+    )
+    assert validated["default_arm"]["v12_50_day_current_economic_authority"] is False
+    assert validated["default_arm"]["v12_50_day_economic_results_status"] == (
+        "historical_comparator_stale_under_current_safety_mechanics"
+    )
+    assert validated["material_mechanics_config_delta"] == (
+        baseline.SAFETY_SUCCESSOR_MATERIAL_MECHANICS_CONFIG_DELTA
+    )
     assert validated["permissions"]["backtest_mechanics_available"] is True
     assert validated["permissions"]["backtest_default_arm_resolution_authorized"] is True
     assert validated["permissions"]["economic_authority"] is False
@@ -1122,7 +1320,7 @@ def test_v14_governance_rejects_invalid_time_and_extra_fields(
     fixture = _v14_publication_fixture(tmp_path, monkeypatch)
     with pytest.raises(
         baseline.OwnerBuyE3MechanicsBaselineError,
-        match="canonical UTC-Z|precedes|frozen sequential",
+        match="canonical UTC-Z|precedes|frozen (?:sequential|activation)",
     ):
         baseline.create_v14_mechanics_governance_receipt(
             predecessor_v13_identity_path=fixture.predecessor_path,
@@ -1179,7 +1377,9 @@ def test_v14_private_bundle_publish_validate_and_idempotence(
         cold_repository_root=fixture.runtime_root,
     )
     assert first == second == validated
-    assert first["status"] == "current_default_buy_e3_mechanics_bundle_complete"
+    assert first["status"] == (
+        "current_default_buy_e3_mechanics_safety_successor_bundle_complete"
+    )
     assert first["permissions"]["backtest_default_arm_resolution_authorized"] is True
     assert fixture.destination.stat().st_mode & 0o777 == 0o700
     assert {path.name for path in fixture.destination.iterdir()} == {
@@ -1187,7 +1387,7 @@ def test_v14_private_bundle_publish_validate_and_idempotence(
         "owner_private_inputs.json",
         "config.host_neutral.replay_projection.json",
         "loaded_capability_receipt.json",
-        "v14_mechanics_governance_receipt.json",
+        "mechanics_safety_successor_governance_receipt.json",
         "manifest.json",
     }
     for path in fixture.destination.iterdir():
@@ -1223,7 +1423,9 @@ def test_v14_private_bundle_recovers_every_exact_crash_prefix(
             _failure_hook=fail_after,
         )
     assert failure_name in seen
-    assert _publish(fixture)["status"] == ("current_default_buy_e3_mechanics_bundle_complete")
+    assert _publish(fixture)["status"] == (
+        "current_default_buy_e3_mechanics_safety_successor_bundle_complete"
+    )
 
 
 def test_v14_private_bundle_recovers_precreated_empty_directory(
@@ -1232,7 +1434,9 @@ def test_v14_private_bundle_recovers_precreated_empty_directory(
 ) -> None:
     fixture = _v14_publication_fixture(tmp_path, monkeypatch)
     fixture.destination.mkdir(mode=0o700)
-    assert _publish(fixture)["status"] == ("current_default_buy_e3_mechanics_bundle_complete")
+    assert _publish(fixture)["status"] == (
+        "current_default_buy_e3_mechanics_safety_successor_bundle_complete"
+    )
 
 
 def test_v14_private_bundle_recovers_manifest_final_pending_hardlink(
@@ -1576,7 +1780,7 @@ def test_formal_backtest_entry_uses_isolated_default_runner(
         {
             "execution_commit": "1" * 40,
             "execution_tree": "2" * 40,
-            "annotated_tag": baseline.V14_COLD_PUBLISHER_TAG,
+            "annotated_tag": baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
             "annotated_tag_object": "3" * 40,
         }
     )
@@ -1689,6 +1893,44 @@ def test_existing_backtest_cli_implicit_day_reexecs_current_default(
     with pytest.raises(SystemExit) as stopped:
         backtest_tick.main()
     assert stopped.value.code == 31
+
+
+@pytest.mark.parametrize("day_option", ["--day", "--date"])
+def test_implicit_current_default_reexec_captures_only_successor_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    day_option: str,
+) -> None:
+    from models import backtest_tick
+
+    captured_tags: list[str] = []
+    captured_commands: list[tuple[str, ...]] = []
+
+    def capture(_root: Path, *, annotated_tag: str) -> Mapping[str, str]:
+        captured_tags.append(annotated_tag)
+        return {"annotated_tag": annotated_tag}
+
+    monkeypatch.setattr(baseline, "capture_cold_publisher", capture)
+    def run(command: tuple[str, ...], **_kwargs: object) -> SimpleNamespace:
+        captured_commands.append(command)
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(backtest_tick.subprocess, "run", run)
+    monkeypatch.setattr(
+        backtest_tick.sys,
+        "argv",
+        ["backtest_tick.py", day_option, "2026-06-27"],
+    )
+    monkeypatch.setenv("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "/private/evidence")
+    monkeypatch.setenv("NARROWGATE_METADATA_REPOSITORY_ROOT", "/private/metadata")
+
+    assert backtest_tick._reexec_implicit_current_default_day() == 0
+    assert captured_tags == [
+        baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+        baseline.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
+    ]
+    assert baseline.V14_COLD_PUBLISHER_TAG not in captured_tags
+    assert len(captured_commands) == 1
+    assert captured_commands[0][-2:] == (day_option, "2026-06-27")
 
 
 def test_backtest_tick_direct_script_binds_lexical_checkout_before_conflicting_pythonpath(

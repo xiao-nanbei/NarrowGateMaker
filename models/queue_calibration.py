@@ -225,7 +225,7 @@ def _build_regime_payload(
         for values, group in frame.groupby(group_cols, observed=True, sort=True):
             if not isinstance(values, tuple):
                 values = (values,)
-            row = dict(zip(group_cols, values))
+            row = dict(zip(group_cols, values, strict=True))
             side = str(row.get("side", "")).upper()
             if side not in side_base:
                 continue
@@ -653,7 +653,7 @@ def calibrate_daily_queue(
     )
 
     order_records = []
-    for cid, group in outcome_df.groupby("client_order_id", sort=False):
+    for _cid, group in outcome_df.groupby("client_order_id", sort=False):
         placed = group.loc[group["event_type"].isin(["placed", "placed_close"])].sort_values("timestamp")
         if placed.empty:
             continue

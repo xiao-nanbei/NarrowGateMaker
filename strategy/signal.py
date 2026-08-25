@@ -2421,7 +2421,13 @@ class SignalEngine:
                     ),
                     dtype=np.float64,
                 )
-                return dict(zip(self._cpp_signal_feature_names, values.tolist()))
+                return dict(
+                    zip(
+                        self._cpp_signal_feature_names,
+                        values.tolist(),
+                        strict=True,
+                    )
+                )
             if hasattr(engine, "compute_at_cutoff"):
                 return dict(
                     engine.compute_at_cutoff(

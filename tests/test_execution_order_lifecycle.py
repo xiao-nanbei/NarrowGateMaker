@@ -61,9 +61,7 @@ def test_quantity_weighted_exposure_tracks_partial_fill_and_terminal() -> None:
     assert lifecycle.phase == OrderLifecyclePhase.EXCHANGE_TERMINAL
     assert lifecycle.first_fill_latency_s == pytest.approx(2.0)
     assert lifecycle.exposure_btc_s() == pytest.approx(0.004)
-    assert lifecycle.exposure_btc_s(now_ns=20_000_000_000) == pytest.approx(
-        0.004
-    )
+    assert lifecycle.exposure_btc_s(now_ns=20_000_000_000) == pytest.approx(0.004)
 
     lifecycle.enter_post_cancel_recovery(9_000_000_000)
     assert lifecycle.phase == OrderLifecyclePhase.POST_CANCEL_RECOVERY
@@ -117,15 +115,11 @@ def test_exchange_and_visibility_exposure_are_distinct_estimands() -> None:
     )
 
     snapshot = lifecycle.snapshot()
-    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
-        0.0041
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(0.0041)
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(0.0036)
+    assert snapshot["quantity_time_exposure_visibility_minus_exchange_btc_s"] == pytest.approx(
+        0.0005
     )
-    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(
-        0.0036
-    )
-    assert snapshot[
-        "quantity_time_exposure_visibility_minus_exchange_btc_s"
-    ] == pytest.approx(0.0005)
     assert snapshot["exchange_exposure_valid"] is True
     assert snapshot["exchange_exposure_complete"] is True
     assert snapshot["first_fill_latency_visible_s"] == pytest.approx(2.3)
@@ -155,15 +149,10 @@ def test_missing_exchange_activation_invalidates_only_physical_exposure() -> Non
     )
 
     snapshot = lifecycle.snapshot(now_ns=5_000_000_000)
-    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
-        0.0024
-    )
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(0.0024)
     assert snapshot["quantity_time_exposure_exchange_btc_s"] is None
     assert snapshot["exchange_exposure_valid"] is False
-    assert (
-        snapshot["exchange_exposure_invalid_reason"]
-        == "missing_exchange_timestamp:activate"
-    )
+    assert snapshot["exchange_exposure_invalid_reason"] == "missing_exchange_timestamp:activate"
 
 
 @pytest.mark.parametrize(
@@ -292,7 +281,8 @@ def test_orphan_adoption_is_left_truncated_without_fabricated_activation_clock()
     manager = OrderManager(
         on_lifecycle_event=lambda order, event, payload: lifecycle_callbacks.append(
             (order, event, payload)
-        )
+        ),
+        allowed_symbols={"BTCUSDC"},
     )
 
     manager.on_order_update(
@@ -350,6 +340,7 @@ def test_private_fill_after_unknown_submit_preserves_unknown_activation_prefix(
             "p": "99.9",
             "q": "0.001",
             "z": executed_qty,
+            "l": executed_qty,
             "L": "99.8",
             "ap": "99.8",
             "T": 1_900_000_000_000,
@@ -371,7 +362,10 @@ def test_private_fill_after_unknown_submit_preserves_unknown_activation_prefix(
 
 def test_orphan_expiry_preserves_cumulative_fill_before_terminal() -> None:
     fills = []
-    manager = OrderManager(on_fill=lambda order, event: fills.append((order, event)))
+    manager = OrderManager(
+        on_fill=lambda order, event: fills.append((order, event)),
+        allowed_symbols={"BTCUSDC"},
+    )
 
     manager.on_order_update(
         {
@@ -383,6 +377,7 @@ def test_orphan_expiry_preserves_cumulative_fill_before_terminal() -> None:
             "p": "100.1",
             "q": "0.001",
             "z": "0.0004",
+            "l": "0.0004",
             "L": "100.1",
             "ap": "100.1",
             "T": 1_900_000_000_000,
@@ -418,9 +413,7 @@ def test_cancel_reject_restores_partial_fill_phase_and_exposure() -> None:
 
     assert lifecycle.phase == OrderLifecyclePhase.PARTIALLY_FILLED
     assert lifecycle.fill_risk_active
-    assert lifecycle.exposure_btc_s(now_ns=6_000_000_000) == pytest.approx(
-        0.0022
-    )
+    assert lifecycle.exposure_btc_s(now_ns=6_000_000_000) == pytest.approx(0.0022)
 
 
 def test_order_manager_reconcile_preserves_partial_fill_identity(
@@ -443,10 +436,15 @@ def test_order_manager_reconcile_preserves_partial_fill_identity(
     manager.confirm_new(cid, 42, exchange_ts_ns=2_000_000_000)
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "PARTIALLY_FILLED",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "z": "0.0006",
+            "l": "0.0006",
             "L": "100.0",
             "ap": "100.0",
             "T": 3_500,
@@ -484,9 +482,7 @@ def test_order_manager_exposes_quantity_weighted_lifecycle(
     terminal: list[tuple[str, str]] = []
     lifecycle_callbacks: list[str] = []
     manager = OrderManager(
-        on_terminal=lambda order, reason: terminal.append(
-            (order.client_order_id, reason)
-        ),
+        on_terminal=lambda order, reason: terminal.append((order.client_order_id, reason)),
         on_lifecycle_event=lambda _order, event_type, _event: lifecycle_callbacks.append(
             event_type
         ),
@@ -495,9 +491,13 @@ def test_order_manager_exposes_quantity_weighted_lifecycle(
     manager.confirm_new(cid, 42, exchange_ts_ns=2_000_000_000)
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "NEW",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "T": 2_500,
             "_local_receive_ts_ns": 2_600_000_000,
         }
@@ -513,10 +513,15 @@ def test_order_manager_exposes_quantity_weighted_lifecycle(
 
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "PARTIALLY_FILLED",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "z": "0.0006",
+            "l": "0.0006",
             "L": "100.0",
             "ap": "100.0",
             "T": 3_500,
@@ -530,9 +535,13 @@ def test_order_manager_exposes_quantity_weighted_lifecycle(
 
     manager.on_order_update(
         {
+            "s": "BTCUSDC",
             "c": cid,
+            "S": "BUY",
             "X": "CANCELED",
             "i": 42,
+            "p": "100.0",
+            "q": "0.001",
             "T": 5_500,
             "_local_receive_ts_ns": 6_000_000_000,
         }
@@ -543,11 +552,7 @@ def test_order_manager_exposes_quantity_weighted_lifecycle(
     assert snapshot["remaining_quantity"] == pytest.approx(0.0004)
     assert snapshot["first_fill_latency_s"] == pytest.approx(2.0)
     assert snapshot["quantity_time_exposure_btc_s"] == pytest.approx(0.0028)
-    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(
-        0.0028
-    )
-    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(
-        0.0023
-    )
+    assert snapshot["quantity_time_exposure_visible_btc_s"] == pytest.approx(0.0028)
+    assert snapshot["quantity_time_exposure_exchange_btc_s"] == pytest.approx(0.0023)
     assert snapshot["exchange_exposure_complete"] is True
     assert terminal == [(cid, "cancel_ack")]

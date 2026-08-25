@@ -1,0 +1,152 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_calendar_ab_execution_binding.v2",
+  "identity": "causal_v12_1s_restart_aware_continuous_calendar_ab_v2_execution_binding",
+  "created_at_utc": "2026-08-25T00:00:00Z",
+  "last_materially_modified": "2026-08-25",
+  "status": "execution_plan_v2_candidate_unbound_results_closed",
+  "canonical_amendment_sha256": "99a3a80285e672111d9e15c13a97ac3da417e13c8549710dcea0059ac8510d34",
+  "predecessor": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_1_execution_binding_amendment_20260805.json",
+    "status": "immutable_historical_evidence_stale_for_new_execution"
+  },
+  "parent_preflight": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v2_preflight_20260825.json",
+    "sha256": "a7a6d0a0d6479c62bd5eedf664e0ac74e183b684353669c32972edcfc1a1d5e2"
+  },
+  "parent_precommit_drift": {
+    "legacy_sha256_recorded_in_parent_preflight": "f62d1a0b9c9ffc09c0749594e88404ff5c679675caa59ceb11faec1da8bc1df9",
+    "current_parent_precommit": {
+      "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
+      "sha256": "f62d1a0b9c9ffc09c0749594e88404ff5c679675caa59ceb11faec1da8bc1df9"
+    },
+    "current_parent_canonical_sha256": "44321eeb2809dba8fcebcedb03395d916e0f965d741f5d21cbc63a1f517f31e3",
+    "resolution": "successor_v2_only_v1_documents_unchanged"
+  },
+  "source_artifact_manifest": {
+    "schema_version": "restart_aware_continuous_source_manifest.v1",
+    "canonical_sha256": "1bb7f8b76a5e439f64881268ee100da95508ccfc8e21a2f1759a5a493f92d147",
+    "day_count": 71,
+    "native_day_count": 52,
+    "provider_normalized_sensitivity_day_count": 19,
+    "artifact_count": 213,
+    "artifact_roles_per_day": ["bbo", "l2", "feature"],
+    "each_artifact_size_and_sha256_required": true,
+    "provider_exact_queue_authority": false,
+    "provider_exact_lifecycle_authority": false,
+    "exact_authority_excludes_frozen_restart_gaps": true,
+    "provider_continuous_economic_sensitivity_authority": true
+  },
+  "execution_interfaces": {
+    "restart_boundary_contract_id": "restart_boundary_contract.v1",
+    "restart_boundary": {
+      "path": "models/replay/restart_boundary.py",
+      "sha256": "2461b369766babc6589cc1ad92b09f987cdfc7102309ff44105ed3c7552553c3"
+    },
+    "restart_required_methods": [
+      "register_active_order",
+      "begin_maintenance",
+      "request_cancel",
+      "partial_fill",
+      "cancel_reject",
+      "terminal",
+      "enter_offline",
+      "begin_restart",
+      "complete_warmup"
+    ],
+    "continuous_accounting_contract_id": "continuous_accounting_contract.v2",
+    "continuous_accounting": {
+      "path": "models/replay/continuous_accounting.py",
+      "sha256": "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
+    },
+    "continuous_replay_state_contract_id": "continuous_replay_state.v2",
+    "continuous_replay_state": {
+      "path": "models/replay/replay_state_checkpoint.py",
+      "sha256": "8b092950eaf4b620be8b2148a6207f7abb37f8a692cfbbeaa90013c75bcd73e3"
+    },
+    "continuous_execution_runner": {
+      "path": "scripts/run_restart_aware_continuous_baseline.py",
+      "sha256": "e2cdc014602f934c39321a48821fd006e9beac704977ac38dfe9ea9a18f4f7ca"
+    },
+    "fill_trace_ordering_contract": {
+      "identity": "result_local_physical_fill_sequence.v1",
+      "sequence_origin": 0,
+      "sequence_scope": "single_tick_replay_result",
+      "sequence_authority": "physical_fill_append_order",
+      "timestamp_or_order_id_tiebreak_authorized": false,
+      "complete_path_validated_before_ledger_mutation": true,
+      "required_fields": [
+        "fill_sequence",
+        "fill_ts",
+        "side",
+        "fill_qty",
+        "quote_px",
+        "fill_fee_usdc",
+        "fill_fee_asset",
+        "fill_fee_semantics",
+        "inventory_before_fill",
+        "inventory_after_fill"
+      ],
+      "python_replay_engine": {
+        "path": "models/backtest_tick.py",
+        "sha256": "6ba97e72ea8e59b27ebdcdc198849f490836f0df24cdc179579cfae28d55b1cb"
+      },
+      "cpp_replay_engine": {
+        "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+        "sha256": "dd6d2cdcede255549b755129b14396fdc04b3be9cf7ddf6f6cddf5017315e149"
+      },
+      "cpp_replay_abi": {
+        "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+        "sha256": "fe82ed65004bb633d42c7c4e1cff98915339e37ebc81d82d1f43df92df80db30"
+      },
+      "cpp_python_binding": {
+        "path": "cpp/narrowgate_cpp/bindings.cpp",
+        "sha256": "acca4197927148333a3a456253f41481b9b6ec76f1edba622e16e4942b44156c"
+      }
+    },
+    "accounting_required_methods": [
+      "mark",
+      "enter_planned_restart",
+      "resume_after_warmup",
+      "fill",
+      "record_gap",
+      "close_utc_day",
+      "accounting_audit"
+    ],
+    "fee_asset": "USDC",
+    "fee_accounting_semantics": "signed_fee_positive_cost_negative_rebate_v2",
+    "cancel_drain_requires_observed_terminal_ack_or_fill": true,
+    "orders_remaining_at_offline_boundary_fail_closed": true,
+    "fresh_snapshot_before_warmup": true,
+    "warmup_source_coverage_required": true,
+    "feature_ready_not_after_decision": true
+  },
+  "candidate_dag_contract": {
+    "semantic_identity": "causal_v12_cadence_1s_source_aware_semantics_successor_v1",
+    "feature_dag_id": "causal_v12_full_trainable_1s.v1",
+    "cadence_ms": 1000,
+    "head_count": 13,
+    "canonical_payload_sha256": "99f348864689f5dfef50aeeecf380036240975e42f7d75c09ea7467c1ef93354",
+    "head_linkage_sha256": "378884f18e84dacafb8f6cce95ff50d10fbc4d274a9d1cd7154002cf04acc155",
+    "source_clock_manifest_sha256": "f2c473dac79a387e56c4aa1d166cfb511575a2de7f8666c0aef32067e4d1ad7e",
+    "bundle_relation": "training_identity_feature_order_heads_and_cadence_must_match"
+  },
+  "execution_status": {
+    "candidate_identity_bound": false,
+    "full_path_runner_bound": false,
+    "execution_requests_materialized": false,
+    "economic_results_schema_bound": false,
+    "economic_results_read": false,
+    "execution_plan_skeleton": true,
+    "historical_v1_results_reused": false
+  },
+  "permissions": {
+    "execution_plan_validation_authorized": true,
+    "full_path_execution_authorized": false,
+    "economic_outcomes_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "baseline_replacement_authorized": false
+  }
+}

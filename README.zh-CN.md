@@ -1,6 +1,6 @@
 <div align="center">
   <h1>NarrowGate</h1>
-  <p>Maker 策略研究、因果回放与 live/replay 一致性框架。</p>
+  <p>Maker 策略研究、因果回放，以及在明确假设下的实现一致性框架。</p>
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
@@ -10,17 +10,21 @@ Last materially modified: 2026-08-25
 
 NarrowGate 是一个 maker 策略研究框架，用于研究被动报价选择、库存 campaign、tick replay，以及 Python/C++ 执行一致性。
 
-它**不是**打包好的交易机器人，也不附带已经晋级的 live 参数集。公开仓库聚焦于证据框架：
+它**不是**打包好的交易机器人，也不附带已经晋级的 live 参数集。NarrowGate 的核心定位是**负向过滤器**：判断 maker 在什么状态下绝对不应增加风险敞口，而不是预测下一步涨跌。当毒性、波动、库存、数据质量或运行状态不安全或含糊时，默认行为必须暂停对应方向的增仓或 fail closed。任何向内压缩点差的行为都只能是显式研究 arm，不能作为安全默认值。
+
+公开仓库聚焦于证据框架：
 
 - 按冻结 identity 选择每日 fresh-start 或版本化 continuous/restart-aware replay；
 - 使用订单级分母表，而不是只分析成交后的幸存者；
 - 使用最大库存、持续时间、最大不利偏移（Maximum Adverse Excursion，`campaign MAE`）、repair 和 terminal outcome 等 campaign 级库存标签；
-- 在解读 PnL 之前先对齐 live/replay 机制；
+- 在解读 PnL 前，先按明确冻结的数据、时钟、队列与初始状态合同核验 live/replay 机制；
 - 对经过 parity 验证的热点循环和快速筛选，可选用 C++ 加速。
 
 术语约定：仓库中的 `campaign MAE` 始终指 Maximum Adverse Excursion；预测或模型评估语境中的 `prediction MAE` / `model MAE` 才指 Mean Absolute Error（平均绝对误差）。两者不得混用。
 
-当前运营入口：`<current-live-host>`、`<current-live-instance>` 与 `<current-live-epoch>` 只能通过 Git 忽略的私有 current-host pointer 解析，公开说明绝不是远端控制权威。该 pointer 当前绑定 owner-active BUY E3 release-v3，所有 shadow 与 companion surface 均关闭。已准入的 post-lifecycle receipt 是冻结的运营身份与健康证据，不代表最新 liveness、非 baseline 动作实际发生或经济效果；任何远端变更前仍须重新核验 live process。历史查询必须按照私有 catalog 记录的每个 source-labelled host/epoch 边界和显式证据缺口分段，任何 epoch 的行都不得替代另一 epoch 的缺失行。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。
+证据标签彼此独立：**causal（因果）**描述 feature/clock 与 estimand 合同，**exact**描述字节或身份完全匹配，**formal**描述已冻结且 fail-closed 的程序，**parity**只表示两个实现在已声明假设下结果一致，**authority**则是显式权限。任何一个标签本身都不能证明公开可复现、owner 私有可复现、经济有效或允许交易。
+
+当前运营定位：`<current-live-host>`、`<current-live-instance>` 与 `<current-live-epoch>` 只是逻辑占位符，不是可直接使用的公开端点；只能通过 Git 忽略的私有 current-host pointer 解析，公开说明绝不是远端控制权威。该 pointer 当前绑定 owner-active BUY E3 release-v3，所有 shadow 与 companion surface 均关闭。已准入的 post-lifecycle receipt 只是冻结的运营身份与历史健康证据，不代表最新 liveness、持续报价、非 baseline 动作实际发生或经济效果；任何远端变更前仍须独立核验交易所状态、quote loop、fail-closed 闩锁与残余库存。历史查询必须按照私有 catalog 记录的每个 source-labelled host/epoch 边界和显式证据缺口分段，任何 epoch 的行都不得替代另一 epoch 的缺失行。参见[当前主机与数据查询合同](docs/live_host_and_historical_data_access_20260811.md)。
 
 ## 稳定公开版本
 
@@ -116,7 +120,7 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 如果你希望检查或复用以下内容，NarrowGate 会很有用：
 
 - market-making 证据工作流；
-- tick replay 与 live/replay parity 思路；
+- tick replay 与冻结 replay/live 假设下的实现一致性思路；
 - order-level 和 campaign-level label；
 - data-quality 与 horizon/gap guard；
 - 低延迟研究系统中的 Python/C++ 边界设计。
@@ -314,11 +318,11 @@ Latency profile 是 host assumption，不是 strategy parameter。Instance type�
 
 Python tick replay 现在具备共享 feature-ready multi-tape scheduler，并默认使用 no-op `MultiMarketPolicy`。在修正 event clock、feature-ready contract 和 empirical-P3 baseline 之前生成的历史 stop-add、fixed-rearm、fixed-cooldown 与 one-tick response 结果，已经从公开 evidence surface 移除。它们不能用于选择参数或声称 action uplift。
 
-当前 strategy evidence 从已知 propensity 与 campaign-level reward attribution 的冻结 action panel 出发。可变的 [operational pointer](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 现在解析到公开的 [v13 governance identity](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json)，并把两类权限彻底分开：`current_live` 记录 owner-active BUY E3 release-v3 的私有 pointer/稳定 config 绑定，BUY E3 已启用，SELL owner policy 不变，且没有 active shadow 或 companion；`backtest_default` 则继续使用不可变 [v12](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json) 及其 create-only 私有 config，直到存在 exact BUY E3 replay baseline。当前 live alias 绝不能替换 v12 control。v13 只是 locator reconciliation，不授予 research、action、live、最新 liveness、动作发生或经济权限；live E3 evidence 也不是 backtest evidence。
+当前 strategy evidence 从已知 propensity 与 campaign-level reward attribution 的冻结 action panel 出发。可变的 [operational pointer](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) 只通过公开的 [v13 governance identity](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json) 解析 current-live config：`current_live` 记录 owner-active BUY E3 release-v3 的私有 pointer/稳定 config 绑定，BUY E3 已启用，SELL owner policy 不变，且没有 active shadow 或 companion。独立的 [backtest mechanics pointer](research/families/f10_live_replay_attribution/docs/operational_backtest_mechanics_current.json) 解析到 create-only 私有 [mechanics safety successor](research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_safety_successor_v1_20260825.json)：cutoff 前 BUY 使用 exact E3，SELL 与 D+1 新分配使用 exact owner B0，支持集只是 reduced-support 的 30 个 Development 日。它只授权 mechanics 可用；economic、research、action、live、动作发生、Validation/holdout 与 promotion 权限全部为 false。当前 live alias 绝不能替换任何 replay 输入；v13 仍只是 locator reconciliation，live E3 evidence 也不是经济 backtest evidence。
 
-当前 pooled 50 日回测 denominator 是 [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json)。它严格复刻 live BER 时钟：持有最近一个已完成 canonical 10 秒桶的 `trade_intensity_60s`，并在已完成 1 秒 bar 回调上采样。冻结的 daily-fresh-start 前 40 日结果为 terminal MTM `-144.251748 USDC`、closed-campaign `-147.466348 USDC`、`17,118` fills；新增 10 个 Grade-A 日分别贡献 `-21.314331 USDC`、`-21.064631 USDC` 和 `3,029` fills。合并 50 日结果为 terminal MTM `-165.566079 USDC`（`-3.311322/day`）、closed-campaign `-168.530979 USDC`、`20,147` fills。
+保留的历史 50 日比较器是 [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json)。它当时复刻 live BER 时钟：持有最近一个已完成 canonical 10 秒桶的 `trade_intensity_60s`，并在已完成 1 秒 bar 回调上采样。冻结的 daily-fresh-start 前 40 日结果为 terminal MTM `-144.251748 USDC`、closed-campaign `-147.466348 USDC`、`17,118` fills；新增 10 个 Grade-A 日分别贡献 `-21.314331 USDC`、`-21.064631 USDC` 和 `3,029` fills。合并历史结果为 terminal MTM `-165.566079 USDC`（`-3.311322/day`）、closed-campaign `-168.530979 USDC`、`20,147` fills。由于当前 ledger、手续费、campaign、spread-cap 与同时间成交顺序的安全语义已经改变，这些经济结果现为 stale immutable comparator，不是当前默认值，也不授予任何权限。
 
-这组数字的准确身份是 native-derived top-20/100ms C++ daily-fresh-start diagnostic。50 日中的任何一天都没有消费 raw snapshot/delta queue tape、经验 REST 延迟或 AWS receive/feature-ready 可见延迟。因此它可继续用于同模拟器成对诊断，但不能授权会改变订单路径的 action。下一版必须使用 strict raw-native Python replay 和冻结的 Tokyo 延迟 profile；边界见[执行范围勘误](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_execution_scope_amendment_v1_20260810.md)。该 successor 已通过全部 50 日 source preflight，并在 `2026-06-29` 完成一日 strict mechanics：消费 508.6 万条 raw book events，19,460 次 queue lookup 全部 exact 或 known-zero，missing 为零，visibility delay 实际应用 14,825 次。该日 terminal MTM 从旧诊断路径的 `-7.878888` 变为 `-7.132700 USDC`，因此严格 50 日结果必须重算，不能由旧 pooled 数字外推。连续状态实验还须跨 UTC 午夜保留现金、库存、campaign 和 cooldown。
+这组数字的准确身份是 native-derived top-20/100ms C++ daily-fresh-start diagnostic。50 日中的任何一天都没有消费 raw snapshot/delta queue tape、经验 REST 延迟或 AWS receive/feature-ready 可见延迟。因此它只能用于历史同模拟器比较，不能授权会改变订单路径的 action；新的 30 日 mechanics safety successor 也不会刷新或继承这些经济结果。新的经济 baseline 仍必须使用 strict raw-native replay、冻结的 Tokyo 延迟 profile、修正后的单调 ledger/campaign 状态和新冻结的时间序列合同；边界见[执行范围勘误](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_execution_scope_amendment_v1_20260810.md)。先前严格路径已通过全部 50 日 source preflight，并在 `2026-06-29` 完成一日 mechanics：消费 508.6 万条 raw book events，19,460 次 queue lookup 全部 exact 或 known-zero，missing 为零，visibility delay 实际应用 14,825 次。该日 terminal MTM 从旧诊断路径的 `-7.878888` 变为 `-7.132700 USDC`，因此不能由旧 pooled 数字外推任何严格 50 日结果。连续状态实验还须跨 UTC 午夜保留现金、库存、campaign、cooldown 与同时间成交顺序。
 
 这次 owner-directed operational promotion 不等于独立研究确认：campaign q10 未决，research prediction/live authority 仍为 false。旧部署身份只承担回滚与 provenance，不再承担当前回测 control。精确历史证据边界见 [research/families/f10_live_replay_attribution/docs/historical_backtest_evidence_revalidation_20260720.md](research/families/f10_live_replay_attribution/docs/historical_backtest_evidence_revalidation_20260720.md)。
 

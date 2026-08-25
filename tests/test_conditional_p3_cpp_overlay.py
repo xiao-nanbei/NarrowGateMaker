@@ -3,6 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from strategy.quote_core import SPREAD_CAP_COMPRESS
+
 
 cpp = pytest.importorskip("narrowgate_cpp")
 
@@ -25,6 +27,7 @@ def _params():
     params.quote.order_size = params.order_size
     params.quote.max_inventory = params.max_inventory
     params.quote.max_spread_bps = 100.0
+    params.quote.spread_cap_mode = SPREAD_CAP_COMPRESS
     params.quote.dynamic_cap_enabled = False
     return params
 

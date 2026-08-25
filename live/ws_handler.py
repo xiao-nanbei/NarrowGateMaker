@@ -42,6 +42,8 @@ from market_fusion import (
 
 logger = logging.getLogger("ws_handler")
 
+_USER_STREAM_SHUTDOWN_JOIN_TIMEOUT_S = 5.0
+
 
 @dataclass(frozen=True)
 class DynamicFillHazardVisibleSnapshot:
@@ -74,10 +76,15 @@ class WSHandler:
         self._ws_spot = None
         self._ws_user = None
         self._user_thread: Optional[threading.Thread] = None
+        self._user_restart_thread: Optional[threading.Thread] = None
+        self._user_stream_lifecycle_lock = threading.RLock()
         self._user_stream_active = False
         self._rest_client = None
         self._listen_key: Optional[str] = None
         self._listen_key_thread: Optional[threading.Thread] = None
+        self._user_stream_shutdown_join_timeout_s = (
+            _USER_STREAM_SHUTDOWN_JOIN_TIMEOUT_S
+        )
         self._spot_thread: Optional[threading.Thread] = None
         self._spot_stream_active = False
         self._external_clients: list[object] = []
@@ -110,7 +117,9 @@ class WSHandler:
         self._deep_depth_count = 0
         self._spot_book_ticker_count = 0
         self._spot_trade_count = 0
+        self._user_event_stats_lock = threading.Lock()
         self._user_event_count = 0
+        self._last_user_event_monotonic_s = 0.0
 
         self._market_session_id = 0
         self._market_trade_seen: dict[str, float] = {}
@@ -1231,6 +1240,15 @@ class WSHandler:
     def _start_user_stream(self, rest_client):
         """Create listen key and start user data stream."""
 
+        with self._user_stream_lifecycle_lock:
+            self._start_user_stream_locked(rest_client)
+
+    def _start_user_stream_locked(self, rest_client):
+        """Start one user stream while holding the lifecycle lock."""
+
+        if not self._running:
+            return
+
         try:
             import websocket
         except Exception as exc:
@@ -1241,6 +1259,8 @@ class WSHandler:
 
         try:
             self._stop_user_stream()
+            if not self._running:
+                return
 
             resp = rest_client.new_listen_key()
             self._listen_key = resp.get("listenKey", "")
@@ -1279,7 +1299,65 @@ class WSHandler:
         except Exception as e:
             logger.error(f"Failed to start user data stream: {e}")
 
+    def _latch_user_stream_quiescence_failure(
+        self,
+        *,
+        thread_name: str,
+        error: BaseException,
+    ) -> None:
+        latch = getattr(self.engine, "latch_runtime_fatal", None)
+        if not callable(latch):
+            return
+        try:
+            latch(
+                reason=f"USER_STREAM_SHUTDOWN_NOT_QUIESCENT:{thread_name}",
+                error=error,
+                reconciliation_required=True,
+                defer_reconciliation=True,
+            )
+        except BaseException:
+            logger.critical(
+                "Failed to latch user-stream shutdown uncertainty",
+                exc_info=True,
+            )
+
+    def _join_user_stream_thread(
+        self,
+        thread: Optional[threading.Thread],
+        *,
+        thread_name: str,
+    ) -> None:
+        if thread is None or not thread.is_alive():
+            return
+        if thread is threading.current_thread():
+            error = RuntimeError(
+                f"cannot quiesce {thread_name} from its own callback thread"
+            )
+            self._latch_user_stream_quiescence_failure(
+                thread_name=thread_name,
+                error=error,
+            )
+            raise error
+        timeout_s = max(
+            0.0,
+            float(self._user_stream_shutdown_join_timeout_s),
+        )
+        thread.join(timeout=timeout_s)
+        if thread.is_alive():
+            error = RuntimeError(
+                f"{thread_name} did not stop within {timeout_s:.3f}s"
+            )
+            self._latch_user_stream_quiescence_failure(
+                thread_name=thread_name,
+                error=error,
+            )
+            raise error
+
     def _stop_user_stream(self):
+        with self._user_stream_lifecycle_lock:
+            self._stop_user_stream_locked()
+
+    def _stop_user_stream_locked(self):
         self._user_stream_active = False
         if self._ws_user:
             try:
@@ -1291,10 +1369,43 @@ class WSHandler:
             except Exception:
                 pass
             self._ws_user = None
+        thread = self._user_thread
+        self._join_user_stream_thread(
+            thread,
+            thread_name="user-data WebSocket thread",
+        )
+        if thread is self._user_thread:
+            self._user_thread = None
+
+    def _restart_user_stream_after_callback(self, reason: str) -> None:
+        try:
+            self.restart_user_stream(reason)
+        except BaseException as exc:
+            self._latch_user_stream_quiescence_failure(
+                thread_name="user-data restart controller",
+                error=exc,
+            )
+            logger.critical("Deferred user-stream restart failed", exc_info=True)
+        finally:
+            if self._user_restart_thread is threading.current_thread():
+                self._user_restart_thread = None
 
     def restart_user_stream(self, reason: str = ""):
         """Best-effort user-data reconnect after a position sync discrepancy."""
         if not self._running or self._rest_client is None:
+            return
+        if self._user_thread is threading.current_thread():
+            restart_thread = self._user_restart_thread
+            if restart_thread is not None and restart_thread.is_alive():
+                return
+            restart_thread = threading.Thread(
+                target=self._restart_user_stream_after_callback,
+                args=(reason,),
+                daemon=True,
+                name="user-stream-restart-controller",
+            )
+            self._user_restart_thread = restart_thread
+            restart_thread.start()
             return
         msg = "Restarting user data WebSocket"
         if reason:
@@ -1533,6 +1644,7 @@ class WSHandler:
     def _on_user_message(self, _, message):
         """Route user data messages."""
         receive_ts_ns = time.time_ns()
+        event_type = ""
         try:
             if isinstance(message, (bytes, bytearray)):
                 message = message.decode("utf-8", errors="ignore")
@@ -1555,7 +1667,9 @@ class WSHandler:
             if not event_type:
                 return
 
-            self._user_event_count += 1
+            with self._user_event_stats_lock:
+                self._user_event_count += 1
+                self._last_user_event_monotonic_s = time.monotonic()
 
             if event_type == "ORDER_TRADE_UPDATE":
                 order_data = data.get("o", {})
@@ -1564,10 +1678,6 @@ class WSHandler:
                 self.engine.orders.on_order_update(order_data)
 
             elif event_type == "ACCOUNT_UPDATE":
-                # Skip WS-based sync during active closing — REST sync
-                # in main loop is authoritative; WS ACCOUNT_UPDATE arrives
-                # interleaved with ORDER_TRADE_UPDATE and causes race conditions
-                from strategy.inventory_manager import PositionState
                 account_data = data.get("a", {})
 
                 # Skip sync when reason is ORDER — ORDER_TRADE_UPDATE handles
@@ -1580,24 +1690,50 @@ class WSHandler:
                 if reason == "ORDER":
                     pass  # skip — fill will be processed via ORDER_TRADE_UPDATE
                 else:
-                    state = self.engine.inventory.snapshot.state
-                    if state == PositionState.TIMEOUT_CLOSING:
-                        pass  # skip — fills from ORDER_TRADE_UPDATE are sufficient
-                    else:
-                        positions = account_data.get("P", [])
-                        for pos in positions:
-                            if pos.get("s") == self.cfg.symbol:
-                                qty = float(pos.get("pa", 0))
-                                entry = float(pos.get("ep", 0))
-                                self.engine.inventory.sync_from_exchange(qty, entry)
-                                break
+                    # ACCOUNT_UPDATE has no per-order cumulative cursor.  Use a
+                    # bounded REST positionRisk + accountTrades snapshot instead
+                    # of installing an unidentifiable reconciliation barrier.
+                    self.engine.sync_position(required=True)
 
             elif event_type == "listenKeyExpired":
                 logger.warning("Listen key expired, reconnecting...")
-                self._start_user_stream(self.engine.rest)
+                self.restart_user_stream("listen key expired")
 
         except Exception as e:
-            logger.error(f"User message error: {e}")
+            if event_type in {"ORDER_TRADE_UPDATE", "ACCOUNT_UPDATE"}:
+                self.engine.latch_runtime_fatal(
+                    reason=f"USER_EVENT_CALLBACK_FAILURE:{event_type}",
+                    error=e,
+                    reconciliation_required=True,
+                )
+                logger.critical("User message callback failed: %s", e, exc_info=True)
+            else:
+                logger.error(f"User message error: {e}")
+
+    def user_event_safety_snapshot(
+        self,
+        *,
+        now_monotonic_s: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Return general user-stream liveness facts for operational health."""
+
+        now_monotonic_s = (
+            time.monotonic()
+            if now_monotonic_s is None
+            else float(now_monotonic_s)
+        )
+        with self._user_event_stats_lock:
+            event_count = int(self._user_event_count)
+            last_event = float(self._last_user_event_monotonic_s)
+        age_s = (
+            max(0.0, now_monotonic_s - last_event)
+            if last_event > 0.0
+            else None
+        )
+        return {
+            "user_event_count": event_count,
+            "last_user_event_age_s": age_s,
+        }
 
     def _on_market_close(self, _):
         logger.warning("Market trade WebSocket closed")
@@ -1811,6 +1947,7 @@ class WSHandler:
     def stop(self):
         """Stop all WebSocket connections."""
         self._running = False
+        shutdown_errors: list[BaseException] = []
 
         self._stop_external_venue_streams()
         self._stop_market_tape()
@@ -1830,11 +1967,32 @@ class WSHandler:
                 pass
             self._ws_public = None
 
-        if self._ws_user:
+        try:
             self._stop_user_stream()
+        except BaseException as exc:
+            shutdown_errors.append(exc)
+            logger.critical("User-data WebSocket shutdown failed", exc_info=True)
+
+        for attr_name, thread_name in (
+            ("_listen_key_thread", "listen-key renewal thread"),
+            ("_user_restart_thread", "user-data restart controller"),
+        ):
+            thread = getattr(self, attr_name, None)
+            try:
+                self._join_user_stream_thread(
+                    thread,
+                    thread_name=thread_name,
+                )
+            except BaseException as exc:
+                shutdown_errors.append(exc)
+                logger.critical("%s shutdown failed", thread_name, exc_info=True)
+            else:
+                if thread is getattr(self, attr_name, None):
+                    setattr(self, attr_name, None)
 
         self._stop_spot_stream()
 
+        user_event_safety = self.user_event_safety_snapshot()
         logger.info(
             f"WSHandler stopped. Stats: "
             f"aggTrades={self._agg_trade_count}, "
@@ -1844,5 +2002,9 @@ class WSHandler:
             f"deepDepth={self._deep_depth_count}, "
             f"spotBookTickers={self._spot_book_ticker_count}, "
             f"spotTrades={self._spot_trade_count}, "
-            f"user_events={self._user_event_count}"
+            f"user_events={user_event_safety['user_event_count']}"
         )
+        if shutdown_errors:
+            raise RuntimeError(
+                "user-stream shutdown did not reach callback quiescence"
+            ) from shutdown_errors[0]

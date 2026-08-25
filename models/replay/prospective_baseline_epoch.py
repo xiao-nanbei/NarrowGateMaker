@@ -29,6 +29,12 @@ from models.replay.baseline_epoch_manifest import (
     canonical_sha256,
     epoch_identity_sha256,
 )
+from strategy.replay_controls import (
+    LOSS_COOLDOWN_SEMANTICS,
+    LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
+    LOSS_COOLDOWN_SNAPSHOT_STATE_FIELDS,
+    ConsecutiveLossCooldown,
+)
 
 PROSPECTIVE_BASELINE_EPOCH_SCHEMA_VERSION = "narrowgate_prospective_baseline_epoch.v1"
 PROSPECTIVE_BASELINE_INITIAL_STATE_SCHEMA_VERSION = (
@@ -60,6 +66,9 @@ PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS = {
     domain: f"narrowgate_initial_state_{domain}.v1"
     for domain in PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS
 }
+PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS["reward_path_loss_cooldown"] = (
+    LOSS_COOLDOWN_SNAPSHOT_SCHEMA
+)
 PROSPECTIVE_INITIAL_STATE_REQUIRED_FIELDS = {
     "account_and_exchange": ("account", "exchange_open_orders"),
     "inventory_accounting": (
@@ -71,8 +80,10 @@ PROSPECTIVE_INITIAL_STATE_REQUIRED_FIELDS = {
     ),
     "campaign": ("active", "campaign_id", "start_side", "fills"),
     "reward_path_loss_cooldown": (
-        "consecutive_losses",
+        "semantics",
+        *LOSS_COOLDOWN_SNAPSHOT_STATE_FIELDS,
         "cooldown_until_wall_s",
+        "last_cooldown_cancel_time_wall_s",
     ),
     "adverse_markout_pause": ("ema_bid", "ema_ask", "pending", "pause_until_wall_s"),
     "sync_degrade": ("last_seen_sync_adjust_seq", "degrade_until_wall_s"),
@@ -216,6 +227,15 @@ def validate_initial_runtime_state_completeness(
                 f"initial runtime state domain fields are missing for {domain}: "
                 + ", ".join(absent_fields)
             )
+    loss_cooldown_state = state["reward_path_loss_cooldown"]
+    if loss_cooldown_state.get("semantics") != LOSS_COOLDOWN_SEMANTICS:
+        raise ValueError("initial loss-cooldown semantics are stale")
+    try:
+        ConsecutiveLossCooldown.restore(loss_cooldown_state)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "initial loss-cooldown snapshot is incomplete or inconsistent"
+        ) from exc
     signal_state = state["signal_feature_dag_warmup"]
     _require_sha256(
         "initial signal Feature DAG SHA256",

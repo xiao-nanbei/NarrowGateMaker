@@ -557,7 +557,7 @@ def _coverage_union_seconds(starts: np.ndarray, ends: np.ndarray) -> float:
     total_ms = 0.0
     cur_start = float(starts[0])
     cur_end = float(ends[0])
-    for start, end in zip(starts[1:], ends[1:]):
+    for start, end in zip(starts[1:], ends[1:], strict=True):
         start = float(start)
         end = float(end)
         if start <= cur_end:
@@ -2005,10 +2005,13 @@ def _replay_orderbook_file(
             continue
 
         ts_ms_arr = _select_ts_ms(frame, timestamp_source)
-        def _timestamp_array(column: str) -> np.ndarray:
-            if column not in frame.columns:
-                return np.zeros(len(frame), dtype=np.int64)
-            return np.asarray(_extract_ts_ms(frame, column), dtype=np.int64)
+        def _timestamp_array(
+            column: str,
+            source_frame: pd.DataFrame = frame,
+        ) -> np.ndarray:
+            if column not in source_frame.columns:
+                return np.zeros(len(source_frame), dtype=np.int64)
+            return np.asarray(_extract_ts_ms(source_frame, column), dtype=np.int64)
 
         event_ts_ms_arr = _timestamp_array("event_time")
         transaction_ts_ms_arr = _timestamp_array("transaction_time")
@@ -2069,6 +2072,7 @@ def _replay_orderbook_file(
             side_arr,
             price_arr,
             qty_arr,
+            strict=True,
         ):
             if ts_ms <= 0 or side not in {"bid", "ask"}:
                 continue

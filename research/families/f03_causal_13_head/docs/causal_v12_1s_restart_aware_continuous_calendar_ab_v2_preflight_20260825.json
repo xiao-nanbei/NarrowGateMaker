@@ -1,0 +1,210 @@
+{
+  "schema_version": "causal_v12_1s_restart_aware_continuous_calendar_ab.v2",
+  "identity": "causal_v12_1s_candidate_vs_current_v9_10s_control_restart_aware_71d_signed_fee_v2",
+  "created_at_utc": "2026-08-25T00:00:00Z",
+  "last_materially_modified": "2026-08-25",
+  "status": "preflight_v2_signed_fee_results_read_closed",
+  "predecessor": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_restart_aware_continuous_calendar_ab_v1_preflight_20260805.json",
+    "status": "immutable_historical_evidence_stale_for_new_execution"
+  },
+  "parent_precommit": {
+    "path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
+    "sha256": "f62d1a0b9c9ffc09c0749594e88404ff5c679675caa59ceb11faec1da8bc1df9"
+  },
+  "calendar": {
+    "start_day": "2026-04-17",
+    "end_day": "2026-06-26",
+    "day_count": 71,
+    "days": [
+      "2026-04-17",
+      "2026-04-18",
+      "2026-04-19",
+      "2026-04-20",
+      "2026-04-21",
+      "2026-04-22",
+      "2026-04-23",
+      "2026-04-24",
+      "2026-04-25",
+      "2026-04-26",
+      "2026-04-27",
+      "2026-04-28",
+      "2026-04-29",
+      "2026-04-30",
+      "2026-05-01",
+      "2026-05-02",
+      "2026-05-03",
+      "2026-05-04",
+      "2026-05-05",
+      "2026-05-06",
+      "2026-05-07",
+      "2026-05-08",
+      "2026-05-09",
+      "2026-05-10",
+      "2026-05-11",
+      "2026-05-12",
+      "2026-05-13",
+      "2026-05-14",
+      "2026-05-15",
+      "2026-05-16",
+      "2026-05-17",
+      "2026-05-18",
+      "2026-05-19",
+      "2026-05-20",
+      "2026-05-21",
+      "2026-05-22",
+      "2026-05-23",
+      "2026-05-24",
+      "2026-05-25",
+      "2026-05-26",
+      "2026-05-27",
+      "2026-05-28",
+      "2026-05-29",
+      "2026-05-30",
+      "2026-05-31",
+      "2026-06-01",
+      "2026-06-02",
+      "2026-06-03",
+      "2026-06-04",
+      "2026-06-05",
+      "2026-06-06",
+      "2026-06-07",
+      "2026-06-08",
+      "2026-06-09",
+      "2026-06-10",
+      "2026-06-11",
+      "2026-06-12",
+      "2026-06-13",
+      "2026-06-14",
+      "2026-06-15",
+      "2026-06-16",
+      "2026-06-17",
+      "2026-06-18",
+      "2026-06-19",
+      "2026-06-20",
+      "2026-06-21",
+      "2026-06-22",
+      "2026-06-23",
+      "2026-06-24",
+      "2026-06-25",
+      "2026-06-26"
+    ],
+    "source_manifest_path": "research/shared/replay_lifecycle/docs/calendar_continuity_manifest_20260417_20260730_v1.json",
+    "source_manifest_sha256": "5ecca6fef292cb7ffba51464473eebb2a8232fcaca7fbc1e0567f594737145bd",
+    "restart_timeline_sha256": "a825ac2c8ff34dd8fa15d60d27b7c12b0f6a0763d82758f42daacb4c711ba0d7",
+    "cancel_drain_ms": 2000,
+    "past_only_warmup_lookback_s": 3000,
+    "native_execution_days": 52,
+    "provider_normalized_sensitivity_days": 19,
+    "whole_day_offline_placeholders": 0
+  },
+  "control": {
+    "identity": "current_v9_causal_v12_10s_ml_on",
+    "baseline_id": "btc_usdc_causal_v12_quote_snapshot_atomicity_v2_q90_shadow_buy_fill_selection_retired_baseline_20260804",
+    "identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
+    "identity_sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638",
+    "config_path": "${NARROWGATE_LIVE_CONFIG}",
+    "config_sha256": "889f605dc6a057874a8070fd86cbd21a0c8eb050156315c1dc6f48ec9acb48f5",
+    "cadence_ms": 10000,
+    "q90_action_enabled": false,
+    "buy_fill_selection_enabled": false
+  },
+  "candidate": {
+    "identity": null,
+    "bundle_meta": {"path": null, "sha256": null},
+    "feature_dag": {"path": null, "sha256": null},
+    "overlay_root": null,
+    "overlay_index": {"path": null, "sha256": null},
+    "cadence_ms": 1000,
+    "all_13_heads_required": true,
+    "feature_ready_not_after_decision": true
+  },
+  "comparison": {
+    "all_71_days_trade": true,
+    "same_restart_manifest_both_arms": true,
+    "same_market_timeline_both_arms": true,
+    "separate_mutable_state_both_arms": true,
+    "cash_inventory_entry_and_campaign_cross_midnight": true,
+    "utc_midnight_accounting_only": true,
+    "gap_clears_orders_queue_pending_and_hazard": true,
+    "gap_preserves_economic_state": true,
+    "past_only_warmup_before_resume": true,
+    "control_is_v9_10s": true,
+    "candidate_is_f03_1s": true,
+    "utc_midnight_flatten": false,
+    "utc_midnight_state_reset": false,
+    "whole_day_maintenance_placeholder": false,
+    "shared_mutable_arm_state": false,
+    "economic_results_aggregated": false,
+    "request_unit": "daily_source_admission_not_daily_fresh_start",
+    "continuous_accounting_contract": {
+      "identity": "continuous_accounting_contract.v2",
+      "artifact": {
+        "path": "research/shared/replay_lifecycle/docs/continuous_accounting_contract_v2.json",
+        "sha256": "763532a9963700f267e57eb582c38830da8f158288ed900be49b9d7ed96d40ad"
+      },
+      "implementation": {
+        "path": "models/replay/continuous_accounting.py",
+        "sha256": "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
+      }
+    }
+  },
+  "runner": {
+    "shared_module": "models/replay/restart_aware_continuous_ab.py",
+    "f03_module": "research/families/f03_causal_13_head/audit/causal_v12_1s_restart_aware_continuous_ab.py",
+    "continuous_execution_runner": {
+      "path": "scripts/run_restart_aware_continuous_baseline.py",
+      "sha256": "e2cdc014602f934c39321a48821fd006e9beac704977ac38dfe9ea9a18f4f7ca"
+    },
+    "fill_trace_ordering_contract": {
+      "identity": "result_local_physical_fill_sequence.v1",
+      "sequence_origin": 0,
+      "sequence_scope": "single_tick_replay_result",
+      "sequence_authority": "physical_fill_append_order",
+      "timestamp_or_order_id_tiebreak_authorized": false,
+      "complete_path_validated_before_ledger_mutation": true,
+      "required_fields": [
+        "fill_sequence",
+        "fill_ts",
+        "side",
+        "fill_qty",
+        "quote_px",
+        "fill_fee_usdc",
+        "fill_fee_asset",
+        "fill_fee_semantics",
+        "inventory_before_fill",
+        "inventory_after_fill"
+      ],
+      "python_replay_engine": {
+        "path": "models/backtest_tick.py",
+        "sha256": "6ba97e72ea8e59b27ebdcdc198849f490836f0df24cdc179579cfae28d55b1cb"
+      },
+      "cpp_replay_engine": {
+        "path": "cpp/narrowgate_cpp/tick_replay.cpp",
+        "sha256": "dd6d2cdcede255549b755129b14396fdc04b3be9cf7ddf6f6cddf5017315e149"
+      },
+      "cpp_replay_abi": {
+        "path": "cpp/narrowgate_cpp/tick_replay.hpp",
+        "sha256": "fe82ed65004bb633d42c7c4e1cff98915339e37ebc81d82d1f43df92df80db30"
+      },
+      "cpp_python_binding": {
+        "path": "cpp/narrowgate_cpp/bindings.cpp",
+        "sha256": "acca4197927148333a3a456253f41481b9b6ec76f1edba622e16e4942b44156c"
+      }
+    },
+    "tick_engine_called_by_current_skeleton": false,
+    "economic_result_reader_implemented": false,
+    "signed_fee_asset": "USDC",
+    "fee_accounting_semantics": "signed_fee_positive_cost_negative_rebate_v2"
+  },
+  "permissions": {
+    "execution_plan_materialization_authorized": true,
+    "economic_outcomes_read": false,
+    "execution_results_read": false,
+    "validation_read": false,
+    "sealed_holdout_read": false,
+    "action_authorized": false,
+    "live_authorized": false,
+    "baseline_replacement_authorized": false
+  }
+}

@@ -1,13 +1,27 @@
 {
-  "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v1",
-  "status": "current_default_private_exact_buy_e3_mechanics",
-  "effective_at_utc": "2026-08-25T00:00:01Z",
-  "mechanics_identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
-  "mechanics_contract_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1_20260825.json",
-  "mechanics_contract_file_sha256": "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699",
+  "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v2",
+  "status": "current_default_private_exact_buy_e3_mechanics_safety_successor",
+  "effective_at_utc": "2026-08-25T03:45:34Z",
+  "mechanics_identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_safety_successor_v1",
+  "mechanics_contract_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_safety_successor_v1_20260825.json",
+  "mechanics_contract_file_sha256": "a3469af71276d0681dbee1bd1dc9336dac8f29e912bc40c70cab3d2802efd853",
+  "predecessor_mechanics_contract": {
+    "identity": "causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1",
+    "repository_relative_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1_20260825.json",
+    "file_sha256": "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699",
+    "canonical_sha256": "c2f680c79ca2946c66a5f6d6732792fb7b61c4285630e7a951944dfeac9bc968",
+    "annotated_tag": "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825",
+    "annotated_tag_object": "6180725e03e38a8580ce86f14959acf0946d8b90",
+    "private_bundle_relative_identity": "direct_no_shadow_live_evidence_v6_20260824/backtest_mechanics_default_v1",
+    "historical_contract_modified": false,
+    "historical_private_bundle_modified": false,
+    "historical_annotated_tag_modified": false
+  },
   "predecessor_v13_identity_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json",
   "predecessor_v13_identity_file_sha256": "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079",
   "private_bundle_availability": "private_not_distributed",
+  "private_bundle_relative_identity": "mechanics_safety_successor_v1_20260825/backtest_mechanics_default_v1",
+  "cold_publisher_annotated_tag": "f05-owner-buy-e3-backtest-mechanics-safety-successor-v1-final-20260825",
   "default_arm": {
     "target_side": "BUY",
     "buy_policy": "exact_owner_E3",
@@ -15,7 +29,28 @@
     "formal_e3_mechanics_panel_day_count": 30,
     "reduced_support": true
   },
-  "v12_50_day_economic_control_retained": true,
+  "v12_50_day_economic_comparator_retained": true,
+  "v12_50_day_economic_results_status": "historical_comparator_stale_under_current_safety_mechanics",
+  "material_mechanics_config_delta": {
+    "source_config_path": "strategy.spread_cap_mode",
+    "final_replay_abi_path": "spread_cap_mode",
+    "predecessor_effective_default": "compress",
+    "successor_cold_default": "pause_exposure",
+    "explicit_research_arm": "compress",
+    "explicit_research_arm_can_override_cold_default": false,
+    "active_source_config_bytes_modified": false
+  },
+  "mechanics_safety_semantics": {
+    "spread_cap": "pause_exposure_is_the_safe_default;_compress_is_an_explicit_research_arm_only",
+    "exposure_role": "exact_close_and_partial_reduce_are_reducing;_only_cross_zero_residual_is_increasing",
+    "order_ledger": "finite_nonnegative_bounded_monotone_cumulative_fills;_exact_trade_and_order_identity;_terminal_corrections_fail_closed",
+    "campaign_flip": "zero_crossing_closes_the_old_campaign_and_opens_a_new_opposite_side_campaign",
+    "commission": "signed_commission_and_rebates_are_preserved_and_split_by_economic_leg",
+    "same_timestamp_fill_order": "preserve_source_exchange_sequence;_never_reorder_equal_timestamp_fills_by_order_id",
+    "cooldown_checkpoint": "full_cooldown_v2_snapshot_is_required;_legacy_partial_state_fails_closed",
+    "live_liveness": "websocket_and_main_loop_fail_closed;_fatal_runtime_errors_propagate_and_network_calls_are_bounded",
+    "economic_status": "predecessor_v12_50_day_results_are_historical_stale_comparator_only"
+  },
   "permissions": {
     "backtest_mechanics_available": true,
     "backtest_default_arm_resolution_authorized": true,
@@ -32,5 +67,5 @@
     "hypothetical_live_scoring": false,
     "shadow_or_companion_authority": false
   },
-  "canonical_backtest_mechanics_pointer_sha256": "f741795d7897875b247957aedd3100019343e9565935d110b04f7a4649280049"
+  "canonical_backtest_mechanics_pointer_sha256": "bd8d915bc39b15fa4f128c094a49b48d2ebb05db1213fdd80b164ba0d69f2009"
 }

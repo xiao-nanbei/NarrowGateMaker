@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Any
 
 from models.backtest_config import load_operational_baseline_binding
-from models.replay import continuous_accounting, restart_boundary
+from models.replay import (
+    continuous_accounting,
+    replay_state_checkpoint,
+    restart_boundary,
+)
 from models.replay.continuous_accounting import ContinuousAccountingLedger
 from models.replay.replay_state_checkpoint import ContinuousReplayState
 from models.replay.restart_aware_continuous_ab import (
@@ -46,23 +50,55 @@ from research.families.f03_causal_13_head.audit import (
 ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_SPEC = (
     ROOT / "research/families/f03_causal_13_head/docs/"
-    "causal_v12_1s_restart_aware_continuous_calendar_ab_v1_preflight_20260805.json"
+    "causal_v12_1s_restart_aware_continuous_calendar_ab_v2_preflight_20260825.json"
 )
 DEFAULT_AMENDMENT = (
     ROOT / "research/families/f03_causal_13_head/docs/"
-    "causal_v12_1s_restart_aware_continuous_calendar_ab_v1_1_"
-    "execution_binding_amendment_20260805.json"
+    "causal_v12_1s_restart_aware_continuous_calendar_ab_v2_"
+    "execution_binding_amendment_20260825.json"
 )
+DEFAULT_IDENTITY = (
+    ROOT / "research/families/f03_causal_13_head/docs/"
+    "causal_v12_1s_restart_aware_continuous_calendar_ab_v2_"
+    "default_identity_20260825.json"
+)
+DEFAULT_EXECUTION_RUNNER = (
+    ROOT / "scripts/run_restart_aware_continuous_baseline.py"
+)
+FILL_TRACE_ORDERING_IDENTITY = "result_local_physical_fill_sequence.v1"
+FILL_TRACE_REQUIRED_FIELDS = (
+    "fill_sequence",
+    "fill_ts",
+    "side",
+    "fill_qty",
+    "quote_px",
+    "fill_fee_usdc",
+    "fill_fee_asset",
+    "fill_fee_semantics",
+    "inventory_before_fill",
+    "inventory_after_fill",
+)
+FILL_TRACE_SOURCE_PATHS = {
+    "python_replay_engine": ROOT / "models/backtest_tick.py",
+    "cpp_replay_engine": ROOT / "cpp/narrowgate_cpp/tick_replay.cpp",
+    "cpp_replay_abi": ROOT / "cpp/narrowgate_cpp/tick_replay.hpp",
+    "cpp_python_binding": ROOT / "cpp/narrowgate_cpp/bindings.cpp",
+}
 CALENDAR_MANIFEST = (
     ROOT / "research/shared/replay_lifecycle/docs/"
     "calendar_continuity_manifest_20260417_20260730_v1.json"
 )
 START_DAY = "2026-04-17"
 END_DAY = "2026-06-26"
-SCHEMA_VERSION = "causal_v12_1s_restart_aware_continuous_calendar_ab.v1"
+SCHEMA_VERSION = "causal_v12_1s_restart_aware_continuous_calendar_ab.v2"
 AMENDMENT_SCHEMA_VERSION = (
-    "causal_v12_1s_restart_aware_continuous_calendar_ab_execution_binding.v1.1"
+    "causal_v12_1s_restart_aware_continuous_calendar_ab_execution_binding.v2"
 )
+DEFAULT_IDENTITY_SCHEMA_VERSION = (
+    "causal_v12_1s_restart_aware_continuous_calendar_ab_default_identity.v2"
+)
+PREFLIGHT_STATUS = "preflight_v2_signed_fee_results_read_closed"
+AMENDMENT_STATUS = "execution_plan_v2_candidate_unbound_results_closed"
 RESTART_REQUIRED_METHODS = (
     "register_active_order",
     "begin_maintenance",
@@ -237,6 +273,202 @@ def _canonical_document_sha256(payload: Mapping[str, Any], *, identity_field: st
     return canonical_sha256(unsigned)
 
 
+def _validate_fill_trace_ordering_contract(
+    payload: Any,
+    *,
+    execution_runner: ArtifactBinding,
+    source_bindings: Mapping[str, ArtifactBinding],
+    role: str,
+) -> None:
+    if not isinstance(payload, Mapping):
+        raise F03ContinuousABPreflightError(f"{role} runner binding is absent")
+    bound_runner = ArtifactBinding.from_payload(
+        payload.get("continuous_execution_runner"),
+        role=f"{role} continuous execution runner",
+    )
+    if bound_runner != execution_runner:
+        raise F03ContinuousABPreflightError(f"{role} execution runner drifted")
+    contract = payload.get("fill_trace_ordering_contract")
+    if not isinstance(contract, Mapping):
+        raise F03ContinuousABPreflightError(f"{role} fill trace contract is absent")
+    if (
+        contract.get("identity") != FILL_TRACE_ORDERING_IDENTITY
+        or type(contract.get("sequence_origin")) is not int
+        or contract.get("sequence_origin") != 0
+        or contract.get("sequence_scope") != "single_tick_replay_result"
+        or contract.get("sequence_authority") != "physical_fill_append_order"
+        or contract.get("timestamp_or_order_id_tiebreak_authorized") is not False
+        or contract.get("complete_path_validated_before_ledger_mutation") is not True
+        or tuple(contract.get("required_fields") or ()) != FILL_TRACE_REQUIRED_FIELDS
+    ):
+        raise F03ContinuousABPreflightError(f"{role} fill trace semantics drifted")
+    for name, expected in source_bindings.items():
+        observed = ArtifactBinding.from_payload(
+            contract.get(name),
+            role=f"{role} fill trace {name}",
+        )
+        if observed != expected:
+            raise F03ContinuousABPreflightError(
+                f"{role} fill trace {name} drifted"
+            )
+
+
+def validate_default_binding_documents(
+    identity_path: Path = DEFAULT_IDENTITY,
+) -> dict[str, Any]:
+    """Validate the public prospective v2 default without owner-private data."""
+    resolved_identity = _resolve_spec_path(identity_path)
+    identity = _load_json(resolved_identity, role="F03 v2 default identity")
+    if (
+        identity.get("schema_version") != DEFAULT_IDENTITY_SCHEMA_VERSION
+        or identity.get("status") != "prospective_create_only_results_closed"
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 default identity is stale")
+    expected_canonical = str(identity.get("canonical_identity_sha256", ""))
+    if (
+        _canonical_document_sha256(
+            identity,
+            identity_field="canonical_identity_sha256",
+        )
+        != expected_canonical
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 default identity is not canonical")
+
+    bindings = identity.get("bindings")
+    if not isinstance(bindings, Mapping):
+        raise F03ContinuousABPreflightError("F03 v2 default bindings are absent")
+    spec_binding = ArtifactBinding.from_payload(
+        bindings.get("preflight"), role="v2 default preflight"
+    )
+    amendment_binding = ArtifactBinding.from_payload(
+        bindings.get("amendment"), role="v2 default amendment"
+    )
+    accounting_binding = ArtifactBinding.from_payload(
+        bindings.get("continuous_accounting_contract"),
+        role="v2 continuous accounting contract",
+    )
+    state_binding = ArtifactBinding.from_payload(
+        bindings.get("continuous_replay_state_contract"),
+        role="v2 continuous replay state contract",
+    )
+    shared_runner_binding = ArtifactBinding.from_payload(
+        bindings.get("shared_runner"), role="v2 shared runner"
+    )
+    f03_runner_binding = ArtifactBinding.from_payload(
+        bindings.get("f03_preflight_runner"), role="v2 F03 preflight runner"
+    )
+    execution_runner_binding = ArtifactBinding.from_payload(
+        bindings.get("continuous_execution_runner"),
+        role="v2 continuous execution runner",
+    )
+    fill_trace_source_bindings = {
+        name: ArtifactBinding.from_payload(
+            bindings.get(identity_name),
+            role=f"v2 {identity_name}",
+        )
+        for name, identity_name in (
+            ("python_replay_engine", "python_tick_replay"),
+            ("cpp_replay_engine", "cpp_tick_replay"),
+            ("cpp_replay_abi", "cpp_tick_replay_abi"),
+            ("cpp_python_binding", "cpp_tick_replay_binding"),
+        )
+    }
+    expected_shared_runner = (
+        ROOT / "models/replay/restart_aware_continuous_ab.py"
+    ).resolve()
+    if (
+        spec_binding.path != DEFAULT_SPEC.resolve()
+        or amendment_binding.path != DEFAULT_AMENDMENT.resolve()
+        or shared_runner_binding.path != expected_shared_runner
+        or f03_runner_binding.path != Path(__file__).resolve()
+        or execution_runner_binding.path != DEFAULT_EXECUTION_RUNNER.resolve()
+        or any(
+            fill_trace_source_bindings[name].path != path.resolve()
+            for name, path in FILL_TRACE_SOURCE_PATHS.items()
+        )
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 default path binding drifted")
+
+    spec = _load_json(spec_binding.path, role="F03 v2 default preflight")
+    amendment = _load_json(
+        amendment_binding.path,
+        role="F03 v2 default amendment",
+    )
+    if (
+        spec.get("schema_version") != SCHEMA_VERSION
+        or spec.get("status") != PREFLIGHT_STATUS
+        or amendment.get("schema_version") != AMENDMENT_SCHEMA_VERSION
+        or amendment.get("status") != AMENDMENT_STATUS
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 default schema binding drifted")
+    if (
+        _canonical_document_sha256(
+            amendment,
+            identity_field="canonical_amendment_sha256",
+        )
+        != amendment.get("canonical_amendment_sha256")
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 amendment is not canonical")
+    parent = ArtifactBinding.from_payload(
+        amendment.get("parent_preflight"), role="v2 amendment parent"
+    )
+    if parent != spec_binding:
+        raise F03ContinuousABPreflightError("F03 v2 amendment parent drifted")
+    _validate_fill_trace_ordering_contract(
+        spec.get("runner"),
+        execution_runner=execution_runner_binding,
+        source_bindings=fill_trace_source_bindings,
+        role="F03 v2 preflight",
+    )
+    _validate_fill_trace_ordering_contract(
+        amendment.get("execution_interfaces"),
+        execution_runner=execution_runner_binding,
+        source_bindings=fill_trace_source_bindings,
+        role="F03 v2 amendment",
+    )
+    _validate_arm_contract(spec)
+
+    accounting = _load_json(
+        accounting_binding.path,
+        role="continuous accounting contract v2",
+    )
+    replay_state = _load_json(
+        state_binding.path,
+        role="continuous replay state contract v2",
+    )
+    if (
+        accounting.get("contract_id") != continuous_accounting.SCHEMA_VERSION
+        or accounting.get("fee_accounting_semantics")
+        != continuous_accounting.FEE_ACCOUNTING_SEMANTICS
+        or replay_state.get("contract_id") != replay_state_checkpoint.SCHEMA_VERSION
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 economic contract drifted")
+    interfaces = amendment.get("execution_interfaces")
+    if not isinstance(interfaces, Mapping) or (
+        interfaces.get("continuous_accounting_contract_id")
+        != continuous_accounting.SCHEMA_VERSION
+    ):
+        raise F03ContinuousABPreflightError("F03 v2 execution interface drifted")
+    if any(identity.get("authority", {}).get(name) is not False for name in (
+        "economic_results_read",
+        "action_authorized",
+        "live_authorized",
+        "baseline_replacement_authorized",
+    )):
+        raise F03ContinuousABPreflightError("F03 v2 default grants authority")
+    return {
+        "identity_path": str(resolved_identity),
+        "identity_sha256": sha256_file(resolved_identity),
+        "canonical_identity_sha256": expected_canonical,
+        "preflight_sha256": spec_binding.sha256,
+        "amendment_sha256": amendment_binding.sha256,
+        "continuous_accounting_contract_id": continuous_accounting.SCHEMA_VERSION,
+        "continuous_replay_state_contract_id": replay_state_checkpoint.SCHEMA_VERSION,
+        "fee_accounting_semantics": continuous_accounting.FEE_ACCOUNTING_SEMANTICS,
+        "fill_trace_ordering_contract_id": FILL_TRACE_ORDERING_IDENTITY,
+    }
+
+
 def _artifact_payload(path: Path) -> dict[str, Any]:
     resolved = path.expanduser().resolve()
     if not resolved.is_file():
@@ -300,7 +532,7 @@ def _validate_parent_precommit(
     spec: Mapping[str, Any],
     amendment_path: Path,
 ) -> tuple[dict[str, Any], ExecutionInterfaceBindings]:
-    amendment = _load_json(amendment_path, role="F03 v1.1 execution-binding amendment")
+    amendment = _load_json(amendment_path, role="F03 v2 execution-binding amendment")
     if amendment.get("schema_version") != AMENDMENT_SCHEMA_VERSION:
         raise F03ContinuousABPreflightError("F03 execution-binding amendment schema mismatch")
     expected_canonical = str(amendment.get("canonical_amendment_sha256", ""))
@@ -309,7 +541,7 @@ def _validate_parent_precommit(
         != expected_canonical
     ):
         raise F03ContinuousABPreflightError("F03 execution-binding amendment is not canonical")
-    if amendment.get("status") != "execution_plan_skeleton_candidate_unbound_results_closed":
+    if amendment.get("status") != AMENDMENT_STATUS:
         raise F03ContinuousABPreflightError("F03 execution-binding amendment status is unsafe")
 
     frozen_preflight = ArtifactBinding.from_payload(
@@ -326,7 +558,7 @@ def _validate_parent_precommit(
         drift.get("legacy_sha256_recorded_in_parent_preflight", "")
     ):
         raise F03ContinuousABPreflightError("legacy parent precommit hash was rewritten")
-    if drift.get("resolution") != "successor_amendment_only_original_documents_unchanged":
+    if drift.get("resolution") != "successor_v2_only_v1_documents_unchanged":
         raise F03ContinuousABPreflightError(
             "parent precommit drift resolution is not successor-only"
         )
@@ -424,7 +656,7 @@ def _validate_parent_precommit(
 
 def _probe_execution_interfaces() -> None:
     state = ContinuousReplayState(
-        arm_id="f03-v1.1-contract-probe",
+        arm_id="f03-v2-contract-probe",
         checkpoint_ts_ms=0,
         cash_usdc=0.0,
         position_btc=0.0,
@@ -438,7 +670,7 @@ def _probe_execution_interfaces() -> None:
         quoting_enabled=True,
     )
     interval = PlannedRestartInterval(
-        gap_id="f03-v1.1-contract-probe",
+        gap_id="f03-v2-contract-probe",
         quote_stop_ts_ms=1_000,
         cancel_deadline_ts_ms=1_500,
         offline_start_ts_ms=2_000,
@@ -644,7 +876,7 @@ def _validate_candidate(
         or dag_contract.get("bundle_relation")
         != "training_identity_feature_order_heads_and_cadence_must_match"
     ):
-        raise F03ContinuousABPreflightError("v1.1 amendment candidate DAG binding drifted")
+        raise F03ContinuousABPreflightError("v2 amendment candidate DAG binding drifted")
     index = ArtifactBinding.from_payload(candidate.get("overlay_index"), role="overlay index")
     raw_root = candidate.get("overlay_root")
     if not isinstance(raw_root, str) or not raw_root.strip():
@@ -710,7 +942,7 @@ def _validate_arm_contract(spec: Mapping[str, Any]) -> None:
         accounting.get("implementation"), role="continuous accounting implementation"
     )
     payload = _load_json(contract.path, role="continuous accounting contract")
-    if payload.get("contract_id") != "continuous_accounting_contract.v1":
+    if payload.get("contract_id") != continuous_accounting.SCHEMA_VERSION:
         raise F03ContinuousABPreflightError("continuous accounting contract ID mismatch")
     if payload.get("implementation", {}).get("sha256") != implementation.sha256:
         raise F03ContinuousABPreflightError(
@@ -727,10 +959,15 @@ def validate_preflight(
 ) -> F03ContinuousABPreflight:
     path = _resolve_spec_path(spec_path)
     resolved_amendment = _resolve_spec_path(amendment_path)
+    if (
+        path == DEFAULT_SPEC.resolve()
+        and resolved_amendment == DEFAULT_AMENDMENT.resolve()
+    ):
+        validate_default_binding_documents()
     spec = _load_json(path, role="F03 continuous A/B preflight spec")
     if spec.get("schema_version") != SCHEMA_VERSION:
         raise F03ContinuousABPreflightError("F03 continuous A/B schema mismatch")
-    if spec.get("status") != "preflight_only_results_read_closed":
+    if spec.get("status") != PREFLIGHT_STATUS:
         raise F03ContinuousABPreflightError("F03 continuous A/B status is not fail-closed")
     _validate_permissions(spec)
     _validate_arm_contract(spec)

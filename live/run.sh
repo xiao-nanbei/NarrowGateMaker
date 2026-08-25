@@ -14,14 +14,22 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RUN_SH="$DIR/live/run.sh"
 PID_FILE="$DIR/logs/maker.pid"
+CHILD_PID_FILE="$DIR/logs/maker.child.pid"
 LOG_FILE="$DIR/logs/maker.log"
+SUPERVISOR_LOG_FILE="$DIR/logs/maker.supervisor.log"
+SUPERVISOR_STATE_FILE="$DIR/logs/maker.supervisor.state"
+RUNTIME_HEALTH_FILE="$DIR/logs/runtime_health.json"
 MAIN_PY="$DIR/live/main.py"
 CONFIG_FILE="${NARROWGATE_LIVE_CONFIG:-$DIR/live/config.yaml}"
 DRY_RUN_CONFIG_FILE="${NARROWGATE_LIVE_CONFIG:-$DIR/live/formal_dry_run_public.yaml}"
 DRY_RUN_TIMEOUT_S="${NARROWGATE_DRY_RUN_TIMEOUT_S:-30}"
 PROFILE_STATE_FILE="$DIR/logs/maker.profile"
 PREFLIGHT_STATE_FILE="$DIR/logs/maker.preflight.json"
+SUPERVISOR_MAX_RESTARTS="${NARROWGATE_SUPERVISOR_MAX_RESTARTS:-0}"
+SUPERVISOR_BACKOFF_S="${NARROWGATE_SUPERVISOR_BACKOFF_S:-5}"
+EXECUTION_STATE_UNCERTAIN_EXIT_CODE=78
 if [[ -x "$DIR/.venv-active/bin/python3" ]]; then
     PYTHON_BIN="$DIR/.venv-active/bin/python3"
 elif [[ -x "$DIR/.venv/bin/python3" ]]; then
@@ -33,13 +41,16 @@ fi
 # Check if a PID is alive AND is our python process (not a reused PID)
 _is_our_process() {
     local pid=$1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     kill -0 "$pid" 2>/dev/null || return 1
     # Accept both the absolute path used by this script and the historical
     # relative ``live/main.py`` form.  Missing the latter can leave an old
     # process alive and create duplicate bid/ask orders after restart.
     local command
     command=$(ps -p "$pid" -o command= 2>/dev/null || true)
-    [[ "$command" == *"$MAIN_PY"* || "$command" =~ (^|[[:space:]])live/main\.py([[:space:]]|$) ]]
+    [[ "$command" == *"$MAIN_PY"* \
+        || "$command" =~ (^|[[:space:]])live/main\.py([[:space:]]|$) \
+        || ( "$command" == *"$RUN_SH"* && "$command" == *"__supervise"* ) ]]
 }
 
 # Find all PIDs running our main.py (excluding this script)
@@ -47,6 +58,15 @@ _find_maker_pids() {
     ps ax -o pid=,command= 2>/dev/null \
         | awk -v main="$MAIN_PY" '
             /[Pp]ython/ && (index($0, main) > 0 || $0 ~ /(^|[[:space:]])live\/main\.py([[:space:]]|$)/) {
+                print $1
+            }
+        ' || true
+}
+
+_find_supervisor_pids() {
+    ps ax -o pid=,command= 2>/dev/null \
+        | awk -v runner="$RUN_SH" '
+            index($0, runner) > 0 && $0 ~ /(^|[[:space:]])__supervise([[:space:]]|$)/ {
                 print $1
             }
         ' || true
@@ -211,6 +231,110 @@ _kill_pid() {
     fi
 }
 
+_validate_supervisor_policy() {
+    if [[ ! "$SUPERVISOR_MAX_RESTARTS" =~ ^[0-9]+$ ]]; then
+        echo "NARROWGATE_SUPERVISOR_MAX_RESTARTS must be a non-negative integer" >&2
+        return 1
+    fi
+    if [[ "$SUPERVISOR_MAX_RESTARTS" != "0" ]]; then
+        echo "automatic live restarts are disabled; NARROWGATE_SUPERVISOR_MAX_RESTARTS must be 0" >&2
+        return 1
+    fi
+    if [[ ! "$SUPERVISOR_BACKOFF_S" =~ ^[1-9][0-9]*$ ]]; then
+        echo "NARROWGATE_SUPERVISOR_BACKOFF_S must be a positive integer" >&2
+        return 1
+    fi
+}
+
+_record_supervisor_state() {
+    local state=$1 exit_code=${2:-} restart_count=${3:-0}
+    local temporary="$SUPERVISOR_STATE_FILE.tmp.$$"
+    umask 077
+    {
+        echo "state=$state"
+        echo "supervisor_pid=$$"
+        echo "child_pid=${_supervisor_child_pid:-}"
+        echo "last_exit_code=$exit_code"
+        echo "restart_count=$restart_count"
+        echo "max_restarts=$SUPERVISOR_MAX_RESTARTS"
+        echo "backoff_s=$SUPERVISOR_BACKOFF_S"
+        echo "updated_at_epoch=$(date +%s)"
+    } > "$temporary"
+    mv "$temporary" "$SUPERVISOR_STATE_FILE"
+}
+
+_supervisor_child_pid=""
+_supervisor_stop_requested=0
+
+_forward_supervisor_stop() {
+    _supervisor_stop_requested=1
+    if [[ -n "$_supervisor_child_pid" ]] && kill -0 "$_supervisor_child_pid" 2>/dev/null; then
+        kill -TERM "$_supervisor_child_pid" 2>/dev/null || true
+    fi
+}
+
+_cleanup_supervisor() {
+    if [[ -f "$CHILD_PID_FILE" ]] \
+        && [[ "$(cat "$CHILD_PID_FILE" 2>/dev/null || true)" == "$_supervisor_child_pid" ]]; then
+        rm -f "$CHILD_PID_FILE"
+    fi
+    if [[ -f "$PID_FILE" ]] \
+        && [[ "$(cat "$PID_FILE" 2>/dev/null || true)" == "$$" ]]; then
+        rm -f "$PID_FILE"
+    fi
+}
+
+supervise() {
+    _validate_supervisor_policy
+    mkdir -p "$DIR/logs"
+    trap _forward_supervisor_stop TERM INT
+    trap _cleanup_supervisor EXIT
+
+    local restart_count=0
+    while true; do
+        if [[ $restart_count -gt 0 ]]; then
+            if ! _run_deploy_preflight; then
+                _record_supervisor_state "preflight_failed" 125 "$restart_count"
+                return 125
+            fi
+        fi
+
+        _supervisor_child_pid=""
+        "$PYTHON_BIN" "$MAIN_PY" --config "$CONFIG_FILE" &
+        _supervisor_child_pid=$!
+        echo "$_supervisor_child_pid" > "$CHILD_PID_FILE"
+        _record_supervisor_state "running" "" "$restart_count"
+
+        local child_exit
+        set +e
+        wait "$_supervisor_child_pid"
+        child_exit=$?
+        set -e
+        rm -f "$CHILD_PID_FILE"
+
+        if [[ $_supervisor_stop_requested -eq 1 ]]; then
+            _record_supervisor_state "stopped_by_operator" "$child_exit" "$restart_count"
+            return 0
+        fi
+        if [[ $child_exit -eq 0 ]]; then
+            _record_supervisor_state "clean_exit_no_restart" 0 "$restart_count"
+            return 0
+        fi
+        if [[ $child_exit -eq $EXECUTION_STATE_UNCERTAIN_EXIT_CODE ]]; then
+            _record_supervisor_state \
+                "reconciliation_required_no_restart" \
+                "$child_exit" \
+                "$restart_count"
+            return "$child_exit"
+        fi
+        # Unknown nonzero exits are not proven transient.  Restarting a fresh
+        # process could seed over an unresolved fill/campaign state, so the
+        # supervisor exposes the failure and waits for operator reconciliation.
+        _record_supervisor_state "fatal_exit_no_restart" "$child_exit" "$restart_count"
+        return "$child_exit"
+    done
+}
+
 start() {
     # Clean stale PID file
     if [[ -f "$PID_FILE" ]]; then
@@ -228,6 +352,12 @@ start() {
     # Never start a second maker process merely because the file is absent.
     local existing_pids
     existing_pids=$(_find_maker_pids)
+    local existing_supervisors
+    existing_supervisors=$(_find_supervisor_pids)
+    if [[ -n "$existing_supervisors" ]]; then
+        echo "Already running (supervisor PID(s): $(printf '%s' "$existing_supervisors" | tr '\n' ' '))"
+        return 1
+    fi
     if [[ -n "$existing_pids" ]]; then
         local existing_pid
         existing_pid=$(printf '%s\n' "$existing_pids" | head -1)
@@ -240,6 +370,7 @@ start() {
 
     _load_runtime_environment
     _run_deploy_preflight
+    _validate_supervisor_policy
     {
         echo "profile=${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
         echo "profile_file=${NARROWGATE_LIVE_PROFILE_FILE:-unknown}"
@@ -251,20 +382,23 @@ start() {
         echo "preflight_identity=$PREFLIGHT_STATE_FILE"
     } > "$PROFILE_STATE_FILE"
 
-    # stdout/stderr → /dev/null; logging is handled by RotatingFileHandler
-    nohup "$PYTHON_BIN" "$MAIN_PY" --config "$CONFIG_FILE" > /dev/null 2>&1 &
+    rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
+    # The supervisor makes silent exits and stale PIDs visible.  It never
+    # restarts an unclassified non-zero exit without operator reconciliation.
+    nohup "$RUN_SH" __supervise > "$SUPERVISOR_LOG_FILE" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
 
     # Verify it actually started (give it 2s)
     sleep 1
     if kill -0 "$pid" 2>/dev/null; then
-        echo "Started (PID $pid)"
+        echo "Started supervisor (PID $pid)"
         echo "Python: $PYTHON_BIN"
         echo "Config: $CONFIG_FILE"
         echo "Profile: ${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
         echo "Preflight: $PREFLIGHT_STATE_FILE"
         echo "Log: $LOG_FILE"
+        echo "Supervisor: max_restarts=$SUPERVISOR_MAX_RESTARTS backoff=${SUPERVISOR_BACKOFF_S}s"
     else
         rm -f "$PID_FILE"
         echo "Failed to start — check $LOG_FILE"
@@ -281,11 +415,12 @@ stop() {
         pid=$(cat "$PID_FILE")
         if _is_our_process "$pid"; then
             echo "Stopping PID $pid ..."
-            _kill_pid "$pid" "main"
+            _kill_pid "$pid" "supervisor"
             stopped=true
         fi
         rm -f "$PID_FILE"
     fi
+    rm -f "$CHILD_PID_FILE"
 
     # Also kill any orphan maker processes (missed by PID file)
     local orphans
@@ -296,6 +431,17 @@ stop() {
             [[ -z "$opid" ]] && continue
             _kill_pid "$opid" "orphan"
         done <<< "$orphans"
+        stopped=true
+    fi
+
+    local orphan_supervisors
+    orphan_supervisors=$(_find_supervisor_pids)
+    if [[ -n "$orphan_supervisors" ]]; then
+        echo "Cleaning orphan supervisors..."
+        while IFS= read -r opid; do
+            [[ -z "$opid" ]] && continue
+            _kill_pid "$opid" "orphan-supervisor"
+        done <<< "$orphan_supervisors"
         stopped=true
     fi
 
@@ -321,9 +467,18 @@ status() {
         local pid
         pid=$(cat "$PID_FILE")
         if _is_our_process "$pid"; then
-            echo "Running (PID $pid)"
+            echo "Running (supervisor PID $pid)"
             ps -p "$pid" -o pid,etime,rss,command | tail -1
+            if [[ -f "$CHILD_PID_FILE" ]]; then
+                local child_pid
+                child_pid=$(cat "$CHILD_PID_FILE")
+                if [[ "$child_pid" =~ ^[0-9]+$ ]] && kill -0 "$child_pid" 2>/dev/null; then
+                    echo "Child PID: $child_pid"
+                fi
+            fi
             [[ -f "$PROFILE_STATE_FILE" ]] && cat "$PROFILE_STATE_FILE"
+            [[ -f "$SUPERVISOR_STATE_FILE" ]] && cat "$SUPERVISOR_STATE_FILE"
+            [[ -f "$RUNTIME_HEALTH_FILE" ]] && cat "$RUNTIME_HEALTH_FILE"
             return 0
         else
             rm -f "$PID_FILE"
@@ -339,13 +494,24 @@ status() {
     fi
 
     echo "Not running"
+    [[ -f "$SUPERVISOR_STATE_FILE" ]] && cat "$SUPERVISOR_STATE_FILE"
+    [[ -f "$RUNTIME_HEALTH_FILE" ]] && cat "$RUNTIME_HEALTH_FILE"
     return 1
 }
 
 reload() {
+    if [[ -f "$CHILD_PID_FILE" ]]; then
+        local child_pid
+        child_pid=$(cat "$CHILD_PID_FILE")
+        if [[ "$child_pid" =~ ^[0-9]+$ ]] && kill -0 "$child_pid" 2>/dev/null; then
+            kill -HUP "$child_pid"
+            echo "Reload signal sent"
+            return 0
+        fi
+    fi
     if [[ -f "$PID_FILE" ]] && _is_our_process "$(cat "$PID_FILE")"; then
-        kill -HUP "$(cat "$PID_FILE")"
-        echo "Reload signal sent"
+        echo "Supervisor is running without a live child; reload was not sent"
+        return 1
     else
         echo "Not running"
         return 1
@@ -357,6 +523,7 @@ logs() {
 }
 
 case "${1:-help}" in
+    __supervise) supervise ;;
     start)   start   ;;
     stop)    stop    ;;
     restart) restart ;;

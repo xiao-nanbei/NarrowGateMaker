@@ -1,12 +1,14 @@
+import threading
 import time
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
+import strategy.maker_engine as maker_engine_module
 
 from live.config import Config, _validate_config
-import strategy.maker_engine as maker_engine_module
 from strategy.maker_engine import MakerEngine, POLICY_REASON_FILL_COOLDOWN
-from strategy.order_manager import Side
+from strategy.order_manager import OrderManager, Side
 from strategy.signal import Prediction
 
 
@@ -285,17 +287,82 @@ def test_buy_e3_control_fallback_preserves_exact_b0_duration() -> None:
 class _FillInventory:
     def __init__(self, qty: float = 0.0) -> None:
         self.snapshot = SimpleNamespace(qty=float(qty))
+        self._snapshot_update_time_ms = 0
+        self._snapshot_order_cursors = {}
+        self._local_order_cursors = {}
+        self._seen_trade_ids = set()
 
     @property
     def net_position(self) -> float:
         return float(self.snapshot.qty)
 
-    def on_fill(self, side, qty, _price, _commission, _trade_time_ms) -> None:
+    def on_fill(
+        self,
+        side,
+        qty,
+        _price,
+        _commission,
+        _trade_time_ms,
+        **identity,
+    ) -> float:
+        order_id = identity.get("order_id")
+        trade_id = identity.get("trade_id")
+        cumulative = identity.get("cumulative_filled_qty")
+        if trade_id is not None and str(trade_id) in self._seen_trade_ids:
+            return 0.0
+        if order_id is not None and cumulative is not None:
+            order_key = str(order_id)
+            previous = self._local_order_cursors.get(order_key, 0.0)
+            effective = max(0.0, float(cumulative) - previous)
+            self._local_order_cursors[order_key] = max(previous, float(cumulative))
+            if trade_id is not None:
+                self._seen_trade_ids.add(str(trade_id))
+            if effective <= 1e-10:
+                return 0.0
+            qty = effective
         signed = float(qty) if side == "BUY" else -float(qty)
         self.snapshot.qty += signed
+        return float(qty)
+
+    @property
+    def consecutive_losses(self) -> int:
+        return 0
 
     def campaign_snapshot(self):
         return SimpleNamespace(age_s=500.0)
+
+    def reconciliation_snapshot(self):
+        return {
+            "snapshot_update_time_ms": self._snapshot_update_time_ms,
+            "order_cumulative_filled_qty": dict(self._snapshot_order_cursors),
+            "local_order_cumulative_filled_qty": dict(self._local_order_cursors),
+            "retained_post_snapshot_fill_count": 0,
+        }
+
+    def sync_from_exchange(
+        self,
+        exchange_qty,
+        _exchange_entry,
+        *,
+        snapshot_update_time_ms,
+        order_cumulative_filled_qty,
+        included_trade_ids=(),
+        included_trade_identities=None,
+    ):
+        identities = included_trade_identities or {}
+        assert set(map(str, included_trade_ids)) == set(map(str, identities))
+        if self._snapshot_update_time_ms > 0:
+            assert self.snapshot.qty == pytest.approx(float(exchange_qty))
+        else:
+            self.snapshot.qty = float(exchange_qty)
+        self._snapshot_update_time_ms = int(snapshot_update_time_ms)
+        self._snapshot_order_cursors = {
+            str(order_id): float(cumulative)
+            for order_id, cumulative in order_cumulative_filled_qty.items()
+        }
+        self._local_order_cursors.update(self._snapshot_order_cursors)
+        self._seen_trade_ids.update(map(str, included_trade_ids))
+        return {"seeded": self._snapshot_update_time_ms > 0}
 
 
 def _fill_callback_engine(
@@ -381,6 +448,67 @@ def _fill_event(*, qty: float, trade_id: int = 1) -> dict:
     }
 
 
+def test_rest_only_account_trade_runs_the_normal_fill_and_cooldown_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(
+            time=lambda: fixed_now,
+            time_ns=lambda: int(fixed_now * 1e9),
+        ),
+    )
+    engine, evaluator_calls, canceled_sides = _fill_callback_engine()
+    engine.inventory.sync_from_exchange(
+        0.0,
+        0.0,
+        snapshot_update_time_ms=1_000,
+        order_cumulative_filled_qty={},
+        included_trade_ids=(),
+    )
+    engine._reconciliation_lock = threading.Lock()
+    engine._reconciliation_trade_identity_by_id = {}
+    position = [
+        {
+            "symbol": "BTCUSDC",
+            "positionAmt": "0.003",
+            "entryPrice": "70000",
+            "updateTime": 2_000,
+        }
+    ]
+    engine.rest = SimpleNamespace(
+        get_position_risk=Mock(return_value=position),
+        get_account_trades=Mock(
+            return_value=[
+                {
+                    "id": 91,
+                    "orderId": 41,
+                    "qty": "0.003",
+                    "price": "70000",
+                    "commission": "0",
+                    "time": 2_000,
+                    "buyer": True,
+                }
+            ]
+        ),
+    )
+    engine.orders = OrderManager(on_fill=engine._on_fill)
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 70_000.0, 0.003)
+    engine.orders.confirm_new(cid, 41)
+
+    assert engine.sync_position(required=True) is True
+
+    assert engine.inventory.snapshot.qty == pytest.approx(0.003)
+    assert [call["baseline_duration_ms"] for call in evaluator_calls] == [255_000]
+    assert engine._fill_cooldown_until["BUY"] == fixed_now + 2_048.0
+    assert canceled_sides == ["BUY"]
+    assert engine.orders.get_order(cid).is_terminal
+    engine.rest.get_position_risk.assert_called_with(symbol="BTCUSDC")
+    assert engine.rest.get_position_risk.call_count == 2
+
+
 @pytest.mark.parametrize(
     ("action_id", "duration_ms", "expected_seconds", "expected_identity"),
     (
@@ -426,8 +554,8 @@ def test_real_fill_callback_preserves_total_e3_and_control_units(
     (
         (-0.003, 0.001, -0.002, 0, 0.0, "B0"),
         (-0.003, 0.003, 0.0, 0, 0.0, "B0"),
-        (-0.003, 0.004, 0.001, 0, 0.0, "B0"),
-        (-0.002, 0.004, 0.002, 0, 0.0, "B0"),
+        (-0.003, 0.004, 0.001, 1, 2_048.0, "BUY_E3:fixture"),
+        (-0.002, 0.004, 0.002, 1, 2_048.0, "BUY_E3:fixture"),
         (-0.001, 0.004, 0.003, 1, 2_048.0, "BUY_E3:fixture"),
     ),
     ids=(

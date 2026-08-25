@@ -15,6 +15,9 @@ from pathlib import Path
 from typing import Any
 
 from data.quality.calendar_gap_manifest import validate_calendar_continuity_manifest
+from models.replay.continuous_accounting import (
+    SCHEMA_VERSION as CONTINUOUS_ACCOUNTING_CONTRACT_ID,
+)
 
 SCHEMA_VERSION = "restart_aware_continuous_ab_plan.v1"
 SOURCE_MANIFEST_SCHEMA_VERSION = "restart_aware_continuous_source_manifest.v1"
@@ -456,7 +459,7 @@ class PairedExecutionRequest:
     exact_lifecycle_authority: bool
     continuous_economic_sensitivity_authority: bool
     restart_boundary_contract_id: str = "restart_boundary_contract.v1"
-    continuous_accounting_contract_id: str = "continuous_accounting_contract.v1"
+    continuous_accounting_contract_id: str = CONTINUOUS_ACCOUNTING_CONTRACT_ID
     cancel_drain_requires_terminal_ack_or_fill: bool = True
     warmup_requires_source_coverage: bool = True
     feature_ready_not_after_decision: bool = True
