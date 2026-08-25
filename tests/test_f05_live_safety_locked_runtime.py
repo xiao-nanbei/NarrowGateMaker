@@ -422,6 +422,7 @@ def test_private_probe_is_a_real_subprocess_cli() -> None:
         (
             str(BUILDER_PYTHON),
             "-I",
+            "-B",
             str(Path(subject.__file__).resolve()),
             "_probe-interpreter",
         ),
@@ -434,6 +435,21 @@ def test_private_probe_is_a_real_subprocess_cli() -> None:
     assert payload["version_info"] == list(sys.version_info[:3])
     assert payload["is_virtual_environment"] is True
     assert len(payload["executable_sha256"]) == 64
+
+
+def test_private_probe_runner_forces_no_bytecode_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: dict[str, tuple[str, ...]] = {}
+
+    def fake_run(argv: tuple[str, ...], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        observed["argv"] = argv
+        return subprocess.CompletedProcess(argv, 0, stdout="{}\n", stderr="")
+
+    monkeypatch.setattr(subject.subprocess, "run", fake_run)
+
+    assert subject._run_python_json(BUILDER_PYTHON, "_probe-interpreter") == {}  # noqa: SLF001
+    assert observed["argv"][1:3] == ("-I", "-B")
 
 
 def test_content_addressed_wheelhouse_is_private_complete_and_create_only(
@@ -686,6 +702,7 @@ def test_static_gate_rejects_unmanifested_pth_before_target_can_execute(
         (
             str(BUILDER_PYTHON),
             "-I",
+            "-B",
             str(Path(subject.__file__).resolve()),
             "verify-static-tree",
             "--venv",

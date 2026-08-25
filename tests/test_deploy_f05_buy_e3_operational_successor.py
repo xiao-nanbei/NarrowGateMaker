@@ -375,7 +375,7 @@ def test_successor_release_installs_before_stop_and_active_adds_only_buy_grant(
         "/srv/stage/venv-" not in _command_text(row)
         for row in rows[:static_index]
     )
-    assert "/usr/bin/python3.12 -I -S" in static_gate
+    assert "/usr/bin/python3.12 -I -B -S" in static_gate
     assert "sha256sum /usr/bin/python3.12" in static_gate
     assert "f05_live_safety_startup_static_authority.py" in static_gate
     assert "startup-static-runtime-authority-" in static_gate
@@ -398,7 +398,7 @@ def test_successor_release_installs_before_stop_and_active_adds_only_buy_grant(
     assert start.index("exchange-reconcile") < start.index(launch)
     assert '/usr/bin/env -i HOME="$HOME" PATH=/usr/bin:/bin' in start
     assert "bash -lc" not in start
-    assert " -I " in start
+    assert " -I -B " in start
     assert start.index("f05_live_safety_startup_static_authority.py") < start.index(
         "exchange-reconcile"
     )

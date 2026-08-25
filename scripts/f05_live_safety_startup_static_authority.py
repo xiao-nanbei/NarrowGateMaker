@@ -2,7 +2,7 @@
 """Verify the persistent successor runtime before target Python can execute.
 
 This module is deliberately standard-library-only.  It must be launched by a
-release-frozen trusted system interpreter with ``-I -S``.  Only after it has
+release-frozen trusted system interpreter with ``-I -B -S``.  Only after it has
 validated its own bytes, the authority document, checkout/selector identity,
 the safety release, and the complete installed tree may ``live/run.sh`` start
 the target virtual-environment interpreter.

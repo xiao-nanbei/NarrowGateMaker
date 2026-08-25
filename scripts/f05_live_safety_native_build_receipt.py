@@ -93,6 +93,27 @@ def _file(path: Path) -> dict[str, Any]:
     return {"path": str(target), "sha256": _sha(raw), "size_bytes": len(raw)}
 
 
+def _run_native_parity_smoke(root: Path) -> None:
+    parity_environment = dict(os.environ)
+    parity_environment.update(
+        {
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "PYTHONNOUSERSITE": "1",
+        }
+    )
+    completed = subprocess.run(
+        (sys.executable, "-B", "-m", "pytest", "-q", *PARITY_TESTS),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=300.0,
+        env=parity_environment,
+    )
+    if completed.returncode != 0:
+        raise NativeBuildReceiptError("native parity smoke failed")
+
+
 def _locked_runtime_authority(
     *,
     builder_python: Path,
@@ -226,24 +247,7 @@ def build_receipt(
         for name in ("delta_cap", "final_compressed", "cap_exposure_block")
     ) or not hasattr(side, "cap_exposure_block"):
         raise NativeBuildReceiptError("native module lacks successor quote ABI fields")
-    parity_environment = dict(os.environ)
-    parity_environment.update(
-        {
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONNOUSERSITE": "1",
-        }
-    )
-    completed = subprocess.run(
-        (sys.executable, "-m", "pytest", "-q", *PARITY_TESTS),
-        cwd=root,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=300.0,
-        env=parity_environment,
-    )
-    if completed.returncode != 0:
-        raise NativeBuildReceiptError("native parity smoke failed")
+    _run_native_parity_smoke(root)
     sources: dict[str, Any] = {}
     for relative in NATIVE_SOURCES:
         path = root / relative

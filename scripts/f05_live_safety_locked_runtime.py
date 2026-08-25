@@ -624,7 +624,13 @@ def _safe_environment() -> dict[str, str]:
 def _run_python_json(python: Path, private_command: str) -> dict[str, Any]:
     executable = _absolute(python)
     completed = subprocess.run(
-        (str(executable), "-I", str(Path(__file__).resolve(strict=True)), private_command),
+        (
+            str(executable),
+            "-I",
+            "-B",
+            str(Path(__file__).resolve(strict=True)),
+            private_command,
+        ),
         check=False,
         capture_output=True,
         text=True,
@@ -1166,6 +1172,7 @@ def download_wheelhouse(
             destination.mkdir(mode=0o700)
             command = (
                 str(_absolute(pip_python)),
+                "-B",
                 "-m",
                 "pip",
                 "download",
@@ -1383,7 +1390,14 @@ def _validate_static_snapshot_against_receipt(
 
 
 def _pip_target_command(builder_python: Path, target_python: Path) -> list[str]:
-    return [str(_absolute(builder_python)), "-m", "pip", "--python", str(_absolute(target_python))]
+    return [
+        str(_absolute(builder_python)),
+        "-B",
+        "-m",
+        "pip",
+        "--python",
+        str(_absolute(target_python)),
+    ]
 
 
 def install_locked_runtime(
@@ -1437,6 +1451,7 @@ def install_locked_runtime(
             (
                 str(_absolute(builder_python)),
                 "-I",
+                "-B",
                 "-m",
                 "venv",
                 "--without-pip",

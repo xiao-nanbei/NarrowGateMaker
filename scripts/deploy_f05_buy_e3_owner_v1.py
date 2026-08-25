@@ -111,7 +111,7 @@ except ImportError:
 PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v1"
 COMPATIBLE_PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v2"
 SUCCESSOR_PLAN_SCHEMA = "f05_buy_e3_operational_safety_successor_deploy_plan.v1"
-SUCCESSOR_ANNOTATED_TAG = "f05-owner-buy-e3-live-safety-successor-v1-final-r3-20260825"
+SUCCESSOR_ANNOTATED_TAG = "f05-owner-buy-e3-live-safety-successor-v1-final-r4-20260825"
 LEGACY_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v3"
 HISTORICAL_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v4"
 RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v5"
@@ -1643,6 +1643,7 @@ def run_isolated_preflight(
         raise BuyE3TransactionalDeployError("repository virtualenv Python is unavailable")
     command = (
         str(python),
+        "-B",
         str(Path(__file__).resolve()),
         "isolated-preflight",
         "--repository-root",
@@ -3805,7 +3806,7 @@ def _remote_preflight(
         f"PYTHONPATH={shlex.quote(repo_root)} "
         f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
         f"{shlex.quote(python)} "
-        f"{'-I ' if clean_isolated_execution else ''}"
+        f"{'-I -B ' if clean_isolated_execution else ''}"
         f"{shlex.quote(external_script)} isolated-preflight "
         f"--repository-root {shlex.quote(repo_root)} --config {shlex.quote(config_path)} "
         f"--expected-enabled {1 if expected_enabled else 0}"
@@ -3872,7 +3873,7 @@ def _remote_exchange_reconciliation_command(
         f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 "
         "PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
         f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
-        f"{shlex.quote(external_tool_python)} -I {shlex.quote(external_script)} "
+        f"{shlex.quote(external_tool_python)} -I -B {shlex.quote(external_script)} "
         f"exchange-reconcile --config {shlex.quote(config_path)} "
         f"--output {shlex.quote(output_path)}"
     )
@@ -3951,10 +3952,10 @@ def _remote_bound_exchange_config_start(
         f"test \"$(stat -c '%a' {shlex.quote(reconciliation_output_path)})\" = 600 && "
         f"test \"$(stat -c '%h' {shlex.quote(reconciliation_output_path)})\" = 1 && "
         f"exchange_file_sha256=$(sha256sum {shlex.quote(reconciliation_output_path)} | awk '{{print $1}}') && "
-        f"exchange_canonical_sha256=$({shlex.quote(trusted_static_python_path)} -I -S -c "
+        f"exchange_canonical_sha256=$({shlex.quote(trusted_static_python_path)} -I -B -S -c "
         f"{shlex.quote(json_field_reader)} {shlex.quote(reconciliation_output_path)} "
         f"{shlex.quote(canonical_field)}) && "
-        f"exchange_account_key_sha256=$({shlex.quote(trusted_static_python_path)} -I -S -c "
+        f"exchange_account_key_sha256=$({shlex.quote(trusted_static_python_path)} -I -B -S -c "
         f"{shlex.quote(json_field_reader)} {shlex.quote(reconciliation_output_path)} "
         f"{shlex.quote(account_field)}) && "
         "case \"$exchange_file_sha256$exchange_canonical_sha256"
@@ -4124,7 +4125,7 @@ def _phase_commands(
             f"test \"$(sha256sum {shlex.quote(authority_path)} | awk '{{print $1}}')\" = "
             f"{shlex.quote(successor_static_authority_binding['file_sha256'])} && "
             "env PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 "
-            f"{shlex.quote(trusted_python_path)} -I -S "
+            f"{shlex.quote(trusted_python_path)} -I -B -S "
             f"{shlex.quote(static_verifier_path)} --authority "
             f"{shlex.quote(authority_path)} --expected-file-sha256 "
             f"{shlex.quote(successor_static_authority_binding['file_sha256'])} "
@@ -4320,11 +4321,11 @@ def _phase_commands(
                 f"test ! -L {shlex.quote(isolated_venv)} && "
                 f"test -x {shlex.quote(isolated_python)} && "
                 f"test ! -e {shlex.quote(selector_temp)} && "
-                f'test "$({shlex.quote(isolated_python)} -c '
+                f'test "$({shlex.quote(isolated_python)} -B -c '
                 "'import sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')"
                 "= 3.12 && "
-                f"{shlex.quote(isolated_python)} -m pip check && "
-                f"PYTHONPATH={shlex.quote(isolated_root)} {shlex.quote(isolated_python)} -c \"import Crypto, binance, importlib.machinery, live.main, live.ws_handler, narrowgate_cpp, numpy, pandas, pytest, requests, strategy.maker_engine, websocket, yaml, pathlib, platform, sys, sysconfig; "
+                f"{shlex.quote(isolated_python)} -B -m pip check && "
+                f"PYTHONPATH={shlex.quote(isolated_root)} {shlex.quote(isolated_python)} -B -c \"import Crypto, binance, importlib.machinery, live.main, live.ws_handler, narrowgate_cpp, numpy, pandas, pytest, requests, strategy.maker_engine, websocket, yaml, pathlib, platform, sys, sysconfig; "
                 "assert platform.system() == 'Linux' and platform.machine() == 'x86_64'; "
                 "assert str(sysconfig.get_config_var('SOABI')).startswith('cpython-312-'); "
                 "assert pathlib.Path(narrowgate_cpp.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
@@ -4361,18 +4362,18 @@ def _phase_commands(
                 f'test "$(git rev-parse HEAD^{{tree}})" = {shlex.quote(tree)} && '
                 'test -z "$(git status --porcelain=v1 --untracked-files=all)" && '
                 'test "$(uname -s)" = Linux && test "$(uname -m)" = x86_64 && '
-                'test "$(python3.12 -c \'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")\')" = 3.12 && '
+                'test "$(python3.12 -B -c \'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")\')" = 3.12 && '
                 f"(test -x {shlex.quote(isolated_python)} || ("
                 f"test ! -e {shlex.quote(isolated_venv)} && "
-                f"python3.12 -m venv {shlex.quote(isolated_venv)} && "
+                f"python3.12 -B -m venv {shlex.quote(isolated_venv)} && "
                 f"mkdir -p {shlex.quote(isolated_wheel_dir)} && "
-                f"{shlex.quote(isolated_python)} -m pip wheel --no-deps "
+                f"{shlex.quote(isolated_python)} -B -m pip wheel --no-deps "
                 f"--no-build-isolation --wheel-dir {shlex.quote(isolated_wheel_dir)} cpp && "
                 f"wheel=$(find {shlex.quote(isolated_wheel_dir)} -maxdepth 1 -type f "
                 "-name '*.whl' -print -quit) && test -n \"$wheel\" && "
-                f"{shlex.quote(isolated_python)} -m pip install --force-reinstall "
+                f"{shlex.quote(isolated_python)} -B -m pip install --force-reinstall "
                 "--no-deps \"$wheel\")) && "
-                f"{shlex.quote(isolated_python)} -c \"import importlib.machinery, narrowgate_cpp, pathlib, platform, sys, sysconfig; "
+                f"{shlex.quote(isolated_python)} -B -c \"import importlib.machinery, narrowgate_cpp, pathlib, platform, sys, sysconfig; "
                 "assert sys.version_info[:2] == (3, 12); "
                 "assert platform.system() == 'Linux' and platform.machine() == 'x86_64'; "
                 "assert str(sysconfig.get_config_var('SOABI')).startswith('cpython-312-'); "
@@ -4384,9 +4385,9 @@ def _phase_commands(
                 "assert hasattr(s,'cap_exposure_block'); "
                 "assert pathlib.Path(narrowgate_cpp.__file__).resolve().is_relative_to(pathlib.Path(sys.prefix).resolve()); "
                 "assert any(str(narrowgate_cpp.__file__).endswith(suffix) for suffix in importlib.machinery.EXTENSION_SUFFIXES)\" && "
-                f"site=$({shlex.quote(isolated_python)} -c "
+                f"site=$({shlex.quote(isolated_python)} -B -c "
                 "'import site; print(site.getsitepackages()[0])') && "
-                f"PYTHONPATH=\"$site:{shlex.quote(isolated_root)}\" python3.12 "
+                f"PYTHONPATH=\"$site:{shlex.quote(isolated_root)}\" python3.12 -B "
                 "-m pytest -q tests/test_cpp_quote_core_parity.py "
                 "tests/test_cpp_tick_replay_golden_parity.py "
                 "tests/test_conditional_p3_cpp_overlay.py"
@@ -4460,7 +4461,7 @@ def _phase_commands(
                 f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
                 f"PYTHONPATH={shlex.quote(external_tool_root)} "
                 f"{shlex.quote(external_tool_python)} "
-                f"{'-I ' if successor_process_contract else ''}"
+                f"{'-I -B ' if successor_process_contract else ''}"
                 f"{shlex.quote(operational_external_script)} log-checkpoint --log "
                 f"{shlex.quote(str(remote['log_path']))} --output "
                 f"{shlex.quote(checkpoint_path)}"
@@ -4776,7 +4777,7 @@ def _phase_commands(
                 f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
                 f"PYTHONPATH={shlex.quote(external_tool_root)} "
                 f"{shlex.quote(external_tool_python)} "
-                f"{'-I ' if successor_process_contract else ''}"
+                f"{'-I -B ' if successor_process_contract else ''}"
                 f"{shlex.quote(operational_external_script)} process-probe --repository-root "
                 f"{shlex.quote(repo_root)} --pid-file {shlex.quote(pid_file)} --config "
                 f"{shlex.quote(config_path)} --config-sha256 {shlex.quote(config_sha)} "
@@ -4879,7 +4880,7 @@ def _phase_commands(
                 f"NARROWGATE_BUY_E3_GATE_V2_PATH={shlex.quote(external_gate)} "
                 f"PYTHONPATH={shlex.quote(external_tool_root)} "
                 f"{shlex.quote(external_tool_python)} "
-                f"{'-I ' if successor_process_contract else ''}"
+                f"{'-I -B ' if successor_process_contract else ''}"
                 f"{shlex.quote(operational_external_script)} log-validate --log "
                 f"{shlex.quote(str(remote['log_path']))} --checkpoint "
                 f"{shlex.quote(checkpoint_path)} {markers}"
@@ -5704,7 +5705,7 @@ def _activation_rows_with_active_release(
             f"{shlex.quote(str(binding['root_wheel_sha256']))} && "
             f"test \"$(sha256sum {shlex.quote(str(binding['native_wheel_path']))} | awk '{{print $1}}')\" = "
             f"{shlex.quote(str(binding['native_wheel_sha256']))} && "
-            f"{shlex.quote(isolated_python)} {shlex.quote(locked_script)} verify-install "
+            f"{shlex.quote(isolated_python)} -B {shlex.quote(locked_script)} verify-install "
             f"--builder-python {shlex.quote(isolated_python)} "
             f"--venv {shlex.quote(str(PurePosixPath(isolated_python).parent.parent))} "
             f"--lock {shlex.quote(str(binding['runtime_lock_path']))} "
@@ -5717,12 +5718,12 @@ def _activation_rows_with_active_release(
             f"--native-wheel-sha256 {shlex.quote(str(binding['native_wheel_sha256']))} "
             f"--receipt {shlex.quote(str(binding['install_receipt_path']))} "
             f"--expected-receipt-sha256 {shlex.quote(str(binding['install_receipt_canonical_sha256']))} && "
-            f"module=$({shlex.quote(isolated_python)} -c "
+            f"module=$({shlex.quote(isolated_python)} -B -c "
             "'import narrowgate_cpp; print(narrowgate_cpp.__file__)') && "
             "test -f \"$module\" && "
             "test \"$(sha256sum \"$module\" | awk '{print $1}')\" = "
             f"{shlex.quote(str(binding['native_module_sha256']))} && "
-            f"test \"$({shlex.quote(isolated_python)} -c "
+            f"test \"$({shlex.quote(isolated_python)} -B -c "
             "'import sysconfig; print(sysconfig.get_config_var(\"SOABI\"))')\" = "
             f"{shlex.quote(str(binding['native_soabi']))}"
         )
@@ -5755,7 +5756,7 @@ def _activation_rows_with_active_release(
             f"{shlex.quote(str(startup_static_binding['file_sha256']))} && "
             "export PYTHONDONTWRITEBYTECODE=1 PYTHONNOUSERSITE=1 && "
             f"{shlex.quote(str(plan['host']['trusted_static_python_path']))} "
-            f"-I -S {shlex.quote(static_verifier)} "
+            f"-I -B -S {shlex.quote(static_verifier)} "
             f"--authority {shlex.quote(static_authority_path)} "
             f"--expected-file-sha256 {shlex.quote(str(startup_static_binding['file_sha256']))} "
             f"--expected-canonical-sha256 "
@@ -10192,6 +10193,7 @@ def prepare_successor_native_runtime(
         ) from exc
 
     wheel_build = (
+        "-B",
         "-m",
         "pip",
         "wheel",
@@ -10253,6 +10255,7 @@ def prepare_successor_native_runtime(
     run(
         (
             str(python),
+            "-B",
             str(runtime_root / "scripts" / "f05_live_safety_native_build_receipt.py"),
             "--repository-root",
             str(runtime_root),

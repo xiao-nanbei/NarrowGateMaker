@@ -157,7 +157,7 @@ _verify_startup_static_runtime() {
         PATH=/usr/bin:/bin \
         PYTHONDONTWRITEBYTECODE=1 \
         PYTHONNOUSERSITE=1 \
-        "$trusted_python" -I -S "$verifier" \
+        "$trusted_python" -I -B -S "$verifier" \
         --authority "$authority" \
         --expected-file-sha256 \
         "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256" \
@@ -464,9 +464,9 @@ _load_runtime_environment() {
 _run_deploy_preflight() {
     local preflight_tmp="$PREFLIGHT_STATE_FILE.tmp.$$"
     _verify_startup_static_runtime
-    "$PYTHON_BIN" -I -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
+    "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
     _verify_startup_static_runtime
-    if ! "$PYTHON_BIN" -I "$DIR/scripts/preflight_live_deploy.py" \
+    if ! "$PYTHON_BIN" -I -B "$DIR/scripts/preflight_live_deploy.py" \
         --config "$CONFIG_FILE" \
         --repo-root "$DIR" > "$preflight_tmp"; then
         rm -f "$preflight_tmp"
@@ -491,9 +491,9 @@ dry_run() {
     # Deliberately do not source live/.env or a runtime profile. The formal
     # dry-run is local-only and exits before credentials or network code matter.
     _verify_startup_static_runtime
-    "$PYTHON_BIN" -I -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
+    "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
     _verify_startup_static_runtime
-    "$PYTHON_BIN" -I "$MAIN_PY" \
+    "$PYTHON_BIN" -I -B "$MAIN_PY" \
         --dry-run \
         --dry-run-timeout-s "$DRY_RUN_TIMEOUT_S" \
         --config "$DRY_RUN_CONFIG_FILE"
@@ -644,7 +644,7 @@ supervise() {
 
         _supervisor_child_pid=""
         _verify_startup_static_runtime
-        "$PYTHON_BIN" -I "$MAIN_PY" --config "$CONFIG_FILE" &
+        "$PYTHON_BIN" -I -B "$MAIN_PY" --config "$CONFIG_FILE" &
         _supervisor_child_pid=$!
         # Close the start/stop race where TERM arrived after the trap was
         # installed but before the freshly spawned PID was published.

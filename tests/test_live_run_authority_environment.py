@@ -133,6 +133,9 @@ def _stage_run_sh(
         if [[ "${{1:-}}" == "-I" ]]; then
             shift
         fi
+        if [[ "${{1:-}}" == "-B" ]]; then
+            shift
+        fi
         if [[ "${{1:-}}" == "-c" ]]; then
             exit 0
         fi
@@ -307,7 +310,7 @@ def test_run_sh_preserves_invocation_only_buy_e3_authority(tmp_path: Path) -> No
             assert record[name] == "UNSET"
     assert not (root / "bash-env-executed").exists()
     assert all(
-        invocation.startswith("-I ")
+        invocation.startswith("-I -B ")
         for invocation in args_capture.read_text(encoding="utf-8").splitlines()
     )
 
@@ -337,7 +340,7 @@ def test_run_sh_rollback_env_unsets_cannot_be_reintroduced(tmp_path: Path) -> No
             assert record[name] == "UNSET"
     assert not (root / "bash-env-executed").exists()
     assert all(
-        invocation.startswith("-I ")
+        invocation.startswith("-I -B ")
         for invocation in args_capture.read_text(encoding="utf-8").splitlines()
     )
 
@@ -367,6 +370,6 @@ def test_formal_dry_run_does_not_source_live_environment(tmp_path: Path) -> None
         assert records["main"][name] == "UNSET"
     args = args_capture.read_text(encoding="utf-8").splitlines()
     assert len(args) == 1
-    assert args[0].startswith("-I ")
+    assert args[0].startswith("-I -B ")
     assert "--dry-run --dry-run-timeout-s 7" in args[0]
     assert str(root / "live" / "config.yaml") in args[0]
