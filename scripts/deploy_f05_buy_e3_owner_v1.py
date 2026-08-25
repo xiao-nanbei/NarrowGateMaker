@@ -111,7 +111,7 @@ except ImportError:
 PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v1"
 COMPATIBLE_PLAN_SCHEMA = "f05_buy_e3_owner_transactional_deploy_plan.v2"
 SUCCESSOR_PLAN_SCHEMA = "f05_buy_e3_operational_safety_successor_deploy_plan.v1"
-SUCCESSOR_ANNOTATED_TAG = "f05-owner-buy-e3-live-safety-successor-v1-final-20260825"
+SUCCESSOR_ANNOTATED_TAG = "f05-owner-buy-e3-live-safety-successor-v1-final-r2-20260825"
 LEGACY_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v3"
 HISTORICAL_RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v4"
 RECEIPT_SCHEMA = "f05_buy_e3_owner_transactional_deploy_receipt.v5"

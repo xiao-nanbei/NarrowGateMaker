@@ -112,7 +112,7 @@ def _successor_rows(tmp_path: Path):
         "imports_e3_deadline": False,
     }
     phases = subject._phase_commands(
-        pointer={"ssh_target": "ec2-user@example", "repo_root": repo_root},
+        pointer={"ssh_target": "user@host", "repo_root": repo_root},
         known_hosts={"path": str(tmp_path / "known_hosts")},
         host={
             "python_executable": f"{repo_root}/.venv-active/bin/python3",
@@ -140,7 +140,7 @@ def _successor_rows(tmp_path: Path):
         "execution": execution,
         "phases": phases,
         "remote": remote,
-        "active_pointer": {"ssh_target": "ec2-user@example", "repo_root": repo_root},
+        "active_pointer": {"ssh_target": "user@host", "repo_root": repo_root},
         "ssh": {"path": str(tmp_path / "known_hosts")},
         "host": {
             "python_executable": f"{repo_root}/.venv-active/bin/python3",
@@ -228,7 +228,7 @@ def _successor_rows(tmp_path: Path):
         }
     )
     phases = subject._phase_commands(
-        pointer={"ssh_target": "ec2-user@example", "repo_root": repo_root},
+        pointer={"ssh_target": "user@host", "repo_root": repo_root},
         known_hosts={"path": str(tmp_path / "known_hosts")},
         host=plan["host"],
         configs=configs,

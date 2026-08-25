@@ -277,20 +277,52 @@ def _direct_source_kind(raw: str | None) -> str:
     return "direct_url"
 
 
+def _seed_metadata_identity(distribution: Any) -> tuple[int, int]:
+    """Return the physical identity of an installed distribution's metadata.
+
+    ``importlib.metadata`` may enumerate one ``.dist-info`` directory more than
+    once when two entries on ``sys.path`` are filesystem aliases (for example,
+    Amazon Linux virtual environments where ``lib64`` points to ``lib``).  Its
+    public API does not expose the metadata directory, so use the path retained
+    by the standard-library ``PathDistribution`` and fail closed for any other
+    representation.
+    """
+
+    metadata_path = getattr(distribution, "_path", None)
+    if metadata_path is None:
+        raise LockedRuntimeError("seed distribution metadata path is unavailable")
+    try:
+        info = os.stat(metadata_path)
+    except (OSError, TypeError, ValueError) as exc:
+        raise LockedRuntimeError(
+            f"cannot stat seed distribution metadata path: {metadata_path!r}: {exc}"
+        ) from exc
+    return info.st_dev, info.st_ino
+
+
 def _seed_snapshot_current() -> dict[str, Any]:
     import importlib.metadata as metadata
 
     rows: list[dict[str, str]] = []
+    rows_by_metadata_identity: dict[tuple[int, int], dict[str, str]] = {}
     for distribution in metadata.distributions():
         name = str(distribution.metadata.get("Name") or "").strip()
         version = str(distribution.version or "").strip()
-        rows.append(
-            {
-                "name": normalize_distribution_name(name),
-                "version": version,
-                "source_kind": _direct_source_kind(distribution.read_text("direct_url.json")),
-            }
-        )
+        row = {
+            "name": normalize_distribution_name(name),
+            "version": version,
+            "source_kind": _direct_source_kind(distribution.read_text("direct_url.json")),
+        }
+        identity = _seed_metadata_identity(distribution)
+        previous = rows_by_metadata_identity.get(identity)
+        if previous is not None:
+            if previous != row:
+                raise LockedRuntimeError(
+                    "one seed metadata location produced inconsistent distribution metadata"
+                )
+            continue
+        rows_by_metadata_identity[identity] = row
+        rows.append(row)
     rows.sort(key=lambda row: (row["name"], row["version"], row["source_kind"]))
     return {"interpreter": _current_interpreter_snapshot(), "distributions": rows}
 
@@ -814,6 +846,15 @@ def _safe_wheel_member(name: str) -> None:
         raise LockedRuntimeError(f"unsafe wheel member path: {name!r}")
 
 
+def _is_top_level_dist_info_authority(name: str, authority: str) -> bool:
+    parts = name.split("/")
+    return (
+        len(parts) == 2
+        and parts[0].endswith(".dist-info")
+        and parts[1] == authority
+    )
+
+
 def _inspect_wheel_bytes(
     path: Path, *, expected_sha256: str | None = None
 ) -> tuple[dict[str, Any], bytes]:
@@ -834,9 +875,17 @@ def _inspect_wheel_bytes(
                 raise LockedRuntimeError(f"wheel has duplicate members: {source.name}")
             for name in names:
                 _safe_wheel_member(name.rstrip("/"))
-            metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
-            wheel_names = [name for name in names if name.endswith(".dist-info/WHEEL")]
-            record_names = [name for name in names if name.endswith(".dist-info/RECORD")]
+            metadata_names = [
+                name
+                for name in names
+                if _is_top_level_dist_info_authority(name, "METADATA")
+            ]
+            wheel_names = [
+                name for name in names if _is_top_level_dist_info_authority(name, "WHEEL")
+            ]
+            record_names = [
+                name for name in names if _is_top_level_dist_info_authority(name, "RECORD")
+            ]
             if len(metadata_names) != 1 or len(wheel_names) != 1 or len(record_names) != 1:
                 raise LockedRuntimeError(f"wheel authority members are ambiguous: {source.name}")
             dist_info = metadata_names[0].removesuffix("/METADATA")

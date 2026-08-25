@@ -35,6 +35,7 @@ def _wheel(
     version: str,
     marker: str = "original",
     requires: tuple[str, ...] = (),
+    extra_members: dict[str, bytes] | None = None,
 ) -> Path:
     normalized = name.replace("-", "_").replace(".", "_")
     dist_info = f"{normalized}-{version}.dist-info"
@@ -55,6 +56,9 @@ def _wheel(
             b"Tag: py3-none-any\n"
         ),
     }
+    if extra_members:
+        assert not set(members) & set(extra_members)
+        members.update(extra_members)
     record_path = f"{dist_info}/RECORD"
     record = io.StringIO()
     writer = csv.writer(record, lineterminator="\n")
@@ -221,6 +225,96 @@ def _rewrite_record_digest(record: Path, relative_name: str, raw: bytes) -> None
     record.write_text(output.getvalue())
 
 
+class _SeedDistribution:
+    def __init__(self, metadata_path: Path, *, name: str, version: str) -> None:
+        self._path = metadata_path
+        self.metadata = {"Name": name}
+        self.version = version
+
+    @staticmethod
+    def read_text(filename: str) -> None:
+        assert filename == "direct_url.json"
+        return None
+
+
+def test_seed_snapshot_deduplicates_one_metadata_inode_reached_through_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.metadata as metadata
+
+    real_site = tmp_path / "lib" / "python3.12" / "site-packages"
+    dist_info = real_site / "binance_futures_connector-4.1.0.dist-info"
+    dist_info.mkdir(parents=True)
+    lib64 = tmp_path / "lib64"
+    lib64.symlink_to(tmp_path / "lib", target_is_directory=True)
+    alias = lib64 / "python3.12" / "site-packages" / dist_info.name
+    assert (dist_info.stat().st_dev, dist_info.stat().st_ino) == (
+        alias.stat().st_dev,
+        alias.stat().st_ino,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "distributions",
+        lambda: iter(
+            (
+                _SeedDistribution(
+                    dist_info,
+                    name="binance-futures-connector",
+                    version="4.1.0",
+                ),
+                _SeedDistribution(
+                    alias,
+                    name="binance-futures-connector",
+                    version="4.1.0",
+                ),
+            )
+        ),
+    )
+
+    snapshot = subject._seed_snapshot_current()  # noqa: SLF001
+
+    assert snapshot["distributions"] == [
+        {
+            "name": "binance-futures-connector",
+            "source_kind": "index_or_unknown",
+            "version": "4.1.0",
+        }
+    ]
+
+
+def test_build_lock_still_rejects_same_name_at_distinct_metadata_inodes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import importlib.metadata as metadata
+
+    first = tmp_path / "first" / "duplicate-1.0.dist-info"
+    second = tmp_path / "second" / "duplicate-1.0.dist-info"
+    first.mkdir(parents=True)
+    second.mkdir(parents=True)
+    assert (first.stat().st_dev, first.stat().st_ino) != (
+        second.stat().st_dev,
+        second.stat().st_ino,
+    )
+    monkeypatch.setattr(
+        metadata,
+        "distributions",
+        lambda: iter(
+            (
+                _SeedDistribution(first, name="duplicate", version="1.0"),
+                _SeedDistribution(second, name="duplicate", version="1.0"),
+            )
+        ),
+    )
+    snapshot = subject._seed_snapshot_current()  # noqa: SLF001
+    assert len(snapshot["distributions"]) == 2
+    monkeypatch.setattr(subject, "_run_python_json", lambda *_args: snapshot)
+
+    with pytest.raises(subject.LockedRuntimeError, match="duplicate seed distribution: duplicate"):
+        subject.build_lock(seed_python=BUILDER_PYTHON)
+
+
 def test_build_lock_excludes_editable_root_and_native_and_binds_exact_interpreter() -> None:
     lock = subject.build_lock(
         seed_python=BUILDER_PYTHON,
@@ -323,6 +417,49 @@ def test_symlink_wheel_input_is_rejected_before_publication(tmp_path: Path) -> N
             output_dir=output,
         )
     assert not output.exists()
+
+
+def test_wheel_nested_vendored_dist_info_authorities_are_recorded_ordinary_members(
+    tmp_path: Path,
+) -> None:
+    nested = "setuptools/_vendor/vendored-1.0.dist-info"
+    wheel = _wheel(
+        tmp_path,
+        name="setuptools",
+        version="81.0.0",
+        extra_members={
+            f"{nested}/METADATA": b"vendored metadata payload\n",
+            f"{nested}/WHEEL": b"vendored wheel payload\n",
+            f"{nested}/RECORD": b"vendored record payload\n",
+        },
+    )
+
+    assert subject.inspect_wheel(wheel) == {
+        "name": "setuptools",
+        "version": "81.0.0",
+        "filename": wheel.name,
+        "sha256": hashlib.sha256(wheel.read_bytes()).hexdigest(),
+        "size_bytes": wheel.stat().st_size,
+    }
+
+
+def test_wheel_rejects_multiple_top_level_dist_info_authority_directories(
+    tmp_path: Path,
+) -> None:
+    other = "unrelated-2.0.dist-info"
+    wheel = _wheel(
+        tmp_path,
+        name="primary",
+        version="1.0",
+        extra_members={
+            f"{other}/METADATA": b"Metadata-Version: 2.1\nName: unrelated\nVersion: 2.0\n\n",
+            f"{other}/WHEEL": b"Wheel-Version: 1.0\nTag: py3-none-any\n",
+            f"{other}/RECORD": b"ordinary payload for the primary RECORD to bind\n",
+        },
+    )
+
+    with pytest.raises(subject.LockedRuntimeError, match="wheel authority members are ambiguous"):
+        subject.inspect_wheel(wheel)
 
 
 def test_wheel_tamper_and_resigned_manifest_cannot_cross_frozen_authority(
