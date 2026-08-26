@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from strategy.fill_cooldown import (
-    LINEAGE_CANDIDATE_ACTION,
     LINEAGE_CONTROL_ACTION,
     StratifiedBernoulliLineageRandomizer,
 )

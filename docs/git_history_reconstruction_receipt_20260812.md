@@ -1,6 +1,6 @@
 # Git History Reconstruction Receipt
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-26
 
 This repository history is a reconstructed public import created on 2026-08-12. It is not a fabricated timeline of when the research originally occurred. Dates retained in filenames and reports describe the research record; Git author and committer timestamps describe the reconstruction itself.
 
@@ -37,11 +37,13 @@ Dedicated parity verification passed 90 tests with three explicit local-private-
 
 ## Validation
 
+The counts and checks below establish only the named 2026-08-12 reconstruction/publication gate. They do not establish order-ledger correctness, wheel completeness, repository-wide core-code lint, live/runtime safety, or economic validity.
+
 - Public governance audit: 678 documents, 1,009 source files, 243 projections, 557 links, zero findings.
 - Private owner audit: 20 owner roots, 497 private files, 7,407 catalog entries, zero findings.
 - Owner checkout: 2,764 tests passed, 316 explicit skips, zero failures.
 - Fresh public clone: 2,763 tests passed, 317 explicit skips, zero failures. The macOS LightGBM wheel required the host's OpenMP runtime; this is a platform dependency, not private repository evidence.
-- Ruff: passed for the explicitly declared maintained public surface, `narrowgate/` and `examples/`. Historical reconstructed research source is governed by syntax checks, tests, recorded hashes, and replay contracts rather than being misrepresented as fully reformatted.
+- Ruff: passed for the explicitly declared maintained public surface, `narrowgate/` and `examples/`. At this historical gate, syntax checks, tests, recorded hashes, and replay contracts were the declared checks applied to other reconstructed research source; those controls do not substitute for lint or runtime-correctness checks.
 - C++ extension: built in the owner checkout, fresh public clone, and Ubuntu CI.
 - CLI smoke: `doctor`, `quote-demo`, and the order-level score demo passed in the fresh public clone.
 - Public deployment dry-run: passed in both checkouts using the synthetic no-authority bundle with ML and every action disabled.
@@ -62,6 +64,6 @@ They were recreated against the rewritten identity commits. They remain local un
 
 ## Publication Gate
 
-The rewritten temporary branch and its pre-receipt candidate are green. Because committing this receipt creates a new head, that receipt-only head must pass one final GitHub CI run without further edits. Then `origin/main` must still equal the frozen old commit before the sole permitted replacement command uses the exact `--force-with-lease` value. After the replacement's own CI is green, the four tags may be pushed one by one.
+The rewritten temporary branch and its pre-receipt candidate passed the named reconstruction/publication gate. Because committing this receipt creates a new head, that receipt-only head must pass one final GitHub CI run without further edits. Then `origin/main` must still equal the frozen old commit before the sole permitted replacement command uses the exact `--force-with-lease` value. After the replacement's own CI passes the same gate, the four tags may be pushed one by one.
 
-Archive refs, old-history bundles, old worktree refs, and owner-only backup material must never be pushed. Git identifies public source and documentation history; SHA256 manifests remain authoritative for data, models, private originals, execution configuration, results, binaries, and deployment evidence.
+Archive refs, old-history bundles, old worktree refs, and owner-only backup material must never be pushed. Git identifies public source and documentation history; SHA256 manifests identify the exact named bytes for data, models, private originals, execution configuration, results, binaries, and deployment evidence. A matching hash does not grant authority or prove correctness.

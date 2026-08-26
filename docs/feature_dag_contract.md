@@ -1,10 +1,10 @@
 # Feature DAG Contract
 
-Last materially modified: 2026-08-03
+Last materially modified: 2026-08-26
 
 ## Status
 
-NarrowGate uses static runtime implementations, not a dynamic graph executor. `features/feature_dag.py` is the machine-readable authority for graph shape and causal metadata that have been migrated so far.
+NarrowGate uses static runtime implementations, not a dynamic graph executor. `features/feature_dag.py` is the canonical machine-readable source for graph shape and causal metadata that have been migrated so far.
 
 The first registered graphs are:
 

@@ -1545,10 +1545,12 @@ def live_replay_baseline_compare_rows(
             else math.nan
         )
 
-        def _bps(diff: float) -> str:
+        def _bps(diff: float, reference_mid: float) -> str:
             return (
-                f"{diff / mid_px * 10000.0:.6f}"
-                if math.isfinite(diff) and math.isfinite(mid_px) and mid_px > 0
+                f"{diff / reference_mid * 10000.0:.6f}"
+                if math.isfinite(diff)
+                and math.isfinite(reference_mid)
+                and reference_mid > 0
                 else ""
             )
 
@@ -1575,15 +1577,15 @@ def live_replay_baseline_compare_rows(
                 "replay_buy_avg_fill_price": f"{replay_buy_px:.6f}"
                 if math.isfinite(replay_buy_px) and replay_buy_px > 0
                 else "",
-                "buy_vwap_diff_bps": _bps(live_buy_px - replay_buy_px),
+                "buy_vwap_diff_bps": _bps(live_buy_px - replay_buy_px, mid_px),
                 "live_sell_avg_fill_price": live.get("live_sell_avg_fill_price", ""),
                 "replay_sell_avg_fill_price": f"{replay_sell_px:.6f}"
                 if math.isfinite(replay_sell_px) and replay_sell_px > 0
                 else "",
-                "sell_vwap_diff_bps": _bps(live_sell_px - replay_sell_px),
+                "sell_vwap_diff_bps": _bps(live_sell_px - replay_sell_px, mid_px),
                 "live_side_vwap_edge": f"{live_edge:.6f}" if math.isfinite(live_edge) else "",
                 "replay_side_vwap_edge": f"{replay_edge:.6f}" if math.isfinite(replay_edge) else "",
-                "side_edge_diff_bps": _bps(live_edge - replay_edge),
+                "side_edge_diff_bps": _bps(live_edge - replay_edge, mid_px),
                 "live_action_place_replace_rate": live.get("live_action_place_replace_rate", ""),
                 "replay_action_place_replace_rate": (
                     f"{(safe_int(replay, 'decision_place_count') + safe_int(replay, 'decision_replace_count')) / safe_int(replay, 'decision_total'):.6f}"
@@ -1808,7 +1810,7 @@ def _past_mid_window_stats(
     ret_bps = math.log(mid / values[0]) * 10_000.0 if values[0] > 0.0 else math.nan
     ssq = 0.0
     n_ret = 0
-    for prev, cur in zip(values, values[1:]):
+    for prev, cur in zip(values, values[1:], strict=False):
         if prev > 0.0 and cur > 0.0:
             r = math.log(cur / prev)
             ssq += r * r
@@ -4525,7 +4527,7 @@ def replay_order_level_rows(
         return out
 
     labels: list[dict[str, Any]] = []
-    for day, day_fills in fills_by_day.items():
+    for _day, day_fills in fills_by_day.items():
         # 中文说明：xmarket/order-level evidence 需要 terminal campaign PnL /
         # repair rate 做目标；这些 label 只能用于事后校准，不能回流到
         # quote-time 条件。这里按 UTC day fresh-start 复用 replay fill trace，

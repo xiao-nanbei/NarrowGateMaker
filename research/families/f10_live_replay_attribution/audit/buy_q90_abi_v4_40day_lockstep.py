@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import tempfile
 import time
@@ -23,8 +22,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-import pandas as pd
 
 from data_paths import LEGACY_MARKETDATA_ROOT, relocate_marketdata_path
 from models import backtest_tick as bt

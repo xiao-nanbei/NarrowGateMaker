@@ -42,6 +42,8 @@ jobs:
           cd "${RUNNER_TEMP}"
           "${RUNNER_TEMP}/wheel-smoke/bin/python" -c \
             'import research.families.f03_causal_13_head.audit as audit; print(audit.__file__)'
+          "${RUNNER_TEMP}/wheel-smoke/bin/python" -c \
+            'from research.families.f07_active_order_continuation.audit.order_lifecycle_v2_runtime_compatibility_v1_6 import frozen_successor_path; print(frozen_successor_path())'
 
   python:
     name: Python tests and lint (${{ matrix.python-version }})
@@ -78,23 +80,13 @@ jobs:
           narrowgate quote-demo
           python examples/order_level_score_demo.py
 
-      - name: Lint public surface
+      - name: Lint public style surface
         run: |
-          ruff check narrowgate examples
+          ruff check narrowgate examples --select E,F,I,UP,B
 
-      - name: Lint maintained runtime safety surface
+      - name: Lint every tracked Python file for correctness
         run: |
-          git ls-files -z \
-            'strategy/*.py' \
-            'live/*.py' 'live/**/*.py' \
-            'execution/*.py' 'execution/**/*.py' \
-            'data/download_cryptohft_orderbook.py' \
-            'models/backtest.py' 'models/backtest_config.py' \
-            'models/backtest_ml.py' 'models/backtest_tick.py' \
-            'models/experiment_runner.py' 'models/queue_calibration.py' \
-            'models/source_aware_cpp_baseline.py' 'models/replay/*.py' \
-            'research/families/f09_campaign_action_uplift/audit/local_action_uplift.py' \
-            | xargs -0 ruff check --select F,B
+          git ls-files -z '*.py' | xargs -0 -r ruff check --
 
       - name: Audit public documentation
         run: |

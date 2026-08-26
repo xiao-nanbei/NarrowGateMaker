@@ -23,7 +23,7 @@ def test_curve_evaluation_uses_empirical_points_without_unlocking_panels(
         "farther_1tick": (0.06, 0.12),
     }
     for action, values in probabilities.items():
-        for horizon, probability in zip((500, 1000), values):
+        for horizon, probability in zip((500, 1000), values, strict=True):
             rows.append(
                 {
                     "action_lifecycle_id": f"d0:{action}",

@@ -2,7 +2,7 @@
 
 > Avellaneda-Stoikov + LightGBM ML增强 — 面向 Binance BTCUSDC 永续合约的做市算法研究与回测项目
 
-Last materially modified: 2026-08-25
+Last materially modified: 2026-08-26
 
 ---
 
@@ -38,7 +38,7 @@ $$
 
 ### 设计原则
 
-- **回测-运行时一致性**：tick 回测支持 `--pricing-mode bar|microprice` 做 A/B；公开模板参数由 `live/config.yaml` 定义，私有 live baseline 必须通过对应配置及 `models/config_loader.py` / `models/backtest_config.py` 映射后再做 replay
+- **冻结假设下的回测-运行时机制映射**：tick 回测支持 `--pricing-mode bar|microprice` 做 A/B；公开模板参数由 `live/config.yaml` 定义，私有 live baseline 必须通过对应配置及 `models/config_loader.py` / `models/backtest_config.py` 映射后再做 replay。该映射用于检查机制距离，不保证成交、campaign 或 PnL 相等
 - **风险优先**：多层风控（日亏损限额、持仓上限、熔断器、exit urgency），保证极端行情下的安全性
 - **自适应**：动态报撤频率（RQ）、波动率 regime 感知、库存/生命周期控制与逐侧 shadow score，使策略只在短期条件仍成立的窗口里暴露；direct quote EV live policy 当前归档，不属于默认 live 口径
 
@@ -160,7 +160,7 @@ NarrowGate_BTCUSDC/
 ├── data/                       # 离线下载、archive/import、规范化与质量审计代码
 ├── features/                   # 预处理、特征工程与 feature pipeline
 ├── models/                     # 共享 tick replay、数据窗口与实验治理 ABI
-│   ├── backtest_tick.py        # Python 权威逐笔 replay
+│   ├── backtest_tick.py        # Python 参考逐笔 replay 实现
 │   └── audit/                  # 跨研究族共享 scorecard/cache/promotion contract
 ├── research/
 │   ├── families/f01_* ... f10_* # 研究族源码、冻结 spec 与证据文档
@@ -200,10 +200,12 @@ NarrowGate_BTCUSDC/
 r(s, q, t) = s − q × γ × σ² × (T − t)
 ```
 - `s`: 公允价。`use_bar_pricing=false` 时使用盘口 microprice；`use_bar_pricing=true` 时使用 1s bar close 复现旧回测口径
-- `q`: 当前净库存 (正=多头, 负=空头)
-- `γ`: 风险厌恶系数 — 控制做市商对库存风险的敏感度
-- `σ²`: 短期价格方差（波动率的平方）
-- `T − t`: 剩余做市时间周期
+- `q`: 当前净库存的 BTC 原始数量数值（正=多头, 负=空头，例如 `0.026`），不是按 `0.001 BTC` lot 计数
+- `γ`: 针对 BTC 库存单位和 USDC/BTC 价格单位经验校准的有效风险系数，不能脱离单位迁移到其他交易对
+- `σ²_rolling`: 最近滚动窗口内 1 秒价格差分的样本方差，单位为 `(USDC/BTC)²/second`；窗口长度决定估计样本，不是风险期限。ML 开启时，有效 `σ²` 可与同为每秒绝对价格方差的 `vol_10s` 混合
+- `T − t`: 代码中的固定 `quote_horizon_s` 风险积分/报价期限，不是随交易时段倒计时的“剩余做市时间”
+
+当前公开模板的 `quote_horizon_s=1`。它可能短于约 5–10 秒的订单存活/重报价暴露，并与 10 秒 P3 校准期限不同；这不是量纲错误，而是待 joint replay 的经济期限/校准问题。不得脱离 `γ`、P3/floor 与库存行为单独修改 live 值。
 
 **最优 spread**:
 ```
@@ -728,7 +730,9 @@ Maker Engine ── quote core + per-side policy + inventory/risk controls
 | `strategy.vol_power` | 1.5 | volatility scaling |
 | `strategy.order_size` | 0.001 BTC | 单边订单量 |
 | `strategy.max_inventory` | 0.01 BTC | 模板持仓上限 |
-| `strategy.max_spread_bps` | 12 | 模板 spread cap |
+| `strategy.quote_horizon_s` | 1s | 固定风险积分期限；并非 60s 方差估计窗口，也非交易时段剩余时间 |
+| `strategy.max_spread_bps` | 12 | spread-cap 触发阈值；触发后的动作由 `spread_cap_mode` 决定，不是自动向内压缩的 safety cap |
+| `strategy.spread_cap_mode` | `pause_exposure` | 默认暂停增仓侧；`compress` 仅作为显式标注的研究 arm 保留 |
 | `strategy.fill_cooldown` | 0s | 默认不启用 fill cooldown |
 | `strategy.use_bar_pricing` | false | 使用盘口定价路径 |
 | `strategy.adverse_guard_enabled` | false | 模板关闭 adverse guard |
@@ -777,11 +781,11 @@ BTCUSDT execution 的历史参数榜、模型目录和 sweep 排名已经删除�
 
 ### 11.2 当前 BTCUSDC 仍需观察的风险
 
-1. **回测-运行时 fill 偏差**: 继续用 paper/forward-test 或同口径 trace 的 fill markout、同侧连续 fill、fills/day 与库存分布验证 exact-level L2 parity。
+1. **回测-运行时 fill 偏差**: 继续用 paper/forward-test 或同口径 trace 的 fill markout、同侧连续 fill、fills/day 与库存分布衡量冻结假设下的 live/replay mechanism distance。
 2. **逆向选择**: adverse/defense guard 已启用；toxicity gate 与 quote EV gate 默认关闭，需用 BTCUSDC quote trace/OOS tick replay 重新验证。
 3. **库存纠偏**: `inventory_asym_strength`、`inventory_signal_fade_strength` 仍需独立 A/B，不能只凭历史 clean 候选叠加。
 4. **Cross-market stale 风险**: BTCUSDT reference 是当前 BTCUSDC 主线的一部分，必须监控 reference stream stale、anchor guard 与 source-missing days 排除。
-5. **ML 贡献边界**: `ret_skew=0.0` 是当前 retest 结果；后续若重启 ret channel，要重新做完整 OOS 和运行时 parity 验证。
+5. **ML 贡献边界**: `ret_skew=0.0` 是当前 retest 结果；后续若重启 ret channel，要重新做完整 OOS 和 live mechanism alignment 验证。
 
 ### 11.3 BTCUSDT 参考边界
 
@@ -804,7 +808,7 @@ BTCUSDT 在当前项目中只允许承担 reference/source 角色：
 | P0 | `experiment_runner.py describe` / experiment manifest | 固化训练窗口、数据质量排除和生成物输出目录 |
 | P0 | BTCUSDC quote decomposition trace | 生成 `raw_half_spread/raw_mid_shift/final_quote_delta` 与 fill markout 标签 |
 | P0 | BTCUSDC quote EV split target | 用 BTCUSDC 数据训练 `P(fill)`、1s/5s/30s markout buckets、extreme adverse，不要复用 BTCUSDT 模型 |
-| P1 | adverse/defense guard 运行时 parity | 固定连续参数，只切一个 boolean，跨至少两个窗口验证 |
+| P1 | adverse/defense guard live mechanism alignment | 固定连续参数，只切一个 boolean，跨至少两个窗口验证 |
 | P1 | cross-market stale/anchor audit | 确认 reference stream 与 BTCUSDC execution 对齐，排除 source-missing days |
 
 ### 11.4b 旧验证体系归档（2026-07-06 cleanup）
@@ -816,17 +820,17 @@ BTCUSDT 在当前项目中只允许承担 reference/source 角色：
 - 单条连续跨日 / 月度 replay 得出的 fills/day、PnL、winner arm；
 - 受 markout EMA latch、坏日/gap、错误分母、旧模型目录或旧 trace 影响的 A/B；
 - `bid_adverse_*`、direct quote EV live、direct xmarket widen/TTL/retreat、SELL resiliency direct live 等旧 direct policy；
-- 没有 Python/C++/live parity 的 fast sweep 结果；
+- 没有 Python/C++ same-input implementation parity 和 live mechanism alignment 的 fast sweep 结果；
 - 只靠少成交、降库存时间或单日正 markout 支撑的 bucket。
 
-保留下来的方法论结论是：旧机制可以重新提出为 hypothesis，但不能当 alpha 起点。任何候选都必须回到 rolling live baseline、causal data manifest、Python replay 权威路径、chronological validation、family-specific sealed holdout、campaign outcome 与 live mechanism distance 重新验证。
+保留下来的方法论结论是：旧机制可以重新提出为 hypothesis，但不能当 alpha 起点。任何候选都必须回到 rolling live baseline、causal data manifest、Python replay 参考实现、chronological validation、family-specific sealed holdout、campaign outcome 与 live mechanism distance 重新验证。
 
 ### 11.4c 当前验证流水线
 
 当前策略研究只接受下面这条顺序：
 
 1. **Data quality**：只用 retained good days；rolling feature 和 label horizon 不能跨坏日或长 gap。
-2. **Live/replay mechanism parity**：先对齐 placed/day、fills/day、BUY/SELL split、spread、action mix、pause/block reason、VWAP、inventory path；baseline 必须滚动等于当前 live config。
+2. **Live/replay mechanism alignment under frozen assumptions**：比较 placed/day、fills/day、BUY/SELL split、spread、action mix、pause/block reason、VWAP、inventory path；baseline 必须滚动等于当前 live config。对齐只说明实现机制距离，不证明经济有效或逐事件相等。
 3. **Order-level denominator**：每一笔 placed order 都要有 quote-time state、是否成交、fill age、markout、campaign label 和 score；不再只看 filled rows。
 4. **Campaign-level label**：flat -> nonzero -> flat 的 terminal PnL、duration、max inventory、MAE、repair flag、tail/open-risk 是主要风险监督目标。
 5. **Chronological evidence**：所有结论按 UTC day 输出，并使用 development、embargo、validation 与 family-specific sealed holdout；不再用月度路径或 pooled 平均直接选参。
@@ -859,7 +863,7 @@ artifact 强制记录 randomized support、behavior overlap、uplift LCB、featu
 
 2026-07-20 的 native-snapshot deep-250 复核随后确认，v3 的 top-20 queue fallback 不是可识别的 active-price queue：在 2026-06-05，严格 deep 输入将 fills 从 `1,595` 改为 `2,062`、campaigns 从 `669` 改为 `895`，median queue seed 从 `0.1162 BTC` 改为 `0`，路径分歧后只剩 2 个共同 decision ID。52 个旧 eligible entry 中，48 个价格位于 deep-250 范围，其中 29 个是可确认的零可见队列，而旧 fallback 给了正 queue seed。因此 v3 只保留“不晋级”的安全结论，其 queue state、阈值和 DR 数值不能解释为真实深层队列因果证据。该复核随后先验证 baseline discovery + sparse active-order-price tape，并要求 formal replay 零 fallback；详见 `research/families/f07_active_order_continuation/docs/deep_active_order_queue_probe_20260720.md`。
 
-同日 sparse fixed-point 审计继续跑到预注册的 g3 stop rule：g0→g1、g1→g2、g2→g3 的相邻轨迹保留率分别为 `36.61%`、`79.40%`、`84.97%`；g3 仍新增 `2,799` 个订单身份，并有 `2,799` 个 missing seed 与 `14` 个 unusable seed，fills/campaigns 也由 `2,086/943` 变成 `2,072/937`。因此 watch-specific 两遍法被判定为 `diagnostic_only`，不再继续迭代，也不读取任何 queue action outcome。native snapshot/delta 已作为独立于策略轨迹的 exchange-time 状态流接入 Python authoritative replay scheduler；它重建完整价位图，并在订单激活时提供 exact/known-zero/outside-range seed，同时记录逐价 cancel/refill。sequence gap、snapshot reset 与同毫秒 trade/L2 歧义会作废对应订单路径；top-20 receive-time 状态仍只服务 quote feature。冻结的 54 日新 family 随后完成 state fit/calibration 和 17 日 Development：1,448 个 campaign 以 50/50 propensity 分配 K0 keep 与 K1 cancel-until-state-exit，所有 K1 均真实经过 cancel ACK，328 次状态退出后完成 linked re-entry submit。原生 activation support 为 `95.718%`，完整 outcome support 为 `89.848%`，未过预注册 gate；保留 censored rows 后，`K1-K0` 严格 reward bound 为 `[-10.0183,+10.0275] USDC/intervention`。全行 mixed-simulator ITT 虽为 `+0.00556`，日聚类区间仍跨零，BUY 方向为负，而且 17 日 paired PnL 仅增加 `1.4769 USDC`、fills 减少 328。因此该 family 在 Development 关闭，Validation 与 sealed holdout 未读取，live/config/ baseline 均未改变；详见 `research/families/f07_active_order_continuation/docs/native_exchange_book_replay_scheduler_20260720.md`。
+同日 sparse fixed-point 审计继续跑到预注册的 g3 stop rule：g0→g1、g1→g2、g2→g3 的相邻轨迹保留率分别为 `36.61%`、`79.40%`、`84.97%`；g3 仍新增 `2,799` 个订单身份，并有 `2,799` 个 missing seed 与 `14` 个 unusable seed，fills/campaigns 也由 `2,086/943` 变成 `2,072/937`。因此 watch-specific 两遍法被判定为 `diagnostic_only`，不再继续迭代，也不读取任何 queue action outcome。native snapshot/delta 已作为独立于策略轨迹的 exchange-time 状态流接入 Python reference replay scheduler；它重建完整价位图，并在订单激活时提供 exact/known-zero/outside-range seed，同时记录逐价 cancel/refill。sequence gap、snapshot reset 与同毫秒 trade/L2 歧义会作废对应订单路径；top-20 receive-time 状态仍只服务 quote feature。冻结的 54 日新 family 随后完成 state fit/calibration 和 17 日 Development：1,448 个 campaign 以 50/50 propensity 分配 K0 keep 与 K1 cancel-until-state-exit，所有 K1 均真实经过 cancel ACK，328 次状态退出后完成 linked re-entry submit。原生 activation support 为 `95.718%`，完整 outcome support 为 `89.848%`，未过预注册 gate；保留 censored rows 后，`K1-K0` 严格 reward bound 为 `[-10.0183,+10.0275] USDC/intervention`。全行 mixed-simulator ITT 虽为 `+0.00556`，日聚类区间仍跨零，BUY 方向为负，而且 17 日 paired PnL 仅增加 `1.4769 USDC`、fills 减少 328。因此该 family 在 Development 关闭，Validation 与 sealed holdout 未读取，live/config/ baseline 均未改变；详见 `research/families/f07_active_order_continuation/docs/native_exchange_book_replay_scheduler_20260720.md`。
 
 ### 11.5 当前研究口径与后续观察
 
@@ -945,7 +949,7 @@ REST new/cancel 延迟已由顺序 PRNG 改为 Python/C++ 共用的 `keyed_split
 
 ### 2026-07-22 side-specific state-conditioned rearm v1
 
-已实现 Python 权威 replay 的 BUY/SELL 独立 action family：每个 campaign 只在当前 85 秒加仓 cooldown 真正结束后随机一次，`baseline_rearm` 与 `continue_block_until_recovery` 各 50%。候选只在 adverse move、持续 adverse flow、弱 refill 与弱 price/microprice recovery 同时成立时继续阻断 add quote，并按冻结 hysteresis 多周期延续；reducing quote、size、inventory limit 与外部 reference 均不变。C++ 在补齐该多周期状态机前 fail-fast，且没有任何 live wiring。
+已实现以 Python replay 参考实现为准的 BUY/SELL 独立 action family：每个 campaign 只在当前 85 秒加仓 cooldown 真正结束后随机一次，`baseline_rearm` 与 `continue_block_until_recovery` 各 50%。候选只在 adverse move、持续 adverse flow、弱 refill 与弱 price/microprice recovery 同时成立时继续阻断 add quote，并按冻结 hysteresis 多周期延续；reducing quote、size、inventory limit 与外部 reference 均不变。C++ 在补齐该多周期状态机前 fail-fast，且没有任何 live wiring。
 
 56 日 Development 结果关闭了两侧 v1。SELL active baseline/effective candidate 支持为 `42/39`，DR reward `-0.00504 USDC/decision`，95% 日聚类区间 `[-0.01314,+0.00226]`；BUY 支持为 `35/47`，reward 点估计 `+0.00493`，但区间 `[-0.00166,+0.01275]`，30 分钟 repair 与 duration 均恶化。两侧都未达到冻结的每 arm 50 行 support gate，日度正向率仅 28%/32%，5-USDC tail 事件为零而无法提供尾部证据。因此 Validation 与 sealed holdout 保持未读，current 85 秒 baseline 不变；这不证明固定 85 秒最优，只否定该冻结四条件 extension。完整证据见 `research/families/f09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md`。
 
@@ -995,7 +999,7 @@ SELL 作为预声明首侧进入 56 日 Development formal replay。实际 candi
 
 ### 2026-07-25 normalized L2 100ms v2
 
-BTCUSDC 新 replay、feature 与 lifecycle 入口已迁到唯一的 `normalized_l2_100ms_v2` top-20/100ms 身份；旧顶层 `l2/` 的 250 个独立混合频率文件已删除，剩余 6 个硬链接仅维持冻结 strict62 manifest 的历史绝对路径。原生 CryptoHFTData BTCUSDC snapshot/delta 仍是 execution deep queue 的权威源。
+BTCUSDC 新 replay、feature 与 lifecycle 入口已迁到唯一的 `normalized_l2_100ms_v2` top-20/100ms 身份；旧顶层 `l2/` 的 250 个独立混合频率文件已删除，剩余 6 个硬链接仅维持冻结 strict62 manifest 的历史绝对路径。原生 CryptoHFTData BTCUSDC snapshot/delta 仍是 execution deep queue 的 canonical data source。
 
 在保持 chronological split 与 aggTrades 不变、只替换 BBO 身份后，5s/10s P3 的 `delta*` 均未变化，`effective_kappa` 分别只变化 `+0.168%/-0.121%`。因此 P3 touch 结论已在新身份复现，但旧 artifact/hash 仍被 supersede；当前 live 未因本次数据研究自动换模。queue、fill、campaign、action-uplift 的旧精确数值不能由 P3 稳定性推导为有效，必须按 `docs/legacy_l2_evidence_revalidation_20260725.md` 的顺序重跑。
 
@@ -1061,7 +1065,7 @@ owner-amended v2 以 80%-120% fill band、closed-campaign primary outcome 和 lo
 
 新的 action profile 不再把 UTC 日末当成经济终点。现金、库存和 campaign 状态必须跨日延续，逐日会计恒等式之和必须等于全 panel 连续 MTM；panel 最后仍未平仓的库存必须按最终 mid 计价。`day_end_inventory`、open-campaign MTM 和 censoring 的 ranking 权重与 hard-gate 权限均为零，只保留诊断。
 
-新身份为 `action_alpha_v2`、`action_defense_v2`、`action_execution_v2` 与 `action_execution_selective_v3`。closed-campaign value 继承原主要 value 权重，旧 day-end censoring 权重转给 conditional net value；campaign q10/CVaR、MAE、最大库存和 inventory-time 继续作为不可补偿风险门。冻结 v1 profile 与历史结果不改写。ranked-toxicity mechanics 在读取结果前通过 execution-only successor 绑定 `action_execution_selective_v3`，动作、p90、随机种子与运营 baseline 未变。随后的一日权威执行预检发现，活动 maker 订单可以跨越 inventory campaign terminal，从旧 campaign-side assignment 的 add 变成新 assignment 的 opener；因此 v1.4 的 execution eligibility 已撤回，40 日 mechanics 未运行。新身份必须事前冻结 carryover-safe assignment 或 washout，不能让新臂接管旧臂订单。当前仍无正式 mechanics、经济、action 或 live 权限。合同与失败记录见 `docs/experiment_scorecard_v2_continuous_path_profiles_20260802.md` 和 `research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics_v1_5_implementation_failure_20260802.md`。
+新身份为 `action_alpha_v2`、`action_defense_v2`、`action_execution_v2` 与 `action_execution_selective_v3`。closed-campaign value 继承原主要 value 权重，旧 day-end censoring 权重转给 conditional net value；campaign q10/CVaR、MAE、最大库存和 inventory-time 继续作为不可补偿风险门。冻结 v1 profile 与历史结果不改写。ranked-toxicity mechanics 在读取结果前通过 execution-only successor 绑定 `action_execution_selective_v3`，动作、p90、随机种子与运营 baseline 未变。随后的一日准入执行预检发现，活动 maker 订单可以跨越 inventory campaign terminal，从旧 campaign-side assignment 的 add 变成新 assignment 的 opener；因此 v1.4 的 execution eligibility 已撤回，40 日 mechanics 未运行。新身份必须事前冻结 carryover-safe assignment 或 washout，不能让新臂接管旧臂订单。当前仍无正式 mechanics、经济、action 或 live 权限。合同与失败记录见 `docs/experiment_scorecard_v2_continuous_path_profiles_20260802.md` 和 `research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_full_path_mechanics_v1_5_implementation_failure_20260802.md`。
 
 ### 2026-07-25 pre-restart 48h loss attribution
 

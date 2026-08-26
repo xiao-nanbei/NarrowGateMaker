@@ -19,7 +19,7 @@ def _assert_nested_close(actual, expected, path="root"):
         elif isinstance(expected_value, list):
             assert len(actual_value) == len(expected_value), child
             for index, (actual_item, expected_item) in enumerate(
-                zip(actual_value, expected_value)
+                zip(actual_value, expected_value, strict=True)
             ):
                 _assert_nested_close(
                     actual_item, expected_item, f"{child}[{index}]"
@@ -195,7 +195,7 @@ def test_trade_bar_native_batch_matches_scalar_rollover_and_gap_fill():
 
     scalar = narrowgate_cpp.TradeBarAggregator(True)
     scalar_completed = []
-    for values in zip(ts_ms, prices, sizes, maker):
+    for values in zip(ts_ms, prices, sizes, maker, strict=True):
         scalar_completed.extend(
             scalar.update(int(values[0]), float(values[1]), float(values[2]), bool(values[3]))
         )
@@ -204,7 +204,7 @@ def test_trade_bar_native_batch_matches_scalar_rollover_and_gap_fill():
     batch_completed = batched.update_batch(ts_ms, prices, sizes, maker)
 
     assert len(batch_completed) == len(scalar_completed) == 3
-    for batch_bar, scalar_bar in zip(batch_completed, scalar_completed):
+    for batch_bar, scalar_bar in zip(batch_completed, scalar_completed, strict=True):
         assert _bar_values(batch_bar) == pytest.approx(_bar_values(scalar_bar))
     assert _bar_values(batched.current_bar()) == pytest.approx(
         _bar_values(scalar.current_bar())

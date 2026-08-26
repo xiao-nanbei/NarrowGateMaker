@@ -14,9 +14,6 @@ import argparse
 import concurrent.futures
 import hashlib
 import json
-import math
-import os
-import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -256,7 +253,9 @@ def _opportunity_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
     trace = _extract_features(trace, window.ml_data)
     trace["sampling_key"] = [
         _stable_key(day, int(ts), str(role))
-        for ts, role in zip(trace["decision_ts_ms"], trace["role"])
+        for ts, role in zip(
+            trace["decision_ts_ms"], trace["role"], strict=True
+        )
     ]
     atomic_parquet(output_path, trace)
     return {
@@ -545,7 +544,7 @@ def _outcome_day_task(payload: Mapping[str, Any]) -> dict[str, Any]:
     started = time.perf_counter()
     baseline = simulate(params)
     rows: list[dict[str, Any]] = []
-    for index, opportunity in opportunities.iterrows():
+    for _index, opportunity in opportunities.iterrows():
         candidate_params = dict(params)
         candidate_params.update(
             {

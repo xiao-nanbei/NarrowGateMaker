@@ -156,7 +156,7 @@ def test_prefill_and_live_ingestion_have_identical_feature_fingerprints() -> Non
     live.compute_signal()
 
     assert len(prefill_features) == len(live_features) == 6
-    for prefill_row, live_row in zip(prefill_features, live_features):
+    for prefill_row, live_row in zip(prefill_features, live_features, strict=True):
         _assert_feature_dicts_equal(prefill_row, live_row)
 
 

@@ -1,6 +1,6 @@
 # NarrowGate BTCUSDC Codebase Architecture - 2026-07-05
 
-Last materially modified: 2026-07-29
+Last materially modified: 2026-08-26
 
 Current status (2026-07-29): family-specific source and evidence live under the single `research/` subtree registered in `research/registry.json`. Historical family paths and the former root `research_*` packages have been removed rather than retained as aliases. Active commands use canonical `research.families.*` packages, while versioned manifests and archives under `research/governance/` preserve both migration boundaries. Shared replay and governance implementations remain in their runtime-owned packages. New paired work uses `build_paired_daily_evidence()` followed by `research.families.f01_fixed_parameter_racing.audit.paired_screening`; panel transitions belong to `models.audit.panel_promotion_controller`. `paired_daily_selection()` is compatibility-only and has no independent ranking or promotion authority.
 
@@ -14,7 +14,7 @@ This document defines where code and research artifacts belong.  The goal is to 
 | `live/orderbook/` | Runtime execution-market public-book reconstruction | Snapshot/diff sequence state only; historical payloads never live here. |
 | `execution/` | State attached to NarrowGate's own orders | Active-order depth paths and queue-state bounds; no venue transport ownership. |
 | `strategy/` | Shared strategy logic used by live and replay | Quote construction, maker engine policy, signal state, inventory state. |
-| `models/` | Offline training, Python-authoritative replay, canonical research runners | No Markdown reports, no generated result files, no one-off bucket scripts. |
+| `models/` | Offline training, Python-reference replay, canonical research runners | No Markdown reports, no generated result files, no one-off bucket scripts. |
 | `models/audit/` | Unified audit package | Campaign, fill/order denominator, order-level score, daily gate, and future evidence reports. |
 | `research/families/` | Ten family-owned research workspaces | Source at family root/`audit/`, evidence under `docs/`; permissions remain experiment-specific. |
 | `research/shared/` | Shared-layer ownership indexes | D/R/S/G code stays in its runtime package and is never copied into a family. |
@@ -30,7 +30,7 @@ This document defines where code and research artifacts belong.  The goal is to 
 
 ## Canonical Offline Entry Points
 
-- `models/backtest_tick.py`: Python-authoritative tick replay engine.
+- `models/backtest_tick.py`: Python reference tick replay engine.
 - `research/families/f01_fixed_parameter_racing/campaign_outcome_replay_audit.py`: campaign-level arm evaluation and campaign labels; accepts external arm specs with `--arm-spec-json`.
 - `research/families/f01_fixed_parameter_racing/parameter_racing_sweep.py`: parameter coverage, quick-smoke, quick-full-main-effect, frozen validation, and candidate handoff.
 - `research/families/f01_fixed_parameter_racing/parameter_selection.py`: parameter registry, arm generation and paired evidence construction. Its legacy selector is compatibility-only.

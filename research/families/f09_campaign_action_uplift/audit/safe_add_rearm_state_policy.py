@@ -707,8 +707,8 @@ def evaluate_state_policy(
         )
         daily = pooled.groupby("day", sort=True)["dr_contrast"].mean()
 
-        def pooled_ess(column: str) -> float:
-            weight = pooled[column].to_numpy(dtype=float)
+        def pooled_ess(frame: pd.DataFrame, column: str) -> float:
+            weight = frame[column].to_numpy(dtype=float)
             denominator = float(np.square(weight).sum())
             return (
                 float(weight.sum() ** 2 / denominator)
@@ -729,8 +729,8 @@ def evaluate_state_policy(
                 "dr_contrast_p025": interval["p025"],
                 "dr_contrast_p50": interval["p50"],
                 "dr_contrast_p975": interval["p975"],
-                "candidate_ess": pooled_ess("candidate_weight"),
-                "control_ess": pooled_ess("control_weight"),
+                "candidate_ess": pooled_ess(pooled, "candidate_weight"),
+                "control_ess": pooled_ess(pooled, "control_weight"),
                 "candidate_unsupported_mass": float(
                     pooled["candidate_unsupported_mass"].mean()
                 ),

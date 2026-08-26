@@ -56,7 +56,7 @@ try:
         normalize_variant,
         write_bundle_meta,
     )
-    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, update_symbol_globals
+    from models.symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
     from strategy.model_contract import (
         REQUIRED_FEATURE_DAG_ID,
         REQUIRED_FEATURE_DAG_SHA256,
@@ -72,7 +72,7 @@ except ImportError:
         normalize_variant,
         write_bundle_meta,
     )
-    from symbol_paths import ROOT, DEFAULT_SYMBOL, update_symbol_globals
+    from symbol_paths import ROOT, DEFAULT_SYMBOL, paths_for
     from strategy.model_contract import (
         REQUIRED_FEATURE_DAG_ID,
         REQUIRED_FEATURE_DAG_SHA256,
@@ -88,20 +88,22 @@ except ImportError:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
     from data_quality import filter_frame_for_orderbook_quality
 
-SYMBOL = DEFAULT_SYMBOL
-update_symbol_globals(
-    globals(), SYMBOL,
-    feature_key="DATA_DIR", model_key="MODEL_DIR", results_key="RESULTS_DIR",
-)
+_SYMBOL_PATHS = paths_for(DEFAULT_SYMBOL)
+SYMBOL = _SYMBOL_PATHS.symbol
+DATA_DIR = _SYMBOL_PATHS.feature_dir
+MODEL_DIR = _SYMBOL_PATHS.model_dir
+RESULTS_DIR = _SYMBOL_PATHS.results_dir
 
 
 def configure_symbol(symbol=None, *, model_dir_override=None):
-    update_symbol_globals(
-        globals(), symbol,
-        feature_key="DATA_DIR", model_key="MODEL_DIR", results_key="RESULTS_DIR",
-    )
+    global SYMBOL, DATA_DIR, MODEL_DIR, RESULTS_DIR
+    paths = paths_for(symbol)
+    SYMBOL = paths.symbol
+    DATA_DIR = paths.feature_dir
+    MODEL_DIR = paths.model_dir
+    RESULTS_DIR = paths.results_dir
     if model_dir_override is not None:
-        globals()["MODEL_DIR"] = Path(model_dir_override).expanduser().resolve()
+        MODEL_DIR = Path(model_dir_override).expanduser().resolve()
 
 N_THREADS = max(1, int(os.environ.get("MM_LGB_THREADS", min(cpu_count(), 6))))
 ACTIVE_SOURCE_PROFILE = "all"
@@ -888,7 +890,7 @@ def train_one(
     imp = pd.Series(model.feature_importances_, index=feat_cols)
     imp = imp.sort_values(ascending=False)
     if verbose:
-        print(f"\n  Top-15 features:")
+        print("\n  Top-15 features:")
         for i, (f, v) in enumerate(imp.head(15).items(), 1):
             print(f"    {i:2d}. {f:<30s} {v:>6d}")
 

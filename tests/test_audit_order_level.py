@@ -490,7 +490,7 @@ def test_replay_order_level_rows_convert_trace_markout_to_bps() -> None:
 def test_local_liquidity_mechanism_tables_use_order_level_schema() -> None:
     rows = []
     for day in ("2026-06-27", "2026-06-28", "2026-06-29"):
-        for i in range(3):
+        for _ in range(3):
             rows.append(
                 {
                     "day": day,

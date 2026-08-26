@@ -21,7 +21,7 @@ def test_cross_trade_batch_matches_single_event_state(monkeypatch):
         {"s": "BTCUSDT", "T": 1_800_000_001_100, "p": "60000.2", "q": "0.3", "m": False},
     ]
     sequences = [10, 11, 12]
-    for event, sequence in zip(events, sequences):
+    for event, sequence in zip(events, sequences, strict=True):
         single.on_cross_agg_trade(
             event,
             market_type="perp",

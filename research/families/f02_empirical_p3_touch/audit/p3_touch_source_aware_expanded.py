@@ -531,7 +531,6 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
                 }
             )
 
-    by_task = {(task["panel"], task["day"]): task for task in tasks}
     with concurrent.futures.ProcessPoolExecutor(max_workers=int(args.workers)) as pool:
         future_map = {
             pool.submit(_day_reach_task, task): (task["panel"], task["day"])

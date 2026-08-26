@@ -337,7 +337,7 @@ def run_audit(spec_path: Path, output_dir: Path) -> dict:
 
     train = pd.read_parquet(feature_dir / "dataset_train.parquet")
     train_baselines = {}
-    for head, (label, objective, _, _) in MODEL_SPECS.items():
+    for head, (label, _objective, _, _) in MODEL_SPECS.items():
         values = pd.to_numeric(train[label], errors="coerce").to_numpy(dtype=np.float64)
         weights = pd.to_numeric(
             train.get("sample_weight", pd.Series(1.0, index=train.index)),

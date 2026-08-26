@@ -251,7 +251,7 @@ def aggregate_cross_instrument(rows: list[dict[str, Any]]) -> list[dict[str, Any
         grouped[tuple(str(row.get(key, "")) for key in keys)].append(row)
     out: list[dict[str, Any]] = []
     for group_key, daily in sorted(grouped.items()):
-        item = dict(zip(keys, group_key))
+        item = dict(zip(keys, group_key, strict=True))
         item.update({
             "days": len(daily),
             "orders": sum(_int(row, "orders") for row in daily),
@@ -475,7 +475,7 @@ def aggregate_interactions(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         grouped[tuple(str(row.get(key, "")) for key in keys)].append(row)
     out: list[dict[str, Any]] = []
     for group_key, daily in sorted(grouped.items()):
-        item = dict(zip(keys, group_key))
+        item = dict(zip(keys, group_key, strict=True))
         item.update({
             "days": len(daily),
             "orders": sum(_int(row, "orders") for row in daily),

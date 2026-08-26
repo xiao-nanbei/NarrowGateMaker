@@ -70,60 +70,47 @@ py-modules = [
   "data_quality",
   "market_fusion",
 ]
-packages = [
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = [
   "narrowgate",
+  "narrowgate.*",
   "scripts",
+  "scripts.*",
   "data",
-  "data.quality",
+  "data.*",
   "features",
+  "features.*",
   "execution",
+  "execution.*",
   "live",
-  "live.orderbook",
-  "live.venues",
+  "live.*",
   "models",
-  "models.audit",
-  "models.replay",
+  "models.*",
   "research",
-  "research.families",
-  "research.families.f01_fixed_parameter_racing",
-  "research.families.f01_fixed_parameter_racing.audit",
-  "research.families.f02_empirical_p3_touch",
-  "research.families.f02_empirical_p3_touch.audit",
-  "research.families.f03_causal_13_head",
-  "research.families.f03_causal_13_head.audit",
-  "research.families.f04_external_market_alpha",
-  "research.families.f04_external_market_alpha.audit",
-  "research.families.f05_fill_quality_quote_ev",
-  "research.families.f05_fill_quality_quote_ev.audit",
-  "research.families.f06_placement_fill_cif",
-  "research.families.f06_placement_fill_cif.audit",
-  "research.families.f07_active_order_continuation",
-  "research.families.f07_active_order_continuation.audit",
-  "research.families.f08_side_taker_lifecycle",
-  "research.families.f08_side_taker_lifecycle.audit",
-  "research.families.f09_campaign_action_uplift",
-  "research.families.f09_campaign_action_uplift.audit",
-  "research.families.f10_live_replay_attribution",
-  "research.families.f10_live_replay_attribution.audit",
-  "research.governance",
-  "research.shared",
-  "research.system_engineering",
-  "research.system_engineering.audit",
+  "research.*",
   "strategy",
+  "strategy.*",
 ]
+exclude = [
+  "tests*",
+  "cpp*",
+  "*.private",
+  "*.private.*",
+]
+namespaces = false
+
+[tool.setuptools.package-data]
+"*" = ["fixtures/*.py"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# Reconstructed research modules retain frozen byte identities.  The public
-# package keeps the complete E/F/I/UP/B gate below; CI separately runs an F/B
-# correctness gate over the maintained live, strategy, execution, replay, and
-# active action-uplift runtime surface.  Historical frozen imports remain
-# covered by syntax, tests, hashes, and replay audits.
-include = [
-  "narrowgate/**/*.py",
-  "examples/**/*.py",
-]
+# F/B correctness is the repository-wide default. CI supplies every tracked
+# Python path explicitly, so adding a package or research module cannot evade
+# the gate. The public API/examples surface receives the additional E/I/UP
+# style gate in CI.
 extend-exclude = [
   "models/saved*",
   "logs",
@@ -132,7 +119,7 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["F", "B"]
 ignore = [
   "E501",
 ]

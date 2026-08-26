@@ -797,7 +797,7 @@ def _precompute_day_path_features(day_rows: list[dict[str, str]]) -> tuple[list[
         rvs = [0.0] * n
         rets = [0.0] * n
         counts = [0.0] * n
-        for i, (ts, mid) in enumerate(zip(ts_values, mid_values)):
+        for i, (ts, mid) in enumerate(zip(ts_values, mid_values, strict=True)):
             while minq and mid_values[minq[-1]] >= mid:
                 minq.pop()
             minq.append(i)

@@ -608,7 +608,7 @@ def summarize_live_actions(
             side="right",
         )
         for recovery_row, index in zip(
-            recoveries.itertuples(index=False), indices
+            recoveries.itertuples(index=False), indices, strict=True
         ):
             if int(index) >= len(cancel_times):
                 continue

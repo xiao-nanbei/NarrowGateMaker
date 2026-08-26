@@ -1726,7 +1726,7 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
                 include_labels: bool = True) -> pd.DataFrame:
     """处理单个 UTC 日数据：1s bars → 10s特征。"""
     data_lookup_tag = day_tag
-    qprint(f"  补齐 dense 1s UTC 主时间轴...")
+    qprint("  补齐 dense 1s UTC 主时间轴...")
     sparse_rows = len(bars_1s)
     bars_1s = densify_bars_1s(
         bars_1s,
@@ -1736,18 +1736,18 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
     qprint(f"  dense 1s: {sparse_rows:,} → {len(bars_1s):,} 行")
 
     # --- tick-by-tick momentum (在1s精度上计算，然后采样到10s) ---
-    qprint(f"  计算 tick momentum 特征 (1s → 10s)...")
+    qprint("  计算 tick momentum 特征 (1s → 10s)...")
     tick_feats = compute_tick_momentum(bars_1s)
     qprint(f"  tick momentum: {len(tick_feats):,} 行, {len(tick_feats.columns)} 列")
 
-    qprint(f"  重采样 → 10s bars...")
+    qprint("  重采样 → 10s bars...")
     bars_10s = resample_to_10s(bars_1s)
     qprint(f"  {len(bars_10s):,} 个10s bars")
 
     # --- merge tick momentum ---
     bars_10s = bars_10s.join(tick_feats, how="left")
 
-    qprint(f"  对齐 raw taker tempo 特征...")
+    qprint("  对齐 raw taker tempo 特征...")
     bars_10s = add_taker_tempo_features(
         bars_10s,
         symbol,
@@ -1756,7 +1756,7 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
     )
     qprint(f"  taker tempo 特征: {len(TAKER_TEMPO_FEATURE_COLS)} 列")
 
-    qprint(f"  计算 execution-L2 特征...")
+    qprint("  计算 execution-L2 特征...")
     bars_10s = add_execution_l2_features(
         bars_10s,
         bars_1s.index,
@@ -1770,13 +1770,13 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
     # --- metrics features ---
     metrics = load_metrics(data_lookup_tag, symbol)
     if metrics is not None:
-        qprint(f"  计算 metrics 特征...")
+        qprint("  计算 metrics 特征...")
         bars_10s = add_metrics_features(bars_10s, metrics)
         n_metrics = sum(1 for c in bars_10s.columns
                         if any(x in c for x in ["oi_", "ls_ratio", "taker_ls", "crowd_ls", "toptrader_ls"]))
         qprint(f"  metrics 特征: {n_metrics} 列")
 
-    qprint(f"  计算微结构特征...")
+    qprint("  计算微结构特征...")
     bars_10s = add_microstructure_features(bars_10s, bars_1s)
 
     # Local rolling features may use a causal multi-day warmup, while all
@@ -1796,11 +1796,11 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
         data_tag=data_lookup_tag,
     )
 
-    qprint(f"  计算时间特征...")
+    qprint("  计算时间特征...")
     bars_10s = add_time_features(bars_10s)
 
     if include_labels:
-        qprint(f"  计算标签...")
+        qprint("  计算标签...")
         bars_10s = add_labels(
             bars_10s,
             bars_1s,
@@ -1808,7 +1808,7 @@ def process_day(bars_1s: pd.DataFrame, day_tag: str, symbol: str,
             config_path=config_path,
         )
 
-    qprint(f"  计算样本权重...")
+    qprint("  计算样本权重...")
     bars_10s = add_sample_weights(
         bars_10s,
         reference_date=sample_weight_reference_date,
@@ -1839,7 +1839,11 @@ def split_on_calendar_day_gaps(frame: pd.DataFrame, max_gap_s: Optional[float] =
         breaks = np.flatnonzero(np.diff(segments) > 0) + 1
     starts = np.r_[0, breaks]
     ends = np.r_[breaks, len(ordered)]
-    return [ordered.iloc[start:end] for start, end in zip(starts, ends) if end > start]
+    return [
+        ordered.iloc[start:end]
+        for start, end in zip(starts, ends, strict=True)
+        if end > start
+    ]
 
 
 def _assert_unique_time_index(frame: pd.DataFrame, label: str) -> None:

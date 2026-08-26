@@ -13,7 +13,6 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
-import math
 import shutil
 import time
 from datetime import datetime, timezone

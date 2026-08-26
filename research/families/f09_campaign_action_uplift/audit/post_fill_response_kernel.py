@@ -595,7 +595,7 @@ def fit_adverse_amplitude_model(
         "feature_names": feature_names,
         "coefficients_ticks": {
             name: float(value)
-            for name, value in zip(feature_names, coefficients)
+            for name, value in zip(feature_names, coefficients, strict=True)
         },
         "volatility_ref_bps": volatility_ref,
         "refill_edge_ref": refill_ref,

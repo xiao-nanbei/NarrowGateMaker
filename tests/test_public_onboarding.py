@@ -23,6 +23,38 @@ def _project_config() -> dict[str, Any]:
         return tomllib.load(handle)
 
 
+def _configured_packages(config: dict[str, Any] | None = None) -> set[str]:
+    """Resolve the public setuptools package set from explicit or find config."""
+    config = config or _project_config()
+    packages = config["tool"]["setuptools"]["packages"]
+    if isinstance(packages, list):
+        return set(packages)
+
+    find_config = packages["find"]
+    if find_config.get("where", ["."]) != ["."]:
+        raise AssertionError("public package discovery must remain rooted at the repository")
+    if find_config.get("namespaces", True):
+        raise AssertionError("public package discovery must require __init__.py")
+
+    include = find_config.get("include", ["*"])
+    exclude = find_config.get("exclude", [])
+    roots = {
+        pattern.split("*", 1)[0].rstrip(".").split(".", 1)[0]
+        for pattern in include
+        if pattern.split("*", 1)[0].rstrip(".")
+    }
+    discovered: set[str] = set()
+    for root_name in roots:
+        for init_file in (ROOT / root_name).rglob("__init__.py"):
+            package = ".".join(init_file.parent.relative_to(ROOT).parts)
+            if not any(fnmatchcase(package, pattern) for pattern in include):
+                continue
+            if any(fnmatchcase(package, pattern) for pattern in exclude):
+                continue
+            discovered.add(package)
+    return discovered
+
+
 def _docker_copy_sources() -> set[str]:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     logical_lines = dockerfile.replace("\\\n", " ").splitlines()
@@ -79,7 +111,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
 
     def test_setuptools_declares_every_public_package(self) -> None:
         config = _project_config()
-        declared = set(config["tool"]["setuptools"]["packages"])
+        declared = _configured_packages(config)
         roots = {name.split(".", 1)[0] for name in declared}
         discovered: set[str] = set()
 
@@ -96,7 +128,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
     def test_dockerfile_copies_every_declared_package_root_and_module(self) -> None:
         config = _project_config()
         setuptools = config["tool"]["setuptools"]
-        package_roots = {name.split(".", 1)[0] for name in setuptools["packages"]}
+        package_roots = {name.split(".", 1)[0] for name in _configured_packages(config)}
         module_sources = {f"{name}.py" for name in setuptools["py-modules"]}
         copy_sources = _docker_copy_sources()
 
@@ -117,7 +149,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
             "scripts/narrowgate_replay_demo.py",
         }
         required.update(f"{name}.py" for name in setuptools["py-modules"])
-        for package in setuptools["packages"]:
+        for package in _configured_packages():
             package_dir = ROOT / package.replace(".", "/")
             required.update(
                 str(path.relative_to(ROOT)) for path in package_dir.glob("*.py")

@@ -1,6 +1,6 @@
 # Audit Entrypoints - 2026-06-30
 
-Last materially modified: 2026-07-31
+Last materially modified: 2026-08-26
 
 > Current status (2026-07-27): this is a command/reference catalog accumulated across several research generations. The shared audit modules remain useful, but historical numerical examples and retired action-family commands below are not current evidence. Formal new work must bind the normalized 100ms L2, native queue source where required, repaired trade-side identity, merged replay clock, current unit contract, frozen family spec and score profile. Use `research/system_engineering/docs/time_unit_contract_repair_20260726.md`, `docs/normalized_l2_100ms_v2_20260725.md` and `docs/experiment_scorecard_v1_20260722.md` as the governing contracts.
 
@@ -530,11 +530,11 @@ python -m research.families.f09_campaign_action_uplift.audit.state_conditioned_r
   --output-prefix <sell-rearm-development-ope>
 ```
 
-`state_conditioned_rearm_randomized` is Python-authoritative and makes C++ replay fail fast until the multi-cycle state machine has parity. Validation and sealed holdout require a positive Development access decision; do not loosen a failed state definition on the same family identity. The frozen v1 result is in [`state_conditioned_rearm_after85_v1_20260722.md`](../research/families/f09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md).
+`state_conditioned_rearm_randomized` uses the Python reference implementation and makes C++ replay fail fast until the multi-cycle state machine has same-input parity. Validation and sealed holdout require a positive Development access decision; do not loosen a failed state definition on the same family identity. The frozen v1 result is in [`state_conditioned_rearm_after85_v1_20260722.md`](../research/families/f09_campaign_action_uplift/docs/state_conditioned_rearm_after85_v1_20260722.md).
 
 ### Causal safe-add path audit
 
-`research/families/f09_campaign_action_uplift/causal_path_features.py` is the shared causal implementation for the fill-to-decision `shock -> refill -> recovery` path. New authoritative Python replay intervention rows include the path directly. Existing frozen panels can be enriched without rerunning outcomes:
+`research/families/f09_campaign_action_uplift/causal_path_features.py` is the shared causal implementation for the fill-to-decision `shock -> refill -> recovery` path. New intervention rows produced by the Python reference replay implementation include the path directly. Existing frozen panels can be enriched without rerunning outcomes:
 
 ```bash
 python research/families/f09_campaign_action_uplift/audit/enrich_safe_add_rearm_paths.py \
