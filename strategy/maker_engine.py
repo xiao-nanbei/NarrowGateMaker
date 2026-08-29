@@ -10419,39 +10419,61 @@ class MakerEngine:
         existing_barrier = False
         try:
             with self._reconciliation_lock:
-                (
-                    qty,
-                    entry,
-                    snapshot_update_time_ms,
-                    order_cumulative_filled_qty,
-                    included_trade_ids,
-                    normalized_new_trades,
-                    trade_identities,
-                    initial_seed,
-                ) = self._stable_exchange_reconciliation_payload()
-                existing_barrier = not initial_seed
-                if not initial_seed:
-                    stage = "deliver_identified_trades"
-                    for trade in normalized_new_trades:
-                        self.orders.reconcile_exchange_trade(
-                            **trade,
-                            local_receive_ts_ns=time.time_ns(),
-                        )
-                        order_status = self.orders.fatal_status()
-                        if bool(order_status.get("latched")):
-                            raise RuntimeError(
-                                "order-manager fatal during account-trade delivery: "
-                                + str(order_status.get("reason", "unknown"))
+                for barrier_attempt in range(1, 4):
+                    stage = "fetch_stable_snapshot"
+                    (
+                        qty,
+                        entry,
+                        snapshot_update_time_ms,
+                        order_cumulative_filled_qty,
+                        included_trade_ids,
+                        normalized_new_trades,
+                        trade_identities,
+                        initial_seed,
+                    ) = self._stable_exchange_reconciliation_payload()
+                    existing_barrier = not initial_seed
+                    if not initial_seed:
+                        stage = "deliver_identified_trades"
+                        for trade in normalized_new_trades:
+                            self.orders.reconcile_exchange_trade(
+                                **trade,
+                                local_receive_ts_ns=time.time_ns(),
                             )
-                stage = "install_exact_barrier"
-                reconciliation = self.inventory.sync_from_exchange(
-                    qty,
-                    entry,
-                    snapshot_update_time_ms=snapshot_update_time_ms,
-                    order_cumulative_filled_qty=order_cumulative_filled_qty,
-                    included_trade_ids=included_trade_ids,
-                    included_trade_identities=trade_identities,
-                )
+                            order_status = self.orders.fatal_status()
+                            if bool(order_status.get("latched")):
+                                raise RuntimeError(
+                                    "order-manager fatal during account-trade delivery: "
+                                    + str(order_status.get("reason", "unknown"))
+                                )
+                    stage = "install_exact_barrier"
+                    try:
+                        reconciliation = self.inventory.sync_from_exchange(
+                            qty,
+                            entry,
+                            snapshot_update_time_ms=snapshot_update_time_ms,
+                            order_cumulative_filled_qty=order_cumulative_filled_qty,
+                            included_trade_ids=included_trade_ids,
+                            included_trade_identities=trade_identities,
+                        )
+                    except RuntimeError as exc:
+                        identity_cursor_lag = (
+                            "exchange snapshot omitted the identity cursor for a "
+                            "locally applied fill at or before its update time"
+                        ) in str(exc)
+                        if not identity_cursor_lag or barrier_attempt >= 3:
+                            raise
+                        logger.warning(
+                            "POSITION_RECONCILIATION_IDENTITY_LAG_RETRY "
+                            "attempt=%d snapshot_update_time_ms=%d",
+                            barrier_attempt,
+                            snapshot_update_time_ms,
+                        )
+                        # positionRisk may become visible before accountTrades.
+                        # Retry the identity proof; never widen the exchange-time
+                        # interval or synthesize a quantity adjustment.
+                        time.sleep(0.05 * (2 ** (barrier_attempt - 1)))
+                        continue
+                    break
                 trade_identity_map = getattr(
                     self,
                     "_reconciliation_trade_identity_by_id",

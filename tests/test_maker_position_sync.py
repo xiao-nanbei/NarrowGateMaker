@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import pytest
 
+import strategy.maker_engine as maker_engine_module
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import OrderManager, Side
 
@@ -175,6 +176,56 @@ def test_running_sync_delivers_each_identified_trade_before_exact_barrier() -> N
             )
         },
     )
+
+
+def test_sync_retries_transient_position_before_account_trade_visibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = (0.002, 70_000.0, 2_000, {}, (), (), {}, False)
+    second_payload = (
+        0.002,
+        70_000.0,
+        2_000,
+        {"41": 0.001},
+        ("92",),
+        (),
+        {
+            "92": _producer_identity(
+                order_id="41",
+                side="SELL",
+                quantity=0.001,
+                price=70_000.0,
+                commission=0.0,
+                commission_asset="USDC",
+                trade_time_ms=2_000,
+                cumulative=0.001,
+            )
+        },
+        False,
+    )
+    engine = _engine_with_payload(first_payload)
+    engine._stable_exchange_reconciliation_payload.side_effect = (
+        first_payload,
+        second_payload,
+    )
+    engine.inventory.sync_from_exchange.side_effect = (
+        RuntimeError(
+            "exchange snapshot omitted the identity cursor for a locally "
+            "applied fill at or before its update time"
+        ),
+        {"ok": True},
+    )
+    engine.latch_runtime_fatal = Mock()
+    sleeps: list[float] = []
+    monkeypatch.setattr(maker_engine_module.time, "sleep", sleeps.append)
+
+    assert MakerEngine.sync_position(engine, required=True) is True
+
+    assert engine._stable_exchange_reconciliation_payload.call_count == 2
+    assert engine.inventory.sync_from_exchange.call_count == 2
+    assert sleeps == [pytest.approx(0.05)]
+    assert engine.latch_runtime_fatal.call_count == 0
+    assert set(engine._reconciliation_trade_identity_by_id) == {"92"}
 
 
 def _stable_fetch_engine(response: object) -> MakerEngine:
