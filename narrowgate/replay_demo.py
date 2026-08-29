@@ -20,9 +20,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from narrowgate import __version__ as PACKAGE_VERSION  # noqa: E402
 from models.replay import continuous_accounting as accounting  # noqa: E402
 from models.replay import replay_state_checkpoint as checkpoint  # noqa: E402
+from narrowgate import __version__ as PACKAGE_VERSION  # noqa: E402
 
 ContinuousAccountingLedger = accounting.ContinuousAccountingLedger
 ContinuousReplayState = checkpoint.ContinuousReplayState
@@ -231,7 +231,9 @@ def _read_contract(path: Path) -> dict[str, Any]:
             "promotion_eligible",
         )
     ):
-        raise DemoAdmissionError("demo contract cannot grant economic, action, or promotion authority")
+        raise DemoAdmissionError(
+            "demo contract cannot grant economic, action, or promotion authority"
+        )
     return payload
 
 
