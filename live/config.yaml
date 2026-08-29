@@ -34,8 +34,8 @@ api:
   timeout_s: 5.0
 
 strategy:
-  # Core AS/GLFT-style quote controls. Values here are safe examples, not a
-  # promoted parameter set.
+  # AS-shaped empirical quote-controller inputs. These are safe examples, not
+  # an exact AS/GLFT solution or a promoted parameter set.
   gamma: 0.01
   order_size: 0.001
   max_inventory: 0.01
@@ -46,6 +46,20 @@ strategy:
   # The current BTCUSDC operational baseline integrates one second of
   # absolute-price variance. Deploy configs must set this field explicitly.
   quote_horizon_s: 1.0
+  # Explicit unit contract. null preserves the historical B0 mapping:
+  # eta_inventory=gamma*q_ref, a_spread=risk_per_order=gamma,
+  # execution_intensity_slope=kappa, risk_horizon_s=quote_horizon_s.
+  inventory_reference_qty: 1.0
+  eta_inventory: null
+  a_spread: null
+  risk_per_order: null
+  execution_intensity_slope: null
+  risk_horizon_s: null
+  # The historical P3 pair projection is the behavior-identical B0 adapter.
+  # The side-BBO mode is a behavior-changing replay candidate and stays off.
+  historical_p3_scalar_adapter_enabled: true
+  p3_side_bbo_floor_enabled: false
+  trade_intensity_acceleration_spread_mult: null
   max_spread_bps: 12.0
   # Protective widening beyond this limit pauses only the side that adds
   # exposure. Inward compression is an explicit research arm.
@@ -88,7 +102,7 @@ strategy:
   boolean_cooldown_predicate_bundle_path: ""
   boolean_cooldown_predicate_bundle_sha256: ""
   boolean_cooldown_ema_warmup_s: 2048.0
-  boolean_cooldown_evidence_route: "owner_risk_accepted_promotion"
+  boolean_cooldown_evidence_route: "private_deployment_approval"
   buy_e3_cooldown_policy_enabled: false
   buy_e3_cooldown_artifact_manifest_path: ""
   buy_e3_cooldown_artifact_manifest_sha256: ""
@@ -98,7 +112,7 @@ strategy:
   buy_e3_cooldown_predicate_bundle_path: ""
   buy_e3_cooldown_predicate_bundle_sha256: ""
   buy_e3_cooldown_ema_warmup_s: 2048.0
-  buy_e3_cooldown_evidence_route: "owner_risk_accepted_buy_e3_v1"
+  buy_e3_cooldown_evidence_route: "private_deployment_buy_e3"
   adaptive_add_cooldown_enabled: false
   adaptive_add_cooldown_gate_enabled: false
   # Post-fill quote response research surface. I shifts the pair center;
@@ -299,6 +313,8 @@ depth_execution:
   shadow_enabled: false
   log_interval_requotes: 6
   microprice_kappa:
+    # Frozen name: weighted-mid proxy + top-N depth-ratio spread adapter;
+    # neither is the published micro-price estimator or an identified GLFT kappa.
     enabled: false
   imbalance_asym:
     enabled: false
@@ -329,6 +345,7 @@ websocket:
   deep_book_max_buffer_events: 20000
   deep_book_resync_backoff_s: 1.0
   deep_book_max_age_s: 2.0
+  # Reconnect watchdogs only; quote cancel/block freshness gates live under risk.
   exec_stream_silence_timeout_s: 45.0
   anchor_stream_silence_timeout_s: 45.0
 
@@ -339,6 +356,8 @@ risk:
   cooldown_after_loss: 30.0
   max_consecutive_losses: 3
   max_exec_book_age_s: 5.0  # historical replay end-to-end age ABI
+  # Quote cancel/block gates, separate from the longer reconnect watchdog above.
+  # Public examples only; deployment values must bind a feed/host latency profile.
   max_exec_book_visible_age_s: 5.0  # live stale gate: capture - receive
   max_exec_book_source_lag_s: 5.0   # separate receive - exchange transport gate
   sync_adjust_degrade_enabled: true

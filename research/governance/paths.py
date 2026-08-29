@@ -75,6 +75,7 @@ class ResearchPathIdentity:
     archived_sha256: str
     archive_member: str
     archive_path: str
+    canonical_availability: str
 
 
 def file_sha256(path: Path) -> str:
@@ -110,6 +111,9 @@ def _mapping() -> dict[str, ResearchPathIdentity]:
                 archived_sha256=str(row["sha256"]),
                 archive_member=str(row["archive_member"]),
                 archive_path=archive_path,
+                canonical_availability=str(
+                    row.get("canonical_availability", "public_repository")
+                ),
             )
             if identity.legacy_path in identities:
                 raise RuntimeError(f"duplicate research legacy path: {identity.legacy_path}")
@@ -169,6 +173,23 @@ def _final_relative(path: str | Path) -> str | None:
     return relative
 
 
+def _private_canonical_identity(path: str | Path) -> ResearchPathIdentity | None:
+    """Return a mapping whose retired canonical bytes remain private."""
+
+    final_relative = _final_relative(path)
+    if final_relative is None:
+        return None
+    matches = [
+        identity
+        for identity in _mapping().values()
+        if identity.canonical_path == final_relative
+        and identity.canonical_availability == "private_not_distributed"
+    ]
+    if len(matches) > 1:
+        raise RuntimeError(f"ambiguous private canonical research path: {final_relative}")
+    return matches[0] if matches else None
+
+
 def private_legacy_archive_identity(
     path: str | Path,
 ) -> PrivateLegacyArchiveIdentity | None:
@@ -219,6 +240,17 @@ def resolve_research_path(path: str | Path, *, require_exists: bool = True) -> P
     if private_legacy_archive_identity(path) is not None:
         return resolve_private_legacy_archive(path, require_exists=require_exists)
 
+    private_canonical = _private_canonical_identity(path)
+    if private_canonical is not None:
+        candidate = REPOSITORY_ROOT / private_canonical.canonical_path
+        if require_exists:
+            raise FileNotFoundError(
+                f"{private_canonical.canonical_path} is retained only in private "
+                f"historical evidence; availability={private_canonical.canonical_availability}; "
+                "use archived_bytes() with the frozen identity"
+            )
+        return candidate.resolve(strict=False)
+
     candidate = relocate_marketdata_path(path)
     if not candidate.is_absolute():
         candidate = REPOSITORY_ROOT / candidate
@@ -253,6 +285,10 @@ def archived_bytes(path: str | Path, expected_sha256: str | None = None) -> byte
     """Return exact bytes from the migration boundary matching ``path``."""
 
     identities = _identity_chain(path)
+    if not identities:
+        private_canonical = _private_canonical_identity(path)
+        if private_canonical is not None:
+            identities = (private_canonical,)
     if not identities:
         raise KeyError(f"path is not part of a research migration: {path}")
     expected = str(expected_sha256) if expected_sha256 is not None else None

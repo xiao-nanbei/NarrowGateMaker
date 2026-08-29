@@ -49,6 +49,36 @@ def _q90_action_config() -> Config:
     return cfg
 
 
+@pytest.mark.parametrize(
+    ("section", "field"),
+    (
+        ("strategy", "markout_horizon_s"),
+        ("risk", "pnl_volatility_horizon_s"),
+        ("risk", "max_exec_book_visible_age_s"),
+        ("risk", "max_exec_book_source_lag_s"),
+    ),
+)
+def test_duration_contracts_reject_nonfinite_values(
+    section: str,
+    field: str,
+) -> None:
+    cfg = Config()
+    setattr(getattr(cfg, section), field, float("nan"))
+
+    with pytest.raises(ValueError, match="positive and finite"):
+        _validate_config(cfg)
+
+
+def test_side_bbo_floor_rejects_later_inward_spread_compression() -> None:
+    cfg = Config()
+    cfg.strategy.historical_p3_scalar_adapter_enabled = False
+    cfg.strategy.p3_side_bbo_floor_enabled = True
+    cfg.strategy.spread_cap_mode = "compress"
+
+    with pytest.raises(ValueError, match="side-BBO floor cannot be combined"):
+        _validate_config(cfg)
+
+
 def test_q90_action_is_runtime_fail_closed_without_owner_override() -> None:
     with pytest.raises(ValueError, match="POST_CANCEL_RECOVERY"):
         q90_action_runtime_policy(True, environ={})
@@ -81,7 +111,7 @@ def test_q90_owner_override_is_explicit_in_runtime_identity(tmp_path: Path) -> N
 
     persisted = json.loads(path.read_text(encoding="utf-8"))
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
-    assert persisted["q90_action_runtime_authority"] == ("owner_risk_accepted_override")
+    assert persisted["q90_action_runtime_authority"] == ("private_deployment_approved")
     assert persisted["q90_owner_override_requested"] is True
     assert persisted["q90_owner_override_effective"] is True
 
@@ -150,6 +180,59 @@ def test_rest_timeout_must_be_positive_finite_and_non_boolean(timeout) -> None:
         _validate_config(cfg)
 
 
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    (
+        ("order_size", 0.0),
+        ("max_inventory", float("nan")),
+    ),
+)
+def test_base_quantity_limits_must_be_positive_finite(
+    field_name: str,
+    value: float,
+) -> None:
+    cfg = Config()
+    setattr(cfg.strategy, field_name, value)
+
+    with pytest.raises(ValueError, match=rf"strategy\.{field_name}"):
+        _validate_config(cfg)
+
+
+def test_order_size_cannot_exceed_base_inventory_fuse() -> None:
+    cfg = Config()
+    cfg.strategy.order_size = cfg.strategy.max_inventory + 0.001
+
+    with pytest.raises(ValueError, match="order_size cannot exceed"):
+        _validate_config(cfg)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("max_daily_loss", "max_position_value", "emergency_close_dd"),
+)
+def test_quote_currency_risk_fuses_must_be_positive_finite(
+    field_name: str,
+) -> None:
+    cfg = Config()
+    setattr(cfg.risk, field_name, float("inf"))
+
+    with pytest.raises(ValueError, match=rf"risk\.{field_name}"):
+        _validate_config(cfg)
+
+
+def test_reconnect_watchdog_must_outlive_quote_stop_thresholds() -> None:
+    cfg = Config()
+    cfg.risk.max_exec_book_visible_age_s = 3.0
+    cfg.risk.max_exec_book_source_lag_s = 5.0
+    cfg.websocket.exec_stream_silence_timeout_s = 5.0
+
+    with pytest.raises(ValueError, match="reconnect watchdog.*exceed"):
+        _validate_config(cfg)
+
+    cfg.websocket.exec_stream_silence_timeout_s = 5.001
+    _validate_config(cfg)
+
+
 def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> None:
     engine = SimpleNamespace(
         runtime_safety_snapshot=lambda **_kwargs: {
@@ -194,12 +277,15 @@ def test_normal_cleanup_with_final_reconciliation_pending_exits_78() -> None:
         }
     )
 
-    assert resolve_live_shutdown_exit(
-        engine=engine,
-        fatal_error=None,
-        fatal_traceback=None,
-        cleanup_errors=[],
-    ) == EXECUTION_STATE_UNCERTAIN_EXIT_CODE
+    assert (
+        resolve_live_shutdown_exit(
+            engine=engine,
+            fatal_error=None,
+            fatal_traceback=None,
+            cleanup_errors=[],
+        )
+        == EXECUTION_STATE_UNCERTAIN_EXIT_CODE
+    )
 
 
 def test_ws_stop_waits_for_late_user_callback_and_listen_key_thread() -> None:
@@ -510,15 +596,15 @@ def test_supervisor_never_restarts_execution_state_uncertainty() -> None:
     assert "reconciliation_required_no_restart" in supervisor
     assert "fatal_exit_no_restart" in supervisor
     assert "((++restart_count))" not in supervisor
-    assert 'NARROWGATE_SUPERVISOR_MAX_RESTARTS:-0' in script
+    assert "NARROWGATE_SUPERVISOR_MAX_RESTARTS:-0" in script
 
 
 def test_supervisor_does_not_restart_unclassified_exit_one() -> None:
     script = (ROOT / "live/run.sh").read_text(encoding="utf-8")
     supervisor = script.split("supervise() {", 1)[1].split("\nstart() {", 1)[0]
 
-    assert 'if [[ $child_exit -eq 0 ]]' in supervisor
-    assert 'if [[ $child_exit -eq $EXECUTION_STATE_UNCERTAIN_EXIT_CODE ]]' in supervisor
+    assert "if [[ $child_exit -eq 0 ]]" in supervisor
+    assert "if [[ $child_exit -eq $EXECUTION_STATE_UNCERTAIN_EXIT_CODE ]]" in supervisor
     assert '_record_supervisor_state "fatal_exit_no_restart"' in supervisor
     assert "restart_backoff" not in supervisor
 
@@ -559,9 +645,7 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine = object.__new__(MakerEngine)
     engine.cfg = Config()
     engine.orders = SimpleNamespace(
-        fatal_status=Mock(
-            return_value={"latched": False, "reconciliation_required": False}
-        ),
+        fatal_status=Mock(return_value={"latched": False, "reconciliation_required": False}),
         cancel_all_local=Mock(),
     )
     engine.signal = SimpleNamespace(stop=Mock())
@@ -606,11 +690,11 @@ def test_startup_identity_preserves_its_own_schema(tmp_path: Path) -> None:
     assert identity["q90_action_runtime_authority"] == ("action_suspended_shadow_only")
 
 
-def test_f05_boolean_cooldown_requires_permanent_owner_label_and_override() -> None:
-    with pytest.raises(ValueError, match="owner-authorized"):
+def test_f05_boolean_cooldown_requires_private_label_and_approval() -> None:
+    with pytest.raises(ValueError, match="approved private deployment"):
         f05_boolean_cooldown_runtime_policy(
             True,
-            evidence_route="owner_risk_accepted_promotion",
+            evidence_route="private_deployment_approval",
             environ={},
         )
     with pytest.raises(ValueError, match="permanent"):
@@ -622,12 +706,12 @@ def test_f05_boolean_cooldown_requires_permanent_owner_label_and_override() -> N
 
     policy = f05_boolean_cooldown_runtime_policy(
         True,
-        evidence_route="owner_risk_accepted_promotion",
+        evidence_route="private_deployment_approval",
         environ={F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV: "1"},
     )
     assert policy["f05_boolean_cooldown_hard_gates_passed"] is False
     assert policy["f05_boolean_cooldown_owner_override_effective"] is True
-    assert policy["f05_boolean_cooldown_runtime_authority"] == ("owner_risk_accepted_active")
+    assert policy["f05_boolean_cooldown_runtime_authority"] == ("private_deployment_approved")
 
 
 def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
@@ -638,7 +722,7 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
         "boolean_cooldown_predicate_bundle_path": "",
         "boolean_cooldown_predicate_bundle_sha256": "",
         "boolean_cooldown_ema_warmup_s": 2048.0,
-        "boolean_cooldown_evidence_route": "owner_risk_accepted_promotion",
+        "boolean_cooldown_evidence_route": "private_deployment_approval",
     }
     require_f05_boolean_cooldown_restart(base, dict(base))
     changed = {**base, "boolean_cooldown_policy_enabled": True}
@@ -646,11 +730,11 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
         require_f05_boolean_cooldown_restart(base, changed)
 
 
-def test_f05_buy_e3_requires_separate_owner_override_and_label() -> None:
-    with pytest.raises(ValueError, match="owner risk-accepted"):
+def test_f05_buy_e3_requires_separate_private_approval_and_label() -> None:
+    with pytest.raises(ValueError, match="approved private deployment"):
         f05_buy_e3_runtime_policy(
             True,
-            evidence_route="owner_risk_accepted_buy_e3_v1",
+            evidence_route="private_deployment_buy_e3",
             environ={},
         )
     with pytest.raises(ValueError, match="permanent"):
@@ -661,7 +745,7 @@ def test_f05_buy_e3_requires_separate_owner_override_and_label() -> None:
         )
     policy = f05_buy_e3_runtime_policy(
         True,
-        evidence_route="owner_risk_accepted_buy_e3_v1",
+        evidence_route="private_deployment_buy_e3",
         environ={F05_BUY_E3_OWNER_OVERRIDE_ENV: "1"},
     )
     assert policy["f05_buy_e3_research_supported"] is False
@@ -680,7 +764,7 @@ def test_f05_buy_e3_identity_is_restart_only() -> None:
         "buy_e3_cooldown_predicate_bundle_path": "",
         "buy_e3_cooldown_predicate_bundle_sha256": "",
         "buy_e3_cooldown_ema_warmup_s": 2048.0,
-        "buy_e3_cooldown_evidence_route": "owner_risk_accepted_buy_e3_v1",
+        "buy_e3_cooldown_evidence_route": "private_deployment_buy_e3",
     }
     require_f05_buy_e3_restart(base, dict(base))
     with pytest.raises(ValueError, match="restart-only"):
@@ -700,19 +784,15 @@ def _maker_engine_reload_fixture(
     cfg.logging.fill_cooldown_checkpoint = str(checkpoint)
     strategy = cfg.strategy
     strategy.buy_e3_cooldown_policy_enabled = enabled
-    strategy.buy_e3_cooldown_artifact_manifest_path = str(
-        tmp_path / "artifact_manifest.json"
-    )
+    strategy.buy_e3_cooldown_artifact_manifest_path = str(tmp_path / "artifact_manifest.json")
     strategy.buy_e3_cooldown_artifact_manifest_sha256 = "1" * 64
     strategy.buy_e3_cooldown_artifact_sha256 = "2" * 64
     strategy.buy_e3_cooldown_policy_path = str(tmp_path / "policy.json")
     strategy.buy_e3_cooldown_policy_sha256 = "3" * 64
-    strategy.buy_e3_cooldown_predicate_bundle_path = str(
-        tmp_path / "predicates.json"
-    )
+    strategy.buy_e3_cooldown_predicate_bundle_path = str(tmp_path / "predicates.json")
     strategy.buy_e3_cooldown_predicate_bundle_sha256 = "4" * 64
     strategy.buy_e3_cooldown_ema_warmup_s = 2048.0
-    strategy.buy_e3_cooldown_evidence_route = "owner_risk_accepted_buy_e3_v1"
+    strategy.buy_e3_cooldown_evidence_route = "private_deployment_buy_e3"
 
     engine = object.__new__(MakerEngine)
     engine.cfg = cfg

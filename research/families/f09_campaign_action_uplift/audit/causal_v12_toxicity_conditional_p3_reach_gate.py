@@ -34,7 +34,10 @@ from data_paths import (
     data_root,
     immutable_backtest_v12_config_path,
 )
-from models.backtest_config import load_operational_baseline_binding
+from models.backtest_config import (
+    CURRENT_OPERATIONAL_BASELINE_POINTER,
+    load_operational_baseline_binding,
+)
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = data_root(ROOT)
@@ -42,9 +45,7 @@ IDENTITY = "causal_v12_toxicity_outward_16tick_conditional_p3_reach_gate_v1"
 SCHEMA_VERSION = "narrowgate_causal_v12_toxicity_conditional_p3_reach_gate.v1"
 CREATED_DATE = "2026-08-04"
 
-BASELINE_POINTER = (
-    ROOT / "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json"
-)
+BASELINE_POINTER = CURRENT_OPERATIONAL_BASELINE_POINTER
 PANEL_SPEC = (
     ROOT / "research/families/f09_campaign_action_uplift/docs/"
     "causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_spec_20260803.json"
@@ -64,7 +65,7 @@ QUEUE_PATH = (
 )
 LATENCY_PATH = (
     DATA_ROOT / "reports/formal_recalibration_20260715/"
-    "ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz"
+    "private_not_distributed_rest_latency.csv.gz"
 )
 TRADE_MANIFEST = DATA_ROOT / "trade_features_causal_v3_20260727/manifest.json"
 TRADE_QUALITY = (
@@ -286,8 +287,8 @@ def build_params(day: str, config_path: Path) -> dict[str, Any]:
     configure_fixed_latency_distribution(
         params,
         scenario="baseline",
-        profile_id="aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14",
-        environment="aws-ap-northeast-1-tokyo",
+        profile_id="private_not_distributed",
+        environment="private_not_distributed",
         baseline_clip_quantile=0.99,
     )
     validate_formal_replay_calibration(params, require_latency=True)

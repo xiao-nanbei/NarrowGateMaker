@@ -10,6 +10,7 @@ import pytest
 
 import models.cache_tier_lru as cache_lru
 from models.cache_tier_lru import (
+    DEFAULT_COLD_TTL_DAYS,
     CacheTierAuthorizationError,
     CacheTierConfig,
     CacheTierValidationError,
@@ -24,7 +25,7 @@ from models.cache_tier_lru import (
     validate_cache_tiers,
     validate_plan,
 )
-from scripts.manage_cache_tiers import main
+from scripts.manage_cache_tiers import build_parser, main
 
 
 def _config(
@@ -496,6 +497,8 @@ def test_register_write_records_identity_reference_and_size(
 
 
 def test_cli_scan_plan_and_validate_are_non_destructive(tmp_path: Path, capsys: Any) -> None:
+    assert DEFAULT_COLD_TTL_DAYS == 14
+    assert build_parser().parse_args(["scan"]).cold_ttl_days == DEFAULT_COLD_TTL_DAYS
     config = _config(tmp_path)
     hot = _artifact(config.hot_root, "window_cache/a")
     common = [

@@ -28,9 +28,7 @@ import os
 import random
 import re
 import stat
-import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -1054,8 +1052,10 @@ try:
         DepthSnapshot,
         QuotePrediction,
         QuoteState,
+        QUOTE_CORE_UNIT_ABI_FIELDS,
         SPREAD_CAP_COMPRESS,
         SPREAD_CAP_PAUSE_EXPOSURE,
+        apply_p3_side_bbo_floor,
         apply_final_spread_cap,
         apply_final_spread_cap_preserve_side,
         ber_inventory_role_for_target,
@@ -1073,8 +1073,10 @@ except ImportError:
         DepthSnapshot,
         QuotePrediction,
         QuoteState,
+        QUOTE_CORE_UNIT_ABI_FIELDS,
         SPREAD_CAP_COMPRESS,
         SPREAD_CAP_PAUSE_EXPOSURE,
+        apply_p3_side_bbo_floor,
         apply_final_spread_cap,
         apply_final_spread_cap_preserve_side,
         ber_inventory_role_for_target,
@@ -2040,7 +2042,11 @@ def load_execution_trades(
     )
 
 
-def causal_complete_1s_bars(bars: pd.DataFrame) -> pd.DataFrame:
+def causal_complete_1s_bars(
+    bars: pd.DataFrame,
+    *,
+    require_dense_source: bool = False,
+) -> pd.DataFrame:
     """Restore the wall-clock 1s grid without looking past an empty second.
 
     Live emits a flat bar when no execution trade arrives during a second.
@@ -2050,6 +2056,14 @@ def causal_complete_1s_bars(bars: pd.DataFrame) -> pd.DataFrame:
     """
     if bars.empty:
         return bars.copy()
+
+    if require_dense_source:
+        # Validate the bytes as loaded, before sort/de-dup/reindex could repair
+        # a malformed formal source and hide its actual clock contract.
+        require_formal_dense_1s_timeline(
+            bars,
+            {"replay_purpose": "formal"},
+        )
 
     out = bars.copy()
     out.index = _index_to_epoch_ms(out.index)
@@ -2068,7 +2082,12 @@ def causal_complete_1s_bars(bars: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def load_1s_bars(days=None, *, quality_allowed_days=()):
+def load_1s_bars(
+    days=None,
+    *,
+    quality_allowed_days=(),
+    require_dense_source: bool = False,
+):
     """Load causal wall-clock 1s bars for rolling σ² and timer state."""
     files = sorted(BARS_DIR.glob(f"{SYMBOL}-1s-*.parquet"))
     files = _filter_daily_files(files, f"{SYMBOL}-1s-", days=days)
@@ -2082,34 +2101,155 @@ def load_1s_bars(days=None, *, quality_allowed_days=()):
         return None
     dfs = [
         causal_complete_1s_bars(
-            pd.read_parquet(f, columns=["close", "trade_count"])
+            pd.read_parquet(f, columns=["close", "trade_count"]),
+            require_dense_source=require_dense_source,
         )
         for f in files
     ]
-    bars = pd.concat(dfs, copy=False).sort_index()
+    bars = pd.concat(dfs, copy=False)
+    if require_dense_source:
+        # Catch overlap, reversal, or gaps at file boundaries before any
+        # normalization could erase the source defect.
+        require_formal_dense_1s_timeline(
+            bars,
+            {"replay_purpose": "formal"},
+        )
+    else:
+        bars = bars.sort_index()
     del dfs
     gc.collect()
-    bars = bars[~bars.index.duplicated(keep="first")]
+    if not require_dense_source:
+        bars = bars[~bars.index.duplicated(keep="first")]
     bars = filter_frame_for_orderbook_quality(
         bars,
         SYMBOL,
         label="1s bar",
         explicitly_allowed_days=quality_allowed_days,
     )
+    if require_dense_source:
+        require_formal_dense_1s_timeline(
+            bars,
+            {"replay_purpose": "formal"},
+        )
     return bars
 
 
+def require_formal_dense_1s_timeline(
+    bars: pd.DataFrame | None,
+    params: Mapping[str, Any],
+    *,
+    expected_start_ms: int | None = None,
+    expected_end_ms: int | None = None,
+) -> pd.DataFrame | None:
+    """Reject the trade-bearing-second fallback for formal evidence.
+
+    Formal volatility, timer, and trade-intensity state requires the canonical
+    wall-clock one-second timeline.  The historical sparse-trade fallback is
+    retained only for explicitly exploratory runs.
+    """
+    formal = bool(params.get("strict_calibration", False)) or (
+        str(params.get("replay_purpose", "")).strip().lower() == "formal"
+    )
+    if formal and (bars is None or bars.empty):
+        raise RuntimeError(
+            "formal replay requires canonical dense 1s bars; "
+            "trade-bearing-second variance fallback is forbidden"
+        )
+    if not formal:
+        return bars
+    assert bars is not None
+    index_ms = np.asarray(_index_to_epoch_ms(bars.index), dtype=np.int64)
+    if (
+        index_ms.ndim != 1
+        or index_ms.size != len(bars)
+        or np.any(index_ms % 1000 != 0)
+        or np.any(np.diff(index_ms) != 1000)
+    ):
+        raise RuntimeError(
+            "formal replay requires a unique monotonic wall-clock 1s timeline "
+            "with no sparse or duplicate seconds"
+        )
+    if expected_start_ms is not None:
+        required_first = int(expected_start_ms // 1000 * 1000)
+        if int(index_ms[0]) > required_first:
+            raise RuntimeError(
+                "formal replay dense 1s bars do not cover the requested start boundary"
+            )
+    if expected_end_ms is not None:
+        required_last = int((expected_end_ms - 1) // 1000 * 1000)
+        if int(index_ms[-1]) < required_last:
+            raise RuntimeError(
+                "formal replay dense 1s bars do not cover the requested end boundary"
+            )
+    return bars
+
+
+def require_formal_dense_variance_timeline(
+    var_ts_ms: Any,
+    var_ssq: Any,
+    params: Mapping[str, Any],
+    *,
+    trades_df: pd.DataFrame | None = None,
+) -> None:
+    """Enforce the dense wall-clock contract at every replay-engine entry."""
+
+    formal = bool(params.get("strict_calibration", False)) or (
+        str(params.get("replay_purpose", "")).strip().lower() == "formal"
+    )
+    if not formal:
+        return
+    timestamps = np.asarray(var_ts_ms, dtype=np.int64)
+    values = np.asarray(var_ssq, dtype=np.float64)
+    if (
+        timestamps.ndim != 1
+        or timestamps.size == 0
+        or values.ndim != 1
+        or values.size != timestamps.size
+        or np.any(timestamps % 1000 != 0)
+        or np.any(np.diff(timestamps) != 1000)
+        or not np.isfinite(values).all()
+        or np.any(values < 0.0)
+    ):
+        raise RuntimeError(
+            "formal replay requires a finite unique monotonic dense 1s "
+            "variance timeline; sparse trade-bearing-second input is forbidden"
+        )
+    if trades_df is None or trades_df.empty:
+        return
+    trade_timestamps = trades_df["transact_time"].to_numpy(
+        dtype=np.int64,
+        copy=False,
+    )
+    required_first = int(trade_timestamps.min() // 1000 * 1000)
+    required_last = int(trade_timestamps.max() // 1000 * 1000)
+    if int(timestamps[0]) > required_first or int(timestamps[-1]) < required_last:
+        raise RuntimeError(
+            "formal replay dense 1s variance timeline does not cover the "
+            "execution-event interval"
+        )
+
+
 def build_rolling_variance(bars_1s, sigma_window=60):
-    """Pre-compute rolling variance at 1s resolution, return as dict(ms → σ²)."""
+    """Pre-compute the causal live-equivalent variance-rate timeline.
+
+    SignalEngine uses the previous at-most ``sigma_window`` one-second close
+    differences and returns its explicit 1.0 warmup fallback until ten closes
+    exist.  Do the same here.  In particular, never backfill an early replay
+    timestamp from a variance observation that becomes available later.
+    """
     cl = bars_1s["close"].values.astype(np.float64)
-    diffs = np.empty_like(cl)
-    diffs[0] = 0.0
-    diffs[1:] = cl[1:] - cl[:-1]
-    ssq = (pd.Series(diffs)
-           .rolling(sigma_window, min_periods=max(10, sigma_window // 3))
-           .var()
-           .ffill().bfill()
-           .values.astype(np.float64))
+    ssq = np.full(cl.shape, 1.0, dtype=np.float64)
+    if cl.size > 1:
+        window = max(2, int(sigma_window))
+        diffs = pd.Series(cl[1:] - cl[:-1])
+        rolling = (
+            diffs.rolling(window, min_periods=min(9, window))
+            .var()
+            .ffill()
+            .to_numpy(dtype=np.float64)
+        )
+        ssq[1:] = np.where(np.isfinite(rolling), rolling, 1.0)
+        ssq[: min(9, cl.size)] = 1.0
     ssq = np.maximum(ssq, 1e-6)
 
     # Map timestamp (ms) → σ²
@@ -3520,6 +3660,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         empirical_action=params.get("_empirical_requote_action"),
         system_event_ts_ms=sync_degrade_events.timestamps_ms,
         system_event_code=sync_degrade_events.event_code,
+    )
+    require_formal_dense_variance_timeline(
+        var_ts_ms,
+        var_ssq,
+        params,
+        trades_df=trades_df,
     )
     # ── Unpack params ──
     gamma = params["gamma"]
@@ -26335,14 +26481,70 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                                 "ema_add_wait_washout_quarantine"
                             )
 
+            # Re-assert the side-BBO contract after every replay price action.
+            # An already-live order inside the floor must bypass both lazy
+            # drift suppression and the generic replace throttle.
+            p3_floor_enabled = bool(
+                diag.get("p3_side_bbo_floor_enabled", False)
+            )
+            p3_delta_star = float(diag.get("p3_touch_delta_star", 0.0) or 0.0)
+            p3_floor_active = bool(
+                p3_floor_enabled
+                and math.isfinite(p3_delta_star)
+                and p3_delta_star > 0.0
+            )
+            (
+                nbid,
+                nask,
+                p3_buy_floor_price,
+                p3_sell_floor_price,
+                p3_final_bid_changed,
+                p3_final_ask_changed,
+            ) = apply_p3_side_bbo_floor(
+                nbid,
+                nask,
+                enabled=p3_floor_active,
+                delta_star=p3_delta_star,
+                best_bid=float(cur_best_bid),
+                best_ask=float(cur_best_ask),
+                tick_size=float(TICK),
+            )
+            p3_tolerance = max(float(TICK) * 1e-9, 1e-12)
+            bid_p3_floor_force_update = bool(
+                p3_floor_active
+                and bid_ref_order is not None
+                and bid_ref_order.get("state") in (ORDER_OPEN, ORDER_PENDING_CANCEL)
+                and float(bid_ref_order.get("price", 0.0) or 0.0)
+                > p3_buy_floor_price + p3_tolerance
+            )
+            ask_p3_floor_force_update = bool(
+                p3_floor_active
+                and ask_ref_order is not None
+                and ask_ref_order.get("state") in (ORDER_OPEN, ORDER_PENDING_CANCEL)
+                and float(ask_ref_order.get("price", 0.0) or 0.0)
+                < p3_sell_floor_price - p3_tolerance
+            )
+            quote_context["BUY"]["p3_final_side_floor_changed"] = bool(
+                p3_final_bid_changed
+            )
+            quote_context["SELL"]["p3_final_side_floor_changed"] = bool(
+                p3_final_ask_changed
+            )
+            quote_context["BUY"]["p3_active_order_floor_unsafe"] = bool(
+                bid_p3_floor_force_update
+            )
+            quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
+                ask_p3_floor_force_update
+            )
+
             if rq_threshold > 0.0:
                 if bid_ref_order is not None and hb_new and bid_ref_order["price"] > 0.0:
                     drift_bid = abs(nbid - bid_ref_order["price"]) / bid_ref_order["price"]
-                    if drift_bid <= rq_threshold:
+                    if drift_bid <= rq_threshold and not bid_p3_floor_force_update:
                         bid_updated = False
                 if ask_ref_order is not None and ha_new and ask_ref_order["price"] > 0.0:
                     drift_ask = abs(nask - ask_ref_order["price"]) / ask_ref_order["price"]
-                    if drift_ask <= rq_threshold:
+                    if drift_ask <= rq_threshold and not ask_p3_floor_force_update:
                         ask_updated = False
             if bid_multi_short_price_changed:
                 # The treatment targets the most aggressive valid maker price.
@@ -26358,6 +26560,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nbid,
                     bid_ref_order,
                     bid_updated,
+                    force_update=bid_p3_floor_force_update,
                 )
             if ha_new:
                 ask_updated = _apply_replace_throttle(
@@ -26367,9 +26570,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nask,
                     ask_ref_order,
                     ask_updated,
+                    force_update=ask_p3_floor_force_update,
                 )
             if (
                 bid_queue_value_force_keep
+                and not bid_p3_floor_force_update
                 and hb_new
                 and bid_ref_order is not None
             ):
@@ -26377,6 +26582,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 quote_context["BUY"]["queue_value_forced_keep"] = True
             if (
                 ask_queue_value_force_keep
+                and not ask_p3_floor_force_update
                 and ha_new
                 and ask_ref_order is not None
             ):
@@ -29819,6 +30025,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             cooldown_duration_fork_trace
         ),
     }
+    for coefficient_name in ("eta_inventory", "a_spread"):
+        if params.get(coefficient_name) is not None:
+            result[coefficient_name] = float(
+                getattr(quote_core_cfg, coefficient_name)
+            )
     if order_lifecycle_journal_v2_health is not None:
         result["_order_lifecycle_journal_v2_health"] = dict(
             order_lifecycle_journal_v2_health
@@ -30024,6 +30235,14 @@ def _validate_f05_cpp_cooldown_runtime(
 
 
 def _copy_quote_config_to_cpp(py_cfg: Any, cpp_cfg: Any) -> Any:
+    missing = [
+        name for name in QUOTE_CORE_UNIT_ABI_FIELDS if not hasattr(cpp_cfg, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "narrowgate_cpp QuoteCoreConfig ABI missing fields: "
+            + ", ".join(missing)
+        )
     for name in _CPP_CFG_FIELDS:
         if hasattr(py_cfg, name) and hasattr(cpp_cfg, name):
             setattr(cpp_cfg, name, getattr(py_cfg, name))
@@ -30511,6 +30730,12 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         empirical_action=params.get("_empirical_requote_action"),
         system_event_ts_ms=sync_degrade_events.timestamps_ms,
         system_event_code=sync_degrade_events.event_code,
+    )
+    require_formal_dense_variance_timeline(
+        var_ts_ms,
+        var_ssq,
+        params,
+        trades_df=trades_df,
     )
     if bool(params.get("post_fill_quote_response_enabled", False)):
         raise NotImplementedError(
@@ -32948,6 +33173,11 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             f05_repeated_cooldown_checkpoint
         ),
     }
+    for coefficient_name in ("eta_inventory", "a_spread"):
+        if params.get(coefficient_name) is not None:
+            result[coefficient_name] = float(
+                getattr(quote_core_cfg, coefficient_name)
+            )
     if conditional_p3_reproduction_identity is not None:
         result.update(
             _conditional_p3_historical_output_marker(
@@ -33031,210 +33261,9 @@ def _best_result(results, sort_by):
     return _sort_results(results, sort_by)[0]
 
 
-def run_current_default_tick_mechanics_day(*, utc_day):
-    """Execute the current formal mechanics default with no legacy fallback.
-
-    The shared resolver launches an isolated interpreter from the exact
-    annotated-tag checkout, recursively validates the owner-private v14
-    bundle, installs the per-day BUY-E3/SELL-B0 overlay, and only then enters
-    this module's Python tick engine.
-    """
-
-    try:
-        from models.backtest_config import run_default_tick_mechanics_day
-    except ImportError:
-        from backtest_config import run_default_tick_mechanics_day
-
-    return run_default_tick_mechanics_day(utc_day=utc_day)
-
-
-_DEFAULT_MECHANICS_COLD_CHILD_ENV = "NARROWGATE_E3_DEFAULT_COLD_CHILD"
-
-
-def _implicit_current_default_day_requested(args):
-    return bool(
-        args.config is None
-        and not str(os.environ.get("MM_LIVE_CONFIG", "") or "").strip()
-    )
-
-
-def _require_pure_current_default_day_cli():
-    tokens = tuple(sys.argv[1:])
-    valid = (
-        len(tokens) == 2
-        and tokens[0] in {"--day", "--date"}
-        and bool(str(tokens[1]).strip())
-    ) or (
-        len(tokens) == 1
-        and any(tokens[0].startswith(f"{name}=") for name in ("--day", "--date"))
-        and bool(tokens[0].partition("=")[2].strip())
-    )
-    if not valid:
-        option_names = sorted(
-            {
-                token.partition("=")[0]
-                for token in tokens
-                if token.startswith("-")
-                and token.partition("=")[0] not in {"--day", "--date"}
-            }
-        )
-        detail = ", ".join(option_names) if option_names else "unsupported window/mode"
-        raise RuntimeError(
-            "The current exact E3 mechanics default accepts only a pure --day/--date "
-            f"invocation; unsupported arguments: {detail}. Select an explicit "
-            "--config arm for a non-current run"
-        )
-
-
-def _reexec_implicit_current_default_day():
-    """Re-enter this CLI once from the exact clean annotated-tag checkout."""
-
-    from research.families.f05_fill_quality_quote_ev.audit import (
-        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
-    )
-
-    before = mechanics.capture_cold_publisher(
-        ROOT, annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
-    )
-    required = (
-        "NARROWGATE_PRIVATE_EVIDENCE_ROOT",
-        "NARROWGATE_METADATA_REPOSITORY_ROOT",
-    )
-    missing = tuple(name for name in required if not str(os.environ.get(name, "")).strip())
-    if missing:
-        raise RuntimeError(
-            "Current backtest mechanics default is private_not_distributed; "
-            + " and ".join(missing)
-            + " are required"
-        )
-    environment = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONUNBUFFERED": "1",
-        "GIT_NO_REPLACE_OBJECTS": "1",
-        "GIT_OPTIONAL_LOCKS": "0",
-        _DEFAULT_MECHANICS_COLD_CHILD_ENV: "1",
-    }
-    for name in (
-        *required,
-        "NARROWGATE_MARKETDATA_ROOT",
-        "NARROWGATE_DATA_ROOT",
-        "NARROWGATE_CACHE_ROOT",
-        "NARROWGATE_REPLAY_DAG_CACHE_DIR",
-        "NARROWGATE_STORAGE_ROOT",
-        "NARROWGATE_EPHEMERAL_ROOT",
-        "TMPDIR",
-    ):
-        value = str(os.environ.get(name, "") or "").strip()
-        if value:
-            environment[name] = value
-    bootstrap = (
-        "import runpy,sys;"
-        "sys.path.insert(0,sys.argv[1]);"
-        "script=sys.argv[1]+'/models/backtest_tick.py';"
-        "sys.argv=[script,*sys.argv[2:]];"
-        "runpy.run_path(script,run_name='__main__')"
-    )
-    with tempfile.TemporaryDirectory(prefix="narrowgate-e3-cli-pycache-") as cache:
-        os.chmod(cache, 0o700)
-        completed = subprocess.run(
-            (
-                sys.executable,
-                "-I",
-                "-B",
-                "-X",
-                f"pycache_prefix={cache}",
-                "-c",
-                bootstrap,
-                str(ROOT),
-                *sys.argv[1:],
-            ),
-            cwd=ROOT,
-            env=environment,
-            check=False,
-        )
-    after = mechanics.capture_cold_publisher(
-        ROOT, annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG
-    )
-    if after != before:
-        raise RuntimeError("Tagged default mechanics source changed across CLI execution")
-    return int(completed.returncode)
-
-
-def _run_implicit_current_default_day_in_cold_child(utc_day):
-    """Materialize the frozen outcome-blind D/D+1 inputs and execute E3."""
-
-    import contextlib
-
-    from models.backtest_config import load_default_tick_mechanics_baseline
-    from research.families.f05_fill_quality_quote_ev.audit import (
-        causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_b0_mechanics_adapter_v1 as b0_projection,
-    )
-    from research.families.f05_fill_quality_quote_ev.audit import (
-        causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder,
-    )
-
-    def execute():
-        loaded = load_default_tick_mechanics_baseline()
-        try:
-            defaults = panel_builder._default_cli_paths()
-            inputs = panel_builder.validate_inputs(
-                source_manifest_path=defaults["source_manifest"],
-                book_view_root=defaults["book_view_root"],
-                native_observation_manifest_path=defaults["native_observation_manifest"],
-                native_observation_root=defaults["native_observation_root"],
-                features_manifest_path=defaults["features_manifest"],
-                owner_artifacts=panel_builder.OwnerArtifactPaths(
-                    policy=loaded._staged_b0_policy,
-                    predicate_bundle=loaded._staged_b0_bundle,
-                    private_config=loaded._staged_predecessor_source_config,
-                ),
-            )
-            normalized_day = str(utc_day)
-            if normalized_day not in inputs.selected_days:
-                raise RuntimeError(
-                    "Implicit current default day is outside the reduced-support E3 panel"
-                )
-            request = panel_builder._day_request(inputs, normalized_day)
-            replay = b0_projection._materialize_replay_inputs(request)
-            return loaded.run_default_day_replay(
-                request, replay, utc_day=normalized_day
-            )
-        finally:
-            loaded.close()
-
-    # The formal stdout contract is exactly one JSON document. Any diagnostic
-    # output from loading/materializing/simulating is redirected to stderr.
-    with contextlib.redirect_stdout(sys.stderr):
-        result = execute()
-    normalized_day = str(utc_day)
-    receipt = result.get("_default_buy_e3_mechanics_receipt")
-    policy_audit = result.get("_cooldown_duration_policy_audit")
-    emitter_audit = result.get("_cooldown_v2_snapshot_emitter_audit")
-    authorities = result.get("_default_mechanics_authorities")
-    if (
-        not isinstance(receipt, Mapping)
-        or not isinstance(policy_audit, Mapping)
-        or not isinstance(emitter_audit, Mapping)
-        or not isinstance(authorities, Mapping)
-        or any(value is not False for value in authorities.values())
-    ):
-        raise RuntimeError("Current default E3 execution receipt is missing")
-    print(
-        json.dumps(
-            {
-                "status": "current_default_buy_e3_mechanics_day_complete",
-                "utc_day": normalized_day,
-                "mechanics_receipt": dict(receipt),
-                "policy_audit": dict(policy_audit),
-                "emitter_audit": dict(emitter_audit),
-                "authorities": dict(authorities),
-            },
-            sort_keys=True,
-            indent=2,
-            allow_nan=False,
-        )
-    )
-    return 0
+def _public_default_tick_mechanics_marker():
+    """Public replay uses the explicit public config; owner defaults are private."""
+    return None
 
 def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                                ml_data=None, bbo_data=None, l2_data=None,
@@ -34266,6 +34295,11 @@ def run_sweep(trades_df, var_ts_ms, var_ssq, base, n_workers=None,
               engine="python"):
     import multiprocessing as mp
 
+    if base.get("eta_inventory") is not None or base.get("a_spread") is not None:
+        raise ValueError(
+            "legacy gamma sweep is invalid when eta_inventory or a_spread is explicit"
+        )
+
     _init_global(trades_df, var_ts_ms, var_ssq, ml_data, bbo_data, l2_data,
                  var_ti, var_retsq, engine=engine)
 
@@ -34844,18 +34878,6 @@ def main():
         args.end_time = (day_ts + pd.Timedelta(days=1)).strftime("%Y-%m-%d 00:00")
     elif not args.start_time and not args.end_time:
         raise SystemExit("Provide --day YYYY-MM-DD or an explicit --start-time/--end-time window")
-    implicit_current_default = _implicit_current_default_day_requested(args)
-    if implicit_current_default:
-        _require_pure_current_default_day_cli()
-        verified_cold_child = bool(
-            os.environ.get(_DEFAULT_MECHANICS_COLD_CHILD_ENV) == "1"
-            and sys.flags.isolated == 1
-            and sys.dont_write_bytecode
-            and sys.pycache_prefix
-        )
-        if verified_cold_child:
-            raise SystemExit(_run_implicit_current_default_day_in_cold_child(args.day))
-        raise SystemExit(_reexec_implicit_current_default_day())
     VERBOSE = bool(args.verbose)
     if (args.bbo_dir is None) != (args.l2_dir is None):
         raise SystemExit("--bbo-dir and --l2-dir must be supplied together")
@@ -34882,7 +34904,9 @@ def main():
         maker_fill_prob=args.maker_fill_prob,
     )
     base["current_e3_mechanics_default"] = False
-    base["baseline_selection"] = "explicit_non_current_e3_config_arm"
+    base["baseline_selection"] = (
+        "explicit_config_arm" if args.config is not None else "public_template"
+    )
     run_ml = bool(base.get("ml_enabled", False)) if args.ml is None else bool(args.ml)
     base["ml_enabled"] = run_ml
 
@@ -34902,7 +34926,7 @@ def main():
             "  Baseline config: "
             f"{base['operational_baseline_config_id']} (runtime-code overlay)"
         )
-    print("  Mechanics default: explicit non-current-E3 config arm")
+    print(f"  Config source: {base['baseline_selection']}")
     print(f"{'='*60}\n")
 
     if args.requote_threshold_bps is not None:
@@ -35030,6 +35054,13 @@ def main():
         "defense_emergency_loss": "defense_emergency_loss",
         "flat_unilateral_max_s": "flat_unilateral_max_s",
     }
+    if args.gamma is not None and (
+        base.get("eta_inventory") is not None
+        or base.get("a_spread") is not None
+    ):
+        raise SystemExit(
+            "--gamma cannot override an explicit eta_inventory/a_spread split"
+        )
     apply_cli_overrides(base, args, _cli_map)
     if args.queue_regime_calibration:
         base["queue_regime_calibration_enabled"] = True
@@ -35072,7 +35103,7 @@ def main():
         )
         base["exec_book_visibility_delay_profile_id"] = str(
             args.exec_book_visibility_profile_id
-            or "aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718"
+            or "provider_neutral_visibility_profile_v1"
         )
     elif args.exec_book_visibility_profile_id is not None:
         base["exec_book_visibility_delay_profile_id"] = str(
@@ -35154,7 +35185,19 @@ def main():
         print(f"  Time window after filter: {len(trades):,} aggTrades, {start_desc} → {end_desc}")
 
     print("\nLoading 1s bars for rolling variance / TI / ret² …")
-    bars = load_1s_bars(days=days)
+    formal_replay = bool(base.get("strict_calibration", False)) or (
+        str(base.get("replay_purpose", "")).strip().lower() == "formal"
+    )
+    bars = load_1s_bars(
+        days=days,
+        require_dense_source=formal_replay,
+    )
+    bars = require_formal_dense_1s_timeline(
+        bars,
+        base,
+        expected_start_ms=start_ms,
+        expected_end_ms=end_ms,
+    )
     var_ti = None
     var_retsq = None
     if bars is not None:

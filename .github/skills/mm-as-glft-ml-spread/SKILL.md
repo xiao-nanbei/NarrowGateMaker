@@ -1,20 +1,28 @@
 ---
 name: mm-as-glft-ml-spread
-description: 'Design, review, or tune the NarrowGate BTCUSDC market-making strategy that combines Avellaneda-Stoikov (AS), Gueant-Lehalle-Fernandez-Tapia (GLFT), and ML-based spread adaptation using realized volatility, buy/sell volume imbalance, and microstructure toxicity/VPIN features. Use for quote logic design, feature mapping, data-quality exclusions, backtest-to-live parity checks, and parameter sweep plans in the BTCUSDC execution project; BTCUSDT is reference/source data only.'
+description: 'Design, audit, or evaluate the NarrowGate BTCUSDC AS-shaped empirical quote controller and its ML/risk adapters. Use for quote-unit and clock contracts, empirical P3 touch semantics, proxy-feature naming, negative-filter action research, data-quality exclusions, and replay/runtime semantic checks; BTCUSDT is reference/source data only. Do not treat the implementation as an Avellaneda-Stoikov or GLFT optimum.'
 metadata:
   short-description: 'Research and validate NarrowGate maker actions'
 ---
 
-# MM AS+GLFT+ML Spread Skill
+# NarrowGate Empirical Quote Controller Skill
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-29
 
 ## Goal
 Build or evaluate an inventory-aware market-making workflow where:
-- AS is the baseline quote engine.
-- GLFT-style intensity modeling refines optimal spread under fill probability assumptions.
-- ML (LSTM/GRU/Transformer or existing tabular models) adapts spread and skew from short-horizon signals.
-- Core state inputs include realized volatility, buy/sell imbalance, and toxicity/VPIN-like microstructure features.
+- Avellaneda--Stoikov supplies only a reservation-price and symmetric-quote shape used for comparison and implementation structure.
+- The maintained quote core is an **AS-shaped empirical quote controller**, not an exact reproduction or approximate optimum of Avellaneda--Stoikov or GLFT.
+- Empirical spread, inventory, regime, depth, P3, and ML controls retain their own units, clocks, estimands, and evidence authority.
+- NarrowGate is a negative filter: prefer pausing exposure when estimated maker value is unsafe or unidentified; never infer action value from a theoretical label, prediction score, or implementation parity alone.
+
+## Literature and Mechanism Classification (Mandatory)
+- `exact derivation`: a paper's mathematical object is reproduced explicitly and is not presented as the current controller when the implementation differs.
+- `adapted proxy`: part of a published structure is retained while the estimand, data, clock, or action semantics differ.
+- `analogy`: a paper motivates a design question but does not derive the current feature, parameter, threshold, or action.
+- `archived research`: the route is historical, removed, or closed and grants no current action/runtime authority.
+- Classify every literature claim into exactly one of these four relationships. A citation never proves economic value or live authority.
+- Do not claim that Guéant directly implies `gamma_opt ∝ 1/(sigma*sqrt(L))`, a depth-based dynamic `kappa`, or the current liquidity multiplier. Those are unsupported empirical mappings, not theoretical deductions.
 
 ## Current Scope (Mandatory)
 - The only actively maintained execution/maker project is `BTCUSDC` in `${NARROWGATE_ROOT}`.
@@ -23,12 +31,12 @@ Build or evaluate an inventory-aware market-making workflow where:
 - Binance BTCUSDT futures raw `daily/trades` is the active public reference trade source when a BTCUSDT trade stream is needed. As of 2026-07-05 local BTCUSDT raw-trade coverage is aligned to the 111-day BTCUSDC minimal complete good-day universe (`logs/data_audit/cleanup_20260705_align_btcusdt_reference/minimal_complete_good_days_2026.csv`), not the full calendar. Binance futures `daily/bookTicker` is not usable for current 2026 work because the public directory stops at 2024-03-30; Binance `bookDepth` is coarse percent-bucket depth and must not be treated as event-level BBO/L2 or queue data.
 - BTCUSDT reference evidence must be generated per retained UTC day, using the same good-day manifest as BTCUSDC replay. Do not run or present BTCUSDT ref evidence as month chunks. Cross-day/month rollups are only secondary summaries of daily rows and must preserve the day-level support/pass/fail columns.
 - Do not transfer BTCUSDT execution parameters, fees, model bundles, fills/day, or PnL conclusions into BTCUSDC decisions without a fresh BTCUSDC daily replay/validation.
-- Live fill calibration口径：`maker` 单指 NarrowGate live 程序自己报出的被动限价单成交；`taker` 单指用户手动下的主动/人工订单。比较 live 与 replay baseline 的 fills/day、BUY/SELL split、VWAP、markout、campaign outcome 时，只能使用程序 maker fills；手动 taker rows、`SYNC_ADJUST`、人工平仓/干预成交必须单独标记或剔除，不能混入 maker fill-selection 证据。
-- Timezone口径：Binance/CryptoHFT 数据文件、训练、daily replay、baseline day key 默认都是 UTC day。若用户说“昨晚”“早上”“UTC+8 自然日”或用交易所 UI 的本地时间截图，必须先转换成明确 UTC start/end，并用同一 UTC 窗口同时切 live 和 replay；不能用 UTC daily baseline 直接对比 UTC+8 自然日。
-- Live/baseline 单日校准如果 live 在窗口起点不是 flat，必须把 day-start `initial_inventory` / `initial_entry_price` 从 live `trades.csv` 或 HEALTH 状态传入 replay，并让 campaign/fill split 从该初始仓位开始算。正式 retained daily OOS 仍默认 fresh-start；不要把 carry inventory 用进策略晋级证据，除非研究问题明确是 live episode alignment。
-- 小时级 live episode 对齐时，优先用起点前 10-30 分钟日志恢复 `initial_inventory` / `initial_entry_price`、campaign age/MAE/counters、last fill cooldown；`ORDER_UPDATE` 重放用于审计 active orders 并和最近 HEALTH `orders=` 做 sanity check。不要默认把 active orders 注入 replay 成交路径，因为缺少真实 queue ahead、ACK/pending/cancel race 状态时会制造新的假 fill selection；只有显式 `restore_active_orders`/exchange-lifecycle 研究才允许这样做，并必须单独报告。
-- Live/baseline 机制校准不能只看 fills/day。必须同时报告 BUY VWAP、SELL VWAP、`side_vwap_edge = SELL_VWAP - BUY_VWAP`、`edge_diff_bps` 和 `edge_diff_usdc = (live_edge - replay_edge) * matched_qty`。若 side VWAP edge 差异已经达到会改写日 PnL 的量级，则 raw/InvAdj、arm PnL、campaign terminal PnL 都只能作为机制失真诊断，不能作为 promotion evidence。
-- Live/baseline 校准必须确认 replay 使用的主模型目录等于 live `ml.model_dir`。当前 live baseline 的主模型目录来自 `live/config.yaml`，例如 `${NARROWGATE_MODEL_DIR}`；`models/backtest_config.py::load_tick_base_params()` 应通过 `model_dir_override` 传给 `backtest_tick.configure_symbol()`。若 replay 仍落到默认 `models/saved_btcusdc`，dir/vol/ret/tox 模型会不同，小时级 fill/VWAP/PnL 对齐不可信。
+- For live fill calibration, `maker` means only passive limit-order fills submitted by the NarrowGate live process; `taker` means manually submitted aggressive or discretionary orders. Comparisons of live and replay-baseline fills per day, BUY/SELL split, VWAP, markout, or campaign outcome must use only program-generated maker fills. Label or exclude manual taker rows, `SYNC_ADJUST`, manual closes, and intervention fills; never mix them into maker fill-selection evidence.
+- Binance and CryptoHFT files, training, daily replay, and baseline day keys use UTC days by default. Convert phrases such as "last night," "this morning," or "the UTC+8 calendar day," and exchange-UI local-time screenshots, into explicit UTC start and end timestamps. Slice live and replay with the same UTC interval; never compare a UTC daily baseline directly with a UTC+8 calendar day.
+- For one-day live/baseline calibration, when live inventory is not flat at the window start, pass the day-start `initial_inventory` and `initial_entry_price` reconstructed from live `trades.csv` or HEALTH state into replay, and calculate campaign and fill splits from that initial position. Formal retained daily OOS remains fresh-start by default. Do not carry inventory into promotion evidence unless the research question explicitly targets live-episode alignment.
+- For hourly live-episode alignment, prefer the preceding 10-30 minutes of logs to reconstruct `initial_inventory`, `initial_entry_price`, campaign age, MAE, counters, and the last-fill cooldown. Replay `ORDER_UPDATE` only to audit active orders and sanity-check them against the latest HEALTH `orders=` value. Do not inject active orders into the replay fill path by default: without real queue-ahead, ACK, pending, and cancel-race state, doing so creates artificial fill selection. Injection is allowed only for an explicit `restore_active_orders` or exchange-lifecycle study and must be reported separately.
+- Live/baseline mechanism calibration must not rely on fills per day alone. Also report BUY VWAP, SELL VWAP, `side_vwap_edge = SELL_VWAP - BUY_VWAP`, `edge_diff_bps`, and `edge_diff_usdc = (live_edge - replay_edge) * matched_qty`. If the side-VWAP edge discrepancy is large enough to change daily PnL materially, raw/inventory-adjusted PnL, arm PnL, and campaign-terminal PnL are mechanism-distortion diagnostics only and cannot serve as promotion evidence.
+- Live/baseline calibration must verify that replay uses the same main model directory as live `ml.model_dir`. The live baseline model directory comes from `live/config.yaml`, for example `${NARROWGATE_MODEL_DIR}`; `models/backtest_config.py::load_tick_base_params()` must pass it to `backtest_tick.configure_symbol()` through `model_dir_override`. If replay falls back to `models/saved_btcusdc`, its direction, volatility, return, and toxicity models differ, so hourly fill/VWAP/PnL alignment is not trustworthy.
 
 ## Workstream Classification (Mandatory)
 Before proposing or executing work, classify it as **strategy-nature** or **system-nature**. Do not mix the evidence standards.
@@ -71,11 +79,13 @@ Use this path for C++ low latency, live hot path, telemetry, order lifecycle, an
 
 ## Use When
 Use this skill when user asks for:
-- AS or GLFT quote design and calibration.
+- Auditing or modifying the AS-shaped empirical quote controller, including comparison with AS/GLFT papers.
+- Unit, denomination, order-size, risk-horizon, or lifecycle-clock compatibility in quote logic.
+- Fixed-horizon touch, placement-fill, active-order hazard, or terminal-maker-value semantics.
 - Dynamic spread logic from short-term volatility forecasts.
-- Feature engineering around imbalance, trade arrival, and toxicity.
+- Feature engineering around imbalance, event rate, and toxicity proxies.
 - Backtest/live consistency checks for maker strategy.
-- A parameter sweep plan for spread, skew, fill, or cooldown controls.
+- A preregistered, identity-bound candidate test for spread, skew, fill, or cooldown controls.
 
 ## Project Anchors (This Codebase)
 - Strategy baseline: `strategy/quote_core.py`, `strategy/maker_engine.py`
@@ -112,10 +122,9 @@ Use this skill when user asks for:
 
 ### Core Engine
 - `strategy/maker_engine.py`
-  - AS quote logic with ML enhancements.
+  - AS-shaped empirical quote control with optional ML and risk adapters.
   - Risk checks, exit/position-timeout handling, cancel-only operational shutdown, and separate emergency drawdown handling.
-  - Keep behavior aligned with shared strategy helpers and formal
-    `models/backtest_tick.py` replay when proposing logic changes.
+  - Keep behavior aligned with shared strategy helpers and formal `models/backtest_tick.py` replay when proposing logic changes, while treating parity as implementation agreement rather than proof of correct units or economic value.
 - `live/ws_handler.py`
   - Manages three WebSocket lanes: `aggTrade`, `partial_book_depth(20 levels @ 100ms)`, and `user_data`.
   - Handles listen-key lifecycle and renewal.
@@ -219,10 +228,23 @@ Use this skill when user asks for:
 - Git commit, tree, and annotated-tag identities are the primary version authority for tracked public source and documentation. Use Git history and diffs to establish provenance, predecessor/successor relationships, releases, and rollback points; reconstructed-import commits must say that they are reconstructed rather than pretending to be the original execution commits.
 - `Last materially modified` records the date on which the document's claims were last substantively reviewed. Filesystem mtime is only a local cleanup hint and is never authoritative across clones, checkouts, archives, or restored backups.
 - Formal research, replay, build, and deployment work must start from a clean public commit or annotated tag. Record any authorized runtime overlay separately and never silently treat an uncommitted working tree as the canonical source identity.
-- External data, private sources, model bundles, binaries, execution configs, reports, and live epochs remain content-addressed by their SHA256 manifests. A Git commit SHA identifies the tracked public tree; it does not replace artifact SHA256 or prove that private/external bytes were present.
+- External data, private sources, model bundles, binaries, execution configs, and formal research contracts remain content-addressed, but only through one canonical root manifest per run or release. Its stable roots are the Git commit/tree, build artifact, config bundle, model bundle, dataset/source manifest, and research contract. A result receipt binds that root manifest plus the result digest; consumers must not copy the same leaf SHA into Python, tests, JSON, and prose.
+- Git-tracked source and documentation use the Git commit/tree only. Do not add per-file SHA constants for tracked files. Cache digests are cache keys, not research or deployment authority. A mutable `current` pointer resolves an object and is never itself immutable evidence.
+- Live startup validates one release-root identity. The release-manifest builder may validate its internal leaves once, but downstream runtime checks must bind the canonical root instead of re-declaring leaf tables. Unit tests use temporary synthetic artifacts and verify mismatch handling; they must never depend on the current owner artifact SHA.
 - Interpret Git history, the document's material-modification tag, embedded experiment date, current references, code contracts, artifact manifests, and superseding conclusions together.
 - Age is an audit-priority signal, never deletion proof. For each old code or document file, check imports, CLI/Makefile entrypoints, tests, configuration references, artifact manifests, and superseding conclusions. Classify it as current, historical/frozen, superseded-but-referenced, or deletion candidate before editing or deleting it.
 - Do not mass-add modification tags before the first LRU inventory, because doing so destroys the very freshness ordering being audited. Preserve all unrelated local edits and frozen evidence.
+- Do not add source files, tests, deployment wrappers, receipts, or documents for a one-off run when an existing configurable entrypoint can perform it. Search callers and current generic primitives first. New code must represent a reusable contract or a genuinely new mechanism, not the latest attempt at an operational step.
+- When similar one-off implementations accumulate, move their shared behavior into the current generic module, migrate live callers, and remove superseded code and tests after a reference audit. Tests should protect stable generic behavior; do not create a new test file for every small deployment or parameter change.
+- Do not encode implementation retries as `vN`, `vN+1`, `successor`, or `amendment` source/test filenames. Edit the canonical implementation in place. Versioned artifacts are reserved for immutable research evidence, external schemas, or compatibility migrations whose older identity still has an active consumer; Git already preserves ordinary code history.
+- Cache is the lowest storage tier. During an authorized cleanup, delete reproducible cache entries older than 14 days unless an active process owns them or a current manifest explicitly pins them. Never apply this TTL to raw source data, shared normalized market data, private operational evidence, or frozen final research results.
+
+## Language and Translation Contract (Mandatory)
+- Keep agent-only instructions in English. This includes `.github/skills/**/SKILL.md`, skill `references/`, agent metadata, and owner-installed NarrowGate skill packages. Preserve code identifiers, paths, formulas, hashes, and protocol tokens exactly; do not create translated copies of machine-consumed instructions.
+- Maintain current human-facing guides as language pairs: `name.md` is the canonical English document and `name.zh-CN.md` is its Simplified Chinese counterpart. Put reciprocal English and Simplified Chinese language links near the top, and keep one prose language per body except for code, identifiers, paths, formulas, proper nouns, and necessary first-use technical terms.
+- Update both documents in the same change whenever status, conclusions, safety boundaries, commands, links, or other substantive meaning changes. Record the same `Last materially synchronized: YYYY-MM-DD` value in both files. A translation may be idiomatic, but it may not omit or weaken material claims.
+- Do not translate JSON, YAML, CSV, manifests, receipts, generated records, or hash-bound frozen evidence. Both language guides must cite the same underlying artifact identity. Keep immutable historical Markdown in its original language when translation would disturb evidence identity; provide a bilingual maintained index or reader summary instead of duplicating the frozen record.
+- Do not mass-copy the historical documentation tree. Prioritize README, quickstart, architecture, contributor, security, current operations, and research-navigation guides. Add or repair a language pair when another maintained human guide is materially edited.
 
 ## Public / Private Config Boundary (Mandatory)
 - `live/config.yaml` in the public repo is a safe template, not the current live parameter snapshot.
@@ -233,6 +255,7 @@ Use this skill when user asks for:
 - Public reports must use repository-relative links, approved placeholders, logical deployment epochs, and explicit artifact availability. A SHA256 value identifies bytes but is never a substitute for a reader-accessible link or an honest `private evidence store; not distributed with the public repository` label.
 - Cross-project private runtime pointers belong under ignored `docs/private/`; component-local evidence belongs to ignored `live/private/`, `data/private/`, `models/private/`, or `execution/private/`; research-specific locators and owner-only evidence indexes belong under the owning concrete research unit's ignored `private/`, following [`research/PRIVATE_EVIDENCE.md`](../../../research/PRIVATE_EVIDENCE.md) and the [`non-research owner map`](../../../docs/non_research_private_evidence_owners.md). Private Markdown must begin with `Local only — do not publish.` Private JSON/YAML normally declares `local_only_do_not_publish`; exact byte-preserved historical sources and schema-constrained runtime/config records may inherit classification from their ignored directory marker and catalog when adding a field would break identity or consumer compatibility. Keep exact host, storage, account, and secret-bearing locator details there, never in public reports. Treat `panel_role=historical_or_operational_unspecified` as fail-closed for Development, Validation, and holdout.
 - A SHA may remain public only with a named artifact, explicit identity kind, and availability. Never bind an executed/private-source SHA to a public projection path as though the bytes were identical; use the projection-aware resolver. A machine record below a Git-ignored model bundle is `private_working_tree_projection_not_distributed`, not a public repository artifact.
+- A SHA proves byte identity only. It does not prove data correctness, parameter reasonableness, leakage freedom, economic value, live-process health, order ownership, or exchange reconciliation. Require separate research, economic-authority, and runtime-health gates for those claims.
 - Before handoff, run `scripts/audit_public_documentation.py` and, on an authorized owner checkout, `scripts/audit_private_evidence.py`. Public archive members, structured process identifiers, private locators, projection publishability, private catalog hashes, permissions, and source/projection dual identities must all pass.
 
 ## Python Interpreter Rule (Mandatory)
@@ -247,13 +270,19 @@ Use this skill when user asks for:
 - Do not use `caffeinate` for remote live-host process control; live process restarts/stops still require explicit user confirmation.
 
 ## Canonical Modeling Stack
-1. AS baseline
-- Reservation price: `r = s - q * gamma * sigma_sq_per_s * horizon_s`
-- Base spread uses the same explicit variance horizon plus the calibrated intensity term. Never mix absolute price variance with return variance.
+1. AS-shaped empirical controller
+- Normalize inventory explicitly: `n = q / q_ref`, where `q` and `q_ref` use the same base-asset denomination and `n` is dimensionless.
+- Reservation controller: `r = fair - n * eta_inventory_eff * sigma_sq_per_s * inventory_risk_horizon_s`.
+- Empirical pair-spread controller: `pair_spread = a_spread * sigma_sq_per_s * quote_horizon_s + (2/a_spread) * log(1 + a_spread/kappa_spread)`.
+- Keep order quantity `z`, `q_ref`, `eta_inventory`, and `a_spread` explicit. The legacy `gamma` mapping exists only to reproduce frozen B0 behavior; it is not a portable CARA coefficient and cannot be moved across order size, account capital, symbol, or base denomination without new evidence.
+- Admit the unit-contract migration as B0-equivalent only when final bid/ask, the historical P3 pair-spread floor, post-only correction, and tick rounding are identical. This repair must not change live quotes.
+- Never call this pair-spread expression the AS or GLFT optimal spread. Avellaneda--Stoikov's displayed approximation and the current controller are different mathematical objects.
 
-2. Empirical P3 / GLFT-style intensity
-- Load `delta_star` and `effective_kappa` from the current hashed P3 artifact.
-- Treat horizon and fill definition as part of the calibration identity.
+2. Empirical P3 touch identity
+- Load `delta_star` and the legacy field `effective_kappa` only from an identity-bound P3 artifact.
+- Preserve `event=touch`, fixed horizon, `origin=same_side_bbo`, price-distance unit, side scope, `queue_included=false`, and artifact identity through every consumer boundary.
+- Interpret `effective_kappa` only as the local touch-curve slope `-d log(P_touch)/d distance`. It is not order-arrival intensity, fill hazard, touch-to-fill conversion, or GLFT `kappa`.
+- The historical `2 * delta_star` projection is a symmetric pair-spread floor. It does not guarantee that each final quote is at least `delta_star` away from its same-side BBO after reservation shift, asymmetry, tick rounding, post-only correction, and caps.
 
 3. ML spread and skew adapter
 - Predict short-horizon risk/edge (direction, return, volatility, toxicity).
@@ -264,13 +293,14 @@ Use this skill when user asks for:
 
 4. Required microstructure features
 - Realized volatility: rolling sigma/sigma_sq across short windows.
-- Volume imbalance: buy/sell aggressive volume ratio and depth imbalance proxy.
-- Toxicity/VPIN proxies: signed flow imbalance, adverse selection labels, markout-aware risk scores.
-- Trade arrival intensity: event-rate features for liquidity regime adaptation.
+- Weighted-mid proxy: top-N sizes combined with best bid/ask prices; keep the legacy `microprice` field only for ABI compatibility and never describe it as Stoikov's recursive micro-price estimator.
+- Clock-volume imbalance: wall-clock signed-volume windows; keep legacy `vpin_*` fields only for ABI compatibility and never describe them as equal-volume-bucket VPIN.
+- Trade-intensity-burst guard: fast/slow event-rate EMA ratio; keep legacy `ber_*` fields only for ABI compatibility and never describe it as a book-exhaustion BER estimator.
+- Other toxicity proxies: adverse-selection labels and markout-aware risk scores. A proxy's name or prediction quality does not grant quote authority.
 
 ## Procedure
 1. Confirm scope
-- Symbol, date range, and execution mode (BTCUSDC or BTCUSDT; minimal/enhanced market stage).
+- BTCUSDC execution symbol, date range, and optional BTCUSDT/reference-source stage.
 - Objective: design, code audit, tuning plan, or revalidation.
 
 2. Trace data lineage
@@ -279,7 +309,7 @@ Use this skill when user asks for:
 - Check `data_quality.py` and the bad-day audit before trusting fills/day, daily PnL, or parity metrics.
 
 3. Form quote equation layers
-- Layer A: AS/GLFT base spread from sigma_sq, gamma, kappa.
+- Layer A: empirical inventory center and pair spread from `sigma_sq`, explicit horizons, `q_ref`, `eta_inventory`, `a_spread`, and the named spread adapter.
 - Layer B: ML spread multiplier from vol/toxicity regime.
 - Layer C: skew and side-policy from direction/ret/imbalance/toxicity.
 
@@ -295,23 +325,27 @@ Use this skill when user asks for:
 
 6. Produce implementation artifact
 - If coding: patch config/strategy/backtest paths with parity checks.
-- If planning: deliver parameter grid, acceptance criteria, and rollback rules.
+- If planning: deliver one small preregistered candidate family, acceptance criteria, and rollback rules. Do not turn unit repair into an unrestricted parameter grid.
 
 ## Output Contract
 Always return:
 - Assumptions and target symbol/stage.
-- Final quote decomposition (AS base + GLFT/intensity + ML adjustments).
-- Feature set used for realized vol, imbalance, toxicity/VPIN.
+- Final quote decomposition (AS-shaped empirical controller + named empirical adapters + optional ML adjustments).
+- Unit and clock identities for price, base quantity, variance rate, risk horizon, P3 horizon, and lifecycle exposure.
+- Feature set using the truthful names `weighted_mid_proxy`, `clock_volume_imbalance`, and `trade_intensity_burst_guard`, with any legacy ABI names identified separately.
 - Validation plan (tick period, metrics, pass/fail gates).
 - Exact files to change (if any) and why.
 
 ## Constraints
-- Prioritize backtest-live parity over raw in-sample uplift.
+- Require a coherent semantic/unit contract before implementation parity. Parity proves that two implementations agree under stated assumptions; it does not prove the assumptions, units, or strategy economics are correct.
 - Do not use features in training that cannot be reproduced online.
 - Keep side controls explainable (loggable reason masks/policies).
 - Prefer robust parameter regions over single-point best rows.
+- Treat a finite-order-size/quantity-aware spread, a true per-side same-side-BBO floor, an H5/H10 risk horizon, and a variance-time cooldown as separate behavior-changing research candidates. None has economic, action, or live authority merely because it improves dimensional interpretation.
+- Treat fixed base-asset quantity limits and fixed USDC notional, loss, or drawdown limits as independent hard fuses, with the stricter applicable constraint binding. They are not one scale-invariant risk coordinate; an equity/volatility-aware replacement is another candidate and cannot silently remove them.
+- Treat BUY E3 and the SELL owner cooldown, wherever owner-side evidence references them, as owner-authorized live risk experiments rather than research-hard-gate passes. They are not validated strategy optima, and public documentation must not infer whether either experiment is currently active.
 
 ## Quick Prompt Examples
-- "Use mm-as-glft-ml-spread to design a BTCUSDC spread adapter with realized vol + VPIN gating."
+- "Use mm-as-glft-ml-spread to audit the BTCUSDC empirical quote controller's inventory, order-size, and risk-horizon units."
 - "Use this skill to audit whether current backtest_tick and live quote policy are parity-safe."
-- "Use this skill to propose a retained-day sweep grid for gamma, p3_kappa_eff, kappa_ratio, depth_kappa_ratio, vol_blend, toxicity spread scaling, and cooldown."
+- "Use this skill to test one preregistered negative-filter candidate against the frozen baseline without relabelling P3 touch slope as GLFT intensity."

@@ -198,7 +198,7 @@ def test_global_flow_visibility_delay_models_serialized_callback_stall():
     delayed = apply_global_flow_visibility_delay(
         data,
         np.asarray([100.0, 1_500.0, 100.0]),
-        profile_id="aws_tokyo_test",
+        profile_id="provider_neutral_test",
         mode="profile_stable_spike",
     )
 
@@ -207,5 +207,5 @@ def test_global_flow_visibility_delay_models_serialized_callback_stall():
         start + 3_500_000_000,
         start + 3_500_000_000,
     ]
-    assert "latency_profile=aws_tokyo_test" in delayed.source
+    assert "latency_profile=provider_neutral_test" in delayed.source
     assert data.ts_ns[0] == start + 1_000_000_000

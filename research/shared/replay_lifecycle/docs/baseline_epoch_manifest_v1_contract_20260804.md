@@ -35,17 +35,9 @@ Epoch intervals cannot overlap. Every nanosecond in manifest scope must belong t
 
 `lifecycle_estimation_authorized=true` requires all ten identity components and a complete restart audit. Continuous economic estimation additionally requires a complete initial economic state. Cross-epoch pooling is always false in v1: estimates are produced per epoch first, followed by an explicit transport comparison.
 
-## Current 360-Hour Draft
+## Private Operational Evidence
 
-The fail-closed draft is `baseline_epoch_manifest_live_360h_draft_v1_20260804.json`, covering 2026-07-19 08:58 through 2026-08-03 08:58 UTC.
-
-- seven frozen operational identities were found;
-- the first 9.01 hours have no frozen baseline identity;
-- every known epoch remains partially bound;
-- restart-history completeness is false;
-- lifecycle and pooled estimation authority are false.
-
-The draft is evidence of the current provenance gap, not a lifecycle result. Remote startup/restart records and missing source/clock/state identities must be bound before the 360-hour lifecycle curves are computed.
+The concrete epoch manifest, runtime boundaries, host/session bindings, and restart evidence are owner-private and `private_not_distributed`. Their absence grants no lifecycle, pooled-estimation, economic, action, or live authority. A consumer must resolve and verify the private bytes explicitly and fail closed when they are missing or mismatched.
 
 ## Implementation
 

@@ -45,8 +45,8 @@ The action outcome was not read before the following identity was frozen:
 | P3 effective kappa | `0.06743811` per (USDC/BTC), the local negative log-touch slope |
 | Queue artifact | queue calibration v3, `q0.70` |
 | Queue artifact SHA256 | `7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd` |
-| REST latency profile | `aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14` |
-| Book visibility profile | `aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718` |
+| REST latency profile | `private_not_distributed` |
+| Book visibility profile | `private_not_distributed` |
 | Action probabilities | K0 `0.50`, K1 `0.50` |
 | Action seed | `20260720` |
 | External reference | disabled |

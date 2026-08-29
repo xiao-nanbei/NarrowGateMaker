@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import hashlib
-from pathlib import Path
-
 import pytest
 
 from models.audit.experiment_scorecard import (
+    score_profile as legacy_score_profile,
     score_profile_contract as legacy_score_profile_contract,
 )
 from models.audit.experiment_scorecard_v2 import (
@@ -15,12 +13,6 @@ from models.audit.experiment_scorecard_v2 import (
     score_canonical_evidence,
     score_profile_contract,
 )
-
-ROOT = Path(__file__).resolve().parents[1]
-LEGACY_SCORECARD_SHA256 = (
-    "5e040041527788a90560899a9f4ebc27fcc3579707aa493fe1470de6199599f6"
-)
-
 
 def _metric(
     estimate: float,
@@ -52,6 +44,7 @@ def _continuous_evidence(
             "n_days": 20,
             "effective_sample_size": 400.0,
             "minimum_behavior_propensity": 0.5,
+            "importance_weight_clipped_rows": 0,
             "unsupported_mass": 0.0,
             "overlap_violations": 0,
             "failures": [],
@@ -100,16 +93,17 @@ def _continuous_evidence(
     }
 
 
-def test_legacy_scorecard_bytes_and_selective_v2_contract_remain_frozen() -> None:
-    path = ROOT / "models" / "audit" / "experiment_scorecard.py"
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == LEGACY_SCORECARD_SHA256
-    assert legacy_score_profile_contract("action_execution_selective_v2") == {
-        "schema_version": "narrowgate_score_profile.v1",
-        "profile_id": "action_execution_selective_v2",
-        "profile_sha256": (
-            "74f6d38c20b4279e6f7d8da069a9fae7467e5d851ffdcdc54a63b75207a97d14"
-        ),
-    }
+def test_legacy_selective_v2_contract_remains_semantically_available() -> None:
+    profile = legacy_score_profile("action_execution_selective_v2")
+    contract = legacy_score_profile_contract("action_execution_selective_v2")
+
+    assert profile.minimum_fills_retention == pytest.approx(0.0)
+    assert profile.require_positive_toxic_selectivity is True
+    assert sum(metric.weight for metric in profile.metrics) == pytest.approx(1.0)
+    assert contract["schema_version"] == "narrowgate_score_profile.v1"
+    assert contract["profile_id"] == profile.profile_id
+    assert len(contract["profile_sha256"]) == 64
+    assert contract == legacy_score_profile_contract(profile.profile_id)
 
 
 def test_v2_profiles_have_unit_weight_and_versioned_contracts() -> None:

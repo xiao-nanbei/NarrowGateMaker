@@ -22,6 +22,7 @@ from strategy.model_contract import (
     REQUIRED_FEATURE_DAG_SHA256,
     REQUIRED_FEATURE_SEMANTICS_VERSION,
     REQUIRED_MODEL_HEADS,
+    absolute_price_variance_unit_contract,
     validate_model_bundle,
 )
 from strategy.order_manager import OrderManager, Side
@@ -227,6 +228,7 @@ def _write_contract_bundle(root: Path, *, vol_semantics: str) -> None:
     for head in REQUIRED_MODEL_HEADS:
         (root / f"{head}.txt").write_text("placeholder", encoding="utf-8")
         metadata = {
+            "symbol": "BTCUSDC",
             "feature_cols": ["close"],
             "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
             "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
@@ -237,6 +239,9 @@ def _write_contract_bundle(root: Path, *, vol_semantics: str) -> None:
             "label_semantics_version": 3,
             "label_window_semantics": "left_closed_right_open_[t,t+h)",
             "feature_manifest_sha256": "feature-manifest-sha",
+            "volatility_unit_contract": absolute_price_variance_unit_contract(
+                "BTCUSDC"
+            ),
         }
         if head.startswith("vol_"):
             metadata["label_semantics"] = vol_semantics
@@ -247,11 +252,25 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
     valid = tmp_path / "valid"
     _write_contract_bundle(valid, vol_semantics="fixed_forward_h_absolute_price_variance")
     assert set(validate_model_bundle(valid)) == set(REQUIRED_MODEL_HEADS)
+    with pytest.raises(ValueError, match="runtime symbol ETHUSDC"):
+        validate_model_bundle(valid, expected_symbol="ETHUSDC")
 
     invalid = tmp_path / "invalid"
     _write_contract_bundle(invalid, vol_semantics="log_return_variance")
     with pytest.raises(ValueError, match="label_semantics"):
         validate_model_bundle(invalid)
+
+    invalid_units = tmp_path / "invalid_units"
+    _write_contract_bundle(
+        invalid_units,
+        vol_semantics="fixed_forward_h_absolute_price_variance",
+    )
+    meta_path = invalid_units / "vol_10s_meta.json"
+    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    metadata["volatility_unit_contract"]["base_asset"] = "ETH"
+    meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(ValueError, match="volatility_unit_contract"):
+        validate_model_bundle(invalid_units)
 
     mixed = tmp_path / "mixed"
     _write_contract_bundle(mixed, vol_semantics="fixed_forward_h_absolute_price_variance")
@@ -265,6 +284,9 @@ def test_model_contract_requires_absolute_price_variance_metadata(tmp_path: Path
 
 def test_ml_off_prediction_does_not_reuse_dimensionless_realized_volatility() -> None:
     engine = SignalEngine(enable_ml=False)
+    assert engine.variance_unit_contract == absolute_price_variance_unit_contract(
+        "BTCUSDC"
+    )
     prediction = engine._predict({"volatility_30s": 0.123})
     assert prediction.vol_10s == 0.0
 

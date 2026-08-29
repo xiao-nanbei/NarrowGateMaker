@@ -22,10 +22,10 @@ The command writes `summary.json`, `trace.jsonl`, and `receipt.json`. A second r
 
 ## Fixture
 
-- [`contract.json`](contract.json) freezes the synthetic classification, denied permissions, input SHA256, denominator, expected terminal values, and gate authority.
-- [`synthetic_tape.jsonl`](synthetic_tape.jsonl) is a hand-authored top-of-book and trade sequence. It is not exchange data and has no empirical or economic authority.
-- [`reference/`](reference/) contains the byte-for-byte expected summary, event trace, and receipt for the distributed engine bytes.
-- [`../../narrowgate/cli.py`](../../narrowgate/cli.py) exposes the canonical public command and delegates to the existing [`../../scripts/narrowgate_replay_demo.py`](../../scripts/narrowgate_replay_demo.py) engine. That reference engine supports only this small FIFO top-book teaching contract; it is not the private-data full replay and does not claim live fidelity.
+- [`contract.json`](../../narrowgate/fixtures/replay_demo/contract.json) freezes the synthetic classification, denied permissions, input SHA256, denominator, expected terminal values, and gate authority.
+- [`synthetic_tape.jsonl`](../../narrowgate/fixtures/replay_demo/synthetic_tape.jsonl) is a hand-authored top-of-book and trade sequence. It is not exchange data and has no empirical or economic authority.
+- [`reference/`](../../narrowgate/fixtures/replay_demo/reference/) contains the byte-for-byte expected summary, event trace, and receipt for the distributed engine bytes.
+- [`../../narrowgate/cli.py`](../../narrowgate/cli.py) exposes the canonical public command and delegates to the packaged [`../../narrowgate/replay_demo.py`](../../narrowgate/replay_demo.py) engine. That reference engine supports only this small FIFO top-book teaching contract; it is not the private-data full replay and does not claim live fidelity.
 
 ## Evidence Boundary
 
@@ -33,4 +33,4 @@ The runner imports the repository's continuous accounting ledger for cash, inven
 
 The gate always keeps `economic_evidence_eligible`, `promotion_eligible`, and `live_action_eligible` false. It cannot access the network, import the live runtime, submit external orders, read private evidence, or silently substitute local market data. A tape hash mismatch fails before replay; a denominator, accounting, or terminal mismatch writes a `failed_closed` gate.
 
-Evidence availability: every tape, contract, engine, summary, trace, and receipt byte referenced by this demo is distributed in this public directory or at the repository-relative source paths named by the receipt. No private evidence is used.
+Evidence availability: every tape, contract, engine, summary, trace, and receipt byte referenced by this demo is distributed in the public package or at the repository-relative source paths named by the receipt. No private evidence is used.

@@ -19,6 +19,9 @@ Usage:
 
   # 正式本地 dry-run (校验后退出，不创建网络客户端或订单路径)
   python live/main.py --dry-run --config live/formal_dry_run_public.yaml
+
+  # 进程完全停止后，生成 signed REST 交易所对账权威文件
+  python live/main.py --write-stopped-reconciliation /absolute/path.json --config /private/config.yaml
 """
 
 import argparse
@@ -54,10 +57,9 @@ from live.config import (
     set_restart_only_config_sha256,
 )
 from live.runtime_policy import (
+    deployment_envelope_runtime_authority,
     f05_boolean_cooldown_runtime_policy,
-    f05_buy_e3_active_release_runtime_authority,
     f05_buy_e3_runtime_policy,
-    live_safety_successor_runtime_authority,
     q90_action_runtime_policy,
     write_runtime_identity,
 )
@@ -68,8 +70,9 @@ from models.replay.prospective_baseline_epoch import (
     snapshot_action_enablement,
     snapshot_data_source_identity,
 )
-from scripts import f05_live_safety_locked_runtime as locked_runtime
+from live import deployment_runtime as locked_runtime
 from strategy.maker_engine import MakerEngine
+from strategy.quote_core import QUOTE_CORE_UNIT_ABI_FIELDS
 
 POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
 
@@ -179,7 +182,10 @@ def run_formal_dry_run(
         )
 
         model_dir = _configured_model_dir(cfg)
-        model_metadata = validate_model_bundle(model_dir)
+        model_metadata = validate_model_bundle(
+            model_dir,
+            expected_symbol=cfg.symbol,
+        )
         p3_path = model_dir / "fill_prob_params.json"
         if not p3_path.is_file():
             raise ValueError(f"model bundle is missing fill_prob_params.json: {p3_path}")
@@ -231,10 +237,7 @@ def run_formal_dry_run(
     )
     return exit_code
 
-STARTUP_ATTESTATION_SCHEMA = "narrowgate_buy_e3_startup_attestation.v5"
-LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_SCHEMA = (
-    "narrowgate_buy_e3_startup_attestation.v6"
-)
+STARTUP_ATTESTATION_SCHEMA = "narrowgate_startup_attestation.v1"
 RUNNING_CHECKOUT_SCHEMA = "narrowgate_running_checkout_identity.v2"
 INTERPRETER_IDENTITY_SCHEMA = "narrowgate_interpreter_identity.v1"
 NATIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_native_runtime_identity.v1"
@@ -250,9 +253,6 @@ STARTUP_ATTESTATION_GATE_NAMES = (
     "fill_cooldown_checkpoint_binding_valid",
     "fill_cooldown_deadline_contract_valid",
     "fill_cooldown_artifact_contract_valid",
-    "buy_e3_active_release_contract_valid",
-    "buy_e3_active_release_matches_checkout",
-    "buy_e3_active_release_matches_running_config",
     "shadow_config_explicit",
     "global_flow_shadow_backend_contract_valid",
     "global_reference_shadow_state_contract_valid",
@@ -277,9 +277,9 @@ STARTUP_ATTESTATION_GATE_NAMES = (
     "git_snapshot_stable",
     "safe_to_start_live_loops",
 )
-LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_GATE_NAMES = (
+DEPLOYMENT_ENVELOPE_STARTUP_ATTESTATION_GATE_NAMES = (
     *STARTUP_ATTESTATION_GATE_NAMES[:-1],
-    "live_safety_successor_authority_valid",
+    "deployment_envelope_authority_valid",
     "repository_module_closure_available",
     "repository_module_closure_complete",
     "mandatory_safety_modules_loaded",
@@ -306,7 +306,7 @@ KEY_LOADED_RUNTIME_MODULES = {
         "strategy/boolean_cooldown_buy_e3.py",
     ),
 }
-LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES = {
+DEPLOYMENT_ENVELOPE_KEY_LOADED_RUNTIME_MODULES = {
     **KEY_LOADED_RUNTIME_MODULES,
     "inventory_manager": ("strategy.inventory_manager", "strategy/inventory_manager.py"),
     "order_manager": ("strategy.order_manager", "strategy/order_manager.py"),
@@ -351,7 +351,6 @@ def _git_snapshot() -> dict:
     return {
         "commit": commit,
         "tree": tree,
-        "status_porcelain_sha256": _sha256_bytes(status),
         "status_entry_count": len(status.splitlines()),
         "worktree_clean": not status,
         "snapshot_internally_stable": first == second,
@@ -390,23 +389,22 @@ def _runtime_source_rows(*, loaded_paths: Sequence[str] | None = None) -> list[d
         paths.update(loaded_paths)
     for relative in sorted(paths):
         path = ROOT / relative
-        working = path.read_bytes()
-        head = _git_output("show", f"HEAD:{relative}")
+        resolved = path.resolve(strict=True)
+        tracked_type = _git_output("cat-file", "-t", f"HEAD:{relative}").decode(
+            "ascii"
+        ).strip()
         rows.append(
             {
                 "path": relative,
-                "working_file_sha256": _sha256_bytes(working),
-                "head_blob_sha256": _sha256_bytes(head),
-                "working_size_bytes": len(working),
-                "head_blob_size_bytes": len(head),
-                "matches_head_blob": working == head,
+                "tracked_in_head": tracked_type == "blob",
+                "regular_file_under_repository": (
+                    not path.is_symlink()
+                    and resolved.is_file()
+                    and resolved.is_relative_to(ROOT)
+                ),
             }
         )
     return rows
-
-
-def _runtime_source_manifest_sha256(rows: list[dict]) -> str:
-    return _sha256_bytes(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8"))
 
 
 def _file_byte_identity(path: str | Path) -> dict:
@@ -434,11 +432,12 @@ def _loaded_module_origins(
         relative = origin.relative_to(ROOT).as_posix()
         if relative != expected_relative:
             raise RuntimeError(f"loaded module origin drifted: {role}")
+        if relative not in source_by_path:
+            raise RuntimeError(f"loaded module is outside runtime source closure: {role}")
         output[role] = {
             "module_name": module_name,
             "origin_path": str(origin),
             "repository_relative_path": relative,
-            "source_sha256": source_by_path[relative]["working_file_sha256"],
         }
     return output
 
@@ -470,7 +469,6 @@ def _repository_loaded_module_closure(source_rows: list[dict]) -> list[dict]:
             "module_name": module_name,
             "origin_path": str(ROOT / relative),
             "repository_relative_path": relative,
-            "source_sha256": source_by_path[relative]["working_file_sha256"],
         }
         closure.append(row)
     return sorted(
@@ -497,7 +495,7 @@ def _bind_successor_cpp_module_token(expected_venv: Path) -> str:
     token = f"{expected_venv.expanduser().resolve(strict=True)}{os.sep}"
     supplied = os.environ.get(CPP_MODULE_TOKEN_ENV, "")
     if supplied and supplied != token:
-        raise RuntimeError("native module token differs from successor authority")
+        raise RuntimeError("native module token differs from deployment authority")
     os.environ[CPP_MODULE_TOKEN_ENV] = token
     return token
 
@@ -535,7 +533,7 @@ def build_startup_attestation(
     pre_snapshot = _git_snapshot()
     successor = safety_authority is not None
     if successor:
-        for module_name, _relative in LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES.values():
+        for module_name, _relative in DEPLOYMENT_ENVELOPE_KEY_LOADED_RUNTIME_MODULES.values():
             importlib.import_module(module_name)
         loaded_modules_before = _repository_loaded_python_modules()
         source_rows = _runtime_source_rows(
@@ -543,7 +541,7 @@ def build_startup_attestation(
         )
         loaded_origins = _loaded_module_origins(
             source_rows,
-            LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES,
+            DEPLOYMENT_ENVELOPE_KEY_LOADED_RUNTIME_MODULES,
         )
         repository_module_closure = _repository_loaded_module_closure(source_rows)
         loaded_modules_after = _repository_loaded_python_modules()
@@ -555,7 +553,6 @@ def build_startup_attestation(
         loaded_modules_after = ()
     fill_state = engine.fill_cooldown_state_snapshot()
     shadow_runtime = engine.shadow_runtime_snapshot()
-    active_release = engine.buy_e3_active_release_identity()
     post_snapshot = _git_snapshot()
     interpreter_after = _file_byte_identity(sys.executable)
     native_after = _native_runtime_file_identity(native_runtime)
@@ -576,22 +573,26 @@ def build_startup_attestation(
             == str(sysconfig.get_config_var("SOABI"))
             and native_runtime.get("locked_runtime", {}).get("validated") is True
             and native_runtime.get("locked_runtime", {}).get(
-                "installed_record_aggregate_sha256"
+                "release_root_sha256"
             )
-            == safety_authority.get("installed_record_aggregate_sha256")
-            and native_runtime.get("locked_runtime", {}).get("interpreter")
-            == safety_authority.get("locked_runtime_interpreter")
+            == safety_authority.get("canonical_sha256")
+            and interpreter_after.get("sha256")
+            == safety_authority.get("locked_runtime_interpreter", {}).get(
+                "executable_sha256"
+            )
         )
 
     snapshots_equal = pre_snapshot == post_snapshot
-    runtime_files_match = bool(source_rows) and all(row["matches_head_blob"] for row in source_rows)
+    runtime_files_match = bool(source_rows) and all(
+        row["tracked_in_head"] and row["regular_file_under_repository"]
+        for row in source_rows
+    )
     loaded_under_repo = all(
         Path(row["origin_path"]).is_relative_to(ROOT) for row in loaded_origins.values()
     )
     source_by_path = {row["path"]: row for row in source_rows}
     loaded_match_sources = all(
-        row["source_sha256"]
-        == source_by_path[row["repository_relative_path"]]["working_file_sha256"]
+        row["repository_relative_path"] in source_by_path
         for row in loaded_origins.values()
     )
     native_enabled = native_before is not None
@@ -626,7 +627,9 @@ def build_startup_attestation(
         "commit_identical": pre_snapshot["commit"] == post_snapshot["commit"],
         "tree_identical": pre_snapshot["tree"] == post_snapshot["tree"],
         "status_identical": (
-            pre_snapshot["status_porcelain_sha256"] == post_snapshot["status_porcelain_sha256"]
+            pre_snapshot["worktree_clean"] == post_snapshot["worktree_clean"]
+            and pre_snapshot["status_entry_count"]
+            == post_snapshot["status_entry_count"]
         ),
         "runtime_files_match_head": runtime_files_match,
         "stable": snapshots_equal and runtime_files_match,
@@ -640,7 +643,6 @@ def build_startup_attestation(
         "post_snapshot": post_snapshot,
         "stable_snapshot": stable_snapshot,
         "runtime_source_file_count": len(source_rows),
-        "runtime_source_manifest_sha256": _runtime_source_manifest_sha256(source_rows),
         "runtime_source_files": source_rows,
     }
     restore_mode = str(fill_state.get("restore_mode", ""))
@@ -655,36 +657,6 @@ def build_startup_attestation(
         else "B0"
     )
     release_required = runtime_active_identity.startswith("BUY_E3:")
-    release_available = all(
-        bool(active_release.get(name))
-        for name in (
-            "path",
-            "file_sha256",
-            "file_canonical_sha256",
-            "execution_commit",
-            "execution_tree",
-            "annotated_operational_tag",
-            "annotated_operational_tag_object",
-            "active_config_file_sha256",
-            "disabled_config_file_sha256",
-        )
-    )
-    release_contract_valid = (
-        release_available if release_required else not any(active_release.values())
-    )
-    release_matches_checkout = (
-        (
-            active_release.get("execution_commit") == checkout["git_commit"]
-            and active_release.get("execution_tree") == checkout["git_tree"]
-        )
-        if release_required
-        else True
-    )
-    release_matches_running_config = (
-        active_release.get("active_config_file_sha256") == running_config_sha256
-        if release_required
-        else True
-    )
     flow_enabled = shadow_runtime.get("global_flow_shadow_enabled")
     reference_enabled = shadow_runtime.get("global_reference_shadow_enabled")
     flow_backend = shadow_runtime.get("global_flow_backend", {})
@@ -805,11 +777,6 @@ def build_startup_attestation(
                 and runtime_active_identity == "B0"
             )
         ),
-        "buy_e3_active_release_contract_valid": release_contract_valid,
-        "buy_e3_active_release_matches_checkout": release_matches_checkout,
-        "buy_e3_active_release_matches_running_config": (
-            release_matches_running_config
-        ),
         "shadow_config_explicit": shadow_config_explicit,
         "global_flow_shadow_backend_contract_valid": global_flow_contract_valid,
         "global_reference_shadow_state_contract_valid": (
@@ -824,7 +791,7 @@ def build_startup_attestation(
         "loaded_module_origins_available": (
             set(loaded_origins)
             == set(
-                LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES
+                DEPLOYMENT_ENVELOPE_KEY_LOADED_RUNTIME_MODULES
                 if successor
                 else KEY_LOADED_RUNTIME_MODULES
             )
@@ -853,21 +820,17 @@ def build_startup_attestation(
     if successor:
         gates.update(
             {
-                "live_safety_successor_authority_valid": safety_authority_valid,
+                "deployment_envelope_authority_valid": safety_authority_valid,
                 "repository_module_closure_available": bool(repository_module_closure),
                 "repository_module_closure_complete": (
                     loaded_modules_before == loaded_modules_after
                     and all(
                         row["repository_relative_path"] in source_by_path
-                        and row["source_sha256"]
-                        == source_by_path[row["repository_relative_path"]][
-                            "working_file_sha256"
-                        ]
                         for row in repository_module_closure
                     )
                 ),
                 "mandatory_safety_modules_loaded": set(loaded_origins)
-                == set(LIVE_SAFETY_SUCCESSOR_KEY_LOADED_RUNTIME_MODULES),
+                == set(DEPLOYMENT_ENVELOPE_KEY_LOADED_RUNTIME_MODULES),
             }
         )
     gates["safe_to_start_live_loops"] = all(
@@ -875,16 +838,11 @@ def build_startup_attestation(
     )
     errors = sorted(name for name, passed in gates.items() if not passed)
     attestation = {
-        "schema_version": (
-            LIVE_SAFETY_SUCCESSOR_STARTUP_ATTESTATION_SCHEMA
-            if successor
-            else STARTUP_ATTESTATION_SCHEMA
-        ),
+        "schema_version": STARTUP_ATTESTATION_SCHEMA,
         "status": "accepted" if not errors else "rejected",
         "attested_at_utc": datetime.now(UTC).isoformat(),
         "fill_cooldown_state": fill_state,
         "shadow_runtime_identity": shadow_runtime,
-        "buy_e3_active_release": active_release,
         "running_checkout": checkout,
         "loaded_module_origins": loaded_origins,
         "interpreter_identity": interpreter_identity,
@@ -893,7 +851,12 @@ def build_startup_attestation(
         "errors": errors,
     }
     if successor:
-        attestation["live_safety_successor"] = dict(safety_authority or {})
+        attestation["deployment_envelope"] = {
+            "path": str((safety_authority or {}).get("path", "")),
+            "canonical_sha256": str(
+                (safety_authority or {}).get("canonical_sha256", "")
+            ),
+        }
         attestation["loaded_repository_module_closure"] = repository_module_closure
     return attestation
 
@@ -964,6 +927,21 @@ def audit_native_runtime(
                     raise RuntimeError(
                         "narrowgate_cpp ABI missing fields: " + ", ".join(missing_fields)
                     )
+                quote_config = getattr(module, "QuoteCoreConfig", None)
+                quote_config_instance = (
+                    quote_config() if quote_config is not None else None
+                )
+                missing_unit_fields = [
+                    f"QuoteCoreConfig.{field_name}"
+                    for field_name in QUOTE_CORE_UNIT_ABI_FIELDS
+                    if quote_config_instance is None
+                    or not hasattr(quote_config_instance, field_name)
+                ]
+                if missing_unit_fields:
+                    raise RuntimeError(
+                        "narrowgate_cpp ABI missing fields: "
+                        + ", ".join(missing_unit_fields)
+                    )
             if enabled["NARROWGATE_CPP_GLOBAL_FLOW"]:
                 aggregator = module.TradeBarAggregator(False)
                 if not hasattr(aggregator, "update_batch"):
@@ -1012,7 +990,7 @@ def audit_native_runtime(
             or str(sysconfig.get_config_var("SOABI"))
             != safety_authority.get("native_soabi")
         ):
-            raise RuntimeError("native runtime differs from live safety successor authority")
+            raise RuntimeError("native runtime differs from deployment authority")
         install_receipt_path = Path(
             str(safety_authority.get("install_receipt_path", ""))
         ).expanduser()
@@ -1020,11 +998,9 @@ def audit_native_runtime(
             not install_receipt_path.is_absolute()
             or install_receipt_path.is_symlink()
             or not install_receipt_path.is_file()
-            or _sha256_bytes(install_receipt_path.read_bytes())
-            != safety_authority.get("install_receipt_file_sha256")
         ):
             raise RuntimeError(
-                "locked runtime install receipt differs from successor authority"
+                "locked runtime install receipt differs from deployment authority"
             )
         frozen_interpreter = safety_authority.get("locked_runtime_interpreter")
         if not isinstance(frozen_interpreter, Mapping):
@@ -1092,12 +1068,6 @@ def audit_native_runtime(
             locked_receipt.get("interpreter") != frozen_interpreter
             or locked_receipt.get("installed_record_aggregate_sha256")
             != safety_authority.get("installed_record_aggregate_sha256")
-            or locked_receipt.get("lock_authority", {}).get("lock_file_sha256")
-            != safety_authority.get("runtime_lock_file_sha256")
-            or locked_receipt.get("wheelhouse_authority", {}).get(
-                "manifest_file_sha256"
-            )
-            != safety_authority.get("wheelhouse_manifest_file_sha256")
         ):
             raise RuntimeError("locked successor runtime receipt authority drifted")
         _bind_successor_cpp_module_token(expected_venv)
@@ -1114,27 +1084,12 @@ def audit_native_runtime(
         runtime_identity["abi_contract"] = abi_contract
         runtime_identity["locked_runtime"] = {
             "validated": True,
+            "release_root_sha256": safety_authority["canonical_sha256"],
             "venv_selector_path": str(selected_venv),
             "venv_selector_target": selector_target,
             "venv_real_path": str(expected_venv),
             "python_real_path": str(locked_runtime_python),
             "install_receipt_path": str(install_receipt_path.resolve(strict=True)),
-            "install_receipt_file_sha256": safety_authority[
-                "install_receipt_file_sha256"
-            ],
-            "install_receipt_canonical_sha256": safety_authority[
-                "install_receipt_canonical_sha256"
-            ],
-            "runtime_lock_canonical_sha256": safety_authority[
-                "runtime_lock_canonical_sha256"
-            ],
-            "wheelhouse_canonical_sha256": safety_authority[
-                "wheelhouse_canonical_sha256"
-            ],
-            "installed_record_aggregate_sha256": locked_receipt[
-                "installed_record_aggregate_sha256"
-            ],
-            "interpreter": dict(locked_receipt["interpreter"]),
         }
     return runtime_identity
 
@@ -1347,15 +1302,6 @@ def record_startup_runtime_identity(
     f05_buy_e3_policy_fields = {
         key: value for key, value in f05_buy_e3_policy.items() if key != "schema_version"
     }
-    f05_buy_e3_active_release = f05_buy_e3_active_release_runtime_authority(
-        bool(cfg.strategy.buy_e3_cooldown_policy_enabled),
-        require_present=engine is not None,
-    )
-    f05_buy_e3_active_release_fields = {
-        key: value
-        for key, value in f05_buy_e3_active_release.items()
-        if key != "schema_version"
-    }
     model_dir = Path(str(cfg.ml.model_dir)).expanduser()
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
@@ -1418,38 +1364,9 @@ def record_startup_runtime_identity(
         **q90_policy_fields,
         "f05_boolean_cooldown_runtime_policy_schema_version": f05_policy["schema_version"],
         **f05_policy_fields,
-        "f05_boolean_cooldown_policy_sha256": str(cfg.strategy.boolean_cooldown_policy_sha256)
-        .strip()
-        .lower(),
-        "f05_boolean_cooldown_predicate_bundle_sha256": str(
-            cfg.strategy.boolean_cooldown_predicate_bundle_sha256
-        )
-        .strip()
-        .lower(),
         "f05_boolean_cooldown_ema_warmup_s": float(cfg.strategy.boolean_cooldown_ema_warmup_s),
         "f05_buy_e3_runtime_policy_schema_version": f05_buy_e3_policy["schema_version"],
         **f05_buy_e3_policy_fields,
-        "f05_buy_e3_active_release_authority_schema_version": (
-            f05_buy_e3_active_release["schema_version"]
-        ),
-        **{
-            f"f05_buy_e3_{key}": value
-            for key, value in f05_buy_e3_active_release_fields.items()
-        },
-        "f05_buy_e3_artifact_manifest_sha256": str(
-            cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
-        )
-        .strip()
-        .lower(),
-        "f05_buy_e3_artifact_sha256": str(cfg.strategy.buy_e3_cooldown_artifact_sha256)
-        .strip()
-        .lower(),
-        "f05_buy_e3_policy_sha256": str(cfg.strategy.buy_e3_cooldown_policy_sha256).strip().lower(),
-        "f05_buy_e3_predicate_bundle_sha256": str(
-            cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
-        )
-        .strip()
-        .lower(),
         "f05_buy_e3_ema_warmup_s": float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
     }
     if engine is not None:
@@ -1494,6 +1411,144 @@ def _initial_exchange_open_orders(rest, *, symbol: str) -> list[dict]:
     return normalized
 
 
+def _strict_stopped_position_rows(
+    rows: object,
+    *,
+    symbol: str,
+) -> list[dict[str, str | int]]:
+    """Normalize one strict one-way positionRisk row for a stopped barrier."""
+
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], Mapping):
+        raise RuntimeError("stopped reconciliation requires exactly one positionRisk row")
+    row = rows[0]
+    if str(row.get("symbol", "")) != symbol or str(row.get("positionSide", "")) != "BOTH":
+        raise RuntimeError("stopped reconciliation requires one-way/BOTH positionRisk")
+    try:
+        quantity = Decimal(str(row.get("positionAmt", "")))
+        entry_price = Decimal(str(row.get("entryPrice", "")))
+        update_time_ms = int(row.get("updateTime", 0) or 0)
+    except (TypeError, ValueError, InvalidOperation) as exc:
+        raise RuntimeError("stopped reconciliation positionRisk is malformed") from exc
+    if (
+        not quantity.is_finite()
+        or not entry_price.is_finite()
+        or entry_price < 0
+        or update_time_ms < 0
+    ):
+        raise RuntimeError("stopped reconciliation positionRisk is invalid")
+    return [
+        {
+            "symbol": symbol,
+            "position_side": "BOTH",
+            "position_amt": str(row.get("positionAmt", "")),
+            "entry_price": str(row.get("entryPrice", "")),
+            "update_time_ms": update_time_ms,
+        }
+    ]
+
+
+def build_stopped_exchange_reconciliation(
+    rest,
+    *,
+    symbol: str,
+    api_key: str,
+    generated_utc: str | None = None,
+) -> dict[str, Any]:
+    """Double-read signed exchange state while every local maker is stopped."""
+
+    get_orders = getattr(rest, "get_orders", None)
+    get_position_risk = getattr(rest, "get_position_risk", None)
+    if not callable(get_orders) or not callable(get_position_risk):
+        raise RuntimeError("stopped reconciliation requires signed Futures endpoints")
+    first_orders = get_orders(symbol=symbol)
+    if first_orders != []:
+        raise RuntimeError("stopped reconciliation requires zero exchange open orders")
+    first_position = _strict_stopped_position_rows(
+        get_position_risk(symbol=symbol), symbol=symbol
+    )
+    second_orders = get_orders(symbol=symbol)
+    if second_orders != []:
+        raise RuntimeError("exchange open orders appeared during stopped reconciliation")
+    second_position = _strict_stopped_position_rows(
+        get_position_risk(symbol=symbol), symbol=symbol
+    )
+    if second_position != first_position:
+        raise RuntimeError("positionRisk drifted during stopped reconciliation")
+    position_raw = json.dumps(
+        first_position,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    payload: dict[str, Any] = {
+        "schema_version": "narrowgate_stopped_exchange_reconciliation.v1",
+        "status": "signed_open_orders_zero_exact_position_stable",
+        "generated_utc": generated_utc
+        or datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+        "symbol": symbol,
+        "open_order_count": 0,
+        "signed_endpoints": [
+            "/fapi/v1/openOrders",
+            POSITION_RISK_RECONCILIATION_ENDPOINT,
+        ],
+        "signed_read_sequence": [
+            "/fapi/v1/openOrders",
+            POSITION_RISK_RECONCILIATION_ENDPOINT,
+            "/fapi/v1/openOrders",
+            POSITION_RISK_RECONCILIATION_ENDPOINT,
+        ],
+        "account_key_sha256": _sha256_bytes(str(api_key).encode("utf-8")),
+        "position_rows": first_position,
+        "position_lineage_sha256": _sha256_bytes(position_raw),
+    }
+    canonical_raw = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("ascii")
+    payload["canonical_exchange_reconciliation_sha256"] = _sha256_bytes(
+        canonical_raw
+    )
+    return payload
+
+
+def write_stopped_exchange_reconciliation(
+    rest,
+    *,
+    symbol: str,
+    api_key: str,
+    output_path: Path,
+    generated_utc: str | None = None,
+) -> dict[str, str]:
+    """Atomically publish a private stopped-exchange reconciliation authority."""
+
+    candidate = output_path.expanduser()
+    if not candidate.is_absolute() or "\x00" in str(candidate):
+        raise ValueError("stopped reconciliation output path must be absolute")
+    if candidate.exists() or candidate.is_symlink():
+        raise ValueError("stopped reconciliation output must be create-only")
+    payload = build_stopped_exchange_reconciliation(
+        rest,
+        symbol=symbol,
+        api_key=api_key,
+        generated_utc=generated_utc,
+    )
+    write_runtime_identity(candidate, payload)
+    resolved = candidate.resolve(strict=True)
+    metadata = resolved.stat()
+    if metadata.st_mode & 0o777 != 0o600 or metadata.st_nlink != 1:
+        raise RuntimeError("stopped reconciliation output permissions drifted")
+    return {
+        "path": str(resolved),
+        "canonical_sha256": str(
+            payload["canonical_exchange_reconciliation_sha256"]
+        ),
+    }
+
+
 def validate_startup_exchange_reconciliation_lineage(
     rest,
     *,
@@ -1519,22 +1574,13 @@ def validate_startup_exchange_reconciliation_lineage(
     if metadata.st_nlink != 1 or metadata.st_mode & 0o777 != 0o600:
         raise RuntimeError("startup exchange reconciliation inode drifted")
     before = resolved.read_bytes()
-    expected_file_sha256 = os.environ.get(
-        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256", ""
-    ).strip().lower()
     expected_canonical_sha256 = os.environ.get(
         "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256", ""
     ).strip().lower()
-    expected_account_key_sha256 = os.environ.get(
-        "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256", ""
-    ).strip().lower()
     running_account_key_sha256 = _sha256_bytes(str(api_key).encode("utf-8"))
-    if (
-        len(expected_file_sha256) != 64
-        or _sha256_bytes(before) != expected_file_sha256
-        or len(expected_canonical_sha256) != 64
-        or len(expected_account_key_sha256) != 64
-        or expected_account_key_sha256 != running_account_key_sha256
+    if len(expected_canonical_sha256) != 64 or any(
+        character not in "0123456789abcdef"
+        for character in expected_canonical_sha256
     ):
         raise RuntimeError("startup exchange reconciliation binding is missing or drifted")
     try:
@@ -1566,7 +1612,7 @@ def validate_startup_exchange_reconciliation_lineage(
         != ["/fapi/v1/openOrders", POSITION_RISK_RECONCILIATION_ENDPOINT]
         or expected_canonical != actual_canonical
         or expected_canonical != expected_canonical_sha256
-        or payload.get("account_key_sha256") != expected_account_key_sha256
+        or payload.get("account_key_sha256") != running_account_key_sha256
         or not isinstance(position_rows, list)
         or len(position_rows) != 1
         or position_rows[0].get("position_side") != "BOTH"
@@ -1633,9 +1679,7 @@ def validate_startup_exchange_reconciliation_lineage(
     )
     return {
         "path": str(resolved),
-        "file_sha256": expected_file_sha256,
         "canonical_sha256": expected_canonical_sha256,
-        "account_key_sha256": expected_account_key_sha256,
         "position_lineage_sha256": lineage,
     }
 
@@ -1647,6 +1691,7 @@ def initialize_prospective_lifecycle_collection(
     rest,
     config_path: Path,
     native_runtime: dict,
+    safety_authority: Mapping[str, Any],
 ) -> tuple[object | None, OrderLifecycleLiveWriterV2 | None]:
     """Create one fully bound epoch and async writer before the main loop."""
 
@@ -1672,6 +1717,14 @@ def initialize_prospective_lifecycle_collection(
     if not model_dir.is_absolute():
         model_dir = ROOT / model_dir
     model_dir = model_dir.resolve(strict=True)
+    checkout = _git_snapshot()
+    if (
+        checkout["snapshot_internally_stable"] is not True
+        or checkout["worktree_clean"] is not True
+        or checkout["commit"] != safety_authority.get("execution_commit")
+        or checkout["tree"] != safety_authority.get("execution_tree")
+    ):
+        raise RuntimeError("prospective epoch checkout differs from deployment release root")
     epoch = publish_prospective_baseline_epoch(
         output_root=settings.prospective_epoch_root,
         required_mount=settings.required_mount,
@@ -1682,7 +1735,12 @@ def initialize_prospective_lifecycle_collection(
         model_dir=model_dir,
         p3_path=model_dir / "fill_prob_params.json",
         feature_dag_sha256=TEN_SECOND_CAUSAL_GRAPH.sha256(),
-        runtime_code_paths=prospective_epoch_runtime_code_paths(ROOT),
+        release_source={
+            "commit": checkout["commit"],
+            "tree": checkout["tree"],
+            "release_root_sha256": safety_authority.get("canonical_sha256"),
+            "worktree_clean": True,
+        },
         native_runtime=native_runtime,
         native_module_path=native_runtime.get("module"),
         action_enablement=snapshot_action_enablement(cfg),
@@ -1733,6 +1791,7 @@ def start_engine_with_prospective_collection(
     rest,
     config_path: Path,
     native_runtime: dict,
+    safety_authority: Mapping[str, Any],
     dry_run: bool,
     exchange_reconciliation_required: bool = False,
     runtime_identity_path: Path | None = None,
@@ -1770,6 +1829,7 @@ def start_engine_with_prospective_collection(
         rest=rest,
         config_path=config_path,
         native_runtime=native_runtime,
+        safety_authority=safety_authority,
     )
     if not dry_run:
         ws.start(rest)
@@ -1956,11 +2016,17 @@ def _runtime_age_text(value: object) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="NarrowGate Maker Engine")
-    parser.add_argument("--live", action="store_true", help="Use mainnet (override testnet config)")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--live", action="store_true", help="Use mainnet (override testnet config)")
+    mode.add_argument(
         "--dry-run",
         action="store_true",
         help="Validate config/model contract locally, then exit",
+    )
+    mode.add_argument(
+        "--write-stopped-reconciliation",
+        type=Path,
+        help="Write a signed stopped-exchange reconciliation to an absolute path",
     )
     parser.add_argument(
         "--dry-run-timeout-s",
@@ -1974,9 +2040,6 @@ def main():
     parser.add_argument("--config", type=str, default=None, help="Path to config.yaml")
     args = parser.parse_args()
 
-    if args.dry_run and args.live:
-        parser.error("--dry-run and --live are mutually exclusive")
-
     config_path = Path(args.config) if args.config else ROOT / "live" / "config.yaml"
     if args.dry_run:
         return run_formal_dry_run(
@@ -1986,20 +2049,27 @@ def main():
 
     # Load config only after the formal dry-run branch has exited.
     cfg = load_config(config_path)
+    if args.write_stopped_reconciliation is not None:
+        if not cfg.api.key or not cfg.api.secret:
+            parser.error("stopped reconciliation requires API credentials")
+        rest = create_rest_client(cfg)
+        result = write_stopped_exchange_reconciliation(
+            rest,
+            symbol=cfg.symbol,
+            api_key=str(cfg.api.key),
+            output_path=args.write_stopped_reconciliation,
+        )
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return 0
     resolved_config_path = config_path.expanduser().resolve()
-    safety_authority = live_safety_successor_runtime_authority(
-        expected_manifest_file_sha256=str(
-            cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
-        ),
-        expected_policy_file_sha256=str(cfg.strategy.buy_e3_cooldown_policy_sha256),
-        expected_predicate_bundle_file_sha256=str(
-            cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
-        ),
+    buy_e3_enabled = bool(cfg.strategy.buy_e3_cooldown_policy_enabled)
+    safety_authority = deployment_envelope_runtime_authority(
+        buy_e3_enabled=buy_e3_enabled,
     )
     running_config_sha256 = _sha256_bytes(resolved_config_path.read_bytes())
     expected_config_sha256 = (
         safety_authority["active_config_file_sha256"]
-        if bool(cfg.strategy.buy_e3_cooldown_policy_enabled)
+        if buy_e3_enabled
         else safety_authority["disabled_config_file_sha256"]
     )
     checkout = _git_snapshot()
@@ -2009,7 +2079,7 @@ def main():
         or checkout["tree"] != safety_authority["execution_tree"]
         or checkout["worktree_clean"] is not True
     ):
-        raise RuntimeError("checkout/config differs from live safety successor authority")
+        raise RuntimeError("checkout/config differs from deployment authority")
     set_restart_only_config_sha256(running_config_sha256)
 
     if args.live:
@@ -2080,19 +2150,21 @@ def main():
     )
     if runtime_identity["q90_owner_override_effective"]:
         logger.warning(
-            "OWNER_RISK_ACCEPTED_OVERRIDE q90_action=ON authority=%s",
+            "PRIVATE_DEPLOYMENT_APPROVAL q90_action=ON authority=%s",
             runtime_identity["q90_action_runtime_authority"],
         )
     if runtime_identity["f05_boolean_cooldown_owner_override_effective"]:
         logger.warning(
-            "OWNER_RISK_ACCEPTED_OVERRIDE f05_boolean_cooldown=ON authority=%s",
+            "PRIVATE_DEPLOYMENT_APPROVAL f05_boolean_cooldown=ON authority=%s",
             runtime_identity["f05_boolean_cooldown_runtime_authority"],
         )
     if runtime_identity["f05_buy_e3_owner_override_effective"]:
         logger.warning(
-            "OWNER_RISK_ACCEPTED_OVERRIDE f05_buy_e3=ON authority=%s artifact=%s",
+            "PRIVATE_DEPLOYMENT_APPROVAL f05_buy_e3=ON authority=%s release_root=%s",
             runtime_identity["f05_buy_e3_runtime_authority"],
-            runtime_identity["f05_buy_e3_artifact_sha256"],
+            runtime_identity["startup_attestation"]["deployment_envelope"][
+                "canonical_sha256"
+            ],
         )
 
     # Create WebSocket handler
@@ -2176,7 +2248,10 @@ def main():
                 # The configured bundle must remain restart-safe even while
                 # inference is disabled.  Validation reads metadata only; it
                 # does not load LightGBM trees into the live process.
-                model_metadata = validate_model_bundle(model_dir)
+                model_metadata = validate_model_bundle(
+                    model_dir,
+                    expected_symbol=cfg.symbol,
+                )
                 logger.info(
                     "Models: %d strict LightGBM heads validated in %s (active=%s)",
                     len(model_metadata),
@@ -2202,6 +2277,7 @@ def main():
             rest=rest,
             config_path=resolved_config_path,
             native_runtime=native_runtime,
+            safety_authority=safety_authority,
             dry_run=bool(args.dry_run),
             exchange_reconciliation_required=True,
             runtime_identity_path=runtime_identity_path,

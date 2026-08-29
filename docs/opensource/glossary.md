@@ -1,6 +1,6 @@
-# Open Source Glossary
+# Source-Available Project Glossary
 
-Last materially modified: 2026-08-23
+Last materially modified: 2026-08-29
 
 Status: Current contributor-facing terminology.
 
@@ -93,11 +93,16 @@ output shape, and a clean worktree.
 : A source publication or maintenance milestone. It is distinct from a research
 identity, an execution attempt, and the annotated tag bound to a formal attempt.
 
-## Shadow
+## Historical Shadow Terminology
 
 `Shadow` is intentionally overloaded in historical project material. Read the noun
 it modifies and the local contract; do not assume every shadow surface has the same
 mechanics.
+
+Current governance does not run shadow or companion collection and does not use a
+shadow stage as the default route to promotion. The definitions below exist to
+interpret historical records and dormant implementation surfaces; they are not an
+activation guide or current collection workflow.
 
 **Policy or live shadow**
 : A candidate is evaluated beside the effective path and may write decisions or
@@ -105,9 +110,10 @@ diagnostics, but the candidate must not change effective quotes or orders. If it
 changes the action, it is active rather than shadow.
 
 **Data or connector shadow**
-: A read-only market-data stream used for reference, freshness, flow, toxicity, or
-transport evidence. External venue shadow connectors are not execution feeds, do
-not place orders, and cannot silently become quote authority.
+: A historical label for a read-only market-data stream used for reference,
+  freshness, flow, toxicity, or transport evidence. Retained external-venue adapter
+  code is not an execution feed, cannot place orders, and has no current collection
+  or quote authority.
 
 **Replay or what-if shadow**
 : A diagnostic comparison evaluated on historical or replay state. Its causal and
@@ -123,9 +129,10 @@ Project-wide constraints apply to every meaning:
 - shadow does not grant research, action, deployment, or live authority;
 - shadow cannot substitute for authoritative full-path replay or causal action
   evidence;
-- observation-only shadow is not a mandatory promotion stage;
-- engineering shadow for parity, transport, or incident diagnosis must be bounded
-  by an explicit owner, byte or rate budget, and expiry;
+- no shadow or companion collection is a mandatory or currently enabled promotion
+  stage;
+- any future reintroduction requires a separately authorized governance change,
+  bounded collection contract, source identity, budget, and expiry;
 - `shadow` does not mean private: public/private classification is governed
   separately by artifact availability and the documentation contract.
 

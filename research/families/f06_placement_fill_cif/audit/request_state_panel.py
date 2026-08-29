@@ -211,7 +211,7 @@ def _request_delay_arrays(
     )
     cutoffs = np.maximum(0, request_ts_ms - delays)
     summary = {
-        "profile_id": "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260718",
+        "profile_id": "private_not_distributed",
         "seed": int(seed),
         "sample_count": int(len(samples)),
         "request_count": int(len(request_ts_ms)),

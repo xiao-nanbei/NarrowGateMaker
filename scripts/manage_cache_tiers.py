@@ -11,6 +11,7 @@ from typing import Any
 from models.cache_tier_lru import (
     DEFAULT_ALLOWED_CACHE_ROOTS,
     DEFAULT_COLD_ROOT,
+    DEFAULT_COLD_TTL_DAYS,
     DEFAULT_HOT_ROOT,
     DEFAULT_LEDGER_PATH,
     CacheTierConfig,
@@ -52,7 +53,11 @@ def _add_config_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--hot-safety-reserve-gib", type=int, default=60)
     parser.add_argument("--hot-target-free-gib", type=int, default=70)
-    parser.add_argument("--cold-ttl-days", type=int, default=180)
+    parser.add_argument(
+        "--cold-ttl-days",
+        type=int,
+        default=DEFAULT_COLD_TTL_DAYS,
+    )
     parser.add_argument("--symlink-mode", choices=("relative", "absolute"), default="relative")
     parser.add_argument(
         "--allow-unknown-migration",

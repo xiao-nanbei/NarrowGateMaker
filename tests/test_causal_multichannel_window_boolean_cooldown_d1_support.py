@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -13,6 +14,12 @@ from research.families.f05_fill_quality_quote_ev.audit import (
 )
 from research.families.f10_live_replay_attribution.audit import (
     current_live_held_ber_replay_baseline_50d as baseline50,
+)
+
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("NARROWGATE_PRIVATE_RESEARCH_ROOT"),
+    reason="private historical operational denominator is not configured",
 )
 
 

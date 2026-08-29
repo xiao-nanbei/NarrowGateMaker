@@ -500,8 +500,7 @@ def main(argv: list[str] | None = None) -> None:
         "--latency-profile-id",
         default="",
         help=(
-            "Immutable environment label for empirical latency, for example "
-            "aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260712."
+            "Operator-defined immutable environment label for empirical latency."
         ),
     )
     parser.add_argument("--min-train-days", type=int, default=30)

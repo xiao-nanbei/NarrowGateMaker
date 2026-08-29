@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "common.hpp"
 
 namespace narrowgate_cpp {
@@ -7,6 +9,7 @@ namespace narrowgate_cpp {
 // QuoteCoreConfig 是 Python/C++ quote parity 的核心 ABI。
 // 新增/删除字段时必须同步 bindings.cpp、strategy/quote_core.py 的字段列表和 parity tests。
 struct QuoteCoreConfig {
+    // Legacy compatibility input. NaN split fields inherit this value exactly.
     double gamma = 0.01;
     double kappa = 1.0;
     double tick_size = 0.1;
@@ -103,6 +106,31 @@ struct QuoteCoreConfig {
     bool defense_pause = true;
     double defense_emergency_inventory_ratio = 0.50;
     double defense_emergency_loss = 5.0;
+
+    // Appended after every legacy field to preserve the aggregate layout.
+    // inventory_reference_qty is q_ref in base units; order_size is z.
+    // Both split coefficients use inverse-price units (base/quote).
+    double inventory_reference_qty = 1.0;
+    double eta_inventory = std::numeric_limits<double>::quiet_NaN();
+    double a_spread = std::numeric_limits<double>::quiet_NaN();
+    double f03_ret_action_horizon_s = 0.0;
+    bool f03_ret_action_compatible = false;
+    double risk_per_order = std::numeric_limits<double>::quiet_NaN();
+    double execution_intensity_slope = std::numeric_limits<double>::quiet_NaN();
+    double risk_horizon_s = std::numeric_limits<double>::quiet_NaN();
+    bool historical_p3_scalar_adapter_enabled = false;
+    bool p3_side_bbo_floor_enabled = false;
+    bool p3_identity_required = false;
+    std::string p3_event_type;
+    double p3_horizon_s = 0.0;
+    std::string p3_distance_origin;
+    std::string p3_distance_unit;
+    std::string p3_side;
+    std::optional<bool> p3_queue_included;
+    std::string p3_artifact_sha256;
+    double trade_intensity_acceleration_spread_mult =
+        std::numeric_limits<double>::quiet_NaN();
+
 };
 
 struct SideQuoteContext {

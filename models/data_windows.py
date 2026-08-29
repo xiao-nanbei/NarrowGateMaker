@@ -1005,10 +1005,15 @@ def load_tick_window(
             source=execution_trade_source,
             quality_allowed_days=formal_quality_allowed_days,
         )
+        formal_replay = bool(params.get("strict_calibration", False)) or (
+            str(params.get("replay_purpose", "")).strip().lower() == "formal"
+        )
         bars = bt.load_1s_bars(
             days=market_context_days,
             quality_allowed_days=formal_quality_allowed_days,
+            require_dense_source=formal_replay,
         )
+        bars = bt.require_formal_dense_1s_timeline(bars, params)
         if bars is None:
             var_ts_ms, var_ssq, var_ti, var_retsq = _variance_from_trades(trades)
         else:

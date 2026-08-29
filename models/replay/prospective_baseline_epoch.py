@@ -345,25 +345,33 @@ def require_external_collection_root(
     return resolved, mount
 
 
-def runtime_code_identity(
-    *,
-    repo_root: str | Path,
-    relative_paths: Sequence[str],
-) -> dict[str, Any]:
-    root = Path(repo_root).expanduser().resolve(strict=True)
-    if not relative_paths:
-        raise ValueError("runtime code identity requires at least one source path")
-    files: dict[str, str] = {}
-    for relative in sorted(set(map(str, relative_paths))):
-        path = (root / relative).resolve(strict=True)
-        if root != path and root not in path.parents:
-            raise ValueError("runtime code identity escaped the repository root")
-        if not path.is_file():
-            raise ValueError(f"runtime code identity path is not a file: {relative}")
-        files[relative] = sha256_file(path)
+def release_source_identity(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind Git-tracked source once through the deployment release root."""
+
+    if set(source) != {
+        "commit",
+        "tree",
+        "release_root_sha256",
+        "worktree_clean",
+    }:
+        raise ValueError("release source identity fields drifted")
+    commit = str(source["commit"]).strip().lower()
+    tree = str(source["tree"]).strip().lower()
+    release_root = _require_sha256(
+        "deployment release root SHA256", source["release_root_sha256"]
+    )
+    if len(commit) != 40 or any(character not in "0123456789abcdef" for character in commit):
+        raise ValueError("release source commit is malformed")
+    if len(tree) != 40 or any(character not in "0123456789abcdef" for character in tree):
+        raise ValueError("release source tree is malformed")
+    if source["worktree_clean"] is not True:
+        raise ValueError("release source checkout must be clean")
     payload = {
-        "schema_version": "narrowgate_prospective_runtime_code_identity.v1",
-        "files": files,
+        "schema_version": "narrowgate_prospective_release_source_identity.v1",
+        "commit": commit,
+        "tree": tree,
+        "release_root_sha256": release_root,
+        "worktree_clean": True,
     }
     return {**payload, "sha256": canonical_sha256(payload)}
 
@@ -516,7 +524,7 @@ def publish_prospective_baseline_epoch(
     model_dir: str | Path,
     p3_path: str | Path,
     feature_dag_sha256: str,
-    runtime_code_paths: Sequence[str],
+    release_source: Mapping[str, Any],
     native_runtime: Mapping[str, Any],
     native_module_path: str | Path | None,
     action_enablement: Mapping[str, Any],
@@ -564,10 +572,7 @@ def publish_prospective_baseline_epoch(
         raise ValueError("operational baseline identity SHA256 mismatch")
     validate_initial_runtime_state_completeness(initial_runtime_state)
 
-    code_identity = runtime_code_identity(
-        repo_root=repo,
-        relative_paths=runtime_code_paths,
-    )
+    code_identity = release_source_identity(release_source)
     model_identity = directory_content_identity(model_dir)
     p3 = Path(p3_path).expanduser().resolve(strict=True)
     if not p3.is_file():

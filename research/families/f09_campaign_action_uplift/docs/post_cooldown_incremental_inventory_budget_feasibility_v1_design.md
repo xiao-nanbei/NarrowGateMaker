@@ -6,7 +6,7 @@ Status: `single_day_mechanics_smoke_complete_not_registered`. This mutable desig
 
 ## Latest Live Motivation And Scope Boundary
 
-F10's diagnostic-only [`live_240h_loss_solution_routing_v1`](../../f10_live_replay_attribution/docs/live_240h_loss_solution_routing_v1_20260801.md) found that single-level SHORT campaigns were approximately flat in aggregate, while 257 multi-level SHORT campaigns contributed -11.1471 USDC. Every exact depth from two through seven units had negative aggregate PnL, with a sharply worse high-depth tail. This is observational motivation only: depth is endogenous and cannot select a budget, establish a treatment effect, or replace the mechanics-first gates below.
+A private historical loss-routing diagnostic motivated separate multi-level SHORT analysis. The exact operational window and economics are not distributed. This remains observational motivation only: depth is endogenous and cannot select a budget, establish a treatment effect, or replace the mechanics-first gates below.
 
 SELL opener weakness is outside this intervention's scope. A post-cooldown incremental inventory budget can only alter later exposure-increasing fills; it cannot improve the first order that opens a SHORT campaign. BUY and SELL support must remain separate, with SELL/SHORT as the preregistered primary mechanics slice only if that choice is frozen before reading replay outcomes.
 

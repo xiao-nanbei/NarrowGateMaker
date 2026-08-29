@@ -11,15 +11,15 @@ import pytest
 
 from models import backtest_tick as bt
 from models.backtest_tick import _validate_f05_cpp_cooldown_runtime
-from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_cpp_runtime_v22 as cpp_runtime_v22,
-)
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_features import (
     BASE_WINDOW_WIDTH_NS,
     CausalWindowObservation,
 )
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_replay_emitter import (
     CooldownV2ReplayEmitter,
+    ReplayEmitterError,
+    build_cpp_predicate_row,
+    validate_cpp_predicate_row,
 )
 from research.families.f05_fill_quality_quote_ev.audit.causal_multichannel_window_boolean_cooldown_shared_prefix import (
     build_lockstep_digest,
@@ -1155,8 +1155,8 @@ def test_cpp_real_builder_accepts_sparse_support_row_with_runtime_predicates() -
         "feature::channel_support_valid": True,
         "owner_fallback_reason": "",
     }
-    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
-    cpp_runtime_v22.validate_target_predicate_row(
+    row = build_cpp_predicate_row(cpp, opportunity)
+    validate_cpp_predicate_row(
         cpp,
         row,
         opportunity,
@@ -1197,10 +1197,10 @@ def test_cpp_real_builder_rejects_identity_and_width_drift() -> None:
         "feature::channel_support_valid": True,
         "owner_fallback_reason": "",
     }
-    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
+    row = build_cpp_predicate_row(cpp, opportunity)
     row.exposure_fill_ordinal = 2
-    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="identity drifted"):
-        cpp_runtime_v22.validate_target_predicate_row(
+    with pytest.raises(ReplayEmitterError, match="identity drifted"):
+        validate_cpp_predicate_row(
             cpp,
             row,
             opportunity,
@@ -1208,8 +1208,8 @@ def test_cpp_real_builder_rejects_identity_and_width_drift() -> None:
         )
     row.exposure_fill_ordinal = 3
     row.predicate_values = [cpp.F05TriState.TRUE]
-    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="width drifted"):
-        cpp_runtime_v22.validate_target_predicate_row(
+    with pytest.raises(ReplayEmitterError, match="width drifted"):
+        validate_cpp_predicate_row(
             cpp,
             row,
             opportunity,
@@ -1231,13 +1231,13 @@ def test_cpp_real_builder_rejects_missing_or_drifted_support_state() -> None:
     }
     missing = dict(opportunity)
     missing.pop("feature::support_valid")
-    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="lacks required fields"):
-        cpp_runtime_v22.build_target_predicate_row(cpp, missing)
+    with pytest.raises(ReplayEmitterError, match="lacks required fields"):
+        build_cpp_predicate_row(cpp, missing)
 
-    row = cpp_runtime_v22.build_target_predicate_row(cpp, opportunity)
+    row = build_cpp_predicate_row(cpp, opportunity)
     row.support_valid = False
-    with pytest.raises(cpp_runtime_v22.CppOwnerRuntimeError, match="support state drifted"):
-        cpp_runtime_v22.validate_target_predicate_row(
+    with pytest.raises(ReplayEmitterError, match="support state drifted"):
+        validate_cpp_predicate_row(
             cpp,
             row,
             opportunity,

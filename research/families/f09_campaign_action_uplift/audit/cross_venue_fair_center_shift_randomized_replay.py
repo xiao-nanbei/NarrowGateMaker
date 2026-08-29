@@ -884,6 +884,7 @@ def evaluate_scope(
             "n_days": int(derived["day"].nunique()),
             "effective_sample_size": float(ess),
             "minimum_behavior_propensity": 0.5,
+            "importance_weight_clipped_rows": 0,
             "unsupported_mass": float(1.0 - support_valid.mean()),
             "overlap_violations": 0,
             "failures": [],

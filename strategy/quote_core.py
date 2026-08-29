@@ -25,6 +25,96 @@ import numpy as np
 SPREAD_CAP_COMPRESS = 0
 SPREAD_CAP_PAUSE_EXPOSURE = 1
 SPREAD_CAP_OBSERVE = 2
+QUOTE_CORE_UNIT_ABI_FIELDS = (
+    "inventory_reference_qty",
+    "eta_inventory",
+    "a_spread",
+    "risk_per_order",
+    "execution_intensity_slope",
+    "risk_horizon_s",
+    "historical_p3_scalar_adapter_enabled",
+    "p3_side_bbo_floor_enabled",
+    "p3_identity_required",
+    "p3_event_type",
+    "p3_horizon_s",
+    "p3_distance_origin",
+    "p3_distance_unit",
+    "p3_side",
+    "p3_queue_included",
+    "p3_artifact_sha256",
+    "trade_intensity_acceleration_spread_mult",
+    "f03_ret_action_horizon_s",
+    "f03_ret_action_compatible",
+)
+
+P3_TOUCH_EVENT_TYPE = "touch"
+P3_TOUCH_HORIZON_S = 10.0
+P3_TOUCH_DISTANCE_UNIT = "USDC_per_BTC"
+P3_TOUCH_DISTANCE_ORIGIN = "same_side_best_bid_or_ask_at_window_start"
+P3_TOUCH_SIDE_IDENTITY = "pooled_buy_sell"
+
+
+def validate_p3_touch_identity(
+    identity: Mapping[str, Any],
+    *,
+    require_artifact_hash: bool = True,
+) -> dict[str, Any]:
+    """Validate the estimand before projecting it into the legacy quote ABI.
+
+    P3 is a pooled, ten-second *touch* curve measured outward from the
+    same-side BBO.  It is not a one-second fill curve and it contains no queue
+    model.  Keeping these fields together prevents a naked slope/distance from
+    acquiring a different meaning at the quote consumer.
+    """
+    normalized = {
+        "event_type": str(identity.get("event_type") or "").strip().lower(),
+        "horizon_s": float(identity.get("horizon_s", 0.0) or 0.0),
+        "distance_origin": str(identity.get("distance_origin") or "").strip(),
+        "distance_unit": str(identity.get("distance_unit") or "").strip(),
+        "side": str(identity.get("side") or "").strip().lower(),
+        "queue_included": identity.get("queue_included"),
+        "artifact_sha256": str(identity.get("artifact_sha256") or "").strip().lower(),
+    }
+    expected = {
+        "event_type": P3_TOUCH_EVENT_TYPE,
+        "horizon_s": P3_TOUCH_HORIZON_S,
+        "distance_origin": P3_TOUCH_DISTANCE_ORIGIN,
+        "distance_unit": P3_TOUCH_DISTANCE_UNIT,
+        "side": P3_TOUCH_SIDE_IDENTITY,
+        "queue_included": False,
+    }
+    for name, value in expected.items():
+        actual = normalized[name]
+        matches = (
+            actual is False
+            if name == "queue_included"
+            else math.isclose(actual, value, rel_tol=0.0, abs_tol=1e-12)
+            if name == "horizon_s"
+            else actual == value
+        )
+        if not matches:
+            raise ValueError(
+                f"P3 touch identity {name}={actual!r} does not match {value!r}"
+            )
+    artifact_sha256 = normalized["artifact_sha256"]
+    if require_artifact_hash and (
+        len(artifact_sha256) != 64
+        or any(ch not in "0123456789abcdef" for ch in artifact_sha256)
+    ):
+        raise ValueError("P3 touch identity requires an exact artifact_sha256")
+    return normalized
+
+
+def finite_positive_quote_coefficient(name: str, value: Any) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a finite positive coefficient")
+    try:
+        resolved = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a finite positive coefficient") from exc
+    if not math.isfinite(resolved) or resolved <= 0.0:
+        raise ValueError(f"{name} must be a finite positive coefficient")
+    return resolved
 
 
 def reservation_price(
@@ -34,16 +124,25 @@ def reservation_price(
     sigma_sq: float,
     horizon_s: float = 1.0,
 ) -> float:
-    """AS inventory fair value for per-second absolute-price variance."""
+    """Inventory fair value for an explicit per-second variance integral.
+
+    ``q`` is measured in base currency, ``sigma_sq`` in
+    ``(quote/base)^2 / second``, and legacy ``gamma`` in ``1 / quote``.
+    """
     return mid - q * gamma * sigma_sq * max(float(horizon_s), 0.0)
 
 
-def microprice_from_book(
+def weighted_mid_proxy_from_book(
     bids: Sequence[tuple[float, float]],
     asks: Sequence[tuple[float, float]],
     levels: int = 1,
 ) -> float:
-    """Return the size-weighted top-N microprice used by live and replay."""
+    """Return the legacy top-N weighted-mid proxy used by quote control.
+
+    Quantities are summed over the selected levels while prices remain the
+    best bid and ask.  This is not Stoikov's state-transition/conditional-
+    expectation micro-price estimator.
+    """
     if not bids or not asks:
         return 0.0
     n = max(1, min(int(levels), len(bids), len(asks)))
@@ -58,6 +157,10 @@ def microprice_from_book(
     mid = 0.5 * (best_bid + best_ask)
     return mid + imbalance * 0.5 * (best_ask - best_bid)
 
+
+# Frozen public/runtime ABI.  New code should use the semantically accurate
+# name above; old callers remain behavior-identical.
+microprice_from_book = weighted_mid_proxy_from_book
 
 def spread_cap_mode_code(value: Any) -> int:
     """Normalize the public string mode to the compact Python/C++ ABI value."""
@@ -125,9 +228,10 @@ class QuoteState:
     hold_time_s: float = 0.0
     unrealized_pnl: float = 0.0
 
-
 @dataclass(frozen=True)
 class QuoteCoreConfig:
+    # Compatibility input only.  When the two dimensioned coefficients below
+    # are omitted, both inherit this historical numeric value exactly.
     gamma: float
     kappa: float
     tick_size: float
@@ -236,6 +340,182 @@ class QuoteCoreConfig:
     defense_emergency_inventory_ratio: float = 0.50
     defense_emergency_loss: float = 5.0
 
+    # Appended after every legacy field to preserve positional construction.
+    # ``inventory_reference_qty`` is q_ref in base-asset units and
+    # ``order_size`` is z in the same units.  The reservation term consumes
+    # n=q/q_ref (dimensionless).  eta_inventory and a_spread have inverse-price
+    # units (base/quote) and are independent empirical controller coefficients;
+    # the historical fallback below exists
+    # only to preserve B0 numerically.  In particular z is not present in the
+    # logarithmic spread term, so legacy gamma/a_spread must not be interpreted
+    # as a portable CARA coefficient derived for arbitrary order quantity.
+    # Changing q_ref with eta omitted rescales eta so the old q*gamma inventory
+    # shift remains unchanged.
+    inventory_reference_qty: float = 1.0
+    eta_inventory: float | None = None
+    a_spread: float | None = None
+
+    # Complete P3 identity is validated here and copied into the native ABI,
+    # where it is validated again.  A stale native extension missing any of
+    # these fields is rejected before it can consume the scalar projection.
+    p3_identity_required: bool = False
+    p3_event_type: str = ""
+    p3_horizon_s: float = 0.0
+    p3_distance_origin: str = ""
+    p3_distance_unit: str = ""
+    p3_side: str = ""
+    p3_queue_included: bool | None = None
+    p3_artifact_sha256: str = ""
+
+    # F03 ret labels historically span 10--20 seconds.  A nonzero ret_skew is
+    # admitted only when an explicitly bound action-horizon head matches the
+    # quote consumer horizon.  Zero leaves the frozen ret action disabled.
+    f03_ret_action_horizon_s: float = 0.0
+    f03_ret_action_compatible: bool = False
+
+    # ``risk_per_order`` is the inverse-price (base/quote) coefficient consumed by the
+    # spread expression.  In a quantity-aware AS derivation it is gamma*z;
+    # legacy B0 instead inherits the empirical ``a_spread`` value exactly.
+    # ``execution_intensity_slope`` is a distance-decay coefficient.  It must
+    # not silently inherit the fixed-horizon P3 touch slope.
+    risk_per_order: float | None = None
+    execution_intensity_slope: float | None = None
+    risk_horizon_s: float | None = None
+
+    # P3 scalars may enter one explicitly named projection only.  The legacy
+    # switch reproduces B0's pooled pair-floor/touch-slope adapter.  The side
+    # switch applies the distance in its true same-side-BBO coordinates and is
+    # a behavior-changing research candidate.  They are mutually exclusive.
+    historical_p3_scalar_adapter_enabled: bool = False
+    p3_side_bbo_floor_enabled: bool = False
+
+    # Canonical name for the old BER multiplier.  The underlying state is a
+    # trade-intensity acceleration proxy, not book-exhaustion BER.
+    trade_intensity_acceleration_spread_mult: float | None = None
+
+    def __post_init__(self) -> None:
+        legacy = finite_positive_quote_coefficient("gamma", self.gamma)
+        legacy_effective = max(legacy, 1e-12)
+        inventory_reference_qty = finite_positive_quote_coefficient(
+            "inventory_reference_qty", self.inventory_reference_qty
+        )
+        eta_inventory = (
+            legacy_effective * inventory_reference_qty
+            if self.eta_inventory is None
+            else finite_positive_quote_coefficient("eta_inventory", self.eta_inventory)
+        )
+        a_spread = (
+            legacy_effective
+            if self.a_spread is None
+            else finite_positive_quote_coefficient("a_spread", self.a_spread)
+        )
+        risk_per_order = (
+            a_spread
+            if self.risk_per_order is None
+            else finite_positive_quote_coefficient(
+                "risk_per_order", self.risk_per_order
+            )
+        )
+        execution_intensity_slope = (
+            finite_positive_quote_coefficient("kappa", self.kappa)
+            if self.execution_intensity_slope is None
+            else finite_positive_quote_coefficient(
+                "execution_intensity_slope", self.execution_intensity_slope
+            )
+        )
+        risk_horizon_s = (
+            finite_positive_quote_coefficient(
+                "quote_horizon_s", self.quote_horizon_s
+            )
+            if self.risk_horizon_s is None
+            else finite_positive_quote_coefficient(
+                "risk_horizon_s", self.risk_horizon_s
+            )
+        )
+        acceleration_spread_mult = (
+            finite_positive_quote_coefficient("ber_spread_mult", self.ber_spread_mult)
+            if self.trade_intensity_acceleration_spread_mult is None
+            else finite_positive_quote_coefficient(
+                "trade_intensity_acceleration_spread_mult",
+                self.trade_intensity_acceleration_spread_mult,
+            )
+        )
+        object.__setattr__(self, "gamma", legacy)
+        object.__setattr__(self, "inventory_reference_qty", inventory_reference_qty)
+        object.__setattr__(self, "eta_inventory", eta_inventory)
+        object.__setattr__(self, "a_spread", a_spread)
+        object.__setattr__(self, "risk_per_order", risk_per_order)
+        object.__setattr__(
+            self, "execution_intensity_slope", execution_intensity_slope
+        )
+        object.__setattr__(self, "risk_horizon_s", risk_horizon_s)
+        object.__setattr__(
+            self,
+            "trade_intensity_acceleration_spread_mult",
+            acceleration_spread_mult,
+        )
+        if (
+            self.historical_p3_scalar_adapter_enabled
+            and self.p3_side_bbo_floor_enabled
+        ):
+            raise ValueError(
+                "historical P3 pair projection and side-BBO floor are mutually exclusive"
+            )
+        has_p3_identity = any(
+            (
+                self.p3_event_type,
+                self.p3_horizon_s,
+                self.p3_distance_origin,
+                self.p3_distance_unit,
+                self.p3_side,
+                self.p3_queue_included is not None,
+                self.p3_artifact_sha256,
+            )
+        )
+        p3_projection_active = (
+            self.historical_p3_scalar_adapter_enabled
+            and (self.p3_delta_star > 0.0 or self.p3_kappa_eff > 0.0)
+        ) or (
+            self.p3_side_bbo_floor_enabled and self.p3_delta_star > 0.0
+        )
+        if self.p3_identity_required or has_p3_identity:
+            validate_p3_touch_identity(
+                {
+                    "event_type": self.p3_event_type,
+                    "horizon_s": self.p3_horizon_s,
+                    "distance_origin": self.p3_distance_origin,
+                    "distance_unit": self.p3_distance_unit,
+                    "side": self.p3_side,
+                    "queue_included": self.p3_queue_included,
+                    "artifact_sha256": self.p3_artifact_sha256,
+                },
+                require_artifact_hash=bool(
+                    self.p3_identity_required or p3_projection_active
+                ),
+            )
+        if p3_projection_active and not has_p3_identity:
+            raise ValueError("an active P3 projection requires the complete touch identity")
+        if self.ml_enabled and self.ret_skew > 0.0:
+            producer_horizon_s = float(self.f03_ret_action_horizon_s)
+            consumer_horizon_s = float(self.quote_horizon_s)
+            if (
+                not self.f03_ret_action_compatible
+                or
+                not math.isfinite(producer_horizon_s)
+                or producer_horizon_s <= 0.0
+                or not math.isclose(
+                    producer_horizon_s,
+                    consumer_horizon_s,
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                raise ValueError(
+                    "F03 ret action horizon is not compatible with the quote "
+                    f"consumer: producer={producer_horizon_s!r}s "
+                    f"consumer={consumer_horizon_s!r}s"
+                )
+
 
 @dataclass(frozen=True)
 class QuoteCoreResult:
@@ -263,7 +543,9 @@ def ber_inventory_role_for_target(
         raise ValueError(f"unsupported BER quote side: {side!r}")
     quantity = float(target_quantity)
     if not math.isfinite(quantity) or quantity <= 0.0:
-        raise ValueError("BER target_quantity must be finite and positive")
+        raise ValueError(
+            "BER target_quantity must be finite and positive"
+        )
     q = float(inventory)
     epsilon = max(float(epsilon_btc), 0.0)
     if abs(q) <= epsilon:
@@ -286,7 +568,7 @@ def compose_ber_exposure_add_only_quote(
     target_sell_quantity: float,
     epsilon_btc: float = 1e-10,
 ) -> QuoteCoreResult:
-    """Keep the exact legacy BER side only when that quote is a pure add.
+    """Keep BER widening only when that quote is a pure inventory add.
 
     Both source quotes must come from the same decision snapshot.  The helper
     does not invent a new spread formula: each side is copied byte-for-byte
@@ -513,6 +795,51 @@ def _ceil_tick(price: float, tick: float) -> float:
     return math.ceil(units) * tick
 
 
+def apply_p3_side_bbo_floor(
+    bid_price: float,
+    ask_price: float,
+    *,
+    enabled: bool,
+    delta_star: float,
+    best_bid: float,
+    best_ask: float,
+    tick_size: float,
+) -> tuple[float, float, float, float, bool, bool]:
+    """Apply the P3 same-side-BBO distance contract to final quote prices.
+
+    The operation only moves quotes outward.  Calling it again after downstream
+    policy transforms is therefore idempotent and cannot make a quote more
+    aggressive.  Invalid active inputs fail closed instead of silently turning
+    the floor into a naked scalar projection.
+    """
+
+    bid = float(bid_price)
+    ask = float(ask_price)
+    if not enabled or float(delta_star) <= 0.0:
+        return bid, ask, 0.0, 0.0, False, False
+    delta = float(delta_star)
+    bbo_bid = float(best_bid)
+    bbo_ask = float(best_ask)
+    tick = float(tick_size)
+    if not all(math.isfinite(value) and value > 0.0 for value in (delta, bbo_bid, bbo_ask, tick)):
+        raise ValueError("P3 side-BBO floor requires finite positive BBO, delta, and tick")
+    if not math.isfinite(bid) or not math.isfinite(ask):
+        raise ValueError("P3 side-BBO floor requires finite quote prices")
+    buy_floor = _floor_tick(bbo_bid - delta, tick)
+    sell_floor = _ceil_tick(bbo_ask + delta, tick)
+    final_bid = min(bid, buy_floor)
+    final_ask = max(ask, sell_floor)
+    tolerance = max(tick * 1e-9, 1e-12)
+    return (
+        final_bid,
+        final_ask,
+        buy_floor,
+        sell_floor,
+        final_bid < bid - tolerance,
+        final_ask > ask + tolerance,
+    )
+
+
 def _normalize_levels(
     rows: Sequence[Sequence[float]] | None,
 ) -> tuple[tuple[float, float], ...]:
@@ -567,7 +894,9 @@ def quote_depth_from_l2_rows(
     return DepthSnapshot(bids=tuple(bids), asks=tuple(asks))
 
 
-def _microprice(depth: DepthSnapshot, levels: int, fallback_mid: float) -> float:
+def _weighted_mid_proxy(
+    depth: DepthSnapshot, levels: int, fallback_mid: float
+) -> float:
     if not depth.has_book:
         return fallback_mid
     n = max(1, min(int(levels), len(depth.bids), len(depth.asks)))
@@ -622,7 +951,7 @@ def _depth_tox_mult(mid: float, depth: DepthSnapshot, cfg: QuoteCoreConfig) -> f
     imb, _, _ = _depth_imbalance(depth, cfg.depth_tox_levels)
     micro_shift_bps = 0.0
     if mid > 0.0:
-        fair = _microprice(depth, 3, mid)
+        fair = _weighted_mid_proxy(depth, 3, mid)
         micro_shift_bps = (fair - mid) / mid * 10000.0
     if (
         abs(imb) >= abs(cfg.depth_tox_imbalance_threshold)
@@ -926,6 +1255,9 @@ def quote_core_config_from_live_config(
     *,
     p3_delta_star: float = 0.0,
     p3_kappa_eff: float = 0.0,
+    p3_identity: Mapping[str, Any] | None = None,
+    f03_ret_action_horizon_s: float = 0.0,
+    f03_ret_action_compatible: bool = False,
 ) -> QuoteCoreConfig:
     strategy = cfg.strategy
     ml = cfg.ml
@@ -955,13 +1287,41 @@ def quote_core_config_from_live_config(
         if vol_base > 0.0:
             dyn_var_base = vol_base * vol_base
 
+    normalized_p3_identity = (
+        validate_p3_touch_identity(p3_identity, require_artifact_hash=True)
+        if p3_identity is not None
+        else {}
+    )
+    order_size = finite_positive_quote_coefficient(
+        "strategy.order_size", strategy.order_size
+    )
+    inventory_reference_qty = finite_positive_quote_coefficient(
+        "strategy.inventory_reference_qty",
+        getattr(strategy, "inventory_reference_qty", 1.0),
+    )
+    eta_inventory = getattr(strategy, "eta_inventory", None)
+    a_spread = getattr(strategy, "a_spread", None)
+    risk_per_order = getattr(strategy, "risk_per_order", None)
+    execution_intensity_slope = getattr(
+        strategy, "execution_intensity_slope", None
+    )
+    risk_horizon_s = getattr(strategy, "risk_horizon_s", None)
+    historical_p3_scalar_adapter_enabled = bool(
+        getattr(strategy, "historical_p3_scalar_adapter_enabled", True)
+    )
+    p3_side_bbo_floor_enabled = bool(
+        getattr(strategy, "p3_side_bbo_floor_enabled", False)
+    )
+    acceleration_spread_mult = getattr(
+        strategy, "trade_intensity_acceleration_spread_mult", None
+    )
     return QuoteCoreConfig(
         gamma=float(strategy.gamma),
         kappa=float(strategy.kappa),
         tick_size=float(cfg.tick_size),
         lot_size=float(cfg.lot_size),
         maker_fee=float(fees.maker),
-        order_size=float(strategy.order_size),
+        order_size=order_size,
         max_inventory=float(strategy.max_inventory),
         position_timeout_s=float(getattr(strategy, "position_timeout", 0.0)),
         quote_horizon_s=max(1e-6, float(getattr(strategy, "quote_horizon_s", 1.0))),
@@ -987,6 +1347,16 @@ def quote_core_config_from_live_config(
         kappa_ratio=float(getattr(strategy, "kappa_ratio", 0.3)),
         p3_delta_star=float(p3_delta_star),
         p3_kappa_eff=float(p3_kappa_eff),
+        p3_identity_required=p3_identity is not None,
+        p3_event_type=str(normalized_p3_identity.get("event_type", "")),
+        p3_horizon_s=float(normalized_p3_identity.get("horizon_s", 0.0)),
+        p3_distance_origin=str(normalized_p3_identity.get("distance_origin", "")),
+        p3_distance_unit=str(normalized_p3_identity.get("distance_unit", "")),
+        p3_side=str(normalized_p3_identity.get("side", "")),
+        p3_queue_included=normalized_p3_identity.get("queue_included"),
+        p3_artifact_sha256=str(normalized_p3_identity.get("artifact_sha256", "")),
+        f03_ret_action_horizon_s=float(f03_ret_action_horizon_s),
+        f03_ret_action_compatible=bool(f03_ret_action_compatible),
         use_bar_pricing=bool(getattr(strategy, "use_bar_pricing", True)),
         use_depth_microprice=use_depth_pricing,
         use_depth_kappa=use_depth_pricing,
@@ -1050,6 +1420,17 @@ def quote_core_config_from_live_config(
         defense_pause=bool(getattr(strategy, "defense_pause", True)),
         defense_emergency_inventory_ratio=max(0.0, float(getattr(strategy, "defense_emergency_inventory_ratio", 0.50))),
         defense_emergency_loss=max(0.0, float(getattr(strategy, "defense_emergency_loss", 5.0))),
+        inventory_reference_qty=inventory_reference_qty,
+        eta_inventory=eta_inventory,
+        a_spread=a_spread,
+        risk_per_order=risk_per_order,
+        execution_intensity_slope=execution_intensity_slope,
+        risk_horizon_s=risk_horizon_s,
+        historical_p3_scalar_adapter_enabled=(
+            historical_p3_scalar_adapter_enabled
+        ),
+        p3_side_bbo_floor_enabled=p3_side_bbo_floor_enabled,
+        trade_intensity_acceleration_spread_mult=acceleration_spread_mult,
     )
 
 
@@ -1071,14 +1452,73 @@ def quote_core_config_from_params(
         vol_base = float(params.get("vol_baseline", 0.0))
         if vol_base > 0.0:
             dyn_var_base = vol_base * vol_base
-
+    formal_replay = bool(params.get("strict_calibration", False)) or (
+        str(params.get("replay_purpose", "")).strip().lower() == "formal"
+    )
+    f03_ret_action_compatible = bool(
+        params.get("f03_ret_action_compatible", False)
+    ) and (
+        not formal_replay
+        or bool(params.get("f03_ret_action_contract_bound", False))
+    )
+    quote_math_mode = str(
+        params.get("quote_math_mode", "legacy_v0") or "legacy_v0"
+    ).strip().lower()
+    if quote_math_mode not in {"legacy_v0", "quantity_aware_v1"}:
+        raise ValueError("quote_math_mode must be legacy_v0 or quantity_aware_v1")
+    order_size = finite_positive_quote_coefficient("order_size", params["order_size"])
+    legacy_gamma = finite_positive_quote_coefficient("gamma", params["gamma"])
+    if quote_math_mode == "quantity_aware_v1":
+        cara_risk_aversion = finite_positive_quote_coefficient(
+            "cara_risk_aversion",
+            params.get("cara_risk_aversion", legacy_gamma),
+        )
+        default_risk_per_order = cara_risk_aversion * order_size
+        inventory_reference_qty = finite_positive_quote_coefficient(
+            "inventory_reference_qty",
+            params.get("inventory_reference_qty", order_size),
+        )
+        eta_inventory = params.get("eta_inventory")
+        if eta_inventory is None:
+            eta_inventory = default_risk_per_order
+        a_spread = params.get("a_spread")
+        if a_spread is None:
+            a_spread = default_risk_per_order
+    else:
+        default_risk_per_order = params.get("a_spread", legacy_gamma)
+        inventory_reference_qty = finite_positive_quote_coefficient(
+            "inventory_reference_qty",
+            params.get("inventory_reference_qty", 1.0),
+        )
+        eta_inventory = params.get("eta_inventory")
+        a_spread = params.get("a_spread")
     return QuoteCoreConfig(
-        gamma=float(params["gamma"]),
+        gamma=legacy_gamma,
+        inventory_reference_qty=inventory_reference_qty,
+        eta_inventory=eta_inventory,
+        a_spread=a_spread,
+        risk_per_order=params.get("risk_per_order", default_risk_per_order),
+        execution_intensity_slope=params.get(
+            "execution_intensity_slope", params["kappa"]
+        ),
+        risk_horizon_s=params.get(
+            "risk_horizon_s", params.get("quote_horizon_s", 1.0)
+        ),
+        historical_p3_scalar_adapter_enabled=bool(
+            params.get("historical_p3_scalar_adapter_enabled", False)
+        ),
+        p3_side_bbo_floor_enabled=bool(
+            params.get("p3_side_bbo_floor_enabled", False)
+        ),
+        trade_intensity_acceleration_spread_mult=params.get(
+            "trade_intensity_acceleration_spread_mult",
+            params.get("ber_spread_mult", 2.0),
+        ),
         kappa=float(params["kappa"]),
         tick_size=float(tick_size),
         lot_size=float(lot_size),
         maker_fee=float(params["maker_fee"]),
-        order_size=float(params["order_size"]),
+        order_size=order_size,
         max_inventory=float(params["max_inventory"]),
         position_timeout_s=float(params.get("position_timeout", 0.0)),
         quote_horizon_s=max(1e-6, float(params.get("quote_horizon_s", 1.0))),
@@ -1104,6 +1544,18 @@ def quote_core_config_from_params(
         kappa_ratio=float(params.get("kappa_ratio", 0.3)),
         p3_delta_star=float(params.get("p3_delta_star", 0.0)),
         p3_kappa_eff=float(params.get("p3_kappa_eff", 0.0)),
+        p3_identity_required=bool(params.get("p3_identity_required", False)),
+        p3_event_type=str(params.get("fill_probability_event_type", "")),
+        p3_horizon_s=float(params.get("fill_probability_horizon_s", 0.0)),
+        p3_distance_origin=str(params.get("fill_probability_distance_origin", "")),
+        p3_distance_unit=str(params.get("fill_probability_distance_unit", "")),
+        p3_side=str(params.get("fill_probability_side", "")),
+        p3_queue_included=params.get("fill_probability_queue_included"),
+        p3_artifact_sha256=str(params.get("fill_probability_artifact_sha256", "")),
+        f03_ret_action_horizon_s=float(
+            params.get("f03_ret_action_horizon_s", 0.0)
+        ),
+        f03_ret_action_compatible=f03_ret_action_compatible,
         use_bar_pricing=bool(params.get("use_bar_pricing", True)),
         use_depth_microprice=bool(use_depth_microprice),
         use_depth_kappa=bool(use_depth_kappa),
@@ -1177,7 +1629,10 @@ def _compute_quote_core_py(
     tick = max(float(cfg.tick_size), 1e-12)
     mid = float(state.mid)
     q = float(state.inventory)
-    gamma = max(float(cfg.gamma), 1e-12)
+    inventory_reference_qty = float(cfg.inventory_reference_qty)
+    inventory_units = q / inventory_reference_qty
+    eta_inventory = float(cfg.eta_inventory)
+    risk_per_order = float(cfg.risk_per_order)
     sigma_sq_raw = max(float(state.sigma_sq), 0.0)
     pred_dir = _float(_get(pred, "dir_10s", 0.5), 0.5)
     pred_vol = _float(_get(pred, "vol_10s", 0.0), 0.0)
@@ -1185,17 +1640,24 @@ def _compute_quote_core_py(
     tox_bid = _float(_get(pred, "tox_bid", _get(pred, "tox_bid_10s", 0.5)), 0.5)
     tox_ask = _float(_get(pred, "tox_ask", _get(pred, "tox_ask_10s", 0.5)), 0.5)
 
-    kappa_base = float(cfg.p3_kappa_eff) if cfg.p3_kappa_eff > 0.0 else float(cfg.kappa)
-    kappa_before_depth = max(kappa_base, 1e-12)
-    kappa_used = kappa_before_depth
+    distance_decay_source = "execution_intensity_slope"
+    distance_decay_before_depth = float(cfg.execution_intensity_slope)
+    if (
+        cfg.historical_p3_scalar_adapter_enabled
+        and cfg.p3_kappa_eff > 0.0
+    ):
+        distance_decay_source = "legacy_p3_touch_slope_projection"
+        distance_decay_before_depth = float(cfg.p3_kappa_eff)
+    kappa_used = max(distance_decay_before_depth, 1e-12)
+    kappa_before_depth = kappa_used
 
     fair = mid
     if depth.has_book and cfg.use_depth_microprice:
-        fair = _microprice(depth, cfg.microprice_levels, mid)
+        fair = _weighted_mid_proxy(depth, cfg.microprice_levels, mid)
     if depth.has_book and cfg.use_depth_kappa:
         kappa_used = _estimate_depth_kappa(
             depth,
-            kappa_before_depth,
+            kappa_used,
             cfg.kappa_depth_baseline,
             cfg.kappa_levels,
             cfg.depth_kappa_ratio,
@@ -1206,10 +1668,11 @@ def _compute_quote_core_py(
         sigma_sq = (1.0 - cfg.vol_blend) * sigma_sq_raw + cfg.vol_blend * max(pred_vol, 0.0)
     sigma_sq = max(sigma_sq, 1e-6)
     quote_horizon_s = max(float(cfg.quote_horizon_s), 1e-6)
-    sigma_sq_horizon = sigma_sq * quote_horizon_s
+    risk_horizon_s = max(float(cfg.risk_horizon_s), 1e-6)
+    sigma_sq_horizon = sigma_sq * risk_horizon_s
 
     regime_spread_scale = 1.0
-    g_base = gamma
+    g_base = eta_inventory
     if cfg.regime_enabled:
         if cfg.liq_baseline > 0.0 and state.trade_intensity > 0.0:
             liq_ratio = state.trade_intensity / cfg.liq_baseline
@@ -1237,16 +1700,22 @@ def _compute_quote_core_py(
         g_eff = g_base * (1.0 - cfg.gamma_dir_bonus * align * 2.0)
         g_eff = max(g_base * 0.2, min(g_base * 3.0, g_eff))
 
-    r = fair - q * g_eff * sigma_sq_horizon
+    r = fair - inventory_units * g_eff * sigma_sq_horizon
     kappa_spread = max(kappa_used * cfg.kappa_ratio, 1e-12)
-    delta = gamma * sigma_sq_horizon + (2.0 / gamma) * math.log(1.0 + gamma / kappa_spread)
+    delta = risk_per_order * sigma_sq_horizon + (
+        (2.0 / risk_per_order)
+        * math.log(1.0 + risk_per_order / kappa_spread)
+    )
 
     delta_raw = delta
     delta *= regime_spread_scale
     delta_after_regime = delta
 
-    if state.ber_active and cfg.ber_spread_mult > 1.0:
-        delta *= cfg.ber_spread_mult
+    if (
+        state.ber_active
+        and cfg.trade_intensity_acceleration_spread_mult > 1.0
+    ):
+        delta *= cfg.trade_intensity_acceleration_spread_mult
 
     if cfg.markout_spread_scale > 0.0 and state.mo_ema_all != 0.0:
         mo_ratio = state.mo_ema_all / max(state.mo_ref, 1e-6)
@@ -1257,8 +1726,24 @@ def _compute_quote_core_py(
     if depth_tox_mult > 1.0:
         delta *= depth_tox_mult
 
-    if cfg.regime_enabled and cfg.p3_delta_star > 0.0:
-        delta = max(delta, 2.0 * cfg.p3_delta_star)
+    p3_pair_floor = 0.0
+    p3_floor_mode = "inactive"
+    if (
+        cfg.regime_enabled
+        and cfg.historical_p3_scalar_adapter_enabled
+        and cfg.p3_delta_star > 0.0
+    ):
+        # The frozen B0 mechanism used one pooled same-side-BBO touch distance
+        # as a symmetric pair-spread floor.  Keep that exact projection for
+        # behavior identity while making the coordinate conversion explicit;
+        # it must not be misread as a side-specific fill-probability optimum.
+        p3_pair_floor = 2.0 * float(cfg.p3_delta_star)
+        p3_floor_mode = (
+            "legacy_pair_projection_from_same_side_bbo"
+            if cfg.p3_event_type
+            else "legacy_naked_pair_floor"
+        )
+        delta = max(delta, p3_pair_floor)
 
     min_spread = 2.0 * abs(cfg.maker_fee) * mid + tick
     delta = max(delta, min_spread)
@@ -1546,6 +2031,41 @@ def _compute_quote_core_py(
         if cap_reason == "none":
             cap_reason = "ask_adverse"
 
+    p3_buy_side_floor_changed = False
+    p3_sell_side_floor_changed = False
+    p3_buy_floor_price = 0.0
+    p3_sell_floor_price = 0.0
+    if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0:
+        p3_floor_mode = "same_side_bbo_floor"
+        (
+            bid_price,
+            ask_price,
+            p3_buy_floor_price,
+            p3_sell_floor_price,
+            p3_buy_side_floor_changed,
+            p3_sell_side_floor_changed,
+        ) = apply_p3_side_bbo_floor(
+            bid_price,
+            ask_price,
+            enabled=True,
+            delta_star=cfg.p3_delta_star,
+            best_bid=state.best_bid,
+            best_ask=state.best_ask,
+            tick_size=tick,
+        )
+        if max_spread > 0.0 and ask_price - bid_price > max_spread:
+            cap_hit = True
+            final_cap_excess = max(
+                final_cap_excess,
+                ask_price - bid_price - max_spread,
+            )
+            if cap_mode != SPREAD_CAP_OBSERVE:
+                # A max-spread control cannot pull a side back through a
+                # declared same-side-BBO safety floor.  NarrowGate resolves
+                # the conflict by blocking exposure-increasing routing.
+                cap_exposure_block = True
+            cap_reason = "p3_side_floor"
+
     final_pair_spread = max(ask_price - bid_price, tick)
     bid_final_guard_changed = abs(bid_price - pre_guard_bid) > (tick * 0.5)
     ask_final_guard_changed = abs(ask_price - pre_guard_ask) > (tick * 0.5)
@@ -1575,12 +2095,17 @@ def _compute_quote_core_py(
         "raw_asym_shift": raw_asym_shift,
         "asym": asym,
         "inventory": q,
+        "inventory_reference_qty": inventory_reference_qty,
+        "inventory_units": inventory_units,
+        "order_size": float(cfg.order_size),
+        "order_units": float(cfg.order_size) / inventory_reference_qty,
         "dir_signal": dir_signal,
         "pred_dir": pred_dir,
         "pred_ret": pred_ret,
         "tox_bid": tox_bid,
         "tox_ask": tox_ask,
         "book_imb": trace_book_imb,
+        "weighted_mid_proxy_shift_bps": microprice_shift_bps,
         "microprice_shift_bps": microprice_shift_bps,
         "near_depth_total": near_depth_total,
         "mo_ema_bid": state.mo_ema_bid,
@@ -1620,6 +2145,15 @@ def _compute_quote_core_py(
         "defense_spread_mult": 1.0,
         "bid_adverse": bid_adverse_active,
         "ask_adverse": ask_adverse_active,
+        "p3_floor_mode": p3_floor_mode,
+        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_pair_floor": p3_pair_floor,
+        "p3_distance_origin": str(cfg.p3_distance_origin),
+        "p3_buy_floor_price": p3_buy_floor_price,
+        "p3_sell_floor_price": p3_sell_floor_price,
+        "p3_side_floor_changed": (
+            p3_buy_side_floor_changed or p3_sell_side_floor_changed
+        ),
     }
     quote_context = {
         "BUY": {
@@ -1657,7 +2191,8 @@ def _compute_quote_core_py(
             "final_guard_changed": bid_final_guard_changed,
             "any_constraint_changed": (
                 delta_cap_hit or final_compressed or bid_final_guard_changed
-                or cap_exposure_block or bid_adverse_active or bool(bid_defense["active"])
+                or cap_exposure_block or p3_buy_side_floor_changed
+                or bid_adverse_active or bool(bid_defense["active"])
             ),
             "cap_exposure_block": bool(
                 cap_exposure_block
@@ -1700,7 +2235,8 @@ def _compute_quote_core_py(
             "final_guard_changed": ask_final_guard_changed,
             "any_constraint_changed": (
                 delta_cap_hit or final_compressed or ask_final_guard_changed
-                or cap_exposure_block or ask_adverse_active or bool(ask_defense["active"])
+                or cap_exposure_block or p3_sell_side_floor_changed
+                or ask_adverse_active or bool(ask_defense["active"])
             ),
             "cap_exposure_block": bool(
                 cap_exposure_block
@@ -1725,7 +2261,38 @@ def _compute_quote_core_py(
         "sigma_sq_raw": sigma_sq_raw,
         "sigma_sq_blended": sigma_sq,
         "quote_horizon_s": quote_horizon_s,
+        "risk_horizon_s": risk_horizon_s,
         "sigma_sq_horizon": sigma_sq_horizon,
+        "inventory_reference_qty": inventory_reference_qty,
+        "inventory_units": inventory_units,
+        "order_size": float(cfg.order_size),
+        "order_units": float(cfg.order_size) / inventory_reference_qty,
+        "eta_inventory": eta_inventory,
+        "a_spread": float(cfg.a_spread),
+        "risk_per_order": risk_per_order,
+        "execution_intensity_slope": float(cfg.execution_intensity_slope),
+        "distance_decay_source": distance_decay_source,
+        "p3_floor_mode": p3_floor_mode,
+        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_pair_floor": p3_pair_floor,
+        "p3_buy_floor_price": p3_buy_floor_price,
+        "p3_sell_floor_price": p3_sell_floor_price,
+        "p3_side_floor_changed": (
+            p3_buy_side_floor_changed or p3_sell_side_floor_changed
+        ),
+        "historical_p3_scalar_adapter_enabled": bool(
+            cfg.historical_p3_scalar_adapter_enabled
+        ),
+        "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
+        "p3_event_type": str(cfg.p3_event_type),
+        "p3_horizon_s": float(cfg.p3_horizon_s),
+        "p3_distance_origin": str(cfg.p3_distance_origin),
+        "p3_distance_unit": str(cfg.p3_distance_unit),
+        "p3_side": str(cfg.p3_side),
+        "p3_queue_included": cfg.p3_queue_included,
+        "p3_artifact_sha256": str(cfg.p3_artifact_sha256),
+        "f03_ret_action_horizon_s": float(cfg.f03_ret_action_horizon_s),
+        "f03_ret_action_compatible": bool(cfg.f03_ret_action_compatible),
         "delta_raw": delta_raw,
         "delta_after_regime": delta_after_regime,
         "delta_pre_cap": delta_pre_cap,
@@ -1745,6 +2312,10 @@ def _compute_quote_core_py(
         "dir_signal": dir_signal,
         "kappa_before_depth": kappa_before_depth,
         "kappa_used": kappa_used,
+        "trade_intensity_acceleration_guard_active": bool(state.ber_active),
+        "trade_intensity_acceleration_spread_mult": float(
+            cfg.trade_intensity_acceleration_spread_mult
+        ),
         "depth_tox_mult": depth_tox_mult,
         "bid_adverse_active": bid_adverse_active,
         "bid_adverse_toxicity_active": bid_adverse_toxicity_active,
@@ -1906,7 +2477,19 @@ def _load_cpp_quote_core():
     return _CPP_QUOTE_CORE
 
 
-def _copy_attrs(src: Any, dst: Any, names: Sequence[str]) -> Any:
+def _copy_attrs(
+    src: Any,
+    dst: Any,
+    names: Sequence[str],
+    *,
+    required: Sequence[str] = (),
+) -> Any:
+    missing = [name for name in required if not hasattr(dst, name)]
+    if missing:
+        raise RuntimeError(
+            "narrowgate_cpp QuoteCoreConfig ABI missing fields: "
+            + ", ".join(missing)
+        )
     for name in names:
         if hasattr(dst, name) and hasattr(src, name):
             setattr(dst, name, getattr(src, name))
@@ -1920,7 +2503,12 @@ def _cached_cpp_config(cpp: Any, cfg: QuoteCoreConfig) -> Any:
     cached = _CPP_CFG_CACHE_REF() if _CPP_CFG_CACHE_REF is not None else None
     if key == _CPP_CFG_CACHE_KEY and cached is cfg and _CPP_CFG_CACHE_VALUE is not None:
         return _CPP_CFG_CACHE_VALUE
-    value = _copy_attrs(cfg, cpp.QuoteCoreConfig(), _CPP_CFG_FIELDS)
+    value = _copy_attrs(
+        cfg,
+        cpp.QuoteCoreConfig(),
+        _CPP_CFG_FIELDS,
+        required=QUOTE_CORE_UNIT_ABI_FIELDS,
+    )
     _CPP_CFG_CACHE_KEY = key
     _CPP_CFG_CACHE_REF = weakref.ref(cfg)
     _CPP_CFG_CACHE_VALUE = value
@@ -1928,7 +2516,8 @@ def _cached_cpp_config(cpp: Any, cfg: QuoteCoreConfig) -> Any:
 
 
 _CPP_CFG_FIELDS = (
-    "gamma", "kappa", "tick_size", "lot_size", "maker_fee", "order_size",
+    "gamma", "kappa", "tick_size", "lot_size",
+    "maker_fee", "order_size",
     "max_inventory", "position_timeout_s", "quote_horizon_s",
     "pnl_volatility_horizon_s", "ml_enabled", "vol_blend",
     "dir_threshold", "gamma_dir_bonus", "skew_strength", "asym_strength",
@@ -1959,6 +2548,14 @@ _CPP_CFG_FIELDS = (
     "defense_ret_bps_threshold", "defense_microprice_shift_bps",
     "defense_spread_mult", "defense_pause",
     "defense_emergency_inventory_ratio", "defense_emergency_loss",
+    "inventory_reference_qty", "eta_inventory", "a_spread",
+    "f03_ret_action_horizon_s", "f03_ret_action_compatible",
+    "risk_per_order", "execution_intensity_slope", "risk_horizon_s",
+    "historical_p3_scalar_adapter_enabled", "p3_side_bbo_floor_enabled",
+    "p3_identity_required", "p3_event_type", "p3_horizon_s",
+    "p3_distance_origin", "p3_distance_unit", "p3_side",
+    "p3_queue_included", "p3_artifact_sha256",
+    "trade_intensity_acceleration_spread_mult",
 )
 
 _CPP_STATE_FIELDS = (
@@ -2091,6 +2688,41 @@ def _compute_quote_core_cpp(
     result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
     pred_dir, pred_vol, pred_ret, pred_tox_bid, pred_tox_ask = pred_values
     tick = max(float(cfg.tick_size), 1e-12)
+    quote_horizon_s = max(float(cfg.quote_horizon_s), 1e-6)
+    risk_horizon_s = max(float(cfg.risk_horizon_s), 1e-6)
+    sigma_sq_horizon = float(result.sigma_sq_blended) * risk_horizon_s
+    inventory_reference_qty = float(cfg.inventory_reference_qty)
+    inventory_units = float(state.inventory) / inventory_reference_qty
+    p3_pair_floor = (
+        2.0 * float(cfg.p3_delta_star)
+        if cfg.regime_enabled
+        and cfg.historical_p3_scalar_adapter_enabled
+        and cfg.p3_delta_star > 0.0
+        else 0.0
+    )
+    p3_floor_mode = (
+        "legacy_pair_projection_from_same_side_bbo"
+        if p3_pair_floor > 0.0 and cfg.p3_event_type
+        else "legacy_naked_pair_floor"
+        if p3_pair_floor > 0.0
+        else "same_side_bbo_floor"
+        if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0
+        else "inactive"
+    )
+    p3_buy_floor_price = (
+        _floor_tick(float(state.best_bid) - float(cfg.p3_delta_star), tick)
+        if cfg.p3_side_bbo_floor_enabled
+        and cfg.p3_delta_star > 0.0
+        and state.best_bid > 0.0
+        else 0.0
+    )
+    p3_sell_floor_price = (
+        _ceil_tick(float(state.best_ask) + float(cfg.p3_delta_star), tick)
+        if cfg.p3_side_bbo_floor_enabled
+        and cfg.p3_delta_star > 0.0
+        and state.best_ask > 0.0
+        else 0.0
+    )
     quote_flags = {
         "final_compressed": bool(result.flags.final_compressed),
         "delta_cap": bool(result.flags.delta_cap),
@@ -2111,12 +2743,17 @@ def _compute_quote_core_cpp(
         "raw_asym_shift": float(result.raw_asym_shift),
         "asym": float(result.asym),
         "inventory": float(state.inventory),
+        "inventory_reference_qty": inventory_reference_qty,
+        "inventory_units": inventory_units,
+        "order_size": float(cfg.order_size),
+        "order_units": float(cfg.order_size) / inventory_reference_qty,
         "dir_signal": pred_dir - 0.5 if cfg.ml_enabled else 0.0,
         "pred_dir": pred_dir,
         "pred_ret": pred_ret,
         "tox_bid": pred_tox_bid,
         "tox_ask": pred_tox_ask,
         "book_imb": float(result.book_imb),
+        "weighted_mid_proxy_shift_bps": float(result.microprice_shift_bps),
         "microprice_shift_bps": float(result.microprice_shift_bps),
         "near_depth_total": float(result.near_depth_total),
         "mo_ema_bid": float(state.mo_ema_bid),
@@ -2157,6 +2794,16 @@ def _compute_quote_core_cpp(
         "defense_spread_mult": 1.0,
         "bid_adverse": quote_flags["bid_adverse"],
         "ask_adverse": quote_flags["ask_adverse"],
+        "p3_floor_mode": p3_floor_mode,
+        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_pair_floor": p3_pair_floor,
+        "p3_distance_origin": str(cfg.p3_distance_origin),
+        "p3_buy_floor_price": p3_buy_floor_price,
+        "p3_sell_floor_price": p3_sell_floor_price,
+        "historical_p3_scalar_adapter_enabled": bool(
+            cfg.historical_p3_scalar_adapter_enabled
+        ),
+        "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
     }
     quote_context = {
         "BUY": _cpp_side_context_to_dict("BUY", result.buy, common=common, tick=tick),
@@ -2167,8 +2814,41 @@ def _compute_quote_core_cpp(
         "reservation_price": float(result.reservation_price),
         "sigma_sq_raw": float(result.sigma_sq_raw),
         "sigma_sq_blended": float(result.sigma_sq_blended),
-        "quote_horizon_s": float(cfg.quote_horizon_s),
-        "sigma_sq_horizon": float(result.sigma_sq_blended) * float(cfg.quote_horizon_s),
+        "quote_horizon_s": quote_horizon_s,
+        "risk_horizon_s": risk_horizon_s,
+        "sigma_sq_horizon": sigma_sq_horizon,
+        "inventory_reference_qty": inventory_reference_qty,
+        "inventory_units": inventory_units,
+        "order_size": float(cfg.order_size),
+        "order_units": float(cfg.order_size) / inventory_reference_qty,
+        "eta_inventory": float(cfg.eta_inventory),
+        "a_spread": float(cfg.a_spread),
+        "risk_per_order": float(cfg.risk_per_order),
+        "execution_intensity_slope": float(cfg.execution_intensity_slope),
+        "distance_decay_source": (
+            "legacy_p3_touch_slope_projection"
+            if cfg.historical_p3_scalar_adapter_enabled
+            and cfg.p3_kappa_eff > 0.0
+            else "execution_intensity_slope"
+        ),
+        "p3_floor_mode": p3_floor_mode,
+        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_pair_floor": p3_pair_floor,
+        "p3_buy_floor_price": p3_buy_floor_price,
+        "p3_sell_floor_price": p3_sell_floor_price,
+        "historical_p3_scalar_adapter_enabled": bool(
+            cfg.historical_p3_scalar_adapter_enabled
+        ),
+        "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
+        "p3_event_type": str(cfg.p3_event_type),
+        "p3_horizon_s": float(cfg.p3_horizon_s),
+        "p3_distance_origin": str(cfg.p3_distance_origin),
+        "p3_distance_unit": str(cfg.p3_distance_unit),
+        "p3_side": str(cfg.p3_side),
+        "p3_queue_included": cfg.p3_queue_included,
+        "p3_artifact_sha256": str(cfg.p3_artifact_sha256),
+        "f03_ret_action_horizon_s": float(cfg.f03_ret_action_horizon_s),
+        "f03_ret_action_compatible": bool(cfg.f03_ret_action_compatible),
         "delta_raw": float(result.delta_raw),
         "delta_after_regime": float(result.delta_after_regime),
         "delta_pre_cap": float(result.delta_pre_cap),
@@ -2270,6 +2950,18 @@ def _compute_quote_core_cpp_compact(
     result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
     pred_dir, _pred_vol, _pred_ret, _pred_tox_bid, _pred_tox_ask = pred_values
     tick = max(float(cfg.tick_size), 1e-12)
+    quote_horizon_s = max(float(cfg.quote_horizon_s), 1e-6)
+    risk_horizon_s = max(float(cfg.risk_horizon_s), 1e-6)
+    sigma_sq_horizon = float(result.sigma_sq_blended) * risk_horizon_s
+    inventory_reference_qty = float(cfg.inventory_reference_qty)
+    inventory_units = float(state.inventory) / inventory_reference_qty
+    p3_pair_floor = (
+        2.0 * float(cfg.p3_delta_star)
+        if cfg.regime_enabled
+        and cfg.historical_p3_scalar_adapter_enabled
+        and cfg.p3_delta_star > 0.0
+        else 0.0
+    )
     delta_cap = bool(result.flags.delta_cap)
     final_compressed = bool(result.flags.final_compressed)
     cap_exposure_block = bool(result.flags.cap_exposure_block)
@@ -2315,8 +3007,41 @@ def _compute_quote_core_cpp_compact(
         "reservation_price": float(result.reservation_price),
         "sigma_sq_raw": float(result.sigma_sq_raw),
         "sigma_sq_blended": float(result.sigma_sq_blended),
-        "quote_horizon_s": float(cfg.quote_horizon_s),
-        "sigma_sq_horizon": float(result.sigma_sq_blended) * float(cfg.quote_horizon_s),
+        "quote_horizon_s": quote_horizon_s,
+        "risk_horizon_s": risk_horizon_s,
+        "sigma_sq_horizon": sigma_sq_horizon,
+        "inventory_reference_qty": inventory_reference_qty,
+        "inventory_units": inventory_units,
+        "order_size": float(cfg.order_size),
+        "order_units": float(cfg.order_size) / inventory_reference_qty,
+        "eta_inventory": float(cfg.eta_inventory),
+        "a_spread": float(cfg.a_spread),
+        "risk_per_order": float(cfg.risk_per_order),
+        "execution_intensity_slope": float(cfg.execution_intensity_slope),
+        "p3_floor_mode": (
+            "legacy_pair_projection_from_same_side_bbo"
+            if p3_pair_floor > 0.0 and cfg.p3_event_type
+            else "legacy_naked_pair_floor"
+            if p3_pair_floor > 0.0
+            else "same_side_bbo_floor"
+            if cfg.p3_side_bbo_floor_enabled and cfg.p3_delta_star > 0.0
+            else "inactive"
+        ),
+        "p3_touch_delta_star": float(cfg.p3_delta_star),
+        "p3_pair_floor": p3_pair_floor,
+        "historical_p3_scalar_adapter_enabled": bool(
+            cfg.historical_p3_scalar_adapter_enabled
+        ),
+        "p3_side_bbo_floor_enabled": bool(cfg.p3_side_bbo_floor_enabled),
+        "p3_event_type": str(cfg.p3_event_type),
+        "p3_horizon_s": float(cfg.p3_horizon_s),
+        "p3_distance_origin": str(cfg.p3_distance_origin),
+        "p3_distance_unit": str(cfg.p3_distance_unit),
+        "p3_side": str(cfg.p3_side),
+        "p3_queue_included": cfg.p3_queue_included,
+        "p3_artifact_sha256": str(cfg.p3_artifact_sha256),
+        "f03_ret_action_horizon_s": float(cfg.f03_ret_action_horizon_s),
+        "f03_ret_action_compatible": bool(cfg.f03_ret_action_compatible),
         "delta_raw": float(result.delta_raw),
         "delta_after_regime": float(result.delta_after_regime),
         "delta_pre_cap": float(result.delta_pre_cap),
@@ -2428,7 +3153,12 @@ def compute_quote_core_batch_depth_cpp(
     mid_arr = np.asarray(mid, dtype=np.float64).reshape(-1)
     n = int(mid_arr.shape[0])
     mid_arr = np.ascontiguousarray(np.nan_to_num(mid_arr, nan=0.0, posinf=0.0, neginf=0.0), dtype=np.float64)
-    cpp_cfg = _copy_attrs(cfg, cpp.QuoteCoreConfig(), _CPP_CFG_FIELDS)
+    cpp_cfg = _copy_attrs(
+        cfg,
+        cpp.QuoteCoreConfig(),
+        _CPP_CFG_FIELDS,
+        required=QUOTE_CORE_UNIT_ABI_FIELDS,
+    )
 
     try:
         out = cpp.compute_quote_core_batch_depth(

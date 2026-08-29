@@ -622,7 +622,7 @@
   },
   "baseline_runtime_identity": {
     "pointer_artifact": {
-      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "path": "${NARROWGATE_PRIVATE_OPERATIONAL_POINTER}",
       "sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62",
       "size_bytes": 1644
     },
@@ -699,7 +699,7 @@
         "size_bytes": 856
       },
       {
-        "path": "${NARROWGATE_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+        "path": "private_not_distributed",
         "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
         "size_bytes": 8625975
       },

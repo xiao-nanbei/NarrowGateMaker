@@ -42,14 +42,29 @@ class ApiConfig:
 
 @dataclass
 class StrategyConfig:
-    gamma: float = 0.010                  # inventory penalty coefficient
-    kappa: float = 0.05                   # internal fallback only; live/tick path normally uses p3_kappa_eff
-    p3_kappa_eff_override: float = 0.0    # 0=use fill-prob model; >0 explicit research/live-trial override
+    gamma: float = 0.010                  # legacy B0 compatibility input; not portable CARA risk aversion
+    kappa: float = 0.05                   # legacy internal spread-adapter fallback, not identified arrival intensity
+    p3_kappa_eff_override: float = 0.0    # frozen replay/config ABI; live preflight/runtime rejects any nonzero value
     order_size: float = 0.0026
     max_inventory: float = 0.026
     requote_interval: float = 10.0
     position_timeout: float = 0.0
-    quote_horizon_s: float = 1.0           # AS variance integration horizon; sigma_sq input is per second
+    quote_horizon_s: float = 1.0           # empirical variance-integration horizon; not order exposure/cancel-ACK quantile
+    # Explicit unit/estimand contract.  The defaults are the behavior-identical
+    # B0 projection: q_ref=1 base asset, eta=gamma*q_ref, a/risk=gamma,
+    # execution slope=kappa, and risk horizon=quote_horizon_s.  None means
+    # derive that legacy value; it never means an independently calibrated
+    # optimum.  The quantity-aware formula is a replay candidate, not a live
+    # default.
+    inventory_reference_qty: float = 1.0
+    eta_inventory: Optional[float] = None
+    a_spread: Optional[float] = None
+    risk_per_order: Optional[float] = None
+    execution_intensity_slope: Optional[float] = None
+    risk_horizon_s: Optional[float] = None
+    historical_p3_scalar_adapter_enabled: bool = True
+    p3_side_bbo_floor_enabled: bool = False
+    trade_intensity_acceleration_spread_mult: Optional[float] = None
     max_spread_bps: float = 8.0           # pair-spread threshold; action is spread_cap_mode
     replace_min_price_change_ticks: float = 0.0      # live order lifecycle: min price delta before cancel/new; 0=disabled
     replace_min_price_change_ticks_reducing: float = 0.0
@@ -77,10 +92,11 @@ class StrategyConfig:
     depth_kappa_ratio: float = 0.3       # minimum depth κ multiplier floor for live/backtest parity
     thin_depth_threshold: float = 0.0     # side policy thin-depth threshold; 0 falls back to legacy kappa_depth_baseline * 0.5
 
-    # ── v1.1: P1 BER Guard (Zhao & Linetsky 2021) ──
+    # ── v1.1 legacy BER ABI: trade-intensity-burst guard ──
+    # No book-depletion state enters this proxy; it is not Zhao--Linetsky BER.
     ber_guard_thresh: float = 1.2         # ema_fast/ema_slow ratio threshold (0=disabled)
     ber_spread_mult: float = 2.0          # spread multiplier when BER active
-    ber_exposure_add_only: bool = False   # owner successor: preserve BER only on pure add quotes
+    ber_exposure_add_only: bool = False   # optional research path: preserve guard only on pure add quotes
 
     # ── v1.2: volatility scaling; AMM LVR is analogy, not a CLOB optimum ──
     vol_power: float = 1.5                # empirical exponent; no paper proves 1.5 optimal for this LOB
@@ -164,17 +180,17 @@ class StrategyConfig:
     fill_cooldown_reducing_vol_ref: float = 0.0       # if >0, scale reducing cooldown by vol_10s / ref
     fill_cooldown_reducing_vol_min_mult: float = 0.5
     fill_cooldown_reducing_vol_max_mult: float = 2.0
-    # Owner-risk-accepted F05 policy. It replaces only the total SELL
-    # exposure-increasing cooldown duration and is restart-only.
+    # Optional private F05 policy envelope. It replaces only the total SELL
+    # exposure-increasing cooldown duration, is disabled by default, and is restart-only.
     boolean_cooldown_policy_enabled: bool = False
     boolean_cooldown_policy_path: str = ""
     boolean_cooldown_policy_sha256: str = ""
     boolean_cooldown_predicate_bundle_path: str = ""
     boolean_cooldown_predicate_bundle_sha256: str = ""
     boolean_cooldown_ema_warmup_s: float = 2048.0
-    boolean_cooldown_evidence_route: str = "owner_risk_accepted_promotion"
-    # Independent owner-risk-accepted BUY E3 artifact. It may replace only
-    # the total exposure-increasing BUY cooldown selected on an executed fill.
+    boolean_cooldown_evidence_route: str = "private_deployment_approval"
+    # Optional private BUY E3 artifact. It may replace only the total
+    # exposure-increasing BUY cooldown selected on an executed fill.
     buy_e3_cooldown_policy_enabled: bool = False
     buy_e3_cooldown_artifact_manifest_path: str = ""
     buy_e3_cooldown_artifact_manifest_sha256: str = ""
@@ -184,7 +200,7 @@ class StrategyConfig:
     buy_e3_cooldown_predicate_bundle_path: str = ""
     buy_e3_cooldown_predicate_bundle_sha256: str = ""
     buy_e3_cooldown_ema_warmup_s: float = 2048.0
-    buy_e3_cooldown_evidence_route: str = "owner_risk_accepted_buy_e3_v1"
+    buy_e3_cooldown_evidence_route: str = "private_deployment_buy_e3"
     post_fill_quote_response_enabled: bool = False
     post_fill_quote_response_mode: str = "noop"
     post_fill_inventory_ticks_per_order_unit: float = 0.25
@@ -277,6 +293,7 @@ class WebSocketConfig:
     deep_book_max_buffer_events: int = 20000
     deep_book_resync_backoff_s: float = 1.0
     deep_book_max_age_s: float = 2.0
+    # Transport-liveness reconnect watchdogs, not quote-survival stale gates.
     exec_stream_silence_timeout_s: float = 45.0
     anchor_stream_silence_timeout_s: float = 45.0
 
@@ -290,7 +307,9 @@ class RiskConfig:
     max_consecutive_losses: int = 3
     # Historical replay ABI: end-to-end capture minus exchange age.
     max_exec_book_age_s: float = 5.0
-    # Live stale gating separates local visibility age from source transport.
+    # Live stale gating cancels/blocks quotes and is deliberately distinct from
+    # the longer WebSocket reconnect watchdog above. Deployment-specific values
+    # must come from the feed/host latency contract, not the public fallback.
     max_exec_book_visible_age_s: float = 5.0
     max_exec_book_source_lag_s: float = 5.0
     sync_adjust_degrade_enabled: bool = True
@@ -509,6 +528,21 @@ BACKTEST_PARAM_SOURCES = (
     ("p3_kappa_eff_override", ("strategy", "p3_kappa_eff_override")),
     ("order_size", ("strategy", "order_size")),
     ("max_inventory", ("strategy", "max_inventory")),
+    ("inventory_reference_qty", ("strategy", "inventory_reference_qty")),
+    ("eta_inventory", ("strategy", "eta_inventory")),
+    ("a_spread", ("strategy", "a_spread")),
+    ("risk_per_order", ("strategy", "risk_per_order")),
+    ("execution_intensity_slope", ("strategy", "execution_intensity_slope")),
+    ("risk_horizon_s", ("strategy", "risk_horizon_s")),
+    (
+        "historical_p3_scalar_adapter_enabled",
+        ("strategy", "historical_p3_scalar_adapter_enabled"),
+    ),
+    ("p3_side_bbo_floor_enabled", ("strategy", "p3_side_bbo_floor_enabled")),
+    (
+        "trade_intensity_acceleration_spread_mult",
+        ("strategy", "trade_intensity_acceleration_spread_mult"),
+    ),
     ("requote_interval", ("strategy", "requote_interval")),
     ("requote_threshold_bps", ("strategy", "requote_threshold_bps")),
     ("replace_min_price_change_ticks", ("strategy", "replace_min_price_change_ticks")),
@@ -969,10 +1003,28 @@ def _validate_config(cfg: Config) -> None:
         raise ValueError("websocket.deep_book_resync_backoff_s must be positive")
     if float(cfg.websocket.deep_book_max_age_s) <= 0.0:
         raise ValueError("websocket.deep_book_max_age_s must be positive")
-    if float(cfg.risk.max_exec_book_visible_age_s) <= 0.0:
-        raise ValueError("risk.max_exec_book_visible_age_s must be positive")
-    if float(cfg.risk.max_exec_book_source_lag_s) <= 0.0:
-        raise ValueError("risk.max_exec_book_source_lag_s must be positive")
+    for field_name in (
+        "max_exec_book_visible_age_s",
+        "max_exec_book_source_lag_s",
+    ):
+        value = float(getattr(cfg.risk, field_name))
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"risk.{field_name} must be positive and finite")
+    for field_name in (
+        "exec_stream_silence_timeout_s",
+        "anchor_stream_silence_timeout_s",
+    ):
+        value = float(getattr(cfg.websocket, field_name))
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"websocket.{field_name} must be positive and finite")
+    if float(cfg.websocket.exec_stream_silence_timeout_s) <= max(
+        float(cfg.risk.max_exec_book_visible_age_s),
+        float(cfg.risk.max_exec_book_source_lag_s),
+    ):
+        raise ValueError(
+            "websocket.exec_stream_silence_timeout_s is a reconnect watchdog "
+            "and must exceed the quote-stop stale thresholds"
+        )
     if bool(cfg.strategy.dynamic_fill_hazard_shadow_enabled):
         if not bool(cfg.websocket.deep_book_enabled):
             raise ValueError(
@@ -1133,12 +1185,65 @@ def _validate_config(cfg: Config) -> None:
     sign = float(getattr(cfg.strategy, "markout_side_asymmetry_sign", 1.0))
     if sign not in {-1.0, 1.0}:
         raise ValueError("strategy.markout_side_asymmetry_sign must be -1 or +1")
-    if float(getattr(cfg.strategy, "quote_horizon_s", 0.0)) <= 0.0:
-        raise ValueError("strategy.quote_horizon_s must be > 0")
-    if float(getattr(cfg.strategy, "markout_horizon_s", 0.0)) <= 0.0:
-        raise ValueError("strategy.markout_horizon_s must be > 0")
-    if float(getattr(cfg.risk, "pnl_volatility_horizon_s", 0.0)) <= 0.0:
-        raise ValueError("risk.pnl_volatility_horizon_s must be > 0")
+    for field_name in ("gamma", "kappa", "order_size", "max_inventory"):
+        value = float(getattr(cfg.strategy, field_name))
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"strategy.{field_name} must be positive and finite")
+    if float(cfg.strategy.order_size) > float(cfg.strategy.max_inventory):
+        raise ValueError("strategy.order_size cannot exceed strategy.max_inventory")
+    q_ref = float(getattr(cfg.strategy, "inventory_reference_qty", 0.0))
+    if not math.isfinite(q_ref) or q_ref <= 0.0:
+        raise ValueError(
+            "strategy.inventory_reference_qty must be positive and finite"
+        )
+    for field_name in (
+        "eta_inventory",
+        "a_spread",
+        "risk_per_order",
+        "execution_intensity_slope",
+        "risk_horizon_s",
+        "trade_intensity_acceleration_spread_mult",
+    ):
+        raw_value = getattr(cfg.strategy, field_name, None)
+        if raw_value is None:
+            continue
+        value = float(raw_value)
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"strategy.{field_name} must be positive and finite")
+    if bool(cfg.strategy.historical_p3_scalar_adapter_enabled) and bool(
+        cfg.strategy.p3_side_bbo_floor_enabled
+    ):
+        raise ValueError(
+            "historical P3 pair projection and P3 side-BBO floor are mutually exclusive"
+        )
+    if bool(cfg.strategy.p3_side_bbo_floor_enabled) and cap_mode == "compress":
+        raise ValueError(
+            "P3 side-BBO floor cannot be combined with spread_cap_mode=compress; "
+            "later inward compression would violate the side-specific distance floor"
+        )
+    p3_override = float(getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0)
+    if not math.isfinite(p3_override) or p3_override != 0.0:
+        raise ValueError(
+            "strategy.p3_kappa_eff_override must remain zero; P3 identity comes "
+            "from the hash-bound artifact"
+        )
+    quote_horizon_s = float(getattr(cfg.strategy, "quote_horizon_s", 0.0))
+    if not math.isfinite(quote_horizon_s) or quote_horizon_s <= 0.0:
+        raise ValueError("strategy.quote_horizon_s must be positive and finite")
+    markout_horizon_s = float(getattr(cfg.strategy, "markout_horizon_s", 0.0))
+    if not math.isfinite(markout_horizon_s) or markout_horizon_s <= 0.0:
+        raise ValueError("strategy.markout_horizon_s must be positive and finite")
+    pnl_horizon_s = float(getattr(cfg.risk, "pnl_volatility_horizon_s", 0.0))
+    if not math.isfinite(pnl_horizon_s) or pnl_horizon_s <= 0.0:
+        raise ValueError("risk.pnl_volatility_horizon_s must be positive and finite")
+    for field_name in (
+        "max_daily_loss",
+        "max_position_value",
+        "emergency_close_dd",
+    ):
+        value = float(getattr(cfg.risk, field_name))
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"risk.{field_name} must be positive and finite")
     response_mode = str(
         getattr(cfg.strategy, "post_fill_quote_response_mode", "noop") or "noop"
     ).strip().lower()

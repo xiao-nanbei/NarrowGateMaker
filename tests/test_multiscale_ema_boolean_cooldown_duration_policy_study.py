@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import numpy as np
@@ -282,6 +283,10 @@ def test_boolean_ema_no_cross_uses_frozen_sentinel_and_cross_predicates_fail_clo
         assert not bool(row[f"predicate::{prefix}:cross_age_le_slow"])
 
 
+@pytest.mark.skipif(
+    not os.environ.get("NARROWGATE_PRIVATE_RESEARCH_ROOT"),
+    reason="private historical operational denominator is not configured",
+)
 def test_execution_dependencies_bind_frozen_specs_without_amendment_cycle(monkeypatch) -> None:
     fake_cpp = SimpleNamespace(__file__=study.bt.__file__)
     monkeypatch.setattr(study.bt, "_load_cpp_tick_replay", lambda: fake_cpp)

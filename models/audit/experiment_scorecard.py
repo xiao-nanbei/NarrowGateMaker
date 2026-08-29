@@ -770,6 +770,10 @@ def score_canonical_evidence(
             float(profile.maximum_overlap_violations + 1),
         )
     )
+    clipping_identity_present = "importance_weight_clipped_rows" in support
+    importance_weight_clipped_rows = int(
+        _finite(support.get("importance_weight_clipped_rows"), 0.0)
+    )
     support_failures = list(support.get("failures") or ())
     if n_rows < profile.minimum_rows:
         support_failures.append(f"rows_below_{profile.minimum_rows}")
@@ -789,6 +793,14 @@ def score_canonical_evidence(
         )
     if overlap_violations > profile.maximum_overlap_violations:
         support_failures.append("overlap_violations")
+    # Clipping identity is part of the estimand only for propensity-weighted
+    # OPE profiles.  Pure paired-replay screens do not consume importance
+    # weights and must not be made invalid by an unrelated OPE field.
+    uses_importance_weights = profile.minimum_behavior_propensity > 0.0
+    if uses_importance_weights and importance_weight_clipped_rows > 0:
+        support_failures.append("importance_weight_clipping_changes_estimand")
+    if uses_importance_weights and not clipping_identity_present:
+        support_failures.append("importance_weight_clipping_identity_missing")
     support_failures = _dedupe(support_failures)
 
     hard_failures = list(evidence.get("family_gate_failures") or ())
@@ -985,6 +997,7 @@ def score_canonical_evidence(
             "minimum_behavior_propensity": min_propensity,
             "unsupported_mass": unsupported_mass,
             "overlap_violations": overlap_violations,
+            "importance_weight_clipped_rows": importance_weight_clipped_rows,
         },
         "hard_gates": {
             "passed": hard_gates_passed,
@@ -1188,6 +1201,15 @@ def action_family_score_evidence(
             "unsupported_mass": unsupported_rows / max(oof_rows, 1),
             "overlap_violations": int(
                 _finite(support.get("overlap_violations", 0), 0.0)
+            ),
+            **(
+                {
+                    "importance_weight_clipped_rows": int(
+                        _finite(support["importance_weight_clipped_rows"], 0.0)
+                    )
+                }
+                if "importance_weight_clipped_rows" in support
+                else {}
             ),
             "failures": list(support.get("failures") or ()),
         },

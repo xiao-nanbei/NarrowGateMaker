@@ -38,6 +38,94 @@ class ReplayEmitterError(RuntimeError):
     """Raised when replay cannot form one causal assignment snapshot."""
 
 
+def build_cpp_predicate_row(cpp: Any, opportunity: Mapping[str, Any]) -> Any:
+    """Build the generic C++ ABI row for one replay-visible fill."""
+
+    required = (
+        "exposure_fill_ordinal",
+        "fill_visible_ts_ms",
+        "side",
+        "campaign_id",
+        "opportunity_id",
+        "policy_input_valid",
+        "feature::support_valid",
+        "feature::channel_support_valid",
+        "owner_fallback_reason",
+    )
+    missing = tuple(name for name in required if name not in opportunity)
+    if missing:
+        raise ReplayEmitterError(
+            f"C++ target predicate row lacks required fields: {list(missing)}"
+        )
+    row = cpp.F05CooldownPredicateRow()
+    row.exposure_fill_ordinal = int(opportunity["exposure_fill_ordinal"])
+    row.fill_ts_ms = int(opportunity["fill_visible_ts_ms"])
+    row.side = cpp.Side.Buy if str(opportunity["side"]).upper() == "BUY" else cpp.Side.Sell
+    row.campaign_id = int(opportunity["campaign_id"])
+    row.snapshot_id = str(opportunity["opportunity_id"])
+    row.policy_input_valid = bool(opportunity["policy_input_valid"])
+    row.support_valid = bool(opportunity["feature::support_valid"])
+    row.channel_support_valid = bool(opportunity["feature::channel_support_valid"])
+    fallback_reason = opportunity["owner_fallback_reason"]
+    row.snapshot_fallback_reason = (
+        "" if fallback_reason is None or fallback_reason != fallback_reason else str(fallback_reason)
+    )
+    row.predicate_values = []
+    return row
+
+
+def validate_cpp_predicate_row(
+    cpp: Any,
+    row: Any,
+    opportunity: Mapping[str, Any],
+    *,
+    expected_predicate_count: int,
+) -> None:
+    """Fail closed when a replay row drifts before entering the C++ ABI."""
+
+    if not isinstance(expected_predicate_count, int) or expected_predicate_count <= 0:
+        raise ReplayEmitterError("C++ predicate count is invalid")
+    expected_side = cpp.Side.Buy if str(opportunity["side"]).upper() == "BUY" else cpp.Side.Sell
+    identity = {
+        "exposure_fill_ordinal": (
+            int(row.exposure_fill_ordinal),
+            int(opportunity["exposure_fill_ordinal"]),
+        ),
+        "fill_ts_ms": (int(row.fill_ts_ms), int(opportunity["fill_visible_ts_ms"])),
+        "campaign_id": (int(row.campaign_id), int(opportunity["campaign_id"])),
+        "snapshot_id": (str(row.snapshot_id), str(opportunity["opportunity_id"])),
+    }
+    drifted = [name for name, (actual, expected) in identity.items() if actual != expected]
+    if drifted or row.side != expected_side:
+        raise ReplayEmitterError(
+            "C++ target predicate-row identity drifted: " + ",".join(drifted or ["side"])
+        )
+    if int(row.exposure_fill_ordinal) <= 0 or int(row.fill_ts_ms) <= 0:
+        raise ReplayEmitterError("C++ target predicate-row identity is incomplete")
+    expected_support = {
+        "policy_input_valid": bool(opportunity["policy_input_valid"]),
+        "support_valid": bool(opportunity["feature::support_valid"]),
+        "channel_support_valid": bool(opportunity["feature::channel_support_valid"]),
+    }
+    observed_support = {
+        "policy_input_valid": bool(row.policy_input_valid),
+        "support_valid": bool(row.support_valid),
+        "channel_support_valid": bool(row.channel_support_valid),
+    }
+    if observed_support != expected_support:
+        raise ReplayEmitterError("C++ target predicate-row support state drifted")
+    values = list(row.predicate_values)
+    if values and len(values) != expected_predicate_count:
+        raise ReplayEmitterError("C++ target predicate-row width drifted")
+    allowed = {
+        cpp.F05TriState.UNOBSERVED,
+        cpp.F05TriState.FALSE,
+        cpp.F05TriState.TRUE,
+    }
+    if any(value not in allowed for value in values):
+        raise ReplayEmitterError("C++ target predicate-row contains an invalid state")
+
+
 @dataclass(frozen=True, slots=True)
 class ReplayEmitterAudit:
     feature_block: str
@@ -291,4 +379,6 @@ __all__ = [
     "REPLAY_EMITTER_SCHEMA_VERSION",
     "ReplayEmitterAudit",
     "ReplayEmitterError",
+    "build_cpp_predicate_row",
+    "validate_cpp_predicate_row",
 ]

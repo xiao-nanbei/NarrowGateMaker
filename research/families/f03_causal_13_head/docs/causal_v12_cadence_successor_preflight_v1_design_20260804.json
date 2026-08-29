@@ -19,7 +19,7 @@
       "sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638"
     },
     "baseline_pointer": {
-      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "path": "${NARROWGATE_PRIVATE_OPERATIONAL_POINTER}",
       "sha256": "0ca4dd9341e6d5bc423507c100bbd096a2233b8b3800d098114c36caf6771a62"
     },
     "bundle_meta": {

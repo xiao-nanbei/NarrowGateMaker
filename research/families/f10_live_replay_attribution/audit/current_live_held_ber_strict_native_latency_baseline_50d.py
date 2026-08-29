@@ -19,7 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from data_paths import data_root, native_exchange_book_cache_root
+from data_paths import data_root, native_exchange_book_cache_root, resolve_portable_path
 from models import backtest_tick as bt
 from models.backtest_config import (
     add_queue_calibration_params,
@@ -32,8 +32,8 @@ from research.families.f10_live_replay_attribution.audit import (
 
 ROOT = Path(__file__).resolve().parents[4]
 IDENTITY = "btc_usdc_current_live_held_ber_strict_native_latency_baseline_50d_v1_20260810"
-SPEC = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+SPEC_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_strict_native_latency_baseline_50d_v1_spec_20260810.json"
 )
 DEFAULT_OUTPUT = (
@@ -99,8 +99,17 @@ class StrictNativeLatencyError(RuntimeError):
     """Raised when strict queue or latency evidence is incomplete."""
 
 
+def _spec_path() -> Path:
+    try:
+        return resolve_portable_path(SPEC_LOCATOR, root=ROOT)
+    except (RuntimeError, ValueError) as exc:
+        raise StrictNativeLatencyError(
+            "strict-native latency spec requires NARROWGATE_PRIVATE_RESEARCH_ROOT"
+        ) from exc
+
+
 def _spec() -> dict[str, Any]:
-    payload = parent._load_json(SPEC, role="strict-native latency spec")
+    payload = parent._load_json(_spec_path(), role="strict-native latency spec")
     if payload.get("identity") != IDENTITY:
         raise StrictNativeLatencyError("strict-native latency identity drifted")
     parent_path = parent._resolve_repo_path(payload["parent_diagnostic"]["path"])
@@ -432,7 +441,7 @@ def execute_day(
             "schema_version": f"{IDENTITY}.day.v1",
             "identity": IDENTITY,
             "day": day,
-            "spec_sha256": parent._sha256_file(SPEC),
+            "spec_sha256": parent._sha256_file(_spec_path()),
             "input_binding": binding,
             "native_tape_identity": tape_identity,
             "latency_audit": audit["latency"],
@@ -575,7 +584,10 @@ def finalize(*, output: Path = DEFAULT_OUTPUT) -> dict[str, Any]:
     manifest = {
         "schema_version": f"{IDENTITY}.manifest.v1",
         "identity": IDENTITY,
-        "spec": {"path": str(SPEC), "sha256": parent._sha256_file(SPEC)},
+        "spec": {
+            "path": SPEC_LOCATOR,
+            "sha256": parent._sha256_file(_spec_path()),
+        },
         "report": {"path": str(report_path), "sha256": parent._sha256_file(report_path)},
         "daily": {"path": str(daily_path), "sha256": parent._sha256_file(daily_path)},
         "campaigns": {

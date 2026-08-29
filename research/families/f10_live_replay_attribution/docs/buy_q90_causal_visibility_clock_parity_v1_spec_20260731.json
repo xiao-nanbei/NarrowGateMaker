@@ -136,17 +136,13 @@
     "legacy_vs_corrected_shadow_truth_and_fill_mismatch_count": 0,
     "python_cpp_q90_mismatch_count": 0,
     "same_date_live_mechanics_parity": true,
-    "exact_AWS_deep_event_path_required_for_transport": true,
+    "exact_host_deep_event_path_required_for_transport": true,
     "grade_A_required_for_transport": true
   },
   "latency_profile_identity": {
-    "path": "live/profiles/latency/aws_tokyo_binance_perp_btcusdc_20260725_3597s.json",
-    "sha256": "f08b5449078d41c4d42cea54b4f8f2ce392ee3986f671c1286dfce04ad8fd11b",
-    "profile_id": "aws_tokyo_binance_perp_btcusdc_20260725_3597s",
-    "capture_window_s": 3597,
-    "market_id": "binance:perp:BTCUSDC",
-    "book_samples": 80462,
-    "trade_samples": 3445,
+    "locator": "${NARROWGATE_PRIVATE_LATENCY_PROFILE}",
+    "profile_id": "owner_private_host_bound_receive_time_profile",
+    "availability": "private_not_distributed",
     "deep_event_path_recorded": false,
     "depth_recording_disabled_in_capture": true,
     "authority": "latency_distribution_sensitivity_not_event_path"
@@ -168,17 +164,17 @@
       "path": "${NARROWGATE_DATA_ROOT}/raw_trades/BTCUSDC/BTCUSDC-trades-2026-07-25.csv",
       "sha256": "90160f4f2c628c6dba1958f807a46e3f6a32e08750711a9e66a3f5ad01295627"
     },
-    "live_q90_shadow_tape": {
-      "path": "${NARROWGATE_DATA_ROOT}/reports/buy_q90_live_action_rate_transport_parity_v1_20260731/inputs/buy_q90_shadow_20260724T223950_20260730T220013.csv.gz",
-      "sha256": "383dafd6cb44e03fd62e3061e4c1669e2e61ce06ffaab75ae57ba0947eae23bc"
+    "private_live_diagnostic_tape": {
+      "locator": "${NARROWGATE_PRIVATE_LIVE_DIAGNOSTIC_TAPE}",
+      "canonical_availability": "private_not_distributed"
     },
-    "aws_capture_summary": {
-      "path": "${NARROWGATE_DATA_ROOT}/receive_time_tape/aws_tokyo_20260725T153151Z/summary.json",
-      "sha256": "759d8cd5043857d9a0e9995bcb21dc5e2578e962dd3776825bc7d3462de45a04"
+    "host_capture_summary": {
+      "locator": "${NARROWGATE_PRIVATE_RECEIVE_TIME_CAPTURE_SUMMARY}",
+      "canonical_availability": "private_not_distributed"
     },
-    "aws_binance_receive_tape": {
-      "path": "${NARROWGATE_DATA_ROOT}/receive_time_tape/aws_tokyo_20260725T153151Z/logs/market_tape/binance_receive_tape_2026-07-25_20260725T153156225991Z_p1303470.jsonl.gz",
-      "sha256": "8a3d75f5ccce186ed1f06cf6f36287297ed44972afaf1925e57a5a6325e7267f"
+    "venue_receive_tape": {
+      "locator": "${NARROWGATE_PRIVATE_RECEIVE_TIME_TAPE}",
+      "canonical_availability": "private_not_distributed"
     }
   },
   "implementation_identity": {

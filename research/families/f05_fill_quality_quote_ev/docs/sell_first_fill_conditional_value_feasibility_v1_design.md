@@ -6,7 +6,7 @@ Status: `development_contract_frozen_before_formal_native_artifact`. The machine
 
 ## Motivation
 
-The F10 [`live_120h_adverse_selection_diagnostic_v1`](../../f10_live_replay_attribution/docs/live_120h_adverse_selection_diagnostic_v1_20260730.md) found weak approximate 10-second value for SELL opener fills in one recent live window. That result is hypothesis-generating only. It cannot be reused as training or confirmatory evidence, and it cannot define a score threshold.
+A private historical 120-hour observational diagnostic motivated this question. That result is not distributed, remains hypothesis-generating only, and cannot be reused as training or confirmatory evidence or define a score threshold.
 
 This question is distinct from the closed first-add model:
 

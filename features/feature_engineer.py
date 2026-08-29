@@ -66,6 +66,10 @@ from market_fusion import (  # noqa: E402
     market_bars_dir,
     normalize_symbol,
 )
+from strategy.quote_core import finite_positive_quote_coefficient  # noqa: E402
+from strategy.model_contract import (  # noqa: E402
+    absolute_price_variance_unit_contract,
+)
 
 DATA_DIR = data_root(ROOT)
 BARS_DIR = DATA_DIR / "bars_1s"
@@ -421,11 +425,60 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
     if p3_delta_star <= 0.0 or p3_kappa_eff <= 0.0:
         raise ValueError(f"invalid P3 calibration values in {fill_prob_path}")
 
+    gamma = finite_positive_quote_coefficient("strategy.gamma", strat.get("gamma", 0.01))
+    raw_a_spread = strat.get("a_spread")
+    a_spread = (
+        gamma
+        if raw_a_spread is None
+        else finite_positive_quote_coefficient("strategy.a_spread", raw_a_spread)
+    )
+    raw_risk_per_order = strat.get("risk_per_order")
+    risk_per_order = (
+        a_spread
+        if raw_risk_per_order is None
+        else finite_positive_quote_coefficient(
+            "strategy.risk_per_order", raw_risk_per_order
+        )
+    )
+    raw_execution_slope = strat.get("execution_intensity_slope")
+    execution_intensity_slope = (
+        finite_positive_quote_coefficient(
+            "strategy.kappa", strat.get("kappa", 0.073)
+        )
+        if raw_execution_slope is None
+        else finite_positive_quote_coefficient(
+            "strategy.execution_intensity_slope", raw_execution_slope
+        )
+    )
+    historical_p3_adapter = bool(
+        strat.get("historical_p3_scalar_adapter_enabled", True)
+    )
+    p3_side_bbo_floor_enabled = bool(
+        strat.get("p3_side_bbo_floor_enabled", False)
+    )
+    if historical_p3_adapter and p3_side_bbo_floor_enabled:
+        raise ValueError("P3 historical pair and side-BBO modes are mutually exclusive")
+    if p3_side_bbo_floor_enabled:
+        raise ValueError(
+            "feature-label half-spread projection has no decision-time side BBO; "
+            "P3 side-BBO mode must use the full quote consumer"
+        )
+    p3_identity = fill_model.semantic_identity(require_artifact_hash=True)
     return {
-        "gamma": float(strat.get("gamma", 0.01)),
+        "gamma": gamma,
+        "a_spread": a_spread,
+        "risk_per_order": risk_per_order,
+        "execution_intensity_slope": execution_intensity_slope,
         "kappa": float(strat.get("kappa", 0.073)),
         "kappa_ratio": float(strat.get("kappa_ratio", 1.0)),
         "quote_horizon_s": float(strat.get("quote_horizon_s", 1.0)),
+        "risk_horizon_s": float(
+            strat.get("risk_horizon_s")
+            if strat.get("risk_horizon_s") is not None
+            else strat.get("quote_horizon_s", 1.0)
+        ),
+        "historical_p3_scalar_adapter_enabled": historical_p3_adapter,
+        "p3_side_bbo_floor_enabled": p3_side_bbo_floor_enabled,
         "max_spread_bps": float(strat.get("max_spread_bps", 0.0)),
         "dynamic_cap_enabled": bool(strat.get("dynamic_cap_enabled", False)),
         "dynamic_cap_base_bps": float(
@@ -450,6 +503,13 @@ def _load_label_quote_params(symbol: str, config_path: Optional[Path] = None) ->
         "fill_probability_sha256": _sha256_file(fill_prob_path),
         "fill_probability_schema_version": fill_model.schema_version,
         "fill_probability_model_type": fill_model.model_type,
+        "fill_probability_event_type": str(p3_identity["event_type"]),
+        "fill_probability_horizon_s": float(p3_identity["horizon_s"]),
+        "fill_probability_distance_origin": str(p3_identity["distance_origin"]),
+        "fill_probability_distance_unit": str(p3_identity["distance_unit"]),
+        "fill_probability_side": str(p3_identity["side"]),
+        "fill_probability_queue_included": bool(p3_identity["queue_included"]),
+        "fill_probability_artifact_sha256": str(p3_identity["artifact_sha256"]),
     }
 
 
@@ -513,14 +573,43 @@ def _prepare_1s_label_context(bars_1s: pd.DataFrame) -> tuple[np.ndarray, ...]:
 
 def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
                        sigma_sq: np.ndarray, quote_params: dict) -> np.ndarray:
-    gamma = max(float(quote_params["gamma"]), 1e-6)
+    raw_risk_per_order = quote_params.get("risk_per_order")
+    if raw_risk_per_order is None:
+        raw_risk_per_order = quote_params.get(
+            "a_spread", quote_params["gamma"]
+        )
+    risk_per_order = max(
+        finite_positive_quote_coefficient(
+            "risk_per_order", raw_risk_per_order
+        ),
+        1e-12,
+    )
     kappa_ratio = max(float(quote_params["kappa_ratio"]), 1e-6)
-    kappa_spread = max(float(quote_params["p3_kappa_eff"]) * kappa_ratio, 1e-6)
-    quote_horizon_s = max(float(quote_params["quote_horizon_s"]), 1e-6)
-    sigma_sq_horizon = sigma_sq * quote_horizon_s
+    historical_p3_adapter = bool(
+        quote_params.get("historical_p3_scalar_adapter_enabled", True)
+    )
+    distance_slope = (
+        float(quote_params["p3_kappa_eff"])
+        if historical_p3_adapter
+        else float(
+            quote_params.get(
+                "execution_intensity_slope", quote_params["kappa"]
+            )
+        )
+    )
+    kappa_spread = max(distance_slope * kappa_ratio, 1e-6)
+    risk_horizon_s = max(
+        float(
+            quote_params.get(
+                "risk_horizon_s", quote_params["quote_horizon_s"]
+            )
+        ),
+        1e-6,
+    )
+    sigma_sq_horizon = sigma_sq * risk_horizon_s
 
-    delta = gamma * sigma_sq_horizon + (2.0 / gamma) * np.log1p(
-        gamma / kappa_spread
+    delta = risk_per_order * sigma_sq_horizon + (2.0 / risk_per_order) * np.log1p(
+        risk_per_order / kappa_spread
     )
 
     liq_baseline = float(quote_params["liq_baseline"])
@@ -547,7 +636,7 @@ def _quote_half_spread(df: pd.DataFrame, close_ref: np.ndarray,
         delta *= vol_scale
 
     p3_delta_star = float(quote_params["p3_delta_star"])
-    if p3_delta_star > 0:
+    if historical_p3_adapter and p3_delta_star > 0:
         delta = np.maximum(delta, 2.0 * p3_delta_star)
 
     tick_size = float(quote_params["tick_size"])
@@ -1493,8 +1582,9 @@ def add_microstructure_features(
     for label, w in WINDOWS_10S.items():
         df[f"trade_intensity_{label}"] = df["trade_count"].rolling(w, min_periods=1).mean()
 
-    # --- 4. VPIN (简化版) ---
-    # 用滚动窗口内的 |buy_vol - sell_vol| / total_vol 近似
+    # --- 4. Clock-volume imbalance (frozen ``vpin_*`` feature ABI) ---
+    # 固定墙钟窗口内 |buy_vol - sell_vol| / total_vol；没有等成交量 bucket，
+    # 因此不是原始 VPIN estimator。字段名为冻结模型/feature schema 保持不变。
     for label, w in WINDOWS_10S.items():
         abs_imb = (df["buy_volume"] - df["sell_volume"]).abs().rolling(w, min_periods=1).sum()
         total = total_vol.rolling(w, min_periods=1).sum()
@@ -1921,6 +2011,7 @@ def write_causal_feature_manifest(
     labels_materialized: bool = True,
 ) -> Path:
     """Bind a versioned feature panel to code, config, and daily content."""
+    volatility_unit_contract = absolute_price_variance_unit_contract(symbol)
     quote_params = _load_label_quote_params(symbol, config_path=config_path)
     daily_files = []
     manifest_digest = hashlib.sha256()
@@ -2117,6 +2208,7 @@ def write_causal_feature_manifest(
             "p3_kappa_eff": quote_params["p3_kappa_eff"],
         },
         "label_quote_policy": {
+            "a_spread": quote_params["a_spread"],
             "quote_horizon_s": quote_params["quote_horizon_s"],
             "kappa_ratio": quote_params["kappa_ratio"],
             "dynamic_cap_enabled": quote_params["dynamic_cap_enabled"],
@@ -2146,7 +2238,8 @@ def write_causal_feature_manifest(
             "fill within h, then maker markout h after fill; decision outcome spans h..2h"
         ),
         "label_volatility_semantics": "fixed forward-h absolute-price variance",
-        "label_volatility_units": "(quote_currency/base_asset)^2_per_second",
+        "label_volatility_units": volatility_unit_contract["variance_units"],
+        "volatility_unit_contract": volatility_unit_contract,
         "warmup_days_requested": int(warmup_days),
         "warmup_policy": "immediately_contiguous_prior_utc_days_stop_at_first_gap",
         "market_stage": str(market_stage),

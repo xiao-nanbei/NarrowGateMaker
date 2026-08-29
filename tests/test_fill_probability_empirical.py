@@ -27,7 +27,10 @@ def test_empirical_fill_probability_round_trip(tmp_path):
     assert loaded.semantic_identity() == {
         "event_type": "touch",
         "horizon_s": 10.0,
+        "distance_origin": "same_side_best_bid_or_ask_at_window_start",
         "distance_unit": "USDC_per_BTC",
+        "side": "pooled_buy_sell",
+        "queue_included": False,
         "artifact_sha256": loaded.artifact_sha256,
     }
     assert np.allclose(loaded.prob([0.1, 1.0, 4.0]), [0.8, 0.5, 0.05])
@@ -37,6 +40,11 @@ def test_empirical_fill_probability_round_trip(tmp_path):
     assert payload["delta_star"] > 0.0
     assert payload["kappa_eff"] > 0.0
     assert payload["metadata"]["event_type"] == "touch"
+    assert payload["metadata"]["distance_origin"] == (
+        "same_side_best_bid_or_ask_at_window_start"
+    )
+    assert payload["metadata"]["side"] == "pooled_buy_sell"
+    assert payload["metadata"]["queue_included"] is False
 
 
 def test_frozen_v2_touch_identity_is_inferred_without_rewriting(tmp_path):
@@ -62,6 +70,11 @@ def test_frozen_v2_touch_identity_is_inferred_without_rewriting(tmp_path):
     model = FillProbabilityModel.load(path)
 
     assert model.semantic_identity()["event_type"] == "touch"
+    assert model.semantic_identity()["distance_origin"] == (
+        "same_side_best_bid_or_ask_at_window_start"
+    )
+    assert model.semantic_identity()["side"] == "pooled_buy_sell"
+    assert model.semantic_identity()["queue_included"] is False
     assert path.read_bytes() == before
 
 

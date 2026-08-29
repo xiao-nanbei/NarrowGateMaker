@@ -78,10 +78,23 @@ def _contract_params(tmp_path):
         "fill_probability_model_type": "empirical_survival",
         "fill_probability_event_type": "touch",
         "fill_probability_horizon_s": 10.0,
+        "fill_probability_distance_origin": (
+            "same_side_best_bid_or_ask_at_window_start"
+        ),
         "fill_probability_distance_unit": "USDC_per_BTC",
+        "fill_probability_side": "pooled_buy_sell",
+        "fill_probability_queue_included": False,
         "fill_probability_artifact_sha256": p3_sha256,
         "p3_delta_star": 14.0,
         "p3_kappa_eff": 0.061,
+        "historical_p3_scalar_adapter_enabled": True,
+        "p3_side_bbo_floor_enabled": False,
+        "quote_math_mode": "legacy_v0",
+        "gamma": 0.046,
+        "kappa": 0.05,
+        "inventory_reference_qty": 1.0,
+        "order_size": 0.001,
+        "quote_horizon_s": 1.0,
         "queue_calibration_schema_version": "narrowgate_queue_calibration.v3",
         "queue_calibration_apply_mode": "frozen_default",
         "queue_calibration_fit_days": ["2026-07-01"],
@@ -109,8 +122,8 @@ def _contract_params(tmp_path):
     configure_fixed_latency_distribution(
         params,
         scenario="baseline",
-        profile_id="aws_tokyo_2vcpu4g_v1",
-        environment="aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+        profile_id="provider_neutral_test_profile_v1",
+        environment="provider_neutral_test_environment",
         baseline_clip_quantile=0.9,
     )
     return params
@@ -122,7 +135,7 @@ def _write_sync_contract_tape(tmp_path):
         json.dumps(
             {
                 "schema_version": SYNC_DEGRADE_TAPE_SCHEMA,
-                "environment": "aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+                "environment": "provider_neutral_test_environment",
                 "start_ts_ms": 1_700_000_000_000,
                 "end_ts_ms": 1_700_086_400_000,
                 "events": [
@@ -156,6 +169,28 @@ def test_formal_contract_is_stable_and_fresh_start(tmp_path):
     assert first["p3"]["horizon_s"] == 10.0
     assert first["p3"]["distance_unit"] == "USDC_per_BTC"
     assert first["p3"]["artifact_sha256"] == first["artifacts"]["p3"]["sha256"]
+    assert first["p3"]["consumer_mode"] == "historical_pair_projection"
+    assert first["quote_unit_contract"] == {
+        "formula_identity": "as_shaped_empirical_controller",
+        "quote_math_mode": "legacy_v0",
+        "inventory_unit": "base_asset",
+        "normalized_inventory_unit": "dimensionless",
+        "price_unit": "quote_asset_per_base_asset",
+        "variance_rate_unit": "price_squared_per_second",
+        "duration_unit": "second",
+        "eta_inventory_unit": "inverse_price",
+        "a_spread_unit": "inverse_price",
+        "risk_per_order_unit": "inverse_price",
+        "execution_intensity_slope_unit": "inverse_price",
+        "inventory_reference_qty": 1.0,
+        "order_size": 0.001,
+        "eta_inventory": 0.046,
+        "a_spread": 0.046,
+        "risk_per_order": 0.046,
+        "execution_intensity_slope": 0.05,
+        "quote_horizon_s": 1.0,
+        "risk_horizon_s": 1.0,
+    }
     trades_identity = first["artifacts"]["individual_trades"]
     assert trades_identity["status"] == "verified"
     assert trades_identity["manifest_sha256"]
@@ -293,8 +328,8 @@ def test_latency_stress_is_reproducible_but_not_promotion_evidence(tmp_path):
     configure_fixed_latency_distribution(
         params,
         scenario="stress",
-        profile_id="aws_tokyo_2vcpu4g_v1",
-        environment="aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+        profile_id="provider_neutral_test_profile_v1",
+        environment="provider_neutral_test_environment",
         stress_spike_probability=0.01,
         stress_spike_multiplier=8.0,
     )
@@ -371,7 +406,7 @@ def test_enabled_sync_adjust_requires_frozen_tape_for_promotion(tmp_path):
             "sync_adjust_event_tape_path": str(tape),
             "sync_adjust_event_tape_sha256": tape_sha,
             "sync_adjust_event_environment": (
-                "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+                "provider_neutral_test_environment"
             ),
             "sync_adjust_semantics": SYNC_DEGRADE_SEMANTICS,
             "sync_adjust_pause_s": 120.0,
@@ -396,7 +431,7 @@ def test_sync_censor_and_stress_are_diagnostic_only(tmp_path):
             "sync_adjust_event_tape_path": str(tape),
             "sync_adjust_event_tape_sha256": tape_sha,
             "sync_adjust_event_environment": (
-                "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+                "provider_neutral_test_environment"
             ),
             "sync_adjust_semantics": SYNC_DEGRADE_SEMANTICS,
         }

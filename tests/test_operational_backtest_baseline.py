@@ -12,8 +12,6 @@ from models.backtest_config import (
     load_operational_baseline_binding,
     resolve_backtest_config_path,
 )
-from research.governance.public_machine_projection import projection_for
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -104,7 +102,7 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
     archive = private / "live_config.backtest_v12.800f4c025663.local.yaml"
     alias = private / "live_config.current.local.yaml"
     archive.write_text("ml:\n  enabled: true\n", encoding="utf-8")
-    alias.write_text("ml:\n  enabled: false\nstrategy:\n  buy_e3: true\n", encoding="utf-8")
+    alias.write_text("ml:\n  enabled: false\n", encoding="utf-8")
     archive.chmod(0o600)
     alias.chmod(0o600)
 
@@ -179,40 +177,17 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
         ),
         encoding="utf-8",
     )
-    v13 = docs / "operational_baseline_identity_v13.json"
-    live_runtime = {
-        "identity": "f05_owner_buy_e3_no_shadow_runtime_v3",
-        "commit": "1" * 40,
-        "tree": "2" * 40,
-        "annotated_tag_object": "3" * 40,
-        "availability": "private_release_bundle_not_distributed",
-    }
-    live_release = {
-        "identity": "f05_owner_buy_e3_direct_active_release_v3",
-        "status": "owner_active_release_v3_no_shadow",
-        "file_sha256": "4" * 64,
-        "canonical_sha256": "5" * 64,
-        "availability": "private_not_distributed",
-    }
-    live_activation = {
-        "identity": (
-            "repository-live-replacement-activation-aws-tokyo-buy-e3-no-shadow-v6-20260824-v1"
-        ),
-        "file_sha256": "6" * 64,
-        "canonical_sha256": "7" * 64,
-        "availability": "private_not_distributed",
-        "rewritten_by_v13": False,
-    }
-    v13.write_text(
+    private_boundary = docs / "operational_baseline_private_boundary.json"
+    private_boundary.write_text(
         json.dumps(
             {
-                "schema_version": "narrowgate_operational_baseline_identity.v13",
-                "baseline_id": "governance-v13",
-                "effective_at_utc": "2026-08-25T00:00:00Z",
-                "operational_status": "active_split_live_and_backtest_authority_locator",
-                "promotion_class": (
-                    "governance_locator_reconciliation_no_new_strategy_or_economic_authority"
+                "schema_version": (
+                    "narrowgate_operational_baseline_identity.private_boundary.v1"
                 ),
+                "baseline_id": "governance-private-boundary",
+                "effective_at_utc": "2026-08-25T00:00:00Z",
+                "operational_status": "private_deployment_not_distributed",
+                "promotion_class": "public_backtest_locator_no_live_or_economic_authority",
                 "predecessor": {
                     "baseline_id": "baseline-v12",
                     "identity": str(v12.relative_to(root)),
@@ -220,47 +195,9 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
                     "historical_identity_modified": False,
                     "status": "immutable_backtest_default_control",
                 },
-                "projection_retirement": {
-                    "predecessor_mutable_pointer_public_sha256": "fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc",
-                    "predecessor_mutable_pointer_private_source_sha256": "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f",
-                    "predecessor_private_source_availability": "private_not_distributed",
-                    "predecessor_private_source_rewritten": False,
-                    "successor_pointer_materialization": (
-                        "ordinary_safe_public_json_no_private_source_identity_claim"
-                    ),
-                },
-                "current_live": {
-                    "authority_resolution": (
-                        "private_current_remote_pointer_then_stable_live_config_alias"
-                    ),
-                    "remote_pointer": "${NARROWGATE_LIVE_REMOTE_POINTER}",
-                    "config": {
-                        "identity": "owner_buy_e3_no_shadow_release_v3_active_config",
-                        "locator": "${NARROWGATE_LIVE_CONFIG}",
-                        "sha256": _sha256(alias),
-                        "availability": "private_not_distributed",
-                    },
-                    "runtime": live_runtime,
-                    "release": live_release,
-                    "activation_receipt": live_activation,
-                    "buy_e3_enabled": True,
-                    "sell_owner_policy_enabled": True,
-                    "external_venues_enabled": False,
-                    "global_flow_shadow_enabled": False,
-                    "global_reference_shadow_enabled": False,
-                    "runtime_shadow_classification": "fully_no_shadow_release_v3",
-                    "lifecycle_admission_direct_pid_binding": False,
-                    "post_lifecycle_capture_is_latest_live_status": False,
-                    "economic_outcomes_read": False,
-                    "economic_values_persisted": False,
-                    "economic_effect_proven": False,
-                    "nonbaseline_action_occurrence_proven": False,
-                    "private_release_and_evidence_chain_remain_authority": True,
-                },
+                "current_live": {"availability": "private_not_distributed"},
                 "backtest_default": {
-                    "status": (
-                        "immutable_v12_control_retained_until_exact_e3_replay_baseline_exists"
-                    ),
+                    "status": "immutable_backtest_default_control",
                     "identity": str(v12.relative_to(root)),
                     "identity_sha256": _sha256(v12),
                     "config_locator": str(archive.relative_to(root)),
@@ -287,14 +224,7 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
                     "governance_locator_publication_authorized": True,
                     "baseline_promotion_authorized": False,
                     "backtest_default_control_authorized": True,
-                    "current_live_authority_granted_by_this_identity": False,
                     "private_release_authority_required": True,
-                    "research_prediction_authority": False,
-                    "research_live_authority": False,
-                    "research_action_experiment_authorized": False,
-                    "buy_e3_backtest_economic_authority": False,
-                    "buy_e3_nonbaseline_action_occurrence_authority": False,
-                    "historical_v12_backtest_control_rewritten": False,
                 },
             }
         ),
@@ -306,29 +236,10 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
             {
                 "schema_version": "narrowgate_operational_baseline_pointer.v2",
                 "updated_at_utc": "2026-08-25T00:00:00Z",
-                "baseline_id": "governance-v13",
-                "identity_path": str(v13.relative_to(root)),
-                "identity_sha256": _sha256(v13),
-                "current_live_binding": {
-                    "authority": "private_current_remote_pointer_and_stable_live_config_alias",
-                    "remote_pointer": "${NARROWGATE_LIVE_REMOTE_POINTER}",
-                    "config_locator": "${NARROWGATE_LIVE_CONFIG}",
-                    "config_sha256": _sha256(alias),
-                    "runtime_commit": live_runtime["commit"],
-                    "runtime_tree": live_runtime["tree"],
-                    "runtime_annotated_tag_object": live_runtime["annotated_tag_object"],
-                    "release_file_sha256": live_release["file_sha256"],
-                    "release_canonical_sha256": live_release["canonical_sha256"],
-                    "activation_receipt_file_sha256": live_activation["file_sha256"],
-                    "activation_receipt_canonical_sha256": live_activation["canonical_sha256"],
-                    "no_shadow": True,
-                    "latest_live_status_authority": False,
-                    "nonbaseline_action_occurrence_proven": False,
-                    "economic_effect_proven": False,
-                    "economic_outcomes_read": False,
-                    "economic_values_persisted": False,
-                    "backtest_economic_authority": False,
-                },
+                "baseline_id": "governance-private-boundary",
+                "identity_path": str(private_boundary.relative_to(root)),
+                "identity_sha256": _sha256(private_boundary),
+                "current_live_binding": {"availability": "private_not_distributed"},
                 "backtest_default_binding": {
                     "baseline_id": "baseline-v12",
                     "identity_path": str(v12.relative_to(root)),
@@ -373,9 +284,7 @@ def _write_split_v2_binding(root: Path) -> tuple[Path, Path, Path]:
                     "baseline_integrity_gate_passed": True,
                 },
                 "backtest_default_control_authorized": True,
-                "backtest_default_control_scope": (
-                    "immutable_v12_control_until_exact_buy_e3_replay_baseline_exists"
-                ),
+                "backtest_default_control_scope": "immutable_backtest_control",
                 "historical_v12_identity_modified": False,
                 "no_cross_layer_substitution": True,
             }
@@ -491,9 +400,9 @@ def test_v2_split_binding_never_uses_current_live_alias_for_backtest(
     assert binding["config_path"] != alias.resolve()
     assert binding["config_scope"] == "immutable_v12_backtest_default"
     assert binding["pointer"]["baseline_id"] == "baseline-v12"
-    assert binding["governance_pointer"]["baseline_id"] == "governance-v13"
+    assert binding["governance_pointer"]["baseline_id"] == "governance-private-boundary"
     assert binding["identity"]["baseline_id"] == "baseline-v12"
-    assert binding["current_live_identity"]["baseline_id"] == "governance-v13"
+    assert binding["current_live_identity"]["baseline_id"] == "governance-private-boundary"
     assert binding["runtime_code_audit"]["declared"] is True
     assert resolve_backtest_config_path(root=tmp_path, pointer_path=pointer) == archive.resolve()
 
@@ -724,17 +633,7 @@ def test_verified_config_snapshot_rejects_path_drift_and_parses_bound_bytes(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("current_live_binding.remote_pointer", "${WRONG_REMOTE_POINTER}"),
-        ("current_live_binding.config_locator", "${WRONG_LIVE_CONFIG}"),
-        ("current_live_binding.runtime_commit", "a" * 40),
-        ("current_live_binding.runtime_tree", "b" * 40),
-        ("current_live_binding.runtime_annotated_tag_object", "c" * 40),
-        ("current_live_binding.release_file_sha256", "d" * 64),
-        ("current_live_binding.release_canonical_sha256", "e" * 64),
-        ("current_live_binding.activation_receipt_file_sha256", "f" * 64),
-        ("current_live_binding.activation_receipt_canonical_sha256", "0" * 64),
-        ("current_live_binding.no_shadow", False),
-        ("current_live_binding.economic_effect_proven", True),
+        ("current_live_binding.availability", "public"),
         ("backtest_default_binding.unexpected_economic_authority", True),
         ("backtest_default_flat_projection.ml_enabled", False),
         ("backtest_default_flat_projection.dynamic_fill_hazard_shadow_enabled", False),
@@ -761,20 +660,15 @@ def test_v2_pointer_layer_mutations_fail_closed(
         ("backtest_default.config_sha256", "1" * 64),
         ("config.canonical_private_source", "${WRONG_CONFIG}"),
         ("config.sha256", "2" * 64),
-        ("current_live.runtime.tree", "3" * 40),
-        ("current_live.release.file_sha256", "a" * 64),
-        ("current_live.activation_receipt.canonical_sha256", "5" * 64),
-        ("current_live.global_flow_shadow_enabled", True),
-        ("current_live.backtest_economic_authority", True),
+        ("current_live.availability", "public"),
         ("backtest_default.current_live_alias_allowed", True),
         ("permissions.unexpected_authority", True),
-        ("projection_retirement.predecessor_private_source_rewritten", True),
         ("effective_at_utc", "2026-08-25T00:00:01Z"),
         ("model.directory", "models/wrong"),
         ("p3.sha256", "6" * 64),
     ],
 )
-def test_v2_v13_identity_layer_mutations_fail_closed(
+def test_v2_private_boundary_identity_layer_mutations_fail_closed(
     tmp_path: Path,
     field: str,
     value: object,
@@ -792,63 +686,5 @@ def test_v2_v13_identity_layer_mutations_fail_closed(
         load_operational_baseline_binding(root=tmp_path, pointer_path=pointer)
 
 
-def test_repository_current_baseline_identity_is_resolver_complete() -> None:
-    binding = load_operational_baseline_binding(root=ROOT)
-
-    assert binding is not None
-    identity = binding["identity"]
-    pointer = binding["pointer"]
-    governance_pointer = binding["governance_pointer"]
-    pointer_projection = projection_for(binding["pointer_path"])
-    assert pointer_projection is None
-    assert binding["pointer_public_projection_sha256"] is None
-    assert binding["pointer_source_sha256"] == binding["pointer_sha256"]
-    identity_projection = projection_for(binding["identity_path"])
-    assert identity_projection is not None
-    assert binding["identity_sha256"] == identity_projection.public_projection_sha256
-    assert binding["identity_public_projection_sha256"] == (
-        identity_projection.public_projection_sha256
-    )
-    assert binding["identity_source_sha256"] == identity_projection.source_private_sha256
-    assert identity["baseline_id"] == pointer["baseline_id"]
-    assert governance_pointer["baseline_id"] != pointer["baseline_id"]
-    assert binding["current_live_identity"]["baseline_id"] == governance_pointer["baseline_id"]
-    assert binding["current_live_identity_public_projection_sha256"] is None
-    assert identity["permissions"]["baseline_promotion_authorized"] is True
-    assert identity["permissions"]["backtest_default_control_authorized"] is True
-    assert identity["model"]["training_summary_sha256"]
-    assert identity["p3"]["sha256"]
-    assert pointer["buy_fill_selection_shadow_enabled"] is False
-    assert pointer["buy_fill_selection_live_enabled"] is False
-    assert pointer["quote_snapshot_atomicity_contract"] == "v2"
-    assert pointer["baseline_integrity_gate_passed"] is True
-    assert binding["config_scope"] == "immutable_v12_backtest_default"
-    assert binding["current_live_config"]["config_sha256"] == (
-        "3d8463c47c1cc2ff2017c9f6e7a963c77a8edb0cc692c48d89b03ee09bff772e"
-    )
-    replay_baseline = binding["replay_baseline"]
-    assert replay_baseline is not None
-    assert replay_baseline["control"]["identity"] == ("current_live_held_global_ber_control")
-    assert replay_baseline["replay_semantics"]["ber_clock_identity"] == (
-        "live_held_completed_10s_feature_sampled_on_completed_1s_callback.v1"
-    )
-    assert replay_baseline["economics"]["terminal_mtm_pnl_usdc"] == pytest.approx(
-        -165.56607903599894
-    )
-    assert replay_baseline["panel"]["days"] == 50
-    assert replay_baseline["parity"]["prefix_daily_mismatch_count"] == 0
-    assert identity["engineering_verification"]["status"] == (
-        "pass_with_owner_accepted_evidence_limitations"
-    )
-    assert identity["research_gate_passed"] is False
-    assert identity["permissions"]["owner_risk_accepted_live_authorized"] is True
-    assert identity["f05_boolean_cooldown"]["restart_aware_71d_terminal_delta_usdc"] == (
-        pytest.approx(16.877254176)
-    )
-    assert identity["f05_boolean_cooldown"]["research_hard_gates_passed"] is False
-    # The immutable v11 identity records the deployed code. This checkout has
-    # continued development, so it is deliberately classified as a runtime
-    # overlay rather than an exact reproduction of deployed v11.
-    assert binding["runtime_code_audit"]["declared"] is True
-    assert binding["runtime_code_audit"]["matches"] is False
-    assert binding["runtime_code_audit"]["mismatched_paths"]
+def test_public_repository_has_no_operational_baseline_binding() -> None:
+    assert load_operational_baseline_binding(root=ROOT) is None

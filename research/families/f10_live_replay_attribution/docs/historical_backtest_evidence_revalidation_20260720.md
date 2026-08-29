@@ -23,7 +23,7 @@ The operational baseline at that time used the empirical P3 artifact instead of 
 
 The causal-v4 13-head bundle and rebuilt BUY scorers remain research artifacts. Changing P3 did not silently promote those models to live.
 
-The immutable operational identity is [`operational_baseline_identity_20260720.json`](operational_baseline_identity_20260720.json).
+The immutable operational identity is owner-private and `private_not_distributed`; this historical report grants no current runtime authority.
 
 ## Deployment guard
 

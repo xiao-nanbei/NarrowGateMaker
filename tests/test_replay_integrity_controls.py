@@ -36,7 +36,12 @@ def _strict_params(config_path: Path) -> dict:
         "fill_probability_model_type": "empirical_survival",
         "fill_probability_event_type": "touch",
         "fill_probability_horizon_s": 10.0,
+        "fill_probability_distance_origin": (
+            "same_side_best_bid_or_ask_at_window_start"
+        ),
         "fill_probability_distance_unit": "USDC_per_BTC",
+        "fill_probability_side": "pooled_buy_sell",
+        "fill_probability_queue_included": False,
         "fill_probability_artifact_sha256": hashlib.sha256(
             p3_path.read_bytes()
         ).hexdigest(),

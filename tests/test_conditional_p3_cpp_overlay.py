@@ -21,6 +21,15 @@ def _params():
     params.quote.kappa = 1.0
     params.quote.p3_delta_star = 2.0
     params.quote.p3_kappa_eff = 10.0
+    params.quote.historical_p3_scalar_adapter_enabled = True
+    params.quote.p3_identity_required = True
+    params.quote.p3_event_type = "touch"
+    params.quote.p3_horizon_s = 10.0
+    params.quote.p3_distance_origin = "same_side_best_bid_or_ask_at_window_start"
+    params.quote.p3_distance_unit = "USDC_per_BTC"
+    params.quote.p3_side = "pooled_buy_sell"
+    params.quote.p3_queue_included = False
+    params.quote.p3_artifact_sha256 = "a" * 64
     params.quote.regime_enabled = True
     params.quote.tick_size = 0.1
     params.quote.lot_size = 0.001

@@ -39,12 +39,12 @@
   },
   "source_contract": {
     "denominator_source_spec": {
-      "artifact_id": "f10_current_live_held_ber_replay_baseline_40d_20260809",
-      "path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
+      "artifact_id": "frozen_historical_40d_denominator_20260809",
+      "path": "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/frozen_historical_40d_denominator_20260809.json",
       "sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
       "sha256_identity_kind": "private_source_sha256_for_public_projection",
       "public_projection_sha256": "6ca73acc0422c501236e100c7a0bead6916c557c4bcd8b03d23ab231bf3351df",
-      "availability": "public_repository",
+      "availability": "private_not_distributed",
       "source_private_availability": "private_not_distributed",
       "fields_reused": [
         "panel.ordered_utc_days",
@@ -55,7 +55,7 @@
     },
     "operational_baseline_pointer": {
       "artifact_id": "f10_operational_baseline_pointer_at_f05_v1_1_freeze",
-      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "path": "${NARROWGATE_PRIVATE_OPERATIONAL_POINTER}",
       "path_role": "mutable_resolution_hint_not_frozen_bytes",
       "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b",
       "sha256_identity_kind": "historical_exact_bytes_sha256",

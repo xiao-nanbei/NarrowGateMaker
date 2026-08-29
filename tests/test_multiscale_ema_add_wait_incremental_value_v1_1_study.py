@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -105,6 +106,10 @@ def test_missing_frozen_operational_pointer_bytes_fail_closed() -> None:
 def test_projected_denominator_validates_against_frozen_source_identity() -> None:
     public_spec = study._load_json(study.SPEC)
     row = public_spec["source_contract"]["denominator_source_spec"]
+    if not os.environ.get("NARROWGATE_PRIVATE_RESEARCH_ROOT"):
+        with pytest.raises(RuntimeError, match="requires private configuration"):
+            study._resolve_bound_path(row["path"])
+        return
     path = study._resolve_bound_path(row["path"])
     study._validate_source_identity(path, row["sha256"], role="test denominator")
 

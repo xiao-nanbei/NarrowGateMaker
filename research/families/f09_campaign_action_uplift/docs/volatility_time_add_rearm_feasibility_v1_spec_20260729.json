@@ -111,7 +111,7 @@
     "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
     "queue_artifact_path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
     "queue_artifact_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
-    "latency_artifact_path": "${NARROWGATE_RETIRED_DATA_ROOT}/live_telemetry_snapshots/ec2_aws_tokyo_2vcpu4g_20260712_live_perf_telemetry.csv",
+    "latency_artifact_path": "private_not_distributed",
     "latency_artifact_sha256": "efd4972b912da616b22243bbac8183486969ce8260ad951cf89e63ecf20657a2"
   },
   "implementation_identity": {

@@ -144,7 +144,7 @@ def test_profile_latency_can_make_external_flow_unavailable_at_fill(tmp_path):
     simulator = MarketDataLatencySimulator(
         {
             "schema": "market_data_latency_profile.v1",
-            "profile_id": "aws_tokyo_test",
+            "profile_id": "provider_neutral_test",
             "groups": groups,
         }
     )
@@ -178,7 +178,7 @@ def test_profile_latency_can_make_external_flow_unavailable_at_fill(tmp_path):
 
     assert captured[0]["global_flow_valid_100ms"] == 1
     assert delayed[0]["global_flow_valid_100ms"] == 0
-    assert delayed[0]["market_data_latency_profile_id"] == "aws_tokyo_test"
+    assert delayed[0]["market_data_latency_profile_id"] == "provider_neutral_test"
 
 
 def test_captured_tape_reorders_cross_callback_feature_timestamps(tmp_path):

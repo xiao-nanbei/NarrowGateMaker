@@ -9,25 +9,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AUTHORITY_ENV = (
-    "NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY",
-    "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY",
-    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH",
-    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256",
-    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256",
-    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH",
-    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256",
-    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256",
+    "NARROWGATE_DEPLOYMENT_ENVELOPE_PATH",
+    "NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256",
     "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH",
-    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256",
     "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256",
-    "NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256",
-    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH",
-    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256",
-    "NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256",
-    "NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH",
-    "NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256",
-    "NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH",
-    "NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256",
+    "NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH",
+    "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY",
+    "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY",
+    "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
 )
 NORMAL_ENV = (
     "NARROWGATE_TEST_NORMAL_FROM_ENV",
@@ -176,7 +165,13 @@ def _stage_run_sh(
             if [[ "$arg" == "--dry-run" ]]; then
                 exit 0
             fi
+            if [[ "$arg" == "--write-stopped-reconciliation" ]]; then
+                exit 0
+            fi
         done
+        if [[ "$kind" == "main" && -n "${{NARROWGATE_TEST_MAIN_EXIT_CODE:-}}" ]]; then
+            exit "$NARROWGATE_TEST_MAIN_EXIT_CODE"
+        fi
 
         child=""
         trap '[[ -n "$child" ]] && kill "$child" 2>/dev/null || true; exit 0' TERM INT
@@ -286,7 +281,26 @@ def test_live_start_fails_closed_when_runtime_selector_is_missing(tmp_path: Path
     assert not (root / "bash-env-executed").exists()
 
 
-def test_run_sh_preserves_invocation_only_buy_e3_authority(tmp_path: Path) -> None:
+def test_live_startup_authority_uses_one_release_root() -> None:
+    script = (ROOT / "live" / "run.sh").read_text(encoding="utf-8")
+
+    assert "verify-envelope-startup" in script
+    assert "NARROWGATE_DEPLOYMENT_ENVELOPE_PATH" in script
+    assert "NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256" in script
+    for obsolete in (
+        "NARROWGATE_DEPLOYMENT_ENVELOPE_FILE_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_RECEIPT_CANONICAL_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_LOCK_CANONICAL_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_WHEELHOUSE_CANONICAL_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_ROOT_WHEEL_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_NATIVE_WHEEL_SHA256",
+        "NARROWGATE_STARTUP_RUNTIME_VERIFIER_SHA256",
+        "NARROWGATE_STARTUP_TRUSTED_PYTHON_SHA256",
+    ):
+        assert obsolete not in script
+
+
+def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -> None:
     root, profile, capture, args_capture = _stage_run_sh(tmp_path)
     environment = _base_environment(root, profile, capture, args_capture)
     invocation = {
@@ -373,3 +387,56 @@ def test_formal_dry_run_does_not_source_live_environment(tmp_path: Path) -> None
     assert args[0].startswith("-I -B ")
     assert "--dry-run --dry-run-timeout-s 7" in args[0]
     assert str(root / "live" / "config.yaml") in args[0]
+
+
+def test_reconcile_stopped_requires_quiescence_and_preserves_invocation_authority(
+    tmp_path: Path,
+) -> None:
+    root, profile, capture, args_capture = _stage_run_sh(tmp_path)
+    environment = _base_environment(root, profile, capture, args_capture)
+    environment["NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"] = "1"
+    output = (tmp_path / "exchange-reconciliation.json").resolve()
+
+    subprocess.run(
+        [
+            "bash",
+            str(root / "live" / "run.sh"),
+            "reconcile-stopped",
+            str(output),
+        ],
+        cwd=root,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    records = _read_records(capture)
+    assert set(records) == {"main"}
+    assert records["main"]["NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"] == "SET:1"
+    assert records["main"]["NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY"] == "UNSET"
+    arguments = args_capture.read_text(encoding="utf-8")
+    assert f"--write-stopped-reconciliation {output}" in arguments
+    assert f"--config {root / 'live' / 'config.yaml'}" in arguments
+
+
+def test_service_propagates_fatal_main_exit_to_systemd(tmp_path: Path) -> None:
+    root, profile, capture, args_capture = _stage_run_sh(tmp_path)
+    environment = _base_environment(root, profile, capture, args_capture)
+    environment["NARROWGATE_TEST_MAIN_EXIT_CODE"] = "73"
+
+    completed = subprocess.run(
+        ["bash", str(root / "live" / "run.sh"), "service"],
+        cwd=root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 73
+    assert set(_read_records(capture)) == {"preflight", "main"}
+    assert "--config" in args_capture.read_text(encoding="utf-8")
+    assert not (root / "logs" / "maker.pid").exists()

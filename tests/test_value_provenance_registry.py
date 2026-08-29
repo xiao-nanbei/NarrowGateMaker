@@ -32,7 +32,7 @@ def test_direct_estimates_and_policy_selections_are_not_conflated() -> None:
 
     for entry_id in (
         "p3_empirical_survival",
-        "aws_tokyo_latency_profile",
+        "host_bound_latency_profile",
         "placement_full_curve_competing_v4_development_result",
     ):
         assert entries[entry_id]["class"] == "empirical_direct_estimate"
@@ -63,7 +63,14 @@ def test_two_v4_families_have_unambiguous_display_identities() -> None:
     assert payload["entry_live_authority_flags_effective_for_current_runtime"] is False
     live_authority_semantics = payload["live_authority_semantics"]
     assert "grants no current authority" in live_authority_semantics
-    assert "operational_baseline_current.json" in live_authority_semantics
+    assert "owner-private" in live_authority_semantics
+    assert "fail closed" in live_authority_semantics
+    assert payload["current_operational_authority_availability"] == (
+        "private_not_distributed"
+    )
+    assert payload["current_operational_authority_resolution"] == (
+        "owner_private_fail_closed"
+    )
 
 
 def test_policy_clock_race_result_has_no_live_authority() -> None:

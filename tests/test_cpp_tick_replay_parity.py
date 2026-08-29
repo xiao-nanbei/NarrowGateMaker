@@ -47,12 +47,21 @@ def _python_replay(ts, price, qty, is_buyer_maker, params):
     requote_ms = int(params.requote_interval_s * 1000.0)
     quote_cfg = qc.QuoteCoreConfig(
         gamma=params.quote.gamma,
+        eta_inventory=(
+            None
+            if np.isnan(params.quote.eta_inventory)
+            else params.quote.eta_inventory
+        ),
+        a_spread=(
+            None if np.isnan(params.quote.a_spread) else params.quote.a_spread
+        ),
         kappa=params.quote.kappa,
         tick_size=tick,
         lot_size=lot,
         maker_fee=params.maker_fee,
         order_size=order_size,
         max_inventory=params.max_inventory,
+        quote_horizon_s=params.quote.quote_horizon_s,
         max_spread_bps=params.quote.max_spread_bps,
         dynamic_cap_enabled=params.quote.dynamic_cap_enabled,
         dynamic_cap_base_bps=params.quote.dynamic_cap_base_bps,
@@ -242,6 +251,9 @@ def test_cpp_tick_replay_synthetic_parity():
     qty = np.full(n, 0.003, dtype=np.float64)
     is_buyer_maker = ((np.arange(n) % 2) == 0).astype(np.uint8)
     params = _make_params()
+    params.quote.eta_inventory = 0.02
+    params.quote.a_spread = 0.03
+    params.quote.quote_horizon_s = 5.0
 
     py = _python_replay(ts, price, qty, is_buyer_maker, params)
     cpp = narrowgate_cpp.simulate_tick_arrays(ts, price, qty, is_buyer_maker, params).summary

@@ -11,10 +11,12 @@ from pathlib import Path
 ENV_MARKETDATA_ROOT = "NARROWGATE_MARKETDATA_ROOT"
 ENV_DATA_ROOT = "NARROWGATE_DATA_ROOT"
 ENV_CACHE_ROOT = "NARROWGATE_CACHE_ROOT"
+ENV_XDG_CACHE_HOME = "XDG_CACHE_HOME"
 ENV_TICK_WINDOW_CACHE_DIR = "NARROWGATE_TICK_WINDOW_CACHE_DIR"
 ENV_REPLAY_DAG_CACHE_DIR = "NARROWGATE_REPLAY_DAG_CACHE_DIR"
 ENV_RESULTS_DIR = "NARROWGATE_RESULTS_DIR"
 ENV_PRIVATE_EVIDENCE_ROOT = "NARROWGATE_PRIVATE_EVIDENCE_ROOT"
+ENV_PRIVATE_RESEARCH_ROOT = "NARROWGATE_PRIVATE_RESEARCH_ROOT"
 ENV_REMOTE_ROOT = "NARROWGATE_REMOTE_ROOT"
 ENV_REMOTE_HOME = "NARROWGATE_REMOTE_HOME"
 ENV_STORAGE_ROOT = "NARROWGATE_STORAGE_ROOT"
@@ -36,7 +38,6 @@ PRIVATE_STORAGE_ROOTS_PATH = (
 )
 PORTABLE_MARKETDATA_FALLBACK = Path.home() / "MarketData"
 DEFAULT_MARKETDATA_ROOT = PORTABLE_MARKETDATA_FALLBACK
-DEFAULT_CACHE_PARENT = Path.home() / "Library" / "Caches"
 LEGACY_MARKETDATA_ROOT = Path.home() / "MarketData"
 FROZEN_LEGACY_MARKETDATA_ROOTS: tuple[Path, ...] = ()
 PROJECT_DATASET_NAME = "NarrowGate_BTCUSDC"
@@ -119,16 +120,22 @@ def data_root(root: Path | None = None) -> Path:
 def cache_root(root: Path | None = None) -> Path:
     """Return the configured root for disposable, reproducible artifacts.
 
-    The default remains the internal disk. An explicit environment override
-    may select a removable cache tier; callers must still fail closed when the
-    selected volume is absent and must never fall back into the repository.
+    ``NARROWGATE_CACHE_ROOT`` remains the explicit project override. Otherwise
+    use the XDG cache root on macOS and Linux, falling back to ``~/.cache``.
+    Callers selecting a removable cache tier must still fail closed when that
+    volume is absent and must never fall back into the repository.
     """
 
     env_root = os.environ.get(ENV_CACHE_ROOT)
     if env_root:
         return Path(env_root).expanduser().resolve()
+    xdg_cache_home = os.environ.get(ENV_XDG_CACHE_HOME)
+    if xdg_cache_home:
+        xdg_parent = Path(xdg_cache_home).expanduser()
+        if xdg_parent.is_absolute():
+            return xdg_parent.resolve() / PROJECT_DATASET_NAME
     del root
-    return DEFAULT_CACHE_PARENT / PROJECT_DATASET_NAME
+    return Path.home() / ".cache" / PROJECT_DATASET_NAME
 
 
 def window_cache_root(root: Path | None = None) -> Path:
@@ -191,6 +198,9 @@ def resolve_portable_path(path: Path | str, *, root: Path | None = None) -> Path
         "NARROWGATE_PRIVATE_EVIDENCE_ROOT": Path(
             os.environ.get(ENV_PRIVATE_EVIDENCE_ROOT, data_root(repository_root) / "reports")
         ),
+        "NARROWGATE_PRIVATE_RESEARCH_ROOT": Path(os.environ[ENV_PRIVATE_RESEARCH_ROOT])
+        if os.environ.get(ENV_PRIVATE_RESEARCH_ROOT)
+        else None,
         "NARROWGATE_STORAGE_ROOT": storage_root(),
         "NARROWGATE_LOCAL_HOME": Path.home(),
         "NARROWGATE_EPHEMERAL_ROOT": Path(

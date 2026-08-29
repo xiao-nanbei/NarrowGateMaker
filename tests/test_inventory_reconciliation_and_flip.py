@@ -189,6 +189,54 @@ def test_utc_rollover_baselines_already_booked_open_commission(
     assert inventory.daily_pnl == pytest.approx(-0.002)
 
 
+def test_utc_rollover_preserves_session_loss_sequence_and_marked_high_water(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now_s = 86_399.0
+    monkeypatch.setattr(inventory_module.time, "time", lambda: now_s)
+    inventory = InventoryManager()
+    _fill(
+        inventory,
+        "BUY",
+        0.001,
+        100.0,
+        0.0,
+        order_id=6,
+        trade_id=26,
+        cumulative=0.001,
+        trade_time_ms=86_399_000,
+    )
+    inventory.update_mark_price(110.0)
+    assert inventory.drawdown == pytest.approx(0.0)
+
+    inventory.update_mark_price(90.0)
+    assert inventory.drawdown == pytest.approx(0.02)
+    _fill(
+        inventory,
+        "SELL",
+        0.001,
+        90.0,
+        0.0,
+        order_id=7,
+        trade_id=27,
+        cumulative=0.001,
+        trade_time_ms=86_399_500,
+    )
+    assert inventory.consecutive_losses == 1
+    assert inventory.drawdown == pytest.approx(0.02)
+
+    now_s = 86_401.0
+    inventory.update_mark_price(90.0)
+
+    assert inventory.daily_pnl == pytest.approx(0.0)
+    assert inventory.consecutive_losses == 1
+    assert inventory.drawdown == pytest.approx(0.02)
+    exposure = inventory.inventory_exposure_snapshot()
+    assert exposure["session_marked_pnl"] == pytest.approx(-0.01)
+    assert exposure["session_marked_high_water"] == pytest.approx(0.01)
+    assert exposure["session_marked_drawdown"] == pytest.approx(0.02)
+
+
 def test_equal_quantity_snapshot_installs_identity_barrier_and_deduplicates() -> None:
     inventory = InventoryManager()
     _fill(

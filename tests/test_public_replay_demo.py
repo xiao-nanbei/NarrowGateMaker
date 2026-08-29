@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from narrowgate.cli import main as narrowgate_main
-from scripts import narrowgate_replay_demo as demo
+from narrowgate import replay_demo as demo
 
 ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_ROOT = ROOT / "examples" / "replay_demo"
+FIXTURE_ROOT = demo.FIXTURE_ROOT
 
 
 def _read_json(path: Path) -> dict:
@@ -51,7 +51,13 @@ def test_public_replay_demo_matches_reference_byte_for_byte(tmp_path: Path) -> N
     assert summary["identity"]["tape"]["sha256"] == demo.sha256_file(
         FIXTURE_ROOT / "synthetic_tape.jsonl"
     )
-    assert summary["identity"]["code"]["version"] == demo.ENGINE_VERSION
+    code_identity = summary["identity"]["code"]
+    assert code_identity["version"] == demo.ENGINE_VERSION
+    assert code_identity["identity_kind"] == "package_distribution"
+    assert code_identity["package_version"] == "0.1.2.dev0"
+    assert code_identity["exact_bytes"] == "external_wheel_digest_or_git_commit_tree"
+    assert "sources" not in code_identity
+    assert "bundle_sha256" not in code_identity
     assert summary["identity"]["contract"]["version"] == demo.CONTRACT_VERSION
     assert summary["denominators"] == _read_json(FIXTURE_ROOT / "contract.json")[
         "expected_denominators"

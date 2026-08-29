@@ -1,9 +1,11 @@
-"""Strict runtime contract for the active 13-head LightGBM bundle."""
+"""Strict runtime contract for a configured 13-head LightGBM bundle."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import math
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,9 @@ REQUIRED_MODEL_HEADS = (
 )
 
 ABSOLUTE_PRICE_VARIANCE_SEMANTICS = "fixed_forward_h_absolute_price_variance"
+VARIANCE_UNIT_CONTRACT_SCHEMA = "narrowgate.absolute_price_variance_unit_contract.v1"
+ABSOLUTE_PRICE_VARIANCE_UNITS = "(quote/base)^2_per_second"
+ABSOLUTE_PRICE_VARIANCE_SAMPLE_PERIOD_S = 1.0
 REQUIRED_FEATURE_SEMANTICS_VERSION = 6
 REQUIRED_FEATURE_DAG_ID = TEN_SECOND_CAUSAL_GRAPH.graph_id
 REQUIRED_FEATURE_DAG_SHA256 = TEN_SECOND_CAUSAL_GRAPH.sha256()
@@ -26,47 +31,199 @@ REQUIRED_LABEL_WINDOW_SEMANTICS = "left_closed_right_open_[t,t+h)"
 REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS = (
     "preserve_datetime_physical_unit_ms_us_ns_before_epoch_conversion"
 )
-OWNER_AUTHORIZED_LIVE_CANARY = "owner_authorized_live_canary"
-LIVE_CANARY_AUTHORIZATION_SCHEMA = "narrowgate.owner_authorized_live_canary.v1"
+PRIVATE_DEPLOYMENT_AUTHORITY = "private_deployment_authorized"
+DEPLOYMENT_AUTHORIZATION_SCHEMA = "narrowgate.private_deployment_authorization.v1"
+LEGACY_OWNER_AUTHORIZED_LIVE_CANARY = "owner_authorized_live_canary"
+LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA = (
+    "narrowgate.owner_authorized_live_canary.v1"
+)
 PUBLIC_SYNTHETIC_MANIFEST_SCHEMA = "narrowgate_public_dry_run_model_bundle.v1"
 NON_LIVE_PROMOTION_AUTHORITIES = frozenset(
     {"public_dry_run_only", "research_only"}
 )
+F03_DIRECT_QUOTE_ACTION_SCHEMA = "narrowgate.f03.direct_quote_action.v1"
+F03_DIRECT_QUOTE_ACTION_EVENT_TYPE = "decision_to_fixed_horizon_return"
+F03_DIRECT_QUOTE_ACTION_PRICE_ORIGIN = "decision_mid"
+F03_DIRECT_QUOTE_ACTION_RETURN_UNIT = "fraction"
+F03_DIRECT_QUOTE_ACTION_CONSUMER = "quote_center_shift"
+
+_MODEL_QUOTE_ASSET_SUFFIXES = (
+    "FDUSD",
+    "USDC",
+    "USDT",
+    "BUSD",
+    "TUSD",
+    "DAI",
+    "USD",
+)
+_LEGACY_VARIANCE_UNIT_IDENTITIES = (
+    {
+        "legacy_identity": "causal_v12_live_canary_feature_manifest_5409a398",
+        "symbol": "BTCUSDC",
+        "feature_manifest_sha256": (
+            "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+        ),
+        "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
+        "promotion_authority": LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
+        "canonical_promotion_authority": PRIVATE_DEPLOYMENT_AUTHORITY,
+        "source_profile": "all",
+        "feature_variant": "base",
+    },
+    {
+        "legacy_identity": "public_dry_run_feature_manifest_ffc85a81",
+        "symbol": "BTCUSDC",
+        "feature_manifest_sha256": (
+            "ffc85a81b177825f43455f346dab8c9926a699c8f7f8e34a2ce9188861eeadd2"
+        ),
+        "training_experiment_id": "public_dry_run_model_bundle_v1",
+        "promotion_authority": "public_dry_run_only",
+        "source_profile": "synthetic_fixture",
+        "feature_variant": "public_dry_run_fixture",
+    },
+)
+
+
+def absolute_price_variance_unit_contract(symbol: str) -> dict[str, Any]:
+    """Derive the variance-rate unit contract from one canonical symbol."""
+    normalized = str(symbol or "").strip().upper().replace("/", "").replace("-", "")
+    for quote_asset in _MODEL_QUOTE_ASSET_SUFFIXES:
+        if normalized.endswith(quote_asset) and len(normalized) > len(quote_asset):
+            base_asset = normalized[: -len(quote_asset)]
+            return {
+                "schema_version": VARIANCE_UNIT_CONTRACT_SCHEMA,
+                "symbol": normalized,
+                "base_asset": base_asset,
+                "quote_asset": quote_asset,
+                "variance_units": ABSOLUTE_PRICE_VARIANCE_UNITS,
+                "sample_period_s": ABSOLUTE_PRICE_VARIANCE_SAMPLE_PERIOD_S,
+            }
+    raise ValueError(f"cannot derive base/quote assets from model symbol {symbol!r}")
+
+
+def validate_variance_unit_contract(
+    contract: Any,
+    *,
+    symbol: str,
+) -> dict[str, Any]:
+    expected = absolute_price_variance_unit_contract(symbol)
+    if not isinstance(contract, dict) or contract != expected:
+        raise ValueError(
+            "volatility_unit_contract must exactly match the symbol-derived "
+            "absolute-price variance-rate contract"
+        )
+    return dict(expected)
+
+
+def canonicalize_model_variance_unit_contract(meta: dict[str, Any]) -> dict[str, Any]:
+    """Validate future metadata or canonicalize an exact hash-bound legacy identity."""
+    raw_contract = meta.get("volatility_unit_contract")
+    if raw_contract is not None:
+        canonical = dict(meta)
+        canonical["volatility_unit_contract"] = validate_variance_unit_contract(
+            raw_contract,
+            symbol=str(meta.get("symbol") or ""),
+        )
+        return canonical
+
+    identity_keys = (
+        "feature_manifest_sha256",
+        "training_experiment_id",
+        "promotion_authority",
+        "source_profile",
+        "feature_variant",
+    )
+    for legacy in _LEGACY_VARIANCE_UNIT_IDENTITIES:
+        if all(str(meta.get(key) or "") == legacy[key] for key in identity_keys):
+            meta_symbol = str(meta.get("symbol") or legacy["symbol"])
+            if meta_symbol != legacy["symbol"]:
+                break
+            canonical = dict(meta)
+            canonical["volatility_unit_contract"] = (
+                absolute_price_variance_unit_contract(legacy["symbol"])
+            )
+            canonical["volatility_unit_contract_origin"] = (
+                f"legacy_canonicalized:{legacy['legacy_identity']}"
+            )
+            canonical_authority = legacy.get("canonical_promotion_authority")
+            if canonical_authority:
+                canonical["promotion_authority_origin"] = canonical.get(
+                    "promotion_authority"
+                )
+                canonical["promotion_authority"] = canonical_authority
+            return canonical
+    raise ValueError(
+        "metadata requires an explicit symbol-derived volatility_unit_contract; "
+        "unregistered legacy metadata cannot be canonicalized"
+    )
+
+
+def f03_direct_quote_action_contract(meta: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a fail-closed, explicitly declared F03 quote-action contract.
+
+    Existing F03 ``ret_10s`` labels are fill-conditioned outcomes spanning
+    10--20 seconds.  Their historical name is not permission to consume them
+    as a point-horizon quote-center action.  A future action model must carry
+    this separate contract; absence deliberately returns an incompatible
+    identity so ML inference with ``ret_skew == 0`` remains a no-op.
+    """
+
+    raw = meta.get("direct_quote_action")
+    if raw is None:
+        return {"compatible": False, "horizon_s": 0.0}
+    if not isinstance(raw, Mapping):
+        raise ValueError("F03 direct_quote_action must be a mapping")
+    horizon_s = float(raw.get("horizon_s", 0.0) or 0.0)
+    expected = {
+        "schema_version": F03_DIRECT_QUOTE_ACTION_SCHEMA,
+        "compatible": True,
+        "event_type": F03_DIRECT_QUOTE_ACTION_EVENT_TYPE,
+        "price_origin": F03_DIRECT_QUOTE_ACTION_PRICE_ORIGIN,
+        "return_unit": F03_DIRECT_QUOTE_ACTION_RETURN_UNIT,
+        "consumer": F03_DIRECT_QUOTE_ACTION_CONSUMER,
+    }
+    for key, value in expected.items():
+        if raw.get(key) != value:
+            raise ValueError(
+                f"F03 direct_quote_action {key}={raw.get(key)!r}; expected {value!r}"
+            )
+    if not math.isfinite(horizon_s) or horizon_s <= 0.0:
+        raise ValueError("F03 direct_quote_action horizon_s must be finite and positive")
+    return {**expected, "horizon_s": horizon_s}
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _validate_owner_authorized_live_canary(
+def _validate_hash_bound_deployment_authorization(
     root: Path,
     metadata: dict[str, dict[str, Any]],
+    *,
+    authorization_file: str,
+    authorization_schema: str,
+    authorization_label: str,
+    required_true_fields: tuple[str, ...],
 ) -> None:
-    authorization_path = root / "live_canary_authorization.json"
+    authorization_path = root / authorization_file
     if not authorization_path.is_file():
-        raise ValueError(
-            "owner-authorized live canary requires live_canary_authorization.json"
-        )
+        raise ValueError(f"{authorization_label} requires {authorization_file}")
     try:
         authorization = json.loads(authorization_path.read_text(encoding="utf-8"))
     except Exception as exc:
-        raise ValueError(f"invalid live canary authorization: {exc}") from exc
+        raise ValueError(f"invalid {authorization_label}: {exc}") from exc
 
-    if authorization.get("schema_version") != LIVE_CANARY_AUTHORIZATION_SCHEMA:
-        raise ValueError("live canary authorization has incompatible schema")
-    if authorization.get("owner_authorized") is not True:
-        raise ValueError("live canary authorization requires owner_authorized=true")
-    if authorization.get("active_live_inference_authorized") is not True:
-        raise ValueError(
-            "live canary authorization requires active_live_inference_authorized=true"
-        )
+    if authorization.get("schema_version") != authorization_schema:
+        raise ValueError(f"{authorization_label} has incompatible schema")
+    for field in required_true_fields:
+        if authorization.get(field) is not True:
+            raise ValueError(f"{authorization_label} requires {field}=true")
     if "authority" in authorization:
         authority = authorization.get("authority")
         if not isinstance(authority, dict) or authority.get("live") is not True:
-            raise ValueError("live canary authorization requires authority.live=true")
+            raise ValueError(f"{authorization_label} requires authority.live=true")
     if authorization.get("baseline_promotion_authorized") is not False:
         raise ValueError(
-            "live canary authorization must keep baseline promotion unauthorized"
+            f"{authorization_label} must keep baseline promotion unauthorized"
         )
 
     experiment_ids = {
@@ -74,26 +231,62 @@ def _validate_owner_authorized_live_canary(
         for head_metadata in metadata.values()
     }
     if experiment_ids != {str(authorization.get("training_experiment_id") or "")}:
-        raise ValueError("live canary training experiment identity mismatch")
+        raise ValueError(f"{authorization_label} training experiment identity mismatch")
 
     derived = authorization.get("derived_bundle")
     if not isinstance(derived, dict):
-        raise ValueError("live canary authorization lacks derived_bundle")
+        raise ValueError(f"{authorization_label} lacks derived_bundle")
     expected_trees = derived.get("model_tree_sha256")
     expected_metadata = derived.get("head_metadata_sha256")
     if not isinstance(expected_trees, dict) or not isinstance(expected_metadata, dict):
-        raise ValueError("live canary authorization lacks per-head hashes")
+        raise ValueError(f"{authorization_label} lacks per-head hashes")
     for name in REQUIRED_MODEL_HEADS:
         if _sha256(root / f"{name}.txt") != str(expected_trees.get(name) or ""):
-            raise ValueError(f"live canary model hash mismatch for {name}")
+            raise ValueError(f"{authorization_label} model hash mismatch for {name}")
         if _sha256(root / f"{name}_meta.json") != str(
             expected_metadata.get(name) or ""
         ):
-            raise ValueError(f"live canary metadata hash mismatch for {name}")
+            raise ValueError(f"{authorization_label} metadata hash mismatch for {name}")
 
     p3_path = root / "fill_prob_params.json"
     if p3_path.is_file() and _sha256(p3_path) != str(derived.get("p3_sha256") or ""):
-        raise ValueError("live canary P3 hash mismatch")
+        raise ValueError(f"{authorization_label} P3 hash mismatch")
+
+
+def _validate_private_deployment_authorization(
+    root: Path,
+    metadata: dict[str, dict[str, Any]],
+) -> None:
+    authority_origins = {
+        str(head_metadata.get("promotion_authority_origin") or "")
+        for head_metadata in metadata.values()
+    }
+    if authority_origins == {LEGACY_OWNER_AUTHORIZED_LIVE_CANARY}:
+        _validate_hash_bound_deployment_authorization(
+            root,
+            metadata,
+            authorization_file="live_canary_authorization.json",
+            authorization_schema=LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA,
+            authorization_label="legacy live canary authorization",
+            required_true_fields=(
+                "owner_authorized",
+                "active_live_inference_authorized",
+            ),
+        )
+        return
+    if authority_origins != {""}:
+        raise ValueError("private deployment mixes incompatible authorization origins")
+    _validate_hash_bound_deployment_authorization(
+        root,
+        metadata,
+        authorization_file="deployment_authorization.json",
+        authorization_schema=DEPLOYMENT_AUTHORIZATION_SCHEMA,
+        authorization_label="private deployment authorization",
+        required_true_fields=(
+            "private_deployment_authorized",
+            "active_runtime_inference_authorized",
+        ),
+    )
 
 
 def _validate_bundle_manifest_live_authority(root: Path) -> None:
@@ -174,6 +367,7 @@ def validate_model_bundle(
     *,
     allow_research_only: bool = False,
     require_live_authorization: bool = False,
+    expected_symbol: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Validate every runtime head before any model is admitted.
 
@@ -189,6 +383,11 @@ def validate_model_bundle(
 
     metadata: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
+    expected_variance_contract = (
+        None
+        if expected_symbol is None
+        else absolute_price_variance_unit_contract(expected_symbol)
+    )
     for name in REQUIRED_MODEL_HEADS:
         model_path = root / f"{name}.txt"
         meta_path = root / f"{name}_meta.json"
@@ -244,6 +443,20 @@ def validate_model_bundle(
         if not str(meta.get("feature_manifest_sha256") or ""):
             errors.append(f"{meta_path.name} requires feature_manifest_sha256")
             continue
+        try:
+            meta = canonicalize_model_variance_unit_contract(meta)
+        except ValueError as exc:
+            errors.append(f"{meta_path.name} {exc}")
+            continue
+        if (
+            expected_variance_contract is not None
+            and meta["volatility_unit_contract"] != expected_variance_contract
+        ):
+            errors.append(
+                f"{meta_path.name} volatility unit contract does not match "
+                f"runtime symbol {expected_variance_contract['symbol']}"
+            )
+            continue
         promotion_authority = str(meta.get("promotion_authority") or "")
         if require_live_authorization and not promotion_authority:
             errors.append(
@@ -252,7 +465,7 @@ def validate_model_bundle(
             continue
         if (
             require_live_authorization
-            and promotion_authority != OWNER_AUTHORIZED_LIVE_CANARY
+            and promotion_authority != PRIVATE_DEPLOYMENT_AUTHORITY
         ):
             if promotion_authority in NON_LIVE_PROMOTION_AUTHORITIES:
                 errors.append(
@@ -305,6 +518,14 @@ def validate_model_bundle(
             str(meta.get("promotion_authority") or "")
             for meta in metadata.values()
         }
+        variance_unit_contracts = {
+            json.dumps(
+                meta["volatility_unit_contract"],
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for meta in metadata.values()
+        }
         if len(manifest_hashes) != 1:
             errors.append("model heads do not share one feature manifest")
         if len(feature_schemas) != 1:
@@ -315,10 +536,12 @@ def validate_model_bundle(
             errors.append("model heads do not share one training experiment id")
         if len(promotion_authorities) != 1:
             errors.append("model heads do not share one promotion authority")
+        if len(variance_unit_contracts) != 1:
+            errors.append("model heads do not share one volatility unit contract")
 
-        if not errors and promotion_authorities == {OWNER_AUTHORIZED_LIVE_CANARY}:
+        if not errors and promotion_authorities == {PRIVATE_DEPLOYMENT_AUTHORITY}:
             try:
-                _validate_owner_authorized_live_canary(root, metadata)
+                _validate_private_deployment_authorization(root, metadata)
                 if require_live_authorization:
                     _validate_bundle_manifest_live_authority(root)
             except ValueError as exc:

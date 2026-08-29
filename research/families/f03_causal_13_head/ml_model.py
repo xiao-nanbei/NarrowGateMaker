@@ -62,6 +62,8 @@ try:
         REQUIRED_FEATURE_DAG_SHA256,
         REQUIRED_FEATURE_SEMANTICS_VERSION,
         REQUIRED_MODEL_HEADS,
+        absolute_price_variance_unit_contract,
+        validate_variance_unit_contract,
     )
 except ImportError:
     from backtest_config import build_backtest_base_params
@@ -78,6 +80,8 @@ except ImportError:
         REQUIRED_FEATURE_DAG_SHA256,
         REQUIRED_FEATURE_SEMANTICS_VERSION,
         REQUIRED_MODEL_HEADS,
+        absolute_price_variance_unit_contract,
+        validate_variance_unit_contract,
     )
 from market_fusion import default_reference_symbol
 from calendar_features import legacy_calendar_feature_names
@@ -346,6 +350,24 @@ def _feature_panel_identity() -> dict:
         raise RuntimeError(
             f"Training requires the current feature DAG hash: {manifest_path}"
         )
+    expected_unit_contract = absolute_price_variance_unit_contract(SYMBOL)
+    if str(payload.get("symbol") or "") != expected_unit_contract["symbol"]:
+        raise RuntimeError(
+            f"Training feature symbol differs from configured symbol: {manifest_path}"
+        )
+    try:
+        volatility_unit_contract = validate_variance_unit_contract(
+            payload.get("volatility_unit_contract"),
+            symbol=SYMBOL,
+        )
+    except ValueError as exc:
+        raise RuntimeError(
+            f"Training requires an explicit volatility unit contract: {manifest_path}"
+        ) from exc
+    if payload.get("label_volatility_units") != volatility_unit_contract["variance_units"]:
+        raise RuntimeError(
+            f"Training feature manifest has inconsistent volatility units: {manifest_path}"
+        )
     calibration = payload.get("label_quote_calibration") or {}
     if (
         calibration.get("schema_version") != "narrowgate_p3_touch_calibration.v2"
@@ -387,6 +409,7 @@ def _feature_panel_identity() -> dict:
         ),
         "feature_panel_split": payload.get("split", {}),
         "feature_warmup_policy": str(payload.get("warmup_policy", "") or ""),
+        "volatility_unit_contract": volatility_unit_contract,
         "feature_label_quote_calibration": calibration,
         "feature_label_quote_policy": payload.get("label_quote_policy", {}),
     }
@@ -926,6 +949,21 @@ def train_one(
             )
         ),
     }
+    if label_col.startswith(("label_ret_", "label_dir_")):
+        horizon_token = label_col.rsplit("_", 1)[-1]
+        horizon_s = int(horizon_token.removesuffix("s"))
+        metadata["outcome_identity"] = {
+            "schema_version": "narrowgate.f03.fill_conditioned_outcome.v1",
+            "event_type": "fill_conditioned_first_touch_then_markout",
+            "fill_window_s": horizon_s,
+            "markout_after_fill_s": horizon_s,
+            "outcome_min_s": horizon_s,
+            "outcome_max_s": 2 * horizon_s,
+            "max_future_dependency_s": 2 * horizon_s,
+            "price_origin": "simulated_fill_price",
+            "return_unit": "fraction_of_decision_close",
+            "direct_quote_center_compatible": False,
+        }
     if selection_contract is not None:
         metadata["train_only_selection"] = selection_contract.to_metadata()
     return model, metadata

@@ -26,6 +26,8 @@ from data_paths import (  # noqa: E402
     window_cache_root,
 )
 
+REDACTED_PATH = "<redacted; run `narrowgate paths`>"
+
 
 def _has_module(name: str) -> bool:
     try:
@@ -33,6 +35,10 @@ def _has_module(name: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _environment_state(name: str) -> str:
+    return "<set>" if os.environ.get(name) else "<unset>"
 
 
 def cmd_doctor(_args: argparse.Namespace) -> int:
@@ -43,28 +49,26 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     checks: dict[str, Any] = {
         "python": sys.version.split()[0],
         "platform": platform.platform(),
-        "root": str(ROOT),
-        "marketdata_root": str(resolved_marketdata_root),
+        "root": REDACTED_PATH,
+        "marketdata_root": REDACTED_PATH,
         "marketdata_root_exists": resolved_marketdata_root.is_dir(),
-        "narrowgate_data_root": str(resolved_data_root),
+        "narrowgate_data_root": REDACTED_PATH,
         "narrowgate_data_root_exists": resolved_data_root.is_dir(),
-        "narrowgate_cache_root": str(resolved_cache_root),
+        "narrowgate_cache_root": REDACTED_PATH,
         "narrowgate_cache_root_exists": resolved_cache_root.is_dir(),
-        "tick_window_cache_root": str(window_cache_root(ROOT)),
-        "narrowgate_marketdata_root_env": os.environ.get(
-            "NARROWGATE_MARKETDATA_ROOT", "<unset>"
+        "tick_window_cache_root": REDACTED_PATH,
+        "narrowgate_marketdata_root_env": _environment_state(
+            "NARROWGATE_MARKETDATA_ROOT"
         ),
-        "narrowgate_data_root_env": os.environ.get(
-            "NARROWGATE_DATA_ROOT", "<unset>"
+        "narrowgate_data_root_env": _environment_state("NARROWGATE_DATA_ROOT"),
+        "narrowgate_cache_root_env": _environment_state("NARROWGATE_CACHE_ROOT"),
+        "xdg_cache_home_env": _environment_state("XDG_CACHE_HOME"),
+        "narrowgate_tick_window_cache_dir_env": _environment_state(
+            "NARROWGATE_TICK_WINDOW_CACHE_DIR"
         ),
-        "narrowgate_cache_root_env": os.environ.get(
-            "NARROWGATE_CACHE_ROOT", "<unset>"
-        ),
-        "narrowgate_tick_window_cache_dir_env": os.environ.get(
-            "NARROWGATE_TICK_WINDOW_CACHE_DIR", "<unset>"
-        ),
-        "legacy_mm_data_root": os.environ.get("MM_DATA_ROOT", "<unset>"),
-        "narrowgate_live_config": os.environ.get("NARROWGATE_LIVE_CONFIG", "<unset>"),
+        "legacy_mm_data_root": _environment_state("MM_DATA_ROOT"),
+        "narrowgate_live_config": _environment_state("NARROWGATE_LIVE_CONFIG"),
+        "path_details_command": "narrowgate paths",
         "numpy": _has_module("numpy"),
         "pandas": _has_module("pandas"),
         "pyarrow": _has_module("pyarrow"),
@@ -129,6 +133,7 @@ def cmd_quote_demo(_args: argparse.Namespace) -> int:
 def cmd_paths(_args: argparse.Namespace) -> int:
     paths = {
         "repo_root": str(ROOT),
+        "marketdata_root": str(marketdata_root()),
         "data_root": str(data_root(ROOT)),
         "cache_root": str(cache_root(ROOT)),
         "window_cache_root": str(window_cache_root(ROOT)),
@@ -145,7 +150,7 @@ def cmd_paths(_args: argparse.Namespace) -> int:
 
 def cmd_replay_demo(args: argparse.Namespace) -> int:
     """Run the deterministic, non-economic public replay demonstration."""
-    from scripts import narrowgate_replay_demo
+    from narrowgate import replay_demo
 
     forwarded: list[str] = []
     if args.output_dir is not None:
@@ -154,7 +159,7 @@ def cmd_replay_demo(args: argparse.Namespace) -> int:
         forwarded.extend(("--contract", str(args.contract)))
     if args.verify_reference:
         forwarded.append("--verify-reference")
-    return int(narrowgate_replay_demo.main(forwarded))
+    return int(replay_demo.main(forwarded))
 
 
 def build_parser() -> argparse.ArgumentParser:

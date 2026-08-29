@@ -1,10 +1,14 @@
 # Source, Research, and Execution Identities
 
-Last materially modified: 2026-08-23
+[English](identity_and_release.md) | [简体中文](identity_and_release.zh-CN.md)
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 Status: Current public naming and provenance guide.
 
-Current public software release: annotated tag `v0.1.1`, matching package version `0.1.1`. This tag names the tested public clone surface; it is distinct from every research reconstruction and execution-attempt tag.
+Current public software release: annotated tag `v0.1.1`, whose tagged tree carries package version `0.1.1`. Current `main` development version: `0.1.2.dev0` in both Python and C++ distribution metadata. The development version is not a release tag. The immutable `v0.1.1` tag continues to name its tested public clone surface and remains distinct from every research reconstruction and execution-attempt tag.
 
 NarrowGateMaker uses several identities because source publication, scientific
 questions, execution attempts, and result bytes answer different audit questions.
@@ -71,12 +75,6 @@ For formal execution:
 - give a repaired run a new attempt ID, manifest, annotated tag, and receipt;
 - state that action and live authority are false unless separate governance says
   otherwise.
-
-Historical F05 `formal-v13` through `formal-v27` labels predate the current naming
-contract. They remain immutable historical attempt aliases under one research
-identity and are not precedent for promoting implementation fixes to research
-versions. The [formal execution contract](../../research/shared/experiment_governance/docs/formal_execution_attempt_and_evidence_freeze_contract_v1_20260821.md)
-records this normalization.
 
 ## Authority Boundary
 

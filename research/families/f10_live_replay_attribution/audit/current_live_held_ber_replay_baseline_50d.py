@@ -36,8 +36,8 @@ from research.families.f09_campaign_action_uplift.audit import (
 ROOT = Path(__file__).resolve().parents[4]
 IDENTITY = "btc_usdc_current_live_held_ber_replay_baseline_50d_20260810"
 EVIDENCE_LABEL = "native_derived_top20_100ms_cpp_daily_fresh_start_diagnostic"
-SPEC = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+SPEC_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_replay_baseline_50d_spec_20260810.json"
 )
 DEFAULT_OUTPUT = (
@@ -63,6 +63,15 @@ REPLAY_TOLERANCE = 1e-9
 
 class Baseline50Error(RuntimeError):
     """Raised when the 50-day successor cannot preserve baseline identity."""
+
+
+def _spec_path() -> Path:
+    try:
+        return resolve_portable_path(SPEC_LOCATOR, root=ROOT)
+    except (RuntimeError, ValueError) as exc:
+        raise Baseline50Error(
+            "50-day baseline spec requires NARROWGATE_PRIVATE_RESEARCH_ROOT"
+        ) from exc
 
 
 def _sha256_file(path: Path) -> str:
@@ -132,7 +141,7 @@ def _atomic_text(path: Path, value: str) -> None:
 
 
 def _spec() -> dict[str, Any]:
-    payload = _load_json(SPEC, role="50-day baseline spec")
+    payload = _load_json(_spec_path(), role="50-day baseline spec")
     if payload.get("identity") != IDENTITY:
         raise Baseline50Error("50-day spec identity drifted")
     prefix = list(payload["immutable_prefix"]["ordered_utc_days"])
@@ -167,13 +176,14 @@ def _ensure_dataset_binding(
     if canonical_identity != IDENTITY or days != canonical_days:
         raise Baseline50Error("canonical dataset-governance denominator drifted")
     universe_path = cache_root / DATASET_UNIVERSE_NAME
+    spec_path = _spec_path()
     universe = {
         "schema_version": f"{IDENTITY}.dataset_universe.v1",
         "identity": f"{IDENTITY}.dataset_universe",
         "days": days,
         "source_spec": {
-            "path": str(SPEC.relative_to(ROOT)),
-            "sha256": _sha256_file(SPEC),
+            "path": SPEC_LOCATOR,
+            "sha256": _sha256_file(spec_path),
         },
         "historical_result_pre_execution_binding_claimed": False,
     }
@@ -474,7 +484,7 @@ def prepare(cache_root: Path = DEFAULT_CACHE) -> dict[str, Any]:
             raise Baseline50Error("50-day execution plan admission is incomplete")
         plan = _load_prepared_plan(cache_root)
         expected_days = ordered_days(spec)
-        if plan.get("spec_sha256") != _sha256_file(SPEC):
+        if plan.get("spec_sha256") != _sha256_file(_spec_path()):
             raise Baseline50Error("50-day execution plan spec binding drifted")
         if plan.get("ordered_utc_days") != expected_days:
             raise Baseline50Error("50-day execution plan day denominator drifted")
@@ -523,8 +533,8 @@ def prepare(cache_root: Path = DEFAULT_CACHE) -> dict[str, Any]:
         "schema_version": f"{IDENTITY}.execution_plan.v1",
         "identity": IDENTITY,
         "created_at_utc": datetime.now(tz=UTC).isoformat(),
-        "spec_path": str(SPEC.resolve()),
-        "spec_sha256": _sha256_file(SPEC),
+        "spec_path": SPEC_LOCATOR,
+        "spec_sha256": _sha256_file(_spec_path()),
         "ordered_utc_days": ordered_days(spec),
         "prefix_days": list(spec["immutable_prefix"]["ordered_utc_days"]),
         "added_days": list(spec["added_panel"]["ordered_utc_days"]),
@@ -856,7 +866,7 @@ def execute_day(
             "identity": IDENTITY,
             "mode": mode,
             "day": day,
-            "spec_sha256": _sha256_file(SPEC),
+            "spec_sha256": _sha256_file(_spec_path()),
             "dataset_binding": dataset_binding,
             "input_binding": binding,
             "summary": {
@@ -1088,7 +1098,7 @@ def finalize(
     manifest = {
         "schema_version": f"{IDENTITY}.manifest.v1",
         "identity": IDENTITY,
-        "spec": {"path": str(SPEC), "sha256": _sha256_file(SPEC)},
+        "spec": {"path": SPEC_LOCATOR, "sha256": _sha256_file(_spec_path())},
         "execution_plan": {
             "path": str(cache_root / "execution-plan.json"),
             "sha256": _sha256_file(cache_root / "execution-plan.json"),

@@ -28,10 +28,9 @@
     "sha256": "ef177d5ee282a2490dcb436ecba8d5b492b43a01c0a55731f400b8ccc6dd55b3"
   },
   "draft_manifest": {
-    "path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
-    "canonical_sha256": "a70e75ca6e609bbe1a7bf503b3c7b6e8407db2706b11c836ca33eda8f26bfcf7",
-    "restart_audit_complete": false,
-    "lifecycle_estimation_authorized_epochs": 0,
+    "locator": "${NARROWGATE_PRIVATE_BASELINE_EPOCH_MANIFEST}",
+    "canonical_availability": "private_not_distributed",
+    "missing_identity_policy": "fail_closed",
     "pooled_estimation_authorized": false
   },
   "permissions": {

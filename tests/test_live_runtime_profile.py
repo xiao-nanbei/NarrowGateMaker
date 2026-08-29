@@ -23,7 +23,7 @@ def test_successor_cpp_module_token_is_derived_and_conflict_fails_closed(
     assert main._bind_successor_cpp_module_token(expected_venv) == expected_token  # noqa: SLF001
 
     monkeypatch.setenv(main.CPP_MODULE_TOKEN_ENV, "/hostile/runtime/")
-    with pytest.raises(RuntimeError, match="differs from successor authority"):
+    with pytest.raises(RuntimeError, match="differs from deployment authority"):
         main._bind_successor_cpp_module_token(expected_venv)  # noqa: SLF001
 
 

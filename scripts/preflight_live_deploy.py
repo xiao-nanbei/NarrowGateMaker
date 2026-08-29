@@ -1,4 +1,4 @@
-"""Validate the private live config and print its effective P3 identity."""
+"""Validate a private deployment config and print its effective identities."""
 
 from __future__ import annotations
 
@@ -6,7 +6,6 @@ import argparse
 import hashlib
 import json
 import math
-import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,6 +29,15 @@ def _as_mapping(value: Any, name: str) -> dict[str, Any]:
     return value
 
 
+def _identity_path(path: Path, repo_root: Path) -> str:
+    """Use a stable relative label when possible, otherwise preserve absolute paths."""
+
+    try:
+        return str(path.relative_to(repo_root))
+    except ValueError:
+        return str(path)
+
+
 def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]:
     config_path = config_path.resolve()
     config_text = config_path.read_text(encoding="utf-8")
@@ -45,16 +53,18 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     )
     from live.runtime_policy import (
         f05_boolean_cooldown_runtime_policy,
+        f05_buy_e3_runtime_policy,
         q90_action_runtime_policy,
     )
     from research.families.f02_empirical_p3_touch.fill_probability import (
         FillProbabilityModel,
     )
     from strategy.model_contract import (
-        OWNER_AUTHORIZED_LIVE_CANARY,
+        PRIVATE_DEPLOYMENT_AUTHORITY,
         REQUIRED_FEATURE_DAG_ID,
         REQUIRED_FEATURE_DAG_SHA256,
         REQUIRED_MODEL_HEADS,
+        f03_direct_quote_action_contract,
         validate_model_bundle,
     )
 
@@ -62,6 +72,42 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     strategy = _as_mapping(config.get("strategy"), "strategy")
     ml = _as_mapping(config.get("ml"), "ml")
     risk = _as_mapping(config.get("risk"), "risk")
+    q_ref = float(strategy.get("inventory_reference_qty", 1.0))
+    if not math.isfinite(q_ref) or q_ref <= 0.0:
+        raise ValueError(
+            "strategy.inventory_reference_qty must be positive and finite"
+        )
+    for field_name in (
+        "eta_inventory",
+        "a_spread",
+        "risk_per_order",
+        "execution_intensity_slope",
+        "risk_horizon_s",
+    ):
+        raw_value = strategy.get(field_name)
+        if raw_value is None:
+            continue
+        value = float(raw_value)
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(
+                f"strategy.{field_name} must be positive and finite when set"
+            )
+    if bool(strategy.get("historical_p3_scalar_adapter_enabled", True)) and bool(
+        strategy.get("p3_side_bbo_floor_enabled", False)
+    ):
+        raise ValueError(
+            "historical P3 pair projection and P3 side-BBO floor are mutually exclusive"
+        )
+    spread_cap_mode = str(
+        strategy.get("spread_cap_mode", "pause_exposure") or "pause_exposure"
+    ).strip().lower()
+    if bool(strategy.get("p3_side_bbo_floor_enabled", False)) and (
+        spread_cap_mode == "compress"
+    ):
+        raise ValueError(
+            "P3 side-BBO floor cannot be combined with spread_cap_mode=compress; "
+            "later inward compression would violate the side-specific distance floor"
+        )
     lifecycle_v2 = _as_mapping(
         config.get("lifecycle_journal_v2", {}),
         "lifecycle_journal_v2",
@@ -136,7 +182,7 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
             "remote_spool_allowlisted_root": str(storage.allowlisted_root),
             "remote_session_max_duration_s": duration_s,
             "remote_session_max_bytes": max_bytes,
-            "baseline_identity_path": str(baseline_path.relative_to(repo_root)),
+            "baseline_identity_path": _identity_path(baseline_path, repo_root),
             "baseline_identity_sha256": expected_baseline_sha,
             "formal_collection_valid_at_remote_write": False,
         }
@@ -149,8 +195,8 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         if field not in risk:
             raise ValueError(f"risk.{field} must be explicit in deploy config")
         value = float(risk[field])
-        if value <= 0.0:
-            raise ValueError(f"risk.{field} must be > 0")
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"risk.{field} must be positive and finite")
         clock_limits[field] = value
 
     model_dir_value = str(ml.get("model_dir") or "").strip()
@@ -169,19 +215,40 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     model_metadata = validate_model_bundle(
         model_dir,
         require_live_authorization=True,
+        expected_symbol=str(config.get("symbol") or ""),
     )
     promotion_authorities = {
         str(metadata["promotion_authority"])
         for metadata in model_metadata.values()
     }
-    if promotion_authorities != {OWNER_AUTHORIZED_LIVE_CANARY}:
-        raise ValueError("deploy bundle does not have one explicit live authorization")
+    if promotion_authorities != {PRIVATE_DEPLOYMENT_AUTHORITY}:
+        raise ValueError("deploy bundle does not have one explicit private authorization")
 
     if "quote_horizon_s" not in strategy:
         raise ValueError("strategy.quote_horizon_s must be explicit in deploy config")
     quote_horizon_s = float(strategy["quote_horizon_s"])
-    if quote_horizon_s <= 0.0:
-        raise ValueError("strategy.quote_horizon_s must be > 0")
+    if not math.isfinite(quote_horizon_s) or quote_horizon_s <= 0.0:
+        raise ValueError("strategy.quote_horizon_s must be positive and finite")
+    ret_skew = float(ml.get("ret_skew", 0.0) or 0.0)
+    if ml_enabled and ret_skew > 0.0:
+        ret_action = f03_direct_quote_action_contract(
+            model_metadata.get("ret_10s", {})
+        )
+        producer_horizon_s = float(ret_action["horizon_s"])
+        if (
+            not bool(ret_action["compatible"])
+            or not math.isclose(
+                producer_horizon_s,
+                quote_horizon_s,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            )
+        ):
+            raise ValueError(
+                "F03 ret action horizon is not compatible with the quote "
+                f"consumer: producer={producer_horizon_s!r}s "
+                f"consumer={quote_horizon_s!r}s"
+            )
 
     p3_path = model_dir / "fill_prob_params.json"
     if not p3_path.is_file():
@@ -198,13 +265,15 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         )
 
     override = float(strategy.get("p3_kappa_eff_override", 0.0) or 0.0)
-    if override < 0.0:
-        raise ValueError("strategy.p3_kappa_eff_override cannot be negative")
-    if override > 0.0 and os.getenv("NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY") != "1":
+    if not math.isfinite(override) or override < 0.0:
         raise ValueError(
-            "nonzero strategy.p3_kappa_eff_override would replace the calibrated "
-            "artifact; set NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1 only for an "
-            "explicitly identified trial"
+            "strategy.p3_kappa_eff_override must be finite and nonnegative"
+        )
+    if override > 0.0:
+        raise ValueError(
+            "nonzero strategy.p3_kappa_eff_override cannot inherit the P3 "
+            "artifact identity; live deployment requires an independently "
+            "hash-bound override identity"
         )
 
     q90_policy = q90_action_runtime_policy(
@@ -220,7 +289,7 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         evidence_route=str(
             strategy.get(
                 "boolean_cooldown_evidence_route",
-                "owner_risk_accepted_promotion",
+                "private_deployment_approval",
             )
         ),
     )
@@ -282,9 +351,9 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         )
         f05_artifact_identity = {
             "enabled": True,
-            "policy_path": str(policy_path.relative_to(repo_root)),
+            "policy_path": _identity_path(policy_path, repo_root),
             "policy_sha256": runtime.evaluator.policy_sha256,
-            "predicate_bundle_path": str(bundle_path.relative_to(repo_root)),
+            "predicate_bundle_path": _identity_path(bundle_path, repo_root),
             "predicate_bundle_sha256": (
                 runtime.evaluator.predicate_bundle_sha256
             ),
@@ -294,16 +363,109 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
             ),
         }
 
+    buy_e3_enabled = bool(strategy.get("buy_e3_cooldown_policy_enabled", False))
+    buy_e3_policy = f05_buy_e3_runtime_policy(
+        buy_e3_enabled,
+        evidence_route=str(
+            strategy.get(
+                "buy_e3_cooldown_evidence_route",
+                "private_deployment_buy_e3",
+            )
+        ),
+    )
+    buy_e3_artifact_identity: dict[str, Any] = {"enabled": False}
+    if buy_e3_enabled:
+        from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
+
+        if not math.isclose(
+            float(strategy.get("fill_cooldown", 0.0)),
+            85.0,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("F05 BUY E3 requires fill_cooldown=85")
+        if bool(strategy.get("adaptive_add_cooldown_enabled", False)):
+            raise ValueError("F05 BUY E3 requires adaptive add cooldown OFF")
+        if str(
+            strategy.get("fill_cooldown_consecutive_reset_policy", "")
+        ).strip() != "opposite_fill_only":
+            raise ValueError("F05 BUY E3 requires opposite_fill_only reset")
+
+        def resolve_buy_e3_artifact(name: str) -> Path:
+            raw = str(strategy.get(name, "")).strip()
+            if not raw:
+                raise ValueError(f"F05 BUY E3 requires strategy.{name}")
+            candidate = Path(raw).expanduser()
+            if not candidate.is_absolute():
+                candidate = repo_root / candidate
+            candidate = candidate.resolve()
+            if not candidate.is_file():
+                raise ValueError(f"F05 BUY E3 artifact missing: {name}")
+            return candidate
+
+        manifest_path = resolve_buy_e3_artifact(
+            "buy_e3_cooldown_artifact_manifest_path"
+        )
+        buy_policy_path = resolve_buy_e3_artifact("buy_e3_cooldown_policy_path")
+        buy_bundle_path = resolve_buy_e3_artifact(
+            "buy_e3_cooldown_predicate_bundle_path"
+        )
+        runtime = LiveBuyE3CooldownPolicy.from_files(
+            artifact_manifest_path=manifest_path,
+            artifact_manifest_sha256=str(
+                strategy.get("buy_e3_cooldown_artifact_manifest_sha256", "")
+            )
+            .strip()
+            .lower(),
+            expected_artifact_sha256=str(
+                strategy.get("buy_e3_cooldown_artifact_sha256", "")
+            )
+            .strip()
+            .lower(),
+            policy_path=buy_policy_path,
+            policy_sha256=str(
+                strategy.get("buy_e3_cooldown_policy_sha256", "")
+            )
+            .strip()
+            .lower(),
+            predicate_bundle_path=buy_bundle_path,
+            predicate_bundle_sha256=str(
+                strategy.get("buy_e3_cooldown_predicate_bundle_sha256", "")
+            )
+            .strip()
+            .lower(),
+            warmup_s=float(strategy.get("buy_e3_cooldown_ema_warmup_s", 0.0)),
+            max_feature_age_s=float(risk["max_exec_book_visible_age_s"]),
+        )
+        buy_e3_artifact_identity = {
+            "enabled": True,
+            "artifact_manifest_path": _identity_path(manifest_path, repo_root),
+            "artifact_manifest_sha256": str(
+                strategy["buy_e3_cooldown_artifact_manifest_sha256"]
+            )
+            .strip()
+            .lower(),
+            "artifact_sha256": runtime.artifact_sha256,
+            "policy_path": _identity_path(buy_policy_path, repo_root),
+            "policy_sha256": runtime.evaluator.policy_sha256,
+            "predicate_bundle_path": _identity_path(buy_bundle_path, repo_root),
+            "predicate_bundle_sha256": runtime.evaluator.predicate_bundle_sha256,
+        }
+
     return {
         "config_path": str(config_path),
         "config_sha256": _sha256(config_path),
-        "model_dir": str(model_dir.relative_to(repo_root)),
-        "p3_path": str(p3_path.relative_to(repo_root)),
+        "model_dir": _identity_path(model_dir, repo_root),
+        "p3_path": _identity_path(p3_path, repo_root),
         "p3_sha256": _sha256(p3_path),
         "p3_schema": str(p3.get("schema_version") or ""),
         "p3_event_type": str(p3_identity["event_type"]),
         "p3_horizon_s": float(p3_identity["horizon_s"]),
+        "p3_distance_origin": str(p3_identity["distance_origin"]),
         "p3_distance_unit": str(p3_identity["distance_unit"]),
+        "p3_side": str(p3_identity["side"]),
+        "p3_queue_included": bool(p3_identity["queue_included"]),
+        "p3_artifact_sha256": str(p3_identity["artifact_sha256"]),
         "delta_star": delta_star,
         "artifact_kappa_eff": artifact_kappa,
         "override": override,
@@ -318,11 +480,27 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         ),
         "required_model_heads": list(REQUIRED_MODEL_HEADS),
         "validated_model_heads": sorted(model_metadata),
-        "model_promotion_authority": OWNER_AUTHORIZED_LIVE_CANARY,
+        "model_promotion_authority": PRIVATE_DEPLOYMENT_AUTHORITY,
         "model_live_authorized": True,
         "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
         "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
         "quote_horizon_s": quote_horizon_s,
+        "quote_unit_contract": {
+            "inventory_reference_qty": q_ref,
+            "eta_inventory": strategy.get("eta_inventory"),
+            "a_spread": strategy.get("a_spread"),
+            "risk_per_order": strategy.get("risk_per_order"),
+            "execution_intensity_slope": strategy.get(
+                "execution_intensity_slope"
+            ),
+            "risk_horizon_s": strategy.get("risk_horizon_s"),
+            "historical_p3_scalar_adapter_enabled": bool(
+                strategy.get("historical_p3_scalar_adapter_enabled", True)
+            ),
+            "p3_side_bbo_floor_enabled": bool(
+                strategy.get("p3_side_bbo_floor_enabled", False)
+            ),
+        },
         "use_bar_pricing": bool(strategy.get("use_bar_pricing", True)),
         **clock_limits,
         "q90_runtime_policy_schema_version": q90_policy["schema_version"],
@@ -335,7 +513,22 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         ],
         **f05_policy_fields,
         "f05_boolean_cooldown_artifacts": f05_artifact_identity,
+        "f05_buy_e3_runtime_policy_schema_version": buy_e3_policy[
+            "schema_version"
+        ],
+        **{
+            key: value
+            for key, value in buy_e3_policy.items()
+            if key != "schema_version"
+        },
+        "f05_buy_e3_artifacts": buy_e3_artifact_identity,
         "lifecycle_journal_v2": lifecycle_identity,
+        "validation_scope": "config_model_p3_and_enabled_policy_artifacts",
+        "startup_gates_not_validated": [
+            "deployment_envelope",
+            "locked_runtime",
+            "stopped_exchange_reconciliation",
+        ],
     }
 
 

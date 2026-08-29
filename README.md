@@ -4,13 +4,27 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-25
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
 NarrowGate is a maker-strategy research framework for studying passive quote selection, inventory campaigns, tick replay, and Python/C++ execution parity.
 
+The source code is publicly available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Because that license limits licensed use to permitted noncommercial purposes, NarrowGate is **source-available**, not open source in the unrestricted-use sense. Commercial use requires separate written permission from the licensor.
+
 It is **not** a packaged trading bot and it does not ship a promoted live parameter set. NarrowGate is primarily a **negative filter**: it is designed to identify conditions in which a maker must not add exposure, rather than to predict the next price direction. When toxicity, volatility, inventory, data quality, or runtime state is unsafe or ambiguous, the default must pause the affected exposure or fail closed. Inward spread compression is an explicit research arm, not a safety default.
+
+The maintained quote core is an **AS-shaped empirical quote controller**, not an exact reproduction or approximate optimum of Avellaneda--Stoikov or GLFT. AS supplies the reservation-price shape; the implemented pair-spread, regime multipliers, depth adapter, and P3 adapter are empirical controls. In particular, P3 estimates a fixed-horizon, same-side-BBO **touch opportunity** without queue-ahead or touch-to-fill conversion. Its legacy local `-d log(P_touch)/d distance` adapter is neither a fill hazard nor the AS/GLFT order-arrival `kappa`, and the frozen `2 * delta_star` mechanism is only a symmetric pair-spread floor, not a per-side BBO-distance guarantee.
+
+Legacy public field names remain stable for replay, model, JSON, and C++ ABI compatibility. In current prose, `microprice` means a top-N-size **weighted-mid proxy**, clock-window `vpin_*` means **clock-volume imbalance**, and `ber_*` means a **trade-intensity-burst guard**. Those names do not claim reproduction of the corresponding published estimators. Likewise, `gamma` is a compatibility input: `q_ref`, order quantity `z`, `eta_inventory`, and `a_spread` expose the implemented units, while omitted new coefficients reproduce the frozen B0 numbers rather than deriving a portable CARA risk-aversion parameter.
+
+That unit-contract split is a behavior-preserving B0 migration: with the legacy mapping, final bid/ask, the historical P3 pair-spread floor, post-only correction, and tick rounding must remain identical. It does not change a live quote or establish that the mapped coefficients are economically optimal. A finite-order-size/quantity-aware spread, a true per-side same-side-BBO floor, an H5/H10 risk horizon, and a variance-time cooldown would each change the order or campaign path. They are separate research candidates with no economic, action, or live authority.
+
+Runtime clocks also have separate roles. UTC rollover resets only daily accounting/statistical state such as the daily PnL baseline and daily fill aggregates. The consecutive-loss state and session marked-equity high-water mark persist across UTC rollover, as do inventory and an open campaign. Execution-book visible-age/source-lag limits cancel or block quotes, while the longer WebSocket silence timeout is a transport reconnect watchdog. Public timeout values are deployment examples, not latency laws for every host.
+
+Fixed base-asset quantity limits and fixed USDC notional, loss, or drawdown limits are independent hard fuses; whichever is stricter binds. They are not one scale-invariant risk coordinate and do not automatically adapt together with equity, BTC price, volatility, fill frequency, or order exposure time. An equity/volatility-aware sizing or risk-budget replacement is itself a strategy/risk candidate and cannot silently replace those hard fuses.
 
 The public repository focuses on the evidence framework:
 
@@ -24,14 +38,18 @@ Terminology: `campaign MAE` always means Maximum Adverse Excursion. Only `predic
 
 Evidence labels are deliberately separate. **Causal** describes the feature/clock and estimand contract; **exact** describes a byte or identity match; **formal** describes a frozen, fail-closed procedure; **parity** means two implementations agree under named assumptions; and **authority** is an explicit permission. None of those labels by itself establishes public reproducibility, owner-private reproducibility, economic validity, or permission to trade.
 
-Current operations: `<current-live-host>`, `<current-live-instance>`, and `<current-live-epoch>` are logical placeholders, not usable public endpoints. Resolve them only through the ignored private current-host pointer; public prose is never remote-control authority. The pointer currently binds the owner-active BUY E3 release-v3 with every shadow and companion surface disabled. Its admitted post-lifecycle receipt is frozen operational identity and historical health evidence, not a latest-liveness, nonbaseline-action-occurrence, economic, or continuous-quoting claim; independently check exchange state, the quote loop, fail-closed latches, and residual inventory before any mutation. Historical queries must follow every source-labelled host/epoch boundary and explicit evidence gap recorded by the private catalog, and rows from one epoch must never substitute for missing rows in another. See the [current host and data-routing contract](docs/live_host_and_historical_data_access_20260811.md).
+A SHA only establishes that the bytes read now match the bytes named by that digest. It does not establish that data are correct, a configuration is sensible, research is leakage-free, a strategy has economic value, or a live process, order-ownership latch, and exchange reconciliation remain healthy. Those claims require separate validation and runtime checks.
+
+When owner-side evidence refers to BUY E3 or the SELL owner cooldown, those labels mean **owner-authorized live risk experiments**, not strategies that passed the research hard gates. They are not validated optima, and this public repository does not assert whether either experiment is currently active.
+
+Generic deployment code and provider examples are public. Only a concrete host, account, credential, active config/release, runtime receipt, rollback selector, and current operational state are owner-private. Public prose and placeholders never grant remote-control authority; resolve a specific deployment only through ignored private configuration and evidence, and fail closed when that authority is unavailable.
 
 ## Stable Public Release
 
-The supported public software snapshot is the annotated Git tag `v0.1.1`, matching the package version in `pyproject.toml`. Pin that tag when reproducibility matters; `main` may contain newer governed work after the release:
+The supported public software snapshot remains the annotated Git tag `v0.1.1`, whose tagged tree carries package version `0.1.1`. The current `main` development line intentionally reports `0.1.2.dev0` for both Python and C++ distribution metadata; it is not the `v0.1.1` release and must not produce another `0.1.1` wheel. Pin the release tag when reproducibility matters:
 
 ```bash
-git clone --branch v0.1.1 --depth 1 <repo-url> narrowgate
+git clone --branch v0.1.1 --depth 1 https://github.com/xiao-nanbei/NarrowGateMaker.git narrowgate
 ```
 
 Research reconstruction and execution-attempt tags are evidence identities, not software releases. A release tag does not include owner-side data, grant research or live authority, or certify the economics of any private artifact. See [Source, Research, and Execution Identities](docs/opensource/identity_and_release.md).
@@ -59,9 +77,9 @@ Market identity is always `venue:instrument:symbol`; feeds with the same display
 | Binance reference | Binance USD-M | `BTCUSDT` perpetual | Live `aggTrade` and `bookTicker`; historical official individual-trade 1s bars | Cross-symbol price/flow reference and causal historical local bridge; never an execution route in this repository | No | Implemented behind `multi_market`; off by default |
 | Binance reference | Binance spot | `BTCUSDC` and `BTCUSDT` | Live `bookTicker` and `aggTrade` | Spot anchors, cross-checks, and cross-instrument features | No | Only in `enhanced`/`full` multi-market stages; off by default |
 | Binance reference | Binance spot | `USDCUSDT` | Live `bookTicker` only | Stablecoin conversion anchor for `BTCUSDT / USDCUSDT -> BTCUSDC` | No | Only in `enhanced`/`full` multi-market stages; off by default |
-| Cross-venue shadow | Bitget | `BTCUSDT` perpetual and spot | Public v3 WebSocket `books1` + `publicTrade` | Receive-time reference, flow, and toxicity evidence | No | Read-only adapter implemented; both sources off by default |
-| Cross-venue shadow | Bybit | `BTCUSDT` linear perpetual and spot | Public v5 WebSocket `orderbook.1` + `publicTrade` | Receive-time reference, flow, and toxicity evidence | No | Read-only adapter implemented; both sources off by default |
-| Cross-venue shadow | OKX | `BTC-USDT-SWAP` and `BTC-USDT` spot | Public WebSocket `bbo-tbt` + `trades` | Receive-time reference, flow, and toxicity evidence | No | Read-only adapter implemented; both sources off by default |
+| Cross-venue reference (inactive) | Bitget | `BTCUSDT` perpetual and spot | Public v3 WebSocket `books1` + `publicTrade` | Historical/offline reference, flow, and toxicity evidence | No | Read-only adapter retained but inactive; not part of current collection |
+| Cross-venue reference (inactive) | Bybit | `BTCUSDT` linear perpetual and spot | Public v5 WebSocket `orderbook.1` + `publicTrade` | Historical/offline reference, flow, and toxicity evidence | No | Read-only adapter retained but inactive; not part of current collection |
+| Cross-venue reference (inactive) | OKX | `BTC-USDT-SWAP` and `BTC-USDT` spot | Public WebSocket `bbo-tbt` + `trades` | Historical/offline reference, flow, and toxicity evidence | No | Read-only adapter retained but inactive; not part of current collection |
 | Historical archive | Binance Vision | USD-M `BTCUSDC` / `BTCUSDT`; configured spot symbols | Daily `aggTrades`; USD-M individual `trades` and `metrics` | Retained-day replay inputs, matching-event trades, bars, and metrics; **not historical L2** | No | On-demand downloader; not a live daemon |
 | Historical archive | CryptoHFTData | Binance Futures `BTCUSDC` execution market | Third-party hourly price-level snapshot/delta `.parquet.zst`, normalized to daily BBO/top-20 L2 at 100ms | Historical execution-book path and queue research; eligibility requires strict coverage and sequence audits | No | Authenticated, incomplete third-party source; downloaded only on demand |
 | Historical archive | Tardis delivery | Binance Futures `BTCUSDC` execution market | Daily `incremental_book_L2` and native `book_ticker` `.csv.zst` | Source-separated candidate for repairing CryptoHFTData-missing dates; requires independent bootstrap, timestamp, BBO, coverage, and gap admission | No | Resumable downloader implemented; never relabelled as CryptoHFTData and not policy-eligible on download alone |
@@ -110,7 +128,7 @@ The `dev` extra contains only pytest and Ruff. Combine it explicitly with anothe
 The default quickstart is the data-free **Demo** target:
 
 ```bash
-git clone <repo-url> narrowgate
+git clone https://github.com/xiao-nanbei/NarrowGateMaker.git narrowgate
 cd narrowgate
 
 PYTHON="${PYTHON:-python3}"
@@ -139,13 +157,15 @@ python -m pip install -e cpp
 python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 ```
 
+The local demo above remains the five-minute entry point. To deploy the public code on a separately provisioned AWS EC2 instance, follow the placeholder-only [generic deployment flow and AWS EC2 example](docs/ops/README.md). That guide and the deployment kernel are public; the target address, credentials, active config, artifacts, hashes, release identity, and receipts must be supplied privately by the operator.
+
 ## Official No-Data Validation
 
 The public repository has exactly two canonical validation routes beyond the Quickstart smoke. The formal live-input dry-run is `bash live/run.sh dry-run`; it validates local configuration and the complete model contract, then exits before any network client, thread, engine, or order path exists. See [Live / Dry-Run Boundary](docs/ops/live_dry_run.md). The synthetic replay demo is `narrowgate replay-demo --output-dir results/replay_demo --verify-reference`; it exercises deterministic queue, fill, campaign, accounting, and fail-closed evidence mechanics without private data or economic authority. See the [Public Replay Demo](examples/replay_demo/README.md).
 
 ## Participate
 
-Start with [Open-source navigation](docs/opensource/README.md), follow [Contributing](CONTRIBUTING.md) for ordinary and research changes, and use the [Security policy](SECURITY.md) for vulnerabilities. The [one-day data pipeline](docs/opensource/one_day_data_pipeline.md) shows the honest boundary between public trade archives, optional authenticated L2, diagnostic replay, and formal evidence. Maintainers should configure the exact required checks documented under [Branch protection](docs/dev/branch_protection.md).
+Start with [source-available project navigation](docs/opensource/README.md), follow [Contributing](CONTRIBUTING.md) for ordinary and research changes, and use the [Security policy](SECURITY.md) for vulnerabilities. The [one-day data pipeline](docs/opensource/one_day_data_pipeline.md) shows the honest boundary between public trade archives, optional authenticated L2, diagnostic replay, and formal evidence. Maintainers should configure the exact required checks documented under [Branch protection](docs/dev/branch_protection.md).
 
 ## What This Repo Is For
 
@@ -159,7 +179,7 @@ NarrowGate is useful if you want to inspect or reuse:
 
 It is not designed as a one-command profitable strategy. Public configs are templates, and private live parameters/results are intentionally not included.
 
-## Companion Articles
+## Related Articles
 
 These long-form notes explain the current research and engineering boundaries:
 
@@ -177,8 +197,8 @@ flowchart LR
   D --> F["Campaign labels"]
   E --> G["Evidence gates"]
   F --> G
-  G --> H["Shadow arm / candidate report"]
-  H --> I["Live shadow or private deployment"]
+  G --> H["Offline candidate report"]
+  H --> I["Explicit action / live authorization"]
   C --> J["Optional C++ quote/replay kernels"]
   J --> D
 ```
@@ -213,12 +233,12 @@ Large data lives outside the git checkout:
 export NARROWGATE_ROOT="$PWD"
 export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
-export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
+export NARROWGATE_CACHE_ROOT="${NARROWGATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/NarrowGate_BTCUSDC}"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
 export MM_DATA_ROOT="$NARROWGATE_DATA_ROOT"
 ```
 
-Raw, normalized, model, report, and evidence data live on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}`. Disposable replay caches remain on the internal disk under `NARROWGATE_CACHE_ROOT`.
+Raw, normalized, model, report, and evidence data live on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}`. Disposable replay caches remain under `NARROWGATE_CACHE_ROOT`. The explicit `NARROWGATE_CACHE_ROOT` override wins; otherwise the portable default is `$XDG_CACHE_HOME/NarrowGate_BTCUSDC`, falling back to `$HOME/.cache/NarrowGate_BTCUSDC` when `XDG_CACHE_HOME` is unset. Public instructions must not assume a macOS-only `~/Library/Caches` path.
 
 Daily containers are preferred:
 
@@ -229,135 +249,21 @@ Daily containers are preferred:
 - `features_btcusdc/features_YYYY-MM-DD.parquet`
 - `metrics_5m/<SYMBOL>-metrics-YYYY-MM-DD.parquet`
 
-See [docs/market_data.md](docs/market_data.md) for the complete directory tree, source provenance, UTC normalization, and retained-day rules. The historical top-level `bbo/` and `l2/` roots are migration-only identities and must not be globbed by new BTCUSDC research. CryptoHFTData is explicitly treated as an incomplete third-party/personal collection rather than a Binance official archive; file existence never marks a day research-eligible. This workstation uses the APFS `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` volume directly and does not retain a compatibility symlink at the old home-directory path. Frozen evidence keeps its original provenance strings and is resolved through the [storage relocation contract](docs/marketdata_storage_relocation_20260730.md). The good-day identity is study-specific: global-reference work requires its declared official/reference sources, while formal queue and action studies use the BTCUSDC native snapshot/sequence/coverage manifest. These universes must not be replaced by an implicit intersection of every locally stored source.
+See [docs/market_data.md](docs/market_data.md) for the complete directory tree, source provenance, UTC normalization, and retained-day rules. The historical top-level `bbo/` and `l2/` roots are migration-only identities and must not be globbed by new BTCUSDC research. CryptoHFTData is explicitly treated as an incomplete third-party/personal collection rather than a Binance official archive; file existence never marks a day research-eligible. Frozen evidence keeps its original provenance strings; machine-local relocation is resolved outside the public repository without rewriting evidence bytes. The good-day identity is study-specific: global-reference work requires its declared official/reference sources, while formal queue and action studies use the BTCUSDC native snapshot/sequence/coverage manifest. These universes must not be replaced by an implicit intersection of every locally stored source.
 
-### Independent venue shadow data
+Retention priority is immutable raw data, shared canonical derived data reused across studies, frozen final evidence, then reproducible cache and staging. Concrete disk quotas, volume names, cleanup queues, and machine relocation history are owner-local operations rather than public repository governance.
 
-External venues are identified by `venue:instrument:symbol`; for example, `binance:perp:BTCUSDT`, `bitget:perp:BTCUSDT`, `bitget:spot:BTCUSDT`, `bybit:spot:BTCUSDT`, `okx:perp:BTCUSDT`, and `okx:spot:BTCUSDT` never share state. The read-only adapters support Bitget public v3 WebSocket `books1`/`publicTrade`, Bybit public WebSocket `orderbook.1`/`publicTrade`, and OKX public WebSocket `bbo-tbt`/`trades` for both spot and perpetual markets. REST remains available only for bootstrap, recovery, and slow comparisons. All preserve exchange event time and local receive time, cannot place orders, and require no API key.
+### Independent venue reference data
 
-Enable it only as shadow input in a private config:
+External venues are identified by `venue:instrument:symbol`; for example, `binance:perp:BTCUSDT`, `bitget:perp:BTCUSDT`, `bitget:spot:BTCUSDT`, `bybit:spot:BTCUSDT`, `okx:perp:BTCUSDT`, and `okx:spot:BTCUSDT` never share state. The repository retains read-only adapters and historical import tools for Bitget, Bybit, and OKX. They cannot place orders and are not execution feeds.
 
-```yaml
-external_venues:
-  enabled: true
-  shadow_only: true
-  sources:
-    - venue: bitget
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: perp
-      product_type: USDT-FUTURES
-      websocket_url: wss://ws.bitget.com/v3/ws/public
-      book_channel: books1
-      trade_channel: publicTrade
-    - venue: bybit
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: perp
-      product_type: linear
-      websocket_url: wss://stream.bybit.com/v5/public/linear
-      book_channel: orderbook.1
-      trade_channel: publicTrade
-    - venue: bitget
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: spot
-      product_type: SPOT
-      websocket_url: wss://ws.bitget.com/v3/ws/public
-      book_channel: books1
-      trade_channel: publicTrade
-    - venue: bybit
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: spot
-      product_type: spot
-      websocket_url: wss://stream.bybit.com/v5/public/spot
-      book_channel: orderbook.1
-      trade_channel: publicTrade
-    - venue: okx
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: perp
-      product_type: SWAP
-      instrument_id: BTC-USDT-SWAP
-      contract_multiplier: 0.01
-      websocket_url: wss://ws.okx.com:8443/ws/v5/public
-      book_channel: bbo-tbt
-      trade_channel: trades
-    - venue: okx
-      enabled: true
-      transport: websocket
-      symbol: BTCUSDT
-      instrument_type: spot
-      product_type: SPOT
-      instrument_id: BTC-USDT
-      contract_multiplier: 1.0
-      websocket_url: wss://ws.okx.com:8443/ws/v5/public
-      book_channel: bbo-tbt
-      trade_channel: trades
-```
+The public template disables external-venue collection and this README provides no activation recipe. Public research uses admitted retained archives and canonical offline replay. Any private live reference collection requires separate authorization, a bounded collection contract, and its own source/transport identity; dormant adapter code grants none of those permissions. The repository does not attest whether a private deployment currently collects such data.
 
-Every external connector is shadow evidence, not an execution feed. WebSocket rows preserve exchange, receive, and feature-ready timestamps. `book_stale` controls reference availability while trade silence only marks `trade_stale`. Top-of-book changes support L1 OFI/depletion/refill proxies, not exact-L2 cancel attribution.
-
-Run a zero-key connector preflight and a fill-time toxicity audit with:
-
-```bash
-python scripts/preflight_external_venues.py --config live/config.yaml --duration-s 15
-
-python research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py \
-  --input 'logs/market_tape/*.jsonl.gz' \
-  --input 'logs/external_venues/*.jsonl.gz' \
-  --fills logs/trades.csv \
-  --output-prefix logs/audit/global_flow_fill_toxicity
-```
-
-Market-data delay must be tied to the host and transport that measured it. Build a 3600-second profile, then choose an explicit replay visibility model:
-
-```bash
-python research/system_engineering/audit/market_data_latency.py \
-  --input logs/market_tape \
-  --input logs/external_venues \
-  --output-json live/profiles/latency/<profile>.json \
-  --output-md docs/<profile>.md \
-  --profile-id <environment-and-window-id> \
-  --window-seconds 3600 \
-  --transport websocket \
-  --environment cloud=AWS \
-  --environment region=ap-northeast-1 \
-  --environment instance_type=t3.medium \
-  --environment public_ipv4=<current-live-host>
-
-python research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py \
-  --input 'logs/market_tape/*.jsonl.gz' \
-  --input 'logs/external_venues/*.jsonl.gz' \
-  --fills logs/trades.csv \
-  --output-prefix logs/audit/global_flow_fill_toxicity_p50 \
-  --market-data-latency-profile live/profiles/latency/<profile>.json \
-  --market-data-latency-mode profile_p50
-```
-
-`captured` uses the recorded `feature_ready_ts_ns` and adds nothing; `exchange_zero` is an idealized zero-feed-delay control; the `profile_*` modes rebuild p50/p95/p99/p99.9/max or empirical visibility from exchange time. Do not apply a profile mode to captured receive-time evidence and call the result "actual". `profile_stable_spike` is a fixed-seed sensitivity with a 0.5% p95-p99 stall branch; it is not the primary ranking baseline.
-
-Frozen original-AWS, Vultr Tokyo, and reactivated-AWS predecessor profiles may still be used as host-labelled historical priors/sensitivities. They must not be relabelled as current AWS transport.
-
-Latency profiles are host assumptions, not strategy parameters. Rebuild and reselect the profile whenever the instance type, region, OS/runtime/native build, feed set, recorder, transport, gateway, or strategy workload changes. A faster machine must receive a new profile ID and a new replay instead of inheriting the old millisecond values.
-
-The retained111 reference report remains a frozen causal-one-second diagnostic. New maker evidence uses receive-time events and 10/25/50/100/250/500ms maker-signed markouts; neither path changes live quotes by itself.
+Frozen predecessor receive-time captures and latency profiles remain historical provenance and sensitivity evidence only. They must not be relabelled as current transport, used as current liveness evidence, or treated as quote authority. The retained111 reference report likewise remains a frozen causal-one-second diagnostic and does not change live quotes.
 
 Python tick replay now has a shared feature-ready multi-tape scheduler and a default no-op `MultiMarketPolicy`. Historical stop-add, fixed-rearm, fixed-cooldown and one-tick response results produced before the corrected event clock, feature-ready contract and empirical-P3 baseline have been removed from the public evidence surface. They must not be used to select a parameter or claim action uplift.
 
-Current strategy evidence starts from frozen action panels with known propensity and campaign-level reward attribution. The mutable [operational pointer](research/families/f10_live_replay_attribution/docs/operational_baseline_current.json) resolves the public [v13 governance identity](research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260825_v13.json) for current-live configuration only. `current_live` records the private-pointer/stable-config binding for the owner-active BUY E3 release-v3: BUY E3 is enabled, the SELL owner policy is unchanged, and no shadow or companion is active. The separate [backtest-mechanics pointer](research/families/f10_live_replay_attribution/docs/operational_backtest_mechanics_current.json) resolves a create-only private [mechanics-safety successor](research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_safety_successor_v1_20260825.json): exact BUY E3 before cutoff, exact owner B0 for SELL and D+1 assignments, and a reduced-support 30-Development-day mechanics panel. It grants mechanics availability only; every economic, research, action, live, occurrence, validation/holdout, and promotion authority remains false. The current live alias must never replace either replay input. v13 remains a locator reconciliation, and live E3 evidence remains non-economic backtest evidence.
-
-The retained historical 50-day comparator is [`current_live_held_global_ber_control`](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json). It used the live BER clock: the last completed canonical 10-second `trade_intensity_60s` feature was held and sampled on completed 1-second bar callbacks. The immutable first 40 days recorded `-144.251748 USDC` terminal MTM, `-147.466348 USDC` closed-campaign value, and `17,118` fills. The added ten Grade-A days contributed `-21.314331 USDC`, `-21.064631 USDC`, and `3,029` fills. The pooled historical result was `-165.566079 USDC` terminal MTM (`-3.311322/day`), `-168.530979 USDC` closed-campaign value, and `20,147` fills. Those economics are stale under the current ledger, fee, campaign, spread-cap, and fill-order safety mechanics; they remain an immutable comparator, not the current default or an authorization claim.
-
-Those figures are a native-derived top-20/100ms C++ daily-fresh-start diagnostic. The runner did not consume raw snapshot/delta queue events, empirical REST latency, or AWS receive/feature-ready visibility latency on any of the 50 days. It remains useful for historical common-simulator comparison but cannot authorize an order-path action. The 30-day mechanics-safety successor does not refresh or inherit those economics. A new economic baseline would still require strict raw-native replay, a frozen Tokyo latency profile, the corrected monotonic ledger/campaign state, and a newly frozen chronological contract; see the [execution-scope amendment](research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_execution_scope_amendment_v1_20260810.md). The earlier strict path passed all-50 source preflight and a one-day mechanics run on `2026-06-29`: 5.09 million raw book events, 19,460 queue lookups with zero missing, and 14,825 sampled visibility-delay applications. That day's terminal MTM changed from `-7.878888` to `-7.132700 USDC`, so no strict 50-day result may be inferred from the old diagnostic. Continuous-state studies must additionally retain cash, inventory, campaign, cooldown, and same-timestamp fill order across UTC midnight.
-
-This owner-directed operational promotion does not turn previously read panels into independent confirmation: campaign q10 remains unresolved and research prediction/live authority remains false. Historical deployment identities are rollback or provenance records, not current replay controls. The exact historical evidence boundary remains in [research/families/f10_live_replay_attribution/docs/historical_backtest_evidence_revalidation_20260720.md](research/families/f10_live_replay_attribution/docs/historical_backtest_evidence_revalidation_20260720.md).
+Current strategy, live-host, active-release, rollback, account/order, exact receipt, and runtime-profile identities are owner-private. Public replay defaults to the checked-in public template and never resolves a current-live pointer. Public family documents may describe methods and frozen non-operational research examples, but they do not disclose or attest the currently deployed policy, host, liveness, or economics.
 
 Download/audit Bitget trades against the same retained UTC-day manifest:
 
@@ -419,7 +325,7 @@ python pipeline.py external-features \
 
 The Bybit downloader uses resumable `.download` files, validates every event against its UTC retained day, converts UUID trade IDs without numeric coercion, and writes complete metadata before a day becomes research-eligible. The website's OrderBook product is tracked separately; daily trades are not treated as historical L2. The current retained111 build contains 252,387,353 trades and 7,276,709 causal 1-second states, with 111/111 complete trade and feature metadata records.
 
-Pass `--instrument-type spot` and use `external_venues/bybit/spot/BTCUSDT` for the Bybit spot archive. Spot and perp have different source filenames and CSV columns; the downloader validates and normalizes each schema separately. The retained111 spot layer contains 40,287,185 Bitget trades, 106,016,009 Bybit trades, and 69,915,914 OKX trades. The robust three-venue build produces 7,747,571 spot-consensus states, 9,225,272 perpetual-consensus states, and 7,547,083 fresh spot/perp cross-instrument states; these remain shadow evidence and do not alter live quotes.
+Pass `--instrument-type spot` and use `external_venues/bybit/spot/BTCUSDT` for the Bybit spot archive. Spot and perp have different source filenames and CSV columns; the downloader validates and normalizes each schema separately. The retained111 spot layer contains 40,287,185 Bitget trades, 106,016,009 Bybit trades, and 69,915,914 OKX trades. The robust three-venue build produces 7,747,571 spot-consensus states, 9,225,272 perpetual-consensus states, and 7,547,083 fresh spot/perp cross-instrument states; these remain offline reference evidence and do not alter live quotes.
 
 OKX history-download ZIPs also use UTC+8 daily boundaries. A complete UTC day requires source files D and D+1; normalize only retained dates and remove source ZIPs after metadata validation:
 
@@ -448,7 +354,7 @@ Both OKX layers now cover 111/111 retained UTC days: perpetual has 399,947,490 n
 
 Binance `USDCUSDT` spot is a local currency-conversion anchor, not an external vote. The pair is quoted as USDT per USDC, so the level bridge is `BTCUSDT / USDCUSDT -> BTCUSDC`. Historical anchor data is downloaded only for retained UTC days and raw CSV/ZIP inputs are removed after one-second bars are validated. BTCUSDC spot remains a cross-check and fallback. See [the retained111 Stage 0 report](research/families/f04_external_market_alpha/docs/global_reference_stage0_retained111_20260711.md) and the [review memo](research/families/f04_external_market_alpha/docs/global_market_reference_review_memo_20260711.md), which contains the formulas, leave-one-venue-out tables, limitations, and open questions for independent review. The implementation order and promotion gates are in the [cross-venue reference-to-alpha roadmap](research/families/f04_external_market_alpha/docs/cross_venue_reference_to_alpha_roadmap_20260711.md).
 
-The feature timestamp is the right edge: trades in `[t, t+1s)` become visible at `t+1s`. Historical trade timestamps support shadow sorting and risk moderation research; they do not reproduce live receive-time cancel latency.
+The feature timestamp is the right edge: trades in `[t, t+1s)` become visible at `t+1s`. Historical trade timestamps support offline sorting and risk-moderation research; they do not reproduce live receive-time cancel latency.
 
 ## Public vs Private Config
 
@@ -461,7 +367,7 @@ export NARROWGATE_LIVE_CONFIG="$PWD/docs/private/live_config.current.local.yaml"
 bash live/run.sh start
 ```
 
-`make deploy` refuses a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts therefore fail closed before any remote sync. The preflight also prints the effective P3 artifact identity; a nonzero P3 override requires the explicit `NARROWGATE_ALLOW_P3_OVERRIDE_DEPLOY=1` trial unlock.
+`make deploy` refuses a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts therefore fail closed before any remote sync. The preflight also prints the effective P3 artifact identity. A nonzero `p3_kappa_eff_override` is a legacy replay/config field and is unconditionally rejected by current deploy preflight and runtime; no environment-variable trial unlock exists.
 
 ### Persisted live runtime profiles
 
@@ -487,7 +393,7 @@ python bench/bench_global_flow_batch.py \
   --frames 1000 --frame-sizes 1 8 32 --rounds 5
 ```
 
-See `research/system_engineering/docs/native_global_flow_batch_soak_20260711.md` for parity, memory, and live-preflight boundaries.
+The host-specific soak record is owner-private and is not distributed with the public repository; this section retains only the portable parity and preflight boundary.
 
 Normal quote REST remains synchronous. The experimental async gateway was removed after a 194-minute target-host soak showed worse requote and order-update tails with almost no useful coalescing. The soak report remains in `project.md`; there is no dormant runtime switch or telemetry ABI to maintain.
 
@@ -540,7 +446,7 @@ python -m research.families.f09_campaign_action_uplift.audit.offline_policy_eval
 
 The offline evaluator requires a complete decision/action panel, estimates behavior propensities and action-specific outcomes out of fold, and reports DM/IPS/SNIPS/doubly-robust values together with overlap and effective-sample-size gates. A placed-order or filled-only score table is deliberately rejected as a substitute for actions the baseline never attempted. See [the OPE contract](research/families/f09_campaign_action_uplift/docs/offline_policy_evaluation_20260712.md).
 
-The next-generation strategy boundary is now implemented as a bounded, state-conditioned action layer rather than another global parameter sweep. Fixed quote parameters remain the safety envelope; a frozen artifact may choose only baseline, prevent-over-widen, widen one tick, or re-center one tick on the exposure-increasing add surface. Python replay and the governed runtime use the same action geometry, unsupported C++ runs fail fast, and no artifact is enabled in live without promotion evidence. The current live release runs no research shadow or companion. Current action evidence is recorded in [the side-specific randomized audit](research/families/f09_campaign_action_uplift/docs/side_specific_action_uplift_existing_split_20260718.md), [the BUY conditional-widen audit](research/families/f09_campaign_action_uplift/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md), [the SELL competing-risk audit](research/families/f09_campaign_action_uplift/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md), [the queue keep/cancel v1 audit](research/families/f07_active_order_continuation/docs/queue_value_keep_cancel_v1_20260719.md), [the corrected cancel/re-enter v3 Development audit](research/families/f07_active_order_continuation/docs/queue_value_cancel_reenter_v3_development_20260720.md), and [the deep active-order queue probe](research/families/f07_active_order_continuation/docs/deep_active_order_queue_probe_20260720.md). The deep probe preserves v3's no-promotion decision but supersedes its queue mechanism interpretation: top-20 fallback changed queue seeds, fills, and the entire inventory path. A new queue action family now requires strict active-price queue state with no formal fallback. The watch-specific sparse replay failed its g0-g3 fixed-point closure gate, so the next engine must consume native snapshot/delta state independently of the strategy trajectory.
+The next-generation strategy boundary is implemented as a bounded, state-conditioned action layer rather than another global parameter sweep. Fixed quote parameters remain the safety envelope; a frozen artifact may choose only baseline, prevent-over-widen, widen one tick, or re-center one tick on the exposure-increasing add surface. Python replay and the governed runtime use the same action geometry, unsupported C++ runs fail fast, and a private deployment must independently authorize any artifact. Public action evidence is recorded in [the side-specific randomized audit](research/families/f09_campaign_action_uplift/docs/side_specific_action_uplift_existing_split_20260718.md), [the BUY conditional-widen audit](research/families/f09_campaign_action_uplift/docs/buy_add_conditional_widen_causal_v4_v1_20260718.md), [the SELL competing-risk audit](research/families/f09_campaign_action_uplift/docs/sell_add_repair_trend_skip_causal_v4_v1_20260718.md), [the queue keep/cancel v1 audit](research/families/f07_active_order_continuation/docs/queue_value_keep_cancel_v1_20260719.md), [the corrected cancel/re-enter v3 Development audit](research/families/f07_active_order_continuation/docs/queue_value_cancel_reenter_v3_development_20260720.md), and [the deep active-order queue probe](research/families/f07_active_order_continuation/docs/deep_active_order_queue_probe_20260720.md). The deep probe preserves v3's no-promotion decision but supersedes its queue mechanism interpretation: top-20 fallback changed queue seeds, fills, and the entire inventory path. A new queue action family requires strict active-price queue state with no formal fallback. The watch-specific sparse replay failed its g0-g3 fixed-point closure gate, so the next engine must consume native snapshot/delta state independently of the strategy trajectory.
 
 Real replay/training commands require retained good-day market data under `MM_DATA_ROOT`.
 
@@ -587,8 +493,8 @@ data quality
   -> fill selection sanity
   -> OOS bucket / score stability
   -> daily campaign and inventory gates
-  -> shadow arm
-  -> private live validation
+  -> frozen offline candidate decision
+  -> explicit action and live authorization
 ```
 
 Bucket hits alone are diagnostic. A candidate must preserve mechanism metrics, side split, campaign risk, tail days, and inventory-time behavior before PnL is treated as meaningful.
@@ -600,7 +506,7 @@ For private retained-data research, `research/families/f01_fixed_parameter_racin
 - `--integrity-diagnostic-arms` compares historical/off/sign-corrected markout feedback and compress/pause/observe spread-cap actions;
 - `--random-passive-trials N` runs an executable passive null through the full queue, latency, cooldown, inventory, campaign, and terminal-accounting state machine.
 
-Use `--strict-calibration` with an explicit private config. Formal replay then fails fast when effective-kappa/fill calibration, daily queue calibration, historical BBO/L2, or order-latency calibration is missing. The executable null is not a deployable strategy: its report compares activity, spread/action mix, side split, inventory time, tails, markout, and PnL per fill so path-dependent changes in fill count cannot masquerade as alpha. See [docs/audit_entrypoints_20260630.md](docs/audit_entrypoints_20260630.md).
+Use `--strict-calibration` with an explicit private config. Formal replay then fails fast when the identity-bound P3 touch-slope adapter, queue calibration, historical BBO/L2, or order-latency calibration is missing. This does not relabel P3 as fill probability or arrival intensity. The executable null is not a deployable strategy: its report compares activity, spread/action mix, side split, inventory time, tails, markout, and PnL per fill so path-dependent changes in fill count cannot masquerade as alpha. See [docs/audit_entrypoints_20260630.md](docs/audit_entrypoints_20260630.md).
 
 Replay window end is a mark-to-market boundary, not an implicit taker close. `final PnL = cash + inventory * terminal mark`; the hypothetical taker-close cost is reported separately as `terminal_liquidation_fee_estimate` and is not deducted. The current BTCUSDC research config uses `maker_fee=0`; taker fees apply only to explicit taker exits such as timeout or emergency liquidation.
 
@@ -610,4 +516,4 @@ Crypto trading can involve legal, compliance, operational, and financial risk. T
 
 ## License
 
-NarrowGate is released under the [PolyForm Noncommercial License 1.0.0](LICENSE). Commercial use requires a separate license.
+NarrowGate is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). The license permits the noncommercial purposes stated in its terms and restricts commercial use; it is therefore not presented as an unrestricted-use open-source license. Commercial use requires separate written permission from the licensor.

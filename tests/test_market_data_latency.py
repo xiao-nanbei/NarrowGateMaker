@@ -37,7 +37,7 @@ def test_profile_filters_receive_window_and_preserves_environment(tmp_path):
 
     profile = build_latency_profile(
         [path],
-        profile_id="aws_tokyo_test",
+        profile_id="provider_neutral_test",
         environment={"region": "ap-northeast-1", "vcpu": 2},
         window_seconds=2,
         end_receive_ns=end_ns,
@@ -70,7 +70,7 @@ def test_simulator_separates_captured_from_profile_visibility():
     simulator = MarketDataLatencySimulator(
         {
             "schema": "market_data_latency_profile.v1",
-            "profile_id": "aws_tokyo_test",
+            "profile_id": "provider_neutral_test",
             "groups": [group],
         }
     )
@@ -125,7 +125,7 @@ def test_stable_spike_mode_keeps_core_and_tail_sampling_explicit():
     simulator = MarketDataLatencySimulator(
         {
             "schema": "market_data_latency_profile.v1",
-            "profile_id": "aws_tokyo_stable_spike_test",
+            "profile_id": "provider_neutral_stable_spike_test",
             "groups": [group],
         }
     )

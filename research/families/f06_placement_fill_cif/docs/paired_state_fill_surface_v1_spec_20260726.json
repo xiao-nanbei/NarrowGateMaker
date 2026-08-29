@@ -16,7 +16,7 @@
     "config": "${NARROWGATE_LIVE_CONFIG}",
     "config_sha256": "2c3d1daf5d07f48d3e8a35555531f95294833d1190a2cf4bcc230804b3f958cc",
     "latency_sampler_version": "keyed_splitmix64_v1",
-    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux"
+    "latency_environment": "private_not_distributed"
   },
   "panels": {
     "development": {

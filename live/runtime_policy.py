@@ -2,43 +2,24 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-Q90_ACTION_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_UNREPAIRED_Q90_ACTION_DEPLOY"
+Q90_ACTION_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY"
 Q90_POST_CANCEL_RECOVERY_CONTRACT_SUPPORTED = False
-F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY"
-F05_BOOLEAN_COOLDOWN_EVIDENCE_ROUTE = "owner_risk_accepted_promotion"
+F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY"
+F05_BOOLEAN_COOLDOWN_EVIDENCE_ROUTE = "private_deployment_approval"
 F05_BOOLEAN_COOLDOWN_HARD_GATES_PASSED = False
-F05_BUY_E3_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY"
-F05_BUY_E3_EVIDENCE_ROUTE = "owner_risk_accepted_buy_e3_v1"
+F05_BUY_E3_OWNER_OVERRIDE_ENV = "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"
+F05_BUY_E3_EVIDENCE_ROUTE = "private_deployment_buy_e3"
 F05_BUY_E3_HARD_GATES_PASSED = False
-F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV = "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH"
-F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV = (
-    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256"
-)
-F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV = (
-    "NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256"
-)
-F05_BUY_E3_ACTIVE_RELEASE_AUTHORITY_SCHEMA = (
-    "narrowgate_f05_buy_e3_active_release_runtime_authority.v1"
-)
-LIVE_SAFETY_SUCCESSOR_PATH_ENV = "NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH"
-LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV = (
-    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256"
-)
-LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV = (
-    "NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256"
-)
+DEPLOYMENT_ENVELOPE_PATH_ENV = "NARROWGATE_DEPLOYMENT_ENVELOPE_PATH"
+DEPLOYMENT_ENVELOPE_CANONICAL_SHA256_ENV = "NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256"
 RUNTIME_POLICY_SCHEMA_VERSION = "narrowgate_runtime_policy.v1"
-
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def q90_action_runtime_policy(
@@ -59,8 +40,8 @@ def q90_action_runtime_policy(
             "the cancel-ACK terminal active-order risk-set and "
             "POST_CANCEL_RECOVERY contract is unresolved; keep shadow enabled "
             "with action disabled, or set "
-            f"{Q90_ACTION_OWNER_OVERRIDE_ENV}=1 only for an explicit owner "
-            "risk-accepted override"
+            f"{Q90_ACTION_OWNER_OVERRIDE_ENV}=1 only with an explicit private "
+            "deployment approval"
         )
 
     if not enabled:
@@ -68,7 +49,7 @@ def q90_action_runtime_policy(
     elif contract_supported:
         authority = "post_cancel_recovery_contract_supported"
     else:
-        authority = "owner_risk_accepted_override"
+        authority = "private_deployment_approved"
 
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA_VERSION,
@@ -102,7 +83,7 @@ def f05_boolean_cooldown_runtime_policy(
     evidence_route: str,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Require an explicit owner grant for the positive-estimate F05 policy."""
+    """Require explicit private approval for the historical F05 policy."""
 
     environment = os.environ if environ is None else environ
     override_requested = environment.get(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV) == "1"
@@ -116,7 +97,7 @@ def f05_boolean_cooldown_runtime_policy(
         raise ValueError(
             "F05 Boolean cooldown hard gates did not pass; set "
             f"{F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV}=1 only for the "
-            "owner-authorized risk-accepted deployment"
+            "approved private deployment"
         )
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA_VERSION,
@@ -127,7 +108,7 @@ def f05_boolean_cooldown_runtime_policy(
         "f05_boolean_cooldown_owner_override_requested": override_requested,
         "f05_boolean_cooldown_owner_override_effective": bool(enabled and override_requested),
         "f05_boolean_cooldown_runtime_authority": (
-            "owner_risk_accepted_active" if enabled and override_requested else "disabled"
+            "private_deployment_approved" if enabled and override_requested else "disabled"
         ),
     }
 
@@ -160,7 +141,7 @@ def f05_buy_e3_runtime_policy(
     evidence_route: str,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Require a separate owner grant for the BUY-only E3 artifact."""
+    """Require separate private approval for the historical BUY-only E3 artifact."""
 
     environment = os.environ if environ is None else environ
     override_requested = environment.get(F05_BUY_E3_OWNER_OVERRIDE_ENV) == "1"
@@ -174,7 +155,7 @@ def f05_buy_e3_runtime_policy(
         raise ValueError(
             "F05 BUY E3 formal hierarchy and hard gates did not pass; set "
             f"{F05_BUY_E3_OWNER_OVERRIDE_ENV}=1 only for the explicit "
-            "owner risk-accepted deployment"
+            "approved private deployment"
         )
     return {
         "schema_version": RUNTIME_POLICY_SCHEMA_VERSION,
@@ -186,184 +167,40 @@ def f05_buy_e3_runtime_policy(
         "f05_buy_e3_owner_override_requested": override_requested,
         "f05_buy_e3_owner_override_effective": bool(enabled and override_requested),
         "f05_buy_e3_runtime_authority": (
-            "owner_risk_accepted_active" if enabled and override_requested else "disabled"
+            "private_deployment_approved" if enabled and override_requested else "disabled"
         ),
     }
 
 
-def f05_buy_e3_active_release_runtime_authority(
-    enabled: bool,
+def deployment_envelope_runtime_authority(
     *,
-    environ: Mapping[str, str] | None = None,
-    require_present: bool = True,
-) -> dict[str, Any]:
-    """Resolve the post-envelope active-release grant for one process start."""
-
-    environment = os.environ if environ is None else environ
-    active = bool(enabled)
-    path = str(environment.get(F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV, "")).strip()
-    file_sha256 = str(
-        environment.get(F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV, "")
-    ).strip().lower()
-    canonical_sha256 = str(
-        environment.get(F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV, "")
-    ).strip().lower()
-    if active and require_present:
-        if environment.get(F05_BUY_E3_OWNER_OVERRIDE_ENV) != "1":
-            raise ValueError("enabled F05 BUY E3 requires the owner override grant")
-        candidate = Path(path).expanduser()
-        if not path or "\x00" in path or not candidate.is_absolute():
-            raise ValueError(
-                f"enabled F05 BUY E3 requires an absolute {F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV}"
-            )
-        for label, value in (
-            (F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV, file_sha256),
-            (F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV, canonical_sha256),
-        ):
-            if _SHA256_RE.fullmatch(value) is None:
-                raise ValueError(f"enabled F05 BUY E3 requires a valid {label}")
-    elif not active:
-        path = ""
-        file_sha256 = ""
-        canonical_sha256 = ""
-    return {
-        "schema_version": F05_BUY_E3_ACTIVE_RELEASE_AUTHORITY_SCHEMA,
-        "required": active,
-        "active_release_path": path,
-        "active_release_file_sha256": file_sha256,
-        "active_release_canonical_sha256": canonical_sha256,
-    }
-
-
-def live_safety_successor_runtime_authority(
-    *,
-    expected_manifest_file_sha256: str,
-    expected_policy_file_sha256: str,
-    expected_predicate_bundle_file_sha256: str,
+    buy_e3_enabled: bool,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Load the always-required shared execution-safety authority."""
+    """Load a private, content-addressed deployment envelope.
+
+    The caller supplies one release-root digest.  Nested build/config/policy
+    manifests verify their own leaves; this policy layer does not repeat them.
+    """
 
     environment = os.environ if environ is None else environ
-    path_text = str(environment.get(LIVE_SAFETY_SUCCESSOR_PATH_ENV, "")).strip()
-    expected_file = str(
-        environment.get(LIVE_SAFETY_SUCCESSOR_FILE_SHA256_ENV, "")
-    ).strip().lower()
-    expected_canonical = str(
-        environment.get(LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256_ENV, "")
-    ).strip().lower()
+    path_text = str(environment.get(DEPLOYMENT_ENVELOPE_PATH_ENV, "")).strip()
+    expected_root = (
+        str(environment.get(DEPLOYMENT_ENVELOPE_CANONICAL_SHA256_ENV, "")).strip().lower()
+    )
     candidate = Path(path_text).expanduser()
-    if (
-        not path_text
-        or "\x00" in path_text
-        or not candidate.is_absolute()
-        or _SHA256_RE.fullmatch(expected_file) is None
-        or _SHA256_RE.fullmatch(expected_canonical) is None
-        or candidate.is_symlink()
-        or not candidate.is_file()
-    ):
-        raise ValueError("live safety successor authority is missing or malformed")
-    resolved = candidate.resolve(strict=True)
-    metadata = resolved.stat()
-    if metadata.st_nlink != 1 or metadata.st_mode & 0o777 != 0o600:
-        raise ValueError("live safety successor permissions/link count drifted")
-    before = resolved.read_bytes()
-    if hashlib.sha256(before).hexdigest() != expected_file:
-        raise ValueError("live safety successor file hash drifted")
+    if not path_text or "\x00" in path_text or not candidate.is_absolute():
+        raise ValueError("private deployment envelope is missing or malformed")
+    from live import deployment_runtime
+
     try:
-        payload = json.loads(before)
-    except json.JSONDecodeError as exc:
-        raise ValueError("live safety successor is not JSON") from exc
-    if not isinstance(payload, Mapping):
-        raise ValueError("live safety successor is not a mapping")
-    from strategy import boolean_cooldown_buy_e3 as buy_e3
-
-    identity = buy_e3._validate_active_release(  # noqa: SLF001
-        payload,
-        expected_canonical_sha256=expected_canonical,
-        expected_artifact_sha256=buy_e3.DIRECT_OWNER_EXACT_ARTIFACT_SHA256,
-        expected_manifest_file_sha256=str(expected_manifest_file_sha256).lower(),
-        expected_policy_file_sha256=str(expected_policy_file_sha256).lower(),
-        expected_predicate_bundle_file_sha256=str(
-            expected_predicate_bundle_file_sha256
-        ).lower(),
-    )
-    if payload.get("schema_version") != buy_e3.DIRECT_OWNER_LIVE_SAFETY_SUCCESSOR_SCHEMA:
-        raise ValueError("runtime requires the live safety successor schema")
-    after = resolved.read_bytes()
-    if before != after:
-        raise ValueError("live safety successor changed while loading")
-    return {
-        "path": str(resolved),
-        "file_sha256": expected_file,
-        "canonical_sha256": expected_canonical,
-        "execution_commit": identity["execution_commit"],
-        "execution_tree": identity["execution_tree"],
-        "active_config_file_sha256": identity["active_config_file_sha256"],
-        "disabled_config_file_sha256": identity["disabled_config_file_sha256"],
-        "native_module_sha256": str(payload["native_build"]["module_sha256"]),
-        "native_wheel_sha256": str(payload["native_build"]["wheel_sha256"]),
-        "native_soabi": str(payload["native_build"]["soabi"]),
-        "native_build_receipt_sha256": str(
-            payload["native_build"]["file_sha256"]
-        ),
-        "native_build_receipt_canonical_sha256": str(
-            payload["native_build"]["canonical_sha256"]
-        ),
-        "runtime_lock_file_sha256": str(
-            payload["native_build"]["runtime_lock_file_sha256"]
-        ),
-        "runtime_lock_path": str(payload["native_build"]["runtime_lock_path"]),
-        "runtime_lock_canonical_sha256": str(
-            payload["native_build"]["runtime_lock_canonical_sha256"]
-        ),
-        "wheelhouse_manifest_file_sha256": str(
-            payload["native_build"]["wheelhouse_manifest_file_sha256"]
-        ),
-        "wheelhouse_path": str(payload["native_build"]["wheelhouse_path"]),
-        "wheelhouse_canonical_sha256": str(
-            payload["native_build"]["wheelhouse_canonical_sha256"]
-        ),
-        "install_receipt_path": str(
-            payload["native_build"]["install_receipt_path"]
-        ),
-        "install_receipt_file_sha256": str(
-            payload["native_build"]["install_receipt_file_sha256"]
-        ),
-        "install_receipt_canonical_sha256": str(
-            payload["native_build"]["install_receipt_canonical_sha256"]
-        ),
-        "root_wheel_sha256": str(
-            payload["native_build"]["root_wheel_sha256"]
-        ),
-        "root_wheel_path": str(payload["native_build"]["root_wheel_path"]),
-        "native_wheel_path": str(payload["native_build"]["native_wheel_path"]),
-        "installed_record_aggregate_sha256": str(
-            payload["native_build"]["installed_record_aggregate_sha256"]
-        ),
-        "locked_runtime_interpreter": dict(
-            payload["native_build"]["interpreter"]
-        ),
-    }
-
-
-def require_f05_buy_e3_active_release_restart(
-    previous: Mapping[str, Any],
-    candidate: Mapping[str, Any],
-) -> None:
-    """Keep the post-envelope active-release grant immutable for a process."""
-
-    fields = (
-        F05_BUY_E3_ACTIVE_RELEASE_PATH_ENV,
-        F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256_ENV,
-        F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256_ENV,
-    )
-    changed = [name for name in fields if previous.get(name) != candidate.get(name)]
-    if changed:
-        raise ValueError(
-            "F05 BUY E3 active-release authority is restart-only; changed field(s): "
-            + ", ".join(changed)
+        return deployment_runtime.load_deployment_envelope(
+            candidate,
+            expected_root_sha256=expected_root,
+            buy_e3_enabled=buy_e3_enabled,
         )
+    except (OSError, deployment_runtime.LockedRuntimeError) as exc:
+        raise ValueError(f"private deployment envelope rejected: {exc}") from exc
 
 
 def require_f05_buy_e3_restart(

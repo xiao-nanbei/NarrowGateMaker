@@ -17,6 +17,10 @@ from research.families.f03_causal_13_head.ml_model import (
 )
 from strategy.model_contract import (
     ABSOLUTE_PRICE_VARIANCE_SEMANTICS,
+    DEPLOYMENT_AUTHORIZATION_SCHEMA,
+    LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA,
+    LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
+    PRIVATE_DEPLOYMENT_AUTHORITY,
     REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
     REQUIRED_FEATURE_DAG_ID,
     REQUIRED_FEATURE_DAG_SHA256,
@@ -24,6 +28,7 @@ from strategy.model_contract import (
     REQUIRED_LABEL_SEMANTICS_VERSION,
     REQUIRED_LABEL_WINDOW_SEMANTICS,
     REQUIRED_MODEL_HEADS,
+    absolute_price_variance_unit_contract,
     validate_model_bundle,
 )
 
@@ -282,6 +287,7 @@ def test_research_only_predictive_bundle_cannot_enter_live(tmp_path: Path) -> No
     for name in REQUIRED_MODEL_HEADS:
         (tmp_path / f"{name}.txt").write_text("model", encoding="utf-8")
         metadata = {
+            "symbol": "BTCUSDC",
             "feature_cols": ["close"],
             "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
             "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
@@ -294,6 +300,9 @@ def test_research_only_predictive_bundle_cannot_enter_live(tmp_path: Path) -> No
             "feature_variant": "base",
             "training_experiment_id": "source-local-v1",
             "promotion_authority": "research_only",
+            "volatility_unit_contract": absolute_price_variance_unit_contract(
+                "BTCUSDC"
+            ),
         }
         if name.startswith("vol_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
@@ -308,7 +317,26 @@ def test_research_only_predictive_bundle_cannot_enter_live(tmp_path: Path) -> No
     assert len(validate_model_bundle(tmp_path, allow_research_only=True)) == 13
 
 
-def test_owner_authorized_live_canary_binds_every_head_hash(tmp_path: Path) -> None:
+@pytest.mark.parametrize("legacy", [False, True], ids=["current", "legacy-canary"])
+def test_private_deployment_authorization_binds_every_head_hash(
+    tmp_path: Path,
+    legacy: bool,
+) -> None:
+    training_experiment_id = (
+        "causal_v12_expanded_source_aware_semantics_v6"
+        if legacy
+        else "canary-v1"
+    )
+    feature_manifest_sha256 = (
+        "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+        if legacy
+        else "manifest-sha"
+    )
+    promotion_authority = (
+        LEGACY_OWNER_AUTHORIZED_LIVE_CANARY
+        if legacy
+        else PRIVATE_DEPLOYMENT_AUTHORITY
+    )
     tree_hashes = {}
     metadata_hashes = {}
     for name in REQUIRED_MODEL_HEADS:
@@ -316,6 +344,7 @@ def test_owner_authorized_live_canary_binds_every_head_hash(tmp_path: Path) -> N
         model_path.write_text("model", encoding="utf-8")
         tree_hashes[name] = hashlib.sha256(model_path.read_bytes()).hexdigest()
         metadata = {
+            "symbol": "BTCUSDC",
             "feature_cols": ["close"],
             "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
             "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
@@ -323,36 +352,69 @@ def test_owner_authorized_live_canary_binds_every_head_hash(tmp_path: Path) -> N
             "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
             "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
             "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
-            "feature_manifest_sha256": "manifest-sha",
+            "feature_manifest_sha256": feature_manifest_sha256,
             "source_profile": "all",
             "feature_variant": "base",
-            "training_experiment_id": "canary-v1",
-            "promotion_authority": "owner_authorized_live_canary",
+            "training_experiment_id": training_experiment_id,
+            "promotion_authority": promotion_authority,
         }
+        if not legacy:
+            metadata["volatility_unit_contract"] = (
+                absolute_price_variance_unit_contract("BTCUSDC")
+            )
         if name.startswith("vol_"):
             metadata["label_semantics"] = ABSOLUTE_PRICE_VARIANCE_SEMANTICS
         metadata_path = tmp_path / f"{name}_meta.json"
         metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
         metadata_hashes[name] = hashlib.sha256(metadata_path.read_bytes()).hexdigest()
 
-    with pytest.raises(ValueError, match="live_canary_authorization"):
+    authorization_file = (
+        "live_canary_authorization.json"
+        if legacy
+        else "deployment_authorization.json"
+    )
+    with pytest.raises(ValueError, match=authorization_file):
         validate_model_bundle(tmp_path)
 
     authorization = {
-        "schema_version": "narrowgate.owner_authorized_live_canary.v1",
-        "training_experiment_id": "canary-v1",
-        "owner_authorized": True,
-        "active_live_inference_authorized": True,
+        "schema_version": (
+            LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA
+            if legacy
+            else DEPLOYMENT_AUTHORIZATION_SCHEMA
+        ),
+        "training_experiment_id": training_experiment_id,
         "baseline_promotion_authorized": False,
         "derived_bundle": {
             "model_tree_sha256": tree_hashes,
             "head_metadata_sha256": metadata_hashes,
         },
     }
-    (tmp_path / "live_canary_authorization.json").write_text(
+    if legacy:
+        authorization["owner_authorized"] = True
+        authorization["active_live_inference_authorized"] = True
+    else:
+        authorization["private_deployment_authorized"] = True
+        authorization["active_runtime_inference_authorized"] = True
+    (tmp_path / authorization_file).write_text(
         json.dumps(authorization), encoding="utf-8"
     )
-    assert len(validate_model_bundle(tmp_path)) == 13
+    metadata = validate_model_bundle(
+        tmp_path,
+        require_live_authorization=True,
+        expected_symbol="BTCUSDC",
+    )
+    assert len(metadata) == 13
+    assert {head["promotion_authority"] for head in metadata.values()} == {
+        PRIVATE_DEPLOYMENT_AUTHORITY
+    }
+    expected_origin = (
+        {LEGACY_OWNER_AUTHORIZED_LIVE_CANARY}
+        if legacy
+        else {None}
+    )
+    assert {
+        head.get("promotion_authority_origin") for head in metadata.values()
+    } == expected_origin
 
     (tmp_path / "dir_10s.txt").write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="model hash mismatch"):

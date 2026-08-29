@@ -1,6 +1,10 @@
 # Security Policy
 
-Last materially modified: 2026-08-23
+<p><a href="SECURITY.md">English</a> | <a href="SECURITY.zh-CN.md">简体中文</a></p>
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 ## Reporting a Vulnerability
 
@@ -46,8 +50,9 @@ security updates.
 ## Commercial Authorization
 
 Security reporting is not a commercial licensing channel. NarrowGateMaker uses the
-[PolyForm Noncommercial License 1.0.0](LICENSE), and commercial use requires separate
-written permission. The repository publishes no dedicated licensing email; use the
+[PolyForm Noncommercial License 1.0.0](LICENSE) as a source-available license. It
+permits the noncommercial purposes stated in its terms and restricts commercial
+use, which requires separate written permission. The repository publishes no dedicated licensing email; use the
 [commercial-license issue form](https://github.com/xiao-nanbei/NarrowGateMaker/issues/new?template=commercial_license.yml)
 for a non-confidential inquiry. A public issue, discussion, or pull request is not
 itself authorization.

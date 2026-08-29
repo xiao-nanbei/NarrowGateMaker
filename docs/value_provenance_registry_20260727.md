@@ -2,11 +2,11 @@
 
 Date: 2026-07-27
 
-Last materially modified: 2026-08-20
+Last materially modified: 2026-08-29
 
 Machine-readable registry: `docs/value_provenance_registry_20260727.json`
 
-Status: historical provenance snapshot. It does not grant current live authority. Current operational authority is resolved only through `research/families/f10_live_replay_attribution/docs/operational_baseline_current.json`.
+Status: historical provenance snapshot. It does not grant current live authority. Current operational authority is owner-private, `private_not_distributed`, and must fail closed when its bytes are unavailable or unverifiable.
 
 ## Why this exists
 
@@ -32,20 +32,26 @@ Those classes are not interchangeable. In particular, a theoretical optimum such
 
 The direct/selection split is operational. P3 slopes, latency distributions, OOF metrics, and observed calibration bias are direct estimates. `gamma`, a cooldown selected by replay, or a score threshold selected from candidate policies are policy selections. A selected value must not be described as if the market uniquely fitted it.
 
+The maintained quote core is an **AS-shaped empirical quote controller**, not an exact or approximately optimal Avellaneda--Stoikov/GLFT implementation. Current interpretation separates four literature relationships: `exact derivation` for an explicitly reproduced mathematical object, `adapted proxy` when estimand or data semantics changed, `analogy` for design motivation only, and `archived research` for removed or closed routes. A citation never upgrades an empirical coefficient, threshold, proxy, or action into a theoretical result.
+
+In particular, the P3 artifact estimates a fixed-horizon touch opportunity measured from the same-side BBO. Its legacy `effective_kappa` field is `-d log(P_touch)/d distance`; it excludes queue-ahead and touch-to-fill conversion and is not GLFT order-arrival intensity. Likewise, legacy prose names map as follows: `microprice` is a top-N-size weighted-mid proxy, wall-clock `vpin_*` is clock-volume imbalance, and `ber_*` is a trade-intensity-burst guard rather than a book-exhaustion estimator.
+
+The `q_ref` / `eta_inventory` / `a_spread` unit split is admitted as a behavior-preserving B0 migration only when final bid/ask, the historical P3 pair-spread floor, post-only correction, and tick rounding are identical. A quantity-aware finite-order-size spread, a true per-side same-side-BBO floor, an H5/H10 risk horizon, or a variance-time cooldown changes the economic path and remains a candidate without economic, action, or live authority.
+
 ## Historical live-baseline snapshot
 
-The table below records the state understood on 2026-07-27. Its values and `live_authority` flags are retained for provenance only and must not be used to resolve the current runtime. As of 2026-08-20, the current v12 host-only identity preserves v11's causal-v12 ML, BUY fill-selection shadow/action OFF, q90 shadow ON/action OFF, and F05 SELL Boolean cooldown under `owner_risk_accepted_promotion`. Its research hard gates remain failed. Follow the operational pointer above for the hash-bound identity.
+The table below records the state understood on 2026-07-27. Its values and `live_authority` flags are retained for provenance only and must not be used to resolve the current runtime. Later operational identities, host bindings, release state, and action enablement are owner-private and are not distributed here. Consumers must verify the private authority explicitly and fail closed when it is absent.
 
-| Item | Current value | Classification | Important limitation |
+| Item | Historical value/status | Classification | Important limitation |
 |---|---:|---|---|
-| AS/GLFT quote equation | active | Hybrid | Theory supplies the form; it does not supply the current coefficients |
-| `gamma` | `0.046` | Empirical policy selection | Retained/Sobol selection, not a universal optimum |
+| AS-shaped empirical quote controller | active | Hybrid | AS supplies a comparison shape; the implemented pair spread, P3/depth adapters, and regime multipliers are empirical and are not an AS/GLFT optimum |
+| legacy `gamma` | `0.046` | Empirical policy selection | Retained/Sobol selection and compatibility input, not a universal CARA optimum; current unit contracts expose `q_ref`, `z`, `eta_inventory`, and `a_spread` separately |
 | effective P3 `delta_star` | `13.9991 USDC/BTC` | Empirical direct estimate | About 140 ticks, not 13.999 ticks |
-| effective P3 `kappa_eff` | `0.067356 (USDC/BTC)^-1` | Empirical direct estimate | Local touch-probability slope, not arrival intensity |
+| effective P3 `kappa_eff` | `0.067356 (USDC/BTC)^-1` | Empirical direct estimate | Fixed-horizon, same-side-BBO local touch-probability slope; not arrival intensity, fill hazard, or queue conversion |
 | legacy `kappa=0.073` | fallback only | Empirical policy selection | Not the current effective kappa while override is zero |
-| quote horizon | `1s` | Judgmental engineering | Required for units; value is not theory-derived |
-| order size | `0.001 BTC` | Judgmental risk budget | Must satisfy exchange filters |
-| maximum inventory | `0.026 BTC` | Hybrid | Historically selected plus accepted risk budget |
+| quote horizon | `1s` | Judgmental engineering | Controller risk-integration horizon, not an observed order lifetime or the P3 touch horizon; value is not theory-derived |
+| order size `z` | `0.001 BTC` | Judgmental risk budget | Must satisfy exchange filters; it is not present in the legacy spread logarithm and therefore prevents interpreting that expression as a complete finite-order-size GLFT derivation |
+| maximum inventory | `0.026 BTC` | Hybrid | Independent base-asset hard fuse alongside separate USDC hard limits; not a unified scale-invariant risk coordinate |
 | requote interval | `5s` | Hybrid | Historical operating choice and churn budget |
 | add-side fill cooldown | `85s` | Empirical policy selection | No paper or theorem implies 85 seconds |
 | total pair-spread threshold | `20 bps` | Hybrid | Historical inward-compression trigger, not a risk-safety guarantee |
@@ -54,6 +60,10 @@ The table below records the state understood on 2026-07-27. Its values and `live
 | 13-head ML | disabled | Engineering runtime state | Empirical P3 remains active |
 | tick / lot | `0.1 / 0.001` | Exchange rule | Refresh from symbol filters |
 | maker / taker fee | `0 / 0.00036` | Account rule | Fee asset conversion remains part of accounting |
+
+Later owner-side evidence may refer to BUY E3 or the SELL owner cooldown. Those are **owner-authorized live risk experiments**, not research-hard-gate passes or validated optima. Their exact enablement, parameters, release identity, and current state are private operational facts and cannot be inferred from this historical public registry.
+
+Fixed base-asset quantity and fixed USDC notional, loss, and drawdown limits remain independent hard fuses, with the stricter applicable constraint binding. They do not jointly scale with equity, BTC price, volatility, fill frequency, or exposure time. An equity/volatility-aware replacement is a separate candidate and cannot silently inherit safety or live authority.
 
 ## Placement fill probability
 
@@ -146,6 +156,7 @@ Maker-signed markout already contains execution-price value relative to future m
 ## Governance
 
 - Every empirical value must carry dataset, split, code, artifact, and when relevant machine/environment identity.
+- A SHA proves only byte identity. It does not prove data correctness, parameter reasonableness, leakage freedom, economic value, live-process health, order ownership, or exchange reconciliation; each requires a separate gate.
 - Every judgmental threshold must say what loss or failure it budgets.
 - A threshold changed after observing a panel creates a new version; it cannot rewrite the old experiment.
 - Prediction qualification, action uplift, and live promotion remain separate decisions.

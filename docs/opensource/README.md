@@ -1,6 +1,10 @@
-# Open Source Contributor Guide
+# Source-Available Contributor Guide
 
-Last materially modified: 2026-08-23
+<p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 Status: Current public participation and navigation guide.
 
@@ -8,6 +12,8 @@ Use this page to find the shortest path to the work you want to do. NarrowGateMa
 contains public software, public research contracts, and references to owner-side
 evidence that is not distributed with the repository. Those surfaces have different
 review rules.
+
+NarrowGateMaker is source-available under the [PolyForm Noncommercial License 1.0.0](../../LICENSE). The license permits the noncommercial purposes stated in its terms and restricts commercial use. For that reason, project documentation uses **source-available** rather than describing the repository as unrestricted-use open source. A contribution, public clone, or merged pull request does not grant commercial-use permission.
 
 ## Navigate by Goal
 

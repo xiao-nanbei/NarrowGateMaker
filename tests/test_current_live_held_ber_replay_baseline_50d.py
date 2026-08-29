@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import os
+
+import pytest
+
 from research.families.f10_live_replay_attribution.audit import (
     current_live_held_ber_replay_baseline_50d as baseline50,
+)
+
+
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("NARROWGATE_PRIVATE_RESEARCH_ROOT"),
+    reason="private historical operational denominator is not configured",
 )
 from research.families.f10_live_replay_attribution.audit import (
     current_live_held_ber_strict_native_latency_baseline_50d as strict50,
@@ -78,8 +88,8 @@ def test_prepare_reuses_the_admitted_execution_plan(tmp_path) -> None:
         "schema_version": f"{baseline50.IDENTITY}.execution_plan.v1",
         "identity": baseline50.IDENTITY,
         "created_at_utc": "2026-08-10T00:00:00+00:00",
-        "spec_path": str(baseline50.SPEC.resolve()),
-        "spec_sha256": baseline50._sha256_file(baseline50.SPEC),
+        "spec_path": baseline50.SPEC_LOCATOR,
+        "spec_sha256": baseline50._sha256_file(baseline50._spec_path()),
         "ordered_utc_days": baseline50.ordered_days(spec),
         "prefix_days": list(spec["immutable_prefix"]["ordered_utc_days"]),
         "added_days": list(spec["added_panel"]["ordered_utc_days"]),

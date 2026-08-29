@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import stat
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+import strategy.maker_engine as maker_engine_module
+from live.main import (
+    build_stopped_exchange_reconciliation,
+    write_stopped_exchange_reconciliation,
+)
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import OrderManager, Side
 
@@ -175,6 +184,56 @@ def test_running_sync_delivers_each_identified_trade_before_exact_barrier() -> N
             )
         },
     )
+
+
+def test_sync_retries_transient_position_before_account_trade_visibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_payload = (0.002, 70_000.0, 2_000, {}, (), (), {}, False)
+    second_payload = (
+        0.002,
+        70_000.0,
+        2_000,
+        {"41": 0.001},
+        ("92",),
+        (),
+        {
+            "92": _producer_identity(
+                order_id="41",
+                side="SELL",
+                quantity=0.001,
+                price=70_000.0,
+                commission=0.0,
+                commission_asset="USDC",
+                trade_time_ms=2_000,
+                cumulative=0.001,
+            )
+        },
+        False,
+    )
+    engine = _engine_with_payload(first_payload)
+    engine._stable_exchange_reconciliation_payload.side_effect = (
+        first_payload,
+        second_payload,
+    )
+    engine.inventory.sync_from_exchange.side_effect = (
+        RuntimeError(
+            "exchange snapshot omitted the identity cursor for a locally "
+            "applied fill at or before its update time"
+        ),
+        {"ok": True},
+    )
+    engine.latch_runtime_fatal = Mock()
+    sleeps: list[float] = []
+    monkeypatch.setattr(maker_engine_module.time, "sleep", sleeps.append)
+
+    assert MakerEngine.sync_position(engine, required=True) is True
+
+    assert engine._stable_exchange_reconciliation_payload.call_count == 2
+    assert engine.inventory.sync_from_exchange.call_count == 2
+    assert sleeps == [pytest.approx(0.05)]
+    assert engine.latch_runtime_fatal.call_count == 0
+    assert set(engine._reconciliation_trade_identity_by_id) == {"92"}
 
 
 def _stable_fetch_engine(response: object) -> MakerEngine:
@@ -797,3 +856,96 @@ def test_stop_finally_drains_reconciliation_latched_during_writer_shutdown() -> 
 
     assert sync_calls == [True]
     assert engine._runtime_reconciliation_pending is False
+
+
+class _StoppedReconciliationRest:
+    def __init__(
+        self,
+        *,
+        orders: list[object] | None = None,
+        positions: list[object] | None = None,
+    ) -> None:
+        self.orders = list(orders or [[], []])
+        row = [
+            {
+                "symbol": "BTCUSDC",
+                "positionSide": "BOTH",
+                "positionAmt": "0.001",
+                "entryPrice": "70000.0",
+                "updateTime": 1_900_000_000_000,
+            }
+        ]
+        self.positions = list(positions or [row, row])
+
+    def get_orders(self, *, symbol: str) -> object:
+        assert symbol == "BTCUSDC"
+        return self.orders.pop(0)
+
+    def get_position_risk(self, *, symbol: str) -> object:
+        assert symbol == "BTCUSDC"
+        return self.positions.pop(0)
+
+
+def test_stopped_reconciliation_double_reads_zero_orders_and_stable_position(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "stopped-reconciliation.json"
+    result = write_stopped_exchange_reconciliation(
+        _StoppedReconciliationRest(),
+        symbol="BTCUSDC",
+        api_key="fixture-key",
+        output_path=output,
+        generated_utc="2026-08-29T00:00:00Z",
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["signed_read_sequence"] == [
+        "/fapi/v1/openOrders",
+        "/fapi/v2/positionRisk",
+        "/fapi/v1/openOrders",
+        "/fapi/v2/positionRisk",
+    ]
+    assert payload["position_rows"][0]["position_side"] == "BOTH"
+    assert payload["account_key_sha256"] == hashlib.sha256(
+        b"fixture-key"
+    ).hexdigest()
+    assert set(result) == {"path", "canonical_sha256"}
+    assert result["canonical_sha256"] == payload[
+        "canonical_exchange_reconciliation_sha256"
+    ]
+    assert stat.S_IMODE(output.stat().st_mode) == 0o600
+    assert output.stat().st_nlink == 1
+
+
+def test_stopped_reconciliation_rejects_open_order_on_either_read() -> None:
+    with pytest.raises(RuntimeError, match="zero exchange open orders"):
+        build_stopped_exchange_reconciliation(
+            _StoppedReconciliationRest(orders=[[{"orderId": 1}], []]),
+            symbol="BTCUSDC",
+            api_key="fixture-key",
+        )
+    with pytest.raises(RuntimeError, match="appeared"):
+        build_stopped_exchange_reconciliation(
+            _StoppedReconciliationRest(orders=[[], [{"orderId": 1}]]),
+            symbol="BTCUSDC",
+            api_key="fixture-key",
+        )
+
+
+def test_stopped_reconciliation_rejects_position_drift() -> None:
+    first = [
+        {
+            "symbol": "BTCUSDC",
+            "positionSide": "BOTH",
+            "positionAmt": "0.001",
+            "entryPrice": "70000.0",
+            "updateTime": 1_900_000_000_000,
+        }
+    ]
+    second = [dict(first[0], positionAmt="0.002")]
+    with pytest.raises(RuntimeError, match="positionRisk drifted"):
+        build_stopped_exchange_reconciliation(
+            _StoppedReconciliationRest(positions=[first, second]),
+            symbol="BTCUSDC",
+            api_key="fixture-key",
+        )

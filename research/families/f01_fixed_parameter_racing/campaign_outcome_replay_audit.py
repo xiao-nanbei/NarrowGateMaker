@@ -2266,7 +2266,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--latency-seed", type=int, default=59)
     parser.add_argument(
         "--latency-profile-id",
-        default="aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718_v1",
+        default="provider_neutral_latency_profile_v1",
         help="Environment/version identity for the frozen REST/book latency distribution.",
     )
     parser.add_argument(
@@ -2346,7 +2346,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--exec-book-visibility-profile-id",
-        default="aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718",
+        default="provider_neutral_visibility_profile_v1",
         help="Environment/version label stored with the replay artifacts.",
     )
     parser.add_argument(

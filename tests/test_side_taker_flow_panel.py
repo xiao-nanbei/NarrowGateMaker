@@ -120,7 +120,7 @@ def test_fixed_delay_requires_identity_and_moves_visibility() -> None:
         windows_ms=(100,),
         visibility_mode="fixed_delay_replay",
         visibility_delay_ms=100.0,
-        latency_profile_id="aws_tokyo_2vcpu_4g_test",
+        latency_profile_id="provider_neutral_test",
         start_ms=DAY_START_MS,
         end_ms=DAY_START_MS + 500,
     )

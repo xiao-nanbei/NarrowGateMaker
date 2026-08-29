@@ -14,9 +14,10 @@ from data_paths import resolve_portable_path
 
 SCHEMA_VERSION = "narrowgate_experiment_dataset_binding.v1"
 CANONICAL_FULL_PATH_BASELINE = (
-    "research/families/f10_live_replay_attribution/docs/"
-    "current_live_held_ber_replay_baseline_50d_spec_20260810.json"
+    "research/families/f05_fill_quality_quote_ev/docs/"
+    "causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json"
 )
+CANONICAL_FULL_PATH_IDENTITY = "btc_usdc_frozen_public_research_denominator_50d_20260810"
 FULL_PATH_CLASSES = {
     "daily_fresh_start_full_path_action",
     "strict_native_queue_action",
@@ -103,18 +104,19 @@ def canonical_full_path_days(*, root: Path | None = None) -> tuple[str, list[str
     project_root = (root or _project_root()).resolve()
     spec_path = project_root / CANONICAL_FULL_PATH_BASELINE
     payload = json.loads(spec_path.read_text(encoding="utf-8"))
+    ordered = _mapping(payload.get("ordered_utc_days"), name="canonical ordered days")
     prefix = _days(
-        payload["immutable_prefix"]["ordered_utc_days"],
+        ordered.get("prefix40"),
         name="canonical immutable prefix",
     )
     added = _days(
-        payload["added_panel"]["ordered_utc_days"],
+        ordered.get("added10"),
         name="canonical added panel",
     )
     combined = sorted(prefix + added)
     if len(combined) != 50 or len(set(combined)) != 50:
         raise ValueError("canonical full-path baseline is not a unique 50-day panel")
-    return str(payload["identity"]), combined
+    return CANONICAL_FULL_PATH_IDENTITY, combined
 
 
 def _validate_universe(payload: Mapping[str, Any], *, root: Path) -> list[str]:

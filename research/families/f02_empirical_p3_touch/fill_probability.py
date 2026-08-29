@@ -2,8 +2,9 @@
 """
 Legacy bar-excursion fill probability model — SU Johnson parametrisation.
 
-Estimates the probability that a limit order posted at distance δ from
-the best opposite quote gets filled within one requote interval (10 s).
+Estimates a 10-second bar-excursion touch opportunity at distance δ from the
+same-side BBO at window start.  It does not estimate queue-ahead fill or an
+order-arrival intensity; historical class/field names remain for artifact ABI.
 
 Parametric form (Guéant & Manziuk 2019):
     f(δ) = 1 − Φ(ξ + λ · arcsinh((δ − γ) / δ₀))
@@ -70,6 +71,8 @@ REQUOTE_SEC = 10   # one requote interval
 P3_EVENT_TYPE = "touch"
 P3_HORIZON_S = 10.0
 P3_DISTANCE_UNIT = "USDC_per_BTC"
+P3_DISTANCE_ORIGIN = "same_side_best_bid_or_ask_at_window_start"
+P3_SIDE_IDENTITY = "pooled_buy_sell"
 P3_EMPIRICAL_SCHEMA = "narrowgate_p3_touch_calibration.v2"
 
 
@@ -136,6 +139,17 @@ class FillProbabilityModel:
             event_type = P3_EVENT_TYPE
         horizon_s = float(self.metadata.get("horizon_s", 0.0) or 0.0)
         distance_unit = str(self.metadata.get("distance_unit") or "").strip()
+        distance_origin = str(self.metadata.get("distance_origin") or "").strip()
+        if not distance_origin and self.schema_version == P3_EMPIRICAL_SCHEMA:
+            # The frozen v2 and public dry-run artifacts predate this explicit
+            # field.  Their calibration implementation has one fixed origin.
+            distance_origin = P3_DISTANCE_ORIGIN
+        side = str(self.metadata.get("side") or "").strip().lower()
+        if not side and self.schema_version == P3_EMPIRICAL_SCHEMA:
+            side = P3_SIDE_IDENTITY
+        queue_included = self.metadata.get("queue_included")
+        if queue_included is None and self.schema_version == P3_EMPIRICAL_SCHEMA:
+            queue_included = False
         if event_type != P3_EVENT_TYPE:
             raise ValueError(f"empirical P3 event_type must be {P3_EVENT_TYPE!r}")
         if not np.isclose(horizon_s, P3_HORIZON_S, rtol=0.0, atol=1e-12):
@@ -144,12 +158,25 @@ class FillProbabilityModel:
             raise ValueError(
                 f"empirical P3 distance_unit must be {P3_DISTANCE_UNIT!r}"
             )
+        if distance_origin != P3_DISTANCE_ORIGIN:
+            raise ValueError(
+                f"empirical P3 distance_origin must be {P3_DISTANCE_ORIGIN!r}"
+            )
+        if side != P3_SIDE_IDENTITY:
+            raise ValueError(
+                f"empirical P3 side identity must be {P3_SIDE_IDENTITY!r}"
+            )
+        if queue_included is not False:
+            raise ValueError("empirical P3 queue_included must be false")
         if require_artifact_hash and len(self.artifact_sha256) != 64:
             raise ValueError("empirical P3 artifact_sha256 is unavailable")
         return {
             "event_type": event_type,
             "horizon_s": horizon_s,
             "distance_unit": distance_unit,
+            "distance_origin": distance_origin,
+            "side": side,
+            "queue_included": False,
             "artifact_sha256": self.artifact_sha256,
         }
 
@@ -175,7 +202,11 @@ class FillProbabilityModel:
         return 1.0 - norm.cdf(z)
 
     def optimal_delta(self, delta_min=0.1, delta_max=200.0, n=50_000):
-        """δ* = argmax δ · f(δ)  (expected execution revenue)."""
+        """δ* = argmax δ · f(δ), a touch-distance diagnostic objective.
+
+        This is not expected execution revenue: the touch curve excludes queue
+        position, touch-to-fill conversion, quantity, fees, and post-fill value.
+        """
         if self.model_type == "empirical_survival":
             delta_min = max(float(delta_min), float(self.delta_grid[0]))
             delta_max = min(float(delta_max), float(self.delta_grid[-1]))
@@ -222,6 +253,9 @@ class FillProbabilityModel:
             # Every newly written empirical artifact carries its estimand. Old
             # v2 artifacts remain byte-for-byte frozen and normalize at load.
             self.metadata.setdefault("event_type", P3_EVENT_TYPE)
+            self.metadata.setdefault("distance_origin", P3_DISTANCE_ORIGIN)
+            self.metadata.setdefault("side", P3_SIDE_IDENTITY)
+            self.metadata.setdefault("queue_included", False)
             self.semantic_identity(require_artifact_hash=False)
             payload.update({
                 "delta_grid": self.delta_grid.tolist(),

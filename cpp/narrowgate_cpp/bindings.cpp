@@ -1318,6 +1318,25 @@ void bind_quote_core(py::module_& m) {
     BIND_QUOTE_CONFIG_FIELD(defense_pause);
     BIND_QUOTE_CONFIG_FIELD(defense_emergency_inventory_ratio);
     BIND_QUOTE_CONFIG_FIELD(defense_emergency_loss);
+    BIND_QUOTE_CONFIG_FIELD(inventory_reference_qty);
+    BIND_QUOTE_CONFIG_FIELD(eta_inventory);
+    BIND_QUOTE_CONFIG_FIELD(a_spread);
+    BIND_QUOTE_CONFIG_FIELD(f03_ret_action_horizon_s);
+    BIND_QUOTE_CONFIG_FIELD(f03_ret_action_compatible);
+    BIND_QUOTE_CONFIG_FIELD(risk_per_order);
+    BIND_QUOTE_CONFIG_FIELD(execution_intensity_slope);
+    BIND_QUOTE_CONFIG_FIELD(risk_horizon_s);
+    BIND_QUOTE_CONFIG_FIELD(historical_p3_scalar_adapter_enabled);
+    BIND_QUOTE_CONFIG_FIELD(p3_side_bbo_floor_enabled);
+    BIND_QUOTE_CONFIG_FIELD(p3_identity_required);
+    BIND_QUOTE_CONFIG_FIELD(p3_event_type);
+    BIND_QUOTE_CONFIG_FIELD(p3_horizon_s);
+    BIND_QUOTE_CONFIG_FIELD(p3_distance_origin);
+    BIND_QUOTE_CONFIG_FIELD(p3_distance_unit);
+    BIND_QUOTE_CONFIG_FIELD(p3_side);
+    BIND_QUOTE_CONFIG_FIELD(p3_queue_included);
+    BIND_QUOTE_CONFIG_FIELD(p3_artifact_sha256);
+    BIND_QUOTE_CONFIG_FIELD(trade_intensity_acceleration_spread_mult);
 #undef BIND_QUOTE_CONFIG_FIELD
 
     py::class_<SideQuoteContext> side_context(m, "SideQuoteContext");

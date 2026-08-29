@@ -28,6 +28,10 @@ def _cfg(**overrides):
         max_spread_bps=20.0,
     )
     values.update(overrides)
+    values.setdefault(
+        "f03_ret_action_horizon_s", values.get("quote_horizon_s", 1.0)
+    )
+    values.setdefault("f03_ret_action_compatible", True)
     return qc.QuoteCoreConfig(**values)
 
 
@@ -176,10 +180,39 @@ def test_cpp_quote_core_scalar_parity(monkeypatch):
         (_state(0), _cfg(), _pred(0), qc.DepthSnapshot()),
         (_state(1), _cfg(use_depth_microprice=True, use_depth_kappa=True), _pred(1), _depth()),
         (
+            _state(1),
+            _cfg(
+                eta_inventory=0.02,
+                a_spread=0.03,
+                quote_horizon_s=5.0,
+            ),
+            _pred(1),
+            qc.DepthSnapshot(),
+        ),
+        (
             _state(2, inventory=0.004, mo_ema_bid=-6.0, mo_ema_ask=-7.0),
             _cfg(adverse_guard_enabled=True, adverse_markout_threshold=5.0, adverse_pause=False),
             _pred(2),
             _depth(),
+        ),
+        (
+            _state(1, inventory=0.004),
+            _cfg(
+                p3_delta_star=0.5,
+                p3_kappa_eff=0.1,
+                p3_side_bbo_floor_enabled=True,
+                p3_event_type="touch",
+                p3_horizon_s=10.0,
+                p3_distance_origin=(
+                    "same_side_best_bid_or_ask_at_window_start"
+                ),
+                p3_distance_unit="USDC_per_BTC",
+                p3_side="pooled_buy_sell",
+                p3_queue_included=False,
+                p3_artifact_sha256="c" * 64,
+            ),
+            _pred(1),
+            qc.DepthSnapshot(),
         ),
     ]
     for state, cfg, pred, depth in cases:
@@ -192,6 +225,105 @@ def test_cpp_quote_core_scalar_parity(monkeypatch):
         assert cpp.bid_price == pytest.approx(py.bid_price, abs=cfg.tick_size * 0.51)
         assert cpp.ask_price == pytest.approx(py.ask_price, abs=cfg.tick_size * 0.51)
         assert cpp.spread == pytest.approx(py.spread, abs=cfg.tick_size * 1.01)
+
+
+def test_cpp_p3_side_floor_constraint_flags_are_side_specific(monkeypatch):
+    cfg = _cfg(
+        kappa=0.1,
+        ml_enabled=False,
+        dynamic_cap_enabled=False,
+        max_spread_bps=0.0,
+        inventory_skew_strength=2.0,
+        p3_delta_star=0.1,
+        p3_side_bbo_floor_enabled=True,
+        p3_event_type="touch",
+        p3_horizon_s=10.0,
+        p3_distance_origin="same_side_best_bid_or_ask_at_window_start",
+        p3_distance_unit="USDC_per_BTC",
+        p3_side="pooled_buy_sell",
+        p3_queue_included=False,
+        p3_artifact_sha256="c" * 64,
+    )
+    state = _state(0, inventory=-0.02, sigma_sq=1.0)
+    pred = qc.QuotePrediction()
+
+    monkeypatch.delenv("NARROWGATE_CPP_QUOTE_CORE", raising=False)
+    py = qc.compute_quote_core(state, cfg, pred, qc.DepthSnapshot())
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    cpp = qc.compute_quote_core(state, cfg, pred, qc.DepthSnapshot())
+
+    assert py.bid_price == pytest.approx(cpp.bid_price, abs=cfg.tick_size * 0.51)
+    assert py.ask_price == pytest.approx(cpp.ask_price, abs=cfg.tick_size * 0.51)
+    assert py.quote_context["BUY"]["any_constraint_changed"] is True
+    assert py.quote_context["SELL"]["any_constraint_changed"] is False
+    assert cpp.quote_context["BUY"]["any_constraint_changed"] is True
+    assert cpp.quote_context["SELL"]["any_constraint_changed"] is False
+
+
+def test_cpp_direct_legacy_gamma_fallback_preserves_old_callers():
+    cfg = _cfg(gamma=0.02)
+    state = _state(1)
+    pred = _pred(1)
+    depth = qc.DepthSnapshot()
+    expected = qc.compute_quote_core(state, cfg, pred, depth)
+
+    cpp_cfg = narrowgate_cpp.QuoteCoreConfig()
+    assert np.isnan(cpp_cfg.eta_inventory)
+    assert np.isnan(cpp_cfg.a_spread)
+    for name in qc._CPP_CFG_FIELDS:
+        if name not in {"eta_inventory", "a_spread"}:
+            setattr(cpp_cfg, name, getattr(cfg, name))
+    cpp_state = qc._copy_attrs(state, narrowgate_cpp.QuoteState(), qc._CPP_STATE_FIELDS)
+    cpp_pred = qc._copy_attrs(pred, narrowgate_cpp.QuotePrediction(), qc._CPP_PRED_FIELDS)
+    actual = narrowgate_cpp.compute_quote_core(
+        cpp_state,
+        cpp_cfg,
+        cpp_pred,
+        qc._to_cpp_depth(narrowgate_cpp, depth),
+    )
+
+    assert actual.bid_price == pytest.approx(expected.bid_price, abs=cfg.tick_size * 0.51)
+    assert actual.ask_price == pytest.approx(expected.ask_price, abs=cfg.tick_size * 0.51)
+    cpp_cfg.a_spread = 0.0
+    with pytest.raises(ValueError, match="a_spread"):
+        narrowgate_cpp.compute_quote_core(
+            cpp_state,
+            cpp_cfg,
+            cpp_pred,
+            qc._to_cpp_depth(narrowgate_cpp, qc.DepthSnapshot()),
+        )
+
+
+def test_cpp_f03_ret_action_requires_explicit_consumer_compatibility():
+    cfg = _cfg(
+        ml_enabled=True,
+        ret_skew=0.1,
+        quote_horizon_s=10.0,
+        f03_ret_action_horizon_s=10.0,
+        f03_ret_action_compatible=True,
+    )
+    cpp_cfg = qc._copy_attrs(
+        cfg,
+        narrowgate_cpp.QuoteCoreConfig(),
+        qc._CPP_CFG_FIELDS,
+    )
+    cpp_cfg.f03_ret_action_compatible = False
+    with pytest.raises(ValueError, match="F03 ret action horizon"):
+        narrowgate_cpp.compute_quote_core(
+            qc._copy_attrs(
+                _state(4),
+                narrowgate_cpp.QuoteState(),
+                qc._CPP_STATE_FIELDS,
+            ),
+            cpp_cfg,
+            qc._copy_attrs(
+                _pred(4),
+                narrowgate_cpp.QuotePrediction(),
+                qc._CPP_PRED_FIELDS,
+            ),
+            qc._to_cpp_depth(narrowgate_cpp, qc.DepthSnapshot()),
+        )
 
 
 def test_cpp_quote_core_horizon_and_absolute_price_risk_contract(monkeypatch):
@@ -217,6 +349,10 @@ def test_cpp_quote_core_horizon_and_absolute_price_risk_contract(monkeypatch):
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     cpp = qc.compute_quote_core(state, cfg, qc.QuotePrediction())
     assert cpp.diagnostics["sigma_sq_horizon"] == pytest.approx(20.0)
+    assert cpp.diagnostics["reservation_price"] == pytest.approx(
+        py.diagnostics["reservation_price"]
+    )
+    assert cpp.diagnostics["delta_raw"] == pytest.approx(py.diagnostics["delta_raw"])
     assert cpp.diagnostics["asym"] == pytest.approx(-0.9)
     assert cpp.bid_price == pytest.approx(py.bid_price, abs=cfg.tick_size * 0.51)
     assert cpp.ask_price == pytest.approx(py.ask_price, abs=cfg.tick_size * 0.51)
@@ -570,6 +706,56 @@ def test_cpp_quote_core_strict_module_token_guard(monkeypatch):
     monkeypatch.delenv("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", raising=False)
     qc._CPP_QUOTE_CORE = None
     qc._CPP_QUOTE_CORE_IMPORT_FAILED = False
+
+
+def test_direct_cpp_p3_projection_requires_complete_touch_identity() -> None:
+    cpp_cfg = narrowgate_cpp.QuoteCoreConfig()
+    cpp_cfg.p3_delta_star = 0.5
+    cpp_cfg.p3_side_bbo_floor_enabled = True
+    cpp_state = qc._copy_attrs(
+        _state(1), narrowgate_cpp.QuoteState(), qc._CPP_STATE_FIELDS
+    )
+    cpp_pred = qc._copy_attrs(
+        _pred(1), narrowgate_cpp.QuotePrediction(), qc._CPP_PRED_FIELDS
+    )
+    cpp_depth = qc._to_cpp_depth(narrowgate_cpp, qc.DepthSnapshot())
+
+    with pytest.raises(ValueError, match="complete touch identity"):
+        narrowgate_cpp.compute_quote_core(
+            cpp_state,
+            cpp_cfg,
+            cpp_pred,
+            cpp_depth,
+        )
+
+    cpp_cfg.p3_identity_required = True
+    cpp_cfg.p3_event_type = "touch"
+    cpp_cfg.p3_horizon_s = 10.0
+    cpp_cfg.p3_distance_origin = "same_side_best_bid_or_ask_at_window_start"
+    cpp_cfg.p3_distance_unit = "USDC_per_BTC"
+    cpp_cfg.p3_side = "pooled_buy_sell"
+    cpp_cfg.p3_queue_included = False
+    cpp_cfg.p3_artifact_sha256 = "d" * 64
+    result = narrowgate_cpp.compute_quote_core(
+        cpp_state,
+        cpp_cfg,
+        cpp_pred,
+        cpp_depth,
+    )
+    assert result.bid_price > 0.0
+    assert result.ask_price > result.bid_price
+
+
+def test_scalar_cpp_route_rejects_stale_quote_config_abi() -> None:
+    class StaleCppModule:
+        class QuoteCoreConfig:
+            gamma = 0.01
+
+    qc._CPP_CFG_CACHE_KEY = None
+    qc._CPP_CFG_CACHE_REF = None
+    qc._CPP_CFG_CACHE_VALUE = None
+    with pytest.raises(RuntimeError, match="p3_identity_required"):
+        qc._cached_cpp_config(StaleCppModule(), _cfg())
 
 
 def test_cpp_quote_core_batch_parity(monkeypatch):

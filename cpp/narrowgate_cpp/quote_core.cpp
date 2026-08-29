@@ -1,9 +1,51 @@
 #include "quote_core.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <cctype>
+#include <stdexcept>
 
 namespace narrowgate_cpp {
 namespace {
+
+bool is_lower_hex_sha256(const std::string& value) {
+    return value.size() == 64 && std::all_of(
+        value.begin(), value.end(), [](unsigned char ch) {
+            return std::isdigit(ch) != 0 || (ch >= 'a' && ch <= 'f');
+        }
+    );
+}
+
+void validate_p3_touch_identity(const QuoteCoreConfig& cfg) {
+    const bool projection_active = (
+        cfg.historical_p3_scalar_adapter_enabled &&
+        (cfg.p3_delta_star > 0.0 || cfg.p3_kappa_eff > 0.0)
+    ) || (cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0);
+    const bool identity_present =
+        !cfg.p3_event_type.empty() || cfg.p3_horizon_s != 0.0 ||
+        !cfg.p3_distance_origin.empty() || !cfg.p3_distance_unit.empty() ||
+        !cfg.p3_side.empty() || cfg.p3_queue_included.has_value() ||
+        !cfg.p3_artifact_sha256.empty();
+    if (!projection_active && !cfg.p3_identity_required && !identity_present) {
+        return;
+    }
+    if (
+        cfg.p3_event_type != "touch" ||
+        !std::isfinite(cfg.p3_horizon_s) ||
+        std::abs(cfg.p3_horizon_s - 10.0) > 1e-12 ||
+        cfg.p3_distance_origin !=
+            "same_side_best_bid_or_ask_at_window_start" ||
+        cfg.p3_distance_unit != "USDC_per_BTC" ||
+        cfg.p3_side != "pooled_buy_sell" ||
+        !cfg.p3_queue_included.has_value() ||
+        cfg.p3_queue_included.value() ||
+        !is_lower_hex_sha256(cfg.p3_artifact_sha256)
+    ) {
+        throw std::invalid_argument(
+            "active P3 projection requires the complete touch identity"
+        );
+    }
+}
 
 int bounded_levels(int requested, std::size_t bid_count, std::size_t ask_count) {
     const int n = std::max(1, requested);
@@ -561,7 +603,76 @@ QuoteCoreResult compute_quote_core(
     }
 
     const double q = state.inventory;
-    const double gamma = std::max(cfg.gamma, 1e-12);
+    const double legacy_gamma = cfg.gamma;
+    const double q_ref = cfg.inventory_reference_qty;
+    if (!std::isfinite(legacy_gamma) || legacy_gamma <= 0.0) {
+        throw std::invalid_argument("gamma must be positive and finite");
+    }
+    const double legacy_effective = std::max(legacy_gamma, 1e-12);
+    if (!std::isfinite(q_ref) || q_ref <= 0.0) {
+        throw std::invalid_argument("inventory_reference_qty must be positive and finite");
+    }
+    if (std::isfinite(cfg.eta_inventory) && cfg.eta_inventory <= 0.0) {
+        throw std::invalid_argument("eta_inventory must be positive and finite");
+    }
+    if (std::isfinite(cfg.a_spread) && cfg.a_spread <= 0.0) {
+        throw std::invalid_argument("a_spread must be positive and finite");
+    }
+    const double eta_inventory = std::isfinite(cfg.eta_inventory)
+        ? cfg.eta_inventory
+        : legacy_effective * q_ref;
+    const double legacy_spread_coefficient = std::isfinite(cfg.a_spread)
+        ? cfg.a_spread
+        : legacy_effective;
+    const double risk_per_order = std::isfinite(cfg.risk_per_order)
+        ? cfg.risk_per_order
+        : legacy_spread_coefficient;
+    const double execution_intensity_slope = std::isfinite(cfg.execution_intensity_slope)
+        ? cfg.execution_intensity_slope
+        : cfg.kappa;
+    const double risk_horizon_s = std::isfinite(cfg.risk_horizon_s)
+        ? cfg.risk_horizon_s
+        : cfg.quote_horizon_s;
+    const double acceleration_spread_mult =
+        std::isfinite(cfg.trade_intensity_acceleration_spread_mult)
+        ? cfg.trade_intensity_acceleration_spread_mult
+        : cfg.ber_spread_mult;
+    if (!std::isfinite(eta_inventory) || eta_inventory <= 0.0) {
+        throw std::invalid_argument("eta_inventory must be positive and finite");
+    }
+    if (!std::isfinite(risk_per_order) || risk_per_order <= 0.0) {
+        throw std::invalid_argument("risk_per_order must be positive and finite");
+    }
+    if (!std::isfinite(execution_intensity_slope) || execution_intensity_slope <= 0.0) {
+        throw std::invalid_argument("execution_intensity_slope must be positive and finite");
+    }
+    if (!std::isfinite(risk_horizon_s) || risk_horizon_s <= 0.0) {
+        throw std::invalid_argument("risk_horizon_s must be positive and finite");
+    }
+    if (!std::isfinite(acceleration_spread_mult) || acceleration_spread_mult <= 0.0) {
+        throw std::invalid_argument(
+            "trade_intensity_acceleration_spread_mult must be positive and finite"
+        );
+    }
+    if (cfg.historical_p3_scalar_adapter_enabled && cfg.p3_side_bbo_floor_enabled) {
+        throw std::invalid_argument(
+            "historical P3 scalar projection and side-BBO floor are mutually exclusive"
+        );
+    }
+    validate_p3_touch_identity(cfg);
+    if (cfg.ml_enabled && cfg.ret_skew > 0.0) {
+        if (
+            !cfg.f03_ret_action_compatible ||
+            !std::isfinite(cfg.f03_ret_action_horizon_s) ||
+            cfg.f03_ret_action_horizon_s <= 0.0 ||
+            std::abs(cfg.f03_ret_action_horizon_s - cfg.quote_horizon_s) > 1e-12
+        ) {
+            throw std::invalid_argument(
+                "F03 ret action horizon is not compatible with the quote consumer"
+            );
+        }
+    }
+    const double inventory_units = q / q_ref;
     out.sigma_sq_raw = std::max(state.sigma_sq, 0.0);
     double sigma_sq = std::max(state.sigma_sq, 1e-6);
     if (cfg.ml_enabled && cfg.vol_blend > 0.0 && pred.vol_10s > 1e-8) {
@@ -569,9 +680,12 @@ QuoteCoreResult compute_quote_core(
     }
     sigma_sq = std::max(sigma_sq, 1e-6);
     out.sigma_sq_blended = sigma_sq;
-    const double sigma_sq_horizon = sigma_sq * std::max(cfg.quote_horizon_s, 1e-6);
+    const double sigma_sq_horizon = sigma_sq * risk_horizon_s;
 
-    const double kappa_base = cfg.p3_kappa_eff > 0.0 ? cfg.p3_kappa_eff : cfg.kappa;
+    const double kappa_base =
+        cfg.historical_p3_scalar_adapter_enabled && cfg.p3_kappa_eff > 0.0
+        ? cfg.p3_kappa_eff
+        : execution_intensity_slope;
     double kappa_used = std::max(kappa_base, 1e-12);
     const double kappa_before_depth = kappa_used;
     double fair = mid;
@@ -591,7 +705,7 @@ QuoteCoreResult compute_quote_core(
     out.kappa_used = kappa_used;
 
     double regime_spread_scale = 1.0;
-    double g_base = gamma;
+    double g_base = eta_inventory;
     if (cfg.regime_enabled) {
         if (cfg.liq_baseline > 0.0 && state.trade_intensity > 0.0) {
             const double liq_ratio = state.trade_intensity / cfg.liq_baseline;
@@ -625,14 +739,16 @@ QuoteCoreResult compute_quote_core(
         g_eff = clamp(g_eff, g_base * 0.2, g_base * 3.0);
     }
 
-    double reservation = fair - q * g_eff * sigma_sq_horizon;
+    double reservation = fair - inventory_units * g_eff * sigma_sq_horizon;
     const double kappa_spread = std::max(kappa_used * cfg.kappa_ratio, 1e-12);
-    double delta = gamma * sigma_sq_horizon + (2.0 / gamma) * std::log(1.0 + gamma / kappa_spread);
+    double delta = risk_per_order * sigma_sq_horizon +
+        (2.0 / risk_per_order) *
+        std::log(1.0 + risk_per_order / kappa_spread);
     const double delta_raw = delta;
     delta *= regime_spread_scale;
     const double delta_after_regime = delta;
-    if (state.ber_active && cfg.ber_spread_mult > 1.0) {
-        delta *= cfg.ber_spread_mult;
+    if (state.ber_active && acceleration_spread_mult > 1.0) {
+        delta *= acceleration_spread_mult;
     }
     if (cfg.markout_spread_scale > 0.0 && state.mo_ema_all != 0.0) {
         const double mo_ratio = state.mo_ema_all / std::max(state.mo_ref, 1e-6);
@@ -641,7 +757,11 @@ QuoteCoreResult compute_quote_core(
     }
     const double depth_tox = depth_tox_mult(mid, depth, cfg);
     delta *= depth_tox;
-    if (cfg.regime_enabled && cfg.p3_delta_star > 0.0) {
+    if (
+        cfg.regime_enabled &&
+        cfg.historical_p3_scalar_adapter_enabled &&
+        cfg.p3_delta_star > 0.0
+    ) {
         delta = std::max(delta, 2.0 * cfg.p3_delta_star);
     }
     const double min_spread = 2.0 * std::abs(cfg.maker_fee) * mid + tick;
@@ -895,6 +1015,33 @@ QuoteCoreResult compute_quote_core(
         }
     }
 
+    if (cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0) {
+        if (state.best_bid <= 0.0 || state.best_ask <= 0.0) {
+            throw std::invalid_argument(
+                "P3 side-BBO floor requires a valid decision-time BBO"
+            );
+        }
+        const double p3_buy_floor_price = floor_tick(
+            state.best_bid - cfg.p3_delta_star, tick
+        );
+        const double p3_sell_floor_price = ceil_tick(
+            state.best_ask + cfg.p3_delta_star, tick
+        );
+        bid_price = std::min(bid_price, p3_buy_floor_price);
+        ask_price = std::max(ask_price, p3_sell_floor_price);
+        if (out.max_spread > 0.0 && ask_price - bid_price > out.max_spread) {
+            out.flags.cap_hit = true;
+            cap_excess = std::max(
+                cap_excess,
+                ask_price - bid_price - out.max_spread
+            );
+            if (cap_mode != 2) {
+                // Never compress a declared same-side-BBO safety floor inward.
+                cap_exposure_block = true;
+            }
+        }
+    }
+
     const double pair_spread = std::max(ask_price - bid_price, tick);
     const double final_quote_skew = pair_spread > 1e-12
         ? ((ask_price - mid) - (mid - bid_price)) / pair_spread
@@ -927,6 +1074,7 @@ QuoteCoreResult compute_quote_core(
     out.flags.ask_adverse = ask_adverse.active;
     out.flags.defense_guard = bid_defense.active || ask_defense.active;
     out.flags.cap_exposure_block = cap_exposure_block;
+    out.final_cap_excess = cap_excess;
 
     return out;
 }

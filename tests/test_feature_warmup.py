@@ -125,6 +125,7 @@ def test_label_quote_params_use_explicit_empirical_p3_artifact(tmp_path: Path) -
     assert params["fill_probability_model_type"] == "empirical_survival"
     assert params["p3_delta_star"] > 0.0
     assert params["p3_kappa_eff"] > 0.0
+    assert params["a_spread"] == params["gamma"]
 
 
 def test_label_quote_params_reject_legacy_su_artifact(tmp_path: Path) -> None:
@@ -137,7 +138,7 @@ def test_label_quote_params_reject_legacy_su_artifact(tmp_path: Path) -> None:
         _load_label_quote_params("BTCUSDC", config)
 
 
-def test_quote_labels_use_empirical_kappa_horizon_and_dynamic_cap() -> None:
+def test_quote_labels_use_spread_coefficient_kappa_horizon_and_dynamic_cap() -> None:
     sigma_sq = np.asarray([100.0, 400.0])
     close = np.asarray([10_000.0, 10_000.0])
     params = {
@@ -170,3 +171,8 @@ def test_quote_labels_use_empirical_kappa_horizon_and_dynamic_cap() -> None:
     uncapped = 0.05 * sigma_sq * 2.0 + (2.0 / 0.05) * np.log1p(0.05 / 0.1)
     pair_cap = np.asarray([10.0, 20.0])
     np.testing.assert_allclose(result, 0.5 * np.minimum(uncapped, pair_cap))
+
+    params.update(a_spread=0.08, dynamic_cap_enabled=False)
+    result = _quote_half_spread(pd.DataFrame(index=range(2)), close, sigma_sq, params)
+    uncapped = 0.08 * sigma_sq * 2.0 + (2.0 / 0.08) * np.log1p(0.08 / 0.1)
+    np.testing.assert_allclose(result, 0.5 * uncapped)

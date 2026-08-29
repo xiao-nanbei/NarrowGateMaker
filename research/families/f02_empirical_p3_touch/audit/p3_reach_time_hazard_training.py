@@ -43,7 +43,12 @@ from research.governance.public_machine_projection import (
     source_document_path,
     source_identity_sha256,
 )
-from scripts import build_p3_reach_time_caches as cache_builder
+try:
+    from scripts import build_p3_reach_time_caches as cache_builder
+except ModuleNotFoundError as exc:
+    if exc.name not in {"scripts", "scripts.build_p3_reach_time_caches"}:
+        raise
+    cache_builder = None
 
 ROOT = Path(__file__).resolve().parents[4]
 IDENTITY = "p3_aggressive_reach_time_conditioned_hazard_v1"
@@ -555,6 +560,11 @@ def load_cache_catalog(
 ) -> CacheCatalog:
     """Validate cache summaries and every context/label manifest before fit."""
 
+    if cache_builder is None:
+        raise RuntimeError(
+            "F02 cache training requires the source-checkout cache builder; "
+            "the compact public wheel intentionally excludes scripts/"
+        )
     if not summary_paths:
         raise ValueError("at least one F02 cache summary is required")
     entries: dict[tuple[str, str], CacheEntry] = {}

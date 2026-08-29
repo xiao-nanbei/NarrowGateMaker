@@ -160,12 +160,12 @@
   },
   "latency_identity": {
     "samples": {
-      "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+      "path": "private_not_distributed",
       "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2"
     },
     "mode": "avg",
-    "profile_id": "aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14",
-    "environment": "aws-ap-northeast-1-tokyo",
+    "profile_id": "private_not_distributed",
+    "environment": "private_not_distributed",
     "baseline_clip_quantile": 0.99,
     "shared_random_path_between_arms": true,
     "exact_historical_receive_time_required_for_this_preflight": false

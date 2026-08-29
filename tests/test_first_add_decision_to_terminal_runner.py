@@ -54,6 +54,7 @@ def test_native_producer_identity_is_frozen_and_fail_closed() -> None:
     with pytest.raises(
         (FileNotFoundError, ValueError),
         match=(
+            "baseline spec hash mismatch|"
             "normalized L2 manifest|"
             "operational config (?:is missing|hash mismatch)"
         ),

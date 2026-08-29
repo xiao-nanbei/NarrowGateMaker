@@ -89,11 +89,11 @@ The experiment uses an explicit chronological split over good days:
 
 These are selected good days, not continuous calendar intervals. The manifest SHA256 is `04f8abe8db3c947b47e94f0dbe31be291f6fc30759ee4c15fe12597979a90c2a`.
 
-The executable fast result is tagged to the current reference environment:
+The executable fast result is bound to an owner-private reference environment. Its host profile and measurements are not distributed with the public repository:
 
 ```text
-AWS Tokyo / t3.medium / 2 vCPU / 3.75 GiB / Amazon Linux 2023
-profile: aws_tokyo_t3_medium_amzn2023_native_public_ws_20260711_p50_bucketed_1s
+profile: ${NARROWGATE_PRIVATE_LATENCY_PROFILE}
+availability: private_not_distributed
 ```
 
 Historical archives do not contain same-collector receive timestamps. Because their minimum state interval is one second, any positive subsecond receive delay can only be represented conservatively as one whole visibility bucket. The zero-delay run is therefore an information upper bound, while the one-bucket run is a conservative executable approximation, not an exact latency model.
@@ -102,7 +102,7 @@ Historical archives do not contain same-collector receive timestamps. Because th
 
 The table reports `M1 AUC - M0 AUC`. M0 uses local BTCUSDC and Binance BTCUSDT trade state; M1 adds all three external venues and both instrument layers.
 
-### Current-AWS one-bucket visibility delay
+### Private host-bound one-bucket visibility delay
 
 | Target | Validation | Positive days | Test | Positive days | Later | Positive days |
 |---|---:|---:|---:|---:|---:|---:|
@@ -178,7 +178,7 @@ Historical reproduction command:
 
 ```bash
 .venv/bin/python models/external_venue_model.py \
-  --output-dir "$NARROWGATE_DATA_ROOT/model_runs/external_venue_fast_aws_tokyo_v2_20260713" \
+  --output-dir "$NARROWGATE_DATA_ROOT/model_runs/external_venue_fast_host_bound" \
   --cadences fast1s \
   --targets-fast dir_1s dir_3s dir_5s move_1s move_3s move_5s \
   --profiles m0_local_binance m1_external_all \
@@ -186,7 +186,7 @@ Historical reproduction command:
   --fast-train-row-stride 5 \
   --fast-validation-row-stride 10 \
   --external-delay-s 1 \
-  --latency-profile aws_tokyo_t3_medium_amzn2023_native_public_ws_20260711_p50_bucketed_1s
+  --latency-profile "$NARROWGATE_PRIVATE_LATENCY_PROFILE"
 ```
 
 A current decay experiment must declare the entire support rather than naming three preferred heads. Using the Development-p95 support diagnostic above, the first candidate command is:
@@ -201,7 +201,7 @@ A current decay experiment must declare the entire support rather than naming th
   --fast-target-kinds dir \
   --score-panels validation \
   --external-delay-s 1 \
-  --latency-profile aws_tokyo_t3_medium_amzn2023_native_public_ws_20260711_p50_bucketed_1s
+  --latency-profile "$NARROWGATE_PRIVATE_LATENCY_PROFILE"
 ```
 
 This first pass writes `direction_horizon_decay_curve.csv` and `direction_horizon_selection.json`. Test and late panels are not opened by default. A later `--score-only --score-panels test` call must provide that frozen JSON through `--horizon-selection-artifact`; the trainer then refuses to score any horizon except the single Development-selected one. Prediction qualification still cannot authorize a cancel, widen, recenter or live action without a separate known-propensity action experiment.

@@ -52,13 +52,13 @@
     "journal_unknown_ack_quarantine_count": 0,
     "async_close_restart_remote_spool_durability_passed": true,
     "maker_engine_async_bridge_covered": true,
-    "test_receipt": "research/shared/replay_lifecycle/docs/order_lifecycle_unknown_submit_ack_correctness_v1_predeploy_test_receipt_20260813.json",
-    "ec2_preflight_run": false,
+    "test_evidence_availability": "private_not_distributed",
+    "deployment_preflight_run": false,
     "runtime_release_receipt_exists": false
   },
   "predeploy_blockers": [
     "independent_runtime_deployment_amendment_required",
-    "ec2_preflight_required",
+    "private_deployment_preflight_required",
     "rollback_receipt_required",
     "post_start_lifecycle_admission_required"
   ],

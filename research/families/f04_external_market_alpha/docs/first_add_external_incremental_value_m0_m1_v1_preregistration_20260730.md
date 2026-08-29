@@ -4,7 +4,7 @@ Last materially modified: 2026-07-30
 
 Status: `preregistered_blocked_on_30_distinct_valid_receive_time_utc_days`
 
-Migration note (2026-08-11): this frozen AWS-only preregistration is not rewritten. Its outcome-blind [`transport-source amendment`](first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_20260811.md) preserves admitted AWS rows and governs separately identified prospective Vultr rows after the live-host cutover.
+Migration note (2026-08-11): exact transport-source amendments and host-bound rows are private operational evidence and are not distributed. This public preregistration is historical and makes no claim about a current host or collection route.
 
 This is the only registered successor to the completed F10/F05 first-add evidence. It is prediction evidence only and cannot register an action or grant live authority.
 

@@ -94,6 +94,6 @@ Native logical order-book hours and component window caches are now reusable DAG
 
 ## Runtime Cadence Boundary
 
-The current operational baseline runs the causal-v12 semantics-v6 13-head bundle. Its prediction node refreshes once per completed ten-second bucket and is sample-and-held between refreshes. Market events and lower-level feature state continue to update during that interval, but the 13-head output is not a 100ms order-lifecycle model.
+The historical causal-v12 semantics-v6 13-head consumer contract refreshes its prediction node once per completed ten-second bucket and sample-and-holds it between refreshes. Market events and lower-level feature state continue to update during that interval, but the 13-head output is not a 100ms order-lifecycle model. This document does not identify a currently deployed bundle.
 
 The q90 subgraph evaluates active-order state at 100ms cadence. Its faster cadence does not grant post-ACK authority: after exchange terminal it must leave the old fill-risk graph and wait for a separately specified prospective placement/re-entry estimator. These two cadences therefore share lifecycle and visibility contracts without pretending to be one prediction horizon.

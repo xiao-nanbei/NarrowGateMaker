@@ -49,6 +49,7 @@ from execution.exact_opportunity_tape_runtime import (
     validate_exact_opportunity_runtime_config,
 )
 from strategy.inventory_manager import InventoryManager, PositionState
+from strategy.model_contract import f03_direct_quote_action_contract
 from strategy.order_manager import OrderManager, OrderState, Side
 from strategy.post_fill_quote_response import (
     PostFillQuoteResponse,
@@ -59,6 +60,7 @@ from strategy.quote_core import (
     QuoteState,
     SPREAD_CAP_COMPRESS,
     SPREAD_CAP_PAUSE_EXPOSURE,
+    apply_p3_side_bbo_floor,
     apply_final_spread_cap,
     apply_final_spread_cap_preserve_side,
     ber_inventory_role_for_target,
@@ -1037,9 +1039,6 @@ def _load_boolean_cooldown_live_policy(cfg) -> Optional[LiveBooleanCooldownPolic
 def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
     if not bool(getattr(cfg.strategy, "buy_e3_cooldown_policy_enabled", False)):
         return None
-    from live.runtime_policy import f05_buy_e3_active_release_runtime_authority
-
-    release = f05_buy_e3_active_release_runtime_authority(True)
     return LiveBuyE3CooldownPolicy.from_files(
         artifact_manifest_path=_resolve_repo_runtime_path(
             cfg.strategy.buy_e3_cooldown_artifact_manifest_path
@@ -1060,11 +1059,6 @@ def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
         predicate_bundle_sha256=str(
             cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
         ).strip().lower(),
-        active_release_path=release["active_release_path"],
-        active_release_file_sha256=release["active_release_file_sha256"],
-        active_release_canonical_sha256=release[
-            "active_release_canonical_sha256"
-        ],
         warmup_s=float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
         max_feature_age_s=float(cfg.risk.max_exec_book_visible_age_s),
     )
@@ -3144,8 +3138,6 @@ class MakerEngine:
                 "decision_latency_samples": 0,
                 "decision_latency_p99_us": 0.0,
                 "artifact_sha256": "",
-                "active_release_file_sha256": "",
-                "active_release_canonical_sha256": "",
                 "binding_error": "",
                 "windows": {
                     "updates": 0,
@@ -3162,20 +3154,6 @@ class MakerEngine:
                 },
             }
         return policy.audit()
-
-    def buy_e3_active_release_identity(self) -> dict[str, str]:
-        policy = self._buy_e3_cooldown_policy
-        return policy.active_release_identity if policy is not None else {
-            "path": "",
-            "file_sha256": "",
-            "file_canonical_sha256": "",
-            "execution_commit": "",
-            "execution_tree": "",
-            "annotated_operational_tag": "",
-            "annotated_operational_tag_object": "",
-            "active_config_file_sha256": "",
-            "disabled_config_file_sha256": "",
-        }
 
     def shadow_runtime_snapshot(self) -> dict[str, Any]:
         """Bind live config explicitness to the effective signal backends."""
@@ -5022,6 +5000,38 @@ class MakerEngine:
             return min_filter_qty
         return floored
 
+    @staticmethod
+    def _cap_exposure_qty_by_position_value(
+        *,
+        side: Side,
+        current_qty: float,
+        mid: float,
+        requested_qty: float,
+        max_position_value: float,
+        lot: float,
+    ) -> float:
+        """Apply the existing USDC hard fuse before an increasing submit.
+
+        The post-trade risk check remains the final insurance layer.  This
+        pre-submit cap merely prevents a known new order from crossing the same
+        fixed notional limit first; it is not equity/volatility-aware sizing.
+        """
+
+        if (
+            requested_qty <= 0.0
+            or mid <= 0.0
+            or max_position_value <= 0.0
+            or lot <= 0.0
+        ):
+            return 0.0
+        max_abs_qty = max_position_value / mid
+        if side == Side.BUY:
+            room = max_abs_qty - current_qty
+        else:
+            room = max_abs_qty + current_qty
+        room = max(0.0, math.floor(max(0.0, room) / lot + 1e-12) * lot)
+        return min(requested_qty, room)
+
     def _fmt_price(self, price: float) -> str:
         return f"{price:.{self._price_precision}f}"
 
@@ -5326,6 +5336,12 @@ class MakerEngine:
             self._resolve_pending_markouts(now, markout_mid)
         self._evaluate_dynamic_fill_hazard_shadow(time.time_ns())
 
+        # Quote-stop freshness is a safety clock, not a requote feature.  An
+        # active maker order must not remain live for another 5--10 second
+        # requote interval after its execution book has already gone stale.
+        if self._enforce_stale_quote_stop():
+            return
+
         # Cooldown after loss
         if now < self._cooldown_until:
             if self.orders.has_active_orders() and now - self._last_cooldown_cancel_time >= 5.0:
@@ -5354,6 +5370,37 @@ class MakerEngine:
             return
 
         self._requote()
+
+    def _enforce_stale_quote_stop(self) -> bool:
+        """Cancel active quotes immediately when either depth clock is stale."""
+
+        if not self.orders.has_active_orders():
+            return False
+        visible_age_s, source_lag_s = self.signal.last_depth_clock_ages_s()
+        risk = self.cfg.risk
+        max_visible_age_s = float(
+            getattr(risk, "max_exec_book_visible_age_s", 0.0) or 0.0
+        )
+        max_source_lag_s = float(
+            getattr(risk, "max_exec_book_source_lag_s", 0.0) or 0.0
+        )
+        visible_stale = (
+            max_visible_age_s > 0.0 and visible_age_s > max_visible_age_s
+        )
+        source_stale = (
+            max_source_lag_s > 0.0 and source_lag_s > max_source_lag_s
+        )
+        if not (visible_stale or source_stale):
+            return False
+        observed_age_s = max(
+            visible_age_s if visible_stale else 0.0,
+            source_lag_s if source_stale else 0.0,
+        )
+        observed_limit_s = (
+            max_visible_age_s if visible_stale else max_source_lag_s
+        )
+        self._block_stale_quote_data(observed_age_s, observed_limit_s)
+        return True
 
     def _requote(self):
         """Core requote logic — compute quotes, manage orders, risk check."""
@@ -5739,18 +5786,30 @@ class MakerEngine:
         tox_bid, tox_ask = self._toxicity_probs(pred)
         p3_delta_star = 0.0
         p3_kappa_eff = 0.0
+        p3_identity = None
         if fill_model is not None:
             cache_key = (self._model_dir, id(fill_model))
             cache = getattr(self, "_fill_model_quote_cache", None)
             if cache is None or cache[0] != cache_key:
                 delta_star = fill_model.optimal_delta()
-                cache = (cache_key, delta_star, fill_model.effective_kappa(delta_star))
+                cache = (
+                    cache_key,
+                    delta_star,
+                    fill_model.effective_kappa(delta_star),
+                    fill_model.semantic_identity(require_artifact_hash=True),
+                )
                 self._fill_model_quote_cache = cache
             p3_delta_star = float(cache[1])
             p3_kappa_eff = float(cache[2])
-        p3_kappa_eff_override = max(0.0, float(getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0))
-        if p3_kappa_eff_override > 0.0:
-            p3_kappa_eff = p3_kappa_eff_override
+            p3_identity = dict(cache[3])
+        p3_kappa_eff_override = float(
+            getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
+        )
+        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+            raise RuntimeError(
+                "nonzero p3_kappa_eff_override has no independently bound "
+                "touch-curve identity and is forbidden"
+            )
         trade_intensity = getattr(getattr(cfg, "regime", None), "liq_baseline", 200.0)
         if self.signal._feat_history:
             trade_intensity = self.signal._feat_history[-1].get("trade_intensity_60s", trade_intensity)
@@ -5774,7 +5833,23 @@ class MakerEngine:
             hold_time_s=hold_time,
             unrealized_pnl=float(getattr(snap, "unrealized_pnl", 0.0)),
         )
-        quote_cfg_key = (id(cfg), p3_delta_star, p3_kappa_eff)
+        ret_metadata = getattr(self.signal, "_model_metadata", {}).get("ret_10s", {})
+        f03_action_contract = (
+            f03_direct_quote_action_contract(ret_metadata)
+            if bool(getattr(cfg.ml, "enabled", False))
+            and float(getattr(cfg.ml, "ret_skew", 0.0) or 0.0) > 0.0
+            else {"compatible": False, "horizon_s": 0.0}
+        )
+        f03_ret_action_horizon_s = float(f03_action_contract["horizon_s"])
+        f03_ret_action_compatible = bool(f03_action_contract["compatible"])
+        quote_cfg_key = (
+            id(cfg),
+            p3_delta_star,
+            p3_kappa_eff,
+            str((p3_identity or {}).get("artifact_sha256", "")),
+            f03_ret_action_horizon_s,
+            f03_ret_action_compatible,
+        )
         quote_cfg_cache = getattr(self, "_quote_core_config_cache", None)
         if quote_cfg_cache is None or quote_cfg_cache[0] != quote_cfg_key:
             quote_cfg_cache = (
@@ -5783,6 +5858,9 @@ class MakerEngine:
                     cfg,
                     p3_delta_star=p3_delta_star,
                     p3_kappa_eff=p3_kappa_eff,
+                    p3_identity=p3_identity,
+                    f03_ret_action_horizon_s=f03_ret_action_horizon_s,
+                    f03_ret_action_compatible=f03_ret_action_compatible,
                 ),
             )
             self._quote_core_config_cache = quote_cfg_cache
@@ -6472,6 +6550,41 @@ class MakerEngine:
                 lot,
             )
 
+        # Re-evaluate the fixed quote-currency fuse for orders that would
+        # otherwise be kept solely because their price drift is small.  A mark
+        # move or an intervening fill can make a previously valid remaining
+        # quantity exceed the current notional room.  Force the normal
+        # cancel/replace path now; the replacement is capped again immediately
+        # before submit below.
+        for side, order, alive in (
+            (Side.BUY, bid_order, bid_alive),
+            (Side.SELL, ask_order, ask_alive),
+        ):
+            if not alive or order is None:
+                continue
+            remaining_qty = max(
+                0.0,
+                float(getattr(order, "remaining_qty", 0.0) or 0.0),
+            )
+            if not _exposure_increasing(side.value, q, remaining_qty, lot):
+                continue
+            allowed_qty = self._cap_exposure_qty_by_position_value(
+                side=side,
+                current_qty=q,
+                mid=mid,
+                requested_qty=remaining_qty,
+                max_position_value=float(cfg.risk.max_position_value),
+                lot=lot,
+            )
+            if allowed_qty + max(lot * 1e-9, 1e-12) >= remaining_qty:
+                continue
+            if side == Side.BUY:
+                bid_needs_update = True
+                bid_force_update = True
+            else:
+                ask_needs_update = True
+                ask_force_update = True
+
         state_policy_max_spread = float(
             self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
         )
@@ -6539,6 +6652,47 @@ class MakerEngine:
                 bid_policy.reason_mask
             )
             can_bid = False
+
+        # Re-assert the side-BBO contract after every live price transform.
+        # Existing orders inside the floor must not survive lazy-requote or
+        # replace throttling merely because the price delta is small.
+        (
+            bid_price,
+            ask_price,
+            p3_buy_floor_price,
+            p3_sell_floor_price,
+            p3_final_bid_changed,
+            p3_final_ask_changed,
+            bid_p3_floor_unsafe,
+            ask_p3_floor_unsafe,
+        ) = self._apply_final_p3_side_bbo_floor(
+            bid_price=bid_price,
+            ask_price=ask_price,
+            best_bid=best_bid,
+            best_ask=best_ask,
+            bid_order_price=float(getattr(bid_order, "price", 0.0) or 0.0),
+            ask_order_price=float(getattr(ask_order, "price", 0.0) or 0.0),
+            bid_order_active=bool(bid_alive),
+            ask_order_active=bool(ask_alive),
+        )
+        if bid_p3_floor_unsafe:
+            bid_needs_update = True
+            bid_force_update = True
+        if ask_p3_floor_unsafe:
+            ask_needs_update = True
+            ask_force_update = True
+        self._last_quote_context["BUY"]["p3_final_side_floor_changed"] = bool(
+            p3_final_bid_changed
+        )
+        self._last_quote_context["SELL"]["p3_final_side_floor_changed"] = bool(
+            p3_final_ask_changed
+        )
+        self._last_quote_context["BUY"]["p3_active_order_floor_unsafe"] = bool(
+            bid_p3_floor_unsafe
+        )
+        self._last_quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
+            ask_p3_floor_unsafe
+        )
 
         # Both evidence-only external projections share one causal state read.
         # Neither candidate is allowed to flow into live order routing.
@@ -6784,6 +6938,8 @@ class MakerEngine:
         ask_action = "none"
         bid_submitted_cid = ""
         ask_submitted_cid = ""
+        bid_size_final = bid_size_pre
+        ask_size_final = ask_size_pre
         if bid_pending_coalesce:
             bid_action = "pending_coalesce"
         elif bid_cancel_first:
@@ -6803,6 +6959,16 @@ class MakerEngine:
                 close_cap = math.floor(abs(q) / lot) * lot
                 if close_cap >= min_qty and close_cap * bid_price >= min_notional:
                     bid_size = min(bid_size, close_cap)
+            if bid_exposure_increasing:
+                bid_size = self._cap_exposure_qty_by_position_value(
+                    side=Side.BUY,
+                    current_qty=q,
+                    mid=mid,
+                    requested_qty=bid_size,
+                    max_position_value=float(cfg.risk.max_position_value),
+                    lot=lot,
+                )
+            bid_size_final = bid_size
             # Exchange filter guard after eta decay
             if bid_size < min_qty or bid_size * bid_price < min_notional:
                 logger.debug(
@@ -6859,6 +7025,16 @@ class MakerEngine:
                 close_cap = math.floor(q / lot) * lot
                 if close_cap >= min_qty and close_cap * ask_price >= min_notional:
                     ask_size = min(ask_size, close_cap)
+            if ask_exposure_increasing:
+                ask_size = self._cap_exposure_qty_by_position_value(
+                    side=Side.SELL,
+                    current_qty=q,
+                    mid=mid,
+                    requested_qty=ask_size,
+                    max_position_value=float(cfg.risk.max_position_value),
+                    lot=lot,
+                )
+            ask_size_final = ask_size
             # Exchange filter guard after eta decay
             if ask_size < min_qty or ask_size * ask_price < min_notional:
                 logger.debug(
@@ -6992,7 +7168,7 @@ class MakerEngine:
             existing_order=bid_order,
             replaced_cid=bid_replaced_cid,
             cancel_requested=bid_cancel_requested,
-            target_quantity=bid_size_pre,
+            target_quantity=bid_size_final,
         )
         record_exact_decision(
             side="SELL",
@@ -7004,7 +7180,7 @@ class MakerEngine:
             existing_order=ask_order,
             replaced_cid=ask_replaced_cid,
             cancel_requested=ask_cancel_requested,
-            target_quantity=ask_size_pre,
+            target_quantity=ask_size_final,
         )
 
         self._append_row(
@@ -7037,7 +7213,7 @@ class MakerEngine:
                 base_price=base_bid_price,
                 final_price=bid_price,
                 base_size=base_size,
-                final_size=bid_size_pre,
+                final_size=bid_size_final,
                 can_post_after_inventory=int(can_bid_after_inventory),
                 order_active_before=int(bool(bid_alive)),
                 needs_update=int(bool(bid_needs_update)),
@@ -7074,7 +7250,7 @@ class MakerEngine:
                 base_price=base_ask_price,
                 final_price=ask_price,
                 base_size=base_size,
-                final_size=ask_size_pre,
+                final_size=ask_size_final,
                 can_post_after_inventory=int(can_ask_after_inventory),
                 order_active_before=int(bool(ask_alive)),
                 needs_update=int(bool(ask_needs_update)),
@@ -7514,6 +7690,60 @@ class MakerEngine:
         if best_bid > 0.0 and ask_new <= best_bid:
             ask_new = best_bid + tick
         return bid_new, ask_new, True
+
+    def _apply_final_p3_side_bbo_floor(
+        self,
+        *,
+        bid_price: float,
+        ask_price: float,
+        best_bid: float,
+        best_ask: float,
+        bid_order_price: float = 0.0,
+        ask_order_price: float = 0.0,
+        bid_order_active: bool = False,
+        ask_order_active: bool = False,
+    ) -> tuple[float, float, float, float, bool, bool, bool, bool]:
+        """Return final floor-safe prices and unsafe active-order flags."""
+
+        enabled = bool(
+            self._last_quote_diagnostics.get("p3_side_bbo_floor_enabled", False)
+        )
+        delta_star = float(
+            self._last_quote_diagnostics.get("p3_touch_delta_star", 0.0) or 0.0
+        )
+        active = bool(enabled and math.isfinite(delta_star) and delta_star > 0.0)
+        bid, ask, buy_floor, sell_floor, bid_changed, ask_changed = (
+            apply_p3_side_bbo_floor(
+                bid_price,
+                ask_price,
+                enabled=active,
+                delta_star=delta_star,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                tick_size=float(self.cfg.tick_size),
+            )
+        )
+        tolerance = max(float(self.cfg.tick_size) * 1e-9, 1e-12)
+        return (
+            bid,
+            ask,
+            buy_floor,
+            sell_floor,
+            bid_changed,
+            ask_changed,
+            bool(
+                active
+                and bid_order_active
+                and bid_order_price > 0.0
+                and bid_order_price > buy_floor + tolerance
+            ),
+            bool(
+                active
+                and ask_order_active
+                and ask_order_price > 0.0
+                and ask_order_price < sell_floor - tolerance
+            ),
+        )
 
     def _log_order_outcome(self, event_type: str, order, **extra):
         context = self._get_order_context(order.client_order_id) if order is not None else {}
@@ -8638,9 +8868,24 @@ class MakerEngine:
         if not active:
             return True
 
+        cancel_all_candidates = [
+            order
+            for order in active
+            if order.state != OrderState.PENDING_CANCEL
+        ]
+        if not cancel_all_candidates:
+            # A cancel request already owns every resolvable order lifecycle.
+            # Repeating cancel-open-orders on each main-loop tick cannot add
+            # authority; stale pending cancels converge through the bounded
+            # individual-order reconciliation path instead.
+            return True
+
         marked_ids: list[str] = []
-        for order in active:
-            if order.state in {OrderState.PENDING_NEW, OrderState.PENDING_CANCEL}:
+        for order in cancel_all_candidates:
+            # A submit ACK may have been lost after exchange acceptance, so a
+            # symbol-level cancel remains necessary even though local state
+            # cannot yet transition from PENDING_NEW to PENDING_CANCEL.
+            if order.state == OrderState.PENDING_NEW:
                 continue
             self.orders.mark_pending_cancel(order.client_order_id)
             marked_ids.append(order.client_order_id)
@@ -8653,7 +8898,7 @@ class MakerEngine:
                 self._record_perf_rest_latency(
                     "cancel_all", (time.perf_counter() - rest_start) * 1_000_000.0
                 )
-            logger.debug(f"Canceled {len(active)} orders")
+            logger.debug(f"Canceled {len(cancel_all_candidates)} orders")
             return True
         except Exception as e:
             for cid in marked_ids:
@@ -10419,39 +10664,61 @@ class MakerEngine:
         existing_barrier = False
         try:
             with self._reconciliation_lock:
-                (
-                    qty,
-                    entry,
-                    snapshot_update_time_ms,
-                    order_cumulative_filled_qty,
-                    included_trade_ids,
-                    normalized_new_trades,
-                    trade_identities,
-                    initial_seed,
-                ) = self._stable_exchange_reconciliation_payload()
-                existing_barrier = not initial_seed
-                if not initial_seed:
-                    stage = "deliver_identified_trades"
-                    for trade in normalized_new_trades:
-                        self.orders.reconcile_exchange_trade(
-                            **trade,
-                            local_receive_ts_ns=time.time_ns(),
-                        )
-                        order_status = self.orders.fatal_status()
-                        if bool(order_status.get("latched")):
-                            raise RuntimeError(
-                                "order-manager fatal during account-trade delivery: "
-                                + str(order_status.get("reason", "unknown"))
+                for barrier_attempt in range(1, 4):
+                    stage = "fetch_stable_snapshot"
+                    (
+                        qty,
+                        entry,
+                        snapshot_update_time_ms,
+                        order_cumulative_filled_qty,
+                        included_trade_ids,
+                        normalized_new_trades,
+                        trade_identities,
+                        initial_seed,
+                    ) = self._stable_exchange_reconciliation_payload()
+                    existing_barrier = not initial_seed
+                    if not initial_seed:
+                        stage = "deliver_identified_trades"
+                        for trade in normalized_new_trades:
+                            self.orders.reconcile_exchange_trade(
+                                **trade,
+                                local_receive_ts_ns=time.time_ns(),
                             )
-                stage = "install_exact_barrier"
-                reconciliation = self.inventory.sync_from_exchange(
-                    qty,
-                    entry,
-                    snapshot_update_time_ms=snapshot_update_time_ms,
-                    order_cumulative_filled_qty=order_cumulative_filled_qty,
-                    included_trade_ids=included_trade_ids,
-                    included_trade_identities=trade_identities,
-                )
+                            order_status = self.orders.fatal_status()
+                            if bool(order_status.get("latched")):
+                                raise RuntimeError(
+                                    "order-manager fatal during account-trade delivery: "
+                                    + str(order_status.get("reason", "unknown"))
+                                )
+                    stage = "install_exact_barrier"
+                    try:
+                        reconciliation = self.inventory.sync_from_exchange(
+                            qty,
+                            entry,
+                            snapshot_update_time_ms=snapshot_update_time_ms,
+                            order_cumulative_filled_qty=order_cumulative_filled_qty,
+                            included_trade_ids=included_trade_ids,
+                            included_trade_identities=trade_identities,
+                        )
+                    except RuntimeError as exc:
+                        identity_cursor_lag = (
+                            "exchange snapshot omitted the identity cursor for a "
+                            "locally applied fill at or before its update time"
+                        ) in str(exc)
+                        if not identity_cursor_lag or barrier_attempt >= 3:
+                            raise
+                        logger.warning(
+                            "POSITION_RECONCILIATION_IDENTITY_LAG_RETRY "
+                            "attempt=%d snapshot_update_time_ms=%d",
+                            barrier_attempt,
+                            snapshot_update_time_ms,
+                        )
+                        # positionRisk may become visible before accountTrades.
+                        # Retry the identity proof; never widen the exchange-time
+                        # interval or synthesize a quantity adjustment.
+                        time.sleep(0.05 * (2 ** (barrier_attempt - 1)))
+                        continue
+                    break
                 trade_identity_map = getattr(
                     self,
                     "_reconciliation_trade_identity_by_id",

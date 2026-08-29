@@ -154,7 +154,7 @@
     "event_tape_sha256": "9083c11cfe9ed24c3aec7e4a1b128680ffeebc8799e71cbb503eb04f2e3b3c31",
     "source_log_path": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260721/ng_live_20260720/maker_2026-07-20_context.log",
     "source_log_sha256": "62b48cd9d3ed69bcacee5a84bf095db50f725870d694b7524051d4075a809b86",
-    "environment": "aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+    "environment": "private_not_distributed",
     "promotion_evidence_mode": "frozen_tape_only",
     "zero_trigger_tape_interpretation": "observational full-window no-trigger coverage; trigger behavior remains synthetic parity evidence only"
   },
@@ -163,11 +163,11 @@
     "live_authorization_requires_aws_transport_gate": true,
     "artifacts": [
       {
-        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.json",
+        "path": "private_not_distributed",
         "sha256": "762ba2a2a6c38ebb7ae2392a367ceb713bfb7f6838faaf3abcf7135886e36f3f"
       },
       {
-        "path": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+        "path": "private_not_distributed",
         "sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2"
       },
       {

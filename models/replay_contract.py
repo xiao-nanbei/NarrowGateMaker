@@ -20,7 +20,7 @@ from strategy.replay_controls import (
 FORMAL_REPLAY_CONTRACT_SCHEMA = "narrowgate_formal_replay_contract.v4"
 STANDARD_INITIAL_STATE_SCHEMA = "narrowgate_standard_initial_state.v1"
 KEYED_LATENCY_SAMPLER_VERSION = "keyed_splitmix64_v1"
-DEFAULT_LATENCY_ENVIRONMENT = "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+DEFAULT_LATENCY_ENVIRONMENT = "provider_neutral_unspecified"
 INDIVIDUAL_TRADES_REPAIR_ID = "individual_trade_side_repaired_20260725"
 INDIVIDUAL_TRADES_REPAIRED_DAYS = tuple(f"2026-07-{day:02d}" for day in range(4, 12))
 
@@ -520,6 +520,30 @@ def build_replay_contract(
         (not sync_enabled and sync_mode == "disabled")
         or (sync_enabled and sync_mode == "frozen_tape")
     )
+    legacy_gamma = float(params.get("gamma", 0.0) or 0.0)
+    inventory_reference_qty = float(
+        params.get("inventory_reference_qty", 1.0) or 0.0
+    )
+    eta_inventory = params.get("eta_inventory")
+    if eta_inventory is None:
+        eta_inventory = legacy_gamma * inventory_reference_qty
+    a_spread = params.get("a_spread")
+    if a_spread is None:
+        a_spread = legacy_gamma
+    risk_per_order = params.get("risk_per_order")
+    if risk_per_order is None:
+        risk_per_order = a_spread
+    execution_intensity_slope = params.get("execution_intensity_slope")
+    if execution_intensity_slope is None:
+        execution_intensity_slope = params.get("kappa", 0.0)
+    quote_horizon_s = float(params.get("quote_horizon_s", 1.0) or 0.0)
+    risk_horizon_s = params.get("risk_horizon_s")
+    if risk_horizon_s is None:
+        risk_horizon_s = quote_horizon_s
+    historical_p3_adapter = bool(
+        params.get("historical_p3_scalar_adapter_enabled", True)
+    )
+    p3_side_bbo_floor = bool(params.get("p3_side_bbo_floor_enabled", False))
     contract = {
         "schema_version": FORMAL_REPLAY_CONTRACT_SCHEMA,
         "purpose": normalized_purpose,
@@ -536,12 +560,49 @@ def build_replay_contract(
             "model_type": str(params.get("fill_probability_model_type", "")),
             "event_type": str(params.get("fill_probability_event_type", "")),
             "horizon_s": float(params.get("fill_probability_horizon_s", 0.0) or 0.0),
+            "distance_origin": str(
+                params.get("fill_probability_distance_origin", "")
+            ),
             "distance_unit": str(params.get("fill_probability_distance_unit", "")),
+            "side": str(params.get("fill_probability_side", "")),
+            "queue_included": params.get("fill_probability_queue_included"),
             "artifact_sha256": str(
                 params.get("fill_probability_artifact_sha256", "") or ""
             ),
             "delta_star": float(params.get("p3_delta_star", 0.0) or 0.0),
             "kappa_eff": float(params.get("p3_kappa_eff", 0.0) or 0.0),
+            "historical_scalar_adapter_enabled": historical_p3_adapter,
+            "side_bbo_floor_enabled": p3_side_bbo_floor,
+            "consumer_mode": (
+                "historical_pair_projection"
+                if historical_p3_adapter
+                else "same_side_bbo_floor"
+                if p3_side_bbo_floor
+                else "inactive"
+            ),
+        },
+        "quote_unit_contract": {
+            "formula_identity": "as_shaped_empirical_controller",
+            "quote_math_mode": str(
+                params.get("quote_math_mode", "legacy_v0") or "legacy_v0"
+            ),
+            "inventory_unit": "base_asset",
+            "normalized_inventory_unit": "dimensionless",
+            "price_unit": "quote_asset_per_base_asset",
+            "variance_rate_unit": "price_squared_per_second",
+            "duration_unit": "second",
+            "eta_inventory_unit": "inverse_price",
+            "a_spread_unit": "inverse_price",
+            "risk_per_order_unit": "inverse_price",
+            "execution_intensity_slope_unit": "inverse_price",
+            "inventory_reference_qty": inventory_reference_qty,
+            "order_size": float(params.get("order_size", 0.0) or 0.0),
+            "eta_inventory": float(eta_inventory),
+            "a_spread": float(a_spread),
+            "risk_per_order": float(risk_per_order),
+            "execution_intensity_slope": float(execution_intensity_slope),
+            "quote_horizon_s": quote_horizon_s,
+            "risk_horizon_s": float(risk_horizon_s),
         },
         "queue": {
             "schema_version": str(params.get("queue_calibration_schema_version", "")),
@@ -710,11 +771,84 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
     latency = contract.get("latency", {})
     causal = contract.get("causal_event_semantics", {})
     artifacts = contract.get("artifacts", {})
+    p3_contract = contract.get("p3", {})
+    quote_units = contract.get("quote_unit_contract", {})
     controls = contract.get("path_dependent_controls", {})
     loss_control = controls.get("consecutive_loss_cooldown", {})
     q90_control = controls.get("dynamic_fill_hazard_q90", {})
     sync_control = controls.get("sync_adjust_degrade", {})
     if purpose == "formal":
+        p3_delta_star = float(p3_contract.get("delta_star", 0.0) or 0.0)
+        p3_kappa_eff = float(p3_contract.get("kappa_eff", 0.0) or 0.0)
+        if p3_delta_star > 0.0 or p3_kappa_eff > 0.0:
+            try:
+                from strategy.quote_core import validate_p3_touch_identity
+
+                validate_p3_touch_identity(
+                    {
+                        "event_type": p3_contract.get("event_type"),
+                        "horizon_s": p3_contract.get("horizon_s"),
+                        "distance_origin": p3_contract.get("distance_origin"),
+                        "distance_unit": p3_contract.get("distance_unit"),
+                        "side": p3_contract.get("side"),
+                        "queue_included": p3_contract.get("queue_included"),
+                        "artifact_sha256": p3_contract.get("artifact_sha256"),
+                    },
+                    require_artifact_hash=True,
+                )
+            except ValueError as exc:
+                errors.append(f"formal P3 identity is incomplete: {exc}")
+            historical_adapter = bool(
+                p3_contract.get("historical_scalar_adapter_enabled", False)
+            )
+            side_bbo_floor = bool(p3_contract.get("side_bbo_floor_enabled", False))
+            if historical_adapter == side_bbo_floor:
+                errors.append(
+                    "formal P3 consumer must select exactly one explicit projection mode"
+                )
+        for name in (
+            "inventory_reference_qty",
+            "order_size",
+            "eta_inventory",
+            "a_spread",
+            "risk_per_order",
+            "execution_intensity_slope",
+            "quote_horizon_s",
+            "risk_horizon_s",
+        ):
+            try:
+                value = float(quote_units.get(name, 0.0))
+            except (TypeError, ValueError):
+                value = math.nan
+            if not math.isfinite(value) or value <= 0.0:
+                errors.append(
+                    f"formal quote unit contract requires positive finite {name}"
+                )
+        if str(quote_units.get("formula_identity", "")) != (
+            "as_shaped_empirical_controller"
+        ):
+            errors.append("formal quote formula identity is missing or invalid")
+        if str(quote_units.get("quote_math_mode", "")) not in {
+            "legacy_v0",
+            "quantity_aware_v1",
+        }:
+            errors.append("formal quote math mode is missing or invalid")
+        expected_unit_identities = {
+            "inventory_unit": "base_asset",
+            "normalized_inventory_unit": "dimensionless",
+            "price_unit": "quote_asset_per_base_asset",
+            "variance_rate_unit": "price_squared_per_second",
+            "duration_unit": "second",
+            "eta_inventory_unit": "inverse_price",
+            "a_spread_unit": "inverse_price",
+            "risk_per_order_unit": "inverse_price",
+            "execution_intensity_slope_unit": "inverse_price",
+        }
+        for name, expected in expected_unit_identities.items():
+            if str(quote_units.get(name, "")) != expected:
+                errors.append(
+                    f"formal quote unit contract requires {name}={expected}"
+                )
         for name in ("config", "p3", "queue"):
             if not str((artifacts.get(name) or {}).get("sha256", "")):
                 errors.append(f"formal replay requires a frozen {name} artifact hash")

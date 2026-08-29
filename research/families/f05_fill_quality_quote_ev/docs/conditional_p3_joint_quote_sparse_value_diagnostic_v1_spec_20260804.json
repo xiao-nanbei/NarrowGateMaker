@@ -50,15 +50,9 @@
       "sha256": "4ec56ade6197d1c9aa0e9bb8812df654eb33bdac7803410175a4f80691c7fcdd",
       "size_bytes": 6983
     },
-    "owner_progression_result": {
-      "path": "${NARROWGATE_DATA_ROOT}/reports/conditional_p3_joint_quote_value_owner_progression_v1_20260804/result.json",
-      "sha256": "f223a1cdace586f8d14b52868f4249e4071637350b23005f5fa66858c2800a91",
-      "size_bytes": 4307
-    },
-    "owner_progression_spec": {
-      "path": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_value_owner_progression_v1_spec_20260804.json",
-      "sha256": "5dda2dafb84da299fc56171c4b6080d56fb786db2eb33dc579a0676de9eab398",
-      "size_bytes": 4258
+    "private_progression_evidence": {
+      "locator": "${NARROWGATE_PRIVATE_F05_PROGRESSION_EVIDENCE}",
+      "availability": "private_not_distributed"
     },
     "preflight_side_support": {
       "path": "${NARROWGATE_DATA_ROOT}/reports/conditional_p3_joint_quote_value_preflight_v1_development_20260803/side_support.parquet",

@@ -11,7 +11,8 @@
     "subsecond_claim_allowed": false,
     "feature_visibility": "right_edge_causal",
     "external_visibility_delay_s": 1,
-    "latency_profile": "aws_tokyo_t3_medium_amzn2023_native_public_ws_20260711_p50_bucketed_1s",
+    "latency_profile": "${NARROWGATE_PRIVATE_LATENCY_PROFILE}",
+    "latency_profile_availability": "private_not_distributed",
     "good_day_manifest": "logs/data_audit/cleanup_20260705_align_btcusdt_reference/minimal_complete_good_days_2026.csv",
     "good_day_manifest_sha256": "04f8abe8db3c947b47e94f0dbe31be291f6fc30759ee4c15fe12597979a90c2a"
   },

@@ -1,6 +1,6 @@
 {
   "schema_version": "narrowgate_public_machine_document_projections_v1",
-  "last_materially_modified": "2026-08-21",
+  "last_materially_modified": "2026-08-29",
   "contract": "docs/public_private_documentation_contract.md",
   "private_layout": "research/PRIVATE_EVIDENCE.md",
   "entries": [
@@ -53,7 +53,7 @@
       "public_path": "research/families/f02_empirical_p3_touch/docs/p3_touch_conditional_curve_quote_mapping_v1_spec_20260803.json",
       "unit_id": "research/families/f02_empirical_p3_touch",
       "source_private_sha256": "c88e99fdeb69b0654a4b4a79c3e31bda190ffdfaf61f3b6b82db78298016c59a",
-      "public_projection_sha256": "ba51cca8788bad785f90fba67fa11b752440544366b09f62127567b56205d459",
+      "public_projection_sha256": "486859216166324c9d5413e7d0c4d64b71d06b3628639aa6b743d56811e8a8b3",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 60
@@ -161,7 +161,7 @@
       "public_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_cadence_full_path_economic_precommit_v1_20260805.json",
       "unit_id": "research/families/f03_causal_13_head",
       "source_private_sha256": "af079850d7173b82bf431eabaf5165fa5d5216352f588fb1fb7cdae1803c9882",
-      "public_projection_sha256": "f62d1a0b9c9ffc09c0749594e88404ff5c679675caa59ceb11faec1da8bc1df9",
+      "public_projection_sha256": "e9dd09ee08b1c2e5ac7cfde2cfd594f7dc20ce71fe618ab2e661d3256ad6614b",
       "transformation": "locator_and_operational_identifier_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1,
@@ -189,7 +189,7 @@
       "public_path": "research/families/f03_causal_13_head/docs/causal_v12_1s_dual_overlay_full_path_ml_ab_execution_amendment_v1_20260805.json",
       "unit_id": "research/families/f03_causal_13_head",
       "source_private_sha256": "813588f9cbd4b0349d3346afe22720ada3e2f8c8bcc2096d2913d0711372daae",
-      "public_projection_sha256": "1810be73adaeb083dbbbc6e5ccaadfea8c9a4283ef8520c92e7ede0f88665a69",
+      "public_projection_sha256": "8d2c7eaff818c2c117b1a7511bd737532f26248e164a90df4c5f8af4c55217ea",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 2
@@ -325,7 +325,7 @@
       "public_path": "research/families/f03_causal_13_head/docs/causal_v12_cadence_successor_preflight_v1_design_20260804.json",
       "unit_id": "research/families/f03_causal_13_head",
       "source_private_sha256": "765e50f2bc921a77d2401ad55f6f040fe80fa8afdb73500a50e50179e6ee64e4",
-      "public_projection_sha256": "8000979d1678a2d549498704903a2ef8293cbb61774e0d54fe020745d5514b7b",
+      "public_projection_sha256": "a2c2ea9b16b5d9a1786afe9509ce7fce1143137356a20cbfd1bd3ddb4d46e393",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 3
@@ -347,15 +347,6 @@
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 2
-    },
-    {
-      "public_path": "research/families/f03_causal_13_head/docs/causal_v12_owner_amended_economic_gate_v2_20260802.json",
-      "unit_id": "research/families/f03_causal_13_head",
-      "source_private_sha256": "ae4dcfe7c5826baa099a723b442899cbebbdffd79f8a2bcb0d4ec58248044042",
-      "public_projection_sha256": "71d80cb97d2364f8bbdd4ac7b911ab8445715b7c29d6dddd08a2dcc139332702",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 4
     },
     {
       "public_path": "research/families/f03_causal_13_head/docs/causal_v12_postfit_native_full_path_ml_ab_spec_20260802.json",
@@ -461,7 +452,7 @@
       "public_path": "research/families/f04_external_market_alpha/docs/external_information_decay_v1_spec_20260727.json",
       "unit_id": "research/families/f04_external_market_alpha",
       "source_private_sha256": "492ec1a301dd9f597cb3c81d2bba4a8e74c55df4a4bf073cfc955c47fca301f7",
-      "public_projection_sha256": "12147014260337a5a20e4d45e6b5ecd36b30272c6819f51da5fdc2e12d128e10",
+      "public_projection_sha256": "3e4efc77b22e2533fe9a3fccc3994dd8149fe38ff9dea9a7388b970f878c54d9",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1
@@ -476,58 +467,10 @@
       "private_locator_count": 1
     },
     {
-      "public_path": "research/families/f04_external_market_alpha/docs/first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_20260811.json",
-      "unit_id": "research/families/f04_external_market_alpha",
-      "source_private_sha256": "f44c74f95559a8407c82c74630bc094e3bd6209a7786df9ed2db46738f2853bd",
-      "public_projection_sha256": "d2615a779a64a8bd63a59beafa0948306f7d7318b4eac11df7b12682bdf9dcc0",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
-    },
-    {
-      "public_path": "research/families/f04_external_market_alpha/docs/first_add_external_incremental_value_m0_m1_v1_transport_source_amendment_v2_20260811.json",
-      "unit_id": "research/families/f04_external_market_alpha",
-      "source_private_sha256": "2047a0facf888c0c8af1e7bfe529a1c4f4d420525c861bf54f36f32cbefefe08",
-      "public_projection_sha256": "16e5f37ef3cd1214d5b9d3dcccf084279e992931384ad9276e6902bf131dfa72",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 7
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_action_suspension_operational_release_v1_20260803.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "d4cd2d1642326d662632543394e84e2fed0924b584d7913eb55c7900d1b80116",
-      "public_projection_sha256": "0c841b8b77a96e2e95d817f28b5825a8187497cf9e0fc80b2e65353675f730b7",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_live_shadow_retirement_operational_release_v3_20260804.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "2e69e65113b565ae68b05b86f01c6171b178b676294a5a2af4819e7aaddf0394",
-      "public_projection_sha256": "dcb49f9965d57f114e9f3b1afeec0b12995d496661eec15f3db4a13cc9d6c3b6",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/buy_fill_selection_shadow_action_separation_operational_release_v2_20260803.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "d3709b2809cfba6fac7629d71c7d43e18b0c9648573daeb0fff285d329bccf65",
-      "public_projection_sha256": "78a720040dcd08bcdb4057edf42bcaa0a3e3a3ee9a7d664d4875de439c7e72a5",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 2
-    },
-    {
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/buy_soft_widen_release_single_decision_action_value_v1_spec_20260804.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "cf640c7636ad0358b7a86c425a21f99ad6f633237f2102bd17b7a00526ecffd3",
-      "public_projection_sha256": "b9b563d62cf8d2c580ff72f37b5ca2b43ee69723ca227e83518bea89489edc0d",
+      "public_projection_sha256": "b34209881b51ec10d849f9026f1e114fd2be72565390b409a1f710d43919fbf8",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 12
@@ -549,33 +492,6 @@
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_interpretation_errata_20260812.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "04928d9726dc2a6425df4c2b033831447c97dc7c51efccd9dbdfc3ae7f4013f8",
-      "public_projection_sha256": "3db492a9bebceb941866793c064054160cd38d92934f6122436f0c174c02817f",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 5
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_oof_execution_amendment_20260811.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "e8e33aab820fb35c7d12e2b488cdadf50730a5ac86ada7e17ec4a6c339e40ff3",
-      "public_projection_sha256": "e8ff9e71c90f67f6c69ce89a1c93267150134d26d3cde51a31f918f30e6da24e",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 11
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_spec_20260811.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "362cb1848da44e8b6f4e274ab4e99f7077e9cea7efafcbd77cc404e53774c666",
-      "public_projection_sha256": "825c54d17b581dd9b1033192cb6ae7d79b4fed56ecb737194031a6fddfedb7ff",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
     },
     {
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_preflight_20260810.json",
@@ -606,31 +522,13 @@
       "private_locator_count": 1
     },
     {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_persistent_policy_v3_owner_modeled_queue_execution_20260812.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "7cc8de127c218baeaf0f9fc8da2720331888166430d280360e271c60986fea06",
-      "public_projection_sha256": "04f153e53962be029fa32241c4aa25eb8f5b684cca2f0032ee4bc5729e7dd503",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 8
-    },
-    {
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_sparse_value_diagnostic_v1_spec_20260804.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "a5484090ef4c5e75b8016216f8b9b65f994473371f6da4c74ea84478eb3d17c1",
-      "public_projection_sha256": "bc97d564cb14a5d92357ce700f8cc43baa3f208c463f861f5b6a2eff7a6b654a",
+      "public_projection_sha256": "03324bb943235a2c56c3186b790e6a931fda89076d63a6fac218aca608eab031",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 5
-    },
-    {
-      "public_path": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_value_owner_progression_v1_spec_20260804.json",
-      "unit_id": "research/families/f05_fill_quality_quote_ev",
-      "source_private_sha256": "a7d8367a197ef38c4ac1b8ccde92f5b71d2b33dff3d6b8c85e8284b0fb59f592",
-      "public_projection_sha256": "5dda2dafb84da299fc56171c4b6080d56fb786db2eb33dc579a0676de9eab398",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 6
     },
     {
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/conditional_p3_joint_quote_value_preflight_v1_spec_20260803.json",
@@ -672,7 +570,7 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_execution_amendment_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "4c2dd8a19640e058856bc2eb27e408fa431935349a3a2fab0e474643f389269f",
-      "public_projection_sha256": "e0d14f2e0dfdcb2f11aec4b0e76f64d2375f5c7ab795b6573ec5964e8b913aa8",
+      "public_projection_sha256": "274775db54e9f8bf1f1437e4d72f90085491dac4b300f302411106b3ae292e9c",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 3
@@ -681,16 +579,16 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_1_spec_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908",
-      "public_projection_sha256": "0cb38c77fadcc9cc1748344c5915e450e3d47a24f117a76e4a9aa3a00940ddab",
+      "public_projection_sha256": "ab0937a3e0033ab9dafb82083d87c204dcb4d1127239ae09eff992d86a29b94a",
       "transformation": "locator_redaction_and_public_private_identity_annotation_only",
       "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
+      "private_locator_count": 3
     },
     {
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_execution_amendment_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "581f163726911c3ddd19975d4f7a9b3e6420f466be92dd2ff12c2bf814df5fcf",
-      "public_projection_sha256": "4d355b5f2b6ade243ce68531d12aaf9cfac8dd7e59e7fe082cb983fa9e30a62b",
+      "public_projection_sha256": "2e8a2240e3407b67b27d069f4babc394d1e38ba623d8e4b4ca15b9e998721f10",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 5,
@@ -700,7 +598,7 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_execution_amendment_v2_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "a11ad4d8f1986132537976643fe91188482aded5981a7489de4eb2ee70cd6c96",
-      "public_projection_sha256": "881181c985819dd475d4c75dd7a0632063eb1acb42562f860d1622b6876e15cd",
+      "public_projection_sha256": "28dbcc87734ff8937b997c92ba18835fac7e857c9d6dc89bc6d3c5517b58d660",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 5
@@ -709,7 +607,7 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_2_source_grid_oof_execution_amendment_v3_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "ab1b9240cca09e17de325d99b3b8c76d69d9d97460885b4ea4ef47c6be05aab2",
-      "public_projection_sha256": "d9a328623140260afe5f3cb52c1da98a267843603b73826fe149dc71f06d9aa8",
+      "public_projection_sha256": "9e617ce5e29af2083e0a424d21c6b790165e4d97f79e1c853bac36985bb9ae2a",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 4
@@ -727,7 +625,7 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_execution_amendment_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "58e7990c00c4abc11d1ec0bbd27f8a4400e53969a8dc5756aa0db5d2d05f361f",
-      "public_projection_sha256": "72c5864e08e2f7276b55ff5a66bcc45ab21112d96cb1ee052c44d75c4fc6f156",
+      "public_projection_sha256": "ab2e3baf0bff391aac27b7de18f40e1f0e10484d29658b67dcd2b2dccbeebd9c",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 2,
@@ -747,7 +645,7 @@
       "public_path": "research/families/f05_fill_quality_quote_ev/docs/multiscale_ema_add_wait_incremental_value_v1_spec_20260809.json",
       "unit_id": "research/families/f05_fill_quality_quote_ev",
       "source_private_sha256": "ed935104b5b98cf178a4e76b87667071d0a1dec2b32882e5dc640cb03b12f928",
-      "public_projection_sha256": "28c12d72f63a9ad400d0bc21433d49a9a03ee3b9df45fed79894c660c7169438",
+      "public_projection_sha256": "f0449f76c0f1e6152afb4fe86c2aa7386aedc7cce35eeb70da48d745cbfc9e8b",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1,
@@ -867,7 +765,7 @@
       "public_path": "research/families/f06_placement_fill_cif/docs/paired_state_fill_surface_v1_experiment_spec_20260726.json",
       "unit_id": "research/families/f06_placement_fill_cif",
       "source_private_sha256": "4929fbd8b78c4661500149092c5b265c87b6c86c81b57c6e13d0cf36cc8df25d",
-      "public_projection_sha256": "5955914784476220577fda934ab2ae00d7296be9d6b5a08621b064c1d4381742",
+      "public_projection_sha256": "0b90a0c9037439870ede2d85bfbacb1c6cde40e3b2624ef89f66b15ec7ecd33f",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 9,
@@ -877,7 +775,7 @@
       "public_path": "research/families/f06_placement_fill_cif/docs/paired_state_fill_surface_v1_spec_20260726.json",
       "unit_id": "research/families/f06_placement_fill_cif",
       "source_private_sha256": "fc20d96c2cf72a1e9c524f157cd118d66ee54f1e6535915dc752965c0455baa2",
-      "public_projection_sha256": "fe4eb2c1b1b605715d3ce9c5edfeacb9fbc7bb4619522a37ea10a61d775b5c5a",
+      "public_projection_sha256": "0ce506c519ed7e595671f3a9923db89673775f5891b8cca235b2d91f37b2f0ca",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 4,
@@ -887,7 +785,7 @@
       "public_path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v1_spec_20260726.json",
       "unit_id": "research/families/f06_placement_fill_cif",
       "source_private_sha256": "3852fbcb4a588b616f00dd6c9dfc50475dc4f5b713113e40fbfe0ba4a659b26f",
-      "public_projection_sha256": "e7271b68bce1ac147d37eb76045a0b30de117c231b806f4682f9528ffc47ff83",
+      "public_projection_sha256": "204f28b32f4eb086b61d82e4d286906521cd7f0b9dc1e68674e448714fa72291",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 7,
@@ -897,7 +795,7 @@
       "public_path": "research/families/f06_placement_fill_cif/docs/placement_fill_cif_v2_spec_20260727.json",
       "unit_id": "research/families/f06_placement_fill_cif",
       "source_private_sha256": "54c74b8a5185cfe55ff00cd7bbf95896649133d6093de0707ddf6b3b7ce906e9",
-      "public_projection_sha256": "70ef96a255ac7fce2520ab98cdccfb0cc696c9a131aec6c172f043cbf20142ac",
+      "public_projection_sha256": "a6c645cc903bc14c45dc12a1d9e83c4c6f06a317aa44c3f4be97a5a7abb1ce59",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 9,
@@ -1043,7 +941,7 @@
       "public_path": "research/families/f06_placement_fill_cif/docs/placement_fill_request_state_race_v2_spec_20260728.json",
       "unit_id": "research/families/f06_placement_fill_cif",
       "source_private_sha256": "5b5c89b5c43ea0ca9f3a186da759551be43effbeaca6eb0936bf4fedfaeb3721",
-      "public_projection_sha256": "99c7d3c1c4296792f02669849b66e40af6295cb19a0a8271aee08580e1ad2a63",
+      "public_projection_sha256": "ff432d8dfb185181840b4af58ed8a4323648a1411aeeca042f1d71e2fa2e6f25",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 10,
@@ -1071,7 +969,7 @@
       "public_path": "research/families/f07_active_order_continuation/docs/order_lifecycle_v2_40day_input_admission_v1_contract_20260805.json",
       "unit_id": "research/families/f07_active_order_continuation",
       "source_private_sha256": "3b1f6816111e2f73018307d2a44886d789a47bf84b48d5bcbe69f6bddc8d0aeb",
-      "public_projection_sha256": "640bcd19af53f975d604a8c2b66778a3fa31cfd1def163718efa8c51964cc11f",
+      "public_projection_sha256": "c6c0b7d5440918a037ccf20e8e94496d5d6b381c422d25ce278e5dcc6a72c6ce",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 8
@@ -1263,7 +1161,7 @@
       "public_path": "research/families/f09_campaign_action_uplift/docs/causal_v12_ranked_toxicity_exposure_guard_carryover_safe_v2_mechanics_spec_20260803.json",
       "unit_id": "research/families/f09_campaign_action_uplift",
       "source_private_sha256": "07b92c0c1b913a38f1354181d8643cb8c049b6bbe430a9a0fbbd552d0253a37d",
-      "public_projection_sha256": "6f9fa693e4347c9ee7ea5f076db44eafafa42fe3f7f6e4bc1990d876aa1d4d15",
+      "public_projection_sha256": "dfd4752664b74473018df85beebc347c0a689a19d6031a9edbd15896e45c8f01",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 12
@@ -1484,7 +1382,7 @@
       "public_path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_feasibility_v1_spec_20260729.json",
       "unit_id": "research/families/f09_campaign_action_uplift",
       "source_private_sha256": "170b0bb904757e8ba8f520dcf55d8a965680a72aa929f0ea2dd8b5f17fa6e98f",
-      "public_projection_sha256": "2664c3e951a34f5b4d946c7fc22d6510c43f8325a43726816d144cdfe28fb629",
+      "public_projection_sha256": "b897cb06cb9fa4eaeeb41a5097713f32d92fb19ee719d19a31b2615abf7902ff",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 9
@@ -1520,7 +1418,7 @@
       "public_path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_full_path_preflight_v1_spec_20260729.json",
       "unit_id": "research/families/f09_campaign_action_uplift",
       "source_private_sha256": "e1c97101cbd4646db27c63c7764bb04492e57b6aec1c15f8e01e324238e5aad5",
-      "public_projection_sha256": "e73fb8707310cd6ad179dbe7b8227302fe6a7b3c128e94a67b426d6ba2b5114e",
+      "public_projection_sha256": "bdcbd2e9de559d5aa498dfbe333a22339dca3cd7fdfcd5ea21ee579a480e1756",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 17
@@ -1529,7 +1427,7 @@
       "public_path": "research/families/f09_campaign_action_uplift/docs/volatility_time_add_rearm_live_stack_parity_v1_spec_20260729.json",
       "unit_id": "research/families/f09_campaign_action_uplift",
       "source_private_sha256": "a61004f4af9aaaf5fe0d50bc4268453cd1e0c6f892114125b0d93d209a77695f",
-      "public_projection_sha256": "90842ff0bab67fb5a381fafde3e0fc1a213f116161a39923b3a38e5e2451fd47",
+      "public_projection_sha256": "2844797f9e2b6ca6a75b3cb46a12507aee4183ef122d9b9a7e6f444291dbf7ed",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 18
@@ -1646,7 +1544,7 @@
       "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_causal_visibility_clock_parity_v1_1_spec_20260731.json",
       "unit_id": "research/families/f10_live_replay_attribution",
       "source_private_sha256": "1327ea10805ee474968c29012fc7e8b2d9aa1abbd5de01289e3fe5e23ad9d3ca",
-      "public_projection_sha256": "bd381f6e6da5a15c1c6747aee91e6a848abe4b4176cea320055e0a357a93defa",
+      "public_projection_sha256": "2ac72707680cc3fc4ae8f8077bbef5087d38377640d6dd06f9142f2af793be88",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 7
@@ -1655,37 +1553,10 @@
       "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_causal_visibility_clock_parity_v1_spec_20260731.json",
       "unit_id": "research/families/f10_live_replay_attribution",
       "source_private_sha256": "17da7375a754efb9db9617f2e0cce5fe7674ab67f8a076991fcf99ec05d814d1",
-      "public_projection_sha256": "d660c50a917c64b090cdf5c71bb88050c4c0aeb71d1723f5774cb02fe1acc486",
+      "public_projection_sha256": "136459623652daebca2c54a0dbe604ddef03ab450b020073d116177d3bd4b751",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 7
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_live_action_rate_transport_parity_v1_execution_20260731.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "ab9bb23ebed3129319f373ce6ebca1b3f2c4c9bc89b660ab02c09f8f88ffd5ed",
-      "public_projection_sha256": "e407dadfbaef967cc6a107edd2ab3d736a6f9e0c54082c1dd0f8846d316a03a9",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 7
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_live_action_rate_transport_parity_v1_same_date_mechanics_spec_20260731.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "abac0fc772b222b778e9621e0b0aa68aa33acdc11550572897b195b179a4ee44",
-      "public_projection_sha256": "41ebea41fc530b79c4828f53265576dc794af83ea9116a02a9c78afe5a8dc3f6",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 3
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_live_action_rate_transport_parity_v1_spec_20260731.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "8a8e25a53ef401e6322f55c0d6523fac3b208099868337679e44421e0070de28",
-      "public_projection_sha256": "4e83c7e5cbe38cc10dfcbd30eadc8e3159a57f656eed4cc2ba43bc313741769c",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 5
     },
     {
       "public_path": "research/families/f10_live_replay_attribution/docs/buy_q90_portfolio_path_attribution_v1_spec_20260731.json",
@@ -1704,44 +1575,6 @@
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 8
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_40d_20260809.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "1070d280f8679689ffb07733b7ae91226000f987e35ce6a993bf79090d65e047",
-      "public_projection_sha256": "6ca73acc0422c501236e100c7a0bead6916c557c4bcd8b03d23ab231bf3351df",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 7
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "2788aeb90d0e869a8c4b647775c13670d89a18f424bf78bb1b6bc5fa82d3e720",
-      "public_projection_sha256": "f2691875f2126a2233419401b4e7d204790e326629c890c3ba9f2eca19096983",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 8
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_spec_20260810.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "98762d1000ff27aa6bbc72e3e219c6a73abf49da4bdd6f95f0f1679ec04a4abb",
-      "public_projection_sha256": "e0ad4e2147f619eb121d8a44ad0e7f6e7577d76c81c3d0e8bceabb2a82223979",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 4,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/current_live_held_ber_strict_native_latency_baseline_50d_v1_spec_20260810.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "4d9a227ec2a8e090db973759f74cc58e7ebf295927ddab18d196a369c31cf726",
-      "public_projection_sha256": "6cce1e5e1a13506af2c078d1fd2fb2a51fed736c7b4c02076596ecef9cae3e95",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 4,
-      "operational_identifier_redaction_count": 0
     },
     {
       "public_path": "research/families/f10_live_replay_attribution/docs/first_add_decision_to_terminal_loss_diagnostic_v1_spec_20260729.json",
@@ -1816,154 +1649,6 @@
       "private_locator_count": 67
     },
     {
-      "public_path": "research/families/f10_live_replay_attribution/docs/live_120h_adverse_selection_diagnostic_v1_spec_20260730.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "a66f75769f739f5fdca6d83605b9e9b723242482da84cc67f4afd981cc50374c",
-      "public_projection_sha256": "f83105cecd1dc65e2a0756541544e8b9b701e0f3a76705093fa2f550871c3b84",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 6
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/live_shadow_retirement_audit_v1_20260808.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "061e58ae32d45883e929d03ded090a5c6882e8faad62c6fcf72f5a1d73e2a37e",
-      "public_projection_sha256": "0aca37e80146b1eee0c46b4e362f85c6aac51c4a736ba0049077468de7af0a2c",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 9
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
-      "public_projection_sha256": "e1abe8dc92922373745563e83c5c3532e6ed672dacbb0ed72ce2809119f6ad32",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
-      "public_projection_sha256": "b0871526285429ef08b508cdf64d818de06f3877af6fc5e52b59f3244096aa78",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "a6b9d9fb0e63328e6407c1c44ed4206fdd2dbb577296887582a7e9af491f9810",
-      "public_projection_sha256": "367e0de5e04cb6a5c384005eedfcf71692066e6036b6b4cb860fcbfb06a87a39",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v4.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "aa25144dae7de8a1ca06d374e0e52faafd66b4199be71ef08e3d721688755d29",
-      "public_projection_sha256": "943cb3064e13e1c7902a8dee97328c652324cc0d7f90e4841c4e678d6bd639d2",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260802_v5.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "e80aacdad29160e47889d157fdf67a633cb42d8e448bbfe4db70ea7c4435a000",
-      "public_projection_sha256": "e3504641061956a8cc234a8d841ba3357561365ccd43bcc8450dd1177610a5b3",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 1
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v6.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "43c6c89692b50101c17dd35c2038a39f7b9708fd3b4c9527f2fe18bc9e564e0b",
-      "public_projection_sha256": "8af44a35d306637688966418330d2b6226bd9267e79ff14002b5e44ca6302701",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260803_v7.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "c4fe893b62ba7d972f293ec2afa789af0e9229c3cdb01bedc79200cd26d88672",
-      "public_projection_sha256": "7be9bbae25f36ca5810ada25a05a023c6a66f8374a9e654e651be4127cbe2e32",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v8.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "5dc6f68991272b7203f1cb243c800ea979e9d16cc315587468241ed185b32f38",
-      "public_projection_sha256": "4952574e9eefd2afb1002f59edd24bfeb0feb2330181ce11c3b3285acc0648d5",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260804_v9.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "bfe835bf4b76fc675cd450eccf248cd1a3d179e2f9755425b40889f042c44638",
-      "public_projection_sha256": "b0f43e9c850d53aa4d5426725cd6501c3d38121c8e1143ede8960fe5a4d3c8eb",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "01a2e23e57025b072fb12384d54eb39f12692410f036ee0c8385c2cbf1781ea4",
-      "public_projection_sha256": "571e1301a9b47dcfb420c85bf4118e98790c84695914fd02ffac25400e08ced1",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260812_v11.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "edb0de785b698c70bce2b2cdb169b78c89a5f6076015b7ab8a313557567dead4",
-      "public_projection_sha256": "edb0de785b698c70bce2b2cdb169b78c89a5f6076015b7ab8a313557567dead4",
-      "transformation": "public_private_identity_annotation_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 0,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260820_v12.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
-      "public_projection_sha256": "af25b31f70017c3745972b8b77f5ba7779af2f761d4c253722f201beab658967",
-      "transformation": "public_private_identity_annotation_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 0,
-      "operational_identifier_redaction_count": 0
-    },
-    {
-      "public_path": "research/families/f10_live_replay_attribution/docs/quote_decision_snapshot_atomicity_v2_operational_release_20260804.json",
-      "unit_id": "research/families/f10_live_replay_attribution",
-      "source_private_sha256": "9a47cf3dcc07ce73246e018ae99d34d29b88030583db1bbca7b2096ffd393500",
-      "public_projection_sha256": "b7c2a961bdb61f51cefc3771dc2645360e5904849f23feb813fc0e0275ba3c6d",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 2
-    },
-    {
       "public_path": "research/families/f10_live_replay_attribution/docs/sell_first_fill_conditional_value_feasibility_v1_invalidation_20260730.json",
       "unit_id": "research/families/f10_live_replay_attribution",
       "source_private_sha256": "e2472c461957a639425b85d0876fd1336f94cfb193c3dd7efeeb66982b7a4133",
@@ -2000,42 +1685,6 @@
       "private_locator_count": 3
     },
     {
-      "public_path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "6ea76c17da758355f710ed65efb5a51aaa99d99445444177e65e0dc0bbbac59f",
-      "public_projection_sha256": "c896e1192c8ad8f6283c6ae2757964c462c8223efdc9e586a37b005ce4379fd8",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 18
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/baseline_epoch_remote_evidence_audit_20260804.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "6c2b817a0545805a281979a2ad7095e4a84e5c81c43d704a45f5010d527f9854",
-      "public_projection_sha256": "b89268911ecdad29d7e5d2729310465ade8aa14a32ad355a6c94c64f67c39a33",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/cache_tier_lru_initial_migration_plan_20260808.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "2b280eadfd5f14ce98c7a1d5da96052adb94346b991aaf62264a0cbab76b7c17",
-      "public_projection_sha256": "4f18bfd6fed3165d32a51a974ca7be06d2965f032ded555066f92c1fb832f083",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 201
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/cache_tier_lru_initial_migration_receipt_20260808.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "25bdbeccd0d0fc79cbac64e548f28b681da2ad2132696816266b4003ea3ca3a2",
-      "public_projection_sha256": "26e35111e3510810621d6599181bc40147586ed79f2fbc6ca1e747045caabf54",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 102
-    },
-    {
       "public_path": "research/shared/replay_lifecycle/docs/calendar_continuity_manifest_20260417_20260730_v1.json",
       "unit_id": "research/shared/replay_lifecycle",
       "source_private_sha256": "403ebb52ac3374a38f68514092b0aa4cb8a8287f0912937162f635a28ac22c2a",
@@ -2061,119 +1710,6 @@
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 1096
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/order_lifecycle_journal_v2_storage_profiles_v2_implementation_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "8a1f24b936407c1401a23c3f352cb8f9d453139a7501103b59cc9db171dc6101",
-      "public_projection_sha256": "1b3d90f609134e39830104868ce9190ad9d12a7061191260178d731a06b022f0",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/order_lifecycle_live_writer_v2_prospective_epoch_v1_implementation_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "b147995e3cc02d40a2dd9b093a61108ede69658c683157380141d65c5e204f74",
-      "public_projection_sha256": "52c67ffaaf85a48698b194ad124daa80bc25597898165db98983d5825bdccbaf",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_minimal_production_release_manifest_v1_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "28864c38b06425ef9751311c4e43b23930bd422696929fd5557156ef2a85b82f",
-      "public_projection_sha256": "bb68eb6f1a062eaad83694c1299a8ec2190c8979a8a55c6c8457e5abe502de24",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_isolated_stage_evidence_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "50ba740455430402562beafdf0e1f2ccf762f9199eb65f32d7fe979f120d6259",
-      "public_projection_sha256": "4f7ffa50f76f066e3500d6a72c1ad59fdff44fd18d5fa3421650f1215332787d",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_release_orchestrator_v1_contract_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "5f5d24825c7efcf2a47ad3136ed212a44c4ea799da0223894be4bbb88cc122b1",
-      "public_projection_sha256": "5cb4cc2bd144e5ebf8cb7610dbd8ad5e9cd340e336f7ce8aa2331c461113c767",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 2,
-      "operational_identifier_redaction_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_runtime_evidence_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "3a9ee533f28075251ed2365a03132efae8e88f2efd5579146ce541ae5b884d33",
-      "public_projection_sha256": "68329d5a73f16077013b2e2665da48074fcdce9a1c823f2bffb057b456d10826",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_runtime_evidence_v2_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "2c0eaf2426ed4849352ff21a9685f2b45fa9cfd73df88965c8ccb0fc064ef5ae",
-      "public_projection_sha256": "e5b9d80edfb373eb00054c053b95eec728a2e5b46df623bcf98cc6d160d082eb",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 4,
-      "operational_identifier_redaction_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_runtime_evidence_v3_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "c3de2d178effb8e3f017849156ad92e5ad0a6578befd4fa12be4e3bf3dd27bab",
-      "public_projection_sha256": "95344606c1ccaf079cc4bea61172595271fb2fda8c79581168c3de03337b9c20",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 4,
-      "operational_identifier_redaction_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_session_admission_v1_20260808.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "d10a882ca18ecf4e45e251a5bd3c72b61e2e0389173cce7cd865ca580f0593ae",
-      "public_projection_sha256": "2af53abda4b96370344c203639c1695f8e90d4b151fcedee80d4d90b7ea43fdc",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1
-    },
-    {
-      "public_path": "research/shared/replay_lifecycle/docs/prospective_lifecycle_remote_v9_dependency_evidence_20260805.json",
-      "unit_id": "research/shared/replay_lifecycle",
-      "source_private_sha256": "917664dc93be7324eeb3d41bc4d4a562ef8f979f1345f1c479f0d1b544aeb802",
-      "public_projection_sha256": "4859ef788dda678b95830eff428c987a8307d1493d9da29f99f5ca95ad26b75f",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1
-    },
-    {
-      "public_path": "research/system_engineering/docs/ec2_python_runtime_migration_v1_20260801.json",
-      "unit_id": "research/system_engineering",
-      "source_private_sha256": "2bcb95ec6f75ebf767b28fa0c8dceb5f00b04b9fbb70a126a5e52fb893bcbd58",
-      "public_projection_sha256": "da418aed545bbc4b80fbf8dbec045124b33578be59c1abec1552d394493d01ff",
-      "transformation": "locator_and_operational_identifier_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 1,
-      "operational_identifier_redaction_count": 2
-    },
-    {
-      "public_path": "research/system_engineering/docs/ec2_python_runtime_migration_v1_20260801_spec.json",
-      "unit_id": "research/system_engineering",
-      "source_private_sha256": "996ebd781d686bba29c5341789cf73cdd72d5163c7624cf143d532884e8f3bdc",
-      "public_projection_sha256": "f119f5d169e9c896af40a079d919dc34810b087553c9b8dffc0dbabcc5c1db6f",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 3
     }
   ]
 }

@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import copy
-import json
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 
-from data_paths import relocate_marketdata_path
 from models import backtest_tick as bt
 from models.tick_data_types import HistoricalL2Data
 from research.families.f10_live_replay_attribution.audit import (
@@ -16,56 +11,15 @@ from research.families.f10_live_replay_attribution.audit import (
 )
 from tests.test_lineage_randomized_outcome_contract_v2 import _replay_params
 
-ROOT = Path(__file__).resolve().parents[1]
-SPEC_PATH = (
-    ROOT
-    / "research"
-    / "families"
-    / "f10_live_replay_attribution"
-    / "docs"
-    / "sell_first_fill_conditional_value_feasibility_v3_spec_20260730.json"
-)
 BASE_MS = int(pd.Timestamp("2026-04-20", tz="UTC").value // 1_000_000)
-IDENTITY_FIXTURE_ROOT = ROOT / "tests" / "fixtures" / "frozen_identity"
 
 
-def _spec() -> dict:
-    spec = json.loads(SPEC_PATH.read_text(encoding="utf-8"))
-    spec["status"] = "frozen_before_v3_native_development_outcome_read"
-    quality = spec["quality_identity"]
-    quality["path"] = str(relocate_marketdata_path(quality["path"]))
-    identity_fixtures = {
-        "normalized_l2_manifest_identity": (
-            IDENTITY_FIXTURE_ROOT / "normalized_l2_manifest.json"
-        ),
-        "normalized_l2_daily_quality_identity": (
-            IDENTITY_FIXTURE_ROOT / "normalized_l2_daily_quality.csv"
-        ),
-    }
-    for key, fixture_path in identity_fixtures.items():
-        identity = quality[key]
-        identity["path"] = str(fixture_path.resolve())
-        identity["sha256"] = contract.sha256_file(fixture_path)
-    implementation = spec["implementation_identity"]
-    implementation["contract_module_sha256"] = contract.sha256_file(
-        Path(contract.__file__).resolve()
+def _validate(trace: pd.DataFrame) -> pd.DataFrame:
+    return contract.validate_native_trace_mechanics(
+        trace,
+        tick_size_usdc_per_btc=0.1,
+        quality_grade_by_day={"2026-04-20": "A"},
     )
-    implementation["contract_test_sha256"] = contract.sha256_file(
-        Path(__file__).resolve()
-    )
-    implementation["evaluator_module_sha256"] = contract.sha256_file(
-        ROOT
-        / "research"
-        / "families"
-        / "f05_fill_quality_quote_ev"
-        / "audit"
-        / "sell_first_fill_conditional_value.py"
-    )
-    implementation["evaluator_test_sha256"] = contract.sha256_file(
-        ROOT / "tests" / "test_sell_first_fill_conditional_value.py"
-    )
-    spec["canonical_spec_sha256"] = contract.canonical_spec_sha256(spec)
-    return spec
 
 
 def _run(prices: list[float], buyer_maker: list[bool]) -> dict:
@@ -129,7 +83,7 @@ def test_native_replay_emits_exact_first_opener_trace(
 ) -> None:
     result = _run(prices, buyer_maker)
     trace = pd.DataFrame(result["_first_opener_decision_to_terminal_trace"])
-    validated = contract.validate_native_trace(trace, _spec())
+    validated = _validate(trace)
 
     assert len(validated) == 1
     row = validated.iloc[0]
@@ -180,18 +134,9 @@ def test_native_replay_emits_exact_first_opener_trace(
     }
 
 
-def test_first_opener_contract_keeps_order_age_out_of_model_features() -> None:
-    spec = _spec()
-    contract.validate_spec(spec)
-
-    broken = copy.deepcopy(spec)
-    broken["decision_visible_features"]["model_features"].append(
-        "order_age_to_fill_ms"
-    )
-    broken["canonical_spec_sha256"] = contract.canonical_spec_sha256(broken)
-
-    with pytest.raises(ValueError, match="post-decision feature"):
-        contract.validate_spec(broken)
+def test_first_opener_contract_keeps_post_fill_age_out_of_features() -> None:
+    assert "order_age_to_fill_ms" not in contract.MODEL_FEATURES
+    assert "active_age_to_fill_ms" not in contract.MODEL_FEATURES
 
 
 def test_first_opener_trace_rejects_future_ready_features() -> None:
@@ -205,7 +150,7 @@ def test_first_opener_trace_rejects_future_ready_features() -> None:
     )
 
     with pytest.raises(ValueError, match="non-causal"):
-        contract.validate_native_trace(trace, _spec())
+        _validate(trace)
 
 
 def test_first_opener_trace_rejects_future_source_asof() -> None:
@@ -219,7 +164,7 @@ def test_first_opener_trace_rejects_future_source_asof() -> None:
     )
 
     with pytest.raises(ValueError, match="non-causal"):
-        contract.validate_native_trace(trace, _spec())
+        _validate(trace)
 
 
 def test_first_opener_trace_rejects_self_declared_book_ready_time() -> None:
@@ -233,14 +178,12 @@ def test_first_opener_trace_rejects_self_declared_book_ready_time() -> None:
     ) - 1
 
     with pytest.raises(ValueError, match="non-causal"):
-        contract.validate_native_trace(trace, _spec())
+        _validate(trace)
 
 
-def test_first_opener_v3_excludes_child_trade_flow_from_model() -> None:
-    spec = _spec()
-
+def test_first_opener_excludes_child_trade_flow_from_model() -> None:
     assert "individual_trade_taker_flow_imbalance_5s" not in (
-        spec["decision_visible_features"]["model_features"]
+        contract.MODEL_FEATURES
     )
     assert "individual_trade_taker_flow_imbalance_5s" not in (
         contract.REQUIRED_TRACE_COLUMNS

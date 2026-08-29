@@ -10,6 +10,8 @@
 #   ./live/run.sh reload   # 热重载配置 (SIGHUP)
 #   ./live/run.sh profile  # 显示将被持久化的 runtime profile
 #   ./live/run.sh dry-run  # 限时本地校验；零网络、零订单
+#   ./live/run.sh service  # 前台监督进程（供 systemd 使用）
+#   ./live/run.sh reconcile-stopped /absolute/path.json  # 停机交易所对账
 
 set -euo pipefail
 
@@ -41,20 +43,20 @@ EXECUTION_STATE_UNCERTAIN_EXIT_CODE=78
 # neither consult the user site nor create new bytecode after the proof.
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONNOUSERSITE=1
-STARTUP_STATIC_GATE_REQUIRED=0
+STARTUP_RUNTIME_GATE_REQUIRED=0
 # Every real live start in this release is deployment-bound.  This remains
 # true even if an attacker or operator deletes `.venv-active`; selector absence
 # must fail closed rather than select a developer/system interpreter.
 LIVE_START_REQUIRES_STATIC_RUNTIME=1
 if [[ "$LIVE_START_REQUIRES_STATIC_RUNTIME" == "1" ]]; then
     case "${1:-}" in
-        start|restart|__supervise) STARTUP_STATIC_GATE_REQUIRED=1 ;;
+        start|restart|service|reconcile-stopped|__supervise) STARTUP_RUNTIME_GATE_REQUIRED=1 ;;
     esac
 fi
 if [[ -e "$DIR/.venv-active" || -L "$DIR/.venv-active" ]]; then
     # A deployed runtime selector is authority-bound.  Do not silently fall
     # back to the developer venv if the selector is broken or tampered with.
-    STARTUP_STATIC_GATE_REQUIRED=1
+    STARTUP_RUNTIME_GATE_REQUIRED=1
     PYTHON_BIN="$DIR/.venv-active/bin/python3"
 elif [[ -x "$DIR/.venv/bin/python3" ]]; then
     PYTHON_BIN="$DIR/.venv/bin/python3"
@@ -62,111 +64,150 @@ else
     PYTHON_BIN="$(command -v python3)"
 fi
 LAUNCH_HOME="${HOME:-}"
-readonly DIR RUN_SH MAIN_PY CONFIG_FILE PYTHON_BIN STARTUP_STATIC_GATE_REQUIRED
+readonly DIR RUN_SH MAIN_PY CONFIG_FILE PYTHON_BIN STARTUP_RUNTIME_GATE_REQUIRED
 readonly LIVE_START_REQUIRES_STATIC_RUNTIME LAUNCH_HOME
-
-_runtime_file_sha256() {
-    /usr/bin/sha256sum "$1" | /usr/bin/awk '{print $1}'
-}
 
 _runtime_file_nlink() {
     /usr/bin/stat -c '%h' "$1"
+}
+
+_runtime_file_uid() {
+    /usr/bin/stat -c '%u' "$1"
 }
 
 _runtime_file_mode() {
     /usr/bin/stat -c '%a' "$1"
 }
 
-_verify_startup_static_runtime() {
-    [[ "$STARTUP_STATIC_GATE_REQUIRED" == "1" ]] || return 0
+_verify_startup_runtime() {
+    [[ "$STARTUP_RUNTIME_GATE_REQUIRED" == "1" ]] || return 0
 
-    local name value
+    local name
     for name in \
-        NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH \
-        NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256 \
-        NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256 \
-        NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH \
-        NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256 \
-        NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH \
-        NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256; do
+        NARROWGATE_DEPLOYMENT_ENVELOPE_PATH \
+        NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256 \
+        NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH; do
         if [[ "${!name+x}" != "x" || -z "${!name}" ]]; then
             echo "Missing deployment-bound startup authority: $name" >&2
             return 1
         fi
     done
 
-    local authority="$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH"
-    local verifier="$NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH"
-    local trusted_python="$NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH"
-    local expected
-    for expected in \
-        "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256" \
-        "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256" \
-        "$NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256" \
-        "$NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256"; do
-        [[ "$expected" =~ ^[0-9a-f]{64}$ ]] || {
-            echo "Invalid deployment-bound startup SHA256" >&2
-            return 1
-        }
-    done
-    [[ "$authority" == /* && "$verifier" == /* && "$trusted_python" == /* ]] || {
+    local verifier="$DIR/live/deployment_runtime.py"
+    local trusted_python="$NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH"
+    local envelope="$NARROWGATE_DEPLOYMENT_ENVELOPE_PATH"
+    [[ "$NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+        echo "Invalid deployment release-root SHA256" >&2
+        return 1
+    }
+    [[ "$envelope" == /* && "$verifier" == /* && "$trusted_python" == /* ]] || {
         echo "Startup authority paths must be absolute" >&2
         return 1
     }
-    [[ ! -L "$trusted_python" && -f "$trusted_python" && -x "$trusted_python" ]] || {
+    [[ ! -L "$trusted_python" && -f "$trusted_python" && -x "$trusted_python" \
+        && "$(/usr/bin/readlink -f "$trusted_python")" == "$trusted_python" ]] || {
         echo "Trusted startup Python inode is unsafe" >&2
         return 1
     }
-    [[ ! -L "$verifier" && -f "$verifier" ]] || {
-        echo "Startup verifier inode is unsafe" >&2
-        return 1
-    }
-    [[ ! -L "$authority" && -f "$authority" ]] || {
-        echo "Startup authority inode is unsafe" >&2
+    [[ ! -L "$envelope" && -f "$envelope" && ! -L "$verifier" && -f "$verifier" ]] || {
+        echo "Startup release-root or verifier inode is unsafe" >&2
         return 1
     }
     [[ "$(_runtime_file_nlink "$trusted_python")" == "1" \
-        && "$(_runtime_file_nlink "$verifier")" == "1" \
-        && "$(_runtime_file_nlink "$authority")" == "1" ]] || {
+        && "$(_runtime_file_nlink "$envelope")" == "1" \
+        && "$(_runtime_file_nlink "$verifier")" == "1" ]] || {
         echo "Startup authority files must have one hard link" >&2
         return 1
     }
-    local authority_mode
-    authority_mode="$(_runtime_file_mode "$authority")"
-    [[ "$authority_mode" == "400" || "$authority_mode" == "600" ]] || {
-        echo "Startup authority mode is unsafe: $authority_mode" >&2
+    local trusted_uid trusted_mode
+    trusted_uid="$(_runtime_file_uid "$trusted_python")"
+    trusted_mode="$(_runtime_file_mode "$trusted_python")"
+    [[ "$trusted_uid" == "0" ]] || {
+        echo "Trusted startup Python owner is unsafe" >&2
         return 1
     }
-    [[ "$(_runtime_file_sha256 "$trusted_python")" \
-        == "$NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256" \
-        && "$(_runtime_file_sha256 "$verifier")" \
-        == "$NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256" \
-        && "$(_runtime_file_sha256 "$authority")" \
-        == "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256" ]] || {
-        echo "Startup authority file hash drifted" >&2
+    (( (8#$trusted_mode & 8#022) == 0 )) || {
+        echo "Trusted startup Python is group/world writable" >&2
         return 1
     }
 
-    # Clear loader and Python injection surfaces before the trusted verifier is
-    # loaded.  The verifier then rechecks its own bytes, both Git trees, the
-    # selector, release receipt, target interpreter, and every installed file.
+    # Bootstrap the repository verifier from the OS-owned/trusted interpreter.
+    # The short stdlib-only check validates the release root, extracts its Git
+    # identity, and proves the checkout clean before repository Python executes.
     unset LD_PRELOAD LD_LIBRARY_PATH LD_AUDIT LD_PROFILE LD_DEBUG
     unset LD_DEBUG_OUTPUT LD_ORIGIN_PATH DYLD_INSERT_LIBRARIES DYLD_LIBRARY_PATH
+    local source_identity expected_commit expected_tree
+    source_identity="$(
+        /usr/bin/env -i \
+            HOME="$LAUNCH_HOME" \
+            PATH=/usr/bin:/bin \
+            PYTHONDONTWRITEBYTECODE=1 \
+            PYTHONNOUSERSITE=1 \
+            "$trusted_python" -I -B -S -c '
+import hashlib
+import json
+import re
+import sys
+
+path, expected = sys.argv[1:]
+with open(path, "rb") as handle:
+    raw = handle.read()
+payload = json.loads(raw)
+if set(payload) != {
+    "schema_version", "status", "source", "build_bundle", "config_bundle",
+    "model_policy_bundle", "canonical_sha256",
+}:
+    raise SystemExit("deployment release-root fields drifted")
+clone = dict(payload)
+observed = str(clone.pop("canonical_sha256", ""))
+canonical_bytes = (json.dumps(
+    payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+) + "\n").encode("utf-8")
+actual = hashlib.sha256(json.dumps(
+    clone, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+).encode("utf-8")).hexdigest()
+source = payload.get("source")
+if (
+    payload.get("schema_version") != "narrowgate_private_deployment_envelope.v1"
+    or payload.get("status") != "deployment_envelope_built"
+    or raw != canonical_bytes
+    or observed != expected
+    or actual != expected
+    or not isinstance(source, dict)
+    or set(source) != {"commit", "tree"}
+    or re.fullmatch(r"[0-9a-f]{40}", str(source.get("commit", ""))) is None
+    or re.fullmatch(r"[0-9a-f]{40}", str(source.get("tree", ""))) is None
+):
+    raise SystemExit("deployment release root is invalid")
+print("{}\t{}".format(source["commit"], source["tree"]))
+' "$envelope" "$NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256"
+    )" || return 1
+    IFS=$'\t' read -r expected_commit expected_tree <<< "$source_identity"
+    [[ "$(/usr/bin/git -C "$DIR" rev-parse HEAD)" == "$expected_commit" \
+        && "$(/usr/bin/git -C "$DIR" rev-parse 'HEAD^{tree}')" == "$expected_tree" \
+        && -z "$(/usr/bin/git -C "$DIR" status --porcelain=v1 --untracked-files=all)" ]] || {
+        echo "Startup checkout differs from deployment release root" >&2
+        return 1
+    }
+
+    # Nested manifests now derive and self-verify the receipt, wheel, module,
+    # interpreter, and RECORD identities behind the single release root.
     /usr/bin/env -i \
         HOME="$LAUNCH_HOME" \
         PATH=/usr/bin:/bin \
         PYTHONDONTWRITEBYTECODE=1 \
         PYTHONNOUSERSITE=1 \
-        "$trusted_python" -I -B -S "$verifier" \
-        --authority "$authority" \
-        --expected-file-sha256 \
-        "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256" \
-        --expected-canonical-sha256 \
-        "$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256"
+        "$trusted_python" -I -B -S "$verifier" verify-envelope-startup \
+        --repository-root "$DIR" \
+        --envelope "$envelope" \
+        --expected-envelope-sha256 \
+        "$NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256" \
+        --venv-python "$PYTHON_BIN" \
+        --pip-runner-python "$trusted_python"
 }
 
-readonly -f _runtime_file_sha256 _runtime_file_nlink _runtime_file_mode
-readonly -f _verify_startup_static_runtime
+readonly -f _runtime_file_nlink _runtime_file_uid _runtime_file_mode
+readonly -f _verify_startup_runtime
 
 # Check if a PID is alive AND is our python process (not a reused PID)
 _is_our_process() {
@@ -219,123 +260,31 @@ _load_runtime_environment() {
     local requested_profile="${NARROWGATE_LIVE_PROFILE:-}"
     local requested_profile_file="${NARROWGATE_LIVE_PROFILE_FILE:-}"
 
-    # BUY E3 activation authority is invocation-only.  Snapshot both value and
+    # Deployment authority is invocation-only. Snapshot both value and
     # presence before sourcing mutable host files so an activation command
     # cannot be overridden and rollback's ``env -u`` cannot be reintroduced.
-    local f05_buy_e3_owner_override_set=0
-    local f05_buy_e3_owner_override_value=""
-    local f05_boolean_owner_override_set=0
-    local f05_boolean_owner_override_value=""
-    local f05_buy_e3_release_path_set=0
-    local f05_buy_e3_release_path_value=""
-    local f05_buy_e3_release_file_sha256_set=0
-    local f05_buy_e3_release_file_sha256_value=""
-    local f05_buy_e3_release_canonical_sha256_set=0
-    local f05_buy_e3_release_canonical_sha256_value=""
-    local live_safety_successor_path_set=0
-    local live_safety_successor_path_value=""
-    local live_safety_successor_file_sha256_set=0
-    local live_safety_successor_file_sha256_value=""
-    local live_safety_successor_canonical_sha256_set=0
-    local live_safety_successor_canonical_sha256_value=""
-    local startup_exchange_reconciliation_path_set=0
-    local startup_exchange_reconciliation_path_value=""
-    local startup_exchange_reconciliation_file_sha256_set=0
-    local startup_exchange_reconciliation_file_sha256_value=""
-    local startup_exchange_reconciliation_canonical_sha256_set=0
-    local startup_exchange_reconciliation_canonical_sha256_value=""
-    local startup_exchange_reconciliation_account_key_sha256_set=0
-    local startup_exchange_reconciliation_account_key_sha256_value=""
-    local startup_static_runtime_authority_path_set=0
-    local startup_static_runtime_authority_path_value=""
-    local startup_static_runtime_authority_file_sha256_set=0
-    local startup_static_runtime_authority_file_sha256_value=""
-    local startup_static_runtime_authority_canonical_sha256_set=0
-    local startup_static_runtime_authority_canonical_sha256_value=""
-    local startup_static_runtime_verifier_path_set=0
-    local startup_static_runtime_verifier_path_value=""
-    local startup_static_runtime_verifier_sha256_set=0
-    local startup_static_runtime_verifier_sha256_value=""
-    local startup_static_trusted_python_path_set=0
-    local startup_static_trusted_python_path_value=""
-    local startup_static_trusted_python_sha256_set=0
-    local startup_static_trusted_python_sha256_value=""
-    if [[ "${NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY+set}" == "set" ]]; then
-        f05_buy_e3_owner_override_set=1
-        f05_buy_e3_owner_override_value="$NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY"
-    fi
-    if [[ "${NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY+set}" == "set" ]]; then
-        f05_boolean_owner_override_set=1
-        f05_boolean_owner_override_value="$NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY"
-    fi
-    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH+set}" == "set" ]]; then
-        f05_buy_e3_release_path_set=1
-        f05_buy_e3_release_path_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH"
-    fi
-    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256+set}" == "set" ]]; then
-        f05_buy_e3_release_file_sha256_set=1
-        f05_buy_e3_release_file_sha256_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256"
-    fi
-    if [[ "${NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256+set}" == "set" ]]; then
-        f05_buy_e3_release_canonical_sha256_set=1
-        f05_buy_e3_release_canonical_sha256_value="$NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256"
-    fi
-    if [[ "${NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH+set}" == "set" ]]; then
-        live_safety_successor_path_set=1
-        live_safety_successor_path_value="$NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH"
-    fi
-    if [[ "${NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256+set}" == "set" ]]; then
-        live_safety_successor_file_sha256_set=1
-        live_safety_successor_file_sha256_value="$NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256"
-    fi
-    if [[ "${NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256+set}" == "set" ]]; then
-        live_safety_successor_canonical_sha256_set=1
-        live_safety_successor_canonical_sha256_value="$NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH+set}" == "set" ]]; then
-        startup_exchange_reconciliation_path_set=1
-        startup_exchange_reconciliation_path_value="$NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH"
-    fi
-    if [[ "${NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256+set}" == "set" ]]; then
-        startup_exchange_reconciliation_file_sha256_set=1
-        startup_exchange_reconciliation_file_sha256_value="$NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256+set}" == "set" ]]; then
-        startup_exchange_reconciliation_canonical_sha256_set=1
-        startup_exchange_reconciliation_canonical_sha256_value="$NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256+set}" == "set" ]]; then
-        startup_exchange_reconciliation_account_key_sha256_set=1
-        startup_exchange_reconciliation_account_key_sha256_value="$NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH+set}" == "set" ]]; then
-        startup_static_runtime_authority_path_set=1
-        startup_static_runtime_authority_path_value="$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256+set}" == "set" ]]; then
-        startup_static_runtime_authority_file_sha256_set=1
-        startup_static_runtime_authority_file_sha256_value="$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256+set}" == "set" ]]; then
-        startup_static_runtime_authority_canonical_sha256_set=1
-        startup_static_runtime_authority_canonical_sha256_value="$NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH+set}" == "set" ]]; then
-        startup_static_runtime_verifier_path_set=1
-        startup_static_runtime_verifier_path_value="$NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256+set}" == "set" ]]; then
-        startup_static_runtime_verifier_sha256_set=1
-        startup_static_runtime_verifier_sha256_value="$NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH+set}" == "set" ]]; then
-        startup_static_trusted_python_path_set=1
-        startup_static_trusted_python_path_value="$NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH"
-    fi
-    if [[ "${NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256+set}" == "set" ]]; then
-        startup_static_trusted_python_sha256_set=1
-        startup_static_trusted_python_sha256_value="$NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256"
-    fi
+    local authority_names=(
+        NARROWGATE_DEPLOYMENT_ENVELOPE_PATH
+        NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256
+        NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH
+        NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256
+        NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH
+        NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY
+        NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY
+        NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY
+    )
+    local authority_present=()
+    local authority_values=()
+    local authority_name
+    for authority_name in "${authority_names[@]}"; do
+        if [[ "${!authority_name+x}" == "x" ]]; then
+            authority_present+=(1)
+            authority_values+=("${!authority_name}")
+        else
+            authority_present+=(0)
+            authority_values+=("")
+        fi
+    done
 
     if [[ -f "$DIR/live/.env" ]]; then
         set -a
@@ -356,101 +305,18 @@ _load_runtime_environment() {
     set +a
     export NARROWGATE_LIVE_PROFILE_FILE="$profile_path"
 
-    if [[ "$f05_buy_e3_owner_override_set" == "1" ]]; then
-        export NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY="$f05_buy_e3_owner_override_value"
-    else
-        unset NARROWGATE_ALLOW_F05_BUY_E3_OWNER_DEPLOY
-    fi
-    if [[ "$f05_boolean_owner_override_set" == "1" ]]; then
-        export NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY="$f05_boolean_owner_override_value"
-    else
-        unset NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_OWNER_DEPLOY
-    fi
-    if [[ "$f05_buy_e3_release_path_set" == "1" ]]; then
-        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH="$f05_buy_e3_release_path_value"
-    else
-        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_PATH
-    fi
-    if [[ "$f05_buy_e3_release_file_sha256_set" == "1" ]]; then
-        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256="$f05_buy_e3_release_file_sha256_value"
-    else
-        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_FILE_SHA256
-    fi
-    if [[ "$f05_buy_e3_release_canonical_sha256_set" == "1" ]]; then
-        export NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256="$f05_buy_e3_release_canonical_sha256_value"
-    else
-        unset NARROWGATE_F05_BUY_E3_ACTIVE_RELEASE_CANONICAL_SHA256
-    fi
-    if [[ "$live_safety_successor_path_set" == "1" ]]; then
-        export NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH="$live_safety_successor_path_value"
-    else
-        unset NARROWGATE_LIVE_SAFETY_SUCCESSOR_PATH
-    fi
-    if [[ "$live_safety_successor_file_sha256_set" == "1" ]]; then
-        export NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256="$live_safety_successor_file_sha256_value"
-    else
-        unset NARROWGATE_LIVE_SAFETY_SUCCESSOR_FILE_SHA256
-    fi
-    if [[ "$live_safety_successor_canonical_sha256_set" == "1" ]]; then
-        export NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256="$live_safety_successor_canonical_sha256_value"
-    else
-        unset NARROWGATE_LIVE_SAFETY_SUCCESSOR_CANONICAL_SHA256
-    fi
-    if [[ "$startup_exchange_reconciliation_path_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH="$startup_exchange_reconciliation_path_value"
-    else
-        unset NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH
-    fi
-    if [[ "$startup_exchange_reconciliation_file_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256="$startup_exchange_reconciliation_file_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_FILE_SHA256
-    fi
-    if [[ "$startup_exchange_reconciliation_canonical_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256="$startup_exchange_reconciliation_canonical_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256
-    fi
-    if [[ "$startup_exchange_reconciliation_account_key_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256="$startup_exchange_reconciliation_account_key_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_ACCOUNT_KEY_SHA256
-    fi
-    if [[ "$startup_static_runtime_authority_path_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH="$startup_static_runtime_authority_path_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_PATH
-    fi
-    if [[ "$startup_static_runtime_authority_file_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256="$startup_static_runtime_authority_file_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_FILE_SHA256
-    fi
-    if [[ "$startup_static_runtime_authority_canonical_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256="$startup_static_runtime_authority_canonical_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_RUNTIME_AUTHORITY_CANONICAL_SHA256
-    fi
-    if [[ "$startup_static_runtime_verifier_path_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH="$startup_static_runtime_verifier_path_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_PATH
-    fi
-    if [[ "$startup_static_runtime_verifier_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256="$startup_static_runtime_verifier_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_RUNTIME_VERIFIER_SHA256
-    fi
-    if [[ "$startup_static_trusted_python_path_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH="$startup_static_trusted_python_path_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_PATH
-    fi
-    if [[ "$startup_static_trusted_python_sha256_set" == "1" ]]; then
-        export NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256="$startup_static_trusted_python_sha256_value"
-    else
-        unset NARROWGATE_STARTUP_STATIC_TRUSTED_PYTHON_SHA256
-    fi
+    local authority_index
+    for authority_index in "${!authority_names[@]}"; do
+        authority_name="${authority_names[$authority_index]}"
+        if [[ "${authority_present[$authority_index]}" == "1" ]]; then
+            export "$authority_name=${authority_values[$authority_index]}"
+        else
+            unset "$authority_name"
+        fi
+    done
+    # Private strategy grants, like artifact/runtime authorities, are accepted
+    # only from the invocation or systemd EnvironmentFile captured above.
+    # Mutable live/.env and compute profiles cannot inject or override them.
     # Mutable host environment files cannot undo the locked-runtime proof.
     unset PYTHONPATH PYTHONHOME PYTHONSTARTUP PYTHONUSERBASE PYTHONINSPECT
     unset PYTHONWARNINGS PYTHONBREAKPOINT PYTHONMALLOC PYTHONPLATLIBDIR
@@ -463,9 +329,9 @@ _load_runtime_environment() {
 
 _run_deploy_preflight() {
     local preflight_tmp="$PREFLIGHT_STATE_FILE.tmp.$$"
-    _verify_startup_static_runtime
+    _verify_startup_runtime
     "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
-    _verify_startup_static_runtime
+    _verify_startup_runtime
     if ! "$PYTHON_BIN" -I -B "$DIR/scripts/preflight_live_deploy.py" \
         --config "$CONFIG_FILE" \
         --repo-root "$DIR" > "$preflight_tmp"; then
@@ -490,9 +356,9 @@ profile() {
 dry_run() {
     # Deliberately do not source live/.env or a runtime profile. The formal
     # dry-run is local-only and exits before credentials or network code matter.
-    _verify_startup_static_runtime
+    _verify_startup_runtime
     "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
-    _verify_startup_static_runtime
+    _verify_startup_runtime
     "$PYTHON_BIN" -I -B "$MAIN_PY" \
         --dry-run \
         --dry-run-timeout-s "$DRY_RUN_TIMEOUT_S" \
@@ -643,7 +509,7 @@ supervise() {
         fi
 
         _supervisor_child_pid=""
-        _verify_startup_static_runtime
+        _verify_startup_runtime
         "$PYTHON_BIN" -I -B "$MAIN_PY" --config "$CONFIG_FILE" &
         _supervisor_child_pid=$!
         # Close the start/stop race where TERM arrived after the trap was
@@ -694,6 +560,64 @@ supervise() {
         _record_supervisor_state "fatal_exit_no_restart" "$child_exit" "$restart_count"
         return "$child_exit"
     done
+}
+
+_require_quiescent_maker() {
+    local maker_pids supervisor_pids
+    maker_pids=$(_find_maker_pids)
+    supervisor_pids=$(_find_supervisor_pids)
+    if [[ -n "$maker_pids" || -n "$supervisor_pids" ]]; then
+        echo "Maker must be fully stopped before this operation." >&2
+        [[ -n "$maker_pids" ]] && echo "Maker PID(s): $maker_pids" >&2
+        [[ -n "$supervisor_pids" ]] && echo "Supervisor PID(s): $supervisor_pids" >&2
+        return 1
+    fi
+    if [[ -f "$PID_FILE" ]]; then
+        local recorded_pid
+        recorded_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if [[ "$recorded_pid" =~ ^[0-9]+$ ]] && kill -0 "$recorded_pid" 2>/dev/null; then
+            echo "Recorded maker/supervisor PID is still alive: $recorded_pid" >&2
+            return 1
+        fi
+        rm -f "$PID_FILE"
+    fi
+}
+
+reconcile_stopped() {
+    local output_path=${1:-}
+    if [[ -z "$output_path" || "$output_path" != /* ]]; then
+        echo "reconcile-stopped requires one absolute output path" >&2
+        return 2
+    fi
+    _require_quiescent_maker
+    _load_runtime_environment
+    _verify_startup_runtime
+    _require_quiescent_maker
+    "$PYTHON_BIN" -I -B "$MAIN_PY" \
+        --write-stopped-reconciliation "$output_path" \
+        --config "$CONFIG_FILE"
+}
+
+service() {
+    _require_quiescent_maker
+    mkdir -p "$DIR/logs"
+    _load_runtime_environment
+    _run_deploy_preflight
+    _validate_supervisor_policy
+    _require_quiescent_maker
+    {
+        echo "profile=${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
+        echo "profile_file=${NARROWGATE_LIVE_PROFILE_FILE:-unknown}"
+        echo "cpp_quote_core=${NARROWGATE_CPP_QUOTE_CORE:-0}"
+        echo "cpp_signal_features=${NARROWGATE_CPP_SIGNAL_FEATURES:-0}"
+        echo "cpp_global_flow=${NARROWGATE_CPP_GLOBAL_FLOW:-0}"
+        echo "cpp_live_routing=${NARROWGATE_CPP_LIVE_ROUTING:-0}"
+        echo "cpp_strict=${NARROWGATE_CPP_STRICT:-0}"
+        echo "preflight_identity=$PREFLIGHT_STATE_FILE"
+    } > "$PROFILE_STATE_FILE"
+    rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
+    echo "$$" > "$PID_FILE"
+    supervise
 }
 
 start() {
@@ -963,6 +887,11 @@ logs() {
 
 case "${1:-help}" in
     __supervise) supervise ;;
+    service) service ;;
+    reconcile-stopped)
+        shift
+        reconcile_stopped "$@"
+        ;;
     start)   start   ;;
     stop)    stop    ;;
     restart) restart ;;
@@ -972,7 +901,7 @@ case "${1:-help}" in
     reload)  reload  ;;
     logs)    logs    ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status|dry-run|profile|reload|logs}"
+        echo "Usage: $0 {start|service|stop|restart|status|dry-run|reconcile-stopped ABSOLUTE_PATH|profile|reload|logs}"
         exit 1
         ;;
 esac

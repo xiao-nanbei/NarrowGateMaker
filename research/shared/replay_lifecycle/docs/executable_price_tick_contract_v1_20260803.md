@@ -34,7 +34,7 @@ The new replay exposes diagnostic counters comparing the authoritative integer d
 
 ## Current Baseline
 
-The pre-correction 71-day economic output was removed because its BER feature clock did not reproduce live. Integer-tick crossing remains a mandatory replay invariant, but that old PnL panel has no authority. The current compatibility control is the [`current_live_held_ber_replay_baseline_50d_20260810`](../../../families/f10_live_replay_attribution/docs/current_live_held_ber_replay_baseline_50d_20260810.json): its immutable first 40 days have terminal MTM `-144.251748 USDC`, while the pooled 50 days have terminal MTM `-165.566079 USDC`, closed-campaign value `-168.530979 USDC`, and 20,147 fills. This remains a top-20/100ms diagnostic, not raw-native order-path authority. The strict raw-native latency successor has passed one-day mechanics but has not completed its 50-day panel.
+The pre-correction 71-day economic output was removed because its BER feature clock did not reproduce live. Integer-tick crossing remains a mandatory replay invariant, but that old PnL panel has no authority. The later compatibility denominator and its economic receipt are private research evidence and are not distributed; they remain diagnostic rather than raw-native order-path authority.
 
 ## Authority Boundary
 

@@ -67,15 +67,14 @@
     "chronological_python_cpp_lockstep_execution_ready": "training registration plus C++ panel/kernel and event/checkpoint lockstep runners"
   },
   "current_live_v1_audit": {
-    "baseline_manifest_path": "research/shared/replay_lifecycle/docs/baseline_epoch_manifest_live_360h_draft_v1_20260804.json",
-    "baseline_manifest_canonical_sha256": "f05ec4fbcc331837997779ded0a916c6105e3265f7854c823db2425b3510a69f",
-    "preflight_report_canonical_sha256": "f56cfc22d05b9ec383e6d8187f40c9eea9ae753ce8b01b598542b62576eabd04",
+    "baseline_manifest_locator": "${NARROWGATE_PRIVATE_BASELINE_EPOCH_MANIFEST}",
+    "canonical_availability": "private_not_distributed",
     "baseline_epoch_ready": false,
     "lifecycle_data_admission_ready": false,
     "training_identity_registration_ready": false,
     "chronological_python_cpp_lockstep_execution_ready": false,
     "current_journal_authoritative": false,
-    "reason": "The current live producer writes only the latest v1 lifecycle snapshot after a callback. It is not the v2 all-unseen-event batch emitter and has no admitted v2 dataset or lockstep evidence."
+    "reason": "Current operational lifecycle evidence is owner-private and is not distributed. Public bytes grant no admitted dataset, lockstep, research, action, or live authority."
   },
   "missing_runtime_integrations": [
     "all_unseen_lifecycle_event_batch_emission",

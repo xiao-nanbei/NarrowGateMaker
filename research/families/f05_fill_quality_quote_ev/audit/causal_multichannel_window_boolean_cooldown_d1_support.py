@@ -16,12 +16,17 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from data_paths import data_root, external_cache_root, marketdata_root
+from data_paths import (
+    data_root,
+    external_cache_root,
+    marketdata_root,
+    resolve_portable_path,
+)
 from models.audit import dataset_governance
 
 IDENTITY = "causal_multichannel_window_boolean_cooldown_duration_v2"
@@ -44,12 +49,12 @@ V2_SPEC = ROOT / (
     "research/families/f05_fill_quality_quote_ev/docs/"
     "causal_multichannel_window_boolean_cooldown_duration_v2_spec_20260810.json"
 )
-PANEL_SPEC = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+PANEL_SPEC_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_replay_baseline_50d_spec_20260810.json"
 )
-STRICT_SPEC = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+STRICT_SPEC_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_strict_native_latency_baseline_50d_v1_spec_20260810.json"
 )
 DEFAULT_PREFIX_OVERLAY_PANEL = DATA_ROOT / (
@@ -65,9 +70,12 @@ DEFAULT_50D_DATASET_BINDING = external_cache_root(ROOT) / (
 
 
 def _public_panel_days() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    payload = json.loads(PANEL_SPEC.read_text(encoding="utf-8"))
-    prefix = tuple(str(day) for day in payload["immutable_prefix"]["ordered_utc_days"])
-    added = tuple(str(day) for day in payload["added_panel"]["ordered_utc_days"])
+    """Read the public research denominator without loading private operations."""
+
+    payload = json.loads(V2_SPEC.read_text(encoding="utf-8"))
+    ordered = payload["ordered_utc_days"]
+    prefix = tuple(str(day) for day in ordered["prefix40"])
+    added = tuple(str(day) for day in ordered["added10"])
     return prefix, added
 
 
@@ -81,11 +89,28 @@ class SupportAuditError(RuntimeError):
     """Raised when a frozen identity or source index is malformed."""
 
 
+def _private_spec_path(locator: str, *, role: str) -> Path:
+    try:
+        return resolve_portable_path(locator, root=ROOT)
+    except (RuntimeError, ValueError) as exc:
+        raise SupportAuditError(
+            f"{role} requires NARROWGATE_PRIVATE_RESEARCH_ROOT"
+        ) from exc
+
+
+def _panel_spec_path() -> Path:
+    return _private_spec_path(PANEL_SPEC_LOCATOR, role="50-day panel spec")
+
+
+def _strict_spec_path() -> Path:
+    return _private_spec_path(STRICT_SPEC_LOCATOR, role="strict-native spec")
+
+
 @dataclass(frozen=True)
 class AuditPaths:
     v2_spec: Path = V2_SPEC
-    panel_spec: Path = PANEL_SPEC
-    strict_spec: Path = STRICT_SPEC
+    panel_spec: Path = field(default_factory=_panel_spec_path)
+    strict_spec: Path = field(default_factory=_strict_spec_path)
     raw_cryptohft_root: Path = marketdata_root() / "cryptohftdata"
     normalized_root: Path = DATA_ROOT / "normalized_l2_100ms_v2"
     individual_trade_root: Path = DATA_ROOT / "raw_trades" / SYMBOL

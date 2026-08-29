@@ -1,6 +1,6 @@
 # Path Conventions
 
-Last materially modified: 2026-08-25
+Last materially modified: 2026-08-29
 
 Status: Current public path and privacy contract.
 
@@ -24,6 +24,7 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `${NARROWGATE_REPLAY_DAG_CACHE_DIR}` | Explicit tier override for reusable replay-DAG materializations |
 | `${NARROWGATE_RESULTS_DIR}` | Backtest / audit / evidence output root |
 | `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` | Owner-side evidence store that is not distributed with the public repository |
+| `${NARROWGATE_PRIVATE_RESEARCH_ROOT}` | Explicit owner-side root for frozen research inputs omitted from the public clone; no public default |
 | `${NARROWGATE_MODEL_DIR}` | Model bundle directory used for a specific run |
 | `${NARROWGATE_MAIN_MODEL_DIR}` | Main quote-model bundle for a specific run |
 | `${NARROWGATE_QUOTE_EV_MODEL_DIR}` | Quote-EV model bundle for a specific run |
@@ -38,12 +39,9 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `<current-live-eip-allocation>` | Logical current public-address allocation identity; never publish the allocation ID |
 | `<current-live-epoch>` | Mutable current-epoch locator in current-facing documents; inside a frozen dated contract it means the epoch current when that contract was frozen and must not be rebound |
 | `<current-live-epoch-start>` | Start of the epoch resolved by the current private pointer; never infer it from a public address or an older report |
-| `<admitted-predecessor-epoch>` | One exact prior runtime epoch with its own private receipt and availability boundary; never a current endpoint |
+| `<admitted-predecessor-epoch>` | One prior private runtime epoch with an owner-side availability boundary; never a current endpoint |
 | `<retired-live-host>` | Logical name for a retired deployment epoch; it is not a reachable endpoint |
-| `<retired-reactivated-aws-host>` | Logical predecessor AWS host retired at the 2026-08-19 cutover |
-| `<retired-reactivated-aws-instance>` | Logical predecessor AWS instance; historical/control-plane cleanup identity only |
-| `<retired-reactivated-aws-epoch>` | Frozen source/runtime epoch of the 2026-08-11 through 2026-08-19 AWS deployment |
-| `<retired-reactivated-aws-archive>` | Verified owner-local retirement archive for that predecessor; not a public path |
+| `<retired-runtime-archive>` | Owner-private retirement archive for an unavailable predecessor runtime; not a public path |
 | `<tag>` | User-chosen experiment tag |
 | `<symbol>` | Lowercase symbol suffix, for example `btcusdc` |
 
@@ -53,16 +51,18 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 export NARROWGATE_ROOT="$PWD"
 export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
-export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
+export NARROWGATE_CACHE_ROOT="${NARROWGATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/NarrowGate_BTCUSDC}"
 # When the internal storage gate fails, reusable DAG cache only:
 # export NARROWGATE_REPLAY_DAG_CACHE_DIR="$NARROWGATE_DATA_ROOT/cache/replay_dag"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
 export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
+# Set only when running an owner-private research integration:
+# export NARROWGATE_PRIVATE_RESEARCH_ROOT="<owner-private-research-root>"
 ```
 
 Cross-project private runtime pointers remain under `docs/private/`. Component-local unpublished evidence is owned by the ignored `live/private/`, `data/private/`, `models/private/`, or `execution/private/` root defined in [Non-Research Private Evidence Owners](non_research_private_evidence_owners.md). Each concrete research unit also owns an ignored `private/` directory for its artifact catalog and owner-only research context; see [Public Research and Private Evidence Layout](../research/PRIVATE_EVIDENCE.md). None of these private surfaces is published, and a component-private root may not duplicate or override repository-wide current authority.
 
-The physical storage volume and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the deployment that was current when that report became effective; it must not be dynamically rebound to today's host. Mutable current pointers may advance, while immutable event receipts retain their original host epoch. The default cache tier remains the internal disk. The governed cache-tier LRU may atomically migrate validated cache artifacts to the project `cache/` namespace while preserving their internal paths as verified symlinks. It fails closed when the configured storage root is absent; it does not silently choose another data source. See [the cache-tier contract](cache_tier_lru_governance_v1_20260808.md). Frozen evidence paths are resolved through the private locator without changing evidence bytes or identity.
+The physical storage volume, capacity policy, and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the private deployment that was current when that report became effective; it must not be rebound to today's host. Mutable current pointers may advance, while owner-side immutable evidence retains its original private runtime identity. The default cache root follows the bilingual README [Data Layout](../README.md#data-layout) section. Cache is reproducible and disposable; raw inputs, shared canonical data, and frozen evidence never inherit deletion authority merely because they are old. Private evidence paths are resolved through an owner-side locator without publishing their bytes or identity.
 
 Repository package names do not identify data-storage roots. `data/` contains offline acquisition and normalization code. `live/orderbook/` contains the in-process execution-market book reconstructed from REST snapshot plus WebSocket diff depth. Actual market-data files belong only under `${NARROWGATE_DATA_ROOT}`. Tick replay and mechanics caches belong under `${NARROWGATE_CACHE_ROOT}`; `NARROWGATE_TICK_WINDOW_CACHE_DIR` may override the legacy tick-window subdirectory without changing the data root. `NARROWGATE_REPLAY_DAG_CACHE_DIR` may separately override the component cache; its default is `${NARROWGATE_CACHE_ROOT}/replay_dag`. An external override must remain below `${NARROWGATE_DATA_ROOT}/cache`, not a raw-data or evidence directory. Strategy-dependent order, queue, fill, inventory and campaign paths must never be shared through either cache root.
 
@@ -88,9 +88,7 @@ export NARROWGATE_LIVE_CONFIG="<owner-local-current-live-config>"
 bash live/run.sh start
 ```
 
-`make deploy` refuses to deploy a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` for private deployment. The current stable live alias resolves only the active owner release. It must never be used as a backtest default merely because an older deployment and replay once shared the same bytes.
-
-The public operational pointer separates `current_live` from backtest mechanics. Current live resolution is `${NARROWGATE_LIVE_REMOTE_POINTER}` followed by `${NARROWGATE_LIVE_CONFIG}`. Backtest resolution follows `operational_backtest_mechanics_current.json` to the create-only owner-private mechanics-safety successor below `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}`. That successor runs exact BUY E3 with exact SELL/D+1 B0 delegation on a reduced-support 30-Development-day mechanics panel; it grants no economic, research, action, live, occurrence, validation/holdout, or promotion authority. The immutable v12 50-day result remains only a historical comparator and is stale under the repaired safety mechanics. Missing or mismatched bytes fail closed, and no consumer may fall back to the current live alias or v12. The public v13 governance identity still records only the live/config locator split and grants no additional authority.
+`make deploy` refuses to deploy a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` for private deployment. The repository distributes neither a current operational identity nor a backtest authority identity. Both are owner-private, `private_not_distributed`, and must be supplied and verified explicitly. Missing or mismatched private bytes fail closed, and a current live alias may never substitute for backtest authority.
 
 ## Documentation Rule
 

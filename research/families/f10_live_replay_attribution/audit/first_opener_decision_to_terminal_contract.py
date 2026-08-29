@@ -339,6 +339,34 @@ def validate_native_trace(
     spec: Mapping[str, Any],
 ) -> pd.DataFrame:
     validate_spec(spec)
+    panels = spec["panels"]
+    grade_by_day = {
+        **{
+            str(day): "A"
+            for day in panels["development_primary_grade_a_days"]
+        },
+        **{
+            str(day): "B"
+            for day in panels["development_sensitivity_grade_b_days"]
+        },
+    }
+    return validate_native_trace_mechanics(
+        frame,
+        tick_size_usdc_per_btc=float(
+            spec["market_contract"]["tick_size_usdc_per_btc"]
+        ),
+        quality_grade_by_day=grade_by_day,
+    )
+
+
+def validate_native_trace_mechanics(
+    frame: pd.DataFrame,
+    *,
+    tick_size_usdc_per_btc: float,
+    quality_grade_by_day: Mapping[str, str],
+) -> pd.DataFrame:
+    """Validate trace mechanics without requiring private frozen evidence."""
+
     missing = sorted(REQUIRED_TRACE_COLUMNS - set(frame.columns))
     if missing:
         raise ValueError("first-opener native trace is missing: " + ", ".join(missing))
@@ -435,7 +463,9 @@ def validate_native_trace(
     for feature in MODEL_FEATURES:
         _numeric(frame, feature)
 
-    tick_size = float(spec["market_contract"]["tick_size_usdc_per_btc"])
+    tick_size = float(tick_size_usdc_per_btc)
+    if not np.isfinite(tick_size) or tick_size <= 0.0:
+        raise ValueError("first-opener tick size is invalid")
     decision_mid = _numeric(frame, "decision_mid_usdc_per_btc")
     decision_bid = _numeric(frame, "decision_best_bid_usdc_per_btc")
     decision_ask = _numeric(frame, "decision_best_ask_usdc_per_btc")
@@ -472,17 +502,11 @@ def validate_native_trace(
     ):
         raise ValueError("first-opener submit-time market geometry drifted")
 
-    panels = spec["panels"]
     grade_by_day = {
-        **{
-            str(day): "A"
-            for day in panels["development_primary_grade_a_days"]
-        },
-        **{
-            str(day): "B"
-            for day in panels["development_sensitivity_grade_b_days"]
-        },
+        str(day): str(grade) for day, grade in quality_grade_by_day.items()
     }
+    if not grade_by_day or not set(grade_by_day.values()).issubset({"A", "B"}):
+        raise ValueError("first-opener public quality mapping is invalid")
     observed_days = set(frame["day"].astype(str))
     if not observed_days.issubset(grade_by_day):
         raise ValueError("first-opener trace read a day outside frozen Development")

@@ -175,7 +175,7 @@ class OPEConfig:
     blocked_folds: int = 5
     min_train_rows: int = 500
     min_action_rows: int = 100
-    min_behavior_propensity: float = 0.02
+    min_behavior_propensity: float = 0.05
     max_importance_weight: float = 20.0
     max_unsupported_mass: float = 0.05
     min_effective_sample_size: float = 100.0
@@ -185,6 +185,34 @@ class OPEConfig:
     bootstrap_trials: int = 500
     random_seed: int = 20260712
     learn_supported_policy: bool = False
+
+    def __post_init__(self) -> None:
+        """Keep the overlap floor and importance-weight cap one estimand.
+
+        For a deterministic candidate action, a behavior propensity ``p``
+        produces raw weight ``1 / p``.  Treating ``p`` as supported while
+        clipping that same row to a smaller weight changes the estimand.  Rows
+        below this floor may remain diagnostic unsupported mass, but the
+        declared support region itself must be unclipped.
+        """
+
+        min_propensity = float(self.min_behavior_propensity)
+        max_weight = float(self.max_importance_weight)
+        if (
+            not math.isfinite(min_propensity)
+            or min_propensity <= 0.0
+            or min_propensity > 1.0
+        ):
+            raise ValueError("min_behavior_propensity must be in (0, 1]")
+        if not math.isfinite(max_weight) or max_weight < 1.0:
+            raise ValueError("max_importance_weight must be finite and at least 1")
+        if 1.0 / min_propensity > max_weight + 1e-12:
+            raise ValueError(
+                "min_behavior_propensity and max_importance_weight are "
+                "incompatible: a deterministic action admitted at the "
+                "propensity floor would be clipped; require "
+                "min_behavior_propensity >= 1 / max_importance_weight"
+            )
 
 
 @dataclass(frozen=True)
@@ -727,6 +755,7 @@ def _fold_predictions(
         where=np.isfinite(logged_propensity),
     )
     clipped_weight = np.minimum(raw_weight, cfg.max_importance_weight)
+    weight_was_clipped = raw_weight > cfg.max_importance_weight + 1e-12
     reward = test["_ope_reward"].to_numpy(dtype=float)
     correction_q_available = np.isfinite(q_logged) | (pi_logged <= 1e-12)
     valid = np.isfinite(dm) & correction_q_available & np.isfinite(logged_propensity)
@@ -747,6 +776,7 @@ def _fold_predictions(
     result["ope_candidate_logged_probability"] = pi_logged
     result["ope_raw_importance_weight"] = raw_weight
     result["ope_clipped_importance_weight"] = clipped_weight
+    result["ope_importance_weight_was_clipped"] = weight_was_clipped.astype(int)
     result["ope_q_logged"] = q_logged
     result["ope_dm_value"] = dm
     result["ope_ips_value"] = ips
@@ -775,6 +805,7 @@ def _fold_predictions(
         "prediction_coverage": float(valid.mean()),
         "unsupported_candidate_mass": float(np.mean(unsupported_mass)),
         "effective_sample_size": ess,
+        "importance_weight_clipped_rows": int(weight_was_clipped.sum()),
         "behavior_observed_value": (
             float(np.mean(reward[valid])) if valid.any() else math.nan
         ),
@@ -880,6 +911,11 @@ def _summarize(
     daily_zero = int((daily_uplift == 0.0).sum())
     coverage = len(valid) / max(len(rows), 1)
     unsupported = _finite_mean(rows["ope_unsupported_candidate_mass"])
+    clipped_weight_rows = int(
+        pd.to_numeric(
+            rows["ope_importance_weight_was_clipped"], errors="coerce"
+        ).fillna(0.0).gt(0.0).sum()
+    )
     bootstrap = _cluster_bootstrap(
         valid,
         day_col=cfg.day_col,
@@ -912,8 +948,27 @@ def _summarize(
         coverage >= cfg.min_prediction_coverage
         and unsupported <= cfg.max_unsupported_mass
         and ess >= cfg.min_effective_sample_size
+        and clipped_weight_rows == 0
         and not unsupported_actions
     )
+    diagnostic_estimators = {
+        "behavior_observed_value": observed,
+        "candidate_direct_value": dm,
+        "candidate_clipped_ips_value": ips,
+        "candidate_clipped_snips_value": snips,
+        "candidate_clipped_dr_value": dr,
+        "candidate_minus_behavior_dr_uplift": dr - observed,
+    }
+    formal_estimators = dict(diagnostic_estimators)
+    if not overlap_pass:
+        for name in (
+            "candidate_direct_value",
+            "candidate_clipped_ips_value",
+            "candidate_clipped_snips_value",
+            "candidate_clipped_dr_value",
+            "candidate_minus_behavior_dr_uplift",
+        ):
+            formal_estimators[name] = math.nan
     summary = {
         "schema_version": SCHEMA_VERSION,
         "status": (
@@ -931,20 +986,22 @@ def _summarize(
         "actions": list(actions),
         "candidate_source": sorted(set(rows["ope_candidate_source"].astype(str))),
         "feature_specs": [asdict(spec) for spec in specs],
-        "estimators": {
-            "behavior_observed_value": observed,
-            "candidate_direct_value": dm,
-            "candidate_clipped_ips_value": ips,
-            "candidate_clipped_snips_value": snips,
-            "candidate_clipped_dr_value": dr,
-            "candidate_minus_behavior_dr_uplift": dr - observed,
+        "estimand": {
+            "kind": "candidate_policy_value_with_bounded_unsupported_mass",
+            "importance_weight_semantics": (
+                "importance weights must be unclipped; lower-propensity candidate "
+                "mass is reported separately and bounded by the unsupported-mass gate"
+            ),
         },
+        "estimators": formal_estimators,
+        "diagnostic_estimators": diagnostic_estimators,
         "overlap": {
             "mean_unsupported_candidate_mass": unsupported,
             "effective_sample_size": ess,
             "min_effective_sample_size": cfg.min_effective_sample_size,
             "min_behavior_propensity": cfg.min_behavior_propensity,
             "max_importance_weight": cfg.max_importance_weight,
+            "importance_weight_clipped_rows": clipped_weight_rows,
             "raw_weight_p95": float(rows["ope_raw_importance_weight"].quantile(0.95)),
             "raw_weight_p99": float(rows["ope_raw_importance_weight"].quantile(0.99)),
             "raw_weight_max": float(rows["ope_raw_importance_weight"].max()),
@@ -981,6 +1038,29 @@ def _summarize(
         ],
     }
     return summary, action_frame
+
+
+def _apply_formal_estimate_gate(
+    rows: pd.DataFrame,
+    summary: dict[str, Any],
+) -> pd.DataFrame:
+    """Make the aggregate overlap gate impossible for consumers to ignore.
+
+    Row-level fitted values remain useful diagnostics, but they are not formal
+    OPE estimates when the declared overlap/ESS/unclipped-weight gate fails.
+    Downstream research code historically consumed only the rows and discarded
+    ``summary``; expose one explicit row flag and invalidate promotion-facing
+    estimators so that pattern now fails closed.
+    """
+
+    output = rows.copy()
+    formal_valid = bool(summary.get("formal_estimate_valid", False))
+    output["ope_formal_estimate_valid"] = int(formal_valid)
+    if not formal_valid:
+        output["ope_prediction_valid"] = 0
+        for name in ("ope_dm_value", "ope_ips_value", "ope_dr_value"):
+            output[name] = math.nan
+    return output
 
 
 def evaluate_offline_policy(
@@ -1027,6 +1107,7 @@ def evaluate_offline_policy(
         raise ValueError("all OPE folds were skipped because of insufficient training/test rows")
     output = pd.concat(predictions, ignore_index=True)
     summary, action_frame = _summarize(output, fold_rows, actions, specs, cfg)
+    output = _apply_formal_estimate_gate(output, summary)
     return output, pd.DataFrame(fold_rows), action_frame, summary
 
 
@@ -1099,6 +1180,7 @@ def evaluate_fixed_holdout_policy(
         "holdout_days": list(holdout_days),
         "holdout_used_for_fit": False,
     }
+    rows = _apply_formal_estimate_gate(rows, summary)
     return rows, pd.DataFrame([metadata]), action_frame, summary
 
 
@@ -1217,7 +1299,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--blocked-folds", type=int, default=5)
     parser.add_argument("--min-train-rows", type=int, default=500)
     parser.add_argument("--min-action-rows", type=int, default=100)
-    parser.add_argument("--min-behavior-propensity", type=float, default=0.02)
+    parser.add_argument("--min-behavior-propensity", type=float, default=0.05)
     parser.add_argument("--max-importance-weight", type=float, default=20.0)
     parser.add_argument("--max-unsupported-mass", type=float, default=0.05)
     parser.add_argument("--min-effective-sample-size", type=float, default=100.0)

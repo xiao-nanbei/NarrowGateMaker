@@ -579,7 +579,7 @@ Build the one-decision-per-campaign panel with exact L2, Binance bridge, per-ven
 python research/families/f10_live_replay_attribution/audit/maker_lifecycle_panel.py \
   --input-panel <safe-add.path_panel.csv> \
   --data-dir ${NARROWGATE_DATA_ROOT} \
-  --latency-profile <aws-tokyo-latency-summary.json> \
+  --latency-profile <operator-latency-summary.json> \
   --output-panel <maker_lifecycle_panel_v1.parquet> \
   --metadata <maker_lifecycle_panel_v1.metadata.json>
 ```

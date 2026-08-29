@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-from data_paths import data_root
+from data_paths import data_root, resolve_portable_path
 from research.families.f05_fill_quality_quote_ev.audit.multiscale_ema_boolean_cooldown_duration import (
     EMA_HALF_LIVES_S,
     IDENTITY,
@@ -27,8 +27,8 @@ from research.families.f05_fill_quality_quote_ev.audit.multiscale_ema_boolean_co
 
 ROOT = Path(__file__).resolve().parents[4]
 DATA_ROOT = data_root(ROOT)
-BASELINE = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+BASELINE_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_replay_baseline_40d_20260809.json"
 )
 PROVIDER_ENCODER = DATA_ROOT / (
@@ -49,6 +49,15 @@ FROZEN_CONFIG_SHA256 = "62a6add8d46c2695205e278ecb41bcaa16dc8199e683ef9114c21f61
 
 class FreezeError(RuntimeError):
     """Fail closed when an outcome-blind source identity drifts."""
+
+
+def _baseline_path() -> Path:
+    try:
+        return resolve_portable_path(BASELINE_LOCATOR, root=ROOT)
+    except (RuntimeError, ValueError) as exc:
+        raise FreezeError(
+            "40-day baseline requires NARROWGATE_PRIVATE_RESEARCH_ROOT"
+        ) from exc
 
 
 def _sha256(path: Path) -> str:
@@ -286,7 +295,8 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
         config,
         expected_sha256=FROZEN_CONFIG_SHA256,
     )
-    baseline = json.loads(BASELINE.read_text(encoding="utf-8"))
+    baseline_path = _baseline_path()
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     if baseline.get("baseline_id") != (
         "btc_usdc_current_live_held_ber_replay_baseline_40d_20260809"
     ):
@@ -413,7 +423,7 @@ def freeze(*, config: Path, output: Path = OUTPUT) -> dict[str, Any]:
         "research_class": "exploratory",
         "baseline_projection": {
             "baseline_id": baseline["baseline_id"],
-            "baseline_identity_sha256": _sha256(BASELINE),
+            "baseline_identity_sha256": _sha256(baseline_path),
             "operational_identity_path": baseline["operational_baseline"]["identity_path"],
             "operational_identity_sha256": baseline["operational_baseline"]["identity_sha256"],
             "ordered_utc_days": baseline["panel"]["ordered_utc_days"],

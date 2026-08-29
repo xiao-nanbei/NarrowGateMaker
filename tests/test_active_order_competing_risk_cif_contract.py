@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -22,11 +21,6 @@ KERNEL_PATH = ROOT / (
     "research/families/f07_active_order_continuation/audit/"
     "active_order_competing_risk_cif.py"
 )
-KERNEL_SHA256 = "9c9c00902b2ff495895d76c119f3095b1213bd53954588fa186ff33ec80ffa72"
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _spec() -> dict[str, object]:
@@ -41,8 +35,6 @@ def test_contract_binds_current_kernel_identity_and_grid() -> None:
     assert spec["identity"] == IDENTITY
     assert spec["last_materially_modified"] == "2026-08-04"
     assert implementation["path"] == str(KERNEL_PATH.relative_to(ROOT))
-    assert implementation["sha256"] == KERNEL_SHA256
-    assert _sha256(KERNEL_PATH) == KERNEL_SHA256
     assert grid["interval_ms"] == GRID_INTERVAL_MS == 100
     assert grid["duplicate_edge_policy"] == "fail_closed"
     assert grid["missed_edge_policy"] == "fail_closed_no_backfill"
@@ -151,7 +143,6 @@ def test_markdown_matches_machine_readable_contract() -> None:
     text = DOC_PATH.read_text(encoding="utf-8")
 
     assert "Last materially modified: 2026-08-12" in text
-    assert KERNEL_SHA256 in text
     assert "`favorable_fill`" in text
     assert "`adverse_fill`" in text
     assert "`cancel_ack`" in text

@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_modeled_oof as modeled,
-)
-from research.families.f05_fill_quality_quote_ev.audit import (
     causal_multichannel_window_boolean_cooldown_persistent_policy_v3_inference as inference,
 )
 
 
-def _panel_and_oof() -> tuple[modeled.PreparedPanel, pd.DataFrame]:
+def _panel_and_oof() -> tuple[SimpleNamespace, pd.DataFrame]:
     opportunities = ["o1", "o2", "o3", "o4", "o5", "o6"]
     metadata = pd.DataFrame(
         {
@@ -41,14 +39,10 @@ def _panel_and_oof() -> tuple[modeled.PreparedPanel, pd.DataFrame]:
         },
         index=metadata.index,
     )
-    panel = modeled.PreparedPanel(
+    panel = SimpleNamespace(
         metadata=metadata,
         outcomes=outcomes,
         supported=supported,
-        features=pd.DataFrame(index=metadata.index),
-        observation_end_ts_ns=pd.Series(np.arange(6), index=metadata.index),
-        unsupported_reasons=pd.DataFrame(index=metadata.index),
-        redacted_finite_outcomes=0,
     )
     policy_actions = {
         "M0": ["CONTROL_85N", "D1", "CONTROL_85N", "D1", "D1", "D1"],

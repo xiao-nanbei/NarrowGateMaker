@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "narrowgate"
-version = "0.1.1"
+version = "0.1.2.dev0"
 description = "Maker strategy research framework with tick replay, evidence gates, and optional C++ acceleration."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -76,8 +76,6 @@ where = ["."]
 include = [
   "narrowgate",
   "narrowgate.*",
-  "scripts",
-  "scripts.*",
   "data",
   "data.*",
   "features",
@@ -103,6 +101,12 @@ namespaces = false
 
 [tool.setuptools.package-data]
 "*" = ["fixtures/*.py"]
+"narrowgate" = [
+  "fixtures/replay_demo/*.json",
+  "fixtures/replay_demo/*.jsonl",
+  "fixtures/replay_demo/reference/*.json",
+  "fixtures/replay_demo/reference/*.jsonl",
+]
 
 [tool.ruff]
 line-length = 100

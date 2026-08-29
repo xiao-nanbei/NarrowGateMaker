@@ -1,27 +1,9 @@
 {
   "schema_version": "narrowgate_public_machine_document_projections_v1",
-  "last_materially_modified": "2026-08-12",
+  "last_materially_modified": "2026-08-29",
   "contract": "docs/public_private_documentation_contract.md",
   "private_layout": "research/PRIVATE_EVIDENCE.md",
   "entries": [
-    {
-      "public_path": "docs/cache_tier_lru_governance_v1_20260808.json",
-      "unit_id": "repository",
-      "source_private_sha256": "82c44998b06d315e9452717cdfff682985dcda6a30bff42e13cb6fc620c6f6e9",
-      "public_projection_sha256": "edb6ef667d5bf8743e8f80d1101111c8fb4e864f0e4aeb8e1be0eb82d862001b",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 3
-    },
-    {
-      "public_path": "docs/marketdata_storage_relocation_20260730.json",
-      "unit_id": "repository",
-      "source_private_sha256": "2f13ae50ffb319f22a7e6111d92a015556d1f0e2bd114beab43ccfffa7d2b27d",
-      "public_projection_sha256": "0525a2f8a6f3402160ac9c1ab638e867e0cfd991c9e2aaf91c080ffe5b6cd0ab",
-      "transformation": "locator_redaction_only",
-      "availability": "public_repository_projection_private_source_not_distributed",
-      "private_locator_count": 13
-    },
     {
       "public_path": "docs/replay_cache_legacy_reference_audit_20260803.json",
       "unit_id": "repository",
@@ -54,7 +36,7 @@
       "public_path": "docs/value_provenance_registry_20260727.json",
       "unit_id": "repository",
       "source_private_sha256": "19dec5deca79d7ca37ceee9587fbdd6b5beeb949ade03f97ca60a20714b701cf",
-      "public_projection_sha256": "42533dce8c3c8369feded6becaf8299b2f2580b03f2a760781ea49ed4fb1736c",
+      "public_projection_sha256": "66f61610c5a1f61f6890ef9a47426ffb014c4a84adade2ee0528f7954b496794",
       "transformation": "locator_redaction_only",
       "availability": "public_repository_projection_private_source_not_distributed",
       "private_locator_count": 20,

@@ -2,8 +2,8 @@
   "schema_version": "narrowgate_value_provenance.v2",
   "as_of_utc": "2026-07-28",
   "status": "historical_provenance_snapshot_no_current_live_authority",
-  "current_operational_authority_pointer": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
-  "current_operational_identity_at_last_audit": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260808_v10.json",
+  "current_operational_authority_availability": "private_not_distributed",
+  "current_operational_authority_resolution": "owner_private_fail_closed",
   "entry_live_authority_flags_effective_for_current_runtime": false,
   "scope": "Decision-relevant training, formal tick replay, live baseline, and placement-fill-CIF values. This registry is not a claim that every diagnostic column in the repository is listed.",
   "classes": {
@@ -19,7 +19,7 @@
     "placement_fill_full_curve_competing_cif_v4": "full_curve_competing_v4",
     "placement_fill_policy_clock_race_v1": "policy_clock_race_v1"
   },
-  "live_authority_semantics": "Historical snapshot field only. A true value records applicability at this registry's 2026-07-28 snapshot and grants no current authority. Current runtime authority resolves exclusively through operational_baseline_current.json and its bound immutable identity.",
+  "live_authority_semantics": "Historical snapshot field only. A true value records applicability at this registry's 2026-07-28 snapshot and grants no current authority. Current runtime authority is owner-private, not distributed, and must fail closed when unavailable or unverifiable.",
   "entries": [
     {
       "id": "equity_accounting",
@@ -135,15 +135,16 @@
       "note": "Calibrates public-book replay against live outcomes; true exchange queue priority remains latent."
     },
     {
-      "id": "aws_tokyo_latency_profile",
+      "id": "host_bound_latency_profile",
       "area": "replay_matcher",
       "value_or_formula": "avg/captured/p95/p99 empirical latency paths",
       "unit": "milliseconds",
       "class": "empirical_direct_estimate",
-      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
-      "environment_id": "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260712",
+      "source": "${NARROWGATE_PRIVATE_LATENCY_PROFILE}",
+      "source_availability": "private_not_distributed",
+      "environment_id": "owner_private_host_bound_environment",
       "live_authority": false,
-      "note": "Must be replaced when instance type, region, network path, or gateway changes."
+      "note": "Must be re-estimated and privately rebound when the deployment environment or network path changes."
     },
     {
       "id": "execution_book_visibility_delay",
@@ -151,8 +152,9 @@
       "value_or_formula": "empirical receive-time visibility distribution with fixed replay seed",
       "unit": "milliseconds",
       "class": "empirical_direct_estimate",
-      "source": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260719/day_20260718/quote_decisions_2026-07-18.csv",
-      "environment_id": "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260718",
+      "source": "${NARROWGATE_PRIVATE_EXECUTION_VISIBILITY_PROFILE}",
+      "source_availability": "private_not_distributed",
+      "environment_id": "owner_private_host_bound_environment",
       "live_authority": false
     },
     {
@@ -252,10 +254,11 @@
           "historical selected value"
         ],
         "judgmental_engineering": [
-          "safety cap"
+          "pair-spread trigger threshold and configured response mode"
         ]
       },
-      "live_authority": true
+      "live_authority": true,
+      "note": "This is not an automatic safety cap. pause_exposure is protective; compress is an explicit research response that can increase fill probability."
     },
     {
       "id": "buy_fill_selection_threshold",
@@ -802,11 +805,11 @@
           "historically selected kappa ratio"
         ],
         "judgmental_engineering": [
-          "volatility exponent, BER threshold/multiplier, cap response and bounds"
+          "volatility exponent, legacy ber_* trade-intensity-burst threshold/multiplier, cap response and bounds"
         ]
       },
       "live_authority": true,
-      "note": "LVR/AMM literature does not prove vol_power=1.5 for this CLOB."
+      "note": "LVR/AMM literature does not prove vol_power=1.5 for this CLOB. Legacy ber_* fields consume trade-intensity acceleration, not a book-exhaustion BER estimator."
     },
     {
       "id": "replace_churn_controls_live",

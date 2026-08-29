@@ -1,6 +1,6 @@
 # Market Data
 
-Last materially modified: 2026-08-23
+Last materially modified: 2026-08-29
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](public_private_documentation_contract.md).
 
@@ -10,16 +10,18 @@ NarrowGate keeps large market data outside the git checkout. Every formal traini
 export NARROWGATE_ROOT="$PWD"
 export NARROWGATE_MARKETDATA_ROOT="<local-marketdata-root>"
 export NARROWGATE_DATA_ROOT="$NARROWGATE_MARKETDATA_ROOT/NarrowGate_BTCUSDC"
-export NARROWGATE_CACHE_ROOT="$HOME/Library/Caches/NarrowGate_BTCUSDC"
+export NARROWGATE_CACHE_ROOT="${NARROWGATE_CACHE_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/NarrowGate_BTCUSDC}"
 export NARROWGATE_RESULTS_DIR="$NARROWGATE_DATA_ROOT/backtest_results_btcusdc"
 export MM_DATA_ROOT="$NARROWGATE_DATA_ROOT"
 ```
 
-The `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` volume is APFS and must be mounted at `${NARROWGATE_STORAGE_ROOT}` before a local data job starts. The retired `${NARROWGATE_RETIRED_MARKETDATA_ROOT}` directory is not kept as a symlink. Active code resolves paths through `data_paths.py`; frozen Specs and result manifests keep their original provenance strings and use the documented relocation mapping instead of being rewritten. See [the storage migration record](marketdata_storage_relocation_20260730.md).
+Physical volumes, capacity limits, and historical relocation receipts are owner-local operations and are not published. Active code resolves configured roots through `data_paths.py`; frozen Specs and result manifests keep their original provenance strings rather than being rewritten after a machine-local relocation.
 
 Public placeholders, private-path restrictions, and canonical root naming are defined in [Path Conventions](path_conventions.md).
 
-The public repository does not publish a current live host. `<current-live-host>` is a logical field resolved only through the owner-private pointer, not a usable endpoint in this document. Original AWS, intermediate Vultr, and reactivated-AWS predecessor logs are queried from separate verified local `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` archives. Historical transport profiles retain their exact host/epoch labels and are sensitivities, not current-host measurements. The completed seven-tape program remains closed on the predecessor capture source; a privately resolved successor host has no inherited capture authority. See the [live-host and historical-data routing contract](live_host_and_historical_data_access_20260811.md).
+The bilingual README [Data Layout](../README.md#data-layout) section is the human-facing authority for portable cache-root resolution: an explicit `NARROWGATE_CACHE_ROOT` wins, otherwise the root follows `XDG_CACHE_HOME` with the XDG fallback `$HOME/.cache`. This document uses `${NARROWGATE_CACHE_ROOT}` below and does not define a platform-specific cache default.
+
+The public repository does not publish live deployment locators, operational history, or host-bound transport profiles. Those records are resolved only through owner-private evidence. Public code retains generic profile-injection and fail-closed interfaces; it must not invent a default when the private evidence is unavailable.
 
 ## Canonical Layout
 
@@ -94,7 +96,7 @@ Canonical daily filenames include an explicit UTC date:
 - `features_btcusdc/features_YYYY-MM-DD.parquet`
 - `metrics_5m/<SYMBOL>-metrics-YYYY-MM-DD.parquet`
 
-`window_cache` is disposable and stays on the internal disk. Backtest results and imported live logs are not authoritative market data, but they are versioned evidence or diagnostics and remain on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` with the other non-cache data. None of these changes the retained-day universe.
+`window_cache` is disposable and stays under the XDG-resolved local cache root unless an explicit governed tier override is configured. Backtest results and imported live logs are not authoritative market data, but they are versioned evidence or diagnostics and remain on `${NARROWGATE_PRIVATE_EVIDENCE_ROOT}` with the other non-cache data. None of these changes the retained-day universe.
 
 Source-bound v13 tick windows may use the newly available internal capacity, but cache creation retains at least 60 GiB free. The current 112-day set contains 67 provider windows and 45 native windows. Cache keys bind source authority, queue mode, input hashes, model/feature identity, and replay semantics; they cannot silently bridge provider and native evidence.
 
@@ -263,13 +265,14 @@ These normalized files use Binance transaction time `T`. For executable action e
 
 ### Storage boundary
 
-Preserve storage headroom:
+Retain data in this order:
 
-- keep one CryptoHFTData BTCUSDC native snapshot/delta archive;
-- keep one hardlinked `normalized_l2_100ms_v2` view;
-- write summary-only sufficient statistics for 100+ day, multi-arm studies;
-- do not create per-arm full-L2 copies or duplicate deep-book datasets;
-- keep full per-order traces only for small, predeclared diagnostics.
+1. immutable raw source data;
+2. shared canonical intermediates reused by multiple studies, such as admitted normalized market data;
+3. frozen final research outputs, manifests, locks, and the minimum diagnostics needed to audit them;
+4. reproducible cache and staging data only when capacity remains.
+
+Do not create per-arm full-L2 copies or duplicate deep-book datasets. Multi-arm studies should reuse shared inputs and write summary-only sufficient statistics; full per-order traces are retained only for small, predeclared diagnostics. Concrete volume limits and cleanup schedules remain owner-local configuration.
 
 For fixed-spread research, every output must distinguish `top20_calibrated_fallback` descriptive evidence from `native_deep_exact_level` evidence. A formal-eligible top-20 file alone does not make a native/deep result.
 
@@ -438,23 +441,23 @@ python research/families/f05_fill_quality_quote_ev/audit/fill_toxicity.py \
   --output-prefix logs/audit/global_flow_fill_toxicity
 ```
 
-For exchange-time replay, first freeze an environment-specific market-data latency profile. The profile records cloud region, instance class, OS, compute profile, transport, and an exact receive-time window; it is not a universal "exchange latency" constant.
+For exchange-time replay, first freeze an environment-specific market-data latency profile in the private evidence store. The profile records provider, region, instance class, OS, compute profile, transport, and an exact receive-time window; it is not a universal "exchange latency" constant and its raw bytes are not public.
 
 ```bash
 python research/system_engineering/audit/market_data_latency.py \
   --input logs/market_tape \
   --input logs/external_venues \
-  --output-json live/profiles/latency/aws_tokyo_<current-live-epoch>_<window>.json \
-  --output-md docs/aws_tokyo_<current-live-epoch>_<window>.md \
-  --profile-id aws_ap_northeast_1_<current-live-epoch>_<window> \
+  --output-json "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/latency/<profile-id>.json" \
+  --output-md "${NARROWGATE_PRIVATE_EVIDENCE_ROOT}/latency/<profile-id>.md" \
+  --profile-id <environment-profile-id> \
   --window-seconds 3600 \
   --transport websocket \
-  --environment cloud=AWS \
-  --environment region=ap-northeast-1 \
-  --environment location=Tokyo
+  --environment cloud=<provider> \
+  --environment region=<region> \
+  --environment location=<location>
 ```
 
-Frozen original-AWS, Vultr, and reactivated-AWS predecessor profiles remain valid for their exact historical epochs and may be selected as explicitly named transport sensitivities. Matching CPU/RAM size does not permit relabelling any of them as a current-AWS measurement.
+Frozen host-bound profiles remain valid only for their exact private historical environment and may be selected as explicitly named transport sensitivities. Matching CPU/RAM size does not permit relabelling a predecessor profile as a current measurement.
 
 Replay modes are deliberately separate:
 

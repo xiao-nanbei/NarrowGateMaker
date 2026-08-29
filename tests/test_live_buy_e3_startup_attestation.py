@@ -24,7 +24,6 @@ def _snapshot() -> dict:
     return {
         "commit": "a" * 40,
         "tree": "b" * 40,
-        "status_porcelain_sha256": subject._sha256_bytes(b""),  # noqa: SLF001
         "status_entry_count": 0,
         "worktree_clean": True,
         "snapshot_internally_stable": True,
@@ -37,24 +36,19 @@ def _source_rows() -> list[dict]:
         rows.append(
             {
                 "path": relative,
-                "working_file_sha256": "c" * 64,
-                "head_blob_sha256": "c" * 64,
-                "working_size_bytes": 10,
-                "head_blob_size_bytes": 10,
-                "matches_head_blob": True,
+                "tracked_in_head": True,
+                "regular_file_under_repository": True,
             }
         )
     return sorted(rows, key=lambda row: row["path"])
 
 
-def _loaded_origins(rows: list[dict]) -> dict:
-    source_by_path = {row["path"]: row for row in rows}
+def _loaded_origins(_rows: list[dict]) -> dict:
     return {
         role: {
             "module_name": module,
             "origin_path": str(subject.ROOT / relative),
             "repository_relative_path": relative,
-            "source_sha256": source_by_path[relative]["working_file_sha256"],
         }
         for role, (module, relative) in subject.KEY_LOADED_RUNTIME_MODULES.items()
     }
@@ -70,7 +64,6 @@ class _Engine:
         checkpoint_loaded: bool = False,
         checkpoint_sequence: int = 0,
         active_identity: str = "B0",
-        active_release: dict[str, str] | None = None,
     ) -> None:
         self.buy_identity = buy_identity
         self.remaining_ms = remaining_ms
@@ -78,35 +71,6 @@ class _Engine:
         self.checkpoint_loaded = checkpoint_loaded
         self.checkpoint_sequence = checkpoint_sequence
         self.active_identity = active_identity
-        self.active_release = (
-            dict(active_release)
-            if active_release is not None
-            else (
-                {
-                    "path": "/private/release.json",
-                    "file_sha256": "e" * 64,
-                    "file_canonical_sha256": "f" * 64,
-                    "execution_commit": "a" * 40,
-                    "execution_tree": "b" * 40,
-                    "annotated_operational_tag": "f05-buy-e3-active-v1",
-                    "annotated_operational_tag_object": "c" * 40,
-                    "active_config_file_sha256": RUNNING_CONFIG_SHA256,
-                    "disabled_config_file_sha256": "2" * 64,
-                }
-                if active_identity.startswith("BUY_E3:")
-                else {
-                    "path": "",
-                    "file_sha256": "",
-                    "file_canonical_sha256": "",
-                    "execution_commit": "",
-                    "execution_tree": "",
-                    "annotated_operational_tag": "",
-                    "annotated_operational_tag_object": "",
-                    "active_config_file_sha256": "",
-                    "disabled_config_file_sha256": "",
-                }
-            )
-        )
 
     def _active_buy_e3_deadline_identity(self) -> str:
         return self.active_identity
@@ -120,9 +84,6 @@ class _Engine:
             "checkpoint_loaded": self.checkpoint_loaded,
             "checkpoint_sequence": self.checkpoint_sequence,
         }
-
-    def buy_e3_active_release_identity(self) -> dict[str, str]:
-        return dict(self.active_release)
 
     def shadow_runtime_snapshot(self) -> dict:
         return {
@@ -195,7 +156,6 @@ def test_startup_attestation_accepts_only_clean_fresh_b0(
         "attested_at_utc",
         "fill_cooldown_state",
         "shadow_runtime_identity",
-        "buy_e3_active_release",
         "running_checkout",
         "loaded_module_origins",
         "interpreter_identity",
@@ -204,10 +164,10 @@ def test_startup_attestation_accepts_only_clean_fresh_b0(
         "errors",
     }
     assert set(attestation["gates"]) == set(subject.STARTUP_ATTESTATION_GATE_NAMES)
-    assert attestation["running_checkout"]["runtime_source_manifest_sha256"] == (
-        subject._runtime_source_manifest_sha256(  # noqa: SLF001
-            attestation["running_checkout"]["runtime_source_files"]
-        )
+    assert all(
+        row["tracked_in_head"]
+        and row["regular_file_under_repository"]
+        for row in attestation["running_checkout"]["runtime_source_files"]
     )
 
 
@@ -232,30 +192,6 @@ def test_startup_attestation_accepts_exact_same_artifact_resume(
     assert attestation["status"] == "accepted"
     assert attestation["errors"] == []
     assert attestation["fill_cooldown_state"]["restore_mode"] == ("exact_same_artifact_resume")
-
-
-def test_startup_attestation_rejects_release_bound_to_another_active_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _bind_clean_checkout(monkeypatch)
-    artifact_identity = f"BUY_E3:{'a' * 64}"
-    engine = _Engine(
-        buy_identity=artifact_identity,
-        remaining_ms=1_500_000,
-        restore_mode="exact_same_artifact_resume",
-        checkpoint_loaded=True,
-        checkpoint_sequence=8,
-        active_identity=artifact_identity,
-    )
-    attestation = subject.build_startup_attestation(
-        engine=engine,
-        native_runtime={"profile": "test", "module": "disabled"},
-        running_config_sha256="9" * 64,
-    )
-
-    assert attestation["status"] == "rejected"
-    assert "buy_e3_active_release_matches_running_config" in attestation["errors"]
-    assert attestation["gates"]["safe_to_start_live_loops"] is False
 
 
 def test_startup_attestation_rejects_active_e3_without_checkpoint_epoch(
@@ -433,16 +369,11 @@ def test_git_snapshot_includes_tracked_and_untracked_drift(
     drifted = subject._git_snapshot()  # noqa: SLF001
     assert drifted["worktree_clean"] is False
     assert drifted["status_entry_count"] == 1
-    assert drifted["status_porcelain_sha256"] != subject._sha256_bytes(b"")  # noqa: SLF001
-
     rows = [
         {
             "path": "tracked.py",
-            "working_file_sha256": "c" * 64,
-            "head_blob_sha256": "c" * 64,
-            "working_size_bytes": 10,
-            "head_blob_size_bytes": 10,
-            "matches_head_blob": True,
+            "tracked_in_head": True,
+            "regular_file_under_repository": True,
         }
     ]
     monkeypatch.setattr(subject, "_runtime_source_rows", lambda: rows)
@@ -454,7 +385,6 @@ def test_git_snapshot_includes_tracked_and_untracked_drift(
                 "module_name": module,
                 "origin_path": str(root / "tracked.py"),
                 "repository_relative_path": "tracked.py",
-                "source_sha256": "c" * 64,
             }
             for role, (module, _relative) in subject.KEY_LOADED_RUNTIME_MODULES.items()
         },

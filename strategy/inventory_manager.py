@@ -146,7 +146,8 @@ class InventoryManager:
         # round-trip PnL accumulator (summed across partial closes)
         self._round_trip_rpnl: float = 0.0
 
-        # peak PnL for drawdown calculation
+        # Process-session marked-equity high-water mark.  Unlike daily
+        # accounting, this safety state must survive UTC midnight.
         self._peak_pnl: float = 0.0
 
         # Exchange reconciliation identity.  A local request clock cannot say
@@ -235,11 +236,16 @@ class InventoryManager:
             - self._open_commission
         )
 
+    def _update_session_high_water_locked(self) -> None:
+        self._peak_pnl = max(self._peak_pnl, self._total_pnl_locked())
+
     def _reset_daily_locked(self, utc_day: int) -> None:
+        # UTC accounting reset only.  Inventory, open campaign, consecutive-loss
+        # state, process-session marked-equity high-water and inventory-time
+        # state continue across midnight.  Market risk does not reset with the
+        # daily reporting denominator.
         self._daily_utc_day = int(utc_day)
         self._day_start_total_pnl = self._total_pnl_locked()
-        self._consecutive_losses = 0
-        self._peak_pnl = self._realized_pnl
         self._day_buy_fill_qty = 0.0
         self._day_sell_fill_qty = 0.0
         self._day_buy_fill_notional = 0.0
@@ -849,10 +855,6 @@ class InventoryManager:
                 self._last_trade_pnl = rpnl
                 self._round_trip_rpnl += rpnl
 
-                # track peak PnL
-                if self._realized_pnl > self._peak_pnl:
-                    self._peak_pnl = self._realized_pnl
-
                 remaining = abs(self._qty) - close_qty
                 if remaining < 1e-10:
                     # fully closed (possibly flipped)
@@ -886,6 +888,7 @@ class InventoryManager:
 
             # --- Update unrealized PnL ---
             self._recalc_unrealized(update_campaign=False)
+            self._update_session_high_water_locked()
             self._campaign_on_position_change_locked(
                 prev_qty,
                 self._qty,
@@ -940,6 +943,7 @@ class InventoryManager:
             self._accrue_inventory_time_locked(now)
             self._mark_price = price
             self._recalc_unrealized()
+            self._update_session_high_water_locked()
 
     def _recalc_unrealized(self, *, update_campaign: bool = True):
         if self._qty != 0.0 and self._mark_price > 0:
@@ -993,9 +997,17 @@ class InventoryManager:
                 notional_time += abs(q) * mark * dt_s
             elapsed_s = max(0.0, now - self._inventory_time_start_ts)
             inv_time_hours = abs_inv_time / 3600.0
-            daily_pnl = self._total_pnl_locked() - self._day_start_total_pnl
+            session_marked_pnl = self._total_pnl_locked()
+            session_marked_drawdown = max(
+                0.0,
+                self._peak_pnl - session_marked_pnl,
+            )
+            daily_pnl = session_marked_pnl - self._day_start_total_pnl
             return {
                 "elapsed_s": elapsed_s,
+                "session_marked_pnl": session_marked_pnl,
+                "session_marked_high_water": self._peak_pnl,
+                "session_marked_drawdown": session_marked_drawdown,
                 "signed_inventory_time_s": signed_inv_time,
                 "abs_inventory_time_s": abs_inv_time,
                 "sq_inventory_time_s": sq_inv_time,
@@ -1086,7 +1098,7 @@ class InventoryManager:
     @property
     def drawdown(self) -> float:
         with self._lock:
-            return max(0, self._peak_pnl - self._realized_pnl)
+            return max(0.0, self._peak_pnl - self._total_pnl_locked())
 
     @property
     def consecutive_losses(self) -> int:
@@ -1362,6 +1374,7 @@ class InventoryManager:
                     else PositionState.OPEN
                 )
                 self._recalc_unrealized()
+                self._update_session_high_water_locked()
 
                 delta = target_qty - old_qty
                 if abs(delta) > 1e-10:

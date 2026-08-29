@@ -8,6 +8,7 @@ import pytest
 from live.config import Config
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
+from strategy.order_manager import OrderState
 from strategy.signal import DepthSnapshot, Prediction, SignalEngine
 
 
@@ -202,6 +203,52 @@ def test_invalid_snapshot_block_cancels_active_orders() -> None:
     assert canceled == [True]
 
 
+def test_stale_quote_stop_runs_before_the_requote_clock() -> None:
+    canceled = []
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.signal = SimpleNamespace(
+        last_depth_clock_ages_s=lambda: (5.01, 0.01),
+    )
+    engine.orders = SimpleNamespace(
+        has_active_orders=lambda: True,
+        active_count=lambda: 1,
+    )
+    engine._cancel_all_orders = lambda: canceled.append(True)
+    engine._last_stale_data_block_log = time.time()
+
+    assert engine._enforce_stale_quote_stop() is True
+    assert canceled == [True]
+
+
+def test_cancel_all_does_not_repeat_rest_after_cancel_is_pending() -> None:
+    rest_calls = []
+    order = SimpleNamespace(
+        state=OrderState.OPEN,
+        client_order_id="open-order",
+    )
+
+    def mark_pending_cancel(_cid: str) -> None:
+        order.state = OrderState.PENDING_CANCEL
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine.orders = SimpleNamespace(
+        get_active_orders=lambda: [order],
+        mark_pending_cancel=mark_pending_cancel,
+    )
+    engine.rest = SimpleNamespace(
+        cancel_open_orders=lambda **kwargs: rest_calls.append(kwargs)
+    )
+    engine._prune_terminal_side_order_reference = lambda _side: None
+    engine._record_exact_order_event = lambda *_args, **_kwargs: None
+    engine._record_perf_rest_latency = lambda *_args, **_kwargs: None
+
+    assert engine._cancel_all_orders() is True
+    assert engine._cancel_all_orders() is True
+    assert rest_calls == [{"symbol": "BTCUSDC"}]
+
+
 def test_policy_l2_metrics_use_frozen_history_cutoff() -> None:
     signal = SignalEngine(enable_ml=False)
     base_ms = 1_800_000_000_000
@@ -277,6 +324,7 @@ def test_compute_quotes_does_not_read_mutable_signal_depth(monkeypatch) -> None:
             raise AssertionError("quote path reread mutable _last_depth")
 
     cfg = Config()
+    cfg.ml.enabled = False
     cfg.strategy.use_bar_pricing = False
     cfg.depth_execution.shadow_enabled = False
     engine = object.__new__(MakerEngine)

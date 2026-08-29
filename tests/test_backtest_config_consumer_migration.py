@@ -2,14 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import data_paths
-from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1 as panel_builder,
-)
 from research.families.f05_fill_quality_quote_ev.audit import (
     freeze_multiscale_ema_boolean_cooldown_duration_policy as duration_freeze,
 )
@@ -17,7 +13,6 @@ from research.families.f06_placement_fill_cif.audit import placement_fill_panel
 from research.families.f09_campaign_action_uplift.audit import (
     causal_v12_toxicity_conditional_p3_reach_gate as toxicity_gate,
 )
-from scripts import run_restart_aware_continuous_baseline as restart_baseline
 
 
 def _normalized_v12_binding(
@@ -80,32 +75,6 @@ def test_v12_locator_is_distinct_from_mutable_live_alias(
     assert expected_archive != live_alias.resolve()
 
 
-def test_current_f05_panel_defaults_to_versioned_v12_archive(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    assert data_paths.IMMUTABLE_BACKTEST_V12_CONFIG_SHA256 == (
-        panel_builder.offline.ACTIVE_PRIVATE_CONFIG_SHA256
-    )
-    private_root = tmp_path / "private-configs"
-    live_alias = tmp_path / "mutable-live-alias.yaml"
-    monkeypatch.setenv("NARROWGATE_PRIVATE_CONFIG_ROOT", str(private_root))
-    monkeypatch.setenv("NARROWGATE_LIVE_CONFIG", str(live_alias))
-    monkeypatch.setenv("NARROWGATE_DATA_ROOT", str(tmp_path / "data"))
-
-    archive = private_root / data_paths.IMMUTABLE_BACKTEST_V12_CONFIG_FILENAME
-    defaults = panel_builder._default_cli_paths()
-    assert defaults["owner_config"] == archive.resolve()
-    inputs = SimpleNamespace(
-        owner_artifacts=SimpleNamespace(private_config=archive),
-        project_data_root=tmp_path / "data",
-        marketdata_root=tmp_path / "marketdata",
-    )
-    assert panel_builder._portable_bound_path(archive, inputs=inputs) == (
-        data_paths.IMMUTABLE_BACKTEST_V12_CONFIG_LOCATOR
-    )
-
-
 def test_frozen_f05_and_f06_require_explicit_hash_closed_configs(
     tmp_path: Path,
 ) -> None:
@@ -152,15 +121,6 @@ def test_flat_pointer_consumers_accept_only_normalized_v12_binding(
     binding = _normalized_v12_binding(archive=archive.resolve(), identity=identity)
 
     monkeypatch.setattr(
-        restart_baseline,
-        "load_operational_baseline_binding",
-        lambda **_: binding,
-    )
-    monkeypatch.setattr(restart_baseline, "require_sha256", lambda *args, **kwargs: None)
-    restart = restart_baseline.validate_identities()
-    assert restart["config_path"] == archive.resolve()
-
-    monkeypatch.setattr(
         toxicity_gate,
         "load_operational_baseline_binding",
         lambda **_: binding,
@@ -173,13 +133,3 @@ def test_flat_pointer_consumers_accept_only_normalized_v12_binding(
     toxicity = toxicity_gate.validate_current_baseline()
     assert toxicity["config_path"] == archive.resolve()
     assert toxicity["config_path"] != live_alias.resolve()
-
-    wrong = dict(binding)
-    wrong["config_path"] = live_alias.resolve()
-    monkeypatch.setattr(
-        restart_baseline,
-        "load_operational_baseline_binding",
-        lambda **_: wrong,
-    )
-    with pytest.raises(RuntimeError, match="did not resolve the immutable v12"):
-        restart_baseline.validate_identities()

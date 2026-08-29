@@ -85,13 +85,64 @@ def _trades(
     )
 
 
+def test_replay_final_p3_floor_survives_post_fill_shift_and_forces_unsafe_replace() -> None:
+    params = _base_params()
+    params.update(
+        {
+            "kappa": 100.0,
+            "initial_inventory": 0.004,
+            "initial_entry_price": 100.0,
+            "requote_threshold_bps": 100.0,
+            "replace_min_price_change_ticks": 10.0,
+            "replace_min_interval_ms": 10_000.0,
+            "trace_quotes_max": 20,
+            "post_fill_quote_response_enabled": True,
+            "post_fill_quote_response_mode": "inventory_shift",
+            "post_fill_inventory_ticks_per_order_unit": 2.0,
+            "post_fill_inventory_max_ticks": 20.0,
+            "p3_delta_star": 0.5,
+            "p3_kappa_eff": 100.0,
+            "p3_side_bbo_floor_enabled": True,
+            "historical_p3_scalar_adapter_enabled": False,
+            "fill_probability_event_type": "touch",
+            "fill_probability_horizon_s": 10.0,
+            "fill_probability_distance_origin": (
+                "same_side_best_bid_or_ask_at_window_start"
+            ),
+            "fill_probability_distance_unit": "USDC_per_BTC",
+            "fill_probability_side": "pooled_buy_sell",
+            "fill_probability_queue_included": False,
+            "fill_probability_artifact_sha256": "b" * 64,
+        }
+    )
+    trades = _trades(
+        [BASE_MS, BASE_MS + 1_000],
+        [100.0, 100.1],
+    )
+
+    result = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        np.empty(0, dtype=np.int64),
+        np.empty(0, dtype=np.float64),
+        params,
+    )
+
+    sell_orders = [row for row in result["_quote_trace"] if row["side"] == "SELL"]
+    assert [(row["price"], row["outcome"]) for row in sell_orders] == [
+        (pytest.approx(100.5), "cancel"),
+        (pytest.approx(100.6), "open_end"),
+    ]
+    assert result["replace_throttle_count"] == 0
+
+
 def _write_sync_tape(tmp_path, timestamps: list[int]):
     path = tmp_path / "sync_degrade_events.json"
     path.write_text(
         json.dumps(
             {
                 "schema_version": SYNC_DEGRADE_TAPE_SCHEMA,
-                "environment": "aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+                "environment": "provider_neutral_test_environment",
                 "start_ts_ms": BASE_MS,
                 "end_ts_ms": BASE_MS + 86_400_000,
                 "events": [
@@ -184,7 +235,7 @@ def _write_market_data_latency_profile(tmp_path):
         json.dumps(
             {
                 "schema": "market_data_latency_profile.v1",
-                "profile_id": "aws_tokyo_test_visibility_v1",
+                "profile_id": "provider_neutral_test_visibility_v1",
                 "environment": {
                     "cloud": "AWS",
                     "region": "ap-northeast-1",
@@ -1311,7 +1362,7 @@ def test_sync_censor_prevents_future_mark_price_in_python_and_cpp(tmp_path):
             "sync_adjust_event_tape_path": str(tape),
             "sync_adjust_event_tape_sha256": digest,
             "sync_adjust_event_environment": (
-                "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+                "provider_neutral_test_environment"
             ),
             "sync_adjust_pause_s": 120.0,
             "sync_adjust_cancel_orders": True,
@@ -1355,7 +1406,7 @@ def test_frozen_sync_event_blocks_only_exposure_side_in_python_and_cpp(
             "sync_adjust_event_tape_path": str(tape),
             "sync_adjust_event_tape_sha256": digest,
             "sync_adjust_event_environment": (
-                "aws_tokyo_ec2_2vcpu_4g_amazon_linux"
+                "provider_neutral_test_environment"
             ),
             "sync_adjust_pause_s": 2.0,
             "sync_adjust_cancel_orders": True,
@@ -1667,7 +1718,7 @@ def test_buy_q90_aws_profile_visibility_uses_feature_ready_scheduler(tmp_path):
             "dynamic_fill_hazard_visibility_profile_path": str(profile_path),
             "dynamic_fill_hazard_visibility_profile_sha256": profile_sha,
             "dynamic_fill_hazard_visibility_profile_id": (
-                "aws_tokyo_test_visibility_v1"
+                "provider_neutral_test_visibility_v1"
             ),
             "dynamic_fill_hazard_visibility_profile_market_id": (
                 "binance:perp:BTCUSDC"
@@ -1706,7 +1757,7 @@ def test_buy_q90_aws_profile_visibility_uses_feature_ready_scheduler(tmp_path):
     )
 
     identity = result["dynamic_fill_hazard_visibility_profile_identity"]
-    assert identity["profile_id"] == "aws_tokyo_test_visibility_v1"
+    assert identity["profile_id"] == "provider_neutral_test_visibility_v1"
     assert identity["sha256"] == profile_sha
     assert identity["aws_profile_transport_sensitivity"] is True
     assert result["dynamic_fill_hazard_future_feature_time_count"] == 0

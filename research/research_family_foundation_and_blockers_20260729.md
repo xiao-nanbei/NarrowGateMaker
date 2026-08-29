@@ -87,7 +87,7 @@ E\left[\sum_i q_i\Delta P_{i,H}-\text{fees}
 
 F04、F08、F10 的特征或标签已开始进入 100ms–1s 区间。SYS 的历史证据显示，2vCPU/约4GiB 环境中，多 worker dispatcher 会增加排队和 stale-event p99；native batch 虽降低 CPU/内存开销，但旧剖析不能证明当前多行情源、当前进程布局下的 end-to-end main-loop p99。`trade-to-receive lag` 还包含交易所聚合/发布等待，不是纯网络延迟。
 
-因此，任何亚秒 action 研究之前都应冻结当前部署的：exchange timestamp、local receive、feature-ready、decision-ready、order submit 和 ACK 时钟，并给出 drop、queue age、event loop lag 与跨源 skew。否则模型看到的“100ms 信息”可能只是研究机 replay 的能力，而不是 2vCPU live 的可实现信息集。相关历史证据见 [`reference_feed_dispatch_soak_20260711.md`](system_engineering/docs/reference_feed_dispatch_soak_20260711.md) 与 [`native_global_flow_batch_soak_20260711.md`](system_engineering/docs/native_global_flow_batch_soak_20260711.md)。
+因此，任何亚秒 action 研究之前都应冻结部署环境的 exchange timestamp、local receive、feature-ready、decision-ready、order submit 和 ACK 时钟，并给出 drop、queue age、event loop lag 与跨源 skew。否则模型看到的“100ms 信息”可能只是研究机 replay 的能力，而不是目标部署的可实现信息集。历史主机 soak 与性能画像属于私有运营证据，不在公共仓库分发。
 
 ### P1：已封闭的历史 runner 仍可执行
 
@@ -207,9 +207,9 @@ fill toxicity、maker-signed markout 和 fill-selection ranking 可以继续作�
 
 共享 quote core、记账方向、quantity-weighted PnL、terminal MTM 和初始 inventory/order/ campaign state 的方向已经正确。当前未确认新的数值量纲 bug。
 
-但 [`live_replay_code_parity_20260717.md`](families/f10_live_replay_attribution/docs/live_replay_code_parity_20260717.md) 已明确是被 7/26 单位/时钟修复 supersede 的旧冻结身份，不能当作当前端到端 parity certificate。现有差异主要来自：不可观测 queue priority/hidden liquidity、submit/cancel/ ACK race、跨重启活动单与 campaign 状态、以及历史与 live 不同的 receive-time 路径。
+但早期 live/replay parity 记录已被后续单位与时钟修复 supersede，不能当作当前端到端 parity certificate。现有差异主要来自：不可观测 queue priority/hidden liquidity、submit/cancel/ACK race、跨重启活动单与 campaign 状态、以及历史与 live 不同的 receive-time 路径。该运营记录本身不在公共仓库分发。
 
-48h loss attribution 能定位 add campaign 是亏损集中区，但文档也正确声明它不是因果 action 证据，见 [`live_pre_restart_48h_loss_attribution_20260725.md`](families/f10_live_replay_attribution/docs/live_pre_restart_48h_loss_attribution_20260725.md)。
+私有的历史 loss-attribution 只能定位 add campaign 的亏损集中区；它不是因果 action 证据，也不授予公共部署权限。
 
 下一步应冻结一个 **修复后、同窗、完整初始状态、完整 receive/order lifecycle tape** 的新 parity identity；其通过只授予 mechanism calibration。具体 action 仍交给 F09。
 

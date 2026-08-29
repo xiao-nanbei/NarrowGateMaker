@@ -35,7 +35,7 @@ Every arm inherits the same contract. An arm that changes the model, P3, queue c
 
 ## Latency Semantics
 
-The baseline latency distribution carries an environment/version label, for example `aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718_v1`. A machine migration requires a new profile identity and a new replay contract.
+The baseline latency distribution carries an operator-defined environment/version label. A machine migration requires a new profile identity and a new replay contract; concrete host identities are private and not distributed.
 
 The stable baseline clips the frozen sample arrays at the declared quantile. Rare synthetic stalls are enabled only by `--latency-scenario stress`; stress artifacts are explicitly not promotion-eligible.
 
@@ -68,8 +68,8 @@ python3 models/campaign_outcome_replay_audit.py \
   --strict-calibration \
   --replay-purpose formal \
   --initial-state-mode fresh_start \
-  --latency-profile-id aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718_v1 \
-  --latency-environment aws_tokyo_ec2_2vcpu_4g_amazon_linux \
+  --latency-profile-id <operator-defined-profile-id> \
+  --latency-environment <operator-defined-environment-id> \
   --latency-scenario baseline \
   --rng-seed 42 \
   --latency-seed 59 \

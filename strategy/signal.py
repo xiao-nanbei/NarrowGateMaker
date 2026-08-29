@@ -46,7 +46,11 @@ from strategy.cross_venue_fair_price import (
     CrossVenueFairPriceEstimator,
     FairPriceSource,
 )
-from strategy.model_contract import REQUIRED_MODEL_HEADS, validate_model_bundle
+from strategy.model_contract import (
+    REQUIRED_MODEL_HEADS,
+    absolute_price_variance_unit_contract,
+    validate_model_bundle,
+)
 
 logger = logging.getLogger("signal")
 
@@ -567,6 +571,7 @@ class SignalEngine:
         # models
         self._models: Dict[str, object] = {}
         self._model_feature_cols: Dict[str, List[str]] = {}
+        self._model_metadata: Dict[str, dict] = {}
         if enable_ml:
             self._load_models()
 
@@ -681,7 +686,10 @@ class SignalEngine:
     def _load_models(self):
         """Load saved LightGBM models and their explicit feature schemas."""
         try:
-            metadata = validate_model_bundle(self._model_dir)
+            metadata = validate_model_bundle(
+                self._model_dir,
+                expected_symbol=self._symbol,
+            )
         except Exception as exc:
             raise RuntimeError(
                 f"ML is enabled but its runtime bundle is invalid: {exc}"
@@ -717,6 +725,7 @@ class SignalEngine:
         # memory, while startup has no old bundle and therefore fails closed.
         self._models = loaded_models
         self._model_feature_cols = loaded_feature_cols
+        self._model_metadata = metadata
 
     @staticmethod
     def _history_snapshot(features: dict) -> dict:
@@ -1574,6 +1583,33 @@ class SignalEngine:
             if not snap or not snap.bids or not snap.asks or snap.ts <= 0:
                 return float("inf")
             return max(0.0, now_ts - snap.ts / 1000.0)
+
+    def last_depth_clock_ages_s(
+        self,
+        *,
+        now_ns: Optional[int] = None,
+    ) -> tuple[float, float]:
+        """Return lightweight receive-age and source-lag clocks for quote stop.
+
+        Unlike ``quote_decision_snapshot`` this does not copy depth history, so
+        the main safety loop can enforce stale cancellation independently of
+        the slower requote schedule.
+        """
+
+        with self._lock:
+            capture_ns = int(now_ns if now_ns is not None else time.time_ns())
+            snap = self._last_depth
+            if snap is None:
+                return float("inf"), float("inf")
+            receive_ns = int(snap.receive_ts_ns)
+            exchange_ms = int(snap.ts)
+        if capture_ns <= 0 or receive_ns <= 0 or exchange_ms <= 0:
+            return float("inf"), float("inf")
+        visible_age_s = (capture_ns - receive_ns) / 1_000_000_000.0
+        source_lag_s = (receive_ns - exchange_ms * 1_000_000) / 1_000_000_000.0
+        if visible_age_s < 0.0 or source_lag_s < 0.0:
+            return float("inf"), float("inf")
+        return visible_age_s, source_lag_s
 
     def execution_depth_state(
         self,
@@ -3359,6 +3395,12 @@ class SignalEngine:
         diffs = [closes[i] - closes[i - 1] for i in range(max(1, len(closes) - 60), len(closes))]
         arr = np.array(diffs)
         return max(float(np.var(arr, ddof=1)), 1e-6)
+
+    @property
+    def variance_unit_contract(self) -> dict[str, Any]:
+        """Symbol-derived units for the one-second variance-rate producer."""
+
+        return absolute_price_variance_unit_contract(self._symbol)
 
     def causal_rolling_variance_snapshot(
         self,

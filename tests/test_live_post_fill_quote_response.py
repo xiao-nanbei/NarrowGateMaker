@@ -52,6 +52,54 @@ def test_live_q1_long_shifts_pair_without_widening() -> None:
     assert abs((ask - bid) - 2.0) < 1e-12
 
 
+def test_live_final_p3_floor_clamps_shifted_quote_and_flags_unsafe_keep() -> None:
+    engine = _engine(0.004)
+    engine._last_quote_diagnostics.update(
+        {
+            "p3_side_bbo_floor_enabled": True,
+            "p3_touch_delta_star": 0.5,
+        }
+    )
+
+    result = engine._apply_final_p3_side_bbo_floor(
+        bid_price=99.7,
+        ask_price=100.3,
+        best_bid=99.9,
+        best_ask=100.1,
+        bid_order_price=99.7,
+        ask_order_price=100.3,
+        bid_order_active=True,
+        ask_order_active=True,
+    )
+
+    assert result[:4] == (99.4, 100.60000000000001, 99.4, 100.60000000000001)
+    assert result[4:] == (True, True, True, True)
+
+
+def test_live_zero_p3_delta_is_inactive_for_existing_orders() -> None:
+    engine = _engine(0.004)
+    engine._last_quote_diagnostics.update(
+        {
+            "p3_side_bbo_floor_enabled": True,
+            "p3_touch_delta_star": 0.0,
+        }
+    )
+
+    result = engine._apply_final_p3_side_bbo_floor(
+        bid_price=99.7,
+        ask_price=100.3,
+        best_bid=99.9,
+        best_ask=100.1,
+        bid_order_price=99.7,
+        ask_order_price=100.3,
+        bid_order_active=True,
+        ask_order_active=True,
+    )
+
+    assert result[:2] == (99.7, 100.3)
+    assert result[4:] == (False, False, False, False)
+
+
 def test_live_rejects_flow_mode_without_causal_repair_bundle() -> None:
     cfg = Config()
     cfg.strategy.post_fill_quote_response_enabled = True

@@ -8,9 +8,6 @@ import json
 import math
 import os
 import stat
-import subprocess
-import sys
-import tempfile
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -33,6 +30,7 @@ except ImportError:
     from symbol_paths import model_dir as symbol_model_dir
 
 from live.config import RegimeConfig, load_config, to_backtest_params
+from strategy.quote_core import finite_positive_quote_coefficient
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     SYNC_DEGRADE_SEMANTICS,
@@ -81,20 +79,10 @@ ML_PARAM_KEYS = ("vol_blend", "skew_strength", "asym_strength", "ret_skew", "gam
 ROOT = Path(__file__).resolve().parent.parent
 PUBLIC_TEMPLATE_CONFIG = ROOT / "live" / "config.yaml"
 CURRENT_OPERATIONAL_BASELINE_POINTER = (
-    ROOT
-    / "research"
-    / "families"
-    / "f10_live_replay_attribution"
-    / "docs"
-    / "operational_baseline_current.json"
+    ROOT / "docs" / "private" / "operational_baseline.current.local.json"
 )
 CURRENT_BACKTEST_MECHANICS_POINTER = (
-    ROOT
-    / "research"
-    / "families"
-    / "f10_live_replay_attribution"
-    / "docs"
-    / "operational_backtest_mechanics_current.json"
+    ROOT / "docs" / "private" / "backtest_mechanics.current.local.json"
 )
 DEFAULT_LIQ_BASELINE = RegimeConfig().liq_baseline
 OPERATIONAL_BASELINE_POINTER_SCHEMAS = frozenset(
@@ -473,12 +461,7 @@ def load_operational_baseline_binding(
         else (
             CURRENT_OPERATIONAL_BASELINE_POINTER
             if root == ROOT
-            else root
-            / "research"
-            / "families"
-            / "f10_live_replay_attribution"
-            / "docs"
-            / "operational_baseline_current.json"
+            else root / "docs" / "private" / "operational_baseline.current.local.json"
         )
     )
     try:
@@ -544,8 +527,6 @@ def load_operational_baseline_binding(
         if (
             governance_permissions.get("governance_locator_publication_authorized") is not True
             or governance_permissions.get("baseline_promotion_authorized") is not False
-            or governance_permissions.get("current_live_authority_granted_by_this_identity")
-            is not False
         ):
             raise RuntimeError("Operational locator governance permissions drifted")
     elif not bool(governance_permissions.get("baseline_promotion_authorized", False)):
@@ -566,29 +547,11 @@ def load_operational_baseline_binding(
         identity_backtest = governance_identity.get("backtest_default") or {}
         identity_predecessor = governance_identity.get("predecessor") or {}
         identity_top_config = governance_identity.get("config") or {}
-        identity_projection_retirement = governance_identity.get("projection_retirement") or {}
         if (
-            set(current_live)
-            != {
-                "authority",
-                "remote_pointer",
-                "config_locator",
-                "config_sha256",
-                "runtime_commit",
-                "runtime_tree",
-                "runtime_annotated_tag_object",
-                "release_file_sha256",
-                "release_canonical_sha256",
-                "activation_receipt_file_sha256",
-                "activation_receipt_canonical_sha256",
-                "no_shadow",
-                "latest_live_status_authority",
-                "nonbaseline_action_occurrence_proven",
-                "economic_effect_proven",
-                "economic_outcomes_read",
-                "economic_values_persisted",
-                "backtest_economic_authority",
-            }
+            not isinstance(current_live, Mapping)
+            or dict(current_live) != {"availability": "private_not_distributed"}
+            or not isinstance(identity_current_live, Mapping)
+            or dict(identity_current_live) != {"availability": "private_not_distributed"}
             or set(backtest_default)
             != {
                 "baseline_id",
@@ -604,28 +567,6 @@ def load_operational_baseline_binding(
                 "replay_baseline_path",
                 "replay_baseline_sha256",
                 "replay_ber_clock_semantics",
-            }
-            or set(identity_current_live)
-            != {
-                "authority_resolution",
-                "remote_pointer",
-                "config",
-                "runtime",
-                "release",
-                "activation_receipt",
-                "buy_e3_enabled",
-                "sell_owner_policy_enabled",
-                "external_venues_enabled",
-                "global_flow_shadow_enabled",
-                "global_reference_shadow_enabled",
-                "runtime_shadow_classification",
-                "lifecycle_admission_direct_pid_binding",
-                "post_lifecycle_capture_is_latest_live_status",
-                "economic_outcomes_read",
-                "economic_values_persisted",
-                "nonbaseline_action_occurrence_proven",
-                "economic_effect_proven",
-                "private_release_and_evidence_chain_remain_authority",
             }
             or set(identity_backtest)
             != {
@@ -644,23 +585,8 @@ def load_operational_baseline_binding(
                 "current_live_evidence_is_backtest_economic_authority",
                 "historical_v12_economic_evidence_reinterpreted",
             }
-            or set(governance_permissions)
-            != {
-                "operational_baseline_active",
-                "governance_locator_publication_authorized",
-                "baseline_promotion_authorized",
-                "backtest_default_control_authorized",
-                "current_live_authority_granted_by_this_identity",
-                "private_release_authority_required",
-                "research_prediction_authority",
-                "research_live_authority",
-                "research_action_experiment_authorized",
-                "buy_e3_backtest_economic_authority",
-                "buy_e3_nonbaseline_action_occurrence_authority",
-                "historical_v12_backtest_control_rewritten",
-            }
         ):
-            raise RuntimeError("Operational v13 authority field sets drifted")
+            raise RuntimeError("Private deployment boundary field sets drifted")
         if (
             set(payload)
             != {
@@ -685,7 +611,6 @@ def load_operational_baseline_binding(
                 "operational_status",
                 "promotion_class",
                 "predecessor",
-                "projection_retirement",
                 "current_live",
                 "backtest_default",
                 "config",
@@ -694,138 +619,32 @@ def load_operational_baseline_binding(
                 "permissions",
             }
             or governance_identity.get("schema_version")
-            != "narrowgate_operational_baseline_identity.v13"
+            != "narrowgate_operational_baseline_identity.private_boundary.v1"
             or governance_identity.get("operational_status")
-            != "active_split_live_and_backtest_authority_locator"
+            != "private_deployment_not_distributed"
             or governance_identity.get("promotion_class")
-            != "governance_locator_reconciliation_no_new_strategy_or_economic_authority"
+            != "public_backtest_locator_no_live_or_economic_authority"
             or payload.get("backtest_default_control_scope")
-            != "immutable_v12_control_until_exact_buy_e3_replay_baseline_exists"
+            != "immutable_backtest_control"
             or payload.get("historical_v12_identity_modified") is not False
             or governance_identity.get("effective_at_utc") != payload.get("updated_at_utc")
-            or identity_projection_retirement
+            or governance_permissions.get("operational_baseline_active") is not True
+            or governance_permissions.get("governance_locator_publication_authorized") is not True
+            or governance_permissions.get("baseline_promotion_authorized") is not False
+            or governance_permissions.get("backtest_default_control_authorized") is not True
+            or governance_permissions.get("private_release_authority_required") is not True
+            or set(governance_permissions)
             != {
-                "predecessor_mutable_pointer_public_sha256": (
-                    "fd987497ff26ee7f58108cb28254da81e6569ce0d645d9e7d41e579b06b079dc"
-                ),
-                "predecessor_mutable_pointer_private_source_sha256": (
-                    "f64634dc6b8059c9c3b1875d31820a27e1a3cd31460ffec2b83ce0f53634631f"
-                ),
-                "predecessor_private_source_availability": "private_not_distributed",
-                "predecessor_private_source_rewritten": False,
-                "successor_pointer_materialization": (
-                    "ordinary_safe_public_json_no_private_source_identity_claim"
-                ),
-            }
-            or governance_permissions
-            != {
-                "operational_baseline_active": True,
-                "governance_locator_publication_authorized": True,
-                "baseline_promotion_authorized": False,
-                "backtest_default_control_authorized": True,
-                "current_live_authority_granted_by_this_identity": False,
-                "private_release_authority_required": True,
-                "research_prediction_authority": False,
-                "research_live_authority": False,
-                "research_action_experiment_authorized": False,
-                "buy_e3_backtest_economic_authority": False,
-                "buy_e3_nonbaseline_action_occurrence_authority": False,
-                "historical_v12_backtest_control_rewritten": False,
+                "operational_baseline_active",
+                "governance_locator_publication_authorized",
+                "baseline_promotion_authorized",
+                "backtest_default_control_authorized",
+                "private_release_authority_required",
             }
         ):
-            raise RuntimeError("Operational v13 governance envelope drifted")
-        identity_live_config = identity_current_live.get("config") or {}
-        identity_live_runtime = identity_current_live.get("runtime") or {}
-        identity_live_release = identity_current_live.get("release") or {}
-        identity_live_activation = identity_current_live.get("activation_receipt") or {}
-        expected_current_live_keys = {
-            "authority",
-            "remote_pointer",
-            "config_locator",
-            "config_sha256",
-            "runtime_commit",
-            "runtime_tree",
-            "runtime_annotated_tag_object",
-            "release_file_sha256",
-            "release_canonical_sha256",
-            "activation_receipt_file_sha256",
-            "activation_receipt_canonical_sha256",
-            "no_shadow",
-            "latest_live_status_authority",
-            "nonbaseline_action_occurrence_proven",
-            "economic_effect_proven",
-            "economic_outcomes_read",
-            "economic_values_persisted",
-            "backtest_economic_authority",
-        }
-        expected_current_live = {
-            "authority": "private_current_remote_pointer_and_stable_live_config_alias",
-            "remote_pointer": identity_current_live.get("remote_pointer"),
-            "config_locator": identity_live_config.get("locator"),
-            "config_sha256": identity_live_config.get("sha256"),
-            "runtime_commit": identity_live_runtime.get("commit"),
-            "runtime_tree": identity_live_runtime.get("tree"),
-            "runtime_annotated_tag_object": identity_live_runtime.get("annotated_tag_object"),
-            "release_file_sha256": identity_live_release.get("file_sha256"),
-            "release_canonical_sha256": identity_live_release.get("canonical_sha256"),
-            "activation_receipt_file_sha256": identity_live_activation.get("file_sha256"),
-            "activation_receipt_canonical_sha256": identity_live_activation.get("canonical_sha256"),
-            "no_shadow": True,
-            "latest_live_status_authority": False,
-            "nonbaseline_action_occurrence_proven": False,
-            "economic_effect_proven": False,
-            "economic_outcomes_read": False,
-            "economic_values_persisted": False,
-            "backtest_economic_authority": False,
-        }
+            raise RuntimeError("Private deployment governance envelope drifted")
         if (
             payload.get("no_cross_layer_substitution") is not True
-            or not isinstance(current_live, Mapping)
-            or set(current_live) != expected_current_live_keys
-            or dict(current_live) != expected_current_live
-            or set(identity_live_config) != {"identity", "locator", "sha256", "availability"}
-            or identity_live_config.get("identity")
-            != "owner_buy_e3_no_shadow_release_v3_active_config"
-            or identity_live_config.get("availability") != "private_not_distributed"
-            or set(identity_live_runtime)
-            != {"identity", "commit", "tree", "annotated_tag_object", "availability"}
-            or identity_live_runtime.get("identity") != "f05_owner_buy_e3_no_shadow_runtime_v3"
-            or identity_live_runtime.get("availability") != "private_release_bundle_not_distributed"
-            or set(identity_live_release)
-            != {"identity", "status", "file_sha256", "canonical_sha256", "availability"}
-            or identity_live_release.get("identity") != "f05_owner_buy_e3_direct_active_release_v3"
-            or identity_live_release.get("status") != "owner_active_release_v3_no_shadow"
-            or identity_live_release.get("availability") != "private_not_distributed"
-            or set(identity_live_activation)
-            != {
-                "identity",
-                "file_sha256",
-                "canonical_sha256",
-                "availability",
-                "rewritten_by_v13",
-            }
-            or identity_live_activation.get("identity")
-            != ("repository-live-replacement-activation-aws-tokyo-buy-e3-no-shadow-v6-20260824-v1")
-            or identity_live_activation.get("availability") != "private_not_distributed"
-            or identity_live_activation.get("rewritten_by_v13") is not False
-            or identity_current_live.get("authority_resolution")
-            != "private_current_remote_pointer_then_stable_live_config_alias"
-            or identity_current_live.get("buy_e3_enabled") is not True
-            or identity_current_live.get("sell_owner_policy_enabled") is not True
-            or identity_current_live.get("external_venues_enabled") is not False
-            or identity_current_live.get("global_flow_shadow_enabled") is not False
-            or identity_current_live.get("global_reference_shadow_enabled") is not False
-            or identity_current_live.get("runtime_shadow_classification")
-            != "fully_no_shadow_release_v3"
-            or identity_current_live.get("lifecycle_admission_direct_pid_binding") is not False
-            or identity_current_live.get("post_lifecycle_capture_is_latest_live_status")
-            is not False
-            or identity_current_live.get("economic_outcomes_read") is not False
-            or identity_current_live.get("economic_values_persisted") is not False
-            or identity_current_live.get("nonbaseline_action_occurrence_proven") is not False
-            or identity_current_live.get("economic_effect_proven") is not False
-            or identity_current_live.get("private_release_and_evidence_chain_remain_authority")
-            is not True
             or identity_predecessor
             != {
                 "baseline_id": backtest_default.get("baseline_id"),
@@ -841,7 +660,7 @@ def load_operational_baseline_binding(
                 "sha256": backtest_default.get("config_sha256"),
             }
             or identity_backtest.get("status")
-            != "immutable_v12_control_retained_until_exact_e3_replay_baseline_exists"
+            != "immutable_backtest_default_control"
             or identity_backtest.get("identity") != backtest_default.get("identity_path")
             or identity_backtest.get("identity_sha256") != backtest_default.get("identity_sha256")
             or backtest_default.get("config_sha256") != identity_backtest.get("config_sha256")
@@ -1187,12 +1006,7 @@ def operational_baseline_config_candidates(
         else (
             CURRENT_OPERATIONAL_BASELINE_POINTER
             if root == ROOT
-            else root
-            / "research"
-            / "families"
-            / "f10_live_replay_attribution"
-            / "docs"
-            / "operational_baseline_current.json"
+            else root / "docs" / "private" / "operational_baseline.current.local.json"
         )
     )
     try:
@@ -1282,12 +1096,23 @@ def build_backtest_base_params(
     # 这里是“把 live config 映射到 replay 参数”的唯一共享入口。
     # 新增 live guard/policy 参数时要先进这里，再分别做 Python/C++ parity。
     params = {
-        "gamma": live_params["gamma"],
+        "gamma": finite_positive_quote_coefficient("gamma", live_params["gamma"]),
+        "quote_math_mode": str(live_params.get("quote_math_mode", "legacy_v0")),
+        "inventory_reference_qty": finite_positive_quote_coefficient(
+            "inventory_reference_qty",
+            live_params.get("inventory_reference_qty", 1.0),
+        ),
         "kappa": live_params["kappa"],
         "order_size": live_params["order_size"],
         "max_inventory": live_params["max_inventory"],
         "requote_interval": live_params.get("requote_interval", 10.0),
         "quote_horizon_s": live_params.get("quote_horizon_s", 1.0),
+        "historical_p3_scalar_adapter_enabled": bool(
+            live_params.get("historical_p3_scalar_adapter_enabled", True)
+        ),
+        "p3_side_bbo_floor_enabled": bool(
+            live_params.get("p3_side_bbo_floor_enabled", False)
+        ),
         "maker_fee": live_params["maker_fee"],
         "ml_enabled": bool(live_params.get("ml_enabled", True)),
         "model_dir": live_params.get("model_dir", ""),
@@ -1301,6 +1126,12 @@ def build_backtest_base_params(
         "gamma_scale_min": live_params.get("gamma_scale_min", 0.5),
         "gamma_scale_max": live_params.get("gamma_scale_max", 2.0),
         "ret_skew": live_params.get("ret_skew", 0.0),
+        "f03_ret_action_horizon_s": live_params.get(
+            "f03_ret_action_horizon_s", 0.0
+        ),
+        "f03_ret_action_compatible": bool(
+            live_params.get("f03_ret_action_compatible", False)
+        ),
         "taker_fee": live_params.get("taker_fee", 0.0004),
         "max_spread_bps": live_params.get("max_spread_bps", 0.0),
         "replace_min_price_change_ticks": live_params.get("replace_min_price_change_ticks", 0.0),
@@ -1555,6 +1386,18 @@ def build_backtest_base_params(
             "dynamic_fill_hazard_action_policy_sha256", ""
         ),
     }
+    for name in (
+        "eta_inventory",
+        "a_spread",
+        "risk_per_order",
+        "execution_intensity_slope",
+        "risk_horizon_s",
+        "trade_intensity_acceleration_spread_mult",
+        "cara_risk_aversion",
+    ):
+        raw_value = live_params.get(name)
+        if raw_value is not None:
+            params[name] = finite_positive_quote_coefficient(name, raw_value)
     if queue_calibration is not None:
         # queue calibration 是机制对齐工具，不是 alpha；正式 OOS 评估必须用 fit 以外日期验证。
         params["_queue_calibration"] = queue_calibration
@@ -1608,8 +1451,12 @@ def add_fill_probability_params(
     params["fill_probability_model_type"] = ""
     params["fill_probability_event_type"] = ""
     params["fill_probability_horizon_s"] = 0.0
+    params["fill_probability_distance_origin"] = ""
     params["fill_probability_distance_unit"] = ""
+    params["fill_probability_side"] = ""
+    params["fill_probability_queue_included"] = None
     params["fill_probability_artifact_sha256"] = ""
+    params["p3_identity_required"] = bool(strict)
     try:
         try:
             from research.families.f02_empirical_p3_touch.fill_probability import (
@@ -1625,7 +1472,10 @@ def add_fill_probability_params(
             else {
                 "event_type": "",
                 "horizon_s": 0.0,
+                "distance_origin": "",
                 "distance_unit": "",
+                "side": "",
+                "queue_included": None,
                 "artifact_sha256": "",
             }
         )
@@ -1640,7 +1490,14 @@ def add_fill_probability_params(
         params["fill_probability_model_type"] = str(fill_model.model_type)
         params["fill_probability_event_type"] = str(p3_identity["event_type"])
         params["fill_probability_horizon_s"] = float(p3_identity["horizon_s"])
+        params["fill_probability_distance_origin"] = str(
+            p3_identity["distance_origin"]
+        )
         params["fill_probability_distance_unit"] = str(p3_identity["distance_unit"])
+        params["fill_probability_side"] = str(p3_identity["side"])
+        params["fill_probability_queue_included"] = bool(
+            p3_identity["queue_included"]
+        )
         params["fill_probability_artifact_sha256"] = str(p3_identity["artifact_sha256"])
         print(
             f"  {label}: delta_star={params['p3_delta_star']:.4f}, "
@@ -1744,6 +1601,15 @@ def validate_formal_replay_calibration(
         errors.append("formal replay requires P3 horizon_s=10")
     if params.get("fill_probability_distance_unit") != "USDC_per_BTC":
         errors.append("formal replay requires P3 distance_unit=USDC_per_BTC")
+    if (
+        params.get("fill_probability_distance_origin")
+        != "same_side_best_bid_or_ask_at_window_start"
+    ):
+        errors.append("formal replay requires the same-side-BBO origin")
+    if params.get("fill_probability_side") != "pooled_buy_sell":
+        errors.append("formal replay requires pooled BUY/SELL identity")
+    if params.get("fill_probability_queue_included") is not False:
+        errors.append("formal replay requires queue_included=false")
     p3_sha256 = str(params.get("fill_probability_artifact_sha256", "") or "")
     if len(p3_sha256) != 64 or any(ch not in "0123456789abcdef" for ch in p3_sha256):
         errors.append("formal replay requires the exact P3 artifact SHA256")
@@ -1873,351 +1739,9 @@ def validate_formal_replay_calibration(
     return params
 
 
-def _current_backtest_mechanics_pointer() -> dict[str, Any]:
-    document, _raw, _metadata, _path = _secure_json_authority(
-        CURRENT_BACKTEST_MECHANICS_POINTER,
-        allowed_modes=PUBLIC_AUTHORITY_MODES,
-    )
-    canonical_field = "canonical_backtest_mechanics_pointer_sha256"
-    body = dict(document)
-    observed_canonical = str(body.pop(canonical_field, ""))
-    computed_canonical = hashlib.sha256(
-        json.dumps(
-            body,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-    ).hexdigest()
-    if observed_canonical != computed_canonical:
-        raise RuntimeError("Current backtest mechanics pointer canonical identity drifted")
-    contract_file_sha256 = str(body.pop("mechanics_contract_file_sha256", ""))
-    if len(contract_file_sha256) != 64 or any(
-        character not in "0123456789abcdef" for character in contract_file_sha256
-    ):
-        raise RuntimeError("Current backtest mechanics contract SHA256 is malformed")
-    expected = {
-        "schema_version": "narrowgate_operational_backtest_mechanics_pointer.v2",
-        "status": "current_default_private_exact_buy_e3_mechanics_safety_successor",
-        "effective_at_utc": "2026-08-25T03:45:34Z",
-        "mechanics_identity": (
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-            "backtest_mechanics_safety_successor_v1"
-        ),
-        "mechanics_contract_path": (
-            "research/families/f05_fill_quality_quote_ev/docs/"
-            "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-            "backtest_mechanics_safety_successor_v1_20260825.json"
-        ),
-        "predecessor_mechanics_contract": {
-            "identity": (
-                "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-                "backtest_mechanics_baseline_v1"
-            ),
-            "repository_relative_path": (
-                "research/families/f05_fill_quality_quote_ev/docs/"
-                "causal_multichannel_window_boolean_cooldown_owner_buy_e3_"
-                "backtest_mechanics_baseline_v1_20260825.json"
-            ),
-            "file_sha256": (
-                "36daa37cd381448a6e306847150e4c76579f0f8653ca0c15491f399086c90699"
-            ),
-            "canonical_sha256": (
-                "c2f680c79ca2946c66a5f6d6732792fb7b61c4285630e7a951944dfeac9bc968"
-            ),
-            "annotated_tag": (
-                "f05-owner-buy-e3-backtest-mechanics-source-v1-final-20260825"
-            ),
-            "annotated_tag_object": "6180725e03e38a8580ce86f14959acf0946d8b90",
-            "private_bundle_relative_identity": (
-                "direct_no_shadow_live_evidence_v6_20260824/"
-                "backtest_mechanics_default_v1"
-            ),
-            "historical_contract_modified": False,
-            "historical_private_bundle_modified": False,
-            "historical_annotated_tag_modified": False,
-        },
-        "predecessor_v13_identity_path": (
-            "research/families/f10_live_replay_attribution/docs/"
-            "operational_baseline_identity_20260825_v13.json"
-        ),
-        "predecessor_v13_identity_file_sha256": (
-            "1767d53713f2f02fe49b93e0f37d9a65b46ea4c470cf35f0417646f1e9281079"
-        ),
-        "private_bundle_availability": "private_not_distributed",
-        "private_bundle_relative_identity": (
-            "mechanics_safety_successor_v1_20260825/backtest_mechanics_default_v1"
-        ),
-        "cold_publisher_annotated_tag": (
-            "f05-owner-buy-e3-backtest-mechanics-safety-successor-v1-final-20260825"
-        ),
-        "default_arm": {
-            "target_side": "BUY",
-            "buy_policy": "exact_owner_E3",
-            "sell_delegation": "exact_owner_B0",
-            "formal_e3_mechanics_panel_day_count": 30,
-            "reduced_support": True,
-        },
-        "v12_50_day_economic_comparator_retained": True,
-        "v12_50_day_economic_results_status": (
-            "historical_comparator_stale_under_current_safety_mechanics"
-        ),
-        "material_mechanics_config_delta": {
-            "source_config_path": "strategy.spread_cap_mode",
-            "final_replay_abi_path": "spread_cap_mode",
-            "predecessor_effective_default": "compress",
-            "successor_cold_default": "pause_exposure",
-            "explicit_research_arm": "compress",
-            "explicit_research_arm_can_override_cold_default": False,
-            "active_source_config_bytes_modified": False,
-        },
-        "mechanics_safety_semantics": {
-            "spread_cap": (
-                "pause_exposure_is_the_safe_default;_compress_is_an_explicit_research_arm_only"
-            ),
-            "exposure_role": (
-                "exact_close_and_partial_reduce_are_reducing;_only_cross_zero_residual_is_increasing"
-            ),
-            "order_ledger": (
-                "finite_nonnegative_bounded_monotone_cumulative_fills;_exact_trade_and_order_"
-                "identity;_terminal_corrections_fail_closed"
-            ),
-            "campaign_flip": (
-                "zero_crossing_closes_the_old_campaign_and_opens_a_new_opposite_side_campaign"
-            ),
-            "commission": (
-                "signed_commission_and_rebates_are_preserved_and_split_by_economic_leg"
-            ),
-            "same_timestamp_fill_order": (
-                "preserve_source_exchange_sequence;_never_reorder_equal_timestamp_fills_"
-                "by_order_id"
-            ),
-            "cooldown_checkpoint": (
-                "full_cooldown_v2_snapshot_is_required;_legacy_partial_state_fails_closed"
-            ),
-            "live_liveness": (
-                "websocket_and_main_loop_fail_closed;_fatal_runtime_errors_propagate_and_"
-                "network_calls_are_bounded"
-            ),
-            "economic_status": (
-                "predecessor_v12_50_day_results_are_historical_stale_comparator_only"
-            ),
-        },
-        "permissions": {
-            "backtest_mechanics_available": True,
-            "backtest_default_arm_resolution_authorized": True,
-            "economic_authority": False,
-            "research_authority": False,
-            "action_authority": False,
-            "live_authority": False,
-            "nonbaseline_occurrence_authority": False,
-            "promotion_authority": False,
-            "validation_read": False,
-            "sealed_holdout_read": False,
-            "economic_values_read": False,
-            "economic_values_exposed": False,
-            "hypothetical_live_scoring": False,
-            "shadow_or_companion_authority": False,
-        },
-    }
-    if body != expected:
-        raise RuntimeError("Current backtest mechanics pointer fields drifted")
-    return document
-
-
-def load_default_tick_mechanics_baseline() -> Any:
-    """Resolve the current BUY-E3 mechanics safety successor without fallback."""
-
-    pointer = _current_backtest_mechanics_pointer()
-    durable_raw = os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "").strip()
-    metadata_raw = os.environ.get("NARROWGATE_METADATA_REPOSITORY_ROOT", "").strip()
-    if not durable_raw or not metadata_raw:
-        raise RuntimeError(
-            "Current backtest mechanics default is private_not_distributed; "
-            "NARROWGATE_PRIVATE_EVIDENCE_ROOT and "
-            "NARROWGATE_METADATA_REPOSITORY_ROOT are required"
-        )
-    from research.families.f05_fill_quality_quote_ev.audit import (
-        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
-    )
-
-    if pointer["mechanics_contract_file_sha256"] != (
-        mechanics.SAFETY_SUCCESSOR_PUBLIC_CONTRACT_FILE_SHA256
-    ):
-        raise RuntimeError("Current backtest mechanics contract identity drifted")
-
-    contract_path = ROOT / str(pointer["mechanics_contract_path"])
-    predecessor_path = ROOT / str(pointer["predecessor_v13_identity_path"])
-    try:
-        return mechanics.load_published_owner_buy_e3_default(
-            runtime_repository_root=ROOT,
-            durable_evidence_root=Path(durable_raw),
-            metadata_repository_root=Path(metadata_raw),
-            predecessor_v13_identity_path=predecessor_path,
-            public_contract_path=contract_path,
-            cold_repository_root=ROOT,
-        )
-    except mechanics.OwnerBuyE3MechanicsBaselineError as exc:
-        raise RuntimeError("Current BUY-E3 mechanics default is unavailable") from exc
-
-
-def resolve_owner_tick_mechanics_overlay_in_process(
-    request: Any,
-    replay: Any,
-    *,
-    utc_day: str,
-) -> DefaultTickMechanicsResolution:
-    """Construct an overlay inside an already verified owner cold process.
-
-    This factory helper intentionally does not claim formal default-execution
-    authority. External default consumers must use the day-only isolated
-    runner below so caller-controlled executable objects never cross the
-    process boundary.
-    """
-
-    loaded = load_default_tick_mechanics_baseline()
-    try:
-        overlay = loaded.build_day_overlay(request, replay, utc_day=utc_day)
-    except BaseException:
-        loaded.close()
-        raise
-    return DefaultTickMechanicsResolution(baseline=loaded, overlay=overlay)
-
-
-def run_default_tick_mechanics_day(*, utc_day: str) -> Mapping[str, Any]:
-    """Run one formal current-default day in the exact isolated tagged CLI.
-
-    The public programmatic boundary accepts only a UTC day string. Request,
-    replay, evaluator, and emitter objects are rebuilt from frozen inputs
-    inside the child; no pickle or caller-provided executable object crosses
-    the process boundary.
-    """
-
-    _current_backtest_mechanics_pointer()
-    durable_raw = os.environ.get("NARROWGATE_PRIVATE_EVIDENCE_ROOT", "").strip()
-    metadata_raw = os.environ.get("NARROWGATE_METADATA_REPOSITORY_ROOT", "").strip()
-    if not durable_raw or not metadata_raw:
-        raise RuntimeError(
-            "Current backtest mechanics default is private_not_distributed; "
-            "NARROWGATE_PRIVATE_EVIDENCE_ROOT and "
-            "NARROWGATE_METADATA_REPOSITORY_ROOT are required"
-        )
-    from research.families.f05_fill_quality_quote_ev.audit import (
-        causal_multichannel_window_boolean_cooldown_owner_buy_e3_backtest_mechanics_baseline_v1 as mechanics,
-    )
-
-    normalized_day = str(utc_day)
-    if normalized_day not in mechanics.FORMAL_E3_MECHANICS_DAYS:
-        raise RuntimeError("Current default day is outside the reduced-support E3 panel")
-    before = mechanics.capture_cold_publisher(
-        ROOT,
-        annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
-    )
-    environment = {
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONUNBUFFERED": "1",
-        "NARROWGATE_PRIVATE_EVIDENCE_ROOT": durable_raw,
-        "NARROWGATE_METADATA_REPOSITORY_ROOT": metadata_raw,
-        "NARROWGATE_E3_DEFAULT_COLD_CHILD": "1",
-        "GIT_NO_REPLACE_OBJECTS": "1",
-        "GIT_OPTIONAL_LOCKS": "0",
-    }
-    for name in (
-        "NARROWGATE_MARKETDATA_ROOT",
-        "NARROWGATE_DATA_ROOT",
-        "NARROWGATE_CACHE_ROOT",
-        "NARROWGATE_REPLAY_DAG_CACHE_DIR",
-        "NARROWGATE_STORAGE_ROOT",
-        "NARROWGATE_EPHEMERAL_ROOT",
-        "TMPDIR",
-    ):
-        value = str(os.environ.get(name, "") or "").strip()
-        if value:
-            environment[name] = value
-    bootstrap = (
-        "import runpy,sys;"
-        "sys.path.insert(0,sys.argv[1]);"
-        "script=sys.argv[1]+'/models/backtest_tick.py';"
-        "sys.argv=[script,*sys.argv[2:]];"
-        "runpy.run_path(script,run_name='__main__')"
-    )
-    with tempfile.TemporaryDirectory(prefix="narrowgate-e3-programmatic-pycache-") as cache:
-        Path(cache).chmod(0o700)
-        try:
-            completed = subprocess.run(
-                (
-                    sys.executable,
-                    "-I",
-                    "-B",
-                    "-X",
-                    f"pycache_prefix={cache}",
-                    "-c",
-                    bootstrap,
-                    str(ROOT),
-                    "--day",
-                    normalized_day,
-                ),
-                cwd=ROOT,
-                env=environment,
-                check=True,
-                capture_output=True,
-            )
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise RuntimeError(
-                "Current BUY-E3 mechanics default failed in the isolated tagged runner"
-            ) from exc
-    after = mechanics.capture_cold_publisher(
-        ROOT,
-        annotated_tag=mechanics.SAFETY_SUCCESSOR_COLD_PUBLISHER_TAG,
-    )
-    if after != before:
-        raise RuntimeError("Tagged default mechanics source changed across execution")
-    payload = _strict_json_snapshot(
-        completed.stdout,
-        Path("isolated-current-default-mechanics-result.json"),
-    )
-    receipt = payload.get("mechanics_receipt")
-    policy_audit = payload.get("policy_audit")
-    emitter_audit = payload.get("emitter_audit")
-    authorities = payload.get("authorities")
-
-    def positive_count(audit: Mapping[str, Any], name: str) -> bool:
-        value = audit.get(name)
-        return type(value) is int and value > 0
-
-    if (
-        set(payload)
-        != {
-            "status",
-            "utc_day",
-            "mechanics_receipt",
-            "policy_audit",
-            "emitter_audit",
-            "authorities",
-        }
-        or payload.get("status") != "current_default_buy_e3_mechanics_day_complete"
-        or payload.get("utc_day") != normalized_day
-        or not isinstance(receipt, Mapping)
-        or receipt.get("identity") != mechanics.IDENTITY
-        or receipt.get("utc_day") != normalized_day
-        or receipt.get("sell_delegates_exact_b0") is not True
-        or receipt.get("d_plus_1_exact_b0_washout") is not True
-        or not isinstance(policy_audit, Mapping)
-        or not positive_count(policy_audit, "target_side_evaluations")
-        or not positive_count(policy_audit, "b0_delegated_evaluations")
-        or not positive_count(policy_audit, "d_plus_1_exact_b0_fallback_count")
-        or not isinstance(emitter_audit, Mapping)
-        or not positive_count(emitter_audit, "snapshots_emitted")
-        or authorities != mechanics.PERMISSIONS
-    ):
-        raise RuntimeError("Isolated default mechanics execution receipt drifted")
-    result = dict(payload)
-    result["_default_mechanics_isolated_execution"] = {
-        "fresh_isolated_subprocess": True,
-        "cold_publisher": dict(after),
-    }
-    return result
+def _private_mechanics_boundary_marker() -> None:
+    """Owner mechanics resolvers are distributed only with the private repository."""
+    return None
 
 
 def load_tick_base_params(
@@ -2348,17 +1872,14 @@ def load_tick_base_params(
     model_path = model_dir_for_artifacts / "fill_prob_params.json"
     if include_fill_probability:
         add_fill_probability_params(params, model_path=model_path, strict=strict_calibration)
-        p3_kappa_eff_override = max(0.0, float(params.get("p3_kappa_eff_override", 0.0) or 0.0))
-        if strict_calibration and p3_kappa_eff_override > 0.0:
-            params["p3_kappa_eff_override_ignored"] = p3_kappa_eff_override
-            params["p3_kappa_eff_override"] = 0.0
-            print(
-                "  P3: strict calibration ignores config override "
-                f"{p3_kappa_eff_override:.4f}; using empirical artifact"
+        p3_kappa_eff_override = float(
+            params.get("p3_kappa_eff_override", 0.0) or 0.0
+        )
+        if not math.isfinite(p3_kappa_eff_override) or p3_kappa_eff_override != 0.0:
+            raise ValueError(
+                "nonzero p3_kappa_eff_override cannot inherit the empirical "
+                "touch artifact identity"
             )
-        elif p3_kappa_eff_override > 0.0:
-            params["p3_kappa_eff"] = p3_kappa_eff_override
-            print(f"  P3: kappa_eff override={p3_kappa_eff_override:.4f}")
     if include_queue_calibration and resolved_symbol:
         add_queue_calibration_params(
             params,

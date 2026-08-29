@@ -1,0 +1,284 @@
+{
+  "accounting": {
+    "campaign_value_additivity_error_usdc": "0.00000000",
+    "campaigns_closed": 1,
+    "continuous_pnl_usdc": "0.00200000",
+    "contract_version": "continuous_accounting_contract.v2",
+    "state_contract_version": "continuous_replay_state.v2"
+  },
+  "campaign": {
+    "closed": [
+      {
+        "campaign_id": "synthetic-campaign-001",
+        "end_ts_ms": 1767225608000,
+        "peak_abs_inventory_btc": "0.01000000",
+        "side": "LONG",
+        "start_ts_ms": 1767225604000,
+        "terminal_value_usdc": "0.00200000"
+      }
+    ],
+    "closed_count": 1,
+    "open_at_terminal": false,
+    "terminal_value_usdc": "0.00200000"
+  },
+  "campaign_terminal_value_usdc": "0.00200000",
+  "canonical_summary_sha256": "1b89a0d5aa584cd2750cc405def20f9be593a8228a52c6a8281e0a15cce5f340",
+  "classification": {
+    "classification": "synthetic_non_economic",
+    "economic_authority": "none",
+    "purpose": "public_mechanics_demonstration_only",
+    "source": "hand_authored_public_fixture"
+  },
+  "denominators": {
+    "campaigns": {
+      "closed": 1,
+      "open_at_terminal": 0,
+      "opened": 1
+    },
+    "events": {
+      "book": 3,
+      "mark": 1,
+      "market": 9,
+      "order_lifecycle": 4,
+      "tape_records": 14,
+      "trade": 5
+    },
+    "fill_opportunities": {
+      "eligible": 4,
+      "fill_events": 3,
+      "filled_quantity_btc": "0.02000000",
+      "with_fill": 3,
+      "without_fill": 1
+    },
+    "orders": {
+      "active_at_terminal": 0,
+      "canceled": 1,
+      "canceled_unfilled": 1,
+      "fill_eligible": 3,
+      "filled": 2,
+      "submitted": 3,
+      "terminal": 3,
+      "with_trade_opportunity": 2
+    }
+  },
+  "frozen_generated_at_utc": "2026-08-23T00:00:00Z",
+  "gate": {
+    "checks": [
+      {
+        "check": "tape_sha256_matches_contract",
+        "expected": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125",
+        "observed": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125",
+        "passed": true
+      },
+      {
+        "check": "denominators_match_contract",
+        "expected": {
+          "campaigns": {
+            "closed": 1,
+            "open_at_terminal": 0,
+            "opened": 1
+          },
+          "events": {
+            "book": 3,
+            "mark": 1,
+            "market": 9,
+            "order_lifecycle": 4,
+            "tape_records": 14,
+            "trade": 5
+          },
+          "fill_opportunities": {
+            "eligible": 4,
+            "fill_events": 3,
+            "filled_quantity_btc": "0.02000000",
+            "with_fill": 3,
+            "without_fill": 1
+          },
+          "orders": {
+            "active_at_terminal": 0,
+            "canceled": 1,
+            "canceled_unfilled": 1,
+            "fill_eligible": 3,
+            "filled": 2,
+            "submitted": 3,
+            "terminal": 3,
+            "with_trade_opportunity": 2
+          }
+        },
+        "observed": {
+          "campaigns": {
+            "closed": 1,
+            "open_at_terminal": 0,
+            "opened": 1
+          },
+          "events": {
+            "book": 3,
+            "mark": 1,
+            "market": 9,
+            "order_lifecycle": 4,
+            "tape_records": 14,
+            "trade": 5
+          },
+          "fill_opportunities": {
+            "eligible": 4,
+            "fill_events": 3,
+            "filled_quantity_btc": "0.02000000",
+            "with_fill": 3,
+            "without_fill": 1
+          },
+          "orders": {
+            "active_at_terminal": 0,
+            "canceled": 1,
+            "canceled_unfilled": 1,
+            "fill_eligible": 3,
+            "filled": 2,
+            "submitted": 3,
+            "terminal": 3,
+            "with_trade_opportunity": 2
+          }
+        },
+        "passed": true
+      },
+      {
+        "check": "terminal_values_match_contract",
+        "expected": {
+          "campaign_terminal_value_usdc": "0.00200000",
+          "cash_usdc": "0.00200000",
+          "cumulative_fees_usdc": "0.00000000",
+          "inventory_btc": "0.00000000",
+          "mark_price_usdc_per_btc": "100.25000000",
+          "terminal_pnl_usdc": "0.00200000"
+        },
+        "observed": {
+          "campaign_terminal_value_usdc": "0.00200000",
+          "cash_usdc": "0.00200000",
+          "cumulative_fees_usdc": "0.00000000",
+          "inventory_btc": "0.00000000",
+          "mark_price_usdc_per_btc": "100.25000000",
+          "terminal_pnl_usdc": "0.00200000"
+        },
+        "passed": true
+      },
+      {
+        "check": "all_orders_terminal",
+        "expected": 0,
+        "observed": 0,
+        "passed": true
+      },
+      {
+        "check": "campaign_closed_flat",
+        "passed": true
+      },
+      {
+        "check": "campaign_value_equals_terminal_pnl",
+        "expected": "0.00200000",
+        "observed": "0.00200000",
+        "passed": true
+      },
+      {
+        "check": "trace_covers_every_tape_record",
+        "expected": 14,
+        "observed": 14,
+        "passed": true
+      },
+      {
+        "check": "offline_permissions_locked",
+        "expected": {
+          "external_order_submission": false,
+          "live_runtime_import": false,
+          "network_access": false,
+          "private_evidence_read": false,
+          "runtime_clock_read": false
+        },
+        "observed": {
+          "external_order_submission": false,
+          "live_runtime_import": false,
+          "network_access": false,
+          "private_evidence_read": false,
+          "runtime_clock_read": false
+        },
+        "passed": true
+      },
+      {
+        "check": "synthetic_non_economic_boundary",
+        "passed": true
+      }
+    ],
+    "economic_evidence_eligible": false,
+    "failures": [],
+    "live_action_eligible": false,
+    "passed": true,
+    "promotion_eligible": false,
+    "schema_version": "narrowgate_replay_demo_gate.v1",
+    "status": "passed_demo_mechanics_only"
+  },
+  "identity": {
+    "accounting_contract_version": "continuous_accounting_contract.v2",
+    "code": {
+      "exact_bytes": "external_wheel_digest_or_git_commit_tree",
+      "identity_kind": "package_distribution",
+      "package_version": "0.1.2.dev0",
+      "version": "narrowgate_replay_demo_engine.v1"
+    },
+    "contract": {
+      "artifact_id": "public_replay_demo_contract",
+      "sha256": "f5ec7f12d7ee92614428003daa6ad2ba0f0d91cef981577b2875fa63c65a8ec7",
+      "version": "narrowgate_replay_demo_contract.v1"
+    },
+    "state_contract_version": "continuous_replay_state.v2",
+    "tape": {
+      "artifact_id": "public_synthetic_queue_campaign_v1",
+      "schema_version": "narrowgate.synthetic_replay_tape.v1",
+      "sha256": "6cbcc0f82d83ddf0caff1d761441682ead8543e500f397911292afe4b3a1f125"
+    }
+  },
+  "orders": [
+    {
+      "fill_events": 2,
+      "filled_quantity_btc": "0.01000000",
+      "matching_trade_opportunities": 3,
+      "order_id": "demo-buy-001",
+      "price": "100.00000000",
+      "quantity_btc": "0.01000000",
+      "queue_ahead_terminal_btc": "0.00000000",
+      "side": "BUY",
+      "status": "filled"
+    },
+    {
+      "fill_events": 1,
+      "filled_quantity_btc": "0.01000000",
+      "matching_trade_opportunities": 1,
+      "order_id": "demo-sell-001",
+      "price": "100.20000000",
+      "quantity_btc": "0.01000000",
+      "queue_ahead_terminal_btc": "0.00000000",
+      "side": "SELL",
+      "status": "filled"
+    },
+    {
+      "fill_events": 0,
+      "filled_quantity_btc": "0.00000000",
+      "matching_trade_opportunities": 0,
+      "order_id": "demo-sell-002",
+      "price": "100.30000000",
+      "quantity_btc": "0.01000000",
+      "queue_ahead_terminal_btc": "0.02000000",
+      "side": "SELL",
+      "status": "canceled"
+    }
+  ],
+  "permissions": {
+    "external_order_submission": false,
+    "live_runtime_import": false,
+    "network_access": false,
+    "private_evidence_read": false,
+    "runtime_clock_read": false
+  },
+  "schema_version": "narrowgate_replay_demo_summary.v1",
+  "terminal": {
+    "cash_usdc": "0.00200000",
+    "cumulative_fees_usdc": "0.00000000",
+    "inventory_btc": "0.00000000",
+    "mark_price_usdc_per_btc": "100.25000000",
+    "terminal_pnl_usdc": "0.00200000"
+  }
+}

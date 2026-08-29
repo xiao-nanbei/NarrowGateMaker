@@ -7,7 +7,8 @@
   "predecessor_boundary": {
     "strict_historical_labels": "blocked_non_identifiable_same_millisecond_trade_book_ordering",
     "modeled_queue_one_shot": "limited_search_outer_oof_no_pass",
-    "predecessor_interpretation_errata": "research/families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_duration_v2_owner_modeled_queue_v1_interpretation_errata_20260812.json",
+    "predecessor_evidence_locator": "${NARROWGATE_PRIVATE_F05_PREDECESSOR_EVIDENCE}",
+    "predecessor_evidence_availability": "private_not_distributed",
     "predecessor_development_may_be_reused_as_fresh_outer_evidence": false,
     "predecessor_numeric_results_modified": false
   },

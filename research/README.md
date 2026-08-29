@@ -1,6 +1,10 @@
 # Research Family Layout
 
-Last materially modified: 2026-08-02
+<p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 NarrowGate research is organized into ten strategy/evidence families, one system-engineering line, and four shared infrastructure layers. All research source, evidence, shared contracts, and governance metadata live under this single `research/` subtree.
 

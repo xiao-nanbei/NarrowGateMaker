@@ -1,14 +1,19 @@
 # Contributing to NarrowGateMaker
 
-Last materially modified: 2026-08-23
+<p><a href="CONTRIBUTING.md">English</a> | <a href="CONTRIBUTING.zh-CN.md">简体中文</a></p>
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 Thank you for helping improve NarrowGateMaker. This repository combines ordinary
 software engineering with evidence-governed market-making research, so the review
 path depends on what a change claims.
 
-Start with the [goal-oriented contributor guide](docs/opensource/README.md). Review
-the [PolyForm Noncommercial License](LICENSE) before contributing. A pull request
-does not grant commercial-use permission.
+Start with the [goal-oriented contributor guide](docs/opensource/README.md). This is
+a source-available project under the [PolyForm Noncommercial License](LICENSE),
+which permits the noncommercial purposes stated in its terms and restricts
+commercial use. A pull request does not grant commercial-use permission.
 
 ## Choose the Right Path
 
@@ -121,7 +126,7 @@ Every pull request should state:
 
 Research evidence pull requests have additional requirements in the
 [research evidence guide](docs/opensource/research_contributions.md). Neither a
-merged pull request nor a passing shadow run grants action or live authority.
+merged pull request nor a passing research run grants action or live authority.
 
 ## Documentation Audit
 

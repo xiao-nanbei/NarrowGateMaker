@@ -35,6 +35,15 @@ def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _release_source() -> dict[str, object]:
+    return {
+        "commit": "1" * 40,
+        "tree": "2" * 40,
+        "release_root_sha256": "3" * 64,
+        "worktree_clean": True,
+    }
+
+
 def _fixture(tmp_path: Path) -> dict:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -326,7 +335,7 @@ def test_publishes_fully_bound_epoch_without_touching_historical_epochs(
         model_dir=paths["model"],
         p3_path=paths["p3"],
         feature_dag_sha256="a" * 64,
-        runtime_code_paths=("runtime.py",),
+        release_source=_release_source(),
         native_runtime={"profile": "test", "module": "disabled"},
         native_module_path="disabled",
         action_enablement={"schema_version": "actions.v1", "q90": False},
@@ -338,12 +347,24 @@ def test_publishes_fully_bound_epoch_without_touching_historical_epochs(
     )
 
     manifest = json.loads(epoch.manifest_path.read_text(encoding="utf-8"))
+    evidence = json.loads(
+        (epoch.epoch_root / "identity_evidence.json").read_text(encoding="utf-8")
+    )
     assert manifest["binding_status"] == "fully_bound"
     assert set(manifest["identity"]) == set(REQUIRED_IDENTITY_FIELDS)
     assert all(len(value) == 64 for value in manifest["identity"].values())
     assert manifest["historical_epochs_backfilled"] is False
     assert manifest["formal_collection_valid"] is False
     assert manifest["permissions"]["lifecycle_estimation_authorized"] is False
+    assert set(evidence["runtime_code"]) == {
+        "schema_version",
+        "commit",
+        "tree",
+        "release_root_sha256",
+        "worktree_clean",
+        "sha256",
+    }
+    assert "files" not in evidence["runtime_code"]
     assert historical.read_bytes() == before
     assert not list((paths["mount"] / "epochs").glob(".*.partial-*"))
 
@@ -361,7 +382,7 @@ def test_baseline_hash_mismatch_fails_before_publication(tmp_path: Path) -> None
             model_dir=paths["model"],
             p3_path=paths["p3"],
             feature_dag_sha256="a" * 64,
-            runtime_code_paths=("runtime.py",),
+            release_source=_release_source(),
             native_runtime={"module": "disabled"},
             native_module_path="disabled",
             action_enablement={"enabled": False},
@@ -397,7 +418,7 @@ def test_unsupported_initial_state_fails_before_publication(tmp_path: Path) -> N
             model_dir=paths["model"],
             p3_path=paths["p3"],
             feature_dag_sha256="a" * 64,
-            runtime_code_paths=("runtime.py",),
+            release_source=_release_source(),
             native_runtime={"module": "disabled"},
             native_module_path="disabled",
             action_enablement={"enabled": False},
@@ -426,7 +447,7 @@ def test_missing_initial_state_domain_fails_before_publication(tmp_path: Path) -
             model_dir=paths["model"],
             p3_path=paths["p3"],
             feature_dag_sha256="a" * 64,
-            runtime_code_paths=("runtime.py",),
+            release_source=_release_source(),
             native_runtime={"module": "disabled"},
             native_module_path="disabled",
             action_enablement={"enabled": False},
@@ -473,7 +494,7 @@ def test_captured_domain_placeholder_is_rejected(tmp_path: Path) -> None:
             model_dir=paths["model"],
             p3_path=paths["p3"],
             feature_dag_sha256="a" * 64,
-            runtime_code_paths=("runtime.py",),
+            release_source=_release_source(),
             native_runtime={"module": "disabled"},
             native_module_path="disabled",
             action_enablement={"enabled": False},

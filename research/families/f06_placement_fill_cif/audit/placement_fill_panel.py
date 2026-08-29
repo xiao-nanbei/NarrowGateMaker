@@ -70,12 +70,6 @@ DEFAULT_QUEUE = (
     / "formal_recalibration_20260715"
     / "BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json"
 )
-DEFAULT_LATENCY = (
-    DATA_ROOT
-    / "reports"
-    / "formal_recalibration_20260715"
-    / "ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz"
-)
 DEFAULT_VISIBILITY = (
     DATA_ROOT
     / "live_calibration_snapshots"
@@ -432,11 +426,11 @@ def _baseline_command(
         "--live-perf-latency-mode",
         "avg",
         "--latency-profile-id",
-        "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260712",
+        "private_not_distributed",
         "--exec-book-visibility-profile",
         str(args.book_visibility_profile),
         "--exec-book-visibility-profile-id",
-        "aws_tokyo_ec2_2vcpu4g_amazon_linux_20260718",
+        "private_not_distributed",
         "--exec-book-visibility-delay-seed",
         "20260718",
         "--execution-trade-source",
@@ -899,7 +893,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--raw-book-root", type=Path, default=DEFAULT_RAW_BOOK)
     parser.add_argument("--queue-calibration", type=Path, default=DEFAULT_QUEUE)
-    parser.add_argument("--latency-telemetry", type=Path, default=DEFAULT_LATENCY)
+    parser.add_argument("--latency-telemetry", type=Path, required=True)
     parser.add_argument("--book-visibility-profile", type=Path, default=DEFAULT_VISIBILITY)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument(

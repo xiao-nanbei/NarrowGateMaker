@@ -866,7 +866,7 @@ def _common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--embargo-days", type=int, default=1)
     parser.add_argument("--min-train-rows", type=int, default=500)
     parser.add_argument("--min-action-rows", type=int, default=100)
-    parser.add_argument("--min-behavior-propensity", type=float, default=0.02)
+    parser.add_argument("--min-behavior-propensity", type=float, default=0.05)
     parser.add_argument("--max-importance-weight", type=float, default=20.0)
     parser.add_argument("--max-unsupported-mass", type=float, default=0.05)
     parser.add_argument("--min-effective-sample-size", type=float, default=100.0)

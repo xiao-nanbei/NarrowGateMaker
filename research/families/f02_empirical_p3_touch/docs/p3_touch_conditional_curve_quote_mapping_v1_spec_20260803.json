@@ -306,7 +306,7 @@
       "sha256": "2839d2506364a6c63e48924736b9281f67610e57ac6ce350896ad9e893832a41"
     },
     "operational_baseline_pointer": {
-      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "path": "${NARROWGATE_PRIVATE_OPERATIONAL_POINTER}",
       "sha256": "eecf1b2f2127d427029aa963e9885047ffb50fa0220108cd4bcdb77c0db8e8c2"
     },
     "operational_baseline_v7": {

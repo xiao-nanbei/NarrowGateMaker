@@ -47,6 +47,7 @@ def _action_evidence(*, profile_id: str = "action_alpha_v1") -> dict:
             "minimum_behavior_propensity": 0.5,
             "unsupported_mass": 0.0,
             "overlap_violations": 0,
+            "importance_weight_clipped_rows": 0,
             "failures": [],
         },
         "candidate_rate": 0.25,
@@ -90,6 +91,38 @@ def test_passing_action_evidence_is_rankable_but_not_live_promoted() -> None:
     assert result["total_score"] > 0.0
     assert result["weight_coverage"] == pytest.approx(1.0)
     json.dumps(result, allow_nan=False)
+
+
+def test_scorecard_rejects_importance_weight_clipping_as_estimand_drift() -> None:
+    evidence = _action_evidence()
+    evidence["support"]["importance_weight_clipped_rows"] = 1
+
+    result = score_canonical_evidence(
+        evidence,
+        profile_id="action_alpha_v1",
+    )
+
+    assert not result["support"]["passed"]
+    assert "importance_weight_clipping_changes_estimand" in result["support"][
+        "failures"
+    ]
+    assert not result["ranking_eligible"]
+
+
+def test_scorecard_rejects_missing_importance_weight_clipping_identity() -> None:
+    evidence = _action_evidence()
+    evidence["support"].pop("importance_weight_clipped_rows")
+
+    result = score_canonical_evidence(
+        evidence,
+        profile_id="action_alpha_v1",
+    )
+
+    assert not result["support"]["passed"]
+    assert "importance_weight_clipping_identity_missing" in result["support"][
+        "failures"
+    ]
+    assert not result["ranking_eligible"]
 
 
 def test_tail_improvement_cannot_buy_through_reward_and_fill_collapse() -> None:
@@ -364,6 +397,14 @@ def test_action_family_adapter_verifies_identity_and_maps_sell_metrics(
     assert evidence["validity_failures"] == []
     assert evidence["metrics"]["conditional_net_value"]["lower_bound"] == 0.01
     assert evidence["metrics"]["fills_retention"]["estimate"] == 0.95
+    scored = score_canonical_evidence(
+        evidence,
+        profile_id="action_defense_v1",
+    )
+    assert not scored["support"]["passed"]
+    assert "importance_weight_clipping_identity_missing" in scored["support"][
+        "failures"
+    ]
 
 
 def test_paired_screen_adapter_remains_screening_only() -> None:

@@ -11,13 +11,22 @@ from research.families.f03_causal_13_head.audit import (
     causal_v12_1s_training_contract as f03_training,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_modeled_oof as f05_modeled_oof,
+    causal_multichannel_window_boolean_cooldown_v2_preflight as f05_preflight,
 )
 from research.families.f05_fill_quality_quote_ev.audit import (
-    causal_multichannel_window_boolean_cooldown_v2_preflight as f05_preflight,
+    causal_multichannel_window_boolean_cooldown_d1_support as f05_d1_support,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    freeze_multiscale_ema_boolean_cooldown_duration_policy as f05_freeze,
+)
+from research.families.f05_fill_quality_quote_ev.audit import (
+    multiscale_ema_boolean_cooldown_duration_policy_study as f05_study,
 )
 from research.families.f10_live_replay_attribution.audit import (
     current_live_held_ber_replay_baseline_50d as f10_baseline,
+)
+from research.families.f10_live_replay_attribution.audit import (
+    current_live_held_ber_strict_native_latency_baseline_50d as f10_strict,
 )
 from research.governance.paths import resolve_research_path
 
@@ -77,18 +86,10 @@ def test_research_resolver_preserves_missing_portable_target(
     ) == (tmp_path / "future/manifest.json").resolve()
 
 
-def test_f05_consumers_resolve_public_placeholders(
-    tmp_path: Path,
-    monkeypatch,
-) -> None:
-    monkeypatch.setenv("NARROWGATE_DATA_ROOT", str(tmp_path))
-
+def test_f05_preflight_resolves_repository_placeholder() -> None:
     assert f05_preflight._repo_path(
         "${NARROWGATE_ROOT}/tests/test_research_portable_path_consumers.py"
     ) == Path(__file__).resolve()
-    assert f05_modeled_oof._resolve_bound_path(
-        "${NARROWGATE_DATA_ROOT}/modeled-oof"
-    ) == (tmp_path / "modeled-oof").resolve()
 
 
 def test_f10_baseline_resolves_project_data_placeholder(
@@ -100,3 +101,43 @@ def test_f10_baseline_resolves_project_data_placeholder(
     assert f10_baseline._resolve_repo_path(
         "${NARROWGATE_DATA_ROOT}/baseline/execution-plan.json"
     ) == (tmp_path / "baseline/execution-plan.json").resolve()
+
+
+def test_private_research_defaults_resolve_only_from_private_root(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_PRIVATE_RESEARCH_ROOT", str(tmp_path))
+
+    assert f10_baseline._spec_path() == (
+        tmp_path / "current_live_held_ber_replay_baseline_50d_spec_20260810.json"
+    ).resolve()
+    assert f10_strict._spec_path() == (
+        tmp_path
+        / "current_live_held_ber_strict_native_latency_baseline_50d_v1_spec_20260810.json"
+    ).resolve()
+    assert f05_d1_support._panel_spec_path() == f10_baseline._spec_path()
+    assert f05_d1_support._strict_spec_path() == f10_strict._spec_path()
+    assert f05_freeze._baseline_path() == (
+        tmp_path / "current_live_held_ber_replay_baseline_40d_20260809.json"
+    ).resolve()
+    assert f05_study._current_baseline_path() == f05_freeze._baseline_path()
+
+
+def test_private_research_defaults_fail_closed_without_private_root(monkeypatch) -> None:
+    monkeypatch.delenv("NARROWGATE_PRIVATE_RESEARCH_ROOT", raising=False)
+
+    consumers = (
+        (f10_baseline._spec_path, f10_baseline.Baseline50Error),
+        (f10_strict._spec_path, f10_strict.StrictNativeLatencyError),
+        (f05_d1_support._panel_spec_path, f05_d1_support.SupportAuditError),
+        (f05_freeze._baseline_path, f05_freeze.FreezeError),
+        (f05_study._current_baseline_path, f05_study.StudyError),
+    )
+    for resolver, error in consumers:
+        try:
+            resolver()
+        except error as exc:
+            assert "NARROWGATE_PRIVATE_RESEARCH_ROOT" in str(exc)
+        else:
+            raise AssertionError(f"{resolver.__module__} did not fail closed")

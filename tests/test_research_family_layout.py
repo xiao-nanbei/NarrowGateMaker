@@ -72,6 +72,13 @@ def test_hard_layout_v2_has_no_root_research_packages_or_symlinks() -> None:
         canonical = ROOT / str(row["canonical_path"])
         assert not legacy.exists()
         assert not legacy.is_symlink()
+        if row.get("canonical_availability") == "private_not_distributed":
+            assert not canonical.exists()
+            with pytest.raises(FileNotFoundError, match="private_not_distributed"):
+                resolve_research_path(str(row["legacy_path"]))
+            with pytest.raises(FileNotFoundError, match="private_not_distributed"):
+                resolve_research_path(str(row["canonical_path"]))
+            continue
         archive_identity = private_legacy_archive_identity(str(row["canonical_path"]))
         if archive_identity is not None:
             assert not canonical.exists()
@@ -95,15 +102,25 @@ def test_hard_layout_v2_has_no_root_research_packages_or_symlinks() -> None:
 
 def test_layout_v1_paths_chain_through_layout_v2() -> None:
     payload = _payload(LAYOUT_V1)
+    layout_v2 = _payload(LAYOUT_V2)
     assert payload["schema"] == "narrowgate.research_path_migration.v1"
     mappings = payload["mappings"]
     assert isinstance(mappings, list)
     assert len(mappings) == payload["mapping_count"] == 198
+    private_v2_legacy_paths = {
+        str(row["legacy_path"])
+        for row in layout_v2["mappings"]
+        if row.get("canonical_availability") == "private_not_distributed"
+    }
 
     for row in mappings:
         legacy = ROOT / str(row["legacy_path"])
         assert not legacy.exists()
         assert not legacy.is_symlink()
+        if str(row["canonical_path"]) in private_v2_legacy_paths:
+            with pytest.raises(FileNotFoundError, match="private_not_distributed"):
+                resolve_research_path(str(row["legacy_path"]))
+            continue
         resolved = resolve_research_path(str(row["legacy_path"]))
         assert resolved.is_file()
         assert resolved == resolve_research_path(str(row["canonical_path"]))
@@ -184,9 +201,9 @@ def test_build_and_deploy_use_canonical_research_sources() -> None:
         assert canonical in cmake
         assert f"../research_06_placement_fill_cif/cpp/{stem}.cpp" not in cmake
 
-    assert "$(wildcard research/families/f06_placement_fill_cif/cpp/*.cpp)" in makefile
-    assert "$(wildcard research/families/f03_causal_13_head/*.py)" in makefile
-    assert "$(EC2_DIR)/research/families/f03_causal_13_head" in makefile
+    assert "scripts/live_deploy_common.py source-release" in makefile
+    assert "$(wildcard research/families/" not in makefile
+    assert "$(EC2_DIR)/research/families/" not in makefile
 
 
 def test_frozen_hash_cannot_masquerade_as_changed_canonical_source() -> None:

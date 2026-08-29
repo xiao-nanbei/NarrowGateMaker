@@ -1,6 +1,10 @@
 # Public and Private Documentation and Evidence Contract
 
-Last materially modified: 2026-08-25
+[English](public_private_documentation_contract.md) | [简体中文](public_private_documentation_contract.zh-CN.md)
+
+Last materially modified: 2026-08-29
+
+Last materially synchronized: 2026-08-29
 
 Status: Current public documentation contract.
 
@@ -19,6 +23,18 @@ A SHA256 value is verification metadata, not a locator. A report may show a hash
 Unless a document provides a more specific artifact table, hashes embedded in historical public research reports identify owner-side evidence retained in the private evidence store and not distributed with the public repository. The owning unit's public README and private catalog define availability; a hash never implies that the bytes are downloadable from GitHub.
 
 Historical findings remain historical facts after presentation-only cleanup. Reflowing a paragraph, replacing a machine-local locator with a logical locator, or adding an availability statement must not be described as a rerun or a new scientific result.
+
+## Language and translation identity
+
+Agent-only instructions use English prose and do not receive translation copies. This includes repository and owner-installed `SKILL.md` files, skill references, and agent metadata. Code identifiers, paths, formulas, hashes, and protocol tokens remain unchanged.
+
+Maintained human-facing narrative guides use paired files: `name.md` is the canonical English document and `name.zh-CN.md` is its Simplified Chinese counterpart. Both files place reciprocal language links near the top and keep one prose language per body, except for code, identifiers, paths, formulas, proper nouns, and necessary first-use technical terms.
+
+A substantive change to status, conclusions, safety boundaries, commands, links, or evidence availability must update both language files in the same change. Both files carry the same `Last materially synchronized: YYYY-MM-DD` value. The translation may be idiomatic, but it must preserve the same material claims, limitations, and authority boundaries; it must not become a shortened summary.
+
+Machine-readable records, manifests, receipts, generated outputs, and hash-bound frozen evidence retain one byte identity and are not translated. Both language guides cite the same underlying artifact. Immutable historical Markdown may remain in its original language when editing or duplicating it would disturb evidence identity; a maintained bilingual index or reader summary should explain it instead of presenting a translation as the frozen source.
+
+Do not create translation copies for the historical documentation tree in bulk. Prioritize current README, quickstart, architecture, contributor, security, operations, and research-navigation guides. Other maintained human guides receive or repair their language pair when they are materially edited. The English license text remains authoritative; any reader-facing Chinese explanation must state that it is non-authoritative.
 
 ## Public machine-readable records
 

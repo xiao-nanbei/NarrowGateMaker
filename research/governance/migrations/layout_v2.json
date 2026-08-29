@@ -1066,7 +1066,8 @@
       "canonical_path": "research/families/f07_active_order_continuation/docs/buy_exposure_adverse_q90_live_policy_20260725.md",
       "legacy_path": "research_07_active_order_continuation/docs/buy_exposure_adverse_q90_live_policy_20260725.md",
       "sha256": "a28bcc1fc8b067a96558f49cc86126fdc12055ef59db3e32e79df4d66707b0a4",
-      "size_bytes": 2116
+      "size_bytes": 2116,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_07_active_order_continuation/docs/deep_active_order_queue_probe_20260720.md",
@@ -1206,7 +1207,8 @@
       "canonical_path": "research/families/f08_side_taker_lifecycle/docs/live_taker_flow_parity_v1_20260723.md",
       "legacy_path": "research_08_side_taker_lifecycle/docs/live_taker_flow_parity_v1_20260723.md",
       "sha256": "3d5444998575acc75028715f14625c43c80eef09e1b8dcb3c653f5764b683e9d",
-      "size_bytes": 3144
+      "size_bytes": 3144,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_08_side_taker_lifecycle/docs/side_specific_taker_flow_research_20260723.md",
@@ -1563,35 +1565,40 @@
       "canonical_path": "research/families/f10_live_replay_attribution/docs/live_48h_loss_attribution_20260722.md",
       "legacy_path": "research_10_live_replay_attribution/docs/live_48h_loss_attribution_20260722.md",
       "sha256": "7bc5c20c8ca1e8d7072e21d452d1f043de5b02f40121849345dd10ebe62b7a00",
-      "size_bytes": 8272
+      "size_bytes": 8272,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_10_live_replay_attribution/docs/live_pre_restart_48h_loss_attribution_20260725.md",
       "canonical_path": "research/families/f10_live_replay_attribution/docs/live_pre_restart_48h_loss_attribution_20260725.md",
       "legacy_path": "research_10_live_replay_attribution/docs/live_pre_restart_48h_loss_attribution_20260725.md",
       "sha256": "b04ab5c7aac5a0280764a715f006d5601f2ed73a5b26c879712bd4f4e019d600",
-      "size_bytes": 8136
+      "size_bytes": 8136,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_10_live_replay_attribution/docs/live_replay_code_parity_20260717.md",
       "canonical_path": "research/families/f10_live_replay_attribution/docs/live_replay_code_parity_20260717.md",
       "legacy_path": "research_10_live_replay_attribution/docs/live_replay_code_parity_20260717.md",
       "sha256": "1a1a6c372d1af1374b1f36f4e6f54d03db3f9db5a75d81baf3d3a289d82dbf76",
-      "size_bytes": 4641
+      "size_bytes": 4641,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
       "canonical_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
       "legacy_path": "research_10_live_replay_attribution/docs/operational_baseline_identity_20260720.json",
       "sha256": "b53a014c951e8196213e8bff4608dbc129132b0927da7e2281c8ee817ac89503",
-      "size_bytes": 2898
+      "size_bytes": 2898,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
       "canonical_path": "research/families/f10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
       "legacy_path": "research_10_live_replay_attribution/docs/operational_baseline_identity_20260725.json",
       "sha256": "b945cdfc42b3e5cdd1521c1dad07a6c9a796e6c4ab40d5158adb0f194d6750c8",
-      "size_bytes": 5137
+      "size_bytes": 5137,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/README.md",
@@ -1640,21 +1647,24 @@
       "canonical_path": "research/system_engineering/docs/aws_tokyo_market_data_latency_profile_20260711.md",
       "legacy_path": "research_11_system_engineering/docs/aws_tokyo_market_data_latency_profile_20260711.md",
       "sha256": "306ce928679124a0a1f2bc9ab80e4be2e9b13da8b9b64b9e1325b54f637597cf",
-      "size_bytes": 5127
+      "size_bytes": 5127,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/aws_tokyo_market_data_latency_stable_20260712.md",
       "canonical_path": "research/system_engineering/docs/aws_tokyo_market_data_latency_stable_20260712.md",
       "legacy_path": "research_11_system_engineering/docs/aws_tokyo_market_data_latency_stable_20260712.md",
       "sha256": "f9407b31e479bcd80579a801fae098ddd9dc7d5de02e49244556b802b59b9fdc",
-      "size_bytes": 5668
+      "size_bytes": 5668,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/bounded_receive_time_capture_operations_20260724.md",
       "canonical_path": "research/system_engineering/docs/bounded_receive_time_capture_operations_20260724.md",
       "legacy_path": "research_11_system_engineering/docs/bounded_receive_time_capture_operations_20260724.md",
       "sha256": "a5579569c12e151842276efd458281acb67f22f0bf6423c07c48ece38e31d655",
-      "size_bytes": 3404
+      "size_bytes": 3404,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/formal_replay_contract_20260722.md",
@@ -1668,21 +1678,24 @@
       "canonical_path": "research/system_engineering/docs/native_global_flow_batch_soak_20260711.md",
       "legacy_path": "research_11_system_engineering/docs/native_global_flow_batch_soak_20260711.md",
       "sha256": "5ccb2ec4de54ec63c42990a3099a26e40f6021de4d54995cb3e1d89ed1747a8c",
-      "size_bytes": 5368
+      "size_bytes": 5368,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/reference_feed_dispatch_soak_20260711.md",
       "canonical_path": "research/system_engineering/docs/reference_feed_dispatch_soak_20260711.md",
       "legacy_path": "research_11_system_engineering/docs/reference_feed_dispatch_soak_20260711.md",
       "sha256": "558f9918811897d30042008aae4102e18e4feba799d89c671f837533b5a283f4",
-      "size_bytes": 8490
+      "size_bytes": 8490,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/remote_main_archive_20260705.md",
       "canonical_path": "research/system_engineering/docs/remote_main_archive_20260705.md",
       "legacy_path": "research_11_system_engineering/docs/remote_main_archive_20260705.md",
       "sha256": "51eb65c536357cdb73d2d78b08a2d1895cbd7d92d85d83aaf4ae14f4cfb046d6",
-      "size_bytes": 1573
+      "size_bytes": 1573,
+      "canonical_availability": "private_not_distributed"
     },
     {
       "archive_member": "legacy_v2/research_11_system_engineering/docs/replay_time_unit_causality_repair_20260715.md",

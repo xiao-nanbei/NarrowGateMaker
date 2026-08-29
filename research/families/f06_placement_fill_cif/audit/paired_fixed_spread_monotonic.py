@@ -902,12 +902,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--latency-telemetry",
         type=Path,
-        default=(
-            data_root()
-            / "reports"
-            / "formal_recalibration_20260715"
-            / "ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz"
-        ),
+        required=True,
     )
     parser.add_argument(
         "--latency-mode",

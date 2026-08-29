@@ -133,12 +133,12 @@
     "p3_artifact_sha256": "cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714",
     "queue_calibration": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/BTCUSDC-queue-calibration-v3-fit-20260710_11-q070.json",
     "queue_calibration_sha256": "7756881704743f7a11a5a7a0f2439bf25cbdd9cbebd3aeb00f1135191148fadd",
-    "latency_telemetry": "${NARROWGATE_RETIRED_DATA_ROOT}/reports/formal_recalibration_20260715/ec2_aws_tokyo_2vcpu4g_20260710_14_rest_latency.csv.gz",
+    "latency_telemetry": "private_not_distributed",
     "latency_telemetry_sha256": "2c025fc77df39e9944aff3728dcb96484c8b14c4712b04b0b743b8646bd38df2",
     "book_visibility_profile": "${NARROWGATE_RETIRED_DATA_ROOT}/live_calibration_snapshots/20260719/day_20260718/quote_decisions_2026-07-18.csv",
     "book_visibility_profile_sha256": "c47929a6e0212017762277edbb5b6008b799e0bdb827e72d8d47e8d6310d5825",
     "latency_sampler_version": "keyed_splitmix64_v1",
-    "latency_environment": "aws_tokyo_ec2_2vcpu4g_amazon_linux",
+    "latency_environment": "private_not_distributed",
     "latency_seed": 20260718
   },
   "good_day_contract": {

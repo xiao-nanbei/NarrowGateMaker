@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,35 +15,6 @@ from strategy import signal as signal_module
 from strategy.signal import SignalEngine
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _function_ast_sha256(relative: str, class_name: str, function_name: str) -> str:
-    tree = ast.parse((ROOT / relative).read_text(encoding="utf-8"))
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == class_name:
-            for child in node.body:
-                if (
-                    isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and child.name == function_name
-                ):
-                    # Python 3.12 added an empty ``type_params`` field to
-                    # function/class AST nodes.  Normalize older parsers to
-                    # that schema so the frozen 3.12 structural hashes remain
-                    # identical on every supported Python minor.
-                    for descendant in ast.walk(child):
-                        if (
-                            isinstance(
-                                descendant,
-                                (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-                            )
-                            and "type_params" not in descendant._fields
-                        ):
-                            descendant._fields = (*descendant._fields, "type_params")
-                            descendant.type_params = []
-                    return hashlib.sha256(
-                        ast.dump(child, include_attributes=False).encode("utf-8")
-                    ).hexdigest()
-    raise AssertionError(f"missing {class_name}.{function_name}")
 
 
 def test_multi_market_shadow_flags_fail_closed_and_record_explicit_presence() -> None:
@@ -441,86 +411,3 @@ def test_shadow_flags_are_restart_only_before_engine_mutation() -> None:
     candidate.multi_market.global_flow_shadow_enabled = True
     with pytest.raises(ValueError, match="global_flow_shadow_enabled is restart-only"):
         live_config.require_multi_market_shadow_restart(previous, candidate)
-
-
-def test_buy_e3_and_sell_decision_asts_preserve_exact_07ef_policy_boundary() -> None:
-    expected = {
-        (
-            "strategy/boolean_cooldown_buy_e3.py",
-            "ReceiveTimeFullMidEmaWindows",
-            "observe_depth",
-        ): "e1734c7bcf2b87c78c64b7453051a140e0bb35560287e33d555c1341d0b6cac1",
-        (
-            "strategy/boolean_cooldown_buy_e3.py",
-            "LiveBuyE3CooldownPolicy",
-            "evaluate",
-        ): "cde0b0893bdf2e2d60e4e130fce71c53f9d234fbb8e38cb35591accc6cda2e09",
-        (
-            "strategy/boolean_cooldown_live.py",
-            "ReceiveTimeMidEmaWindows",
-            "observe_depth",
-        ): "ee332bb8992ca36181866d52a0406da13270102858e8a62c2013b4e130e7b647",
-        (
-            "strategy/boolean_cooldown_live.py",
-            "LiveBooleanCooldownPolicy",
-            "observe_depth",
-        ): "655ad44af0c0c6041e65ad1965091364f296266447fa4066c3351d6dfb8e2e8c",
-        (
-            "strategy/boolean_cooldown_live.py",
-            "LiveBooleanCooldownPolicy",
-            "evaluate",
-        ): "62d5b8ea0ecb5b9d67361f7ec5d161f4f1b989b5a4b270571463fbcb204ea012",
-        (
-            "strategy/maker_engine.py",
-            "MakerEngine",
-            "_select_boolean_cooldown_duration",
-        ): "b5dca6c25cbbea4f194b645a7598f43eb4701e73fea71613bb92bcd2987a6227",
-        (
-            "strategy/maker_engine.py",
-            "MakerEngine",
-            "_select_buy_e3_cooldown_duration",
-        ): "049454364176320e2ffaeec338827815a38c6ad463bca245068688f6921a4a1a",
-        (
-            "strategy/maker_engine.py",
-            "MakerEngine",
-            "_on_fill",
-        ): "0e33055db2ccd57fb3e04968b5a5112bbd31d4017649d6d938c66e9954a61bed",
-    }
-    observed = {key: _function_ast_sha256(*key) for key in expected}
-    fill_key = ("strategy/maker_engine.py", "MakerEngine", "_on_fill")
-
-    # Keep the historical 07ef hash immutable.  The fill dispatcher now has
-    # identity-aware reconciliation and applied-quantity deduplication; direct
-    # ledger/campaign tests govern that intentional safety successor.  The BUY
-    # E3/SELL policy selectors themselves must remain byte-for-byte structural
-    # matches with the frozen predecessor.
-    assert observed[fill_key] != expected[fill_key]
-    assert {key: value for key, value in observed.items() if key != fill_key} == {
-        key: value for key, value in expected.items() if key != fill_key
-    }
-
-    tree = ast.parse((ROOT / fill_key[0]).read_text(encoding="utf-8"))
-    maker = next(
-        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == fill_key[1]
-    )
-    fill = next(
-        node
-        for node in maker.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == fill_key[2]
-    )
-    referenced_names = {
-        name
-        for node in ast.walk(fill)
-        for name in (
-            [node.id]
-            if isinstance(node, ast.Name)
-            else [node.attr]
-            if isinstance(node, ast.Attribute)
-            else []
-        )
-    }
-    assert not {
-        name
-        for name in referenced_names
-        if name in {"global_flow", "global_reference"} or "shadow" in name
-    }

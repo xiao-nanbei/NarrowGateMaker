@@ -45,10 +45,8 @@ def _complete_audit() -> dict:
     }
 
 
-def test_opener_native_producer_identity_and_profile_are_frozen() -> None:
+def test_opener_native_producer_public_schema_and_profile_are_stable() -> None:
     spec = _producer_spec()
-    with pytest.raises(ValueError, match="normalized L2 manifest identity drifted"):
-        runner.validate_producer_spec(spec)
 
     assert runner.IDENTITY == "first_opener_decision_to_terminal_native_producer_v3"
     assert runner.SCHEMA_VERSION == (

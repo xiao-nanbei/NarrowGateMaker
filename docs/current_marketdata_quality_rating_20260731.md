@@ -6,7 +6,7 @@ Last materially modified: 2026-08-20
 
 Status: historical snapshot, not a current denominator or freshness authority. The filename is retained for inbound references. The evidence below covers the explicit cutoffs stated in each row, with the canonical local ledger ending at 2026-07-25 and Tardis raw coverage ending at 2026-07-29.
 
-Deployment note (2026-08-20): all counts below remain a frozen 2026-07-31 snapshot and are not revised in place. The live deployment now has four host epochs and three maintenance gaps; the separate receive-time program later completed 30 distinct days and closed on the reactivated-AWS predecessor. The current host has no inherited capture authority. Current routing and later readiness are governed by [`live_host_and_historical_data_access_20260811.md`](live_host_and_historical_data_access_20260811.md).
+Deployment note: all counts below remain a frozen historical snapshot and are not revised in place. Later operational routing, capture boundaries, and readiness evidence are owner-private and are not distributed with the public repository.
 
 As of 2026-07-31, the project data estate is rated by intended use rather than by a single universal good-day flag. The overall research-data rating is **B**: raw evidence and storage integrity are strong, but the authoritative continuous exact-lifecycle denominator is still only 46 days and AWS Tokyo receive-time evidence has not reached its frozen 30-day threshold.
 

@@ -12,14 +12,7 @@
   "categories": {
     "ephemeral_release_predecessor_unavailable": {
       "reason": "requires a retired temporary release/predecessor tree that is not part of the public repository",
-      "modules": [
-        "test_build_prospective_lifecycle_from_safe_baseline.py",
-        "test_build_prospective_lifecycle_narrow_release.py",
-        "test_build_warmup_before_websocket_baseline_successor.py",
-        "test_deploy_warmup_before_websocket_baseline_successor.py",
-        "test_orchestrate_prospective_lifecycle_remote_release.py",
-        "test_preflight_prospective_lifecycle_release.py"
-      ]
+      "modules": []
     },
     "exact_historical_source_bytes_unavailable": {
       "reason": "requires predecessor source/config bytes or artifacts whose frozen SHA intentionally differs from the current public tree",
@@ -28,14 +21,11 @@
         "test_buy_q90_runtime_authority_contract_v3.py",
         "test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
         "test_causal_multichannel_window_boolean_cooldown_v2_preflight.py",
-        "test_causal_v12_1s_restart_aware_continuous_ab.py",
-        "test_causal_v12_1s_restart_aware_continuous_execution_v1_2.py",
         "test_cooldown_action_leverage_frontier.py",
         "test_cooldown_release_one_cycle_mechanics_reaudit.py",
         "test_decision_visible_negative_fill_value_evidence.py",
         "test_exact_opener_opportunity_tape_contract_v2_1.py",
         "test_first_add_external_incremental_preregistration.py",
-        "test_lifecycle_journal_v2_storage_profiles_contract.py",
         "test_order_lifecycle_v2_40day_input_admission.py",
         "test_order_lifecycle_v2_40day_journal_authority_amendment.py",
         "test_order_lifecycle_v2_40day_replay_emitter.py",
@@ -45,13 +35,6 @@
         "test_ranked_toxicity_guard_full_path_adapter_contract.py",
         "test_ranked_toxicity_guard_full_path_adapter_contract_v1_3.py",
         "test_ranked_toxicity_registration_linkage_v2.py"
-      ],
-      "nodeids": [
-        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v3.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
-        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v4.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
-        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v5.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
-        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v6.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes",
-        "tests/test_causal_multichannel_window_boolean_cooldown_owner_buy_e3_current_host_resource_gate_v7.py::test_runtime_source_binding_includes_sparse_repair_and_rejects_old_bytes"
       ]
     },
     "owner_private_execution_config_unavailable": {
@@ -64,13 +47,8 @@
       "reason": "requires an exact owner-private source projection, live config, or generated historical execution plan that is deliberately not distributed",
       "modules": [],
       "nodeids": [
-        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_adapter_cannot_generate_candidate_actions_or_leave_partial_day",
-        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_builds_atomic_outcome_blind_rows_with_exact_owner_action",
-        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_interrupted_build_reuses_valid_day_and_publishes_progress",
-        "tests/test_causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_panel_builder_v1.py::test_post_publish_validation_failure_removes_day_admission",
         "tests/test_causal_v12_1s_economic_precommit.py::test_precommit_binds_current_v9_and_exact_native_40_days",
         "tests/test_causal_v12_1s_economic_precommit.py::test_direct_canary_requires_runtime_safety_and_no_long_shadow",
-        "tests/test_causal_v12_1s_restart_aware_continuous_execution_v1_3.py::test_v13_plan_is_outcome_blind_and_cli_adapter_is_not_injection_only",
         "tests/test_conditional_p3_scalar_reproduction_gate.py::test_scalar_adapter_registered_spec_is_historical_evidence_only",
         "tests/test_conditional_p3_scalar_reproduction_gate.py::test_errata_narrows_scope_without_rewriting_frozen_artifacts",
         "tests/test_historical_reproduction_governance.py::test_f06_accepts_only_registered_path_and_hash",

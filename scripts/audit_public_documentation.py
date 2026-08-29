@@ -10,6 +10,7 @@ import re
 import subprocess
 import tarfile
 import zipfile
+from ipaddress import IPv4Address, IPv4Network
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
@@ -25,28 +26,52 @@ PUBLIC_SOURCE_SUFFIXES = {
     ".toml",
 }
 PUBLIC_ARCHIVE_SUFFIXES = (".tar.gz", ".tgz", ".zip")
+_POSIX_SEPARATOR = "/"
+_ESCAPED_POSIX_SEPARATOR = re.escape(_POSIX_SEPARATOR)
 PRIVATE_LOCATOR_PATTERNS = {
-    "personal_home": re.compile(r"/(?:Users|home)/xuantan(?:/|\b)|/home/ec2-user(?:/|\b)"),
-    "physical_volume": re.compile(r"/Volumes/(?!<)[^\s`\"']+"),
-    "private_tmp": re.compile(r"/private/tmp(?:/|\b)"),
-    "ssh_target": re.compile(r"(?:ec2-user|ubuntu|root)@[A-Za-z0-9.-]+"),
-    "known_private_ipv4": re.compile(
-        r"(?<![0-9])(?:52\.194\.209\.205|167\.179\.114\.39|3\.114\.92\.206)(?![0-9])"
+    "personal_home": re.compile(
+        rf"{_ESCAPED_POSIX_SEPARATOR}(?:Users|home)"
+        rf"{_ESCAPED_POSIX_SEPARATOR}(?!<)[A-Za-z0-9._-]+"
+        rf"(?:{_ESCAPED_POSIX_SEPARATOR}|\b)"
     ),
+    "physical_volume": re.compile(
+        rf"{_ESCAPED_POSIX_SEPARATOR}Volumes{_ESCAPED_POSIX_SEPARATOR}"
+        r"(?!<)[^\s`\"']+"
+    ),
+    "private_tmp": re.compile(
+        rf"{_ESCAPED_POSIX_SEPARATOR}private{_ESCAPED_POSIX_SEPARATOR}tmp"
+        rf"(?:{_ESCAPED_POSIX_SEPARATOR}|\b)"
+    ),
+    "ssh_target": re.compile(r"(?:ec2-user|ubuntu|root)@[A-Za-z0-9.-]+"),
     "cloud_resource_id": re.compile(
         r"\b(?:i|ami|vol|snap)-[0-9a-f]{8,}\b|\beipalloc-[0-9a-f]+\b"
     ),
 }
+IPV4_CANDIDATE_RE = re.compile(
+    r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])"
+)
+EXPLICIT_NON_PUBLIC_IPV4_NETWORKS = (
+    IPv4Network("100.64.0.0/10"),  # RFC 6598 shared address space
+    IPv4Network("192.0.0.0/24"),  # IETF protocol assignments
+    IPv4Network("192.0.2.0/24"),  # RFC 5737 TEST-NET-1
+    IPv4Network("198.18.0.0/15"),  # RFC 2544 benchmark testing
+    IPv4Network("198.51.100.0/24"),  # RFC 5737 TEST-NET-2
+    IPv4Network("203.0.113.0/24"),  # RFC 5737 TEST-NET-3
+)
 PROJECTION_MANIFESTS = (
     Path("research/public_machine_document_projections.json"),
     Path("docs/public_machine_document_projections.json"),
 )
 INLINE_LINK_RE = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 REFERENCE_DEF_RE = re.compile(r"^\s{0,3}\[[^\]]+\]:\s*(\S+)")
+HTML_HREF_RE = re.compile(r"<a\s+[^>]*href\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
 FENCE_RE = re.compile(r"^\s{0,3}(`{3,}|~{3,})")
 SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 SHA256_RE = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])")
-HASH_AVAILABILITY_NOTICE = "Evidence availability:"
+HASH_AVAILABILITY_NOTICES = (
+    "Evidence availability:",
+    "证据可用性：",
+)
 HEX_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 PID_KEY_RE = re.compile(
     r"(?:^|_)(?:pid|process_id|process_pid|maker_pid|parent_pid|child_pid)$",
@@ -60,6 +85,24 @@ REDACTED_PROCESS_IDS = {
     "private_process_id_redacted",
     "not_publicly_distributed",
 }
+HAN_CHARACTER_RE = re.compile(
+    r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]"
+)
+ZH_CN_MARKDOWN_SUFFIX = ".zh-CN.md"
+LAST_MATERIALLY_SYNCHRONIZED_RE = re.compile(
+    r"^Last materially synchronized: (\d{4}-\d{2}-\d{2})\s*$",
+    re.MULTILINE,
+)
+REQUIRED_BILINGUAL_DOCUMENTS = (
+    Path("README.md"),
+    Path("CONTRIBUTING.md"),
+    Path("SECURITY.md"),
+    Path("docs/opensource/README.md"),
+    Path("docs/dev/README.md"),
+    Path("docs/ops/README.md"),
+    Path("research/README.md"),
+    Path("docs/public_private_documentation_contract.md"),
+)
 
 
 def _public_candidates(repo_root: Path) -> list[Path]:
@@ -77,6 +120,224 @@ def public_files(repo_root: Path) -> list[Path]:
 
 def _relative(repo_root: Path, path: Path) -> str:
     return path.relative_to(repo_root).as_posix()
+
+
+def _is_public_ipv4_text(value: str) -> bool:
+    """Return whether a dotted-decimal candidate is a public IPv4 locator."""
+
+    octets = tuple(int(part, 10) for part in value.split("."))
+    if len(octets) != 4 or any(octet > 255 for octet in octets):
+        return False
+    address = IPv4Address(bytes(octets))
+    if any(address in network for network in EXPLICIT_NON_PUBLIC_IPV4_NETWORKS):
+        return False
+    if (
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_multicast
+        or address.is_reserved
+        or address.is_unspecified
+    ):
+        return False
+    return address.is_global
+
+
+def _private_locator_kinds(text: str) -> list[str]:
+    """Return generic private-locator findings without owner-specific values."""
+
+    kinds = [
+        kind
+        for kind, pattern in PRIVATE_LOCATOR_PATTERNS.items()
+        if pattern.search(text)
+    ]
+    if any(
+        _is_public_ipv4_text(match.group(0))
+        for match in IPV4_CANDIDATE_RE.finditer(text)
+    ):
+        kinds.append("public_ipv4")
+    return kinds
+
+
+def _markdown_repository_links(
+    path: Path,
+    *,
+    repo_root: Path,
+) -> list[tuple[int, str, Path]]:
+    """Return repository-local Markdown link destinations outside code fences."""
+
+    links: list[tuple[int, str, Path]] = []
+    in_fence = False
+    fence_character = ""
+    fence_length = 0
+    for line_number, original in enumerate(
+        path.read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        fence = FENCE_RE.match(original)
+        if fence:
+            token = fence.group(1)
+            if not in_fence:
+                in_fence = True
+                fence_character = token[0]
+                fence_length = len(token)
+            elif token[0] == fence_character and len(token) >= fence_length:
+                in_fence = False
+            continue
+        if in_fence:
+            continue
+        line = re.sub(r"`+[^`]*`+", "", original)
+        destinations = [match.group(1) for match in INLINE_LINK_RE.finditer(line)]
+        destinations.extend(match.group(1) for match in HTML_HREF_RE.finditer(line))
+        reference = REFERENCE_DEF_RE.match(line)
+        if reference:
+            destinations.append(reference.group(1))
+        for raw_destination in destinations:
+            value = raw_destination.strip()
+            if value.startswith("<"):
+                end = value.find(">")
+                destination = value[1:end] if end >= 0 else value[1:]
+            else:
+                destination = value.split(maxsplit=1)[0]
+            target = unquote(destination.strip())
+            if (
+                not target
+                or target.startswith(("#", "//"))
+                or "${" in target
+                or "<" in target
+                or ">" in target
+                or SCHEME_RE.match(target)
+            ):
+                continue
+            path_text = urlsplit(target).path
+            if not path_text:
+                continue
+            candidate = (
+                repo_root / path_text.lstrip("/")
+                if path_text.startswith("/")
+                else path.parent / path_text
+            ).resolve(strict=False)
+            links.append((line_number, destination, candidate))
+    return links
+
+
+def _english_path_for_translation(path: Path) -> Path:
+    stem = path.name[: -len(ZH_CN_MARKDOWN_SUFFIX)]
+    return path.with_name(f"{stem}.md")
+
+
+def _translation_path_for_english(path: Path) -> Path:
+    return path.with_name(f"{path.stem}{ZH_CN_MARKDOWN_SUFFIX}")
+
+
+def _audit_bilingual_documents(
+    files: list[Path],
+    *,
+    repo_root: Path,
+    findings: list[dict[str, object]],
+) -> None:
+    """Require maintained bilingual pairs without translating historical evidence."""
+
+    markdown_files = {
+        path.resolve(): path for path in files if path.suffix.lower() == ".md"
+    }
+    english_paths = set(REQUIRED_BILINGUAL_DOCUMENTS)
+    for path in markdown_files.values():
+        if path.name.endswith(ZH_CN_MARKDOWN_SUFFIX):
+            english_paths.add(_english_path_for_translation(path).relative_to(repo_root))
+
+    for relative_english in sorted(english_paths):
+        english = repo_root / relative_english
+        translation = _translation_path_for_english(english)
+        english_is_public = english.resolve() in markdown_files
+        translation_is_public = translation.resolve() in markdown_files
+        required = relative_english in REQUIRED_BILINGUAL_DOCUMENTS
+
+        if not english_is_public:
+            findings.append(
+                {
+                    "path": _relative(repo_root, english),
+                    "line": None,
+                    "kind": (
+                        "required_bilingual_document_missing"
+                        if required
+                        else "bilingual_english_document_missing"
+                    ),
+                    "excerpt": (
+                        f"Expected the public English counterpart of "
+                        f"{_relative(repo_root, translation)}."
+                    ),
+                }
+            )
+        if not translation_is_public and required:
+            findings.append(
+                {
+                    "path": _relative(repo_root, translation),
+                    "line": None,
+                    "kind": "required_bilingual_document_missing",
+                    "excerpt": (
+                        f"Expected the Simplified Chinese counterpart of "
+                        f"{_relative(repo_root, english)}."
+                    ),
+                }
+            )
+        if not english_is_public or not translation_is_public:
+            continue
+
+        for source, target in ((english, translation), (translation, english)):
+            source_targets = {
+                candidate
+                for _, _, candidate in _markdown_repository_links(
+                    source,
+                    repo_root=repo_root,
+                )
+            }
+            if target.resolve() not in source_targets:
+                findings.append(
+                    {
+                        "path": _relative(repo_root, source),
+                        "line": None,
+                        "kind": "bilingual_counterpart_link_missing",
+                        "excerpt": (
+                            f"Expected a Markdown link to {_relative(repo_root, target)}."
+                        ),
+                    }
+                )
+
+        english_dates = LAST_MATERIALLY_SYNCHRONIZED_RE.findall(
+            english.read_text(encoding="utf-8")
+        )
+        translation_dates = LAST_MATERIALLY_SYNCHRONIZED_RE.findall(
+            translation.read_text(encoding="utf-8")
+        )
+        for path, dates in ((english, english_dates), (translation, translation_dates)):
+            if len(dates) != 1:
+                findings.append(
+                    {
+                        "path": _relative(repo_root, path),
+                        "line": None,
+                        "kind": "bilingual_sync_marker_missing",
+                        "excerpt": (
+                            "Expected exactly one `Last materially synchronized: "
+                            "YYYY-MM-DD` marker."
+                        ),
+                    }
+                )
+        if (
+            len(english_dates) == 1
+            and len(translation_dates) == 1
+            and english_dates[0] != translation_dates[0]
+        ):
+            findings.append(
+                {
+                    "path": _relative(repo_root, translation),
+                    "line": None,
+                    "kind": "bilingual_sync_marker_mismatch",
+                    "excerpt": (
+                        f"English={english_dates[0]} Simplified-Chinese="
+                        f"{translation_dates[0]}"
+                    ),
+                }
+            )
 
 
 def _is_ignored(repo_root: Path, relative_path: str) -> bool:
@@ -176,19 +437,17 @@ def _audit_archive(
             except UnicodeDecodeError:
                 pass
         for text in values:
-            for kind, pattern in PRIVATE_LOCATOR_PATTERNS.items():
-                if pattern.search(text):
-                    findings.append(
-                        {
-                            "path": _relative(repo_root, path),
-                            "line": None,
-                            "kind": f"archive_{kind}",
-                            "excerpt": member_name,
-                        }
-                    )
-                    break
-            else:
+            kinds = _private_locator_kinds(text)
+            if not kinds:
                 continue
+            findings.append(
+                {
+                    "path": _relative(repo_root, path),
+                    "line": None,
+                    "kind": f"archive_{kinds[0]}",
+                    "excerpt": member_name,
+                }
+            )
             break
     return len(members)
 
@@ -267,6 +526,22 @@ def audit(repo_root: Path) -> dict[str, object]:
     files = public_files(repo_root)
     for path in files:
         text = path.read_text(encoding="utf-8")
+        relative_path = path.relative_to(repo_root)
+        if (
+            len(relative_path.parts) >= 3
+            and relative_path.parts[:2] == (".github", "skills")
+            and relative_path.name == "SKILL.md"
+        ):
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if HAN_CHARACTER_RE.search(line):
+                    findings.append(
+                        {
+                            "path": relative_path.as_posix(),
+                            "line": line_number,
+                            "kind": "machine_skill_contains_han",
+                            "excerpt": line[:240],
+                        }
+                    )
         if path.suffix == ".json":
             parsed = json.loads(text)
             _audit_markdown_sha_bindings(
@@ -285,7 +560,7 @@ def audit(repo_root: Path) -> dict[str, object]:
         if (
             path.suffix.lower() == ".md"
             and SHA256_RE.search(text)
-            and HASH_AVAILABILITY_NOTICE not in text
+            and not any(notice in text for notice in HASH_AVAILABILITY_NOTICES)
         ):
             findings.append(
                 {
@@ -300,16 +575,20 @@ def audit(repo_root: Path) -> dict[str, object]:
                 }
             )
         for line_number, line in enumerate(text.splitlines(), start=1):
-            for kind, pattern in PRIVATE_LOCATOR_PATTERNS.items():
-                if pattern.search(line):
-                    findings.append(
-                        {
-                            "path": str(path.relative_to(repo_root)),
-                            "line": line_number,
-                            "kind": kind,
-                            "excerpt": line[:240],
-                        }
-                    )
+            for kind in _private_locator_kinds(line):
+                findings.append(
+                    {
+                        "path": str(path.relative_to(repo_root)),
+                        "line": line_number,
+                        "kind": kind,
+                        "excerpt": line[:240],
+                    }
+                )
+    _audit_bilingual_documents(
+        files,
+        repo_root=repo_root,
+        findings=findings,
+    )
     projection_entries = 0
     for relative_manifest in PROJECTION_MANIFESTS:
         manifest_path = repo_root / relative_manifest
@@ -356,24 +635,20 @@ def audit(repo_root: Path) -> dict[str, object]:
         if path.suffix.lower() not in PUBLIC_SOURCE_SUFFIXES:
             continue
         source_files_scanned += 1
-        if path.resolve() == Path(__file__).resolve():
-            # The auditor must contain the prohibited patterns that it enforces.
-            continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
         for line_number, line in enumerate(text.splitlines(), start=1):
-            for kind, pattern in PRIVATE_LOCATOR_PATTERNS.items():
-                if pattern.search(line):
-                    findings.append(
-                        {
-                            "path": _relative(repo_root, path),
-                            "line": line_number,
-                            "kind": f"source_{kind}",
-                            "excerpt": line[:240],
-                        }
-                    )
+            for kind in _private_locator_kinds(line):
+                findings.append(
+                    {
+                        "path": _relative(repo_root, path),
+                        "line": line_number,
+                        "kind": f"source_{kind}",
+                        "excerpt": line[:240],
+                    }
+                )
     archive_files_scanned = 0
     archive_members_scanned = 0
     for path in _public_candidates(repo_root):
@@ -389,64 +664,20 @@ def audit(repo_root: Path) -> dict[str, object]:
     for path in files:
         if path.suffix.lower() != ".md":
             continue
-        in_fence = False
-        fence_character = ""
-        fence_length = 0
-        for line_number, original in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
+        for line_number, destination, candidate in _markdown_repository_links(
+            path,
+            repo_root=repo_root,
         ):
-            fence = FENCE_RE.match(original)
-            if fence:
-                token = fence.group(1)
-                if not in_fence:
-                    in_fence = True
-                    fence_character = token[0]
-                    fence_length = len(token)
-                elif token[0] == fence_character and len(token) >= fence_length:
-                    in_fence = False
-                continue
-            if in_fence:
-                continue
-            line = re.sub(r"`+[^`]*`+", "", original)
-            destinations = [match.group(1) for match in INLINE_LINK_RE.finditer(line)]
-            reference = REFERENCE_DEF_RE.match(line)
-            if reference:
-                destinations.append(reference.group(1))
-            for raw_destination in destinations:
-                value = raw_destination.strip()
-                if value.startswith("<"):
-                    end = value.find(">")
-                    destination = value[1:end] if end >= 0 else value[1:]
-                else:
-                    destination = value.split(maxsplit=1)[0]
-                target = unquote(destination.strip())
-                if (
-                    not target
-                    or target.startswith(("#", "//"))
-                    or "${" in target
-                    or "<" in target
-                    or ">" in target
-                    or SCHEME_RE.match(target)
-                ):
-                    continue
-                path_text = urlsplit(target).path
-                if not path_text:
-                    continue
-                candidate = (
-                    repo_root / path_text.lstrip("/")
-                    if path_text.startswith("/")
-                    else path.parent / path_text
-                ).resolve(strict=False)
-                links_checked += 1
-                if not candidate.exists():
-                    findings.append(
-                        {
-                            "path": str(path.relative_to(repo_root)),
-                            "line": line_number,
-                            "kind": "broken_repository_link",
-                            "excerpt": destination,
-                        }
-                    )
+            links_checked += 1
+            if not candidate.exists():
+                findings.append(
+                    {
+                        "path": str(path.relative_to(repo_root)),
+                        "line": line_number,
+                        "kind": "broken_repository_link",
+                        "excerpt": destination,
+                    }
+                )
     return {
         "schema_version": "narrowgate_public_documentation_audit_v2",
         "files_scanned": len(files),

@@ -1,6 +1,6 @@
 # Replay Cache Materialization Contract
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-29
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](public_private_documentation_contract.md).
 
@@ -12,10 +12,10 @@ The current machine-readable authority is `models/replay_cache_dag.py::REPLAY_WI
 
 ## Storage
 
-Raw data and frozen evidence remain on `${NARROWGATE_MARKETDATA_ROOT}`. Disposable, reproducible cache artifacts default to the internal SSD:
+Raw data and frozen evidence remain on `${NARROWGATE_MARKETDATA_ROOT}`. Disposable, reproducible cache artifacts use `${NARROWGATE_CACHE_ROOT}`. Its portable XDG resolution is defined once in the bilingual README [Data Layout](../README.md#data-layout) section; this contract does not introduce another platform-specific default:
 
 ```text
-~/Library/Caches/NarrowGate_BTCUSDC/
+${NARROWGATE_CACHE_ROOT}/
 ├── window_cache/                 # legacy monolithic tick_window v10-v13
 │   └── components_v2/
 │       ├── market_context_day_v2/
@@ -122,7 +122,7 @@ Do not prewarm all 132 days while internal free space is close to the safety res
 
 ```bash
 .venv/bin/python scripts/audit_legacy_replay_cache.py \
-  --cache-root ~/Library/Caches/NarrowGate_BTCUSDC/window_cache \
+  --cache-root "${NARROWGATE_CACHE_ROOT}/window_cache" \
   --reference-root . \
   --reference-root ${NARROWGATE_DATA_ROOT}/reports
 ```

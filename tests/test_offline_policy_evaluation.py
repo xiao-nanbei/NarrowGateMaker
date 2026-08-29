@@ -54,6 +54,19 @@ def _small_config(**overrides) -> OPEConfig:
     return OPEConfig(**values)
 
 
+def test_propensity_floor_and_weight_cap_define_one_unclipped_support_region() -> None:
+    config = OPEConfig()
+
+    assert config.min_behavior_propensity == pytest.approx(0.05)
+    assert 1.0 / config.min_behavior_propensity <= config.max_importance_weight
+
+    with pytest.raises(ValueError, match="deterministic action admitted.*clipped"):
+        OPEConfig(
+            min_behavior_propensity=0.02,
+            max_importance_weight=20.0,
+        )
+
+
 def test_doubly_robust_ope_recovers_randomized_action_value() -> None:
     rows, folds, actions, summary = evaluate_offline_policy(
         _randomized_panel(),
@@ -65,6 +78,11 @@ def test_doubly_robust_ope_recovers_randomized_action_value() -> None:
     assert len(folds) >= 2
     assert set(actions["action"]) == {"keep", "pause"}
     assert summary["formal_estimate_valid"] is True
+    assert summary["estimand"]["kind"] == (
+        "candidate_policy_value_with_bounded_unsupported_mass"
+    )
+    assert summary["overlap"]["importance_weight_clipped_rows"] == 0
+    assert set(rows["ope_formal_estimate_valid"]) == {1}
     assert summary["overlap"]["mean_unsupported_candidate_mass"] < 0.01
     assert summary["estimators"]["candidate_clipped_dr_value"] == pytest.approx(
         3.0, abs=0.15
@@ -133,7 +151,32 @@ def test_never_logged_candidate_action_fails_overlap_gate() -> None:
     assert summary["status"] == "diagnostic_only_overlap_failed"
     assert summary["prediction_coverage"] == 0.0
     assert summary["overlap"]["unsupported_actions"] == ["recenter_1tick"]
+    assert set(rows["ope_formal_estimate_valid"]) == {0}
+    assert rows["ope_prediction_valid"].eq(0).all()
     assert math.isnan(summary["estimators"]["candidate_clipped_dr_value"])
+
+
+def test_clipped_weight_failure_invalidates_rows_and_summary_estimators() -> None:
+    frame = _randomized_panel()
+    keep_rows = frame["action"].eq("keep")
+    frame.loc[keep_rows, "behavior_propensity"] = 0.01
+
+    rows, _, _, summary = evaluate_offline_policy(
+        frame,
+        feature_names=["side", "inventory_ratio"],
+        config=_small_config(max_unsupported_mass=1.0),
+    )
+
+    assert summary["formal_estimate_valid"] is False
+    assert summary["overlap"]["importance_weight_clipped_rows"] > 0
+    assert math.isfinite(
+        summary["diagnostic_estimators"]["candidate_clipped_dr_value"]
+    )
+    assert math.isnan(summary["estimators"]["candidate_direct_value"])
+    assert math.isnan(summary["estimators"]["candidate_clipped_ips_value"])
+    assert math.isnan(summary["estimators"]["candidate_clipped_dr_value"])
+    assert rows["ope_prediction_valid"].eq(0).all()
+    assert rows["ope_dr_value"].isna().all()
 
 
 def test_reward_components_are_fill_value_minus_campaign_and_queue_cost() -> None:

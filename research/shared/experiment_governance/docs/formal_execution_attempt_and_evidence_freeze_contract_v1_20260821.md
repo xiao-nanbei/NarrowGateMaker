@@ -27,7 +27,3 @@ A result receipt never mutates its pre-run manifest. A source change requires a 
 An unexpected implementation bug, crash, cache mismatch, concurrency race, serialization error, or ordinary performance repair produces an immutable failed-attempt receipt. That attempt is ineligible for economic inference. The repair returns to the development line, repeats every stability gate, and receives a new `attempt-*` identity only after it passes. Partial strategy-dependent caches and partial economic outputs are not imported unless a separately validated cache contract proves exact semantic identity.
 
 Historical failed tags and receipts remain provenance. They are not deleted, renamed, or rewritten. Their names do not define research versions.
-
-## F05 Normalization
-
-The F05 full-multiscale successor predates this naming contract and accumulated `formal-v13` through `formal-v27` labels while debugging one unchanged research question. Their corrected role is recorded in the [F05 execution-attempt normalization](../../../families/f05_fill_quality_quote_ev/docs/causal_multichannel_window_boolean_cooldown_full_multiscale_successor_execution_attempt_normalization_20260821.md): historical attempt aliases under `causal_multichannel_window_boolean_cooldown_full_multiscale_successor_offline_v1`, not separate research versions.

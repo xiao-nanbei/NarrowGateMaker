@@ -47,6 +47,25 @@ def test_cache_roots_are_independent_from_external_data(monkeypatch) -> None:
     ).resolve()
 
 
+def test_cache_root_uses_xdg_cache_home(monkeypatch, tmp_path: Path) -> None:
+    xdg_cache_home = tmp_path / "xdg-cache"
+    monkeypatch.delenv("NARROWGATE_CACHE_ROOT", raising=False)
+    monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_cache_home))
+
+    assert data_paths.cache_root() == (
+        xdg_cache_home / data_paths.PROJECT_DATASET_NAME
+    ).resolve()
+
+
+def test_cache_root_falls_back_to_dot_cache(monkeypatch, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    monkeypatch.delenv("NARROWGATE_CACHE_ROOT", raising=False)
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(home))
+
+    assert data_paths.cache_root() == home / ".cache" / data_paths.PROJECT_DATASET_NAME
+
+
 def test_tick_window_cache_honors_specific_override(monkeypatch) -> None:
     monkeypatch.setenv("NARROWGATE_CACHE_ROOT", "/tmp/narrowgate-cache")
     monkeypatch.setenv(
@@ -136,10 +155,12 @@ def test_resolve_portable_public_paths(monkeypatch, tmp_path: Path) -> None:
     data = marketdata / "NarrowGate_BTCUSDC"
     cache = tmp_path / "cache"
     private_config = tmp_path / "private-config"
+    private_research = tmp_path / "private-research"
     monkeypatch.setenv("NARROWGATE_MARKETDATA_ROOT", str(marketdata))
     monkeypatch.setenv("NARROWGATE_DATA_ROOT", str(data))
     monkeypatch.setenv("NARROWGATE_CACHE_ROOT", str(cache))
     monkeypatch.setenv("NARROWGATE_PRIVATE_CONFIG_ROOT", str(private_config))
+    monkeypatch.setenv("NARROWGATE_PRIVATE_RESEARCH_ROOT", str(private_research))
 
     assert data_paths.resolve_portable_path(
         "${NARROWGATE_DATA_ROOT}/reports/result.json"
@@ -156,16 +177,29 @@ def test_resolve_portable_public_paths(monkeypatch, tmp_path: Path) -> None:
     assert data_paths.resolve_portable_path(
         "${NARROWGATE_PRIVATE_CONFIG_ROOT}/historical.yaml"
     ) == (private_config / "historical.yaml").resolve()
+    assert data_paths.resolve_portable_path(
+        "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/historical.json"
+    ) == (private_research / "historical.json").resolve()
 
 
 def test_resolve_portable_path_fails_closed(monkeypatch) -> None:
     monkeypatch.delenv("NARROWGATE_REMOTE_ROOT", raising=False)
+    monkeypatch.delenv("NARROWGATE_PRIVATE_RESEARCH_ROOT", raising=False)
     try:
         data_paths.resolve_portable_path("${NARROWGATE_REMOTE_ROOT}/logs")
     except RuntimeError as exc:
         assert "requires private configuration" in str(exc)
     else:
         raise AssertionError("missing private remote root must fail closed")
+
+    try:
+        data_paths.resolve_portable_path(
+            "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/historical.json"
+        )
+    except RuntimeError as exc:
+        assert "requires private configuration" in str(exc)
+    else:
+        raise AssertionError("missing private research root must fail closed")
 
     try:
         data_paths.resolve_portable_path("prefix/${NARROWGATE_DATA_ROOT}/file")

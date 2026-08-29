@@ -7,12 +7,15 @@ semantics; this module owns the process boundary shared by every live deploy.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import re
 import shlex
 import subprocess
+import tempfile
 from collections.abc import Mapping, Sequence
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, Final, Literal
 
 
@@ -60,6 +63,11 @@ RESULT_FIELDS: Final = BASE_RESULT_FIELDS | frozenset(
         "startup_attestation_sha256",
     }
 )
+
+PUBLIC_SOURCE_RELEASE_SCHEMA: Final = "narrowgate_public_source_release.v1"
+_GIT_OBJECT_RE: Final = re.compile(r"^[0-9a-f]{40}$")
+_SSH_TARGET_RE: Final = re.compile(r"^[A-Za-z0-9_.@:\[\]-]+$")
+_TAG_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
 def canonical_sha256(value: Any) -> str:
@@ -513,22 +521,432 @@ exit "$rc"
     return f"/bin/bash --noprofile --norc -c {shlex.quote(script)}"
 
 
+def _run_git(repository_root: Path, *arguments: str) -> str:
+    completed = subprocess.run(
+        ("git", *arguments),
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=120.0,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[-2000:]
+        raise LiveDeployContractError(
+            f"local Git command failed: git {' '.join(arguments)}: {detail}"
+        )
+    return completed.stdout.strip()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _validate_tag_name(value: str) -> str:
+    tag = str(value).strip()
+    if (
+        _TAG_NAME_RE.fullmatch(tag) is None
+        or "//" in tag
+        or ".." in tag
+        or "@{" in tag
+        or tag.endswith(("/", ".", ".lock"))
+        or any(part.startswith(".") for part in tag.split("/"))
+    ):
+        raise LiveDeployContractError("annotated release tag name is malformed")
+    return tag
+
+
+def inspect_clean_public_source(
+    repository_root: str | Path,
+    *,
+    annotated_tag: str | None = None,
+) -> dict[str, str | None]:
+    """Bind one physical, clean checkout before any public source transfer."""
+
+    root = Path(repository_root).expanduser().resolve(strict=True)
+    if not root.is_dir():
+        raise LiveDeployContractError("repository root is not a directory")
+    top_level = Path(_run_git(root, "rev-parse", "--show-toplevel")).resolve(strict=True)
+    if top_level != root:
+        raise LiveDeployContractError("repository root is not the Git top level")
+    commit = _run_git(root, "rev-parse", "HEAD")
+    tree = _run_git(root, "rev-parse", "HEAD^{tree}")
+    if _GIT_OBJECT_RE.fullmatch(commit) is None or _GIT_OBJECT_RE.fullmatch(tree) is None:
+        raise LiveDeployContractError("source commit/tree identity is malformed")
+    if _run_git(root, "cat-file", "-t", commit) != "commit":
+        raise LiveDeployContractError("source HEAD is not a commit")
+    status = _run_git(root, "status", "--porcelain=v1", "--untracked-files=all")
+    if status:
+        raise LiveDeployContractError("public source checkout is not clean")
+    identity: dict[str, str | None] = {
+        "repository_root": str(root),
+        "execution_commit": commit,
+        "execution_tree": tree,
+        "annotated_tag": None,
+        "annotated_tag_object": None,
+    }
+    if annotated_tag is not None:
+        tag = _validate_tag_name(annotated_tag)
+        tag_ref = f"refs/tags/{tag}"
+        _run_git(root, "check-ref-format", tag_ref)
+        tag_object = _run_git(root, "rev-parse", "--verify", f"{tag_ref}^{{tag}}")
+        peeled_commit = _run_git(root, "rev-parse", "--verify", f"{tag_ref}^{{commit}}")
+        if _GIT_OBJECT_RE.fullmatch(tag_object) is None:
+            raise LiveDeployContractError("annotated release tag object is malformed")
+        if peeled_commit != commit:
+            raise LiveDeployContractError("annotated release tag does not peel to HEAD")
+        identity.update(
+            {
+                "annotated_tag": tag,
+                "annotated_tag_object": tag_object,
+            }
+        )
+    return identity
+
+
+def create_public_source_bundle(
+    *,
+    repository_root: str | Path,
+    output_path: str | Path,
+    annotated_tag: str | None = None,
+) -> dict[str, Any]:
+    """Create and verify a bundle from one clean HEAD without private extras."""
+
+    identity_before = inspect_clean_public_source(
+        repository_root,
+        annotated_tag=annotated_tag,
+    )
+    root = Path(str(identity_before["repository_root"]))
+    output = Path(output_path).expanduser().absolute()
+    if output.exists() or output.is_symlink():
+        raise LiveDeployContractError("source bundle output must be create-only")
+    if not output.parent.is_dir() or output.parent.is_symlink():
+        raise LiveDeployContractError("source bundle parent is unavailable or unsafe")
+    bundle_refs = ["HEAD"]
+    if identity_before["annotated_tag"] is not None:
+        bundle_refs.append(f"refs/tags/{identity_before['annotated_tag']}")
+    _run_git(root, "bundle", "create", str(output), *bundle_refs)
+    output.chmod(0o600)
+    _run_git(root, "bundle", "verify", str(output))
+    identity_after = inspect_clean_public_source(root, annotated_tag=annotated_tag)
+    if identity_after != identity_before:
+        output.unlink(missing_ok=True)
+        raise LiveDeployContractError("source checkout changed while bundling")
+    bundle_size = output.stat().st_size
+    if bundle_size <= 0:
+        output.unlink(missing_ok=True)
+        raise LiveDeployContractError("source bundle is empty")
+    return {
+        **identity_before,
+        "bundle_path": str(output),
+        "bundle_sha256": _sha256_file(output),
+        "bundle_size_bytes": bundle_size,
+    }
+
+
+def _validate_ssh_target(value: str) -> str:
+    target = str(value).strip()
+    if (
+        not target
+        or target.startswith("-")
+        or _SSH_TARGET_RE.fullmatch(target) is None
+        or target.count("@") > 1
+    ):
+        raise LiveDeployContractError("SSH target is malformed")
+    return target
+
+
+def _validate_public_release_dir(value: str) -> str:
+    release = _absolute_posix_path(value, "public release directory")
+    path = PurePosixPath(release)
+    if path == PurePosixPath("/") or path.parent == PurePosixPath("/"):
+        raise LiveDeployContractError("public release directory is too broad")
+    if path.name.startswith("."):
+        raise LiveDeployContractError("public release directory name cannot be hidden")
+    return release
+
+
+def render_public_source_publish_shell(
+    *,
+    release_dir: str,
+    execution_commit: str,
+    execution_tree: str,
+    bundle_sha256: str,
+    annotated_tag: str | None = None,
+    annotated_tag_object: str | None = None,
+) -> str:
+    """Render one locked remote source publication fed by a bundle on stdin."""
+
+    release = _validate_public_release_dir(release_dir)
+    commit = str(execution_commit)
+    tree = str(execution_tree)
+    bundle_hash = _require_sha256(bundle_sha256, "public source bundle")
+    if _GIT_OBJECT_RE.fullmatch(commit) is None or _GIT_OBJECT_RE.fullmatch(tree) is None:
+        raise LiveDeployContractError("source commit/tree identity is malformed")
+    if (annotated_tag is None) != (annotated_tag_object is None):
+        raise LiveDeployContractError("annotated release tag identity is incomplete")
+    tag = _validate_tag_name(annotated_tag) if annotated_tag is not None else ""
+    tag_object = str(annotated_tag_object) if annotated_tag_object is not None else ""
+    if tag_object and _GIT_OBJECT_RE.fullmatch(tag_object) is None:
+        raise LiveDeployContractError("annotated release tag object is malformed")
+    release_path = PurePosixPath(release)
+    parent = str(release_path.parent)
+    name = release_path.name
+    staging = str(release_path.parent / f".{name}.staging-{commit}")
+    bundle = str(release_path.parent / f".{name}.{bundle_hash}.bundle")
+    lock = str(release_path.parent / ".narrowgate-source-deploy.lock")
+    script = f"""set -eu
+umask 077
+export PATH=/usr/bin:/bin
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_CONFIG_GLOBAL=/dev/null
+release={shlex.quote(release)}
+parent={shlex.quote(parent)}
+staging={shlex.quote(staging)}
+bundle={shlex.quote(bundle)}
+lock={shlex.quote(lock)}
+commit={shlex.quote(commit)}
+tree={shlex.quote(tree)}
+bundle_sha256={shlex.quote(bundle_hash)}
+annotated_tag={shlex.quote(tag)}
+annotated_tag_object={shlex.quote(tag_object)}
+uid=$(/usr/bin/id -u)
+test ! -L "$parent" && test -d "$parent"
+test "$(/usr/bin/readlink -f -- "$parent")" = "$parent"
+test "$(/usr/bin/stat -c '%u' -- "$parent")" = "$uid"
+mode=$(/usr/bin/stat -c '%a' -- "$parent")
+case "$mode" in ''|*[!0-7]*) exit 90 ;; esac
+test $((8#$mode & 022)) -eq 0
+test ! -L "$lock"
+exec 9>"$lock"
+/bin/chmod 600 -- "$lock"
+/usr/bin/flock -w 30 9
+validate_checkout() {{
+  checkout=$1
+  test ! -L "$checkout" && test -d "$checkout"
+  test "$(/usr/bin/readlink -f -- "$checkout")" = "$checkout"
+  test "$(/usr/bin/git -C "$checkout" rev-parse --show-toplevel)" = "$checkout"
+  test "$(/usr/bin/git -C "$checkout" rev-parse HEAD)" = "$commit"
+  test "$(/usr/bin/git -C "$checkout" rev-parse 'HEAD^{{tree}}')" = "$tree"
+  test -z "$(/usr/bin/git -C "$checkout" status --porcelain=v1 --untracked-files=all)"
+  if test -n "$annotated_tag"; then
+    tag_ref="refs/tags/$annotated_tag"
+    test "$(/usr/bin/git -C "$checkout" cat-file -t "$tag_ref")" = tag
+    test "$(/usr/bin/git -C "$checkout" rev-parse "$tag_ref")" = "$annotated_tag_object"
+    test "$(/usr/bin/git -C "$checkout" rev-parse "$tag_ref^{{commit}}")" = "$commit"
+  fi
+}}
+if test -e "$release" || test -L "$release"; then
+  /bin/cat >/dev/null
+  validate_checkout "$release"
+  /usr/bin/printf 'already-present %s %s\\n' "$commit" "$tree"
+  exit 0
+fi
+if test -e "$bundle" || test -L "$bundle"; then
+  test ! -L "$bundle" && test -f "$bundle"
+  test "$(/usr/bin/stat -c '%u' -- "$bundle")" = "$uid"
+  test "$(/usr/bin/stat -c '%h' -- "$bundle")" = 1
+  test "$(/usr/bin/stat -c '%a' -- "$bundle")" = 600
+  test "$(/usr/bin/sha256sum -- "$bundle" | /usr/bin/awk '{{print $1}}')" = "$bundle_sha256"
+  /bin/cat >/dev/null
+else
+  upload=$(/usr/bin/mktemp "$parent/.{name}.bundle-upload.XXXXXX")
+  cleanup_upload() {{ /bin/rm -f -- "$upload"; }}
+  trap cleanup_upload EXIT HUP INT TERM
+  /bin/cat >"$upload"
+  /bin/chmod 600 -- "$upload"
+  test "$(/usr/bin/sha256sum -- "$upload" | /usr/bin/awk '{{print $1}}')" = "$bundle_sha256"
+  /bin/mv -T -- "$upload" "$bundle"
+  trap - EXIT HUP INT TERM
+fi
+if test -e "$staging" || test -L "$staging"; then
+  validate_checkout "$staging"
+else
+  /usr/bin/git clone --no-checkout -- "$bundle" "$staging"
+  /usr/bin/git -C "$staging" checkout --detach --force "$commit"
+  /usr/bin/git -C "$staging" remote remove origin
+  validate_checkout "$staging"
+fi
+/bin/mv -T -- "$staging" "$release"
+validate_checkout "$release"
+/bin/rm -f -- "$bundle"
+/usr/bin/printf 'published %s %s\\n' "$commit" "$tree"
+"""
+    return f"/bin/bash --noprofile --norc -c {shlex.quote(script)}"
+
+
+def deploy_public_source_release(
+    *,
+    repository_root: str | Path,
+    target: str,
+    release_dir: str,
+    annotated_tag: str | None = None,
+    dry_run: bool = False,
+    connect_timeout_s: int = 20,
+    command_timeout_s: int = 600,
+) -> dict[str, Any]:
+    """Publish only an exact public Git checkout; never copy private inputs."""
+
+    ssh_target = _validate_ssh_target(target)
+    release = _validate_public_release_dir(release_dir)
+    for value, label in (
+        (connect_timeout_s, "SSH connect timeout"),
+        (command_timeout_s, "source publication timeout"),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise LiveDeployContractError(f"{label} must be a positive integer")
+    if connect_timeout_s >= command_timeout_s:
+        raise LiveDeployContractError("SSH connect timeout must be shorter than command timeout")
+
+    with tempfile.TemporaryDirectory(prefix="narrowgate-source-release-") as temporary:
+        bundle_path = Path(temporary) / "source.bundle"
+        identity = create_public_source_bundle(
+            repository_root=repository_root,
+            output_path=bundle_path,
+            annotated_tag=annotated_tag,
+        )
+        base = {
+            "schema_version": PUBLIC_SOURCE_RELEASE_SCHEMA,
+            "target": ssh_target,
+            "release_dir": release,
+            "execution_commit": identity["execution_commit"],
+            "execution_tree": identity["execution_tree"],
+            "annotated_tag": identity["annotated_tag"],
+            "annotated_tag_object": identity["annotated_tag_object"],
+            "bundle_sha256": identity["bundle_sha256"],
+            "bundle_size_bytes": identity["bundle_size_bytes"],
+            "private_materials_transferred": False,
+            "process_restarted": False,
+        }
+        if dry_run:
+            return {**base, "mode": "dry-run", "status": "planned"}
+        remote_shell = render_public_source_publish_shell(
+            release_dir=release,
+            execution_commit=str(identity["execution_commit"]),
+            execution_tree=str(identity["execution_tree"]),
+            bundle_sha256=str(identity["bundle_sha256"]),
+            annotated_tag=(
+                str(identity["annotated_tag"])
+                if identity["annotated_tag"] is not None
+                else None
+            ),
+            annotated_tag_object=(
+                str(identity["annotated_tag_object"])
+                if identity["annotated_tag_object"] is not None
+                else None
+            ),
+        )
+        with bundle_path.open("rb") as bundle_stream:
+            completed = subprocess.run(
+                (
+                    "ssh",
+                    "-o",
+                    "BatchMode=yes",
+                    "-o",
+                    f"ConnectTimeout={connect_timeout_s}",
+                    ssh_target,
+                    remote_shell,
+                ),
+                stdin=bundle_stream,
+                check=False,
+                capture_output=True,
+                timeout=float(command_timeout_s),
+            )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout).decode(
+                "utf-8", errors="replace"
+            ).strip()[-2000:]
+            raise LiveDeployContractError(
+                f"remote public source publication failed (rc={completed.returncode}): {detail}"
+            )
+        output = completed.stdout.decode("ascii", errors="strict").strip().splitlines()
+        if len(output) != 1:
+            raise LiveDeployContractError("remote source publication result is malformed")
+        fields = output[0].split()
+        if fields not in (
+            ["published", identity["execution_commit"], identity["execution_tree"]],
+            ["already-present", identity["execution_commit"], identity["execution_tree"]],
+        ):
+            raise LiveDeployContractError("remote source publication identity drifted")
+        return {
+            **base,
+            "mode": "deploy",
+            "status": fields[0],
+        }
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    source = subparsers.add_parser(
+        "source-release",
+        help="publish one exact clean public checkout without private material",
+    )
+    source.add_argument("--repo-root", type=Path, default=Path.cwd())
+    source.add_argument("--target", required=True)
+    source.add_argument("--release-dir", required=True)
+    source.add_argument(
+        "--annotated-tag",
+        help="one explicit annotated public release tag that must peel to HEAD",
+    )
+    source.add_argument("--dry-run", action="store_true")
+    source.add_argument("--connect-timeout-s", type=int, default=20)
+    source.add_argument("--command-timeout-s", type=int, default=600)
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "source-release":
+            result = deploy_public_source_release(
+                repository_root=args.repo_root,
+                target=args.target,
+                release_dir=args.release_dir,
+                annotated_tag=args.annotated_tag,
+                dry_run=args.dry_run,
+                connect_timeout_s=args.connect_timeout_s,
+                command_timeout_s=args.command_timeout_s,
+            )
+        else:  # pragma: no cover - argparse owns the command set.
+            raise LiveDeployContractError(f"unsupported command: {args.command}")
+    except (OSError, subprocess.SubprocessError, LiveDeployContractError) as exc:
+        parser.error(str(exc))
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 __all__ = [
     "BASE_RESULT_FIELDS",
     "EvidenceKind",
     "LiveDeployContractError",
     "PROCESS_FAMILY_IDENTITY_FIELDS",
     "PROCESS_FAMILY_RESULT_FIELDS",
+    "PUBLIC_SOURCE_RELEASE_SCHEMA",
     "RESULT_FIELDS",
     "canonical_sha256",
     "command_result",
+    "create_public_source_bundle",
+    "deploy_public_source_release",
+    "inspect_clean_public_source",
+    "main",
     "parse_process_family_probe",
     "render_bounded_readiness_shell",
     "render_containment_shell",
     "render_fenced_action_shell",
     "render_process_epoch_probe_shell",
     "render_process_family_probe_shell",
+    "render_public_source_publish_shell",
     "render_quiescence_probe_shell",
     "render_repo_cwd_shell",
     "validate_command_result",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

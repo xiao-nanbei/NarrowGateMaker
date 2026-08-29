@@ -34,7 +34,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 from pyarrow import types as pa_types
 
-from data_paths import data_root
+from data_paths import data_root, resolve_portable_path
 from models import backtest_tick as bt
 from models.replay import f05_ema_provider_source_grid as source_grid
 from research.families.f05_fill_quality_quote_ev.audit import (
@@ -66,8 +66,8 @@ FROZEN_SPEC_MD = ROOT / (
     "research/families/f05_fill_quality_quote_ev/docs/"
     "multiscale_ema_boolean_cooldown_duration_policy_v1_spec_20260809.md"
 )
-CURRENT_BASELINE = ROOT / (
-    "research/families/f10_live_replay_attribution/docs/"
+CURRENT_BASELINE_LOCATOR = (
+    "${NARROWGATE_PRIVATE_RESEARCH_ROOT}/"
     "current_live_held_ber_replay_baseline_40d_20260809.json"
 )
 PLAN = DATA_ROOT / (
@@ -112,6 +112,15 @@ FORBIDDEN_RESEARCH_ACTION_FLAGS = (
 
 class StudyError(RuntimeError):
     """Fail closed when a frozen duration study identity drifts."""
+
+
+def _current_baseline_path() -> Path:
+    try:
+        return resolve_portable_path(CURRENT_BASELINE_LOCATOR, root=ROOT)
+    except (RuntimeError, ValueError) as exc:
+        raise StudyError(
+            "current replay baseline requires NARROWGATE_PRIVATE_RESEARCH_ROOT"
+        ) from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -257,6 +266,7 @@ def _validate_file(path: Path, expected_sha256: str, *, role: str) -> None:
 
 def _dependency_bindings() -> list[dict[str, str]]:
     cpp_extension = Path(bt._load_cpp_tick_replay().__file__).resolve()
+    current_baseline = _current_baseline_path()
     rows = (
         ("study_runner", Path(__file__)),
         ("python_full_path_replay", Path(bt.__file__)),
@@ -270,7 +280,7 @@ def _dependency_bindings() -> list[dict[str, str]]:
         ("outcome_blind_duration_inputs", OUTCOME_BLIND_INPUTS),
         ("frozen_study_spec_json", FROZEN_SPEC_JSON),
         ("frozen_study_spec_md", FROZEN_SPEC_MD),
-        ("current_replay_baseline", CURRENT_BASELINE),
+        ("current_replay_baseline", current_baseline),
         ("native_execution_plan", PLAN),
     )
     bindings = []
@@ -416,14 +426,15 @@ def _control_noop_admission_status(output: Path) -> dict[str, Any]:
             "path": str(path),
         }
     receipt = _load_json(path)
-    baseline = _load_source_json(CURRENT_BASELINE, role="current replay baseline")
+    current_baseline = _current_baseline_path()
+    baseline = _load_source_json(current_baseline, role="current replay baseline")
     cpp_extension = Path(bt._load_cpp_tick_replay().__file__).resolve()
     cpp_runtime = receipt.get("cpp_runtime") or {}
     admitted = bool(
         receipt.get("identity") == IDENTITY
         and receipt.get("status") == "passed"
         and receipt.get("baseline_sha256")
-        == _source_identity(CURRENT_BASELINE, role="current replay baseline")
+        == _source_identity(current_baseline, role="current replay baseline")
         and receipt.get("backtest_tick_sha256") == _sha256_file(Path(bt.__file__))
         and int(receipt.get("day_count", 0)) == 40
         and int(receipt.get("fill_count", 0)) == int(baseline["economics"]["fills_total"])
@@ -529,10 +540,11 @@ def _load_contract() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     ):
         raise StudyError("2025 provider representation boundary drifted")
 
-    baseline = _load_source_json(CURRENT_BASELINE, role="current replay baseline")
+    current_baseline = _current_baseline_path()
+    baseline = _load_source_json(current_baseline, role="current replay baseline")
     expected_baseline_hash = contract["baseline_projection"]["baseline_identity_sha256"]
     _validate_file(
-        CURRENT_BASELINE,
+        current_baseline,
         expected_baseline_hash,
         role="current replay baseline",
     )

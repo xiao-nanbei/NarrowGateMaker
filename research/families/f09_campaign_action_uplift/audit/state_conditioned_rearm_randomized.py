@@ -253,7 +253,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--latency-profile-id", required=True)
     parser.add_argument(
         "--latency-environment",
-        default="aws_tokyo_ec2_2vcpu_4g_amazon_linux",
+        required=True,
     )
     parser.add_argument("--output-prefix", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=1)

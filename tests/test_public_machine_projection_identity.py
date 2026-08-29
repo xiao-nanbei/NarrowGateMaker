@@ -59,24 +59,20 @@ def test_owner_private_source_preserves_embedded_canonical_identity() -> None:
     assert observed == expected
 
 
-def test_registry_successor_retires_predecessor_private_source_projection() -> None:
+def test_public_registry_contains_only_family_routing() -> None:
     projection = projection_for(PROJECT_ROOT / "research/registry.json")
     assert projection is None
     payload = json.loads((PROJECT_ROOT / "research/registry.json").read_text(encoding="utf-8"))
-    lineage = payload["publication_lineage"]
-    assert lineage == {
-        "materialization": "ordinary_safe_public_json_no_private_source_identity_claim",
-        "predecessor_public_projection_sha256": (
-            "3e4e6feefac208d64f92e8fe4b1e93204728711d2625b9d79a865c01e02e39a2"
-        ),
-        "predecessor_private_source_sha256": (
-            "f09829baa37f43dac3c3521985a1fa53df7af7a570b71a78b31912a3f9529770"
-        ),
-        "predecessor_private_source_availability": "private_not_distributed",
-        "predecessor_private_source_rewritten": False,
-        "predecessor_projection_manifest_entry_retired": True,
-        "successor_projection_identity_claimed": False,
+    assert set(payload) == {
+        "schema",
+        "as_of",
+        "scope",
+        "operational_evidence_availability",
+        "families",
     }
+    assert payload["scope"] == "public_family_index_only"
+    assert payload["operational_evidence_availability"] == "private_not_distributed"
+    assert all(set(family) == {"id", "directory", "package"} for family in payload["families"])
 
 
 def test_f05_add_wait_spec_keeps_projection_and_frozen_source_identities_distinct() -> None:
@@ -85,9 +81,6 @@ def test_f05_add_wait_spec_keeps_projection_and_frozen_source_identities_distinc
     assert (
         projection.public_projection_sha256
         == hashlib.sha256(F05_ADD_WAIT_SPEC.read_bytes()).hexdigest()
-    )
-    assert projection.source_private_sha256 == (
-        "b59f9f5a3c9cbdd1fa714abe6ddf8ef23e19654374c354a6840e6f943a7c6908"
     )
     assert source_identity_sha256(F05_ADD_WAIT_SPEC) == projection.source_private_sha256
 
@@ -99,16 +92,14 @@ def test_f05_add_wait_spec_keeps_projection_and_frozen_source_identities_distinc
     assert pointer["missing_exact_bytes_policy"].startswith("fail_closed")
 
 
-def test_f05_denominator_binding_names_f10_private_source_and_public_projection() -> None:
-    f10_projection = projection_for(F10_40DAY_BASELINE)
-    assert f10_projection is not None
+def test_f05_denominator_binding_is_private_and_not_a_public_projection() -> None:
+    assert projection_for(F10_40DAY_BASELINE) is None
     public_payload = json.loads(F05_ADD_WAIT_SPEC.read_text(encoding="utf-8"))
     binding = public_payload["source_contract"]["denominator_source_spec"]
 
     assert binding["sha256_identity_kind"] == "private_source_sha256_for_public_projection"
-    assert binding["sha256"] == f10_projection.source_private_sha256
-    assert binding["public_projection_sha256"] == f10_projection.public_projection_sha256
-    assert binding["availability"] == "public_repository"
+    assert binding["availability"] == "private_not_distributed"
+    assert binding["path"].startswith("${NARROWGATE_PRIVATE_RESEARCH_ROOT}/")
     assert binding["source_private_availability"] == "private_not_distributed"
 
 

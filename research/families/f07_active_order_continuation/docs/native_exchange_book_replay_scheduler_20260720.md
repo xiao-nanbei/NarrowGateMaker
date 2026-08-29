@@ -100,11 +100,11 @@ python -m models.audit.local_order_value_replay \
   --exchange-book-raw-root "$NARROWGATE_MARKETDATA_ROOT/cryptohftdata" \
   --exchange-book-mode strict \
   --exchange-book-warmup-hours 24 \
-  --live-perf-telemetry <aws-tokyo-live-perf.csv> \
-  --latency-profile-id aws_tokyo_2vcpu4g_amzn2023_rest_20260710_14 \
-  --exec-book-visibility-profile <aws-tokyo-quote-decisions.csv> \
+  --live-perf-telemetry <operator-live-perf.csv> \
+  --latency-profile-id <operator-defined-latency-profile-id> \
+  --exec-book-visibility-profile <operator-quote-decisions.csv> \
   --exec-book-visibility-profile-id \
-    aws_tokyo_ec2_2vcpu_4g_amazon_linux_20260718 \
+    <operator-defined-visibility-profile-id> \
   --output-prefix <output-prefix>
 ```
 

@@ -29,7 +29,7 @@
       "economic_results_reused": false
     },
     "operational_baseline_pointer": {
-      "path": "research/families/f10_live_replay_attribution/docs/operational_baseline_current.json",
+      "path": "${NARROWGATE_PRIVATE_OPERATIONAL_POINTER}",
       "sha256": "aa1e87e1bdb7a06acd9bf566d6bcf4dab35442c801c421a1768d2369001a236b"
     },
     "operational_config": {

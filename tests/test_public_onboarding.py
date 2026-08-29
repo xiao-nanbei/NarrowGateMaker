@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import io
 import json
+import os
 import shlex
 import tomllib
 import unittest
@@ -10,6 +11,7 @@ from contextlib import redirect_stdout
 from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import yaml
 
@@ -95,6 +97,57 @@ def _docker_context_includes(relative_path: str) -> bool:
 
 
 class PublicOnboardingSmokeTest(unittest.TestCase):
+    def test_python_and_cpp_packages_share_the_main_dev_version(self) -> None:
+        config = _project_config()
+        with (ROOT / "cpp" / "pyproject.toml").open("rb") as handle:
+            cpp_version = tomllib.load(handle)["project"]["version"]
+
+        self.assertEqual(config["project"]["version"], "0.1.2.dev0")
+        self.assertEqual(cpp_version, "0.1.2.dev0")
+
+    def test_doctor_redacts_paths_and_paths_command_reveals_them(self) -> None:
+        configured = {
+            "NARROWGATE_MARKETDATA_ROOT": "/example-owner/private-marketdata",
+            "NARROWGATE_DATA_ROOT": "/example-owner/private-data",
+            "NARROWGATE_CACHE_ROOT": "/example-owner/private-cache",
+            "XDG_CACHE_HOME": "/example-owner/private-xdg-cache",
+            "NARROWGATE_TICK_WINDOW_CACHE_DIR": "/example-owner/private-window-cache",
+            "NARROWGATE_LIVE_CONFIG": "/example-owner/private-live-config.yaml",
+            "MM_DATA_ROOT": "/example-owner/legacy-data",
+        }
+        with patch.dict(os.environ, configured, clear=False):
+            doctor_output = io.StringIO()
+            with redirect_stdout(doctor_output):
+                self.assertEqual(narrowgate_main(["doctor"]), 0)
+            paths_output = io.StringIO()
+            with redirect_stdout(paths_output):
+                self.assertEqual(narrowgate_main(["paths"]), 0)
+
+        doctor = json.loads(doctor_output.getvalue())
+        rendered_doctor = doctor_output.getvalue()
+        self.assertEqual(doctor["root"], "<redacted; run `narrowgate paths`>")
+        self.assertEqual(doctor["narrowgate_data_root_env"], "<set>")
+        self.assertEqual(doctor["xdg_cache_home_env"], "<set>")
+        self.assertEqual(doctor["path_details_command"], "narrowgate paths")
+        self.assertNotIn(str(ROOT), rendered_doctor)
+        self.assertTrue(all(value not in rendered_doctor for value in configured.values()))
+
+        paths = json.loads(paths_output.getvalue())
+        self.assertEqual(paths["repo_root"], str(ROOT))
+        self.assertEqual(
+            paths["marketdata_root"],
+            str(Path(configured["NARROWGATE_MARKETDATA_ROOT"]).resolve()),
+        )
+        self.assertEqual(
+            paths["data_root"],
+            str(Path(configured["NARROWGATE_DATA_ROOT"]).resolve()),
+        )
+        self.assertEqual(
+            paths["cache_root"],
+            str(Path(configured["NARROWGATE_CACHE_ROOT"]).resolve()),
+        )
+        self.assertEqual(paths["private_config_env"], configured["NARROWGATE_LIVE_CONFIG"])
+
     def test_no_data_quote_demo(self) -> None:
         output = io.StringIO()
         with redirect_stdout(output):
@@ -146,7 +199,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
             "data/README.md",
             "live/formal_dry_run_public.yaml",
             "pyproject.toml",
-            "scripts/narrowgate_replay_demo.py",
+            "narrowgate/replay_demo.py",
         }
         required.update(f"{name}.py" for name in setuptools["py-modules"])
         for package in _configured_packages():
@@ -162,6 +215,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         for fixture_dir in (
             ROOT / "examples" / "public_dry_run_model_bundle",
             ROOT / "examples" / "replay_demo",
+            ROOT / "narrowgate" / "fixtures" / "replay_demo",
         ):
             required.update(
                 str(path.relative_to(ROOT))
@@ -318,7 +372,10 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("[Contributing](CONTRIBUTING.md)", readme)
         self.assertIn("[Security policy](SECURITY.md)", readme)
-        self.assertIn("[Open-source navigation](docs/opensource/README.md)", readme)
+        self.assertIn(
+            "[source-available project navigation](docs/opensource/README.md)",
+            readme,
+        )
         self.assertIn("[one-day data pipeline](docs/opensource/one_day_data_pipeline.md)", readme)
         self.assertIn("[Branch protection](docs/dev/branch_protection.md)", readme)
         self.assertEqual(readme.count("(examples/replay_demo/README.md)"), 1)

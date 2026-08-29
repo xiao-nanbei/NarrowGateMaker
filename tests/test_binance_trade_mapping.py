@@ -82,7 +82,7 @@ def test_historical_aggregate_timestamp_uses_last_child_visibility_floor() -> No
         individual,
         aggregate,
         feature_ready_latency_ms=7.0,
-        feature_ready_latency_profile_id="aws_tokyo_2v4g.test.v1",
+        feature_ready_latency_profile_id="provider_neutral.test.v1",
     )
 
     assert mapped["feature_ready_ts_ns"].eq(1_012_000_000).all()
