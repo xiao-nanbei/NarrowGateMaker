@@ -10,6 +10,7 @@ execution-safety changes in its descendant source tree.
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import subprocess
@@ -70,6 +71,8 @@ _DELETED_GIT_BLOB_SHA1: Final = "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
 _DELETED_FILE_SHA256: Final = (
     "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
+B0_FALLBACK_PATH: Final = "strategy/maker_engine.py"
+B0_FALLBACK_ALLOWED_METHODS: Final = frozenset({("MakerEngine", "sync_position")})
 
 
 def _config_pair(
@@ -213,6 +216,53 @@ def _changed_repository_files(root: Path, execution_commit: str) -> dict[str, An
     }
 
 
+def _semantic_ast_sha256_redacting_method_bodies(
+    source: bytes,
+    *,
+    allowed_methods: frozenset[tuple[str, str]],
+) -> str:
+    """Hash the full AST while redacting only allowlisted method bodies."""
+
+    try:
+        tree = ast.parse(source.decode("utf-8"))
+    except (SyntaxError, UnicodeDecodeError) as exc:
+        raise LiveSafetySuccessorError("B0 fallback AST cannot be parsed") from exc
+
+    classes = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    for class_name, method_name in sorted(allowed_methods):
+        class_node = classes.get(class_name)
+        if class_node is None:
+            raise LiveSafetySuccessorError(
+                f"allowlisted B0 fallback class is missing: {class_name}"
+            )
+        matches = [
+            node
+            for node in class_node.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == method_name
+        ]
+        if len(matches) != 1:
+            raise LiveSafetySuccessorError(
+                "allowlisted B0 fallback method must exist exactly once: "
+                f"{class_name}.{method_name}"
+            )
+        # Keep the method itself, including decorators, sync/async kind, complete
+        # argument signature, return annotation, and type comment.  Only the
+        # reviewed reconciliation implementation body is allowed to advance.
+        matches[0].body = [ast.Pass()]
+
+    canonical_ast = ast.dump(
+        tree,
+        annotate_fields=True,
+        include_attributes=False,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical_ast).hexdigest()
+
+
 def _protected_semantics(root: Path, execution_commit: str) -> dict[str, Any]:
     mechanics_commit = "e0804e1dd8b199e2dc04d36c0dcd5f27e9fc83d5"
     changed_after_mechanics = subprocess.run(
@@ -246,18 +296,30 @@ def _protected_semantics(root: Path, execution_commit: str) -> dict[str, Any]:
     mechanics_ast = semantic_guard._semantic_ast_hashes(e3_mechanics)  # noqa: SLF001
     if current_ast != mechanics_ast:
         raise LiveSafetySuccessorError("protected BUY E3 decision AST changed after e080")
+    b0_current = committed(B0_FALLBACK_PATH)
+    b0_mechanics = committed(B0_FALLBACK_PATH, mechanics_commit)
+    if _semantic_ast_sha256_redacting_method_bodies(
+        b0_current,
+        allowed_methods=B0_FALLBACK_ALLOWED_METHODS,
+    ) != _semantic_ast_sha256_redacting_method_bodies(
+        b0_mechanics,
+        allowed_methods=B0_FALLBACK_ALLOWED_METHODS,
+    ):
+        raise LiveSafetySuccessorError(
+            "protected B0 fallback AST changed outside allowlisted reconciliation methods"
+        )
     paths = {
         "sell_owner_policy_file_sha256": "strategy/boolean_cooldown_live.py",
         "e1_e2_definition_file_sha256": (
             "research/families/f05_fill_quality_quote_ev/audit/"
             "causal_multichannel_window_boolean_cooldown_full_multiscale_successor_nested_oof_v1.py"
         ),
-        "b0_fallback_file_sha256": "strategy/maker_engine.py",
     }
     output = {
         "e3_decision_ast_sha256": hashlib.sha256(
             json.dumps(current_ast, sort_keys=True, separators=(",", ":")).encode("ascii")
         ).hexdigest(),
+        "b0_fallback_file_sha256": hashlib.sha256(b0_current).hexdigest(),
         "f03_sources_unchanged_after_e080": True,
         "frozen_mechanics_evidence_bytes_referenced_not_modified": True,
         "current_head_not_mechanics_authority": True,

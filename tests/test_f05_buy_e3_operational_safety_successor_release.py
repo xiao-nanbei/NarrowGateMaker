@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -183,6 +185,97 @@ def test_successor_schema_roundtrips_and_v3_remains_separate() -> None:
     payload = _payload()
     assert _validate(payload)["execution_commit"] == GIT
     assert payload["schema_version"] != runtime.DIRECT_OWNER_ACTIVE_RELEASE_V3_SCHEMA
+
+
+def test_b0_fallback_guard_allows_only_named_reconciliation_method() -> None:
+    baseline = b"""
+class MakerEngine:
+    def sync_position(self, *, required=False):
+        return required
+
+    def quote(self, mid):
+        return mid + 1
+"""
+    allowed_body_change = b"""
+class MakerEngine:
+    def sync_position(self, *, required=False):
+        for attempt in range(3):
+            if required:
+                return attempt
+        return None
+
+    def quote(self, mid):
+        return mid + 1
+"""
+    protected_signature_change = b"""
+class MakerEngine:
+    def sync_position(self, retries=3):
+        return retries > 0
+
+    def quote(self, mid):
+        return mid + 1
+"""
+    protected_change = b"""
+class MakerEngine:
+    def sync_position(self, *, required=False):
+        return required
+
+    def quote(self, mid, *, skew=0):
+        return mid + skew
+"""
+    allowed = builder.B0_FALLBACK_ALLOWED_METHODS
+    baseline_hash = builder._semantic_ast_sha256_redacting_method_bodies(  # noqa: SLF001
+        baseline,
+        allowed_methods=allowed,
+    )
+    assert baseline_hash == builder._semantic_ast_sha256_redacting_method_bodies(  # noqa: SLF001
+        allowed_body_change,
+        allowed_methods=allowed,
+    )
+    assert baseline_hash != builder._semantic_ast_sha256_redacting_method_bodies(  # noqa: SLF001
+        protected_signature_change,
+        allowed_methods=allowed,
+    )
+    assert baseline_hash != builder._semantic_ast_sha256_redacting_method_bodies(  # noqa: SLF001
+        protected_change,
+        allowed_methods=allowed,
+    )
+
+
+def test_b0_fallback_receipt_binds_real_successor_file() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    execution_commit = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    current = subprocess.run(
+        ("git", "show", f"{execution_commit}:{builder.B0_FALLBACK_PATH}"),
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+    ).stdout
+    mechanics = subprocess.run(
+        (
+            "git",
+            "show",
+            "e0804e1dd8b199e2dc04d36c0dcd5f27e9fc83d5:"
+            f"{builder.B0_FALLBACK_PATH}",
+        ),
+        cwd=repository_root,
+        check=True,
+        capture_output=True,
+    ).stdout
+
+    protected = builder._protected_semantics(  # noqa: SLF001
+        repository_root,
+        execution_commit,
+    )
+
+    assert protected["b0_fallback_file_sha256"] == hashlib.sha256(current).hexdigest()
+    assert protected["b0_fallback_file_sha256"] != hashlib.sha256(mechanics).hexdigest()
 
 
 @pytest.mark.parametrize(
