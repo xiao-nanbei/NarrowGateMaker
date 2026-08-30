@@ -366,7 +366,7 @@ export NARROWGATE_LIVE_CONFIG="$PWD/docs/private/live_config.current.local.yaml"
 bash live/run.sh start
 ```
 
-`make deploy` 会拒绝标记为 `PUBLIC TEMPLATE` 的配置，并且只接受模型头与 bundle manifest 都明确授权 live、且由哈希绑定的模型包。公开 synthetic、`public_dry_run_only`、`research_only`、缺少授权或 `authority.live=false` 的 artifact 都会在任何远程同步前 fail closed。Preflight 还会输出有效 P3 artifact identity。非零 `p3_kappa_eff_override` 是历史 replay/config 字段，当前 deploy preflight 与 runtime 会无条件拒绝；不存在环境变量 trial unlock。
+`make deploy-preflight` 会拒绝标记为 `PUBLIC TEMPLATE` 的配置，并且只接受模型头与 bundle manifest 都明确授权 live、且由哈希绑定的模型包。公开 synthetic、`public_dry_run_only`、`research_only`、缺少授权或 `authority.live=false` 的 artifact 都会在本地准入阶段 fail closed。独立的 `make publish-source-dry` 与 `make publish-source` target 只传输 clean public Git checkout；它们不会读取私有部署输入，也不会启动进程。Preflight 还会输出有效 P3 artifact identity。非零 `p3_kappa_eff_override` 是历史 replay/config 字段，当前 deploy preflight 与 runtime 会无条件拒绝；不存在环境变量 trial unlock。
 
 ### 持久化 live runtime profile
 

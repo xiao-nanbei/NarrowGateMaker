@@ -1,6 +1,6 @@
 # Live / Dry-Run Boundary
 
-Last materially modified: 2026-08-23
+Last materially modified: 2026-08-30
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -28,7 +28,7 @@ stopped-exchange reconciliation root independently. Use `live/run.sh status`,
 `live/run.sh profile`, and the startup logs to verify the running release after
 every activation.
 
-`make deploy` refuses a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts fail closed before any remote sync.
+`make deploy-preflight` rejects a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts fail closed during local admission. Source publication is a separate operation performed by `make publish-source-dry` or `make publish-source`; it does not inspect private deployment inputs.
 
 Public examples:
 

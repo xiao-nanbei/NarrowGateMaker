@@ -17,7 +17,7 @@ Last materially synchronized: 2026-08-30
 
 公共部署内核不绑定云厂商，并明确分成两条边界：
 
-- `make deploy-dry` / `make deploy` 只发布一个精确的公共源码 checkout；它们不会复制 config、model、credential、envelope、reconciliation receipt、runtime receipt，也不会执行任何进程控制命令。
+- `make publish-source-dry` / `make publish-source` 只发布一个精确的公共源码 checkout；它们不会复制 config、model、credential、envelope、reconciliation receipt、runtime receipt，也不会执行任何进程控制命令。
 - Runtime 构建与 activation 使用 checkout 之外、由部署者提供的私有材料。发布源码不等于取得交易授权，也不会启动交易。
 
 源码 transport 要求本地 Git checkout 完全 clean。它从 `HEAD` 创建并验证 bundle，通过 SSH 流式传输到远端，在同一文件系统的 staging 目录 clone，验证精确 commit、tree 与 clean status，然后原子 rename 到指定的绝对 release path。若目标已是同一精确 release，则幂等接受；若已有 release 或 staging 的身份不同，则 fail closed。
@@ -25,7 +25,7 @@ Last materially synchronized: 2026-08-30
 安全顺序是：
 
 1. 创建无特权 service user、由该用户拥有的 release parent，以及单独的 mode-`0700` private root；SSH 与出站凭证只开放 venue 连接所需的最小权限。
-2. 从 clean public clone 运行 `make deploy-dry`，核对绑定的 commit/tree，再运行 `make deploy`。这一步只发布源码，绝不重启进程。
+2. 从 clean public clone 运行 `make publish-source-dry`，核对绑定的 commit/tree，再运行 `make publish-source`。这一步只发布源码，绝不重启进程。
 3. 把私有 config、model bundle 及其 authorization manifest、wheel、lock、wheelhouse 与已准入的输入 receipt 放在 private root 下，不能放进 Git checkout。Deployment envelope 与 stopped-exchange reconciliation 稍后必须针对精确 release 在该目录中构建。
 4. 构建或接收 content-addressed wheelhouse，再用 `python3.12 -m live.deployment_runtime install` 创建 commit-bound 环境。Release wheel 必须来自 clean checkout/worktree；构建前清除生成的 `build/`、`dist/` 与 `*.egg-info` 状态，避免已删除文件从陈旧构建树进入 wheel。目标机器安装时不得从 package index 解析依赖。
 5. 同时执行 `verify-install` 与 `verify-static-tree`，再把绝对 `venv-<execution-commit>` 路径绑定为 release 内被 Git 忽略的 `.venv-active` selector。
@@ -82,8 +82,8 @@ git checkout --detach "$NARROWGATE_RELEASE_TAG^{commit}"
 export NARROWGATE_DEPLOY_TARGET="narrowgate@<ec2-address>"
 export NARROWGATE_RELEASE_DIR="/opt/narrowgate/releases/<release-id>"
 
-make deploy-dry
-make deploy
+make publish-source-dry
+make publish-source
 ```
 
 该命令拒绝 dirty 本地 checkout，也拒绝相对 release path；它不会复制或读取任何私有材料。另行创建每个 release 的私有目录：
@@ -211,11 +211,11 @@ RECONCILIATION="$PRIVATE_DIR/stopped-exchange-reconciliation.json"
 "$RELEASE_DIR/live/run.sh" reconcile-stopped "$RECONCILIATION"
 ```
 
-`live/run.sh` 对 release startup authority 只接受 envelope path/root 与 trusted Python locator。它先用 trusted standard library 校验 canonical envelope，并在执行仓库代码前证明 Git commit/tree 与 clean checkout；随后调用 `verify-envelope-startup`，由 nested manifests 验证 runtime、installed distributions、全部 installed `RECORD` 与 `pip check`。Trusted Python path 是 OS bootstrap trust anchor：路径必须 canonical，文件必须 root-owned、非符号链接、单硬链接、可执行且 group/world 不可写。不要把 API credentials 或私有 authority 值写进 unit 或仓库。下面是对 NarrowGate 内置 supervisor 的最小 systemd 包装：
+`live/run.sh` 对 release startup authority 只接受 envelope path/root 与 trusted Python locator。它先用 trusted standard library 校验 canonical envelope，并在执行仓库代码前证明 Git commit/tree 与 clean checkout；随后调用 `verify-envelope-startup`，由 nested manifests 验证 runtime、installed distributions、全部 installed `RECORD` 与 `pip check`。Trusted Python path 是 OS bootstrap trust anchor：路径必须 canonical，文件必须 root-owned、非符号链接、单硬链接、可执行且 group/world 不可写。不要把 API credentials 或私有 authority 值写进 unit 或仓库。Service mode 只执行一次完整证明，随后 `run.sh` 用 maker 进程替换自身；systemd 是唯一进程 owner：
 
 ```ini
 [Unit]
-Description=NarrowGate live supervisor
+Description=NarrowGate live maker
 After=network-online.target
 Wants=network-online.target
 
@@ -225,9 +225,9 @@ User=narrowgate
 WorkingDirectory=/opt/narrowgate/current
 EnvironmentFile=/etc/narrowgate/live.env
 ExecStart=/opt/narrowgate/current/live/run.sh service
-ExecStop=/opt/narrowgate/current/live/run.sh stop
 ExecReload=/opt/narrowgate/current/live/run.sh reload
 Restart=no
+KillSignal=SIGTERM
 TimeoutStartSec=120
 TimeoutStopSec=120
 
@@ -235,7 +235,7 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-只有全部私有 authority gate 都可用后，operator 才能原子切换另行准备的 `/opt/narrowgate/current` 文件系统 selector 并启动 service。源码发布本身绝不改变这个 selector。执行 `systemctl start narrowgate` 后，检查 `systemctl status narrowgate`、`live/run.sh status`、`logs/runtime_health.json` 以及最近的 supervisor/engine logs。PID 存活并不充分：仓位与 open-order reconciliation 必须收敛，而且不能存在 ownership 或 execution-state safety latch。
+只有全部私有 authority gate 都可用后，operator 才能原子切换另行准备的 `/opt/narrowgate/current` 文件系统 selector 并启动 service。源码发布本身绝不改变这个 selector。执行 `systemctl start narrowgate` 后，检查 `systemctl status narrowgate`、`live/run.sh status`、`logs/runtime_health.json` 与最近的 engine logs。PID 存活并不充分：仓位与 open-order reconciliation 必须收敛，而且不能存在 ownership 或 execution-state safety latch。不要在 unit 里添加 `ExecStop=live/run.sh stop`；systemd 应直接发送 `SIGTERM` 并给予完整的 `TimeoutStopSec` 优雅退出时间。`run.sh start|status|stop` 仍作为非 systemd 手工启动的兼容工具。
 
 上述准入通过后，只绑定三个已验证的 activation 输入，然后发布紧凑的私有 current pointer。使用前面命令输出的 canonical root，以及已准入进程写入的绝对 runtime identity 路径：
 

@@ -173,15 +173,34 @@ def _stage_run_sh(
             exit "$NARROWGATE_TEST_MAIN_EXIT_CODE"
         fi
 
-        child=""
-        trap '[[ -n "$child" ]] && kill "$child" 2>/dev/null || true; exit 0' TERM INT
-        sleep 30 &
-        child=$!
-        wait "$child"
+        trap 'exit 0' TERM INT
+        trap '[[ -z "${{NARROWGATE_TEST_RELOAD_MARKER:-}}" ]] || printf reloaded > "$NARROWGATE_TEST_RELOAD_MARKER"' HUP
+        [[ -z "${{NARROWGATE_TEST_MAIN_READY_MARKER:-}}" ]] || printf ready > "$NARROWGATE_TEST_MAIN_READY_MARKER"
+        while true; do
+            sleep 0.05
+        done
         """
     )
     _write_executable(root / ".venv" / "bin" / "python3", python_stub)
-    _write_executable(root / "test-bin" / "ps", "#!/usr/bin/env bash\nexit 0\n")
+    _write_executable(
+        root / "test-bin" / "ps",
+        textwrap.dedent(
+            """\
+            #!/usr/bin/env bash
+            set -euo pipefail
+            [[ -n "${NARROWGATE_TEST_PS_PID_FILE:-}" ]] || exit 0
+            [[ -n "${NARROWGATE_TEST_PS_MAIN:-}" ]] || exit 0
+            [[ -s "$NARROWGATE_TEST_PS_PID_FILE" ]] || exit 0
+            pid="$(<"$NARROWGATE_TEST_PS_PID_FILE")"
+            kill -0 "$pid" 2>/dev/null || exit 0
+            if [[ "${1:-}" == "-p" ]]; then
+                printf 'python %s\n' "$NARROWGATE_TEST_PS_MAIN"
+            else
+                printf '%s python %s\n' "$pid" "$NARROWGATE_TEST_PS_MAIN"
+            fi
+            """
+        ),
+    )
     return root, profile, capture, args_capture
 
 
@@ -276,9 +295,25 @@ def test_live_start_fails_closed_when_runtime_selector_is_missing(tmp_path: Path
     )
 
     assert completed.returncode != 0
-    assert "Missing deployment-bound startup authority" in completed.stderr
+    supervisor_log = (root / "logs" / "maker.supervisor.log").read_text(
+        encoding="utf-8"
+    )
+    assert "Missing deployment-bound startup authority" in supervisor_log
     assert not capture.exists()
     assert not (root / "bash-env-executed").exists()
+
+    direct_supervisor = subprocess.run(
+        ("bash", str(root / "live" / "run.sh"), "__supervise"),
+        cwd=root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert direct_supervisor.returncode != 0
+    assert "Missing deployment-bound startup authority" in direct_supervisor.stderr
+    assert not capture.exists()
 
 
 def test_live_startup_authority_uses_one_release_root() -> None:
@@ -298,6 +333,13 @@ def test_live_startup_authority_uses_one_release_root() -> None:
         "NARROWGATE_STARTUP_TRUSTED_PYTHON_SHA256",
     ):
         assert obsolete not in script
+
+    deploy_preflight = script.split("_run_deploy_preflight() {", 1)[1].split(
+        "\nprofile() {", 1
+    )[0]
+    supervisor = script.split("supervise() {", 1)[1].split("\n_require_quiescent_maker() {", 1)[0]
+    assert deploy_preflight.count("_verify_startup_runtime") == 1
+    assert "_verify_startup_runtime" not in supervisor
 
 
 def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -> None:
@@ -424,7 +466,7 @@ def test_reconcile_stopped_requires_quiescence_and_preserves_invocation_authorit
 def test_service_propagates_fatal_main_exit_to_systemd(tmp_path: Path) -> None:
     root, profile, capture, args_capture = _stage_run_sh(tmp_path)
     environment = _base_environment(root, profile, capture, args_capture)
-    environment["NARROWGATE_TEST_MAIN_EXIT_CODE"] = "73"
+    environment["NARROWGATE_TEST_MAIN_EXIT_CODE"] = "78"
 
     completed = subprocess.run(
         ["bash", str(root / "live" / "run.sh"), "service"],
@@ -436,7 +478,136 @@ def test_service_propagates_fatal_main_exit_to_systemd(tmp_path: Path) -> None:
         timeout=10,
     )
 
-    assert completed.returncode == 73
+    assert completed.returncode == 78
     assert set(_read_records(capture)) == {"preflight", "main"}
     assert "--config" in args_capture.read_text(encoding="utf-8")
-    assert not (root / "logs" / "maker.pid").exists()
+    service = (root / "live" / "run.sh").read_text(encoding="utf-8").split(
+        "service() {", 1
+    )[1].split("\n_launch_manual_supervisor() {", 1)[0]
+    assert 'exec "$PYTHON_BIN" -I -B "$MAIN_PY"' in service
+    assert "supervise" not in service
+    assert "_validate_supervisor_policy" not in service
+
+    # A direct exec cannot run shell cleanup after the maker exits.  The
+    # compatibility status command must discard that dead PID deterministically.
+    pid_file = root / "logs" / "maker.pid"
+    assert pid_file.is_file()
+    status = subprocess.run(
+        ["bash", str(root / "live" / "run.sh"), "status"],
+        cwd=root,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert status.returncode == 1
+    assert not pid_file.exists()
+
+    direct_root, direct_profile, direct_capture, direct_args = _stage_run_sh(
+        tmp_path / "direct-service"
+    )
+    direct_environment = _base_environment(
+        direct_root, direct_profile, direct_capture, direct_args
+    )
+    direct_environment["NARROWGATE_TEST_PS_PID_FILE"] = str(
+        direct_root / "logs" / "maker.pid"
+    )
+    direct_environment["NARROWGATE_TEST_PS_MAIN"] = str(
+        direct_root / "live" / "main.py"
+    )
+    reload_marker = direct_root / "reload.received"
+    ready_marker = direct_root / "main.ready"
+    direct_environment["NARROWGATE_TEST_RELOAD_MARKER"] = str(reload_marker)
+    direct_environment["NARROWGATE_TEST_MAIN_READY_MARKER"] = str(ready_marker)
+    process = subprocess.Popen(
+        ["bash", str(direct_root / "live" / "run.sh"), "service"],
+        cwd=direct_root,
+        env=direct_environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        direct_pid_file = direct_root / "logs" / "maker.pid"
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            captured = (
+                direct_capture.read_text(encoding="utf-8")
+                if direct_capture.is_file()
+                else ""
+            )
+            if direct_pid_file.is_file() and "main\t" in captured and ready_marker.is_file():
+                break
+            time.sleep(0.02)
+        assert direct_pid_file.is_file()
+        assert "main\t" in direct_capture.read_text(encoding="utf-8")
+        assert ready_marker.is_file()
+        assert int(direct_pid_file.read_text(encoding="ascii")) == process.pid
+        assert (direct_root / "logs" / "maker.profile").is_file()
+        assert not (direct_root / "logs" / "maker.child.pid").exists()
+        assert not (direct_root / "logs" / "maker.supervisor.state").exists()
+
+        direct_status = subprocess.run(
+            ["bash", str(direct_root / "live" / "run.sh"), "status"],
+            cwd=direct_root,
+            env=direct_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert direct_status.returncode == 0, direct_status
+        assert "direct process owner" in direct_status.stdout
+
+        for direct_command in ("stop", "restart"):
+            refused = subprocess.run(
+                ["bash", str(direct_root / "live" / "run.sh"), direct_command],
+                cwd=direct_root,
+                env=direct_environment,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            assert refused.returncode != 0
+            assert "owned directly by systemd" in refused.stderr
+            assert process.poll() is None
+            assert direct_pid_file.is_file()
+
+        direct_reload = subprocess.run(
+            ["bash", str(direct_root / "live" / "run.sh"), "reload"],
+            cwd=direct_root,
+            env=direct_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert direct_reload.returncode == 0
+        deadline = time.monotonic() + 2.0
+        while not reload_marker.is_file() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert reload_marker.is_file()
+
+        # This is the production stop path: systemd signals the exec'd maker
+        # directly and waits for it, without invoking run.sh's manual 5+5s
+        # escalation helper.
+        process.terminate()
+        stdout, stderr = process.communicate(timeout=5)
+        assert process.returncode == 0, (stdout, stderr)
+        stopped_status = subprocess.run(
+            ["bash", str(direct_root / "live" / "run.sh"), "status"],
+            cwd=direct_root,
+            env=direct_environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert stopped_status.returncode == 1
+        assert not direct_pid_file.exists()
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=5)

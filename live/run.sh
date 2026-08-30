@@ -10,7 +10,7 @@
 #   ./live/run.sh reload   # 热重载配置 (SIGHUP)
 #   ./live/run.sh profile  # 显示将被持久化的 runtime profile
 #   ./live/run.sh dry-run  # 限时本地校验；零网络、零订单
-#   ./live/run.sh service  # 前台监督进程（供 systemd 使用）
+#   ./live/run.sh service  # 前台 maker 进程（由 systemd 直接管理）
 #   ./live/run.sh reconcile-stopped /absolute/path.json  # 停机交易所对账
 
 set -euo pipefail
@@ -224,6 +224,15 @@ _is_our_process() {
         || ( "$command" == *"$RUN_SH"* && "$command" == *"__supervise"* ) ]]
 }
 
+_is_supervisor_process() {
+    local pid=$1
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    local command
+    command=$(ps -p "$pid" -o command= 2>/dev/null || true)
+    [[ "$command" == *"$RUN_SH"* && "$command" == *"__supervise"* ]]
+}
+
 # Find all PIDs running our main.py (excluding this script)
 _find_maker_pids() {
     ps ax -o pid=,command= 2>/dev/null \
@@ -329,9 +338,16 @@ _load_runtime_environment() {
 
 _run_deploy_preflight() {
     local preflight_tmp="$PREFLIGHT_STATE_FILE.tmp.$$"
-    _verify_startup_runtime
-    "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
-    _verify_startup_runtime
+    if ! _verify_startup_runtime; then
+        rm -f "$preflight_tmp"
+        echo "Live runtime verification failed; maker was not started." >&2
+        return 1
+    fi
+    if ! "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'; then
+        rm -f "$preflight_tmp"
+        echo "Live Python version check failed; maker was not started." >&2
+        return 1
+    fi
     if ! "$PYTHON_BIN" -I -B "$DIR/scripts/preflight_live_deploy.py" \
         --config "$CONFIG_FILE" \
         --repo-root "$DIR" > "$preflight_tmp"; then
@@ -358,7 +374,6 @@ dry_run() {
     # dry-run is local-only and exits before credentials or network code matter.
     _verify_startup_runtime
     "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'
-    _verify_startup_runtime
     "$PYTHON_BIN" -I -B "$MAIN_PY" \
         --dry-run \
         --dry-run-timeout-s "$DRY_RUN_TIMEOUT_S" \
@@ -500,16 +515,12 @@ supervise() {
     trap _cleanup_supervisor EXIT
 
     local restart_count=0
+    if ! _run_deploy_preflight; then
+        _record_supervisor_state "preflight_failed" 125 "$restart_count"
+        return 125
+    fi
     while true; do
-        if [[ $restart_count -gt 0 ]]; then
-            if ! _run_deploy_preflight; then
-                _record_supervisor_state "preflight_failed" 125 "$restart_count"
-                return 125
-            fi
-        fi
-
         _supervisor_child_pid=""
-        _verify_startup_runtime
         "$PYTHON_BIN" -I -B "$MAIN_PY" --config "$CONFIG_FILE" &
         _supervisor_child_pid=$!
         # Close the start/stop race where TERM arrived after the trap was
@@ -598,13 +609,7 @@ reconcile_stopped() {
         --config "$CONFIG_FILE"
 }
 
-service() {
-    _require_quiescent_maker
-    mkdir -p "$DIR/logs"
-    _load_runtime_environment
-    _run_deploy_preflight
-    _validate_supervisor_policy
-    _require_quiescent_maker
+_record_runtime_profile() {
     {
         echo "profile=${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
         echo "profile_file=${NARROWGATE_LIVE_PROFILE_FILE:-unknown}"
@@ -615,9 +620,70 @@ service() {
         echo "cpp_strict=${NARROWGATE_CPP_STRICT:-0}"
         echo "preflight_identity=$PREFLIGHT_STATE_FILE"
     } > "$PROFILE_STATE_FILE"
+}
+
+service() {
+    _require_quiescent_maker
+    mkdir -p "$DIR/logs"
+    _load_runtime_environment
+    _run_deploy_preflight
+    _require_quiescent_maker
+    _record_runtime_profile
     rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
     echo "$$" > "$PID_FILE"
-    supervise
+    # Do not place NarrowGate's manual-launch supervisor below systemd.  The
+    # shell is replaced by the maker so systemd owns the actual trading process,
+    # observes its real exit code, and applies the unit's Restart=no policy.
+    exec "$PYTHON_BIN" -I -B "$MAIN_PY" --config "$CONFIG_FILE"
+}
+
+_launch_manual_supervisor() {
+    _record_runtime_profile
+    rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
+    # The compatibility supervisor makes silent exits and stale PIDs visible.
+    # It never restarts an unclassified non-zero exit without reconciliation.
+    local -a clean_environment=()
+    local environment_entry
+    while IFS= read -r -d '' environment_entry; do
+        case "$environment_entry" in
+            BASH_ENV=*|ENV=*|BASH_FUNC_*=*) continue ;;
+        esac
+        clean_environment+=("$environment_entry")
+    done < <(/usr/bin/env -0)
+    /usr/bin/nohup /usr/bin/env -i "${clean_environment[@]}" \
+        /bin/bash --noprofile --norc "$RUN_SH" __supervise \
+        > "$SUPERVISOR_LOG_FILE" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$PID_FILE"
+
+    local deadline=$((SECONDS + 120))
+    while kill -0 "$pid" 2>/dev/null && [[ ! -s "$CHILD_PID_FILE" ]]; do
+        if [[ $SECONDS -ge $deadline ]]; then
+            kill -TERM "$pid" 2>/dev/null || true
+            rm -f "$PID_FILE"
+            echo "Manual start timed out during preflight" >&2
+            return 1
+        fi
+        sleep 0.1
+    done
+    local child_pid=""
+    [[ -s "$CHILD_PID_FILE" ]] && child_pid=$(cat "$CHILD_PID_FILE")
+    sleep 1
+    if kill -0 "$pid" 2>/dev/null \
+        && [[ "$child_pid" =~ ^[0-9]+$ ]] \
+        && kill -0 "$child_pid" 2>/dev/null; then
+        echo "Started supervisor (PID $pid)"
+        echo "Python: $PYTHON_BIN"
+        echo "Config: $CONFIG_FILE"
+        echo "Profile: ${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
+        echo "Preflight: $PREFLIGHT_STATE_FILE"
+        echo "Log: $LOG_FILE"
+        echo "Supervisor: max_restarts=$SUPERVISOR_MAX_RESTARTS backoff=${SUPERVISOR_BACKOFF_S}s"
+    else
+        rm -f "$PID_FILE"
+        echo "Failed to start — check $LOG_FILE"
+        return 1
+    fi
 }
 
 start() {
@@ -654,51 +720,28 @@ start() {
     mkdir -p "$DIR/logs"
 
     _load_runtime_environment
-    _run_deploy_preflight
     _validate_supervisor_policy
-    {
-        echo "profile=${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
-        echo "profile_file=${NARROWGATE_LIVE_PROFILE_FILE:-unknown}"
-        echo "cpp_quote_core=${NARROWGATE_CPP_QUOTE_CORE:-0}"
-        echo "cpp_signal_features=${NARROWGATE_CPP_SIGNAL_FEATURES:-0}"
-        echo "cpp_global_flow=${NARROWGATE_CPP_GLOBAL_FLOW:-0}"
-        echo "cpp_live_routing=${NARROWGATE_CPP_LIVE_ROUTING:-0}"
-        echo "cpp_strict=${NARROWGATE_CPP_STRICT:-0}"
-        echo "preflight_identity=$PREFLIGHT_STATE_FILE"
-    } > "$PROFILE_STATE_FILE"
+    _launch_manual_supervisor
+}
 
-    rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
-    # The supervisor makes silent exits and stale PIDs visible.  It never
-    # restarts an unclassified non-zero exit without operator reconciliation.
-    local -a clean_environment=()
-    local environment_entry
-    while IFS= read -r -d '' environment_entry; do
-        case "$environment_entry" in
-            BASH_ENV=*|ENV=*|BASH_FUNC_*=*) continue ;;
-        esac
-        clean_environment+=("$environment_entry")
-    done < <(/usr/bin/env -0)
-    /usr/bin/nohup /usr/bin/env -i "${clean_environment[@]}" \
-        /bin/bash --noprofile --norc "$RUN_SH" __supervise \
-        > "$SUPERVISOR_LOG_FILE" 2>&1 &
-    local pid=$!
-    echo "$pid" > "$PID_FILE"
-
-    # Verify it actually started (give it 2s)
-    sleep 1
-    if kill -0 "$pid" 2>/dev/null; then
-        echo "Started supervisor (PID $pid)"
-        echo "Python: $PYTHON_BIN"
-        echo "Config: $CONFIG_FILE"
-        echo "Profile: ${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
-        echo "Preflight: $PREFLIGHT_STATE_FILE"
-        echo "Log: $LOG_FILE"
-        echo "Supervisor: max_restarts=$SUPERVISOR_MAX_RESTARTS backoff=${SUPERVISOR_BACKOFF_S}s"
-    else
-        rm -f "$PID_FILE"
-        echo "Failed to start — check $LOG_FILE"
+_reject_direct_maker_control() {
+    local direct_pid=""
+    if [[ -s "$PID_FILE" ]]; then
+        local recorded_pid
+        recorded_pid=$(cat "$PID_FILE" 2>/dev/null || true)
+        if _is_our_process "$recorded_pid" \
+            && ! _is_supervisor_process "$recorded_pid"; then
+            direct_pid="$recorded_pid"
+        fi
+    fi
+    if [[ -z "$direct_pid" && -z "$(_find_supervisor_pids)" ]]; then
+        direct_pid=$(_find_maker_pids | head -1)
+    fi
+    if [[ -n "$direct_pid" ]]; then
+        echo "Maker PID $direct_pid is owned directly by systemd; use systemctl stop/restart narrowgate." >&2
         return 1
     fi
+    return 0
 }
 
 stop() {
@@ -710,6 +753,7 @@ stop() {
     local supervisor_state=""
     local kill_escalation=0
     local orphan_count=0
+    _reject_direct_maker_control
     rm -f "$STOP_STATE_FILE"
 
     # Kill by PID file
@@ -717,24 +761,34 @@ stop() {
         local pid
         pid=$(cat "$PID_FILE")
         if _is_our_process "$pid"; then
+            local pid_is_supervisor=false
+            if _is_supervisor_process "$pid"; then
+                pid_is_supervisor=true
+            fi
+            local pid_label="maker"
+            $pid_is_supervisor && pid_label="supervisor"
             supervisor_pid="$pid"
-            if [[ -s "$CHILD_PID_FILE" ]]; then
+            if $pid_is_supervisor && [[ -s "$CHILD_PID_FILE" ]]; then
                 child_pid=$(cat "$CHILD_PID_FILE")
+            else
+                child_pid="$pid"
             fi
             echo "Stopping PID $pid ..."
-            if _kill_pid "$pid" "supervisor"; then
+            if _kill_pid "$pid" "$pid_label"; then
                 kill_escalation=0
             else
                 kill_escalation=$?
                 unsafe=true
             fi
             stopped=true
-            if [[ -f "$SUPERVISOR_STATE_FILE" ]]; then
-                supervisor_state=$(awk -F= '$1=="state" {print $2}' "$SUPERVISOR_STATE_FILE")
-                child_exit=$(awk -F= '$1=="last_exit_code" {print $2}' "$SUPERVISOR_STATE_FILE")
-            fi
-            if [[ "$supervisor_state" != "stopped_by_operator" || "$child_exit" != "0" ]]; then
-                unsafe=true
+            if $pid_is_supervisor; then
+                if [[ -f "$SUPERVISOR_STATE_FILE" ]]; then
+                    supervisor_state=$(awk -F= '$1=="state" {print $2}' "$SUPERVISOR_STATE_FILE")
+                    child_exit=$(awk -F= '$1=="last_exit_code" {print $2}' "$SUPERVISOR_STATE_FILE")
+                fi
+                if [[ "$supervisor_state" != "stopped_by_operator" || "$child_exit" != "0" ]]; then
+                    unsafe=true
+                fi
             fi
         fi
         rm -f "$PID_FILE"
@@ -818,11 +872,14 @@ stop() {
 restart() {
     # Validate the candidate runtime before stopping the healthy process.
     mkdir -p "$DIR/logs"
+    _reject_direct_maker_control
     _load_runtime_environment
     _run_deploy_preflight
     stop
     sleep 1
-    start
+    _require_quiescent_maker
+    _validate_supervisor_policy
+    _launch_manual_supervisor
 }
 
 status() {
@@ -830,7 +887,11 @@ status() {
         local pid
         pid=$(cat "$PID_FILE")
         if _is_our_process "$pid"; then
-            echo "Running (supervisor PID $pid)"
+            if _is_supervisor_process "$pid"; then
+                echo "Running (supervisor PID $pid)"
+            else
+                echo "Running (maker PID $pid; direct process owner)"
+            fi
             ps -p "$pid" -o pid,etime,rss,command | tail -1
             if [[ -f "$CHILD_PID_FILE" ]]; then
                 local child_pid
@@ -873,8 +934,15 @@ reload() {
         fi
     fi
     if [[ -f "$PID_FILE" ]] && _is_our_process "$(cat "$PID_FILE")"; then
-        echo "Supervisor is running without a live child; reload was not sent"
-        return 1
+        local pid
+        pid=$(cat "$PID_FILE")
+        if _is_supervisor_process "$pid"; then
+            echo "Supervisor is running without a live child; reload was not sent"
+            return 1
+        fi
+        kill -HUP "$pid"
+        echo "Reload signal sent"
+        return 0
     else
         echo "Not running"
         return 1

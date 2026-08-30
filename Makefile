@@ -94,16 +94,16 @@ deploy-preflight:
 	@test -f "$(LIVE_CONFIG)" || (echo "Set NARROWGATE_LIVE_CONFIG to a private deploy config file." >&2; exit 2)
 	@$(PYTHON) scripts/preflight_live_deploy.py --config "$(LIVE_CONFIG)"
 
-deploy:
-	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running deploy." >&2; exit 2)
+publish-source:
+	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running publish-source." >&2; exit 2)
 	@test -n "$(EC2_DIR)" || (echo "Set EC2_DIR=/absolute/release/path or NARROWGATE_RELEASE_DIR=/absolute/release/path." >&2; exit 2)
 	@$(PYTHON) scripts/live_deploy_common.py source-release \
 		--repo-root "$(CURDIR)" \
 		--target "$(EC2)" \
 		--release-dir "$(EC2_DIR)" $(if $(RELEASE_TAG),--annotated-tag "$(RELEASE_TAG)",)
 
-deploy-dry:
-	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running deploy-dry." >&2; exit 2)
+publish-source-dry:
+	@test -n "$(EC2)" || (echo "Set EC2=user@host or NARROWGATE_DEPLOY_TARGET=user@host before running publish-source-dry." >&2; exit 2)
 	@test -n "$(EC2_DIR)" || (echo "Set EC2_DIR=/absolute/release/path or NARROWGATE_RELEASE_DIR=/absolute/release/path." >&2; exit 2)
 	@$(PYTHON) scripts/live_deploy_common.py source-release \
 		--repo-root "$(CURDIR)" \
@@ -124,4 +124,4 @@ clean-logs:
 	train train-tune platform-describe \
 	backtest backtest-sweep backtest-as backtest-tick \
 	run stop restart status logs reload \
-	deploy-preflight deploy deploy-dry clean clean-logs
+	deploy-preflight publish-source publish-source-dry clean clean-logs

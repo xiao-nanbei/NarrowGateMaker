@@ -1,6 +1,6 @@
 # Historical backtest evidence revalidation
 
-Last materially modified: 2026-08-12
+Last materially modified: 2026-08-30
 
 Evidence availability: SHA256 values below are identity metadata, not download links. Repository-relative links identify files available in this repository. Unless the surrounding text identifies a public repository source or release, a named artifact without a public link is owner-side evidence retained in the private evidence store and is not distributed with the public repository.
 
@@ -27,7 +27,7 @@ The immutable operational identity is owner-private and `private_not_distributed
 
 ## Deployment guard
 
-`make deploy` and `make deploy-dry` now run `scripts/preflight_live_deploy.py`. The preflight:
+At the time, the now-retired `make deploy` and `make deploy-dry` targets ran `scripts/preflight_live_deploy.py`. The current tree separates local admission (`make deploy-preflight`) from source-only publication (`make publish-source-dry` / `make publish-source`). The historical preflight:
 
 - requires an explicit model directory and `fill_prob_params.json`;
 - validates positive `delta_star` and `kappa_eff`;

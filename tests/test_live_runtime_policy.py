@@ -130,15 +130,29 @@ def test_runtime_identity_rejects_symlink_destination(tmp_path: Path) -> None:
 
 def test_run_sh_preflights_before_background_launch() -> None:
     script = (ROOT / "live/run.sh").read_text(encoding="utf-8")
+    supervisor = script.split("supervise() {", 1)[1].split(
+        "\n_require_quiescent_maker() {", 1
+    )[0]
+    launch_body = script.split("_launch_manual_supervisor() {", 1)[1].split(
+        "\nstart() {", 1
+    )[0]
     start_body = script.split("start() {", 1)[1].split("\nstop() {", 1)[0]
     restart_body = script.split("restart() {", 1)[1].split("\nstatus() {", 1)[0]
 
-    assert "_run_deploy_preflight" in start_body
+    assert "_run_deploy_preflight" in supervisor
     assert "scripts/preflight_live_deploy.py" in script
-    assert start_body.index("_run_deploy_preflight") < start_body.index("nohup ")
+    assert "nohup " in launch_body
+    assert "_run_deploy_preflight" not in start_body
+    assert supervisor.index("_run_deploy_preflight") < supervisor.index(
+        '"$PYTHON_BIN" -I -B "$MAIN_PY"'
+    )
+    assert '[[ ! -s "$CHILD_PID_FILE" ]]' in launch_body
     assert restart_body.index("_run_deploy_preflight") < restart_body.index("\n    stop\n")
     assert "stop ||" not in restart_body
-    assert restart_body.index("\n    stop\n") < restart_body.index("\n    start\n")
+    assert restart_body.index("\n    stop\n") < restart_body.index(
+        "_launch_manual_supervisor"
+    )
+    assert restart_body.count("_run_deploy_preflight") == 1
 
 
 def test_rest_client_applies_one_finite_timeout_to_every_sync_call(

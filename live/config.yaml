@@ -14,10 +14,10 @@
 #   NARROWGATE_LIVE_CONFIG=docs/private/live_config.current.local.yaml \
 #     bash live/run.sh start
 #
-# Deploy with:
+# Validate before an owner-side deployment with:
 #
 #   NARROWGATE_LIVE_CONFIG=docs/private/live_config.current.local.yaml \
-#     make deploy
+#     make deploy-preflight
 #
 
 project_name: "NarrowGate"

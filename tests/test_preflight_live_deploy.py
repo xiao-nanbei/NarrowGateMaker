@@ -549,12 +549,16 @@ def test_preflight_rejects_hash_bound_bundle_tamper(
         validate_deploy_config(config_path, tmp_path)
 
 
-def test_deploy_targets_share_structural_preflight() -> None:
+def test_source_publish_targets_are_separate_from_deploy_preflight() -> None:
     root = Path(__file__).resolve().parents[1]
     makefile = (root / "Makefile").read_text(encoding="utf-8")
 
     assert "deploy-preflight:" in makefile
     assert "scripts/preflight_live_deploy.py --config" in makefile
+    assert "publish-source:" in makefile
+    assert "publish-source-dry:" in makefile
+    assert "\ndeploy:" not in makefile
+    assert "\ndeploy-dry:" not in makefile
     assert makefile.count("scripts/live_deploy_common.py source-release") == 2
 
 

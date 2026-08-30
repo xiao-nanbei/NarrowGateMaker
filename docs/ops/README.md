@@ -17,7 +17,7 @@ Operations docs cover dry-run setup, private config boundaries, deployment guard
 
 The public deployment kernel is provider-neutral and deliberately split into two boundaries:
 
-- `make deploy-dry` / `make deploy` publish only an exact public source checkout. They never copy a config, model, credential, envelope, reconciliation receipt, runtime receipt, or process-control command.
+- `make publish-source-dry` / `make publish-source` publish only an exact public source checkout. They never copy a config, model, credential, envelope, reconciliation receipt, runtime receipt, or process-control command.
 - Runtime construction and activation consume operator-supplied private material outside the checkout. Publishing source does not authorize or start trading.
 
 The source transport requires a clean local Git checkout. It creates a verified bundle from `HEAD`, streams it through SSH, clones it into a same-filesystem staging directory, verifies the exact commit, tree, and clean status, and atomically renames that directory to the requested absolute release path. An existing exact release is accepted idempotently; an existing mismatched release or staging directory fails closed.
@@ -25,7 +25,7 @@ The source transport requires a clean local Git checkout. It creates a verified 
 The safe sequence is:
 
 1. Provision an unprivileged service user, a service-user-owned release parent, and a separate mode-`0700` private root. Restrict SSH and outbound credentials to the minimum needed by the venue connection.
-2. From a clean public clone, run `make deploy-dry`, review the bound commit/tree, then run `make deploy`. This publishes source only and never restarts a process.
+2. From a clean public clone, run `make publish-source-dry`, review the bound commit/tree, then run `make publish-source`. This publishes source only and never restarts a process.
 3. Place the private config, model bundle and its authorization manifest, wheels, lock, wheelhouse, and admitted input receipts under the private root—not inside the Git checkout. Construct the deployment envelope and stopped-exchange reconciliation there later from the exact release.
 4. Build or receive the content-addressed wheelhouse, then create a commit-bound environment with `python3.12 -m live.deployment_runtime install`. Build release wheels from a clean checkout/worktree; remove generated `build/`, `dist/`, and `*.egg-info` state before the build so deleted files cannot survive in a stale wheel tree. Never let the target resolve dependencies from an index during install.
 5. Run both `verify-install` and `verify-static-tree`, then bind the absolute `venv-<execution-commit>` path as the release's ignored `.venv-active` selector.
@@ -82,8 +82,8 @@ git checkout --detach "$NARROWGATE_RELEASE_TAG^{commit}"
 export NARROWGATE_DEPLOY_TARGET="narrowgate@<ec2-address>"
 export NARROWGATE_RELEASE_DIR="/opt/narrowgate/releases/<release-id>"
 
-make deploy-dry
-make deploy
+make publish-source-dry
+make publish-source
 ```
 
 The command refuses a dirty local checkout and refuses a relative release path. It does not copy or inspect private material. Create the per-release private directory separately:
@@ -216,11 +216,11 @@ RECONCILIATION="$PRIVATE_DIR/stopped-exchange-reconciliation.json"
 "$RELEASE_DIR/live/run.sh" reconcile-stopped "$RECONCILIATION"
 ```
 
-`live/run.sh` accepts only the envelope path/root and trusted Python locator for release startup authority. It validates the canonical envelope with the trusted standard library, proves the Git commit/tree and clean checkout before executing repository code, then invokes `verify-envelope-startup` so nested manifests verify the runtime, installed distributions, every installed `RECORD`, and `pip check`. The trusted Python path is an OS bootstrap trust anchor: it must be canonical, root-owned, regular, single-link, executable, and not group/world writable. Do not put API credentials or private authority values in the unit or repository. A minimal systemd wrapper around NarrowGate's own supervisor is:
+`live/run.sh` accepts only the envelope path/root and trusted Python locator for release startup authority. It validates the canonical envelope with the trusted standard library, proves the Git commit/tree and clean checkout before executing repository code, then invokes `verify-envelope-startup` so nested manifests verify the runtime, installed distributions, every installed `RECORD`, and `pip check`. The trusted Python path is an OS bootstrap trust anchor: it must be canonical, root-owned, regular, single-link, executable, and not group/world writable. Do not put API credentials or private authority values in the unit or repository. In service mode `run.sh` performs that proof once and then replaces itself with the maker process; systemd is the sole process owner:
 
 ```ini
 [Unit]
-Description=NarrowGate live supervisor
+Description=NarrowGate live maker
 After=network-online.target
 Wants=network-online.target
 
@@ -230,9 +230,9 @@ User=narrowgate
 WorkingDirectory=/opt/narrowgate/current
 EnvironmentFile=/etc/narrowgate/live.env
 ExecStart=/opt/narrowgate/current/live/run.sh service
-ExecStop=/opt/narrowgate/current/live/run.sh stop
 ExecReload=/opt/narrowgate/current/live/run.sh reload
 Restart=no
+KillSignal=SIGTERM
 TimeoutStartSec=120
 TimeoutStopSec=120
 
@@ -240,7 +240,7 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-Only after all private authority gates are available should an operator atomically move a separately prepared `/opt/narrowgate/current` filesystem selector and start the service. Source publication itself never changes that selector. After `systemctl start narrowgate`, verify `systemctl status narrowgate`, `live/run.sh status`, `logs/runtime_health.json`, and recent supervisor/engine logs. A running PID is insufficient: position and open-order reconciliation must converge and no ownership or execution-state safety latch may be active.
+Only after all private authority gates are available should an operator atomically move a separately prepared `/opt/narrowgate/current` filesystem selector and start the service. Source publication itself never changes that selector. After `systemctl start narrowgate`, verify `systemctl status narrowgate`, `live/run.sh status`, `logs/runtime_health.json`, and recent engine logs. A running PID is insufficient: position and open-order reconciliation must converge and no ownership or execution-state safety latch may be active. Do not add `ExecStop=live/run.sh stop` to the unit: systemd must send `SIGTERM` directly and allow the full `TimeoutStopSec` grace period. The `run.sh start|status|stop` commands remain compatibility tools for a manual, non-systemd launch.
 
 After that admission succeeds, bind only the three validated activation inputs and publish the compact private current pointer. Use the canonical roots printed by the earlier commands and the absolute runtime identity written by the admitted process:
 

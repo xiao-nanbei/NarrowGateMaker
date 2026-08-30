@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_successor_stop_does_not_hide_uncertain_child_or_forced_kill() -> None:
     script = (ROOT / "live" / "run.sh").read_text(encoding="utf-8")
     supervise = script.split("supervise() {", 1)[1].split("\nstart() {", 1)[0]
+    service = script.split("service() {", 1)[1].split(
+        "\n_launch_manual_supervisor() {", 1
+    )[0]
     stop = script.split("stop() {", 1)[1].split("\nrestart() {", 1)[0]
     restart = script.split("restart() {", 1)[1].split("\nstatus() {", 1)[0]
 
@@ -23,8 +26,11 @@ def test_successor_stop_does_not_hide_uncertain_child_or_forced_kill() -> None:
     assert 'return "$child_exit"' in supervise
     assert "STOP_RESULT clean=0" in stop
     assert "kill_escalation" in stop
+    assert "_reject_direct_maker_control" in stop
     assert 'SUPERVISOR_STATE_FILE' in stop
     assert 'return "$EXECUTION_STATE_UNCERTAIN_EXIT_CODE"' in stop
+    assert 'exec "$PYTHON_BIN" -I -B "$MAIN_PY"' in service
+    assert "supervise" not in service
     assert "stop 2>/dev/null || true" not in restart
     assert "\n    stop\n" in restart
 
@@ -33,11 +39,13 @@ def test_supervisor_term_reaps_child_and_records_its_real_clean_exit(
     tmp_path: Path,
 ) -> None:
     live_dir = tmp_path / "live"
+    scripts_dir = tmp_path / "scripts"
     # This fixture exercises supervisor signal/reap mechanics, not the
     # deployment-bound `.venv-active` static-authority contract.
     venv_bin = tmp_path / ".venv" / "bin"
     logs_dir = tmp_path / "logs"
     live_dir.mkdir()
+    scripts_dir.mkdir()
     venv_bin.mkdir(parents=True)
     logs_dir.mkdir()
     # Stage a mechanics-only launcher copy. Production start/supervise is
@@ -65,6 +73,10 @@ def test_supervisor_term_reaps_child_and_records_its_real_clean_exit(
         "while True:\n"
         "    time.sleep(0.05)\n",
         encoding="utf-8",
+    )
+    (live_dir / "config.yaml").write_text("project_name: test\n", encoding="utf-8")
+    (scripts_dir / "preflight_live_deploy.py").write_text(
+        'print("{}")\n', encoding="utf-8"
     )
     fake_python = venv_bin / "python3"
     fake_python.symlink_to(sys.executable)

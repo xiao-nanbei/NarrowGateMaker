@@ -1,6 +1,6 @@
 # Path Conventions
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
 Status: Current public path and privacy contract.
 
@@ -88,7 +88,7 @@ export NARROWGATE_LIVE_CONFIG="<owner-local-current-live-config>"
 bash live/run.sh start
 ```
 
-`make deploy` refuses to deploy a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` for private deployment. The repository distributes neither a current operational identity nor a backtest authority identity. Both are owner-private, `private_not_distributed`, and must be supplied and verified explicitly. Missing or mismatched private bytes fail closed, and a current live alias may never substitute for backtest authority.
+`make deploy-preflight` refuses to admit a file marked `PUBLIC TEMPLATE`; use `NARROWGATE_LIVE_CONFIG` to select a private deployment config for that local check. `make publish-source-dry` and `make publish-source` transport only a clean public Git checkout and never inspect that config. The repository distributes neither a current operational identity nor a backtest authority identity. Both are owner-private, `private_not_distributed`, and must be supplied and verified explicitly. Missing or mismatched private bytes fail closed, and a current live alias may never substitute for backtest authority.
 
 ## Documentation Rule
 
