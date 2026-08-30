@@ -21,7 +21,12 @@ Before a start, restart, hot reload or deployment, run the repository preflight 
   --repo-root .
 ```
 
-The 2026-07-27 local declared-config preflight reports 13-head ML disabled, model directory `models/saved_btcusdc_causal_v7_time_calendar_semantics_20260726`, empirical P3 SHA256 `cedec34851454b643be746746a1dd4bcc7e13807985c14e78504643ad6e71714`, and `quote_horizon_s=1`. Those values validate the named local config and artifacts only; they do not prove that a remote process is running the same hashes. Verify the remote config/model/P3 identity with `live/run.sh status`, `live/run.sh profile`, and the startup identity logs after every restart.
+Preflight validates the selected local config and resolves its model and policy
+artifacts, but it does not prove that a remote process is running the same
+release. Live startup therefore validates the deployment-envelope root and the
+stopped-exchange reconciliation root independently. Use `live/run.sh status`,
+`live/run.sh profile`, and the startup logs to verify the running release after
+every activation.
 
 `make deploy` refuses a config marked `PUBLIC TEMPLATE` and admits only a hash-bound model bundle whose heads and bundle manifest explicitly authorize live use. Public synthetic, `public_dry_run_only`, `research_only`, missing-authority, and `authority.live=false` artifacts fail closed before any remote sync.
 

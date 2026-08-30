@@ -9,6 +9,7 @@ import importlib
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 import uuid
 from collections.abc import Mapping
@@ -205,123 +206,85 @@ STUDY_ADMISSION_ROOT = (
     / "nested_chronological_oof_v2_execution_v9"
 )
 
-# The executable binding is duplicated here deliberately: the Spec is the
-# research identity, while this preflight fails before execution if either the
-# Spec declaration or the imported implementation has drifted.
+# Component paths retain the semantic mapping from the frozen research contract
+# to the executable modules.  Their bytes are bound once by the enclosing Git
+# commit/tree instead of being duplicated as per-file hashes here.
 IMPLEMENTATION_BINDINGS: dict[str, dict[str, str]] = {
     "features": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_features.py",
-        "sha256": "fbcfadd8277b2a7ef35d2b16f584e661852b0a3066327e3e2c2f729b717964c0",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_features.py",
-        "test_sha256": "df7ab0c23f06deb3c2b3a3e17bf06d9dc9968465c06d8331955201ca99d654b7",
     },
     "windows": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_windows.py",
-        "sha256": "46148f56b96e85a57f22b1654f903cf36b831f11d6dd04d3ab4263baf2af8c78",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_windows.py",
-        "test_sha256": "f018c8f7c7c0802ffcaa71d4470124e7cc284d5b6d84980809b068cfb40d3b8d",
     },
     "native_features": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_native_features.py",
-        "sha256": "0d9ee2b7497b78b9274f0af6dc60500f232d83f9b12e857cd7b75d6c4251e689",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_native_features.py",
-        "test_sha256": "c79242a2266d5bdfa8ed07c594b6e93cc883a838ad731633ebf0f4bb814ae930",
     },
     "snapshot": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_snapshot.py",
-        "sha256": "5f4c10d3d55f02203807c67e4d32d09d1ba4097dea669e74ff8eca35dcd5f7ea",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_snapshot.py",
-        "test_sha256": "a8faf85a3aba2213095cda68a1889facaa5a0481c39cba38bd1bd3f99ccffd25",
     },
     "source_manifest": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_source_manifest.py",
-        "sha256": "86f992b5df347b82b15dfcee60106d96494ec895648bb350fbc743501cf2f32c",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_source_manifest.py",
-        "test_sha256": "6e8083b8d73920cfa72d728766f9b72368f9330c8accd5b61c8d54f75a6105f9",
     },
     "predicate_materializer": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
-        "sha256": "176a347092183fb43454236c32d83b1754bf095ac555d1bb6e654b01da7b2bf9",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_2025_predicate_artifacts.py",
-        "test_sha256": "bbd2235476134343a2329589e9f761eefcf7435c35e70788fdc9e5467997c5c9",
     },
     "strict_checkpoint": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_checkpoint.py",
-        "sha256": "02734c28a40b200551ff39013acc12fb631e28583720ecc6b940510574a0c4aa",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_checkpoint.py",
-        "test_sha256": "16ff1c7c041eaaf6e42e2f580eada7e77daab786e3a9212e80a4832dec527714",
     },
     "replay_emitter": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_replay_emitter.py",
-        "sha256": "51784343a37635ca813023df8f8c494c75a37aa943baba7c96b0c6c5250cefcb",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_emitter.py",
-        "test_sha256": "c1c101a03d05b2897816547ce9a20daef574f72e6d77d12073ef2da8d17ee651",
     },
     "shared_prefix": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_shared_prefix.py",
-        "sha256": "218ceba4491faa7ae359ce9c60bf48e947bf321f970186874eae8fd3e52a9816",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_shared_prefix.py",
-        "test_sha256": "96245955c666e877f3c229b50007c7bf2f25040155aa5223c3b23366860f9fcd",
     },
     "strict_labels": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_labels.py",
-        "sha256": "94e0063452ec434898f1aabc0c5dda9c75ef906db094eedaa3b14aa4bc656035",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_labels.py",
-        "test_sha256": "1fe06a603af8a2112245b7cd23246fd3b4e55b56d7859eb414300edc7df8253a",
     },
     "label_panel": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_label_panel.py",
-        "sha256": "a3f7c47940a62b61e8f55bb7c430eae5ac579e03fee97bc80f51c948b65b0c2d",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_label_panel.py",
-        "test_sha256": "3c4cd7d547d457732d88693c066ff10beb34ac94b893a0dd551404fa00feb8d8",
     },
     "mechanics_receipt": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_mechanics_receipt.py",
-        "sha256": "ab38333cd30c3f9120412dee446e1afb2a2af3fac9ce99fa4c1cc49583563cb5",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_mechanics_receipt.py",
-        "test_sha256": "e52236759a33e8591151634fad20c3b632fe8561f29ddf9c246ea4c749ea60ba",
     },
     "predicates": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_predicates.py",
-        "sha256": "4b8d0bf871690c2833b9dc7ae1e2f179fb81c88094b606ae9e22216da5106ab8",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_predicates.py",
-        "test_sha256": "c7768c90558673556a8b5adfdd6ffe5e0f2095483ebbdc9dcef5f8bdfcc9099d",
     },
     "nested_oof": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_nested_oof.py",
-        "sha256": "f196dd3d0924e30e58dd62dcc3f73c9d452ab75a38397d213906f0a352e986db",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_nested_oof.py",
-        "test_sha256": "f9adeee733e6823e4cf783b6074f4b97b924c91cc2d24509a37060de48ac6e2e",
     },
     "strict_label_panel_runner": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
-        "sha256": "a61bac08f74ba345ddaea647e674d7ad9b50e528cc63d2c614f398d1ce53fdde",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
-        "test_sha256": "403f866c8260a0f0c95ab51b371e238fca2c3a6417396477d35bf443f1a31772",
     },
     "native_sequence_support_mapping": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_sequence_support.py",
-        "sha256": "4638262688a89fb0b8eabaa0a1fbcbd9c8fcbc82563191fb10d15ede054f1ac9",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_sequence_support.py",
-        "test_sha256": "4f430e1b5c8daa80eedf38a7839895e371600e5715934562a893d9efc15de52d",
     },
     "study": {
         "path": "research/families/f05_fill_quality_quote_ev/audit/causal_multichannel_window_boolean_cooldown_study.py",
-        "sha256": "2e14210695496aed4f82d1afa09d334115f537bb991aa31fc3c95e244e51c36d",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_study.py",
-        "test_sha256": "a6eebeb240902e7e9b7210263debb83f39f7bb7d110257de5115606304a9f17d",
     },
     "execution_replay_abi": {
         "path": "models/backtest_tick.py",
-        "sha256": "379daa3c31bd1261b7d755d11bff476a803836c3992306e6b130a3ea7b1c7f1b",
         "test_path": "tests/test_causal_multichannel_window_boolean_cooldown_replay_binding.py",
-        "test_sha256": "d41bb89c1bea0951a5ca7df7d3578cdee2a08a130afcbd39fca4ccbc6a407b96",
     },
     "native_queue_scheduler": {
         "path": "models/exchange_book_replay.py",
-        "sha256": "a2c53a603dbdf6903faadedb976704de404951622f2cd671e0612fb18a4b5910",
         "test_path": "tests/test_exchange_book_replay.py",
-        "test_sha256": "9e61f79d59cb3d4a9806b2b0b5d93b9892019bbb682c5de3b42cede751e3b526",
     },
 }
 
@@ -540,6 +503,47 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _repo_path(value: str) -> Path:
     return resolve_research_path(str(value), require_exists=False)
+
+
+def _git_output(*args: str) -> str:
+    completed = subprocess.run(
+        ("git", "-C", str(ROOT), *args),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise PreflightError(f"Git source identity is unavailable: {detail}")
+    return completed.stdout.strip()
+
+
+def _implementation_source_root() -> dict[str, Any]:
+    paths = sorted(
+        {
+            binding[field]
+            for binding in IMPLEMENTATION_BINDINGS.values()
+            for field in ("path", "test_path")
+        }
+    )
+    _git_output("ls-files", "--error-unmatch", "--", *paths)
+    drifted = _git_output("diff", "--name-only", "HEAD", "--", *paths).splitlines()
+    if drifted:
+        raise PreflightError(
+            "implementation paths drifted from the Git source tree: "
+            + ", ".join(drifted)
+        )
+    commit = _git_output("rev-parse", "--verify", "HEAD^{commit}")
+    tree = _git_output("rev-parse", "--verify", f"{commit}^{{tree}}")
+    return {
+        "identity": "git.commit_tree.v1",
+        "authority": "observed_source_identity_run_manifest_must_bind",
+        "object_format": _git_output("rev-parse", "--show-object-format"),
+        "commit": commit,
+        "tree": tree,
+        "tracked_path_count": len(paths),
+        "worktree_matches_tree": True,
+    }
 
 
 def _source_identity(path: Path, *, role: str) -> str:
@@ -857,8 +861,6 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(f"feature amendment {name} binding is missing")
         if declared.get("path") != expected["path"]:
             raise PreflightError(f"feature amendment {name} path drifted")
-        if name == "snapshot" and declared.get("sha256") != expected["sha256"]:
-            raise PreflightError(f"feature amendment {name} hash drifted")
 
     replacements = execution_amendment.get("implementation_binding_replacements")
     expected_replacements = {
@@ -876,15 +878,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(
                 f"execution amendment {amendment_name} binding is invalid"
             )
-        for field in ("path", "sha256", "test_path", "test_sha256"):
-            if component_name in {"nested_oof", "study"} and field in {
-                "sha256",
-                "test_sha256",
-            }:
-                # Later amendments replace these implementations. Historical
-                # amendment files remain immutable and hash-bound; v5 binds
-                # the effective executable hashes below.
-                continue
+        for field in ("path", "test_path"):
             if declared.get(field) != expected[field]:
                 raise PreflightError(
                     f"execution amendment {amendment_name} {field} drifted"
@@ -922,11 +916,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
     expected_panel_binding = IMPLEMENTATION_BINDINGS["strict_label_panel_runner"]
     if not isinstance(panel_binding, Mapping):
         raise PreflightError("execution amendment successor panel binding is invalid")
-    for field in ("path", "sha256", "test_path", "test_sha256"):
-        if field in {"sha256", "test_sha256"}:
-            # v2 remains immutable historical provenance. v6 binds the
-            # corrected overlap-only source segmentation implementation.
-            continue
+    for field in ("path", "test_path"):
         if panel_binding.get(field) != expected_panel_binding[field]:
             raise PreflightError(
                 f"execution amendment successor panel {field} drifted"
@@ -972,20 +962,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(
                 f"execution identity-hardening {amendment_name} binding is invalid"
             )
-        for field in ("path", "sha256", "test_path", "test_sha256"):
-            if (
-                component_name
-                in {
-                    "study",
-                    "strict_labels",
-                    "shared_prefix",
-                    "label_panel",
-                    "execution_replay_abi",
-                }
-                and field in {"sha256", "test_sha256"}
-            ):
-                # Later immutable amendments bind the effective executables.
-                continue
+        for field in ("path", "test_path"):
             if declared.get(field) != expected[field]:
                 raise PreflightError(
                     f"execution identity-hardening {amendment_name} {field} drifted"
@@ -1044,9 +1021,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
     expected_study_binding = IMPLEMENTATION_BINDINGS["study"]
     if not isinstance(comparator_study_binding, Mapping):
         raise PreflightError("continuous-comparator study binding is invalid")
-    for field in ("path", "sha256", "test_path", "test_sha256"):
-        if field in {"sha256", "test_sha256"}:
-            continue
+    for field in ("path", "test_path"):
         if comparator_study_binding.get(field) != expected_study_binding[field]:
             raise PreflightError(
                 f"continuous-comparator study {field} drifted"
@@ -1113,14 +1088,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(
                 f"source-and-OOF {amendment_name} binding is invalid"
             )
-        for field in ("path", "sha256", "test_path", "test_sha256"):
-            if component_name in {
-                "nested_oof",
-                "study",
-                "execution_replay_abi",
-            } and field in {"sha256", "test_sha256"}:
-                # v9 binds the effective formal-consumer and replay hashes.
-                continue
+        for field in ("path", "test_path"):
             if declared.get(field) != expected[field]:
                 raise PreflightError(
                     f"source-and-OOF {amendment_name} {field} drifted"
@@ -1191,13 +1159,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(
                 f"native-sequence {amendment_name} binding is invalid"
             )
-        for field in ("path", "sha256", "test_path", "test_sha256"):
-            if (
-                component_name == "strict_label_panel_runner"
-                and field in {"sha256", "test_sha256"}
-            ):
-                # v9 binds the effective formal runner.
-                continue
+        for field in ("path", "test_path"):
             if declared.get(field) != expected[field]:
                 raise PreflightError(
                     f"native-sequence {amendment_name} {field} drifted"
@@ -1367,10 +1329,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
     expected_strict_label_binding = IMPLEMENTATION_BINDINGS["strict_labels"]
     if not isinstance(v7_strict_label_binding, Mapping):
         raise PreflightError("target-receipt ABI strict-label binding is invalid")
-    for field in ("path", "sha256", "test_path", "test_sha256"):
-        if field in {"sha256", "test_sha256"}:
-            # v9 binds the effective strict-label consumer.
-            continue
+    for field in ("path", "test_path"):
         if v7_strict_label_binding.get(field) != expected_strict_label_binding[field]:
             raise PreflightError(f"target-receipt ABI strict-label {field} drifted")
     receipt_contract = execution_amendment_v7.get("target_receipt_abi_contract")
@@ -1417,10 +1376,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
     expected_shared_prefix_binding = IMPLEMENTATION_BINDINGS["shared_prefix"]
     if not isinstance(v8_shared_prefix_binding, Mapping):
         raise PreflightError("strict-arm admission shared-prefix binding is invalid")
-    for field in ("path", "sha256", "test_path", "test_sha256"):
-        if field in {"sha256", "test_sha256"}:
-            # v9 binds the effective queue-trace executor.
-            continue
+    for field in ("path", "test_path"):
         if (
             v8_shared_prefix_binding.get(field)
             != expected_shared_prefix_binding[field]
@@ -1512,7 +1468,7 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
             raise PreflightError(
                 f"queue-trace and formal-schema {amendment_name} binding is invalid"
             )
-        for field in ("path", "sha256", "test_path", "test_sha256"):
+        for field in ("path", "test_path"):
             if declared.get(field) != expected[field]:
                 raise PreflightError(
                     f"queue-trace and formal-schema {amendment_name} {field} drifted"
@@ -1714,6 +1670,8 @@ def _validate_amendments(spec: Mapping[str, Any]) -> dict[str, Any]:
 def _validate_component_bindings(
     spec: Mapping[str, Any],
     amendments: Mapping[str, Any],
+    *,
+    implementation_source_root: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     expected_names = {
         "features",
@@ -1743,20 +1701,18 @@ def _validate_component_bindings(
         "native_queue_scheduler",
     }:
         raise PreflightError("v2 imported component set drifted")
+    if implementation_source_root is None:
+        _implementation_source_root()
 
     audit: dict[str, dict[str, Any]] = {}
     for name in sorted(expected_names):
         binding = IMPLEMENTATION_BINDINGS[name]
-        implementation = _require_hash(
-            binding["path"],
-            binding["sha256"],
-            role=f"{name} implementation",
-        )
-        test_path = _require_hash(
-            binding["test_path"],
-            binding["test_sha256"],
-            role=f"{name} tests",
-        )
+        implementation = _repo_path(binding["path"])
+        test_path = _repo_path(binding["test_path"])
+        if not implementation.is_file():
+            raise PreflightError(f"{name} implementation is missing: {implementation}")
+        if not test_path.is_file():
+            raise PreflightError(f"{name} tests are missing: {test_path}")
         module = _COMPONENT_MODULES.get(name)
         if module is not None and getattr(module, "IDENTITY", None) != IDENTITY:
             raise PreflightError(f"{name} implementation identity drifted")
@@ -1819,11 +1775,10 @@ def _validate_component_bindings(
         }.get(name)
         row: dict[str, Any] = {
             "path": str(implementation),
-            "sha256": _sha256(implementation),
             "test_path": str(test_path),
-            "test_sha256": _sha256(test_path),
             "identity_verified": True,
-            "executable_binding_verified": True,
+            "executable_mapping_verified": True,
+            "git_source_observed": True,
             "declared_in_spec": name in _SPEC_BINDING_LOCATORS,
             "declared_in_execution_amendment": (
                 amendment_binding_name is not None
@@ -1892,14 +1847,7 @@ def _validate_component_bindings(
                 raise PreflightError(f"{name} {declaration} path drifted")
             if declared.get("test_path") != binding["test_path"]:
                 raise PreflightError(f"{name} {declaration} test path drifted")
-            if declared.get("sha256") != binding["sha256"]:
-                raise PreflightError(
-                    f"{name} {declaration} implementation hash drifted"
-                )
-            if declared.get("test_sha256") != binding["test_sha256"]:
-                raise PreflightError(f"{name} {declaration} test hash drifted")
-            row["effective_implementation_sha256_matches"] = True
-            row["effective_test_sha256_matches"] = True
+            row["effective_paths_match"] = True
         elif v9_binding_name is not None or v6_binding_name is not None:
             if v9_binding_name is not None:
                 declared = execution_v9_payload[
@@ -1911,13 +1859,12 @@ def _validate_component_bindings(
                     "implementation_binding_replacements"
                 ][v6_binding_name]
                 successor_name = "native-sequence execution successor"
-            for field in ("path", "sha256", "test_path", "test_sha256"):
+            for field in ("path", "test_path"):
                 if declared.get(field) != binding[field]:
                     raise PreflightError(
                         f"{name} {successor_name} {field} drifted"
                     )
-            row["effective_implementation_sha256_matches"] = True
-            row["effective_test_sha256_matches"] = True
+            row["effective_paths_match"] = True
         audit[name] = row
     return audit
 
@@ -2297,7 +2244,12 @@ def _validate_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
         raise PreflightError("SELL duration vocabulary drifted")
 
     amendments = _validate_amendments(spec)
-    component_bindings = _validate_component_bindings(spec, amendments)
+    implementation_source_root = _implementation_source_root()
+    component_bindings = _validate_component_bindings(
+        spec,
+        amendments,
+        implementation_source_root=implementation_source_root,
+    )
     source = spec["source_separation"]["strict_native_2026"]
     panel_path = _require_hash(
         source["panel_spec_path"],
@@ -2443,6 +2395,7 @@ def _validate_spec(spec: Mapping[str, Any]) -> dict[str, Any]:
                 ],
             },
         },
+        "implementation_source_root": implementation_source_root,
         "component_bindings": component_bindings,
         "outcome_blind_2025_source_manifest": {
             "path": str(source_path),
@@ -2611,7 +2564,7 @@ def preflight() -> dict[str, Any]:
     orico_root = source_manifest.DEFAULT_DATA_ROOT
     orico_free = shutil.disk_usage(orico_root).free if orico_root.exists() else 0
     component_bindings_verified = all(
-        row["executable_binding_verified"]
+        row["executable_mapping_verified"]
         for row in audit["component_bindings"].values()
     )
     strict_one_shot_execution_eligible = bool(

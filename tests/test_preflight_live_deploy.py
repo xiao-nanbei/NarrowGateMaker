@@ -3,11 +3,14 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
 from scripts.preflight_live_deploy import validate_deploy_config
+from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
+from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
 from strategy.model_contract import (
     ABSOLUTE_PRICE_VARIANCE_SEMANTICS,
     REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
@@ -216,6 +219,9 @@ def test_preflight_uses_empirical_p3_artifact(tmp_path: Path) -> None:
     assert identity["max_exec_book_source_lag_s"] == pytest.approx(5.0)
     assert identity["model_promotion_authority"] == "private_deployment_authorized"
     assert identity["model_live_authorized"] is True
+    assert identity["model_authorization_path"].endswith(
+        "deployment_authorization.json"
+    )
     assert identity["f05_buy_e3_artifacts"] == {"enabled": False}
     assert identity["startup_gates_not_validated"] == [
         "deployment_envelope",
@@ -241,6 +247,9 @@ def test_preflight_accepts_private_config_and_bundle_outside_repository(
 
     assert identity["config_path"] == str(config_path.resolve())
     assert identity["model_dir"] == str(model_dir.resolve())
+    assert identity["model_authorization_path"] == str(
+        (model_dir / "deployment_authorization.json").resolve()
+    )
     assert identity["p3_path"] == str((model_dir / "fill_prob_params.json").resolve())
 
 
@@ -264,6 +273,107 @@ def test_preflight_enabled_buy_e3_missing_artifacts_fails_closed(
 
     with pytest.raises(ValueError, match="requires strategy.buy_e3"):
         validate_deploy_config(config_path, tmp_path)
+
+
+def test_preflight_derives_policy_leaf_hashes_from_files_not_yaml(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = _write_fixture(tmp_path)
+    boolean_policy = tmp_path / "boolean-policy.json"
+    boolean_bundle = tmp_path / "boolean-bundle.json"
+    buy_manifest = tmp_path / "buy-manifest.json"
+    buy_policy = tmp_path / "buy-policy.json"
+    buy_bundle = tmp_path / "buy-bundle.json"
+    artifact_sha256 = "a" * 64
+    boolean_policy.write_text("{}\n", encoding="utf-8")
+    boolean_bundle.write_text("{}\n", encoding="utf-8")
+    buy_manifest.write_text(
+        json.dumps({"artifact_sha256": artifact_sha256}) + "\n",
+        encoding="utf-8",
+    )
+    buy_policy.write_text("{}\n", encoding="utf-8")
+    buy_bundle.write_text("{}\n", encoding="utf-8")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["strategy"].update(
+        {
+            "fill_cooldown": 85.0,
+            "adaptive_add_cooldown_enabled": False,
+            "fill_cooldown_consecutive_reset_policy": "opposite_fill_only",
+            "boolean_cooldown_policy_enabled": True,
+            "boolean_cooldown_evidence_route": "private_deployment_approval",
+            "boolean_cooldown_policy_path": str(boolean_policy),
+            "boolean_cooldown_policy_sha256": "0" * 64,
+            "boolean_cooldown_predicate_bundle_path": str(boolean_bundle),
+            "boolean_cooldown_predicate_bundle_sha256": "1" * 64,
+            "boolean_cooldown_ema_warmup_s": 2048.0,
+            "buy_e3_cooldown_policy_enabled": True,
+            "buy_e3_cooldown_evidence_route": "private_deployment_buy_e3",
+            "buy_e3_cooldown_artifact_manifest_path": str(buy_manifest),
+            "buy_e3_cooldown_artifact_manifest_sha256": "2" * 64,
+            "buy_e3_cooldown_artifact_sha256": "3" * 64,
+            "buy_e3_cooldown_policy_path": str(buy_policy),
+            "buy_e3_cooldown_policy_sha256": "4" * 64,
+            "buy_e3_cooldown_predicate_bundle_path": str(buy_bundle),
+            "buy_e3_cooldown_predicate_bundle_sha256": "5" * 64,
+            "buy_e3_cooldown_ema_warmup_s": 2048.0,
+        }
+    )
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv(
+        "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
+        "1",
+    )
+    monkeypatch.setenv("NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY", "1")
+    observed: dict[str, dict[str, object]] = {}
+
+    def fake_boolean_from_files(_cls, **kwargs):
+        observed["boolean"] = kwargs
+        return SimpleNamespace(
+            evaluator=SimpleNamespace(
+                policy_sha256=kwargs["policy_sha256"],
+                predicate_bundle_sha256=kwargs["predicate_bundle_sha256"],
+                predicate_columns=(),
+            )
+        )
+
+    def fake_buy_from_files(_cls, **kwargs):
+        observed["buy"] = kwargs
+        return SimpleNamespace(
+            artifact_sha256=artifact_sha256,
+            evaluator=SimpleNamespace(
+                policy_sha256=kwargs["policy_sha256"],
+                predicate_bundle_sha256=kwargs["predicate_bundle_sha256"],
+            ),
+        )
+
+    monkeypatch.setattr(
+        LiveBooleanCooldownPolicy,
+        "from_files",
+        classmethod(fake_boolean_from_files),
+    )
+    monkeypatch.setattr(
+        LiveBuyE3CooldownPolicy,
+        "from_files",
+        classmethod(fake_buy_from_files),
+    )
+
+    identity = validate_deploy_config(config_path, tmp_path)
+
+    assert observed["boolean"]["policy_sha256"] == hashlib.sha256(
+        boolean_policy.read_bytes()
+    ).hexdigest()
+    assert observed["boolean"]["predicate_bundle_sha256"] == hashlib.sha256(
+        boolean_bundle.read_bytes()
+    ).hexdigest()
+    assert observed["buy"]["artifact_manifest_sha256"] == hashlib.sha256(
+        buy_manifest.read_bytes()
+    ).hexdigest()
+    assert observed["buy"]["expected_artifact_sha256"] == artifact_sha256
+    assert observed["buy"]["policy_sha256"] == hashlib.sha256(
+        buy_policy.read_bytes()
+    ).hexdigest()
+    assert identity["f05_buy_e3_artifacts"]["artifact_sha256"] == artifact_sha256
 
 
 @pytest.mark.parametrize("field", ("eta_inventory", "a_spread"))

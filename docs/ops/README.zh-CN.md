@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-08-30
 
 运维文档涵盖 dry-run 设置、私有配置边界、部署 guardrail 和 telemetry。这些文档不得包含私有主机、账户详情或原始 live PnL。
 
@@ -26,13 +26,13 @@ Last materially synchronized: 2026-08-29
 
 1. 创建无特权 service user、由该用户拥有的 release parent，以及单独的 mode-`0700` private root；SSH 与出站凭证只开放 venue 连接所需的最小权限。
 2. 从 clean public clone 运行 `make deploy-dry`，核对绑定的 commit/tree，再运行 `make deploy`。这一步只发布源码，绝不重启进程。
-3. 把私有 config、model bundle、wheel、lock、wheelhouse 与已准入的输入 receipt 放在 private root 下，不能放进 Git checkout。Deployment envelope 与 stopped-exchange reconciliation 稍后必须针对精确 release 在该目录中构建。
+3. 把私有 config、model bundle 及其 authorization manifest、wheel、lock、wheelhouse 与已准入的输入 receipt 放在 private root 下，不能放进 Git checkout。Deployment envelope 与 stopped-exchange reconciliation 稍后必须针对精确 release 在该目录中构建。
 4. 构建或接收 content-addressed wheelhouse，再用 `python3.12 -m live.deployment_runtime install` 创建 commit-bound 环境。Release wheel 必须来自 clean checkout/worktree；构建前清除生成的 `build/`、`dist/` 与 `*.egg-info` 状态，避免已删除文件从陈旧构建树进入 wheel。目标机器安装时不得从 package index 解析依赖。
 5. 同时执行 `verify-install` 与 `verify-static-tree`，再把绝对 `venv-<execution-commit>` 路径绑定为 release 内被 Git 忽略的 `.venv-active` selector。
-6. 从精确 checkout/runtime authority 构建 deployment envelope，针对私有配置执行 `make deploy-preflight`，并在 maker 完全停止时通过 `live/run.sh reconcile-stopped` 生成 exchange barrier。
-7. 只有 process、runtime health、仓位/订单 reconciliation 和日志检查都通过后才能准入；精确 activation/rollback evidence 仅保存在私有侧。
+6. 从精确 checkout/runtime authority 构建 deployment envelope。Model authorization manifest 是必需的 envelope member；可选 policy artifacts 只能按完整组加入。针对私有配置执行 `make deploy-preflight`，并在 maker 完全停止时通过 `live/run.sh reconcile-stopped` 生成 exchange barrier。
+7. 只有 process、runtime health、仓位/订单 reconciliation 和日志检查都通过后才能准入。然后构建紧凑的 activation receipt，再原子发布 current selector；精确 activation/rollback evidence 仅保存在私有侧。
 
-两个 authority constructor 都已经公开且通用：`live.deployment_runtime build-envelope` 从精确文件与 receipt 推导 deployment envelope；`live/run.sh reconcile-stopped ABSOLUTE_PATH` 只有在确认 maker 完全停止后才执行 signed exchange reads。必须使用二者输出的 canonical root，不能手写 JSON，也不能复制旧 private receipt。
+Authority 命令都已经公开且通用：`live.deployment_runtime build-envelope` 从精确文件与 receipt 推导 deployment envelope；`live/run.sh reconcile-stopped ABSOLUTE_PATH` 只有在证明 maker 完全停止后才执行 signed exchange reads；`build-activation-receipt` 绑定已验证的 envelope、stopped reconciliation 和实际 live runtime identity；`publish-current-pointer` 在原子更新 selector 前会重新验证这条 lineage。必须使用它们输出的 canonical root，不能手写这些 JSON，也不能把旧 private receipt 复制进 current authority。
 
 无需私有数据即可查看通用子命令与必填字段：
 
@@ -42,6 +42,8 @@ python3.12 -m live.deployment_runtime install --help
 python3.12 -m live.deployment_runtime verify-install --help
 python3.12 -m live.deployment_runtime build-envelope --help
 python3.12 -m live.deployment_runtime verify-envelope-startup --help
+python3.12 -m live.deployment_runtime build-activation-receipt --help
+python3.12 -m live.deployment_runtime publish-current-pointer --help
 python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
 ```
@@ -91,7 +93,7 @@ sudo install -d -o narrowgate -g narrowgate -m 0700 \
   /opt/narrowgate/private/<release-id>
 ```
 
-通过部署者批准的 secret/artifact channel，把私有 config、model bundle、lock、wheelhouse、wheel 与已准入的输入 receipts 传到这个 private directory。不要预先复制其他 release 的 envelope 或 reconciliation；二者必须按下文构建。不得把私有材料放进 `/opt/narrowgate/releases/<release-id>`。
+通过部署者批准的 secret/artifact channel，把私有 config、model bundle 及其 authorization manifest、lock、wheelhouse、wheel 与已准入的输入 receipts 传到这个 private directory。不要预先复制其他 release 的 envelope 或 reconciliation；二者必须按下文构建。不得把私有材料放进 `/opt/narrowgate/releases/<release-id>`。
 
 在实例上推导精确的 commit-bound venv 名称，并只使用已经传输且由 hash 绑定的 artifacts 安装。Install receipt 和 `venv-<commit>` 必须具有同一个私有 parent，因为 live startup 会强制检查这一关系：
 
@@ -165,15 +167,21 @@ NATIVE_RECEIPT="$PRIVATE_DIR/native-build-receipt.json"
   --output "$NATIVE_RECEIPT"
 ```
 
-使用精确的私有 active config 和 native-build receipt 构建 deployment envelope。如果 active config 绑定 BUY E3 policy，必须同时提供 `--policy-artifact-manifest`、`--policy-file` 和 `--predicate-bundle`；否则三者全部省略。
+使用精确的私有 active config、native-build receipt 和由 model contract 选中并验证的 model authorization manifest 构建 deployment envelope。这一个必需 manifest 在内部绑定已准入的 model heads 与 P3 artifact；不得在部署命令、service environment 或 pointer 中重复它们的 leaf hashes。即使所有可选 action policy 都关闭，`--model-authorization` 也始终必需。如果 active config 绑定 SELL Boolean cooldown，必须同时提供 `--boolean-policy-file` 和
+`--boolean-predicate-bundle`。如果绑定 BUY E3 policy，必须同时提供
+`--policy-artifact-manifest`、`--policy-file` 和 `--predicate-bundle`。未启用的 policy
+应整组省略。
+将 `MODEL_AUTHORIZATION` 设置为 `scripts/preflight_live_deploy.py` 输出的精确 `model_authorization_path`；不得复制或重命名该文件。
 
 ```bash
 ENVELOPE="$PRIVATE_DIR/deployment-envelope.json"
+MODEL_AUTHORIZATION=<preflight-输出的精确-model_authorization_path>
 
 python3.12 -m live.deployment_runtime build-envelope \
   --repository-root "$RELEASE_DIR" \
   --active-config "$PRIVATE_DIR/live-config.yaml" \
   --native-build-receipt "$NATIVE_RECEIPT" \
+  --model-authorization "$MODEL_AUTHORIZATION" \
   --output "$ENVELOPE"
 ```
 
@@ -227,6 +235,35 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-只有全部私有 authority gate 都可用后，operator 才能原子切换另行准备的 `/opt/narrowgate/current` selector 并启动 service。源码发布本身绝不改变这个 selector。执行 `systemctl start narrowgate` 后，检查 `systemctl status narrowgate`、`live/run.sh status`、`logs/runtime_health.json` 以及最近的 supervisor/engine logs。PID 存活并不充分：仓位与 open-order reconciliation 必须收敛，而且不能存在 ownership 或 execution-state safety latch。
+只有全部私有 authority gate 都可用后，operator 才能原子切换另行准备的 `/opt/narrowgate/current` 文件系统 selector 并启动 service。源码发布本身绝不改变这个 selector。执行 `systemctl start narrowgate` 后，检查 `systemctl status narrowgate`、`live/run.sh status`、`logs/runtime_health.json` 以及最近的 supervisor/engine logs。PID 存活并不充分：仓位与 open-order reconciliation 必须收敛，而且不能存在 ownership 或 execution-state safety latch。
+
+上述准入通过后，只绑定三个已验证的 activation 输入，然后发布紧凑的私有 current pointer。使用前面命令输出的 canonical root，以及已准入进程写入的绝对 runtime identity 路径：
+
+```bash
+ACTIVATION_RECEIPT="$PRIVATE_DIR/activation-receipt.json"
+CURRENT_POINTER=/opt/narrowgate/private/current.json
+RUNTIME_IDENTITY=<absolute-runtime-identity-path>
+
+python3.12 -m live.deployment_runtime build-activation-receipt \
+  --release-id <release-id> \
+  --deployment-envelope "$ENVELOPE" \
+  --deployment-envelope-sha256 <deployment-envelope-canonical-sha256> \
+  --stopped-reconciliation "$RECONCILIATION" \
+  --stopped-reconciliation-sha256 <stopped-reconciliation-canonical-sha256> \
+  --runtime-identity "$RUNTIME_IDENTITY" \
+  --output "$ACTIVATION_RECEIPT"
+
+python3.12 -m live.deployment_runtime publish-current-pointer \
+  --release-id <release-id> \
+  --deployment-envelope "$ENVELOPE" \
+  --deployment-envelope-sha256 <deployment-envelope-canonical-sha256> \
+  --activation-receipt "$ACTIVATION_RECEIPT" \
+  --activation-receipt-sha256 <activation-receipt-canonical-sha256> \
+  --stopped-reconciliation "$RECONCILIATION" \
+  --runtime-identity "$RUNTIME_IDENTITY" \
+  --output "$CURRENT_POINTER"
+```
+
+JSON current pointer 只是一个五字段 release selector。其 `release_id` 通过 owner-private routing inventory 与对应 release directory 解析；pointer 本身不包含 host routing 或 leaf artifact inventory。`status=selected_activation` 只表示该 activation 在 lineage 验证后已被选中，不是 live-health 断言，也绝不替代 service、exchange 或 runtime-health 检查。旧的 verbose receipts、command transcripts 和逐文件 hash inventory 可以作为审计附件继续保存在私有侧，但它们只属于 audit，不得参与 startup authority，也不得复制进 current pointer。
 
 Rollback 是另一次经过验证的部署，不是盲目 restart。先停止 service 并要求 clean stop，核对交易所仓位与 open orders，再把 release/config/envelope selectors 切到已验证的上一私有 release，重新运行 preflight 与 static-runtime verification，然后启动并重复 health admission。如果 stop 报告 uncertain execution state，在人工 reconciliation 完成前不得激活任一 release。

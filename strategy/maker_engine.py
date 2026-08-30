@@ -1013,52 +1013,210 @@ def _resolve_repo_runtime_path(value: str) -> Path:
     return path.resolve()
 
 
-def _load_boolean_cooldown_live_policy(cfg) -> Optional[LiveBooleanCooldownPolicy]:
+def _policy_artifact_authority_members(
+    artifact_authority: Mapping[str, Any] | None,
+    *,
+    required_roles: frozenset[str],
+) -> dict[str, tuple[Path, str]] | None:
+    """Resolve envelope-derived policy members without consulting YAML hashes."""
+
+    if artifact_authority is None:
+        return None
+    if not isinstance(artifact_authority, Mapping):
+        raise ValueError("policy_artifact_authority_not_mapping")
+    member_paths = artifact_authority.get("model_policy_member_paths")
+    member_sha256 = artifact_authority.get("model_policy_member_sha256")
+    if not isinstance(member_paths, Mapping) or not isinstance(
+        member_sha256, Mapping
+    ):
+        raise ValueError("policy_artifact_authority_members_missing")
+    if set(member_paths) != set(member_sha256):
+        raise ValueError("policy_artifact_authority_member_roles_drifted")
+    if not required_roles.issubset(member_paths):
+        raise ValueError("policy_artifact_authority_required_roles_missing")
+
+    resolved: dict[str, tuple[Path, str]] = {}
+    for role in sorted(required_roles):
+        raw_path = str(member_paths[role]).strip()
+        candidate = Path(raw_path).expanduser()
+        if not raw_path or "\x00" in raw_path or not candidate.is_absolute():
+            raise ValueError(f"policy_artifact_authority_path_invalid:{role}")
+        try:
+            path = candidate.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(
+                f"policy_artifact_authority_member_missing:{role}"
+            ) from exc
+        if path != candidate or not path.is_file():
+            raise ValueError(f"policy_artifact_authority_path_invalid:{role}")
+        expected = str(member_sha256[role]).strip().lower()
+        if len(expected) != 64 or any(
+            char not in "0123456789abcdef" for char in expected
+        ):
+            raise ValueError(f"policy_artifact_authority_sha256_invalid:{role}")
+        resolved[role] = (path, expected)
+    return resolved
+
+
+def validate_live_artifact_authority(
+    cfg,
+    *,
+    artifact_authority: Mapping[str, Any],
+    model_authorization_path: Path,
+) -> None:
+    """Prove enabled config locators name the artifacts bound by the envelope."""
+
+    expected_paths = {
+        "model_authorization": model_authorization_path.resolve(strict=True),
+    }
+    if bool(getattr(cfg.strategy, "boolean_cooldown_policy_enabled", False)):
+        expected_paths.update(
+            {
+                "boolean_policy": _resolve_repo_runtime_path(
+                    cfg.strategy.boolean_cooldown_policy_path
+                ),
+                "boolean_predicate_bundle": _resolve_repo_runtime_path(
+                    cfg.strategy.boolean_cooldown_predicate_bundle_path
+                ),
+            }
+        )
+    if bool(getattr(cfg.strategy, "buy_e3_cooldown_policy_enabled", False)):
+        expected_paths.update(
+            {
+                "artifact_manifest": _resolve_repo_runtime_path(
+                    cfg.strategy.buy_e3_cooldown_artifact_manifest_path
+                ),
+                "policy": _resolve_repo_runtime_path(
+                    cfg.strategy.buy_e3_cooldown_policy_path
+                ),
+                "predicate_bundle": _resolve_repo_runtime_path(
+                    cfg.strategy.buy_e3_cooldown_predicate_bundle_path
+                ),
+            }
+        )
+    members = _policy_artifact_authority_members(
+        artifact_authority,
+        required_roles=frozenset(expected_paths),
+    )
+    if members is None:
+        raise ValueError("live_artifact_authority_missing")
+    for role, expected_path in expected_paths.items():
+        if members[role][0] != expected_path:
+            raise ValueError(f"policy_artifact_authority_config_path_drifted:{role}")
+
+
+def _manifest_artifact_sha256(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("buy_e3_artifact_manifest_unreadable") from exc
+    if not isinstance(payload, Mapping):
+        raise ValueError("buy_e3_artifact_manifest_root_not_object")
+    artifact_sha256 = str(payload.get("artifact_sha256", "")).strip().lower()
+    if len(artifact_sha256) != 64 or any(
+        char not in "0123456789abcdef" for char in artifact_sha256
+    ):
+        raise ValueError("buy_e3_artifact_sha256_missing")
+    return artifact_sha256
+
+
+def _load_boolean_cooldown_live_policy(
+    cfg,
+    *,
+    artifact_authority: Mapping[str, Any] | None = None,
+) -> LiveBooleanCooldownPolicy | None:
     if not bool(
         getattr(cfg.strategy, "boolean_cooldown_policy_enabled", False)
     ):
         return None
-    return LiveBooleanCooldownPolicy.from_files(
-        policy_path=_resolve_repo_runtime_path(
+    authority = _policy_artifact_authority_members(
+        artifact_authority,
+        required_roles=frozenset(
+            {"boolean_policy", "boolean_predicate_bundle"}
+        ),
+    )
+    if authority is None:
+        policy_path = _resolve_repo_runtime_path(
             cfg.strategy.boolean_cooldown_policy_path
-        ),
-        policy_sha256=str(
+        )
+        policy_sha256 = str(
             cfg.strategy.boolean_cooldown_policy_sha256
-        ).strip().lower(),
-        predicate_bundle_path=_resolve_repo_runtime_path(
+        ).strip().lower()
+        predicate_bundle_path = _resolve_repo_runtime_path(
             cfg.strategy.boolean_cooldown_predicate_bundle_path
-        ),
-        predicate_bundle_sha256=str(
+        )
+        predicate_bundle_sha256 = str(
             cfg.strategy.boolean_cooldown_predicate_bundle_sha256
-        ).strip().lower(),
+        ).strip().lower()
+    else:
+        policy_path, policy_sha256 = authority["boolean_policy"]
+        predicate_bundle_path, predicate_bundle_sha256 = authority[
+            "boolean_predicate_bundle"
+        ]
+    return LiveBooleanCooldownPolicy.from_files(
+        policy_path=policy_path,
+        policy_sha256=policy_sha256,
+        predicate_bundle_path=predicate_bundle_path,
+        predicate_bundle_sha256=predicate_bundle_sha256,
         warmup_s=float(cfg.strategy.boolean_cooldown_ema_warmup_s),
         max_feature_age_s=float(cfg.risk.max_exec_book_visible_age_s),
     )
 
 
-def _load_buy_e3_cooldown_live_policy(cfg) -> Optional[LiveBuyE3CooldownPolicy]:
+def _load_buy_e3_cooldown_live_policy(
+    cfg,
+    *,
+    artifact_authority: Mapping[str, Any] | None = None,
+) -> LiveBuyE3CooldownPolicy | None:
     if not bool(getattr(cfg.strategy, "buy_e3_cooldown_policy_enabled", False)):
         return None
-    return LiveBuyE3CooldownPolicy.from_files(
-        artifact_manifest_path=_resolve_repo_runtime_path(
+    authority = _policy_artifact_authority_members(
+        artifact_authority,
+        required_roles=frozenset(
+            {"artifact_manifest", "policy", "predicate_bundle"}
+        ),
+    )
+    if authority is None:
+        artifact_manifest_path = _resolve_repo_runtime_path(
             cfg.strategy.buy_e3_cooldown_artifact_manifest_path
-        ),
-        artifact_manifest_sha256=str(
+        )
+        artifact_manifest_sha256 = str(
             cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256
-        ).strip().lower(),
-        expected_artifact_sha256=str(
+        ).strip().lower()
+        expected_artifact_sha256 = str(
             cfg.strategy.buy_e3_cooldown_artifact_sha256
-        ).strip().lower(),
-        policy_path=_resolve_repo_runtime_path(
+        ).strip().lower()
+        policy_path = _resolve_repo_runtime_path(
             cfg.strategy.buy_e3_cooldown_policy_path
-        ),
-        policy_sha256=str(cfg.strategy.buy_e3_cooldown_policy_sha256).strip().lower(),
-        predicate_bundle_path=_resolve_repo_runtime_path(
+        )
+        policy_sha256 = str(
+            cfg.strategy.buy_e3_cooldown_policy_sha256
+        ).strip().lower()
+        predicate_bundle_path = _resolve_repo_runtime_path(
             cfg.strategy.buy_e3_cooldown_predicate_bundle_path
-        ),
-        predicate_bundle_sha256=str(
+        )
+        predicate_bundle_sha256 = str(
             cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256
-        ).strip().lower(),
+        ).strip().lower()
+    else:
+        artifact_manifest_path, artifact_manifest_sha256 = authority[
+            "artifact_manifest"
+        ]
+        policy_path, policy_sha256 = authority["policy"]
+        predicate_bundle_path, predicate_bundle_sha256 = authority[
+            "predicate_bundle"
+        ]
+        expected_artifact_sha256 = _manifest_artifact_sha256(
+            artifact_manifest_path
+        )
+    return LiveBuyE3CooldownPolicy.from_files(
+        artifact_manifest_path=artifact_manifest_path,
+        artifact_manifest_sha256=artifact_manifest_sha256,
+        expected_artifact_sha256=expected_artifact_sha256,
+        policy_path=policy_path,
+        policy_sha256=policy_sha256,
+        predicate_bundle_path=predicate_bundle_path,
+        predicate_bundle_sha256=predicate_bundle_sha256,
         warmup_s=float(cfg.strategy.buy_e3_cooldown_ema_warmup_s),
         max_feature_age_s=float(cfg.risk.max_exec_book_visible_age_s),
     )
@@ -1074,7 +1232,13 @@ class MakerEngine:
         engine.stop()        # graceful shutdown
     """
 
-    def __init__(self, cfg, rest_client):
+    def __init__(
+        self,
+        cfg,
+        rest_client,
+        *,
+        artifact_authority: Mapping[str, Any] | None = None,
+    ):
         """
         cfg: live.config.Config
         rest_client: binance.um_futures.UMFutures instance
@@ -1122,12 +1286,18 @@ class MakerEngine:
                                    ),
                                    ret_demean_halflife=cfg.ml.ret_demean_halflife,
                                    bad_trade_log_every=cfg.logging.bad_trade_log_every)
-        self._boolean_cooldown_policy = _load_boolean_cooldown_live_policy(cfg)
+        self._boolean_cooldown_policy = _load_boolean_cooldown_live_policy(
+            cfg,
+            artifact_authority=artifact_authority,
+        )
         if self._boolean_cooldown_policy is not None:
             self.signal.add_depth_observer(
                 self._boolean_cooldown_policy.observe_depth
             )
-        self._buy_e3_cooldown_policy = _load_buy_e3_cooldown_live_policy(cfg)
+        self._buy_e3_cooldown_policy = _load_buy_e3_cooldown_live_policy(
+            cfg,
+            artifact_authority=artifact_authority,
+        )
         if self._buy_e3_cooldown_policy is not None:
             self.signal.add_depth_observer(
                 self._buy_e3_cooldown_policy.observe_depth

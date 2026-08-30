@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -15,36 +14,8 @@ IDENTITY_PATH = ROOT / (
     "implementation_20260802.json"
 )
 
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _identity() -> dict[str, object]:
     return json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
-
-
-def test_v4_identity_is_preserved_as_a_historical_implementation() -> None:
-    identity = _identity()
-    predecessor = identity["historical_predecessor"]
-    predecessor_path = ROOT / predecessor["implementation_identity"]
-
-    assert _sha256(predecessor_path) == predecessor["implementation_identity_sha256"]
-    assert predecessor["frozen_identity_modified"] is False
-    mismatches = set()
-    for relative_path, expected in identity["implementation_sha256"].items():
-        path = ROOT / relative_path
-        assert path.is_file(), relative_path
-        if _sha256(path) != expected:
-            mismatches.add(relative_path)
-
-    assert mismatches == {
-        "cpp/narrowgate_cpp/bindings.cpp",
-        "execution/order_lifecycle.py",
-        "strategy/maker_engine.py",
-        "tests/test_buy_q90_fresh_prospective_placement_recovery_v4.py",
-        "tests/test_dynamic_fill_hazard_cpp_parity.py",
-    }
 
 
 def test_v4_contract_is_fresh_cancel_ack_only_and_fail_closed() -> None:

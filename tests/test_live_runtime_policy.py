@@ -714,6 +714,21 @@ def test_f05_boolean_cooldown_requires_private_label_and_approval() -> None:
     assert policy["f05_boolean_cooldown_runtime_authority"] == ("private_deployment_approved")
 
 
+def test_enabled_boolean_cooldown_config_does_not_require_yaml_leaf_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV, "1")
+    cfg = Config()
+    cfg.strategy.fill_cooldown = 85.0
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    cfg.strategy.boolean_cooldown_policy_path = "/private/policy.json"
+    cfg.strategy.boolean_cooldown_predicate_bundle_path = "/private/bundle.json"
+    cfg.strategy.boolean_cooldown_policy_sha256 = ""
+    cfg.strategy.boolean_cooldown_predicate_bundle_sha256 = ""
+
+    _validate_config(cfg)
+
+
 def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
     base = {
         "boolean_cooldown_policy_enabled": False,
@@ -728,6 +743,14 @@ def test_f05_boolean_cooldown_identity_is_restart_only() -> None:
     changed = {**base, "boolean_cooldown_policy_enabled": True}
     with pytest.raises(ValueError, match="restart-only"):
         require_f05_boolean_cooldown_restart(base, changed)
+    require_f05_boolean_cooldown_restart(
+        base,
+        {
+            **base,
+            "boolean_cooldown_policy_sha256": "a" * 64,
+            "boolean_cooldown_predicate_bundle_sha256": "b" * 64,
+        },
+    )
 
 
 def test_f05_buy_e3_requires_separate_private_approval_and_label() -> None:
@@ -753,6 +776,24 @@ def test_f05_buy_e3_requires_separate_private_approval_and_label() -> None:
     assert policy["f05_buy_e3_owner_override_effective"] is True
 
 
+def test_enabled_buy_e3_config_does_not_require_yaml_leaf_hashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(F05_BUY_E3_OWNER_OVERRIDE_ENV, "1")
+    cfg = Config()
+    cfg.strategy.fill_cooldown = 85.0
+    cfg.strategy.buy_e3_cooldown_policy_enabled = True
+    cfg.strategy.buy_e3_cooldown_artifact_manifest_path = "/private/manifest.json"
+    cfg.strategy.buy_e3_cooldown_policy_path = "/private/policy.json"
+    cfg.strategy.buy_e3_cooldown_predicate_bundle_path = "/private/bundle.json"
+    cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256 = ""
+    cfg.strategy.buy_e3_cooldown_artifact_sha256 = ""
+    cfg.strategy.buy_e3_cooldown_policy_sha256 = ""
+    cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256 = ""
+
+    _validate_config(cfg)
+
+
 def test_f05_buy_e3_identity_is_restart_only() -> None:
     base = {
         "buy_e3_cooldown_policy_enabled": False,
@@ -772,6 +813,16 @@ def test_f05_buy_e3_identity_is_restart_only() -> None:
             base,
             {**base, "buy_e3_cooldown_policy_enabled": True},
         )
+    require_f05_buy_e3_restart(
+        base,
+        {
+            **base,
+            "buy_e3_cooldown_artifact_manifest_sha256": "a" * 64,
+            "buy_e3_cooldown_artifact_sha256": "b" * 64,
+            "buy_e3_cooldown_policy_sha256": "c" * 64,
+            "buy_e3_cooldown_predicate_bundle_sha256": "d" * 64,
+        },
+    )
 
 
 def _maker_engine_reload_fixture(
@@ -831,12 +882,8 @@ def test_maker_engine_reload_rejects_buy_e3_enablement_change_before_mutation(
     ("field", "replacement"),
     (
         ("buy_e3_cooldown_artifact_manifest_path", "/changed/manifest.json"),
-        ("buy_e3_cooldown_artifact_manifest_sha256", "a" * 64),
-        ("buy_e3_cooldown_artifact_sha256", "b" * 64),
         ("buy_e3_cooldown_policy_path", "/changed/policy.json"),
-        ("buy_e3_cooldown_policy_sha256", "c" * 64),
         ("buy_e3_cooldown_predicate_bundle_path", "/changed/predicates.json"),
-        ("buy_e3_cooldown_predicate_bundle_sha256", "d" * 64),
         ("buy_e3_cooldown_ema_warmup_s", 4096.0),
         ("buy_e3_cooldown_evidence_route", "changed_owner_route"),
     ),

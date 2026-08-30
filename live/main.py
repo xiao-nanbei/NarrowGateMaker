@@ -71,7 +71,7 @@ from models.replay.prospective_baseline_epoch import (
     snapshot_data_source_identity,
 )
 from live import deployment_runtime as locked_runtime
-from strategy.maker_engine import MakerEngine
+from strategy.maker_engine import MakerEngine, validate_live_artifact_authority
 from strategy.quote_core import QUOTE_CORE_UNIT_ABI_FIELDS
 
 POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
@@ -173,6 +173,14 @@ def run_formal_dry_run(
         deadline_armed = True
         resolved_config = Path(config_path).expanduser().resolve()
         cfg = load_config(resolved_config)
+        if (
+            bool(cfg.strategy.boolean_cooldown_policy_enabled)
+            or bool(cfg.strategy.buy_e3_cooldown_policy_enabled)
+        ):
+            raise ValueError(
+                "formal dry-run does not admit private live cooldown policies; "
+                "use the deployment preflight and envelope verifier"
+            )
 
         from strategy.model_contract import (
             REQUIRED_FEATURE_DAG_ID,
@@ -558,10 +566,9 @@ def build_startup_attestation(
     native_after = _native_runtime_file_identity(native_runtime)
     safety_authority_valid = False
     if safety_authority is not None:
-        safety_config_sha256 = running_config_sha256 in {
-            safety_authority.get("active_config_file_sha256"),
-            safety_authority.get("disabled_config_file_sha256"),
-        }
+        safety_config_sha256 = (
+            running_config_sha256 == safety_authority.get("config_file_sha256")
+        )
         safety_authority_valid = (
             safety_authority.get("execution_commit") == post_snapshot["commit"]
             and safety_authority.get("execution_tree") == post_snapshot["tree"]
@@ -2062,16 +2069,9 @@ def main():
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
     resolved_config_path = config_path.expanduser().resolve()
-    buy_e3_enabled = bool(cfg.strategy.buy_e3_cooldown_policy_enabled)
-    safety_authority = deployment_envelope_runtime_authority(
-        buy_e3_enabled=buy_e3_enabled,
-    )
+    safety_authority = deployment_envelope_runtime_authority()
     running_config_sha256 = _sha256_bytes(resolved_config_path.read_bytes())
-    expected_config_sha256 = (
-        safety_authority["active_config_file_sha256"]
-        if buy_e3_enabled
-        else safety_authority["disabled_config_file_sha256"]
-    )
+    expected_config_sha256 = safety_authority["config_file_sha256"]
     checkout = _git_snapshot()
     if (
         running_config_sha256 != expected_config_sha256
@@ -2080,6 +2080,26 @@ def main():
         or checkout["worktree_clean"] is not True
     ):
         raise RuntimeError("checkout/config differs from deployment authority")
+    from strategy.model_contract import (
+        resolve_model_authorization_manifest,
+        validate_model_bundle,
+    )
+
+    model_dir = _configured_model_dir(cfg)
+    model_metadata = validate_model_bundle(
+        model_dir,
+        require_live_authorization=True,
+        expected_symbol=cfg.symbol,
+    )
+    model_authorization_path = resolve_model_authorization_manifest(
+        model_dir,
+        model_metadata,
+    )
+    validate_live_artifact_authority(
+        cfg,
+        artifact_authority=safety_authority,
+        model_authorization_path=model_authorization_path,
+    )
     set_restart_only_config_sha256(running_config_sha256)
 
     if args.live:
@@ -2121,7 +2141,7 @@ def main():
     rest = create_rest_client(cfg)
 
     # Create engine
-    engine = MakerEngine(cfg, rest)
+    engine = MakerEngine(cfg, rest, artifact_authority=safety_authority)
     restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
     logger.info(
         "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "

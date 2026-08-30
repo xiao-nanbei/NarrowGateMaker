@@ -185,10 +185,17 @@ def test_preflight_binds_all_execution_components() -> None:
     spec = preflight._load_json(preflight.SPEC)
     amendments = preflight._validate_amendments(spec)
     audit = preflight._validate_component_bindings(spec, amendments)
+    source_root = preflight._implementation_source_root()
 
     assert set(audit) == EXPECTED_COMPONENTS
+    assert source_root["identity"] == "git.commit_tree.v1"
+    assert source_root["worktree_matches_tree"] is True
+    assert all(
+        set(binding) == {"path", "test_path"}
+        for binding in preflight.IMPLEMENTATION_BINDINGS.values()
+    )
     assert all(row["identity_verified"] for row in audit.values())
-    assert all(row["executable_binding_verified"] for row in audit.values())
+    assert all(row["executable_mapping_verified"] for row in audit.values())
     assert all(Path(row["path"]).is_file() for row in audit.values())
     assert all(Path(row["test_path"]).is_file() for row in audit.values())
     assert audit["nested_oof"]["declared_in_execution_amendment"] is True
@@ -294,16 +301,18 @@ def test_preflight_binds_feature_and_execution_amendments() -> None:
     )
 
 
-def test_component_hash_drift_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_component_path_outside_git_root_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     spec = preflight._load_json(preflight.SPEC)
     amendments = preflight._validate_amendments(spec)
     monkeypatch.setitem(
         preflight.IMPLEMENTATION_BINDINGS["replay_emitter"],
-        "sha256",
-        "0" * 64,
+        "path",
+        "research/not_tracked/replay_emitter.py",
     )
 
-    with pytest.raises(preflight.PreflightError, match="replay_emitter.*drifted"):
+    with pytest.raises(preflight.PreflightError, match="Git source identity"):
         preflight._validate_component_bindings(spec, amendments)
 
 

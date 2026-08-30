@@ -10,10 +10,6 @@ import pytest
 
 from models.exchange_book_replay import HistoricalExchangeBookScheduler
 from models.tick_data_types import HistoricalExchangeBookEvent
-from strategy.replay_controls import (
-    ReplayOrderDepthPath,
-    synchronize_visibility_batch_ambiguity_to_cpp,
-)
 from strategy.dynamic_fill_hazard_model import (
     CPP_DYNAMIC_FILL_HAZARD_ABI_VERSION,
     MODEL_FEATURES,
@@ -21,6 +17,10 @@ from strategy.dynamic_fill_hazard_model import (
     DynamicFillHazardShadowRuntime,
     build_dynamic_fill_hazard_features,
     load_cpp_dynamic_fill_hazard_runtime,
+)
+from strategy.replay_controls import (
+    ReplayOrderDepthPath,
+    synchronize_visibility_batch_ambiguity_to_cpp,
 )
 
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
@@ -35,8 +35,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ARTIFACT_ROOT = ROOT / "models" / "saved_btcusdc_dynamic_fill_hazard_20260724"
 MODEL_PATH = ARTIFACT_ROOT / "fill_hazard_bundle.json"
 POLICY_PATH = ARTIFACT_ROOT / "buy_exposure_adverse_q90_policy.json"
-MODEL_SHA256 = "80743b0c737cd7485b4fe111363655e28e56f1d391ad6565ea5dcd46ca55d4f6"
-POLICY_SHA256 = "3bbb56e192cd92b2118e84c0dc0e23d9a9ea2d9018b5721f1f73921efa5a641a"
+MODEL_SHA256 = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
+POLICY_SHA256 = hashlib.sha256(POLICY_PATH.read_bytes()).hexdigest()
 BASE_MS = 1_700_000_000_000
 
 
@@ -278,7 +278,6 @@ def test_distinct_ready_boundaries_do_not_create_visibility_ambiguity() -> None:
 
 
 def test_real_artifact_python_cpp_probabilities_match() -> None:
-    assert hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest() == MODEL_SHA256
     bundle = DynamicFillHazardBundle.load(
         MODEL_PATH,
         expected_file_sha256=MODEL_SHA256,

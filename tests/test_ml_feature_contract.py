@@ -119,22 +119,24 @@ def test_training_rejects_pre_cutoff_feature_identity(tmp_path, monkeypatch) -> 
         ml_model._feature_panel_identity()
 
 
-def test_hash_bound_legacy_metadata_canonicalizes_without_private_files() -> None:
+def test_authorization_bound_legacy_metadata_canonicalizes_without_owner_hash() -> None:
     source = {
-        "feature_manifest_sha256": (
-            "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
-        ),
+        "symbol": "BTCUSDC",
+        "feature_manifest_sha256": "legacy-fixture-manifest",
         "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
         "promotion_authority": LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
         "source_profile": "all",
         "feature_variant": "base",
     }
-    metadata = canonicalize_model_variance_unit_contract(source)
+    metadata = canonicalize_model_variance_unit_contract(
+        source,
+        legacy_authorization_contract=_BTCUSDC_VARIANCE_UNITS,
+    )
 
     assert "volatility_unit_contract" not in source
     assert metadata["volatility_unit_contract"] == _BTCUSDC_VARIANCE_UNITS
-    assert metadata["volatility_unit_contract_origin"].startswith(
-        "legacy_canonicalized:"
+    assert metadata["volatility_unit_contract_origin"] == (
+        "legacy_authorization_manifest"
     )
     assert metadata["promotion_authority"] == PRIVATE_DEPLOYMENT_AUTHORITY
     assert (

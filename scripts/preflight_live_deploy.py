@@ -23,6 +23,21 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _buy_e3_artifact_sha256(path: Path) -> str:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("F05 BUY E3 artifact manifest is unreadable") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("F05 BUY E3 artifact manifest must be a mapping")
+    observed = str(payload.get("artifact_sha256", "")).strip().lower()
+    if len(observed) != 64 or any(
+        char not in "0123456789abcdef" for char in observed
+    ):
+        raise ValueError("F05 BUY E3 artifact manifest is missing artifact_sha256")
+    return observed
+
+
 def _as_mapping(value: Any, name: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{name} must be a mapping")
@@ -65,6 +80,7 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         REQUIRED_FEATURE_DAG_SHA256,
         REQUIRED_MODEL_HEADS,
         f03_direct_quote_action_contract,
+        resolve_model_authorization_manifest,
         validate_model_bundle,
     )
 
@@ -223,6 +239,10 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
     }
     if promotion_authorities != {PRIVATE_DEPLOYMENT_AUTHORITY}:
         raise ValueError("deploy bundle does not have one explicit private authorization")
+    model_authorization_path = resolve_model_authorization_manifest(
+        model_dir,
+        model_metadata,
+    )
 
     if "quote_horizon_s" not in strategy:
         raise ValueError("strategy.quote_horizon_s must be explicit in deploy config")
@@ -335,12 +355,10 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
 
         policy_path = resolve_artifact("boolean_cooldown_policy_path")
         bundle_path = resolve_artifact("boolean_cooldown_predicate_bundle_path")
-        policy_sha = str(
-            strategy.get("boolean_cooldown_policy_sha256", "")
-        ).strip().lower()
-        bundle_sha = str(
-            strategy.get("boolean_cooldown_predicate_bundle_sha256", "")
-        ).strip().lower()
+        # YAML supplies locators only. The checked file bytes determine the
+        # leaves that the deployment envelope will bind.
+        policy_sha = _sha256(policy_path)
+        bundle_sha = _sha256(bundle_path)
         runtime = LiveBooleanCooldownPolicy.from_files(
             policy_path=policy_path,
             policy_sha256=policy_sha,
@@ -410,41 +428,25 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         buy_bundle_path = resolve_buy_e3_artifact(
             "buy_e3_cooldown_predicate_bundle_path"
         )
+        manifest_file_sha256 = _sha256(manifest_path)
+        artifact_sha256 = _buy_e3_artifact_sha256(manifest_path)
+        policy_file_sha256 = _sha256(buy_policy_path)
+        predicate_bundle_file_sha256 = _sha256(buy_bundle_path)
         runtime = LiveBuyE3CooldownPolicy.from_files(
             artifact_manifest_path=manifest_path,
-            artifact_manifest_sha256=str(
-                strategy.get("buy_e3_cooldown_artifact_manifest_sha256", "")
-            )
-            .strip()
-            .lower(),
-            expected_artifact_sha256=str(
-                strategy.get("buy_e3_cooldown_artifact_sha256", "")
-            )
-            .strip()
-            .lower(),
+            artifact_manifest_sha256=manifest_file_sha256,
+            expected_artifact_sha256=artifact_sha256,
             policy_path=buy_policy_path,
-            policy_sha256=str(
-                strategy.get("buy_e3_cooldown_policy_sha256", "")
-            )
-            .strip()
-            .lower(),
+            policy_sha256=policy_file_sha256,
             predicate_bundle_path=buy_bundle_path,
-            predicate_bundle_sha256=str(
-                strategy.get("buy_e3_cooldown_predicate_bundle_sha256", "")
-            )
-            .strip()
-            .lower(),
+            predicate_bundle_sha256=predicate_bundle_file_sha256,
             warmup_s=float(strategy.get("buy_e3_cooldown_ema_warmup_s", 0.0)),
             max_feature_age_s=float(risk["max_exec_book_visible_age_s"]),
         )
         buy_e3_artifact_identity = {
             "enabled": True,
             "artifact_manifest_path": _identity_path(manifest_path, repo_root),
-            "artifact_manifest_sha256": str(
-                strategy["buy_e3_cooldown_artifact_manifest_sha256"]
-            )
-            .strip()
-            .lower(),
+            "artifact_manifest_sha256": manifest_file_sha256,
             "artifact_sha256": runtime.artifact_sha256,
             "policy_path": _identity_path(buy_policy_path, repo_root),
             "policy_sha256": runtime.evaluator.policy_sha256,
@@ -456,6 +458,10 @@ def validate_deploy_config(config_path: Path, repo_root: Path) -> dict[str, Any]
         "config_path": str(config_path),
         "config_sha256": _sha256(config_path),
         "model_dir": _identity_path(model_dir, repo_root),
+        "model_authorization_path": _identity_path(
+            model_authorization_path,
+            repo_root,
+        ),
         "p3_path": _identity_path(p3_path, repo_root),
         "p3_sha256": _sha256(p3_path),
         "p3_schema": str(p3.get("schema_version") or ""),

@@ -17,6 +17,10 @@ import yaml
 
 import live.main as live_main
 from live.config import Config
+from live.runtime_policy import (
+    F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
+    F05_BUY_E3_OWNER_OVERRIDE_ENV,
+)
 from strategy.model_contract import REQUIRED_MODEL_HEADS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +106,58 @@ def test_formal_dry_run_uses_strict_config_validation(tmp_path: Path) -> None:
     assert result["exit_code"] == 1
     assert result["error"]["type"] == "ValueError"
     assert "unknown config key" in result["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("enabled_field", "path_fields", "override_env"),
+    (
+        (
+            "boolean_cooldown_policy_enabled",
+            (
+                "boolean_cooldown_policy_path",
+                "boolean_cooldown_predicate_bundle_path",
+            ),
+            F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
+        ),
+        (
+            "buy_e3_cooldown_policy_enabled",
+            (
+                "buy_e3_cooldown_artifact_manifest_path",
+                "buy_e3_cooldown_policy_path",
+                "buy_e3_cooldown_predicate_bundle_path",
+            ),
+            F05_BUY_E3_OWNER_OVERRIDE_ENV,
+        ),
+    ),
+)
+def test_formal_dry_run_rejects_private_live_cooldown_policy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    enabled_field: str,
+    path_fields: tuple[str, ...],
+    override_env: str,
+) -> None:
+    config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
+    config.setdefault("strategy", {}).update(
+        {
+            "fill_cooldown": 85.0,
+            "adaptive_add_cooldown_enabled": False,
+            "fill_cooldown_consecutive_reset_policy": "opposite_fill_only",
+            enabled_field: True,
+            **{name: f"/private/{name}.json" for name in path_fields},
+        }
+    )
+    config_path = tmp_path / "private-policy.yaml"
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    monkeypatch.setenv(override_env, "1")
+    output = io.StringIO()
+
+    assert live_main.run_formal_dry_run(config_path, output=output) == 1
+    result = _summary(output.getvalue())
+    assert result["status"] == "failed"
+    assert "does not admit private live cooldown policies" in result["error"][
+        "message"
+    ]
 
 
 def test_formal_dry_run_rejects_invalid_model_contract_without_leaking_secrets(

@@ -29,6 +29,7 @@ from strategy.model_contract import (
     REQUIRED_LABEL_WINDOW_SEMANTICS,
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
+    resolve_model_authorization_manifest,
     validate_model_bundle,
 )
 
@@ -328,7 +329,7 @@ def test_private_deployment_authorization_binds_every_head_hash(
         else "canary-v1"
     )
     feature_manifest_sha256 = (
-        "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
+        "legacy-fixture-manifest"
         if legacy
         else "manifest-sha"
     )
@@ -373,7 +374,12 @@ def test_private_deployment_authorization_binds_every_head_hash(
         if legacy
         else "deployment_authorization.json"
     )
-    with pytest.raises(ValueError, match=authorization_file):
+    initial_error = (
+        "volatility_unit_contract"
+        if legacy
+        else authorization_file
+    )
+    with pytest.raises(ValueError, match=initial_error):
         validate_model_bundle(tmp_path)
 
     authorization = {
@@ -392,6 +398,9 @@ def test_private_deployment_authorization_binds_every_head_hash(
     if legacy:
         authorization["owner_authorized"] = True
         authorization["active_live_inference_authorized"] = True
+        authorization["volatility_unit_contract"] = (
+            absolute_price_variance_unit_contract("BTCUSDC")
+        )
     else:
         authorization["private_deployment_authorized"] = True
         authorization["active_runtime_inference_authorized"] = True
@@ -415,6 +424,9 @@ def test_private_deployment_authorization_binds_every_head_hash(
     assert {
         head.get("promotion_authority_origin") for head in metadata.values()
     } == expected_origin
+    assert resolve_model_authorization_manifest(tmp_path, metadata) == (
+        tmp_path / authorization_file
+    )
 
     (tmp_path / "dir_10s.txt").write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="model hash mismatch"):

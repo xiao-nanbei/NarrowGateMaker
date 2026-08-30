@@ -37,7 +37,7 @@ import sys
 import sysconfig
 import tempfile
 import zipfile
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from email.parser import BytesParser
 from email.policy import compat32
@@ -52,6 +52,16 @@ WHEELHOUSE_CANONICAL_FIELD = "canonical_wheelhouse_sha256"
 INSTALL_CANONICAL_FIELD = "canonical_install_receipt_sha256"
 DEPLOYMENT_ENVELOPE_SCHEMA = "narrowgate_private_deployment_envelope.v1"
 DEPLOYMENT_ENVELOPE_CANONICAL_FIELD = "canonical_sha256"
+ACTIVATION_RECEIPT_SCHEMA = "narrowgate_private_activation_receipt.v1"
+ACTIVATION_RECEIPT_CANONICAL_FIELD = "canonical_sha256"
+ACTIVATION_RECEIPT_STATUS = "activation_complete"
+CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v1"
+CURRENT_POINTER_STATUS = "selected_activation"
+STOPPED_RECONCILIATION_SCHEMA = "narrowgate_stopped_exchange_reconciliation.v1"
+STOPPED_RECONCILIATION_CANONICAL_FIELD = "canonical_exchange_reconciliation_sha256"
+STOPPED_RECONCILIATION_STATUS = "signed_open_orders_zero_exact_position_stable"
+LIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_live_runtime_identity.v1"
+STARTUP_ATTESTATION_SCHEMA = "narrowgate_startup_attestation.v1"
 NATIVE_BUILD_RECEIPT_SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v2"
 NATIVE_BUILD_RECEIPT_CANONICAL_FIELD = "canonical_native_build_sha256"
 NATIVE_BUILD_RECEIPT_STATUS = "exact_tag_native_build_dependency_lock_and_parity_passed"
@@ -71,6 +81,7 @@ NATIVE_DISTRIBUTION_NAMES = frozenset(
     }
 )
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_RELEASE_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
 
 
@@ -94,6 +105,18 @@ def _require_sha256(value: str, label: str) -> str:
     if not _SHA256_RE.fullmatch(candidate):
         raise LockedRuntimeError(f"{label} is not a lowercase SHA256")
     return candidate
+
+
+def _require_exact_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not _SHA256_RE.fullmatch(value):
+        raise LockedRuntimeError(f"{label} is not a lowercase SHA256")
+    return value
+
+
+def _require_release_id(value: Any) -> str:
+    if not isinstance(value, str) or not _RELEASE_ID_RE.fullmatch(value):
+        raise LockedRuntimeError("release id is malformed")
+    return value
 
 
 def canonical_sha256(payload: dict[str, Any], field: str) -> str:
@@ -233,6 +256,50 @@ def _write_json_authority(path: Path, payload: dict[str, Any]) -> None:
     _write_create_only_private(path, _canonical_json_bytes(payload))
 
 
+def _stage_private_json(
+    parent: Path,
+    target_name: str,
+    payload: dict[str, Any],
+) -> tuple[Path, bytes]:
+    raw = _canonical_json_bytes(payload)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{target_name}.tmp.",
+        dir=parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        view = memoryview(raw)
+        while view:
+            written = os.write(descriptor, view)
+            if written <= 0:
+                raise LockedRuntimeError(f"short write: {temporary}")
+            view = view[written:]
+        os.fsync(descriptor)
+        info = os.fstat(descriptor)
+        if stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
+            raise LockedRuntimeError(f"private staging mode/link drifted: {temporary}")
+        os.close(descriptor)
+        descriptor = -1
+        return temporary, raw
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _write_json_authority_atomic(path: Path, payload: dict[str, Any]) -> bytes:
     """Publish one create-only private authority without a partial-file window."""
 
@@ -243,45 +310,60 @@ def _write_json_authority_atomic(path: Path, payload: dict[str, Any]) -> bytes:
         raise LockedRuntimeError(f"output parent is not a directory: {parent}")
     if target.exists() or target.is_symlink():
         raise LockedRuntimeError(f"create-only conflict: {target}")
-    raw = _canonical_json_bytes(payload)
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.tmp.", dir=parent)
-    temporary = Path(temporary_name)
+    temporary, raw = _stage_private_json(parent, target.name, payload)
     published = False
     try:
-        os.fchmod(descriptor, 0o600)
-        view = memoryview(raw)
-        while view:
-            written = os.write(descriptor, view)
-            if written <= 0:
-                raise LockedRuntimeError(f"short write: {temporary}")
-            view = view[written:]
-        os.fsync(descriptor)
-        os.close(descriptor)
-        descriptor = -1
         try:
             os.link(temporary, target, follow_symlinks=False)
         except FileExistsError as exc:
             raise LockedRuntimeError(f"create-only conflict: {target}") from exc
         published = True
         temporary.unlink()
-        directory_fd = os.open(parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        _fsync_directory(parent)
         info = target.stat()
         if stat.S_IMODE(info.st_mode) != 0o600 or info.st_nlink != 1:
             raise LockedRuntimeError(f"private output mode/link drifted: {target}")
         return raw
     except BaseException:
-        if descriptor >= 0:
-            os.close(descriptor)
         if published:
             try:
                 target.unlink()
             except FileNotFoundError:
                 pass
         raise
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _write_json_pointer_atomic(path: Path, payload: dict[str, Any]) -> bytes:
+    """Atomically replace one mutable private pointer with canonical bytes."""
+
+    target = _absolute(path)
+    parent = target.parent
+    _assert_no_symlink_components(parent)
+    if not parent.is_dir():
+        raise LockedRuntimeError(f"output parent is not a directory: {parent}")
+    if target.is_symlink():
+        raise LockedRuntimeError(f"pointer destination must not be a symlink: {target}")
+    if target.exists():
+        _read_regular_file(target, private_authority=True)
+    temporary, raw = _stage_private_json(parent, target.name, payload)
+    try:
+        if target.is_symlink():
+            raise LockedRuntimeError(f"pointer destination must not be a symlink: {target}")
+        os.replace(temporary, target)
+        _fsync_directory(parent)
+        final = target.lstat()
+        if (
+            not stat.S_ISREG(final.st_mode)
+            or stat.S_IMODE(final.st_mode) != 0o600
+            or final.st_nlink != 1
+        ):
+            raise LockedRuntimeError(f"private pointer mode/link drifted: {target}")
+        return raw
     finally:
         try:
             temporary.unlink()
@@ -1400,7 +1482,8 @@ def _validate_installed_versions(snapshot: dict[str, Any], expected: dict[str, s
             name for name in set(actual) & set(expected) if actual[name] != expected[name]
         )
         raise LockedRuntimeError(
-            f"installed distribution/version drift: missing={missing}, extra={extra}, changed={changed}"
+            "installed distribution/version drift: "
+            f"missing={missing}, extra={extra}, changed={changed}"
         )
     aggregate = snapshot.get("record_aggregate_sha256")
     _require_sha256(aggregate, "installed RECORD aggregate")
@@ -2066,9 +2149,7 @@ def _validate_native_build_bundle(
         installed.get("install_receipt_sha256", ""),
         "native receipt install root",
     )
-    install, _ = _load_install_receipt(
-        install_path, expected_canonical_sha256=install_canonical
-    )
+    install, _ = _load_install_receipt(install_path, expected_canonical_sha256=install_canonical)
     if install.get("lock_authority", {}).get("canonical_lock_sha256") != lock[LOCK_CANONICAL_FIELD]:
         raise LockedRuntimeError("install receipt lock root drifted")
     if (
@@ -2160,8 +2241,10 @@ def build_deployment_envelope(
     repository_root: Path,
     active_config_path: Path,
     native_build_receipt_path: Path,
+    model_authorization_path: Path,
     output_path: Path,
-    disabled_config_path: Path | None = None,
+    boolean_policy_file_path: Path | None = None,
+    boolean_predicate_bundle_path: Path | None = None,
     policy_artifact_manifest_path: Path | None = None,
     policy_file_path: Path | None = None,
     predicate_bundle_path: Path | None = None,
@@ -2179,30 +2262,47 @@ def build_deployment_envelope(
         raise LockedRuntimeError("deployment envelope requires a clean repository")
 
     active = _receipt_path(_absolute(active_config_path), "active config")
-    disabled = (
-        active
-        if disabled_config_path is None
-        else _receipt_path(_absolute(disabled_config_path), "disabled config")
-    )
     build = _validate_native_build_bundle(
         native_build_receipt_path,
         execution_commit=commit,
         execution_tree=tree,
     )
 
-    policy_paths = (
+    boolean_policy_paths = (
+        boolean_policy_file_path,
+        boolean_predicate_bundle_path,
+    )
+    if any(path is not None for path in boolean_policy_paths) and not all(
+        path is not None for path in boolean_policy_paths
+    ):
+        raise LockedRuntimeError("Boolean cooldown policy artifacts must be supplied all-or-none")
+
+    buy_e3_policy_paths = (
         policy_artifact_manifest_path,
         policy_file_path,
         predicate_bundle_path,
     )
-    if any(path is not None for path in policy_paths) and not all(
-        path is not None for path in policy_paths
+    if any(path is not None for path in buy_e3_policy_paths) and not all(
+        path is not None for path in buy_e3_policy_paths
     ):
         raise LockedRuntimeError("BUY E3 policy artifacts must be supplied all-or-none")
 
-    policy_members: list[tuple[str, Path]] = []
-    if all(path is not None for path in policy_paths):
+    policy_members: list[tuple[str, Path]] = [
+        ("model_authorization", _absolute(model_authorization_path))
+    ]
+    if all(path is not None for path in boolean_policy_paths):
+        policy_members.extend(
+            [
+                ("boolean_policy", _absolute(boolean_policy_file_path)),
+                (
+                    "boolean_predicate_bundle",
+                    _absolute(boolean_predicate_bundle_path),
+                ),
+            ]
+        )
+    if all(path is not None for path in buy_e3_policy_paths):
         policy_members = [
+            *policy_members,
             ("artifact_manifest", _absolute(policy_artifact_manifest_path)),
             ("policy", _absolute(policy_file_path)),
             ("predicate_bundle", _absolute(predicate_bundle_path)),
@@ -2216,7 +2316,7 @@ def build_deployment_envelope(
             "manifest_path": build["manifest_path"],
             "root_sha256": build["root_sha256"],
         },
-        "config_bundle": _content_bundle_reference((("active", active), ("disabled", disabled))),
+        "config_bundle": _content_bundle_reference((("config", active),)),
         "model_policy_bundle": _content_bundle_reference(policy_members),
     }
     payload[DEPLOYMENT_ENVELOPE_CANONICAL_FIELD] = canonical_sha256(
@@ -2230,21 +2330,23 @@ def build_deployment_envelope(
     }
 
 
-def load_deployment_envelope(
+def _load_deployment_envelope_identity(
     path: Path,
     *,
     expected_root_sha256: str,
-    buy_e3_enabled: bool,
-) -> dict[str, Any]:
-    """Resolve one compact release root into runtime-only derived leaves."""
+) -> tuple[dict[str, Any], str]:
+    """Validate only the immutable envelope object, without opening nested bundles."""
 
     payload, _raw = _load_canonical_authority(
         path,
         schema=DEPLOYMENT_ENVELOPE_SCHEMA,
         canonical_field=DEPLOYMENT_ENVELOPE_CANONICAL_FIELD,
     )
-    observed_root = _require_sha256(payload[DEPLOYMENT_ENVELOPE_CANONICAL_FIELD], "release root")
-    if observed_root != _require_sha256(expected_root_sha256, "expected release root"):
+    observed_root = _require_exact_sha256(
+        payload.get(DEPLOYMENT_ENVELOPE_CANONICAL_FIELD),
+        "release root",
+    )
+    if observed_root != _require_exact_sha256(expected_root_sha256, "expected release root"):
         raise LockedRuntimeError("deployment release root drifted")
     if set(payload) != {
         "schema_version",
@@ -2258,6 +2360,20 @@ def load_deployment_envelope(
         raise LockedRuntimeError("deployment release-root fields drifted")
     if payload.get("status") != "deployment_envelope_built":
         raise LockedRuntimeError("deployment release-root status drifted")
+    return payload, observed_root
+
+
+def load_deployment_envelope(
+    path: Path,
+    *,
+    expected_root_sha256: str,
+) -> dict[str, Any]:
+    """Resolve one compact release root into runtime-only derived leaves."""
+
+    payload, observed_root = _load_deployment_envelope_identity(
+        path,
+        expected_root_sha256=expected_root_sha256,
+    )
     source = _require_mapping(payload.get("source"), "release source")
     if set(source) != {"commit", "tree"}:
         raise LockedRuntimeError("deployment source fields drifted")
@@ -2277,19 +2393,25 @@ def load_deployment_envelope(
     _config_paths, config_leaves = _validate_content_bundle_reference(
         payload.get("config_bundle"),
         label="config bundle",
-        required_roles=frozenset({"active", "disabled"}),
+        required_roles=frozenset({"config"}),
     )
     policy_reference = _require_mapping(payload.get("model_policy_bundle"), "model-policy bundle")
     policy_member_paths = _require_mapping(
         policy_reference.get("member_paths"), "model-policy bundle paths"
     )
-    complete_policy_roles = frozenset({"artifact_manifest", "policy", "predicate_bundle"})
+    base_policy_roles = frozenset({"model_authorization"})
+    buy_e3_policy_roles = frozenset({"artifact_manifest", "policy", "predicate_bundle"})
+    boolean_policy_roles = frozenset({"boolean_policy", "boolean_predicate_bundle"})
     observed_policy_roles = frozenset(policy_member_paths)
-    if observed_policy_roles not in {frozenset(), complete_policy_roles}:
+    allowed_policy_roles = {
+        base_policy_roles,
+        base_policy_roles | buy_e3_policy_roles,
+        base_policy_roles | boolean_policy_roles,
+        base_policy_roles | buy_e3_policy_roles | boolean_policy_roles,
+    }
+    if observed_policy_roles not in allowed_policy_roles:
         raise LockedRuntimeError("model-policy bundle member roles drifted")
-    if bool(buy_e3_enabled) and observed_policy_roles != complete_policy_roles:
-        raise LockedRuntimeError("model-policy bundle member roles drifted")
-    _policy_paths, _policy_leaves = _validate_content_bundle_reference(
+    policy_paths, policy_leaves = _validate_content_bundle_reference(
         policy_reference,
         label="model-policy bundle",
         required_roles=observed_policy_roles,
@@ -2299,8 +2421,9 @@ def load_deployment_envelope(
         "canonical_sha256": observed_root,
         "execution_commit": commit,
         "execution_tree": tree,
-        "active_config_file_sha256": config_leaves["active"],
-        "disabled_config_file_sha256": config_leaves["disabled"],
+        "config_file_sha256": config_leaves["config"],
+        "model_policy_member_paths": policy_paths,
+        "model_policy_member_sha256": policy_leaves,
         **{
             key: value
             for key, value in build.items()
@@ -2332,7 +2455,6 @@ def validate_deployment_envelope_startup(
     authority = load_deployment_envelope(
         envelope_path,
         expected_root_sha256=expected_envelope_sha256,
-        buy_e3_enabled=False,
     )
     if (
         _git_output(root, "rev-parse", "HEAD") != authority["execution_commit"]
@@ -2342,9 +2464,7 @@ def validate_deployment_envelope_startup(
         raise LockedRuntimeError("startup checkout differs from deployment release root")
 
     install_receipt_path = Path(authority["install_receipt_path"])
-    expected_venv = install_receipt_path.parent / (
-        f"venv-{authority['execution_commit']}"
-    )
+    expected_venv = install_receipt_path.parent / (f"venv-{authority['execution_commit']}")
     selected_venv = root / ".venv-active"
     try:
         selector_target = os.readlink(selected_venv)
@@ -2387,6 +2507,367 @@ def validate_deployment_envelope_startup(
         "canonical_sha256": authority["canonical_sha256"],
         "receipt": receipt,
     }
+
+
+def _validated_deployment_envelope_root(
+    path: Path,
+    *,
+    expected_root_sha256: str,
+) -> str:
+    expected = _require_exact_sha256(expected_root_sha256, "expected deployment envelope")
+    _payload, observed = _load_deployment_envelope_identity(
+        path,
+        expected_root_sha256=expected,
+    )
+    if observed != expected:
+        raise LockedRuntimeError("deployment envelope root drifted")
+    return observed
+
+
+def _load_private_json_object(path: Path, label: str) -> tuple[dict[str, Any], bytes, Path]:
+    raw = _read_regular_file(path, private_authority=True)
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LockedRuntimeError(f"invalid JSON authority {label}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise LockedRuntimeError(f"JSON authority must be an object: {label}")
+    return payload, raw, _absolute(path).resolve(strict=True)
+
+
+def _canonical_ascii_sha256(payload: dict[str, Any], field: str) -> str:
+    clone = dict(payload)
+    clone.pop(field, None)
+    try:
+        raw = json.dumps(
+            clone,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        ).encode("ascii")
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        raise LockedRuntimeError("authority cannot be encoded canonically") from exc
+    return _sha256(raw)
+
+
+def _load_stopped_reconciliation(
+    path: Path,
+    *,
+    expected_root_sha256: str,
+) -> tuple[dict[str, Any], Path]:
+    expected = _require_exact_sha256(
+        expected_root_sha256,
+        "expected stopped reconciliation",
+    )
+    payload, _raw, resolved = _load_private_json_object(path, "stopped reconciliation")
+    observed = _require_exact_sha256(
+        payload.get(STOPPED_RECONCILIATION_CANONICAL_FIELD),
+        "stopped reconciliation root",
+    )
+    position_rows = payload.get("position_rows")
+    if (
+        payload.get("schema_version") != STOPPED_RECONCILIATION_SCHEMA
+        or payload.get("status") != STOPPED_RECONCILIATION_STATUS
+        or payload.get("open_order_count") != 0
+        or not isinstance(position_rows, list)
+        or len(position_rows) != 1
+        or observed != expected
+        or observed
+        != _canonical_ascii_sha256(payload, STOPPED_RECONCILIATION_CANONICAL_FIELD)
+    ):
+        raise LockedRuntimeError("stopped reconciliation authority drifted")
+    return payload, resolved
+
+
+def _load_live_runtime_identity(
+    path: Path,
+    *,
+    expected_deployment_envelope_sha256: str,
+    stopped_reconciliation_path: Path,
+    expected_stopped_reconciliation_sha256: str,
+    expected_file_sha256: str | None = None,
+) -> tuple[dict[str, Any], str]:
+    envelope_root = _require_exact_sha256(
+        expected_deployment_envelope_sha256,
+        "expected deployment envelope",
+    )
+    reconciliation_root = _require_exact_sha256(
+        expected_stopped_reconciliation_sha256,
+        "expected stopped reconciliation",
+    )
+    payload, raw, _resolved = _load_private_json_object(path, "live runtime identity")
+    file_sha256 = _sha256(raw)
+    if expected_file_sha256 is not None and file_sha256 != _require_exact_sha256(
+        expected_file_sha256,
+        "expected live runtime identity",
+    ):
+        raise LockedRuntimeError("live runtime identity file hash drifted")
+    attestation = _require_mapping(payload.get("startup_attestation"), "startup attestation")
+    gates = _require_mapping(attestation.get("gates"), "startup attestation gates")
+    deployment = _require_mapping(
+        attestation.get("deployment_envelope"),
+        "startup deployment envelope",
+    )
+    reconciliation = _require_mapping(
+        payload.get("startup_exchange_reconciliation"),
+        "startup exchange reconciliation",
+    )
+    try:
+        bound_reconciliation_path = Path(str(reconciliation.get("path", ""))).resolve(strict=True)
+    except OSError as exc:
+        raise LockedRuntimeError("runtime reconciliation path is unavailable") from exc
+    if (
+        payload.get("schema_version") != LIVE_RUNTIME_IDENTITY_SCHEMA
+        or payload.get("dry_run") is not False
+        or payload.get("testnet") is not False
+        or attestation.get("schema_version") != STARTUP_ATTESTATION_SCHEMA
+        or attestation.get("status") != "accepted"
+        or attestation.get("errors") not in (None, [])
+        or gates.get("safe_to_start_live_loops") is not True
+        or deployment.get("canonical_sha256") != envelope_root
+        or reconciliation.get("canonical_sha256") != reconciliation_root
+        or bound_reconciliation_path != stopped_reconciliation_path
+    ):
+        raise LockedRuntimeError("live runtime identity authority drifted")
+    return payload, file_sha256
+
+
+def _validate_activation_artifacts(
+    receipt: Mapping[str, Any],
+    *,
+    stopped_reconciliation_path: Path,
+    runtime_identity_path: Path,
+) -> None:
+    _reconciliation, resolved_reconciliation = _load_stopped_reconciliation(
+        stopped_reconciliation_path,
+        expected_root_sha256=str(receipt["stopped_reconciliation_sha256"]),
+    )
+    _load_live_runtime_identity(
+        runtime_identity_path,
+        expected_deployment_envelope_sha256=str(receipt["deployment_envelope_sha256"]),
+        stopped_reconciliation_path=resolved_reconciliation,
+        expected_stopped_reconciliation_sha256=str(
+            receipt["stopped_reconciliation_sha256"]
+        ),
+        expected_file_sha256=str(receipt["runtime_identity_sha256"]),
+    )
+
+
+def build_activation_receipt(
+    *,
+    release_id: str,
+    deployment_envelope_path: Path,
+    deployment_envelope_sha256: str,
+    stopped_reconciliation_path: Path,
+    stopped_reconciliation_sha256: str,
+    runtime_identity_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Publish one compact result root after validating observed activation artifacts."""
+
+    normalized_release_id = _require_release_id(release_id)
+    envelope_root = _validated_deployment_envelope_root(
+        deployment_envelope_path,
+        expected_root_sha256=deployment_envelope_sha256,
+    )
+    reconciliation_root = _require_exact_sha256(
+        stopped_reconciliation_sha256,
+        "stopped reconciliation root",
+    )
+    _reconciliation, resolved_reconciliation = _load_stopped_reconciliation(
+        stopped_reconciliation_path,
+        expected_root_sha256=reconciliation_root,
+    )
+    _runtime_identity, runtime_identity_sha256 = _load_live_runtime_identity(
+        runtime_identity_path,
+        expected_deployment_envelope_sha256=envelope_root,
+        stopped_reconciliation_path=resolved_reconciliation,
+        expected_stopped_reconciliation_sha256=reconciliation_root,
+    )
+    payload: dict[str, Any] = {
+        "schema_version": ACTIVATION_RECEIPT_SCHEMA,
+        "release_id": normalized_release_id,
+        "status": ACTIVATION_RECEIPT_STATUS,
+        "deployment_envelope_sha256": envelope_root,
+        "stopped_reconciliation_sha256": reconciliation_root,
+        "runtime_identity_sha256": runtime_identity_sha256,
+    }
+    payload[ACTIVATION_RECEIPT_CANONICAL_FIELD] = canonical_sha256(
+        payload,
+        ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    )
+    _write_json_authority_atomic(output_path, payload)
+    return {
+        "receipt": payload,
+        "path": str(_absolute(output_path)),
+        "canonical_sha256": payload[ACTIVATION_RECEIPT_CANONICAL_FIELD],
+    }
+
+
+def load_activation_receipt(
+    path: Path,
+    *,
+    expected_root_sha256: str,
+    expected_deployment_envelope_sha256: str,
+    expected_release_id: str,
+) -> dict[str, Any]:
+    """Load a compact activation result and prove its deployment lineage."""
+
+    expected_root = _require_exact_sha256(
+        expected_root_sha256,
+        "expected activation receipt",
+    )
+    expected_envelope = _require_exact_sha256(
+        expected_deployment_envelope_sha256,
+        "expected deployment envelope",
+    )
+    release_id = _require_release_id(expected_release_id)
+    payload, _raw = _load_canonical_authority(
+        path,
+        schema=ACTIVATION_RECEIPT_SCHEMA,
+        canonical_field=ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    )
+    fields = {
+        "schema_version",
+        "release_id",
+        "status",
+        "deployment_envelope_sha256",
+        "stopped_reconciliation_sha256",
+        "runtime_identity_sha256",
+        ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    }
+    if set(payload) != fields:
+        raise LockedRuntimeError("activation receipt fields drifted")
+    observed_root = _require_exact_sha256(
+        payload.get(ACTIVATION_RECEIPT_CANONICAL_FIELD, ""),
+        "activation receipt root",
+    )
+    if observed_root != expected_root:
+        raise LockedRuntimeError("activation receipt root drifted")
+    if payload.get("status") != ACTIVATION_RECEIPT_STATUS:
+        raise LockedRuntimeError("activation receipt status drifted")
+    if payload.get("release_id") != release_id:
+        raise LockedRuntimeError("activation receipt release lineage drifted")
+    observed_envelope = _require_exact_sha256(
+        payload.get("deployment_envelope_sha256", ""),
+        "activation receipt deployment envelope",
+    )
+    if observed_envelope != expected_envelope:
+        raise LockedRuntimeError("activation receipt deployment envelope lineage drifted")
+    _require_exact_sha256(
+        payload.get("stopped_reconciliation_sha256", ""),
+        "activation receipt stopped reconciliation root",
+    )
+    _require_exact_sha256(
+        payload.get("runtime_identity_sha256", ""),
+        "activation receipt runtime identity",
+    )
+    return payload
+
+
+def _validate_current_pointer_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    fields = {
+        "schema_version",
+        "release_id",
+        "deployment_envelope_sha256",
+        "activation_receipt_sha256",
+        "status",
+    }
+    if set(payload) != fields:
+        raise LockedRuntimeError("current pointer fields drifted")
+    if payload.get("schema_version") != CURRENT_POINTER_SCHEMA:
+        raise LockedRuntimeError("current pointer schema drifted")
+    if payload.get("status") != CURRENT_POINTER_STATUS:
+        raise LockedRuntimeError("current pointer status drifted")
+    _require_release_id(payload.get("release_id"))
+    _require_exact_sha256(
+        payload.get("deployment_envelope_sha256", ""),
+        "current pointer deployment envelope",
+    )
+    _require_exact_sha256(
+        payload.get("activation_receipt_sha256", ""),
+        "current pointer activation receipt",
+    )
+    return payload
+
+
+def load_current_pointer(
+    path: Path,
+    *,
+    deployment_envelope_path: Path,
+    activation_receipt_path: Path,
+) -> dict[str, Any]:
+    """Resolve a five-field pointer only after both immutable roots agree."""
+
+    pointer_path = _absolute(path)
+    raw = _read_regular_file(pointer_path, private_authority=True)
+    pointer = _validate_current_pointer_payload(_load_json_bytes(raw, str(pointer_path)))
+    envelope_root = _validated_deployment_envelope_root(
+        deployment_envelope_path,
+        expected_root_sha256=pointer["deployment_envelope_sha256"],
+    )
+    receipt = load_activation_receipt(
+        activation_receipt_path,
+        expected_root_sha256=pointer["activation_receipt_sha256"],
+        expected_deployment_envelope_sha256=envelope_root,
+        expected_release_id=pointer["release_id"],
+    )
+    if _read_regular_file(pointer_path, private_authority=True) != raw:
+        raise LockedRuntimeError("current pointer changed during lineage validation")
+    return {
+        "pointer": pointer,
+        "path": str(pointer_path),
+        "activation_receipt": receipt,
+    }
+
+
+def publish_current_pointer(
+    *,
+    release_id: str,
+    deployment_envelope_path: Path,
+    deployment_envelope_sha256: str,
+    activation_receipt_path: Path,
+    activation_receipt_sha256: str,
+    stopped_reconciliation_path: Path,
+    runtime_identity_path: Path,
+    output_path: Path,
+) -> dict[str, Any]:
+    """Validate immutable lineage, then atomically publish the mutable pointer."""
+
+    normalized_release_id = _require_release_id(release_id)
+    envelope_root = _validated_deployment_envelope_root(
+        deployment_envelope_path,
+        expected_root_sha256=deployment_envelope_sha256,
+    )
+    receipt_root = _require_exact_sha256(
+        activation_receipt_sha256,
+        "expected activation receipt",
+    )
+    receipt = load_activation_receipt(
+        activation_receipt_path,
+        expected_root_sha256=receipt_root,
+        expected_deployment_envelope_sha256=envelope_root,
+        expected_release_id=normalized_release_id,
+    )
+    _validate_activation_artifacts(
+        receipt,
+        stopped_reconciliation_path=stopped_reconciliation_path,
+        runtime_identity_path=runtime_identity_path,
+    )
+    pointer = {
+        "schema_version": CURRENT_POINTER_SCHEMA,
+        "release_id": normalized_release_id,
+        "deployment_envelope_sha256": envelope_root,
+        "activation_receipt_sha256": receipt_root,
+        "status": CURRENT_POINTER_STATUS,
+    }
+    _write_json_pointer_atomic(output_path, pointer)
+    return load_current_pointer(
+        output_path,
+        deployment_envelope_path=deployment_envelope_path,
+        activation_receipt_path=activation_receipt_path,
+    )
 
 
 def _summary(payload: dict[str, Any], canonical_field: str) -> None:
@@ -2464,8 +2945,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     envelope.add_argument("--repository-root", type=Path, required=True)
     envelope.add_argument("--active-config", type=Path, required=True)
-    envelope.add_argument("--disabled-config", type=Path)
     envelope.add_argument("--native-build-receipt", type=Path, required=True)
+    envelope.add_argument("--model-authorization", type=Path, required=True)
+    envelope.add_argument("--boolean-policy-file", type=Path)
+    envelope.add_argument("--boolean-predicate-bundle", type=Path)
     envelope.add_argument("--policy-artifact-manifest", type=Path)
     envelope.add_argument("--policy-file", type=Path)
     envelope.add_argument("--predicate-bundle", type=Path)
@@ -2479,6 +2962,31 @@ def _build_parser() -> argparse.ArgumentParser:
     startup.add_argument("--expected-envelope-sha256", required=True)
     startup.add_argument("--venv-python", type=Path, required=True)
     startup.add_argument("--pip-runner-python", type=Path, required=True)
+
+    activation = subparsers.add_parser(
+        "build-activation-receipt",
+        help="bind one deployment root to compact activation result roots",
+    )
+    activation.add_argument("--release-id", required=True)
+    activation.add_argument("--deployment-envelope", type=Path, required=True)
+    activation.add_argument("--deployment-envelope-sha256", required=True)
+    activation.add_argument("--stopped-reconciliation", type=Path, required=True)
+    activation.add_argument("--stopped-reconciliation-sha256", required=True)
+    activation.add_argument("--runtime-identity", type=Path, required=True)
+    activation.add_argument("--output", type=Path, required=True)
+
+    current = subparsers.add_parser(
+        "publish-current-pointer",
+        help="validate activation lineage and atomically publish its five-field pointer",
+    )
+    current.add_argument("--release-id", required=True)
+    current.add_argument("--deployment-envelope", type=Path, required=True)
+    current.add_argument("--deployment-envelope-sha256", required=True)
+    current.add_argument("--activation-receipt", type=Path, required=True)
+    current.add_argument("--activation-receipt-sha256", required=True)
+    current.add_argument("--stopped-reconciliation", type=Path, required=True)
+    current.add_argument("--runtime-identity", type=Path, required=True)
+    current.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -2579,8 +3087,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = build_deployment_envelope(
                 repository_root=args.repository_root,
                 active_config_path=args.active_config,
-                disabled_config_path=args.disabled_config,
                 native_build_receipt_path=args.native_build_receipt,
+                model_authorization_path=args.model_authorization,
+                boolean_policy_file_path=args.boolean_policy_file,
+                boolean_predicate_bundle_path=args.boolean_predicate_bundle,
                 policy_artifact_manifest_path=args.policy_artifact_manifest,
                 policy_file_path=args.policy_file,
                 predicate_bundle_path=args.predicate_bundle,
@@ -2610,6 +3120,49 @@ def main(argv: Sequence[str] | None = None) -> int:
                     {
                         "canonical_sha256": result["canonical_sha256"],
                         "status": result["status"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+        if args.command == "build-activation-receipt":
+            result = build_activation_receipt(
+                release_id=args.release_id,
+                deployment_envelope_path=args.deployment_envelope,
+                deployment_envelope_sha256=args.deployment_envelope_sha256,
+                stopped_reconciliation_path=args.stopped_reconciliation,
+                stopped_reconciliation_sha256=args.stopped_reconciliation_sha256,
+                runtime_identity_path=args.runtime_identity,
+                output_path=args.output,
+            )
+            print(
+                json.dumps(
+                    {
+                        "canonical_sha256": result["canonical_sha256"],
+                        "path": result["path"],
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+        if args.command == "publish-current-pointer":
+            result = publish_current_pointer(
+                release_id=args.release_id,
+                deployment_envelope_path=args.deployment_envelope,
+                deployment_envelope_sha256=args.deployment_envelope_sha256,
+                activation_receipt_path=args.activation_receipt,
+                activation_receipt_sha256=args.activation_receipt_sha256,
+                stopped_reconciliation_path=args.stopped_reconciliation,
+                runtime_identity_path=args.runtime_identity,
+                output_path=args.output,
+            )
+            print(
+                json.dumps(
+                    {
+                        **result["pointer"],
+                        "path": result["path"],
                     },
                     sort_keys=True,
                     separators=(",", ":"),

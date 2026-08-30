@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-08-30
 
 Operations docs cover dry-run setup, private config boundaries, deployment guardrails, and telemetry. They should not contain private hosts, account details, or raw live PnL.
 
@@ -26,13 +26,13 @@ The safe sequence is:
 
 1. Provision an unprivileged service user, a service-user-owned release parent, and a separate mode-`0700` private root. Restrict SSH and outbound credentials to the minimum needed by the venue connection.
 2. From a clean public clone, run `make deploy-dry`, review the bound commit/tree, then run `make deploy`. This publishes source only and never restarts a process.
-3. Place the private config, model bundle, wheels, lock, wheelhouse, and admitted input receipts under the private root—not inside the Git checkout. Construct the deployment envelope and stopped-exchange reconciliation there later from the exact release.
+3. Place the private config, model bundle and its authorization manifest, wheels, lock, wheelhouse, and admitted input receipts under the private root—not inside the Git checkout. Construct the deployment envelope and stopped-exchange reconciliation there later from the exact release.
 4. Build or receive the content-addressed wheelhouse, then create a commit-bound environment with `python3.12 -m live.deployment_runtime install`. Build release wheels from a clean checkout/worktree; remove generated `build/`, `dist/`, and `*.egg-info` state before the build so deleted files cannot survive in a stale wheel tree. Never let the target resolve dependencies from an index during install.
 5. Run both `verify-install` and `verify-static-tree`, then bind the absolute `venv-<execution-commit>` path as the release's ignored `.venv-active` selector.
-6. Build the deployment envelope from the exact checkout/runtime authorities, run `make deploy-preflight` against the private config, and use `live/run.sh reconcile-stopped` while the maker is fully stopped to produce the exchange barrier.
-7. Admit the release only after process, runtime health, position/order reconciliation, and log checks pass. Store exact activation and rollback evidence privately.
+6. Build the deployment envelope from the exact checkout/runtime authorities. The model authorization manifest is a required envelope member; optional policy artifacts are included only as complete groups. Run `make deploy-preflight` against the private config, and use `live/run.sh reconcile-stopped` while the maker is fully stopped to produce the exchange barrier.
+7. Admit the release only after process, runtime health, position/order reconciliation, and log checks pass. Then build the compact activation receipt and atomically publish the current selector. Store exact activation and rollback evidence privately.
 
-Both authority constructors are public and generic: `live.deployment_runtime build-envelope` derives the deployment envelope from exact files and receipts, while `live/run.sh reconcile-stopped ABSOLUTE_PATH` performs signed exchange reads only after proving the maker is fully stopped. Use their emitted canonical roots; never hand-write either JSON or copy an old private receipt.
+The authority commands are public and generic: `live.deployment_runtime build-envelope` derives the deployment envelope from exact files and receipts; `live/run.sh reconcile-stopped ABSOLUTE_PATH` performs signed exchange reads only after proving the maker is fully stopped; `build-activation-receipt` binds the validated envelope, stopped reconciliation, and observed live runtime identity; and `publish-current-pointer` revalidates that lineage before an atomic selector update. Use their emitted canonical roots; never hand-write these JSON objects or copy an old private receipt into current authority.
 
 All locked-runtime subcommands and required fields are discoverable without private data:
 
@@ -42,6 +42,8 @@ python3.12 -m live.deployment_runtime install --help
 python3.12 -m live.deployment_runtime verify-install --help
 python3.12 -m live.deployment_runtime build-envelope --help
 python3.12 -m live.deployment_runtime verify-envelope-startup --help
+python3.12 -m live.deployment_runtime build-activation-receipt --help
+python3.12 -m live.deployment_runtime publish-current-pointer --help
 python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
 ```
@@ -91,7 +93,7 @@ sudo install -d -o narrowgate -g narrowgate -m 0700 \
   /opt/narrowgate/private/<release-id>
 ```
 
-Transfer the private config, model bundle, lock, wheelhouse, wheels, and admitted input receipts into that private directory using the operator's approved secret/artifact channel. Do not pre-copy an envelope or reconciliation from another release; construct both below. Do not place private material under `/opt/narrowgate/releases/<release-id>`.
+Transfer the private config, model bundle, its authorization manifest, lock, wheelhouse, wheels, and admitted input receipts into that private directory using the operator's approved secret/artifact channel. Do not pre-copy an envelope or reconciliation from another release; construct both below. Do not place private material under `/opt/narrowgate/releases/<release-id>`.
 
 On the instance, derive the exact commit-bound venv name and install from already transferred, hash-bound artifacts. The install receipt and `venv-<commit>` must have the same private parent because live startup enforces that relationship:
 
@@ -165,15 +167,26 @@ NATIVE_RECEIPT="$PRIVATE_DIR/native-build-receipt.json"
   --output "$NATIVE_RECEIPT"
 ```
 
-Create the deployment envelope from the exact private active config and native-build receipt. If the active config binds the BUY E3 policy, supply `--policy-artifact-manifest`, `--policy-file`, and `--predicate-bundle` together; otherwise omit all three.
+Create the deployment envelope from the exact private active config, native-build
+receipt, and model authorization manifest selected and validated by the model contract.
+That single required manifest internally binds the admitted model heads and P3 artifact;
+do not repeat their leaf hashes in the deployment command, service environment, or pointer.
+`--model-authorization` is always required, even when every optional action policy is
+disabled. If the active config binds the SELL Boolean cooldown, supply
+`--boolean-policy-file` and `--boolean-predicate-bundle` together. If it binds
+the BUY E3 policy, supply `--policy-artifact-manifest`, `--policy-file`, and
+`--predicate-bundle` together. Omit an entire group when that policy is disabled.
+Set `MODEL_AUTHORIZATION` to the exact `model_authorization_path` reported by `scripts/preflight_live_deploy.py`; do not copy or rename that file.
 
 ```bash
 ENVELOPE="$PRIVATE_DIR/deployment-envelope.json"
+MODEL_AUTHORIZATION=<exact-model_authorization_path-from-preflight>
 
 python3.12 -m live.deployment_runtime build-envelope \
   --repository-root "$RELEASE_DIR" \
   --active-config "$PRIVATE_DIR/live-config.yaml" \
   --native-build-receipt "$NATIVE_RECEIPT" \
+  --model-authorization "$MODEL_AUTHORIZATION" \
   --output "$ENVELOPE"
 ```
 
@@ -227,6 +240,35 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-Only after all private authority gates are available should an operator atomically move a separately prepared `/opt/narrowgate/current` selector and start the service. Source publication itself never changes that selector. After `systemctl start narrowgate`, verify `systemctl status narrowgate`, `live/run.sh status`, `logs/runtime_health.json`, and recent supervisor/engine logs. A running PID is insufficient: position and open-order reconciliation must converge and no ownership or execution-state safety latch may be active.
+Only after all private authority gates are available should an operator atomically move a separately prepared `/opt/narrowgate/current` filesystem selector and start the service. Source publication itself never changes that selector. After `systemctl start narrowgate`, verify `systemctl status narrowgate`, `live/run.sh status`, `logs/runtime_health.json`, and recent supervisor/engine logs. A running PID is insufficient: position and open-order reconciliation must converge and no ownership or execution-state safety latch may be active.
+
+After that admission succeeds, bind only the three validated activation inputs and publish the compact private current pointer. Use the canonical roots printed by the earlier commands and the absolute runtime identity written by the admitted process:
+
+```bash
+ACTIVATION_RECEIPT="$PRIVATE_DIR/activation-receipt.json"
+CURRENT_POINTER=/opt/narrowgate/private/current.json
+RUNTIME_IDENTITY=<absolute-runtime-identity-path>
+
+python3.12 -m live.deployment_runtime build-activation-receipt \
+  --release-id <release-id> \
+  --deployment-envelope "$ENVELOPE" \
+  --deployment-envelope-sha256 <deployment-envelope-canonical-sha256> \
+  --stopped-reconciliation "$RECONCILIATION" \
+  --stopped-reconciliation-sha256 <stopped-reconciliation-canonical-sha256> \
+  --runtime-identity "$RUNTIME_IDENTITY" \
+  --output "$ACTIVATION_RECEIPT"
+
+python3.12 -m live.deployment_runtime publish-current-pointer \
+  --release-id <release-id> \
+  --deployment-envelope "$ENVELOPE" \
+  --deployment-envelope-sha256 <deployment-envelope-canonical-sha256> \
+  --activation-receipt "$ACTIVATION_RECEIPT" \
+  --activation-receipt-sha256 <activation-receipt-canonical-sha256> \
+  --stopped-reconciliation "$RECONCILIATION" \
+  --runtime-identity "$RUNTIME_IDENTITY" \
+  --output "$CURRENT_POINTER"
+```
+
+The JSON current pointer is only a five-field release selector. Its `release_id` is resolved through the owner-private routing inventory and the corresponding release directory; the pointer itself contains no host routing or leaf artifact inventory. `status=selected_activation` means only that this activation was selected after lineage validation. It is not a live-health assertion and never replaces service, exchange, or runtime-health checks. Older verbose receipts, command transcripts, and per-file hash inventories may be retained privately as audit attachments, but they are audit-only and must not participate in startup authority or be copied into the current pointer.
 
 Rollback is another verified deployment, not a blind restart. Stop the service, require a clean stop result, reconcile exchange position/open orders, switch the release/config/envelope selectors to a previously verified private release, rerun preflight and static-runtime verification, then start and repeat health admission. If stop reports uncertain execution state, do not activate either release until manual reconciliation completes.

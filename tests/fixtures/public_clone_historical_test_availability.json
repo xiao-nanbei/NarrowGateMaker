@@ -17,8 +17,6 @@
     "exact_historical_source_bytes_unavailable": {
       "reason": "requires predecessor source/config bytes or artifacts whose frozen SHA intentionally differs from the current public tree",
       "modules": [
-        "test_buy_q90_fresh_prospective_placement_recovery_v4.py",
-        "test_buy_q90_runtime_authority_contract_v3.py",
         "test_causal_multichannel_window_boolean_cooldown_strict_label_panel_runner.py",
         "test_causal_multichannel_window_boolean_cooldown_v2_preflight.py",
         "test_cooldown_action_leverage_frontier.py",
@@ -53,7 +51,6 @@
         "tests/test_conditional_p3_scalar_reproduction_gate.py::test_errata_narrows_scope_without_rewriting_frozen_artifacts",
         "tests/test_historical_reproduction_governance.py::test_f06_accepts_only_registered_path_and_hash",
         "tests/test_historical_reproduction_governance.py::test_historical_output_cannot_claim_new_authority",
-        "tests/test_live_shadow_retirement.py::test_operational_shadow_retirement_does_not_change_quote_core_contract",
         "tests/test_multiscale_ema_boolean_cooldown_duration_policy_study.py::test_execution_dependencies_bind_frozen_specs_without_amendment_cycle",
         "tests/test_p3_reach_time_hazard_training.py::test_actual_frozen_spec_is_strictly_bound",
         "tests/test_p3_reach_time_hazard_training.py::test_spec_tamper_fails_before_data_read",

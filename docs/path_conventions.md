@@ -28,14 +28,14 @@ NarrowGate documentation uses public placeholders instead of personal machine pa
 | `${NARROWGATE_MODEL_DIR}` | Model bundle directory used for a specific run |
 | `${NARROWGATE_MAIN_MODEL_DIR}` | Main quote-model bundle for a specific run |
 | `${NARROWGATE_QUOTE_EV_MODEL_DIR}` | Quote-EV model bundle for a specific run |
-| `${NARROWGATE_LIVE_REMOTE_POINTER}` | Ignored repository-wide current-host pointer; the sole local resolver for current remote authority |
+| `${NARROWGATE_LIVE_REMOTE_POINTER}` | Ignored human-facing current-release selector; it never grants startup or deployment authority |
 | `${NARROWGATE_LIVE_CONFIG}` | Stable ignored alias for the exact current live config; never a replay-default alias |
 | `${NARROWGATE_PRIVATE_CONFIG_ROOT}` | Ignored owner-local directory containing create-only versioned live and replay configs |
-| `${NARROWGATE_REMOTE_ROOT}` | Repository root on the current private live host; resolved from the ignored current-host pointer |
-| `${NARROWGATE_REMOTE_HOME}` | Home directory on a private remote host; resolved locally and never published literally |
+| `${NARROWGATE_REMOTE_ROOT}` | Repository root on the selected private live host; supplied by owner routing configuration, not by release authority |
+| `${NARROWGATE_REMOTE_HOME}` | Home directory on a private remote host; supplied locally and never published literally |
 | `<current-live-host>` | Logical name for the current private live host; the public repository does not publish its address |
 | `<current-live-instance>` | Logical name for the current cloud instance; the public repository does not publish its instance ID |
-| `<current-live-ssh-target>` | Private SSH target resolved from the ignored current-host pointer; never a public endpoint |
+| `<current-live-ssh-target>` | Private SSH target resolved from owner routing configuration; never a public endpoint |
 | `<current-live-eip-allocation>` | Logical current public-address allocation identity; never publish the allocation ID |
 | `<current-live-epoch>` | Mutable current-epoch locator in current-facing documents; inside a frozen dated contract it means the epoch current when that contract was frozen and must not be rebound |
 | `<current-live-epoch-start>` | Start of the epoch resolved by the current private pointer; never infer it from a public address or an older report |
@@ -62,7 +62,7 @@ export NARROWGATE_PRIVATE_EVIDENCE_ROOT="$NARROWGATE_DATA_ROOT/reports"
 
 Cross-project private runtime pointers remain under `docs/private/`. Component-local unpublished evidence is owned by the ignored `live/private/`, `data/private/`, `models/private/`, or `execution/private/` root defined in [Non-Research Private Evidence Owners](non_research_private_evidence_owners.md). Each concrete research unit also owns an ignored `private/` directory for its artifact catalog and owner-only research context; see [Public Research and Private Evidence Layout](../research/PRIVATE_EVIDENCE.md). None of these private surfaces is published, and a component-private root may not duplicate or override repository-wide current authority.
 
-The physical storage volume, capacity policy, and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the private deployment that was current when that report became effective; it must not be rebound to today's host. Mutable current pointers may advance, while owner-side immutable evidence retains its original private runtime identity. The default cache root follows the bilingual README [Data Layout](../README.md#data-layout) section. Cache is reproducible and disposable; raw inputs, shared canonical data, and frozen evidence never inherit deletion authority merely because they are old. Private evidence paths are resolved through an owner-side locator without publishing their bytes or identity.
+The physical storage volume, capacity policy, and current private-host locator are machine-local configuration, not public documentation. In a dated frozen report, a `<current-live-*>` placeholder means the private deployment that was current when that report became effective; it must not be rebound to today's host. Mutable current pointers may advance only after a verified activation receipt is published, and are selectors rather than startup authority. Live startup independently requires the deployment-envelope root and stopped-exchange reconciliation root. Owner-side immutable evidence retains its original private runtime identity. The default cache root follows the bilingual README [Data Layout](../README.md#data-layout) section. Cache is reproducible and disposable; raw inputs, shared canonical data, and frozen evidence never inherit deletion authority merely because they are old. Private evidence paths are resolved through an owner-side locator without publishing their bytes or identity.
 
 Repository package names do not identify data-storage roots. `data/` contains offline acquisition and normalization code. `live/orderbook/` contains the in-process execution-market book reconstructed from REST snapshot plus WebSocket diff depth. Actual market-data files belong only under `${NARROWGATE_DATA_ROOT}`. Tick replay and mechanics caches belong under `${NARROWGATE_CACHE_ROOT}`; `NARROWGATE_TICK_WINDOW_CACHE_DIR` may override the legacy tick-window subdirectory without changing the data root. `NARROWGATE_REPLAY_DAG_CACHE_DIR` may separately override the component cache; its default is `${NARROWGATE_CACHE_ROOT}/replay_dag`. An external override must remain below `${NARROWGATE_DATA_ROOT}/cache`, not a raw-data or evidence directory. Strategy-dependent order, queue, fill, inventory and campaign paths must never be shared through either cache root.
 
@@ -80,7 +80,7 @@ See [the market-data guide](market_data.md) for source provenance, downloads, no
 
 ## Private Runtime Configs
 
-The tracked `live/config.yaml` is a public template. Resolve live authority through the ignored pointer and pass the stable live alias explicitly:
+The tracked `live/config.yaml` is a public template. Resolve the current private locators through the ignored selector and pass the stable live alias explicitly; startup authority still comes from the separately supplied deployment envelope and stopped-exchange reconciliation roots:
 
 ```bash
 export NARROWGATE_LIVE_REMOTE_POINTER="<owner-local-current-pointer>"

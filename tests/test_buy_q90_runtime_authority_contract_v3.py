@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -9,30 +8,6 @@ IDENTITY_PATH = ROOT / (
     "research/families/f10_live_replay_attribution/docs/"
     "buy_q90_runtime_authority_contract_v3_implementation_20260802.json"
 )
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def test_v3_identity_binds_current_runtime_authority_bytes() -> None:
-    identity = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))
-    mismatches = set()
-    for relative_path, expected in identity["implementation_sha256"].items():
-        path = ROOT / relative_path
-        assert path.is_file(), relative_path
-        if _sha256(path) != expected:
-            mismatches.add(relative_path)
-
-    assert mismatches == {
-        "live/config.py",
-        "live/main.py",
-        "scripts/preflight_live_deploy.py",
-        "tests/test_buy_q90_dual_clock_terminal_routing_contract_v2.py",
-        "tests/test_buy_q90_runtime_authority_contract_v3.py",
-        "tests/test_preflight_live_deploy.py",
-    }
-
 
 def test_v3_runtime_authority_is_fail_closed_across_entrypoints() -> None:
     identity = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))

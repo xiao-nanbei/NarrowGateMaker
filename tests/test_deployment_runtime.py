@@ -268,7 +268,7 @@ def _verify_install(bundle: dict[str, Any]) -> dict[str, Any]:
 
 def _deployment_envelope_fixture(
     tmp_path: Path,
-) -> tuple[dict[str, Any], Path, Path]:
+) -> tuple[dict[str, Any], Path, Path, Path]:
     bundle_root = tmp_path / "runtime"
     bundle_root.mkdir()
     bundle = _install(bundle_root)
@@ -345,7 +345,89 @@ def _deployment_envelope_fixture(
     )
     receipt_path = bundle_root / "native-build.json"
     subject._write_json_authority(receipt_path, native_receipt)  # noqa: SLF001
-    return bundle, repository, receipt_path
+    model_authorization = tmp_path / "model-authorization.json"
+    model_authorization.write_text(
+        '{"schema_version":"fixture_model_authorization.v1"}\n',
+        encoding="utf-8",
+    )
+    return bundle, repository, receipt_path, model_authorization
+
+
+def _write_private_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    path.chmod(0o600)
+
+
+def _activation_artifacts(
+    tmp_path: Path,
+    *,
+    envelope_sha256: str,
+) -> tuple[Path, str, Path, str]:
+    reconciliation_path = tmp_path / "stopped-reconciliation.json"
+    position_rows = [
+        {
+            "symbol": "BTCUSDC",
+            "position_side": "BOTH",
+            "position_amt": "0.000",
+            "entry_price": "0.0",
+            "update_time_ms": 1,
+        }
+    ]
+    reconciliation: dict[str, Any] = {
+        "schema_version": subject.STOPPED_RECONCILIATION_SCHEMA,
+        "status": subject.STOPPED_RECONCILIATION_STATUS,
+        "generated_utc": "2026-08-30T00:00:00Z",
+        "symbol": "BTCUSDC",
+        "open_order_count": 0,
+        "signed_endpoints": ["/fapi/v1/openOrders", "/fapi/v3/positionRisk"],
+        "signed_read_sequence": [
+            "/fapi/v1/openOrders",
+            "/fapi/v3/positionRisk",
+            "/fapi/v1/openOrders",
+            "/fapi/v3/positionRisk",
+        ],
+        "account_key_sha256": "a" * 64,
+        "position_rows": position_rows,
+        "position_lineage_sha256": subject.canonical_sha256(
+            {"position_rows": position_rows},
+            "unused",
+        ),
+    }
+    reconciliation_root = subject.canonical_sha256(
+        reconciliation,
+        subject.STOPPED_RECONCILIATION_CANONICAL_FIELD,
+    )
+    reconciliation[subject.STOPPED_RECONCILIATION_CANONICAL_FIELD] = reconciliation_root
+    _write_private_json(reconciliation_path, reconciliation)
+
+    runtime_path = tmp_path / "runtime-identity.json"
+    runtime_identity = {
+        "schema_version": subject.LIVE_RUNTIME_IDENTITY_SCHEMA,
+        "dry_run": False,
+        "testnet": False,
+        "startup_attestation": {
+            "schema_version": subject.STARTUP_ATTESTATION_SCHEMA,
+            "status": "accepted",
+            "errors": [],
+            "gates": {"safe_to_start_live_loops": True},
+            "deployment_envelope": {"canonical_sha256": envelope_sha256},
+        },
+        "startup_exchange_reconciliation": {
+            "path": str(reconciliation_path.resolve()),
+            "canonical_sha256": reconciliation_root,
+            "position_lineage_sha256": reconciliation["position_lineage_sha256"],
+        },
+    }
+    _write_private_json(runtime_path, runtime_identity)
+    return (
+        reconciliation_path,
+        reconciliation_root,
+        runtime_path,
+        hashlib.sha256(runtime_path.read_bytes()).hexdigest(),
+    )
 
 
 def _site_packages(venv: Path) -> Path:
@@ -801,6 +883,8 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
         )
         == receipt
     )
+
+
 def test_installed_version_drift_is_detected_even_if_record_is_resigned(tmp_path: Path) -> None:
     bundle = _install(tmp_path)
     dist_info = _site_packages(bundle["venv"]) / "frozen_dep-1.2.3.dist-info"
@@ -1080,13 +1164,16 @@ def test_public_source_publish_shell_is_source_only_and_atomic() -> None:
 def test_build_deployment_envelope_b0_omits_buy_e3_extension(
     tmp_path: Path,
 ) -> None:
-    _bundle, repository, native_receipt = _deployment_envelope_fixture(tmp_path)
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
     output = tmp_path / "deployment-envelope.json"
 
     result = subject.build_deployment_envelope(
         repository_root=repository,
         active_config_path=repository / "config.yaml",
         native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
         output_path=output,
     )
 
@@ -1109,7 +1196,9 @@ def test_build_deployment_envelope_b0_omits_buy_e3_extension(
         "member_paths",
         "root_sha256",
     }
-    assert envelope["model_policy_bundle"]["member_paths"] == {}
+    assert envelope["model_policy_bundle"]["member_paths"] == {
+        "model_authorization": str(model_authorization.resolve())
+    }
     assert all(
         "file_sha256" not in key and "canonical_sha256" not in key
         for bundle in (
@@ -1126,16 +1215,8 @@ def test_build_deployment_envelope_b0_omits_buy_e3_extension(
         runtime_policy.DEPLOYMENT_ENVELOPE_CANONICAL_SHA256_ENV: result["canonical_sha256"],
     }
     assert not hasattr(runtime_policy, "DEPLOYMENT_ENVELOPE_FILE_SHA256_ENV")
-    authority = runtime_policy.deployment_envelope_runtime_authority(
-        buy_e3_enabled=False,
-        environ=environment,
-    )
+    authority = runtime_policy.deployment_envelope_runtime_authority(environ=environment)
     assert authority["execution_commit"] == envelope["source"]["commit"]
-    with pytest.raises(ValueError, match="model-policy bundle member roles drifted"):
-        runtime_policy.deployment_envelope_runtime_authority(
-            buy_e3_enabled=True,
-            environ=environment,
-        )
 
 
 def test_startup_derives_runtime_leaves_from_one_envelope_root(
@@ -1223,7 +1304,6 @@ def test_startup_derives_runtime_leaves_from_one_envelope_root(
     assert result["canonical_sha256"] == "a" * 64
     assert observed["load"] == {
         "expected_root_sha256": "a" * 64,
-        "buy_e3_enabled": False,
     }
     assert observed["validate"]["receipt_path"] == install_receipt
     assert observed["validate"]["expected_receipt_sha256"] == "b" * 64
@@ -1236,7 +1316,9 @@ def test_startup_derives_runtime_leaves_from_one_envelope_root(
 def test_build_deployment_envelope_policy_extension_is_all_or_none(
     tmp_path: Path,
 ) -> None:
-    _bundle, repository, native_receipt = _deployment_envelope_fixture(tmp_path)
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
     policy = tmp_path / "policy.json"
     policy.write_text("{}\n", encoding="utf-8")
 
@@ -1245,8 +1327,23 @@ def test_build_deployment_envelope_policy_extension_is_all_or_none(
             repository_root=repository,
             active_config_path=repository / "config.yaml",
             native_build_receipt_path=native_receipt,
+            model_authorization_path=model_authorization,
             policy_file_path=policy,
             output_path=tmp_path / "deployment-envelope.json",
+        )
+
+    boolean_policy = tmp_path / "boolean-policy.json"
+    boolean_bundle = tmp_path / "boolean-predicate-bundle.json"
+    boolean_policy.write_text('{"policy":"fixture"}\n', encoding="utf-8")
+    boolean_bundle.write_text('{"bundle":"fixture"}\n', encoding="utf-8")
+    with pytest.raises(subject.LockedRuntimeError, match="all-or-none"):
+        subject.build_deployment_envelope(
+            repository_root=repository,
+            active_config_path=repository / "config.yaml",
+            native_build_receipt_path=native_receipt,
+            model_authorization_path=model_authorization,
+            boolean_policy_file_path=boolean_policy,
+            output_path=tmp_path / "incomplete-boolean-envelope.json",
         )
 
     artifact_manifest = tmp_path / "artifact-manifest.json"
@@ -1258,31 +1355,268 @@ def test_build_deployment_envelope_policy_extension_is_all_or_none(
         repository_root=repository,
         active_config_path=repository / "config.yaml",
         native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
+        boolean_policy_file_path=boolean_policy,
+        boolean_predicate_bundle_path=boolean_bundle,
         policy_artifact_manifest_path=artifact_manifest,
         policy_file_path=policy,
         predicate_bundle_path=predicate_bundle,
         output_path=output,
     )
     members = result["envelope"]["model_policy_bundle"]["member_paths"]
-    assert set(members) == {"artifact_manifest", "policy", "predicate_bundle"}
+    assert set(members) == {
+        "artifact_manifest",
+        "boolean_policy",
+        "boolean_predicate_bundle",
+        "model_authorization",
+        "policy",
+        "predicate_bundle",
+    }
     environment = {
         runtime_policy.DEPLOYMENT_ENVELOPE_PATH_ENV: str(output),
         runtime_policy.DEPLOYMENT_ENVELOPE_CANONICAL_SHA256_ENV: result["canonical_sha256"],
     }
-    authority = runtime_policy.deployment_envelope_runtime_authority(
-        buy_e3_enabled=True,
-        environ=environment,
-    )
+    authority = runtime_policy.deployment_envelope_runtime_authority(environ=environment)
     assert authority["canonical_sha256"] == result["canonical_sha256"]
-    disabled_authority = runtime_policy.deployment_envelope_runtime_authority(
-        buy_e3_enabled=False,
-        environ=environment,
-    )
-    assert disabled_authority["canonical_sha256"] == result["canonical_sha256"]
-
+    assert set(authority["model_policy_member_paths"]) == set(members)
+    assert set(authority["model_policy_member_sha256"]) == set(members)
     policy.write_text('{"changed":true}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="model-policy bundle root drifted"):
-        runtime_policy.deployment_envelope_runtime_authority(
-            buy_e3_enabled=True,
-            environ=environment,
+        runtime_policy.deployment_envelope_runtime_authority(environ=environment)
+
+
+def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
+    tmp_path: Path,
+) -> None:
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
+    envelope_path = tmp_path / "deployment-envelope.json"
+    envelope = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
+        output_path=envelope_path,
+    )
+    release_id = "release-20260830"
+    reconciliation_path, reconciliation_root, runtime_path, runtime_sha256 = (
+        _activation_artifacts(
+            tmp_path,
+            envelope_sha256=envelope["canonical_sha256"],
         )
+    )
+    receipt_path = tmp_path / "active-receipt.json"
+    receipt_result = subject.build_activation_receipt(
+        release_id=release_id,
+        deployment_envelope_path=envelope_path,
+        deployment_envelope_sha256=envelope["canonical_sha256"],
+        stopped_reconciliation_path=reconciliation_path,
+        stopped_reconciliation_sha256=reconciliation_root,
+        runtime_identity_path=runtime_path,
+        output_path=receipt_path,
+    )
+    receipt = receipt_result["receipt"]
+    assert set(receipt) == {
+        "schema_version",
+        "release_id",
+        "status",
+        "deployment_envelope_sha256",
+        "stopped_reconciliation_sha256",
+        "runtime_identity_sha256",
+        "canonical_sha256",
+    }
+    assert receipt["runtime_identity_sha256"] == runtime_sha256
+    assert stat.S_IMODE(receipt_path.stat().st_mode) == 0o600
+    assert receipt_path.stat().st_nlink == 1
+    assert (
+        subject.load_activation_receipt(
+            receipt_path,
+            expected_root_sha256=receipt_result["canonical_sha256"],
+            expected_deployment_envelope_sha256=envelope["canonical_sha256"],
+            expected_release_id=release_id,
+        )
+        == receipt
+    )
+
+    pointer_path = tmp_path / "live.current.json"
+    published = subject.publish_current_pointer(
+        release_id=release_id,
+        deployment_envelope_path=envelope_path,
+        deployment_envelope_sha256=envelope["canonical_sha256"],
+        activation_receipt_path=receipt_path,
+        activation_receipt_sha256=receipt_result["canonical_sha256"],
+        stopped_reconciliation_path=reconciliation_path,
+        runtime_identity_path=runtime_path,
+        output_path=pointer_path,
+    )
+    pointer = published["pointer"]
+    assert pointer == {
+        "schema_version": subject.CURRENT_POINTER_SCHEMA,
+        "release_id": release_id,
+        "deployment_envelope_sha256": envelope["canonical_sha256"],
+        "activation_receipt_sha256": receipt_result["canonical_sha256"],
+        "status": subject.CURRENT_POINTER_STATUS,
+    }
+    assert "canonical_sha256" not in pointer
+    assert pointer["status"] == "selected_activation"
+    assert stat.S_IMODE(pointer_path.stat().st_mode) == 0o600
+    assert pointer_path.stat().st_nlink == 1
+    assert (
+        subject.load_current_pointer(
+            pointer_path,
+            deployment_envelope_path=envelope_path,
+            activation_receipt_path=receipt_path,
+        )["pointer"]
+        == pointer
+    )
+    model_authorization.write_text('{"changed":true}\n', encoding="utf-8")
+    assert (
+        subject.load_current_pointer(
+            pointer_path,
+            deployment_envelope_path=envelope_path,
+            activation_receipt_path=receipt_path,
+        )["pointer"]
+        == pointer
+    )
+    subject._write_json_pointer_atomic(pointer_path, pointer)  # noqa: SLF001
+    assert json.loads(pointer_path.read_bytes()) == pointer
+    assert not list(tmp_path.glob(".live.current.json.tmp.*"))
+
+
+def test_activation_receipt_rejects_unbound_or_changed_runtime_artifacts(
+    tmp_path: Path,
+) -> None:
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
+    envelope_path = tmp_path / "deployment-envelope.json"
+    envelope = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
+        output_path=envelope_path,
+    )
+    reconciliation_path, reconciliation_root, runtime_path, _runtime_sha256 = (
+        _activation_artifacts(
+            tmp_path,
+            envelope_sha256=envelope["canonical_sha256"],
+        )
+    )
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["startup_attestation"]["deployment_envelope"]["canonical_sha256"] = "f" * 64
+    _write_private_json(runtime_path, runtime)
+    with pytest.raises(subject.LockedRuntimeError, match="runtime identity authority drifted"):
+        subject.build_activation_receipt(
+            release_id="release-a",
+            deployment_envelope_path=envelope_path,
+            deployment_envelope_sha256=envelope["canonical_sha256"],
+            stopped_reconciliation_path=reconciliation_path,
+            stopped_reconciliation_sha256=reconciliation_root,
+            runtime_identity_path=runtime_path,
+            output_path=tmp_path / "rejected-receipt.json",
+        )
+
+    reconciliation_path, reconciliation_root, runtime_path, _runtime_sha256 = (
+        _activation_artifacts(
+            tmp_path,
+            envelope_sha256=envelope["canonical_sha256"],
+        )
+    )
+    receipt_path = tmp_path / "active-receipt.json"
+    receipt = subject.build_activation_receipt(
+        release_id="release-a",
+        deployment_envelope_path=envelope_path,
+        deployment_envelope_sha256=envelope["canonical_sha256"],
+        stopped_reconciliation_path=reconciliation_path,
+        stopped_reconciliation_sha256=reconciliation_root,
+        runtime_identity_path=runtime_path,
+        output_path=receipt_path,
+    )
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime["pid"] = 999
+    _write_private_json(runtime_path, runtime)
+    with pytest.raises(subject.LockedRuntimeError, match="runtime identity file hash drifted"):
+        subject.publish_current_pointer(
+            release_id="release-a",
+            deployment_envelope_path=envelope_path,
+            deployment_envelope_sha256=envelope["canonical_sha256"],
+            activation_receipt_path=receipt_path,
+            activation_receipt_sha256=receipt["canonical_sha256"],
+            stopped_reconciliation_path=reconciliation_path,
+            runtime_identity_path=runtime_path,
+            output_path=tmp_path / "current.json",
+        )
+
+
+def test_compact_receipt_and_pointer_reject_ambiguous_or_broken_lineage(
+    tmp_path: Path,
+) -> None:
+    receipt_path = tmp_path / "active-receipt.json"
+    payload: dict[str, Any] = {
+        "schema_version": subject.ACTIVATION_RECEIPT_SCHEMA,
+        "release_id": "release-a",
+        "status": subject.ACTIVATION_RECEIPT_STATUS,
+        "deployment_envelope_sha256": "1" * 64,
+        "stopped_reconciliation_sha256": "2" * 64,
+        "runtime_identity_sha256": "3" * 64,
+    }
+    payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
+        payload,
+        subject.ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    )
+    subject._write_json_authority(receipt_path, payload)  # noqa: SLF001
+    assert subject.load_activation_receipt(
+        receipt_path,
+        expected_root_sha256=payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+        expected_deployment_envelope_sha256="1" * 64,
+        expected_release_id="release-a",
+    )["runtime_identity_sha256"] == "3" * 64
+    with pytest.raises(subject.LockedRuntimeError, match="deployment envelope lineage"):
+        subject.load_activation_receipt(
+            receipt_path,
+            expected_root_sha256=payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+            expected_deployment_envelope_sha256="5" * 64,
+            expected_release_id="release-a",
+        )
+
+    ambiguous = dict(payload)
+    ambiguous["copied_leaf_sha256"] = "6" * 64
+    ambiguous[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
+        ambiguous,
+        subject.ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    )
+    ambiguous_path = tmp_path / "ambiguous-receipt.json"
+    subject._write_json_authority(ambiguous_path, ambiguous)  # noqa: SLF001
+    with pytest.raises(subject.LockedRuntimeError, match="fields drifted"):
+        subject.load_activation_receipt(
+            ambiguous_path,
+            expected_root_sha256=ambiguous[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+            expected_deployment_envelope_sha256="1" * 64,
+            expected_release_id="release-a",
+        )
+
+    pointer = {
+        "schema_version": subject.CURRENT_POINTER_SCHEMA,
+        "release_id": "release-a",
+        "deployment_envelope_sha256": "1" * 64,
+        "activation_receipt_sha256": payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+        "status": subject.CURRENT_POINTER_STATUS,
+    }
+    with pytest.raises(subject.LockedRuntimeError, match="current pointer fields drifted"):
+        subject._validate_current_pointer_payload(  # noqa: SLF001
+            {**pointer, "copied_config_sha256": "7" * 64}
+        )
+    with pytest.raises(subject.LockedRuntimeError, match="lowercase SHA256"):
+        subject._validate_current_pointer_payload(  # noqa: SLF001
+            {**pointer, "deployment_envelope_sha256": int("1" * 64)}
+        )
+    destination = tmp_path / "current.json"
+    outside = tmp_path / "outside.json"
+    outside.write_text("outside\n", encoding="utf-8")
+    outside.chmod(0o600)
+    destination.symlink_to(outside)
+    with pytest.raises(subject.LockedRuntimeError, match="symlink"):
+        subject._write_json_pointer_atomic(destination, pointer)  # noqa: SLF001
+    assert outside.read_text(encoding="utf-8") == "outside\n"

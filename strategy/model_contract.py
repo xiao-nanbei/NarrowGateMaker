@@ -58,18 +58,6 @@ _MODEL_QUOTE_ASSET_SUFFIXES = (
 )
 _LEGACY_VARIANCE_UNIT_IDENTITIES = (
     {
-        "legacy_identity": "causal_v12_live_canary_feature_manifest_5409a398",
-        "symbol": "BTCUSDC",
-        "feature_manifest_sha256": (
-            "5409a398d845eaf9a990dbf4f390cfa3aeff2b7dd014fd02d70b303a2f8a557f"
-        ),
-        "training_experiment_id": "causal_v12_expanded_source_aware_semantics_v6",
-        "promotion_authority": LEGACY_OWNER_AUTHORIZED_LIVE_CANARY,
-        "canonical_promotion_authority": PRIVATE_DEPLOYMENT_AUTHORITY,
-        "source_profile": "all",
-        "feature_variant": "base",
-    },
-    {
         "legacy_identity": "public_dry_run_feature_manifest_ffc85a81",
         "symbol": "BTCUSDC",
         "feature_manifest_sha256": (
@@ -114,8 +102,12 @@ def validate_variance_unit_contract(
     return dict(expected)
 
 
-def canonicalize_model_variance_unit_contract(meta: dict[str, Any]) -> dict[str, Any]:
-    """Validate future metadata or canonicalize an exact hash-bound legacy identity."""
+def canonicalize_model_variance_unit_contract(
+    meta: dict[str, Any],
+    *,
+    legacy_authorization_contract: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate metadata or migrate an authorization-bound legacy contract."""
     raw_contract = meta.get("volatility_unit_contract")
     if raw_contract is not None:
         canonical = dict(meta)
@@ -123,6 +115,21 @@ def canonicalize_model_variance_unit_contract(meta: dict[str, Any]) -> dict[str,
             raw_contract,
             symbol=str(meta.get("symbol") or ""),
         )
+        return canonical
+
+    if legacy_authorization_contract is not None:
+        if str(meta.get("promotion_authority") or "") != (
+            LEGACY_OWNER_AUTHORIZED_LIVE_CANARY
+        ):
+            raise ValueError("legacy authorization contract has incompatible authority")
+        canonical = dict(meta)
+        canonical["volatility_unit_contract"] = validate_variance_unit_contract(
+            dict(legacy_authorization_contract),
+            symbol=str(meta.get("symbol") or ""),
+        )
+        canonical["volatility_unit_contract_origin"] = "legacy_authorization_manifest"
+        canonical["promotion_authority_origin"] = canonical.get("promotion_authority")
+        canonical["promotion_authority"] = PRIVATE_DEPLOYMENT_AUTHORITY
         return canonical
 
     identity_keys = (
@@ -155,6 +162,18 @@ def canonicalize_model_variance_unit_contract(meta: dict[str, Any]) -> dict[str,
         "metadata requires an explicit symbol-derived volatility_unit_contract; "
         "unregistered legacy metadata cannot be canonicalized"
     )
+
+
+def _legacy_authorization_variance_contract(root: Path) -> Mapping[str, Any] | None:
+    path = root / "live_canary_authorization.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"invalid legacy live canary authorization: {exc}") from exc
+    contract = payload.get("volatility_unit_contract")
+    return contract if isinstance(contract, Mapping) else None
 
 
 def f03_direct_quote_action_contract(meta: Mapping[str, Any]) -> dict[str, Any]:
@@ -253,39 +272,76 @@ def _validate_hash_bound_deployment_authorization(
         raise ValueError(f"{authorization_label} P3 hash mismatch")
 
 
-def _validate_private_deployment_authorization(
-    root: Path,
-    metadata: dict[str, dict[str, Any]],
-) -> None:
+def _private_deployment_authorization_contract(
+    metadata: Mapping[str, Mapping[str, Any]],
+) -> tuple[str, str, str, tuple[str, ...]]:
     authority_origins = {
         str(head_metadata.get("promotion_authority_origin") or "")
         for head_metadata in metadata.values()
     }
     if authority_origins == {LEGACY_OWNER_AUTHORIZED_LIVE_CANARY}:
-        _validate_hash_bound_deployment_authorization(
-            root,
-            metadata,
-            authorization_file="live_canary_authorization.json",
-            authorization_schema=LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA,
-            authorization_label="legacy live canary authorization",
-            required_true_fields=(
+        return (
+            "live_canary_authorization.json",
+            LEGACY_LIVE_CANARY_AUTHORIZATION_SCHEMA,
+            "legacy live canary authorization",
+            (
                 "owner_authorized",
                 "active_live_inference_authorized",
             ),
         )
-        return
     if authority_origins != {""}:
         raise ValueError("private deployment mixes incompatible authorization origins")
-    _validate_hash_bound_deployment_authorization(
-        root,
-        metadata,
-        authorization_file="deployment_authorization.json",
-        authorization_schema=DEPLOYMENT_AUTHORIZATION_SCHEMA,
-        authorization_label="private deployment authorization",
-        required_true_fields=(
+    return (
+        "deployment_authorization.json",
+        DEPLOYMENT_AUTHORIZATION_SCHEMA,
+        "private deployment authorization",
+        (
             "private_deployment_authorized",
             "active_runtime_inference_authorized",
         ),
+    )
+
+
+def resolve_model_authorization_manifest(
+    model_dir: Path,
+    metadata: Mapping[str, Mapping[str, Any]],
+) -> Path:
+    """Resolve the one private authorization manifest selected by head metadata."""
+
+    root = Path(model_dir).expanduser().resolve()
+    authorization_file, _schema, label, _required = (
+        _private_deployment_authorization_contract(metadata)
+    )
+    candidate = root / authorization_file
+    try:
+        resolved = candidate.resolve(strict=True)
+    except OSError as exc:
+        raise ValueError(f"{label} requires {authorization_file}") from exc
+    if resolved != candidate or not resolved.is_file():
+        raise ValueError(
+            f"{label} requires {authorization_file} as a canonical regular file"
+        )
+    return resolved
+
+
+def _validate_private_deployment_authorization(
+    root: Path,
+    metadata: dict[str, dict[str, Any]],
+) -> None:
+    (
+        authorization_file,
+        authorization_schema,
+        authorization_label,
+        required_true_fields,
+    ) = _private_deployment_authorization_contract(metadata)
+    resolve_model_authorization_manifest(root, metadata)
+    _validate_hash_bound_deployment_authorization(
+        root,
+        metadata,
+        authorization_file=authorization_file,
+        authorization_schema=authorization_schema,
+        authorization_label=authorization_label,
+        required_true_fields=required_true_fields,
     )
 
 
@@ -383,6 +439,11 @@ def validate_model_bundle(
 
     metadata: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
+    try:
+        legacy_authorization_contract = _legacy_authorization_variance_contract(root)
+    except ValueError as exc:
+        errors.append(str(exc))
+        legacy_authorization_contract = None
     expected_variance_contract = (
         None
         if expected_symbol is None
@@ -444,7 +505,15 @@ def validate_model_bundle(
             errors.append(f"{meta_path.name} requires feature_manifest_sha256")
             continue
         try:
-            meta = canonicalize_model_variance_unit_contract(meta)
+            meta = canonicalize_model_variance_unit_contract(
+                meta,
+                legacy_authorization_contract=(
+                    legacy_authorization_contract
+                    if str(meta.get("promotion_authority") or "")
+                    == LEGACY_OWNER_AUTHORIZED_LIVE_CANARY
+                    else None
+                ),
+            )
         except ValueError as exc:
             errors.append(f"{meta_path.name} {exc}")
             continue

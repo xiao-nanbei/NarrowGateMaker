@@ -184,6 +184,8 @@ class StrategyConfig:
     # exposure-increasing cooldown duration, is disabled by default, and is restart-only.
     boolean_cooldown_policy_enabled: bool = False
     boolean_cooldown_policy_path: str = ""
+    # Legacy replay/test fallback only. Live authority comes from the release
+    # envelope's model-policy bundle, not YAML leaf digests.
     boolean_cooldown_policy_sha256: str = ""
     boolean_cooldown_predicate_bundle_path: str = ""
     boolean_cooldown_predicate_bundle_sha256: str = ""
@@ -193,6 +195,8 @@ class StrategyConfig:
     # exposure-increasing BUY cooldown selected on an executed fill.
     buy_e3_cooldown_policy_enabled: bool = False
     buy_e3_cooldown_artifact_manifest_path: str = ""
+    # Legacy replay/test fallbacks only; live derives these identities from the
+    # deployment envelope and the bound artifact manifest.
     buy_e3_cooldown_artifact_manifest_sha256: str = ""
     buy_e3_cooldown_artifact_sha256: str = ""
     buy_e3_cooldown_policy_path: str = ""
@@ -1127,15 +1131,6 @@ def _validate_config(cfg: Config) -> None:
         ):
             if not str(getattr(cfg.strategy, field_name)).strip():
                 raise ValueError(f"enabled F05 Boolean cooldown requires {field_name}")
-        for field_name in (
-            "boolean_cooldown_policy_sha256",
-            "boolean_cooldown_predicate_bundle_sha256",
-        ):
-            value = str(getattr(cfg.strategy, field_name)).strip().lower()
-            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
-                raise ValueError(
-                    f"enabled F05 Boolean cooldown requires SHA256 field {field_name}"
-                )
     if bool(cfg.strategy.buy_e3_cooldown_policy_enabled):
         if not math.isclose(
             float(cfg.strategy.fill_cooldown),
@@ -1163,17 +1158,6 @@ def _validate_config(cfg: Config) -> None:
         ):
             if not str(getattr(cfg.strategy, field_name)).strip():
                 raise ValueError(f"enabled F05 BUY E3 requires {field_name}")
-        for field_name in (
-            "buy_e3_cooldown_artifact_manifest_sha256",
-            "buy_e3_cooldown_artifact_sha256",
-            "buy_e3_cooldown_policy_sha256",
-            "buy_e3_cooldown_predicate_bundle_sha256",
-        ):
-            value = str(getattr(cfg.strategy, field_name)).strip().lower()
-            if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
-                raise ValueError(
-                    f"enabled F05 BUY E3 requires SHA256 field {field_name}"
-                )
     cap_mode = str(
         getattr(cfg.strategy, "spread_cap_mode", "pause_exposure")
         or "pause_exposure"

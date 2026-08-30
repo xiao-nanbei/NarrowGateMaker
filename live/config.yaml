@@ -96,21 +96,17 @@ strategy:
   fill_cooldown_consecutive_reset_policy: "opposite_fill_only"
   fill_cooldown_reducing: 0.0
   fill_cooldown_reducing_campaign_only: false
+  # Policy byte identities are derived from the deployment envelope. Legacy
+  # YAML SHA fields remain parser-compatible for offline replay only.
   boolean_cooldown_policy_enabled: false
   boolean_cooldown_policy_path: ""
-  boolean_cooldown_policy_sha256: ""
   boolean_cooldown_predicate_bundle_path: ""
-  boolean_cooldown_predicate_bundle_sha256: ""
   boolean_cooldown_ema_warmup_s: 2048.0
   boolean_cooldown_evidence_route: "private_deployment_approval"
   buy_e3_cooldown_policy_enabled: false
   buy_e3_cooldown_artifact_manifest_path: ""
-  buy_e3_cooldown_artifact_manifest_sha256: ""
-  buy_e3_cooldown_artifact_sha256: ""
   buy_e3_cooldown_policy_path: ""
-  buy_e3_cooldown_policy_sha256: ""
   buy_e3_cooldown_predicate_bundle_path: ""
-  buy_e3_cooldown_predicate_bundle_sha256: ""
   buy_e3_cooldown_ema_warmup_s: 2048.0
   buy_e3_cooldown_evidence_route: "private_deployment_buy_e3"
   adaptive_add_cooldown_enabled: false

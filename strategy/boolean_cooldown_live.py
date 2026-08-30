@@ -61,10 +61,6 @@ class _PairState:
     last_cross_ts_ns: int | None = None
 
 
-def _file_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def _canonical_sha256(value: Any) -> str:
     encoded = json.dumps(
         value,
@@ -78,9 +74,13 @@ def _canonical_sha256(value: Any) -> str:
 
 def _load_bound_json(path: Path, expected_sha256: str, label: str) -> dict[str, Any]:
     expected = str(expected_sha256).strip().lower()
-    if not _SHA256_RE.fullmatch(expected) or _file_sha256(path) != expected:
+    raw_bytes = path.read_bytes()
+    if (
+        not _SHA256_RE.fullmatch(expected)
+        or hashlib.sha256(raw_bytes).hexdigest() != expected
+    ):
         raise ValueError(f"{label}_file_sha256_mismatch")
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(raw_bytes.decode("utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{label}_root_not_object")
     canonical = str(raw.get("canonical_sha256", ""))

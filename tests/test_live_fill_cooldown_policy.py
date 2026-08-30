@@ -1,15 +1,215 @@
+import hashlib
+import json
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-import strategy.maker_engine as maker_engine_module
 
+import strategy.maker_engine as maker_engine_module
 from live.config import Config, _validate_config
-from strategy.maker_engine import MakerEngine, POLICY_REASON_FILL_COOLDOWN
+from strategy.maker_engine import POLICY_REASON_FILL_COOLDOWN, MakerEngine
 from strategy.order_manager import OrderManager, Side
 from strategy.signal import Prediction
+
+
+def _policy_authority(paths: dict[str, Path]) -> dict[str, dict[str, str]]:
+    return {
+        "model_policy_member_paths": {
+            role: str(path.resolve()) for role, path in paths.items()
+        },
+        "model_policy_member_sha256": {
+            role: hashlib.sha256(path.read_bytes()).hexdigest()
+            for role, path in paths.items()
+        },
+    }
+
+
+def test_boolean_cooldown_loader_uses_envelope_members_not_yaml_leaves(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    policy_path = tmp_path / "boolean-policy.json"
+    bundle_path = tmp_path / "boolean-bundle.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+    bundle_path.write_text("{}\n", encoding="utf-8")
+    cfg = Config()
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    cfg.strategy.boolean_cooldown_policy_path = "/wrong/policy.json"
+    cfg.strategy.boolean_cooldown_policy_sha256 = "0" * 64
+    cfg.strategy.boolean_cooldown_predicate_bundle_path = "/wrong/bundle.json"
+    cfg.strategy.boolean_cooldown_predicate_bundle_sha256 = "1" * 64
+    observed: dict[str, object] = {}
+    runtime = SimpleNamespace(observe_depth=lambda *_args: None)
+
+    def fake_from_files(_cls, **kwargs):
+        observed.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(
+        maker_engine_module.LiveBooleanCooldownPolicy,
+        "from_files",
+        classmethod(fake_from_files),
+    )
+    authority = _policy_authority(
+        {
+            "boolean_policy": policy_path,
+            "boolean_predicate_bundle": bundle_path,
+        }
+    )
+
+    loaded = maker_engine_module._load_boolean_cooldown_live_policy(  # noqa: SLF001
+        cfg,
+        artifact_authority=authority,
+    )
+
+    assert loaded is runtime
+    assert observed["policy_path"] == policy_path.resolve()
+    assert observed["policy_sha256"] == hashlib.sha256(
+        policy_path.read_bytes()
+    ).hexdigest()
+    assert observed["predicate_bundle_path"] == bundle_path.resolve()
+    assert observed["predicate_bundle_sha256"] == hashlib.sha256(
+        bundle_path.read_bytes()
+    ).hexdigest()
+
+
+def test_buy_e3_loader_uses_envelope_members_and_manifest_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest_path = tmp_path / "buy-manifest.json"
+    policy_path = tmp_path / "buy-policy.json"
+    bundle_path = tmp_path / "buy-bundle.json"
+    artifact_sha256 = "a" * 64
+    manifest_path.write_text(
+        json.dumps({"artifact_sha256": artifact_sha256}) + "\n",
+        encoding="utf-8",
+    )
+    policy_path.write_text("{}\n", encoding="utf-8")
+    bundle_path.write_text("{}\n", encoding="utf-8")
+    cfg = Config()
+    cfg.strategy.buy_e3_cooldown_policy_enabled = True
+    cfg.strategy.buy_e3_cooldown_artifact_manifest_path = "/wrong/manifest.json"
+    cfg.strategy.buy_e3_cooldown_artifact_manifest_sha256 = "0" * 64
+    cfg.strategy.buy_e3_cooldown_artifact_sha256 = "1" * 64
+    cfg.strategy.buy_e3_cooldown_policy_path = "/wrong/policy.json"
+    cfg.strategy.buy_e3_cooldown_policy_sha256 = "2" * 64
+    cfg.strategy.buy_e3_cooldown_predicate_bundle_path = "/wrong/bundle.json"
+    cfg.strategy.buy_e3_cooldown_predicate_bundle_sha256 = "3" * 64
+    observed: dict[str, object] = {}
+    runtime = SimpleNamespace(observe_depth=lambda *_args: None)
+
+    def fake_from_files(_cls, **kwargs):
+        observed.update(kwargs)
+        return runtime
+
+    monkeypatch.setattr(
+        maker_engine_module.LiveBuyE3CooldownPolicy,
+        "from_files",
+        classmethod(fake_from_files),
+    )
+    authority = _policy_authority(
+        {
+            "artifact_manifest": manifest_path,
+            "policy": policy_path,
+            "predicate_bundle": bundle_path,
+        }
+    )
+
+    loaded = maker_engine_module._load_buy_e3_cooldown_live_policy(  # noqa: SLF001
+        cfg,
+        artifact_authority=authority,
+    )
+
+    assert loaded is runtime
+    assert observed["artifact_manifest_path"] == manifest_path.resolve()
+    assert observed["artifact_manifest_sha256"] == hashlib.sha256(
+        manifest_path.read_bytes()
+    ).hexdigest()
+    assert observed["expected_artifact_sha256"] == artifact_sha256
+    assert observed["policy_path"] == policy_path.resolve()
+    assert observed["predicate_bundle_path"] == bundle_path.resolve()
+
+
+def test_policy_artifact_authority_fails_closed_on_missing_or_drifted_member(
+    tmp_path: Path,
+) -> None:
+    policy_path = tmp_path / "boolean-policy.json"
+    policy_path.write_text("{}\n", encoding="utf-8")
+    cfg = Config()
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    missing = _policy_authority({"boolean_policy": policy_path})
+
+    with pytest.raises(ValueError, match="required_roles_missing"):
+        maker_engine_module._load_boolean_cooldown_live_policy(  # noqa: SLF001
+            cfg,
+            artifact_authority=missing,
+        )
+
+    bundle_path = tmp_path / "boolean-bundle.json"
+    bundle_path.write_text("{}\n", encoding="utf-8")
+    drifted = _policy_authority(
+        {
+            "boolean_policy": policy_path,
+            "boolean_predicate_bundle": bundle_path,
+        }
+    )
+    drifted["model_policy_member_sha256"]["boolean_policy"] = "0" * 64
+    with pytest.raises(ValueError, match="policy_file_sha256_mismatch"):
+        maker_engine_module._load_boolean_cooldown_live_policy(  # noqa: SLF001
+            cfg,
+            artifact_authority=drifted,
+        )
+
+
+def test_live_artifact_authority_matches_enabled_config_locators(
+    tmp_path: Path,
+) -> None:
+    paths = {
+        role: tmp_path / f"{role}.json"
+        for role in (
+            "model_authorization",
+            "boolean_policy",
+            "boolean_predicate_bundle",
+            "artifact_manifest",
+            "policy",
+            "predicate_bundle",
+        )
+    }
+    for path in paths.values():
+        path.write_text("{}\n", encoding="utf-8")
+    cfg = Config()
+    cfg.strategy.boolean_cooldown_policy_enabled = True
+    cfg.strategy.boolean_cooldown_policy_path = str(paths["boolean_policy"])
+    cfg.strategy.boolean_cooldown_predicate_bundle_path = str(
+        paths["boolean_predicate_bundle"]
+    )
+    cfg.strategy.buy_e3_cooldown_policy_enabled = True
+    cfg.strategy.buy_e3_cooldown_artifact_manifest_path = str(
+        paths["artifact_manifest"]
+    )
+    cfg.strategy.buy_e3_cooldown_policy_path = str(paths["policy"])
+    cfg.strategy.buy_e3_cooldown_predicate_bundle_path = str(
+        paths["predicate_bundle"]
+    )
+    authority = _policy_authority(paths)
+
+    maker_engine_module.validate_live_artifact_authority(
+        cfg,
+        artifact_authority=authority,
+        model_authorization_path=paths["model_authorization"],
+    )
+
+    cfg.strategy.buy_e3_cooldown_policy_path = str(tmp_path / "other.json")
+    with pytest.raises(ValueError, match="config_path_drifted:policy"):
+        maker_engine_module.validate_live_artifact_authority(
+            cfg,
+            artifact_authority=authority,
+            model_authorization_path=paths["model_authorization"],
+        )
 
 
 def test_stateful_fill_cooldown_requires_checkpoint_path() -> None:

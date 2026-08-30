@@ -122,9 +122,7 @@ def require_f05_boolean_cooldown_restart(
     fields = (
         "boolean_cooldown_policy_enabled",
         "boolean_cooldown_policy_path",
-        "boolean_cooldown_policy_sha256",
         "boolean_cooldown_predicate_bundle_path",
-        "boolean_cooldown_predicate_bundle_sha256",
         "boolean_cooldown_ema_warmup_s",
         "boolean_cooldown_evidence_route",
     )
@@ -174,13 +172,14 @@ def f05_buy_e3_runtime_policy(
 
 def deployment_envelope_runtime_authority(
     *,
-    buy_e3_enabled: bool,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Load a private, content-addressed deployment envelope.
 
-    The caller supplies one release-root digest.  Nested build/config/policy
+    The caller supplies one release-root digest. Nested build/config/policy
     manifests verify their own leaves; this policy layer does not repeat them.
+    The selected config is one immutable member of the envelope; rollback is a
+    separate activation rather than a second config role in the same release.
     """
 
     environment = os.environ if environ is None else environ
@@ -197,7 +196,6 @@ def deployment_envelope_runtime_authority(
         return deployment_runtime.load_deployment_envelope(
             candidate,
             expected_root_sha256=expected_root,
-            buy_e3_enabled=buy_e3_enabled,
         )
     except (OSError, deployment_runtime.LockedRuntimeError) as exc:
         raise ValueError(f"private deployment envelope rejected: {exc}") from exc
@@ -212,12 +210,8 @@ def require_f05_buy_e3_restart(
     fields = (
         "buy_e3_cooldown_policy_enabled",
         "buy_e3_cooldown_artifact_manifest_path",
-        "buy_e3_cooldown_artifact_manifest_sha256",
-        "buy_e3_cooldown_artifact_sha256",
         "buy_e3_cooldown_policy_path",
-        "buy_e3_cooldown_policy_sha256",
         "buy_e3_cooldown_predicate_bundle_path",
-        "buy_e3_cooldown_predicate_bundle_sha256",
         "buy_e3_cooldown_ema_warmup_s",
         "buy_e3_cooldown_evidence_route",
     )
