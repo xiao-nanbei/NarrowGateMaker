@@ -92,6 +92,7 @@ from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
     OrderLifecycleV2ReplayAdapter as StrictNativeOrderLifecycleV2ReplayAdapter,
 )
 from models.replay.continuous_accounting import FEE_ACCOUNTING_SEMANTICS
+from models.replay.replay_state_checkpoint import validate_replay_initial_state
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
@@ -99,8 +100,12 @@ from strategy.replay_controls import (
     SYNC_DEGRADE_SEMANTICS,
     SYNC_EVENT_CODE,
     ConsecutiveLossCooldown,
+    ReplayHardRiskState,
     ReplayOrderDepthPath,
+    cap_exposure_qty_by_position_value,
+    hard_risk_reason,
     load_sync_degrade_events,
+    replay_hard_risk_limits,
     synchronize_visibility_batch_ambiguity_to_cpp,
 )
 from strategy.fill_cooldown import (
@@ -1512,6 +1517,7 @@ try:
         compose_ber_exposure_add_only_quote,
         compute_quote_core,
         _CPP_CFG_FIELDS,
+        _exposure_increasing,
         quote_core_config_from_params,
         quote_depth_from_l2_rows,
         spread_cap_mode_name,
@@ -1533,6 +1539,7 @@ except ImportError:
         compose_ber_exposure_add_only_quote,
         compute_quote_core,
         _CPP_CFG_FIELDS,
+        _exposure_increasing,
         quote_core_config_from_params,
         quote_depth_from_l2_rows,
         spread_cap_mode_name,
@@ -1766,6 +1773,47 @@ def _order_would_cross_book_tick(
     if str(side).upper() == "BUY":
         return best_ask > 0.0 and order_tick >= _price_to_tick(best_ask, tick_size)
     return best_bid > 0.0 and order_tick <= _price_to_tick(best_bid, tick_size)
+
+
+def _match_ioc_order(
+    side: str, limit_price: float, quantity: float,
+    prices: Any, quantities: Any, *, tick_size: float, lot_size: float, market: bool = False,
+) -> tuple[float, float]:
+    """Consume only supplied marketable levels; return filled quantity and VWAP.
+
+    A one-level input is a BBO liquidity bound, not a full-depth or exact-queue
+    claim. Missing/invalid quantity never implies an unlimited touch fill.
+    """
+    is_buy = str(side).upper() == "BUY"
+    limit_tick = _price_to_tick(limit_price, tick_size)
+    levels: dict[int, tuple[float, float]] = {}
+    for price, available in zip(prices, quantities, strict=True):
+        price, available = float(price), float(available)
+        if not (math.isfinite(price) and price > 0.0):
+            continue
+        price_tick = _price_to_tick(price, tick_size)
+        if not market and (price_tick > limit_tick if is_buy else price_tick < limit_tick):
+            continue
+        if price_tick in levels:
+            continue
+        # Repeated/padded levels do not create additional displayed liquidity.
+        levels[price_tick] = (
+            price, available if math.isfinite(available) and available > 0.0 else 0.0,
+        )
+    requested = max(0.0, float(quantity))
+    available = sum(level[1] for level in levels.values())
+    filled = math.floor(min(requested, available) / lot_size + 1e-12) * lot_size
+    if filled < lot_size:
+        return 0.0, 0.0
+    remaining, notional = filled, 0.0
+    for key in sorted(levels, reverse=not is_buy):
+        price, available = levels[key]
+        take = min(remaining, available)
+        notional += take * price
+        remaining -= take
+        if remaining <= 1e-12:
+            break
+    return filled, notional / filled
 
 
 def _coverage_union_seconds(starts: np.ndarray, ends: np.ndarray) -> float:
@@ -3352,6 +3400,9 @@ def build_replay_event_clock(
         clock_action = clock_action_raw[visible]
         if np.any(~np.isin(clock_action, (2, 3))):
             raise ValueError("empirical requote actions must be 2 (ok) or 3 (blocked)")
+        if end_ts_ms is not None and not np.any(clock_ts == end_ts):
+            clock_ts = np.append(clock_ts, np.int64(end_ts))
+            clock_action = np.append(clock_action, np.uint8(0))
     else:
         for data in (bbo_data, l2_data):
             if data is None:
@@ -3367,6 +3418,10 @@ def build_replay_event_clock(
             clock_sources.append(
                 np.arange(first_timer_ts, end_ts + 1, step, dtype=np.int64)
             )
+        if end_ts_ms is not None:
+            # A requested terminal boundary advances lifecycle timers even
+            # when it falls between regular clock ticks. It is not a trade.
+            clock_sources.append(np.asarray([end_ts], dtype=np.int64))
         if clock_sources:
             clock_ts = np.unique(np.concatenate(clock_sources))
             clock_action = np.zeros(clock_ts.size, dtype=np.uint8)
@@ -3494,6 +3549,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     在 UTC 日界或长 gap 处重置 adverse/defense/markout/cooldown 状态；
     正式 daily evidence 应通过 `_simulate_daily_segmented_with_engine()` 进入。
     """
+    validate_replay_initial_state(params.get("initial_live_state"), backend="python")
     TICK = float(params.get("tick_size", globals()["TICK"]))
     LOT_SIZE = float(params.get("lot_size", globals()["LOT_SIZE"]))
     if not math.isfinite(TICK) or TICK <= 0.0:
@@ -4122,6 +4178,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     kappa = params["kappa"]
     order_size = params["order_size"]
     max_inv = params["max_inventory"]
+    max_daily_loss, max_position_value, emergency_close_dd = replay_hard_risk_limits(params)
+    hard_risk_enabled = any(math.isfinite(value) for value in (
+        max_daily_loss, max_position_value, emergency_close_dd,
+    ))
     rq_s = params["requote_interval"]
     rq_ms = int(rq_s * 1000)
     requote_clock = str(params.get("requote_clock", "fixed") or "fixed").lower()
@@ -7120,8 +7180,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     )
     monotonic_exec_visibility_cutoffs_ms: dict[str, int] = {}
     monotonic_exec_visibility_enabled = bool(
-        exec_book_visibility_mode
-        in {"sampled_joint", "profile_source_stratified"}
+        exec_book_visibility_delay_enabled
+        and exec_book_visibility_mode != "message_schedule"
         and not bool(params.get("use_bar_pricing", True))
     )
     require_historical_bbo = bool(params.get("require_historical_bbo", False))
@@ -8075,6 +8135,26 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     q = initial_inventory
     exchange_inventory = initial_inventory
     cash = -initial_inventory * initial_entry_price if initial_entry_price > 0.0 else 0.0
+    hard_risk_clock_ts_ms = int(trade_ts[0])
+    hard_risk_mark_price = float(trade_price[0])
+    initial_risk_equity = cash + q * hard_risk_mark_price
+    risk_state = ReplayHardRiskState(
+        utc_day=hard_risk_clock_ts_ms // 86_400_000,
+        session_peak_pnl=max(0.0, initial_risk_equity),
+        last_total_pnl=initial_risk_equity,
+    )
+    supplied_risk_state = initial_live_state.get("risk_state")
+    if supplied_risk_state is not None:
+        risk_state = ReplayHardRiskState.restore(
+            supplied_risk_state, start_ts_ms=hard_risk_clock_ts_ms,
+        )
+    risk_daily_loss_block_count = 0
+    risk_position_value_block_count = 0
+    risk_emergency_close_count = 0
+    risk_notional_cap_count = 0
+    risk_emergency_latched = False
+    risk_emergency_submit_sent = False
+    trace_risk_actions = []
     (
         expected_loss_limit,
         _,
@@ -8140,6 +8220,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             price=float(fill_price),
             commission=float(fill_price) * float(fill_qty) * float(fee_rate),
         )
+        if hard_risk_enabled:
+            risk_state.observe(hard_risk_clock_ts_ms, cash, q, hard_risk_mark_price)
         if abs(float(consecutive_loss_cooldown.inventory) - float(q)) > max(
             1e-10,
             float(LOT_SIZE) * 1e-7,
@@ -21992,7 +22074,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             order_id = _ranked_guard_order_id(order)
             if normalized_target and order_id != normalized_target:
                 continue
-            if serial_rest_return_enabled and order["state"] == ORDER_PENDING_NEW:
+            if order["state"] == ORDER_PENDING_NEW and (
+                serial_rest_return_enabled or reason in {
+                    "requote_replace", "side_disabled", "cancel_first_replace",
+                    "ranked_toxicity_guard",
+                }
+            ):
                 # Live cannot cancel an order whose submit ACK is unresolved.
                 # The next control boundary revisits it; no automatic cancel
                 # is invented at a future NEW ACK.
@@ -22141,6 +22228,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         fills/cancel callbacks that arrived during the preceding REST call.
         """
         nonlocal serial_rest_decision, serial_rest_sequence, main_loop_next_wake_ms
+        nonlocal risk_notional_cap_count
         if plan is not serial_rest_decision:
             return
         if completed is not None and completed["kind"] == "cancel":
@@ -22170,11 +22258,25 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             side = step["side"]
             side_orders = bid_orders if side == "BUY" else ask_orders
             if step["kind"] == "new":
-                if side in plan["blocked_sides"] or planned_quote_stop_triggered:
+                if (side in plan["blocked_sides"] or planned_quote_stop_triggered
+                        or risk_emergency_latched):
                     continue
                 if any(float(o["remaining"]) >= LOT_SIZE for o in side_orders):
                     _serial_rest_coalesce(plan, side, int(now_ts))
                     continue
+                if math.isfinite(max_position_value) and _exposure_increasing(
+                    side, q, step["quantity"], LOT_SIZE,
+                ):
+                    capped = cap_exposure_qty_by_position_value(
+                        side=side, current_qty=q, mid=plan["submit_mid"],
+                        requested_qty=step["quantity"],
+                        max_position_value=max_position_value, lot=LOT_SIZE,
+                    )
+                    risk_notional_cap_count += int(capped < step["quantity"])
+                    step["quantity"] = capped
+                    if capped < LOT_SIZE:
+                        _serial_rest_coalesce(plan, side, int(now_ts))
+                        continue
             else:
                 order = step["order"]
                 if order not in side_orders or float(order["remaining"]) < LOT_SIZE:
@@ -22742,6 +22844,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         )
                     # IOC is resolved below against the exchange-time book. It
                     # never receives passive queue-ahead or remains resting.
+                    order["exchange_accepted"] = True
+                    order["local_new_ack_published"] = True
                     order["state"] = ORDER_OPEN
                     order["simulator_queue_source"] = "ioc_not_applicable"
                     order["exact_queue_path_valid"] = False
@@ -23818,7 +23922,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             and q >= -max(float(LOT_SIZE) * 0.5, 1e-12)
         )
 
-    def _requote_circuit_breaker_close(now_ts: int, close_mid: float) -> None:
+    def _requote_circuit_breaker_close(
+        now_ts: int, close_mid: float, *, emergency_market: bool = False,
+    ) -> None:
         """Mirror live maker-close escalation from passive GTX to LIMIT IOC."""
 
         nonlocal circuit_breaker_close_place_count
@@ -23840,14 +23946,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
 
         close_qty = math.floor(
-            min(abs(q), order_size) / LOT_SIZE + 1e-12
+            (abs(q) if emergency_market else min(abs(q), order_size)) / LOT_SIZE + 1e-12
         ) * LOT_SIZE
         if close_qty < LOT_SIZE:
             return
 
         stale_ms = max(0, int(now_ts - circuit_breaker_close_start_ts))
         use_ioc = (
-            stale_ms >= 60_000
+            emergency_market
+            or stale_ms >= 60_000
             or circuit_breaker_close_gtx_reject_streak >= 3
         )
         aggressive_passive = not use_ioc and stale_ms >= 30_000
@@ -23941,6 +24048,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             apply_decision_compute=False,
         )
         order["time_in_force"] = "IOC" if use_ioc else "GTX"
+        order["emergency_market"] = bool(emergency_market)
         close_orders.append(order)
         circuit_breaker_close_place_count += 1
         if use_ioc:
@@ -24069,7 +24177,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         trade_idx: int,
         fallback_mid: float,
     ) -> bool:
-        """Resolve activated reduce-only IOC orders against exchange-time BBO."""
+        """Resolve reduce-only IOC against supplied exchange-time depth or BBO."""
 
         nonlocal q, cash, entry_price, exchange_inventory
         nonlocal nfb, nfa
@@ -24112,75 +24220,33 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if side == "BUY":
                 fill_price = float(best_ask_at)
                 top_qty = float(ask_qty_at)
-                marketable = (
-                    fill_price > 0.0
-                    and _order_price_tick(order, TICK)
-                    >= _price_to_tick(fill_price, TICK)
-                )
                 reducible = max(
                     0.0, -exchange_inventory if private_fill_visibility_enabled else -q,
                 )
             else:
                 fill_price = float(best_bid_at)
                 top_qty = float(bid_qty_at)
-                marketable = (
-                    fill_price > 0.0
-                    and _order_price_tick(order, TICK)
-                    <= _price_to_tick(fill_price, TICK)
-                )
                 reducible = max(
                     0.0, exchange_inventory if private_fill_visibility_enabled else q,
                 )
 
-            if not marketable or reducible < LOT_SIZE:
-                circuit_breaker_close_ioc_expire_count += 1
-                _record_order_lifecycle_cancel_request(
-                    order,
-                    int(now_ts),
-                    reason="ioc_expired",
-                )
-                _record_order_lifecycle_cancel_ack(
-                    order,
-                    visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
-                    reason="ioc_expired",
-                )
-                _ranked_guard_cancel_requested(
-                    order,
-                    visibility_ts_ms=int(now_ts),
-                    reason="ioc_expired",
-                )
-                _ranked_guard_exchange_terminal(
-                    order,
-                    reason="expired",
-                    visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(now_ts),
-                )
-                _append_order_outcome(
-                    order,
-                    now_ts,
-                    "cancel",
-                    "ioc_expired",
-                )
-                _post_cooldown_budget_release_order(
-                    order,
-                    now_ts=int(now_ts),
-                    reason="ioc_expired",
-                )
-                orders.pop(idx)
-                continue
-
-            available = (
-                top_qty
-                if math.isfinite(top_qty) and top_qty >= LOT_SIZE
-                else float(order.get("remaining", 0.0))
+            depth_pos = (
+                int(np.searchsorted(
+                    l2_ts, int(order.get("activate_ts", now_ts)), side="right",
+                )) - 1
+                if historical_l2 and l2_ts is not None else -1
             )
-            fill_qty = min(
-                float(order.get("remaining", 0.0)),
-                reducible,
-                available,
+            if depth_pos >= 0:
+                prices = l2_ask_px[depth_pos] if side == "BUY" else l2_bid_px[depth_pos]
+                quantities = l2_ask_qty[depth_pos] if side == "BUY" else l2_bid_qty[depth_pos]
+            else:
+                prices, quantities = (fill_price,), (top_qty,)
+            fill_qty, fill_price = _match_ioc_order(
+                side, float(order["price"]),
+                min(float(order.get("remaining", 0.0)), reducible),
+                prices, quantities, tick_size=TICK, lot_size=LOT_SIZE,
+                market=bool(order.get("emergency_market", False)),
             )
-            fill_qty = math.floor(fill_qty / LOT_SIZE + 1e-12) * LOT_SIZE
             if fill_qty < LOT_SIZE:
                 circuit_breaker_close_ioc_expire_count += 1
                 _record_order_lifecycle_cancel_request(
@@ -25466,6 +25532,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         last_processed_event_idx = i
         active_decision_bbo_idx = None
         t = event_ts_ms
+        hard_risk_clock_ts_ms = int(t)
         p = trade_price[i]
         qty = trade_qty[i] if is_market_array_event else 0.0
         is_sell = is_seller[i]
@@ -25779,6 +25846,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             policy_visible_book = _decision_visible_book(
                 int(t),
                 float(p),
+                advance_visibility_state=queue_value_keep_cancel_enabled,
             )
             current_bid_qty = float(policy_visible_book["bid_qty"])
             current_ask_qty = float(policy_visible_book["ask_qty"])
@@ -26489,80 +26557,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             pos_open_ts = int(t)
             entry_price = 0.0
 
-        # ── Position timeout: force close at market (taker fee) ──
-        if (
-            position_timeout_ms > 0 and abs(q) > 1e-10
-            and (
-                not main_loop_enabled
-                or (is_main_loop_wake and int(t) - int(last_rq_ts) >= cur_rq_ms)
-            )
-        ):
-            if t - pos_open_ts >= position_timeout_ms:
-                timeout_prev_q = float(q)
-                aq_t = abs(q)
-                if q > 0:
-                    cash += p * aq_t * (1.0 - taker_fee)
-                    close_side = "SELL"
-                else:
-                    cash -= p * aq_t * (1.0 + taker_fee)
-                    close_side = "BUY"
-                if private_fill_visibility_enabled:
-                    exchange_inventory -= timeout_prev_q
-                q = 0.0
-                _cooldown_lineage_on_fill(
-                    close_side,
-                    prev_q=timeout_prev_q,
-                    fill_ts_ms=int(t),
-                    fill_price=float(p),
-                    fill_qty=float(aq_t),
-                    fee_rate=float(taker_fee),
-                )
-                _sell_add_price_penalty_on_fill(
-                    close_side,
-                    timeout_prev_q,
-                    float(aq_t),
-                )
-                _multi_short_repair_note_fill(
-                    close_side,
-                    timeout_prev_q,
-                    float(aq_t),
-                )
-                if campaign_active:
-                    _finalize_cooldown_lineage_campaign(
-                        campaign_count,
-                        outcome_ts_ms=int(t),
-                        mark_px=float(p),
-                        closed=True,
-                        terminal_reason="position_timeout",
-                    )
-                    _finalize_sell_add_price_penalty_campaign(
-                        campaign_count,
-                        int(t),
-                        float(p),
-                        closed=True,
-                        terminal_reason="position_timeout",
-                    )
-                    _finalize_multi_short_repair_campaign(
-                        campaign_count,
-                        int(t),
-                        float(p),
-                        closed=True,
-                        terminal_reason="position_timeout",
-                    )
-                _loss_cooldown_on_fill(
-                    close_side,
-                    float(aq_t),
-                    float(p),
-                    float(taker_fee),
-                )
-                nto += 1
-                post_fill_quote_response.reset()
-                post_fill_quote_response_force_bid_requote = False
-                post_fill_quote_response_force_ask_requote = False
-                _drop_orders(bid_orders, t, "position_timeout")
-                _drop_orders(ask_orders, t, "position_timeout")
-                pos_open_ts = t
-                entry_price = 0.0
 
         if (
             dynamic_fill_hazard_visibility_scheduler is None
@@ -26641,6 +26635,76 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 rq_f = rq_max_ms * math.exp(math.log(rq_min_ms / rq_max_ms) * vol_ratio)
                 cur_rq_ms = int(max(rq_min_ms, min(rq_max_ms, rq_f)))
 
+        wake_decision_book = (
+            None if is_quote_compute_resume
+            else _decision_visible_book(int(t), float(p))
+        )
+        if hard_risk_enabled:
+            if wake_decision_book is None:
+                wake_decision_book = _decision_visible_book(int(t), float(p))
+            mark = float(wake_decision_book.get("inventory_mark_price", wake_decision_book["mid"]))
+            if math.isfinite(mark) and mark > 0.0:
+                hard_risk_mark_price = mark
+                risk_state.observe(int(t), cash, q, mark)
+        if risk_emergency_latched and risk_emergency_submit_sent:
+            # The emergency call stopped the live main loop. Its exchange
+            # request still settles above, but a later stale wake cannot
+            # cancel that in-flight market close or resume ordinary quoting.
+            continue
+        if (
+            not is_quote_compute_resume and (bid_orders or ask_orders)
+            and replay_event_clock != "empirical"
+            and (exec_message_schedules or (
+                not use_bar_pricing and max_exec_book_age_ms > 0
+                and (historical_bbo or historical_l2)
+            ))
+        ):
+            # Quote-stop safety runs on each available main-thread wake, not
+            # only every requote. Reuse this snapshot if the same wake is due;
+            # a resumed compute phase takes its own later visible snapshot.
+            if exec_message_schedules:
+                wake_age = float(wake_decision_book["depth_visible_age_ms"])
+                wake_lag = float(wake_decision_book["depth_source_lag_ms"])
+                wake_stale = (
+                    (max_exec_book_visible_age_ms > 0 and (
+                        not math.isfinite(wake_age) or wake_age < 0.0
+                        or wake_age > max_exec_book_visible_age_ms
+                    ))
+                    or (max_exec_book_source_lag_ms > 0 and (
+                        not math.isfinite(wake_lag) or wake_lag < 0.0
+                        or wake_lag > max_exec_book_source_lag_ms
+                    ))
+                )
+            else:
+                wake_age = _current_book_age_ms(
+                    int(t), bbo_cursor=int(wake_decision_book["bbo_idx"]),
+                    l2_cursor=int(wake_decision_book["l2_idx"]),
+                )
+                wake_stale = wake_age is None or wake_age > max_exec_book_age_ms
+            if wake_stale:
+                _cooldown_lineage_observe_early_blocker(int(t), "stale_book")
+                stale_book_skip_count += 1
+                stale_book_cancel_count += 1
+                age_for_stats = float(wake_age if wake_age is not None else max_exec_book_age_ms)
+                stale_book_age_sum += age_for_stats
+                stale_book_age_max = max(stale_book_age_max, age_for_stats)
+                _request_cancel_all(bid_orders, t, "stale_book")
+                _request_cancel_all(ask_orders, t, "stale_book")
+                _process_order_transitions(bid_orders, "BUY", t, p)
+                _process_order_transitions(ask_orders, "SELL", t, p)
+                continue
+
+        if risk_emergency_latched:
+            # The stopped live main thread finishes its cancel/market request;
+            # exchange transitions and private callbacks above remain active.
+            if not risk_emergency_submit_sent and not bid_orders and not ask_orders:
+                if abs(q) >= LOT_SIZE:
+                    _requote_circuit_breaker_close(
+                        int(t), hard_risk_mark_price, emergency_market=True,
+                    )
+                    risk_emergency_submit_sent = bool(bid_orders or ask_orders)
+            continue
+
         if not is_quote_compute_resume and consecutive_loss_cooldown.active(int(t)):
             _cooldown_lineage_observe_early_blocker(
                 int(t),
@@ -26717,30 +26781,6 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # missed fixed-grid deadline. Compute also occupies keep/skip
                 # calls, even when they produce no HTTP request.
                 main_loop_tick_complete_ms = _decision_gateway_request_ts(int(t))
-            loss_cooldown_transition = (
-                consecutive_loss_cooldown.on_policy_clock(int(t))
-                if not is_quote_compute_resume else "continuing_requote"
-            )
-            if loss_cooldown_transition in {"triggered", "active"}:
-                _cooldown_lineage_observe_early_blocker(
-                    int(t),
-                    "consecutive_loss_cooldown",
-                )
-                _request_cancel_all(
-                    bid_orders,
-                    int(t),
-                    reason="consecutive_loss_cooldown",
-                )
-                _request_cancel_all(
-                    ask_orders,
-                    int(t),
-                    reason="consecutive_loss_cooldown",
-                )
-                _process_order_transitions(bid_orders, "BUY", t, p)
-                _process_order_transitions(ask_orders, "SELL", t, p)
-                consecutive_loss_cooldown_cancel_count += 1
-                consecutive_loss_cooldown.last_cancel_ts_ms = int(t)
-                continue
             # Live main loop wakes on a wall-clock cadence. If replay resets the
             # next quote time to the current trade timestamp, sparse trade
             # periods drift slower than live and understate time-based guards
@@ -26816,7 +26856,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 cur_l2_ask_px_row,
                 cur_l2_ask_qty_row,
             )
-            decision_book = _decision_visible_book(int(t), float(p))
+            decision_book = (
+                wake_decision_book if wake_decision_book is not None
+                else _decision_visible_book(int(t), float(p))
+            )
             decision_bbo_idx = int(decision_book["bbo_idx"])
             decision_l2_idx = int(decision_book["l2_idx"])
             active_decision_bbo_idx = decision_bbo_idx
@@ -27063,6 +27106,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ema_pr = alpha_dm * cur_ret + (1.0 - alpha_dm) * ema_pr
                 quote_ret = cur_ret - ema_pr
 
+            if (
+                not circuit_breaker_closing and position_timeout_ms > 0
+                and abs(q) >= LOT_SIZE and t - pos_open_ts >= position_timeout_ms
+            ):
+                # Live TIMEOUT_CLOSING cancels first and lets subsequent
+                # control calls place reduce-only limit orders. A timeout is
+                # not itself a fill and must not change cash or inventory.
+                circuit_breaker_closing = True
+                circuit_breaker_close_start_ts = int(t)
+                circuit_breaker_close_gtx_reject_streak = 0
+                nto += 1
+                _request_cancel_all(bid_orders, int(t), reason="position_timeout")
+                _request_cancel_all(ask_orders, int(t), reason="position_timeout")
+                continue
+
             if circuit_breaker_closing:
                 _cooldown_lineage_observe_early_blocker(
                     int(t),
@@ -27129,6 +27187,48 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         int(t),
                         reason="circuit_breaker",
                     )
+                continue
+
+            if hard_risk_enabled:
+                hard_risk_mark_price = inventory_mark_price
+                risk_state.observe(int(t), cash, q, inventory_mark_price)
+                risk_reason = hard_risk_reason(
+                    daily_pnl=risk_state.daily_pnl,
+                    position_value=abs(q) * mid, drawdown=risk_state.drawdown,
+                    max_daily_loss=max_daily_loss,
+                    max_position_value=max_position_value,
+                    emergency_close_dd=emergency_close_dd,
+                )
+                if risk_reason:
+                    risk_daily_loss_block_count += int(risk_reason == "daily_loss")
+                    risk_position_value_block_count += int(risk_reason == "position_value")
+                    if risk_reason == "emergency_drawdown":
+                        risk_emergency_latched = True
+                        risk_emergency_close_count += 1
+                    if trace_decisions is not None and len(trace_risk_actions) < trace_decisions_max:
+                        trace_risk_actions.append({
+                            "ts_ms": int(t), "reason": risk_reason,
+                            "risk_action": "emergency_close" if risk_emergency_latched else "cancel_all_pause",
+                            "daily_pnl": risk_state.daily_pnl,
+                            "drawdown": risk_state.drawdown,
+                            "position_value": abs(q) * mid,
+                        })
+                    _cooldown_lineage_observe_early_blocker(int(t), risk_reason)
+                    _request_cancel_all(bid_orders, t, risk_reason)
+                    _request_cancel_all(ask_orders, t, risk_reason)
+                    _process_order_transitions(bid_orders, "BUY", t, p)
+                    _process_order_transitions(ask_orders, "SELL", t, p)
+                    continue
+
+            loss_cooldown_transition = consecutive_loss_cooldown.on_policy_clock(int(t))
+            if loss_cooldown_transition in {"triggered", "active"}:
+                _cooldown_lineage_observe_early_blocker(int(t), "consecutive_loss_cooldown")
+                _request_cancel_all(bid_orders, t, "consecutive_loss_cooldown")
+                _request_cancel_all(ask_orders, t, "consecutive_loss_cooldown")
+                _process_order_transitions(bid_orders, "BUY", t, p)
+                _process_order_transitions(ask_orders, "SELL", t, p)
+                consecutive_loss_cooldown_cancel_count += 1
+                consecutive_loss_cooldown.last_cancel_ts_ms = int(t)
                 continue
 
             quote_state = QuoteState(
@@ -28103,12 +28203,35 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 if ask_sz > close_cap:
                     ask_sz = close_cap
 
+            bid_notional_capped = False
+            ask_notional_capped = False
+            if math.isfinite(max_position_value):
+                if _exposure_increasing("BUY", q, bid_sz, LOT_SIZE):
+                    capped = cap_exposure_qty_by_position_value(
+                        side="BUY", current_qty=q, mid=mid, requested_qty=bid_sz,
+                        max_position_value=max_position_value, lot=LOT_SIZE,
+                    )
+                    bid_notional_capped = capped < bid_sz
+                    bid_sz = capped
+                if _exposure_increasing("SELL", q, ask_sz, LOT_SIZE):
+                    capped = cap_exposure_qty_by_position_value(
+                        side="SELL", current_qty=q, mid=mid, requested_qty=ask_sz,
+                        max_position_value=max_position_value, lot=LOT_SIZE,
+                    )
+                    ask_notional_capped = capped < ask_sz
+                    ask_sz = capped
+                risk_notional_cap_count += int(bid_notional_capped) + int(ask_notional_capped)
+
             bid_can_post_after_inventory = q < max_inv and bid_sz >= LOT_SIZE
             ask_can_post_after_inventory = q > -max_inv and ask_sz >= LOT_SIZE
             hb_new = bid_can_post_after_inventory
             ha_new = ask_can_post_after_inventory
             bid_block_reasons: list[str] = [] if hb_new else ["inventory_or_size"]
             ask_block_reasons: list[str] = [] if ha_new else ["inventory_or_size"]
+            if bid_notional_capped and not hb_new:
+                bid_block_reasons.append("position_value_cap")
+            if ask_notional_capped and not ha_new:
+                ask_block_reasons.append("position_value_cap")
 
             bid_stale_hard_pause = bool(
                 bid_common_policy.reason_mask & POLICY_REASON_STALE_HARD
@@ -29283,14 +29406,35 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ask_p3_floor_force_update
             )
 
+            def _kept_order_exceeds_notional(side, order, inventory, mark):
+                if order is None or not math.isfinite(max_position_value):
+                    return False
+                remaining = float(order.get("remaining", 0.0))
+                if not _exposure_increasing(side, inventory, remaining, LOT_SIZE):
+                    return False
+                capped = cap_exposure_qty_by_position_value(
+                    side=side, current_qty=inventory, mid=mark, requested_qty=remaining,
+                    max_position_value=max_position_value, lot=LOT_SIZE,
+                )
+                return capped + max(LOT_SIZE * 1e-9, 1e-12) < remaining
+
+            bid_notional_force_update = _kept_order_exceeds_notional("BUY", bid_ref_order, q, mid)
+            ask_notional_force_update = _kept_order_exceeds_notional("SELL", ask_ref_order, q, mid)
+            if bid_notional_force_update:
+                bid_updated = True
+            if ask_notional_force_update:
+                ask_updated = True
+
             if rq_threshold > 0.0:
                 if bid_ref_order is not None and hb_new and bid_ref_order["price"] > 0.0:
                     drift_bid = abs(nbid - bid_ref_order["price"]) / bid_ref_order["price"]
-                    if drift_bid <= rq_threshold and not bid_p3_floor_force_update:
+                    if (drift_bid <= rq_threshold and not bid_p3_floor_force_update
+                            and not bid_notional_force_update):
                         bid_updated = False
                 if ask_ref_order is not None and ha_new and ask_ref_order["price"] > 0.0:
                     drift_ask = abs(nask - ask_ref_order["price"]) / ask_ref_order["price"]
-                    if drift_ask <= rq_threshold and not ask_p3_floor_force_update:
+                    if (drift_ask <= rq_threshold and not ask_p3_floor_force_update
+                            and not ask_notional_force_update):
                         ask_updated = False
             if bid_multi_short_price_changed:
                 # The treatment targets the most aggressive valid maker price.
@@ -29306,7 +29450,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nbid,
                     bid_ref_order,
                     bid_updated,
-                    force_update=bid_p3_floor_force_update,
+                    force_update=bid_p3_floor_force_update or bid_notional_force_update,
                 )
             if ha_new:
                 ask_updated = _apply_replace_throttle(
@@ -29316,11 +29460,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nask,
                     ask_ref_order,
                     ask_updated,
-                    force_update=ask_p3_floor_force_update,
+                    force_update=ask_p3_floor_force_update or ask_notional_force_update,
                 )
             if (
                 bid_queue_value_force_keep
                 and not bid_p3_floor_force_update
+                and not bid_notional_force_update
                 and hb_new
                 and bid_ref_order is not None
             ):
@@ -29329,6 +29474,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if (
                 ask_queue_value_force_keep
                 and not ask_p3_floor_force_update
+                and not ask_notional_force_update
                 and ha_new
                 and ask_ref_order is not None
             ):
@@ -29624,6 +29770,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 side_orders=ask_orders,
             )
 
+            replacement_blocked_sides = set()
             if serial_rest_return_enabled:
                 serial_steps = []
                 serial_new_requested = {}
@@ -29770,7 +29917,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         "requote_replace" if ha_new else "side_disabled",
                     )
 
-                if bid_new_requested:
+                _process_order_transitions(bid_orders, "BUY", t, p)
+                _process_order_transitions(ask_orders, "SELL", t, p)
+                if bid_new_requested and bid_orders:
+                    replacement_blocked_sides.add("BUY")
+                if ask_new_requested and ask_orders:
+                    replacement_blocked_sides.add("SELL")
+                if bid_new_requested and not bid_orders:
                     bid_orders.append(
                         _make_order(
                             "BUY",
@@ -29782,7 +29935,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             quote_context,
                         )
                     )
-                if ask_new_requested:
+                if ask_new_requested and not ask_orders:
                     ask_orders.append(
                         _make_order(
                             "SELL",
@@ -29813,7 +29966,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             bid_orders, t,
                             "requote_replace" if hb_new else "side_disabled",
                     )
-                    if hb_new:
+                    _process_order_transitions(bid_orders, "BUY", t, p)
+                    if hb_new and bid_orders:
+                        replacement_blocked_sides.add("BUY")
+                    if hb_new and not bid_orders:
                         bid_orders.append(
                             _make_order(
                                 "BUY",
@@ -29842,7 +29998,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             ask_orders, t,
                             "requote_replace" if ha_new else "side_disabled",
                     )
-                    if ha_new:
+                    _process_order_transitions(ask_orders, "SELL", t, p)
+                    if ha_new and ask_orders:
+                        replacement_blocked_sides.add("SELL")
+                    if ha_new and not ask_orders:
                         ask_orders.append(
                             _make_order(
                                 "SELL",
@@ -29855,6 +30014,26 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             )
                         )
 
+            # A cancel becoming exchange-effective is not a local terminal
+            # observation. Do not pre-create a replacement while ownership
+            # remains unresolved; report the actual coalesced action too.
+            for side in replacement_blocked_sides:
+                action = bid_action if side == "BUY" else ask_action
+                exposure = q >= 0.0 if side == "BUY" else q <= 0.0
+                if action == "replace":
+                    decision_replace_count -= 1
+                elif action == "place":
+                    decision_place_count -= 1
+                if action in {"replace", "place"}:
+                    role = "exposure" if exposure else "reducing"
+                    decision_side_role_action_counts[f"decision_{side.lower()}_{role}_{action}_count"] -= 1
+                    _count_decision_action("pending_coalesce", side=side, exposure_increasing=exposure)
+                    for row in reversed(trace_decisions or []):
+                        if row["ts_ms"] != int(t):
+                            break
+                        if row["side"] == side:
+                            row["action"] = "pending_coalesce"
+                            row["needs_update"] = 0
             _process_order_transitions(bid_orders, "BUY", t, p)
             _process_order_transitions(ask_orders, "SELL", t, p)
             max_pending_new_orders = max(
@@ -32546,6 +32725,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "n_days": n_days,
         "avg_rq_ms": rq_sum / max(nrq, 1),
         "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
+        "risk_daily_loss_block_count": risk_daily_loss_block_count,
+        "risk_position_value_block_count": risk_position_value_block_count,
+        "risk_emergency_close_count": risk_emergency_close_count,
+        "risk_notional_cap_count": risk_notional_cap_count,
+        "risk_emergency_latched": risk_emergency_latched,
+        "_final_risk_state": asdict(risk_state),
+        "_risk_action_trace": trace_risk_actions,
         "consecutive_loss_cooldown_state": consecutive_loss_cooldown.snapshot(),
         "max_consecutive_losses": int(
             consecutive_loss_cooldown.max_consecutive_losses
@@ -33671,6 +33857,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     中文说明：C++ replay 是加速/一致性验证工具，不是当前 live 参数选择的
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
+    validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
     pre_snapshot_samples = _as_f64_array(
         params.get("_pre_snapshot_compute_latency_samples_ms")
     )
@@ -34498,6 +34685,28 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params.initial_inventory = float(params.get("initial_inventory", 0.0) or 0.0)
     cpp_params.initial_entry_price = float(params.get("initial_entry_price", 0.0) or 0.0)
     raw_initial_live_state = params.get("initial_live_state") or {}
+    risk_limits = replay_hard_risk_limits(params)
+    if not hasattr(cpp_params, "max_daily_loss"):
+        raise RuntimeError("narrowgate_cpp lacks hard-risk ABI; rebuild it")
+    cpp_params.max_daily_loss, cpp_params.max_position_value, cpp_params.emergency_close_dd = risk_limits
+    initial_risk_cash = (
+        -cpp_params.initial_inventory * cpp_params.initial_entry_price
+        if cpp_params.initial_entry_price > 0.0 else 0.0
+    )
+    initial_risk_equity = initial_risk_cash + cpp_params.initial_inventory * float(trade_price[0])
+    native_risk_state = ReplayHardRiskState(
+        utc_day=int(trade_ts[0]) // 86_400_000,
+        session_peak_pnl=max(0.0, initial_risk_equity),
+        last_total_pnl=initial_risk_equity,
+    )
+    supplied_risk_state = raw_initial_live_state.get("risk_state")
+    if supplied_risk_state is not None:
+        native_risk_state = ReplayHardRiskState.restore(
+            supplied_risk_state, start_ts_ms=int(trade_ts[0]),
+        )
+    cpp_params.initial_risk_state_enabled = True
+    for field, value in asdict(native_risk_state).items():
+        setattr(cpp_params, "initial_risk_" + field, value)
     raw_loss_snapshot = None
     if isinstance(raw_initial_live_state, Mapping):
         raw_loss_snapshot = raw_initial_live_state.get(
@@ -35432,6 +35641,18 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
 
     result = {
         "engine": "cpp",
+        "risk_daily_loss_block_count": int(summary.risk_daily_loss_block_count),
+        "risk_position_value_block_count": int(summary.risk_position_value_block_count),
+        "risk_emergency_close_count": int(summary.risk_emergency_close_count),
+        "risk_notional_cap_count": int(summary.risk_notional_cap_count),
+        "risk_emergency_latched": bool(summary.risk_emergency_latched),
+        "_final_risk_state": {
+            "utc_day": int(summary.risk_utc_day),
+            "day_start_total_pnl": float(summary.risk_day_start_total_pnl),
+            "session_peak_pnl": float(summary.risk_session_peak_pnl),
+            "last_total_pnl": float(summary.risk_last_total_pnl),
+            "total_pnl_offset": float(summary.risk_total_pnl_offset),
+        },
         "engine_policy": "experimental_cpp_tick_replay",
         "strict_calibration": bool(params.get("strict_calibration", False)),
         "strict_calibration_validated": bool(params.get("strict_calibration_validated", False)),
@@ -38496,6 +38717,10 @@ def main():
     # ── Determine backing data days from explicit day/time bounds ──
     start_ms = _parse_time_filter_ms(args.start_time, args.time_zone)
     end_ms = _parse_time_filter_ms(args.end_time, args.time_zone)
+    if end_ms is not None:
+        # CLI filtering is [start, end); the replay clock is millisecond
+        # inclusive, so stop at the last millisecond inside that window.
+        base["replay_event_clock_end_ts_ms"] = int(end_ms) - 1
     days = _days_for_time_window(start_ms, end_ms)
 
     # ── Load data ──

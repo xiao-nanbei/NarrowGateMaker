@@ -15,6 +15,7 @@ from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     SYNC_DEGRADE_SEMANTICS,
     SYNC_DEGRADE_TAPE_SCHEMA,
+    replay_hard_risk_limits,
 )
 
 FORMAL_REPLAY_CONTRACT_SCHEMA = "narrowgate_formal_replay_contract.v4"
@@ -843,6 +844,22 @@ def build_replay_contract(
                 "sha256": sha256_file(profile_path),
             }
         visibility_promotion_eligible = False
+    for key, default in (
+        ("maker_fee", 0.0), ("taker_fee", 0.00036),
+        ("tick_size", 0.1), ("lot_size", 0.001),
+        ("min_qty", None), ("min_notional", None),
+    ):
+        value = params.get(key, default)
+        if value is None and key in {"min_qty", "min_notional"}:
+            continue
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"{key} must be finite")
+        if key in {"tick_size", "lot_size"} and value <= 0.0:
+            raise ValueError(f"{key} must be positive")
+        if key in {"min_qty", "min_notional"} and value < 0.0:
+            raise ValueError(f"{key} must be non-negative")
+    hard_risk_limits = replay_hard_risk_limits(params)
     contract = {
         "schema_version": FORMAL_REPLAY_CONTRACT_SCHEMA,
         "purpose": normalized_purpose,
@@ -940,6 +957,30 @@ def build_replay_contract(
             "queue_event_visibility": "exchange_time_causal",
             "terminal_equity": "cash_plus_inventory_times_terminal_mark",
             "hypothetical_terminal_taker_fee_in_final_pnl": False,
+            "execution": {
+                "maker_fee": float(params.get("maker_fee", 0.0)),
+                "taker_fee": float(params.get("taker_fee", 0.00036)),
+                "fee_rate_unit": "fraction_of_fill_price_times_filled_base_quantity",
+                "fee_sign": "positive_cost_negative_rebate",
+                "tick_size": float(params.get("tick_size", 0.1)),
+                "tick_size_unit": "quote_per_base",
+                "lot_size": float(params.get("lot_size", 0.001)),
+                "lot_size_unit": "base_quantity",
+                "rounding": "side_aware_price_tick_and_quantity_lot_on_order_paths",
+                "min_qty": (
+                    float(params["min_qty"]) if params.get("min_qty") is not None else None
+                ),
+                "min_notional": (
+                    float(params["min_notional"])
+                    if params.get("min_notional") is not None else None
+                ),
+                "min_qty_unit": "base_quantity",
+                "min_notional_unit": "quote_currency",
+                "exchange_filter_limitations": (
+                    "min_qty_and_min_notional_are_declared_not_enforced_by_tick_replay; "
+                    "full_exchange_filter_and_fee_tier_simulation_not_implemented"
+                ),
+            },
             "exec_book_visibility_mode": visibility_mode,
             "exec_depth_visibility_source_offset_ms": int(
                 params.get("exec_depth_visibility_source_offset_ms", 0) or 0
@@ -949,6 +990,14 @@ def build_replay_contract(
             ),
         },
         "path_dependent_controls": {
+            "hard_risk_limits": {
+                key: value if math.isfinite(value) else None
+                for key, value in zip(
+                    ("max_daily_loss", "max_position_value", "emergency_close_dd"),
+                    hard_risk_limits,
+                    strict=True,
+                )
+            },
             "consecutive_loss_cooldown": {
                 "semantics_version": str(
                     params.get(

@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from models import backtest_tick as bt
-from models.tick_data_types import HistoricalExchangeBookEvent
+from models.tick_data_types import HistoricalBBOData, HistoricalExchangeBookEvent
 from strategy.dynamic_fill_hazard_model import MODEL_FEATURES
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
@@ -154,6 +154,94 @@ def _write_sync_tape(tmp_path, timestamps: list[int]):
         encoding="utf-8",
     )
     return path, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@pytest.mark.parametrize("engine", ["python", "cpp"])
+def test_live_replay_max_position_value_order_cap_parity(engine):
+    from models.tick_data_types import HistoricalBBOData
+
+    params = _base_params()
+    params.update({
+        "max_position_value": 100.0, "use_bar_pricing": False,
+        "trace_quotes_max": 20, "trace_decisions_max": 20,
+    })
+    timestamps = [BASE_MS, BASE_MS + 1_000]
+    trades = _trades(timestamps, [110_000.0, 110_000.0])
+    bbo = HistoricalBBOData(
+        np.asarray(timestamps), np.full(2, 109_999.9), np.full(2, 110_000.1),
+        np.ones(2), np.ones(2),
+    )
+    result = bt._simulate_tick_with_engine(
+        engine, trades, np.empty(0, dtype=np.int64), np.empty(0), params,
+        bbo_data=bbo,
+    )
+    assert result["_quote_trace"] == []
+    assert result["risk_notional_cap_count"] == 4
+    assert result["final_inventory"] == 0.0
+
+
+@pytest.mark.parametrize("engine", ["python", "cpp"])
+@pytest.mark.parametrize("reason", ["daily_loss", "position_value"])
+def test_live_replay_hard_risk_pauses_without_erasing_inventory(engine, reason):
+    from models.tick_data_types import HistoricalBBOData
+
+    params = _base_params()
+    params.update({
+        "initial_inventory": 0.001, "initial_entry_price": 110_000.0,
+        "max_daily_loss": 5.0 if reason == "daily_loss" else 50.0,
+        "max_position_value": 1_000.0 if reason == "daily_loss" else 90.0,
+        "emergency_close_dd": 150.0, "use_bar_pricing": False,
+        "trace_quotes_max": 20, "trace_decisions_max": 20,
+    })
+    timestamps = [BASE_MS, BASE_MS + 1_000]
+    bbo = HistoricalBBOData(
+        np.asarray(timestamps), np.full(2, 99_999.9), np.full(2, 100_000.1),
+        np.ones(2), np.ones(2),
+    )
+    result = bt._simulate_tick_with_engine(
+        engine, _trades(timestamps, [100_000.0, 100_000.0]),
+        np.empty(0, dtype=np.int64), np.empty(0), params, bbo_data=bbo,
+    )
+    assert result["_quote_trace"] == []
+    assert result[f"risk_{reason}_block_count"] == 2
+    assert result["final_inventory"] == pytest.approx(0.001)
+    assert result["risk_emergency_close_count"] == 0
+
+
+@pytest.mark.parametrize("engine", ["python", "cpp"])
+def test_live_replay_emergency_waits_for_cancel_then_stops_quoting(engine):
+    from models.tick_data_types import HistoricalBBOData
+
+    params = _base_params()
+    params.update({
+        "initial_inventory": 0.001, "initial_entry_price": 100_000.0,
+        "max_daily_loss": 100.0, "max_position_value": 1_000.0,
+        "emergency_close_dd": 5.0, "use_bar_pricing": False,
+        "cancel_order_latency_ms": 200, "new_order_latency_ms": 100,
+        "trace_quotes_max": 50, "trace_decisions_max": 50, "trace_fills_max": 50,
+    })
+    timestamps = np.arange(BASE_MS, BASE_MS + 4_100, 100)
+    prices = np.where(timestamps < BASE_MS + 1_000, 100_000.0, 90_000.0)
+    bbo = HistoricalBBOData(timestamps, prices - 0.1, prices + 0.1,
+                            np.ones(len(prices)), np.ones(len(prices)))
+    result = bt._simulate_tick_with_engine(
+        engine, _trades(timestamps.tolist(), prices.tolist()),
+        np.empty(0, dtype=np.int64), np.empty(0), params, bbo_data=bbo,
+    )
+    assert result["risk_emergency_close_count"] == 1
+    assert result["risk_emergency_latched"]
+    assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
+    cancels = [row for row in result["_quote_trace"] if row["outcome"] == "cancel"]
+    fills = result["_fill_trace"]
+    assert len(cancels) == 2
+    assert len(fills) == 1
+    assert fills[0]["fill_ts"] >= max(row["outcome_ts"] for row in cancels)
+    assert fills[0]["side"] == "SELL"
+    assert fills[0]["fill_fee_rate"] == 0.0
+    assert not any(
+        row["side"] == "BUY" and row["submit_ts"] >= BASE_MS + 1_000
+        for row in result["_quote_trace"]
+    )
 
 
 def _hazard_head(cause: str, *, refill_coefficient: float = 0.0):
@@ -743,13 +831,25 @@ def test_cpp_loss_snapshot_partial_abi_fails_closed() -> None:
     with pytest.raises(ValueError, match="config must be finite and non-negative"):
         cpp.simulate_tick_arrays(ts, price, quantity, maker, negative_cooldown)
 
+def _loss_test_bbo(trades):
+    prices = trades["price"].to_numpy(dtype=np.float64)
+    return HistoricalBBOData(
+        ts_ms=trades["transact_time"].to_numpy(dtype=np.int64),
+        best_bid=prices - 0.1, best_ask=prices + 0.1,
+        bid_qty=np.ones(len(prices)), ask_qty=np.ones(len(prices)),
+    )
+
+
 def test_signed_rebate_can_turn_gross_loss_into_nonloss_python_cpp() -> None:
     params = _base_params()
     params.update(
         {
             "initial_inventory": 0.001,
             "initial_entry_price": 100.0,
-            "position_timeout": 0.5,
+            "circuit_breaker_sigma": 1.0,
+            "circuit_breaker_exit_mode": "immediate_taker",
+            "pnl_volatility_horizon_s": 1.0,
+            "use_bar_pricing": False,
             "replay_clock_interval_ms": 1_000,
             "maker_fee": -0.2,
             "taker_fee": -0.2,
@@ -766,10 +866,10 @@ def test_signed_rebate_can_turn_gross_loss_into_nonloss_python_cpp() -> None:
     empty_f64 = np.empty(0, dtype=np.float64)
 
     py = bt._simulate_tick_with_engine(
-        "python", trades, empty_i64, empty_f64, params
+        "python", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
     cpp = bt._simulate_tick_with_engine(
-        "cpp", trades, empty_i64, empty_f64, params
+        "cpp", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
 
     for result in (py, cpp):
@@ -945,7 +1045,10 @@ def test_loss_cooldown_resume_snapshot_is_python_cpp_equal() -> None:
         {
             "initial_inventory": 0.001,
             "initial_entry_price": 100.0,
-            "position_timeout": 0.5,
+            "circuit_breaker_sigma": 1.0,
+            "circuit_breaker_exit_mode": "immediate_taker",
+            "pnl_volatility_horizon_s": 1.0,
+            "use_bar_pricing": False,
             "replay_clock_interval_ms": 1_000,
             "max_consecutive_losses": 1,
             "cooldown_after_loss": 30.0,
@@ -963,10 +1066,10 @@ def test_loss_cooldown_resume_snapshot_is_python_cpp_equal() -> None:
     empty_f64 = np.empty(0, dtype=np.float64)
 
     py = bt._simulate_tick_with_engine(
-        "python", trades, empty_i64, empty_f64, params
+        "python", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
     cpp = bt._simulate_tick_with_engine(
-        "cpp", trades, empty_i64, empty_f64, params
+        "cpp", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
 
     py_state = py["consecutive_loss_cooldown_state"]
@@ -1446,7 +1549,10 @@ def test_consecutive_loss_cooldown_is_path_dependent_and_python_cpp_equal():
         {
             "initial_inventory": 0.001,
             "initial_entry_price": 100.0,
-            "position_timeout": 0.5,
+            "circuit_breaker_sigma": 1.0,
+            "circuit_breaker_exit_mode": "immediate_taker",
+            "pnl_volatility_horizon_s": 1.0,
+            "use_bar_pricing": False,
             "replay_clock_interval_ms": 1_000,
             "max_consecutive_losses": 1,
             "cooldown_after_loss": 30.0,
@@ -1461,10 +1567,10 @@ def test_consecutive_loss_cooldown_is_path_dependent_and_python_cpp_equal():
     empty_f64 = np.empty(0, dtype=np.float64)
 
     py = bt._simulate_tick_with_engine(
-        "python", trades, empty_i64, empty_f64, params
+        "python", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
     cpp = bt._simulate_tick_with_engine(
-        "cpp", trades, empty_i64, empty_f64, params
+        "cpp", trades, empty_i64, empty_f64, params, bbo_data=_loss_test_bbo(trades)
     )
 
     for key in (
@@ -1788,3 +1894,58 @@ def test_cpp_fails_closed_when_buy_q90_requires_native_depth():
 def test_sync_semantics_constants_are_frozen():
     assert SYNC_DEGRADE_SEMANTICS == "system_event_after_market_same_ms_v1"
     assert SYNC_CENSOR_CODE != SYNC_EVENT_CODE
+
+
+@pytest.mark.parametrize("engine", ["python", "cpp"])
+def test_hard_risk_restored_offset_and_peak_survive_utc_rollover(engine):
+    midnight = (BASE_MS // 86_400_000 + 1) * 86_400_000
+    params = _base_params()
+    params.update({
+        "max_daily_loss": 100.0,
+        "emergency_close_dd": 100.0,
+        "initial_live_state": {
+            "risk_state": {
+                "utc_day": midnight // 86_400_000 - 1,
+                "day_start_total_pnl": 8.0,
+                "session_peak_pnl": 20.0,
+                "last_total_pnl": 10.0,
+                "total_pnl_offset": 10.0,
+            },
+        },
+    })
+    result = bt._simulate_tick_with_engine(
+        engine,
+        _trades([midnight - 1_000, midnight, midnight + 1_000], [100.0] * 3),
+        np.empty(0, dtype=np.int64), np.empty(0), params,
+    )
+    assert result["_final_risk_state"] == {
+        "utc_day": midnight // 86_400_000,
+        "day_start_total_pnl": 10.0,
+        "session_peak_pnl": 20.0,
+        "last_total_pnl": 10.0,
+        "total_pnl_offset": 10.0,
+    }
+    assert result["risk_daily_loss_block_count"] == 0
+    assert result["risk_emergency_close_count"] == 0
+
+
+@pytest.mark.parametrize("engine", ["python", "cpp"])
+@pytest.mark.parametrize("state, error", [
+    ({}, "missing fields"),
+    ([], "must be a mapping"),
+    ({"utc_day": 0}, "missing fields"),
+    ({"utc_day": 1.5, "day_start_total_pnl": 0.0, "session_peak_pnl": 0.0,
+      "last_total_pnl": 0.0, "total_pnl_offset": 0.0}, "must be an integer"),
+    ({"utc_day": 999_999, "day_start_total_pnl": 0.0, "session_peak_pnl": 0.0,
+      "last_total_pnl": 0.0, "total_pnl_offset": 0.0}, "future UTC day"),
+    ({"utc_day": 0, "day_start_total_pnl": 0.0, "session_peak_pnl": 0.0,
+      "last_total_pnl": 0.0, "total_pnl_offset": float("nan")}, "must be finite"),
+])
+def test_explicit_risk_state_never_silently_defaults(engine, state, error):
+    params = _base_params()
+    params["initial_live_state"] = {"risk_state": state}
+    with pytest.raises(ValueError, match=error):
+        bt._simulate_tick_with_engine(
+            engine, _trades([BASE_MS, BASE_MS + 1_000], [100.0, 100.0]),
+            np.empty(0, dtype=np.int64), np.empty(0), params,
+        )

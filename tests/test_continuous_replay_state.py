@@ -11,6 +11,7 @@ from models.replay.replay_state_checkpoint import (
     ContinuousReplayState,
     EconomicCampaignState,
     read_checkpoint,
+    validate_replay_initial_state,
     write_checkpoint,
 )
 from models.replay.restart_aware_continuous_ab import (
@@ -32,6 +33,55 @@ def _flat_state() -> ContinuousReplayState:
         last_mark_price=100.0,
         cumulative_pnl_usdc=0.0,
     )
+
+
+@pytest.mark.parametrize("backend", ["python", "cpp"])
+def test_live_snapshot_is_not_silently_treated_as_partial_replay_state(backend):
+    from models import backtest_tick as bt
+    from models.replay.prospective_baseline_epoch import (
+        PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS,
+    )
+
+    # Domain completeness is a producer claim, not consumer restore support.
+    snapshot = {
+        "schema_version": "narrowgate_live_initial_runtime_state.v2",
+        **{name: {"captured": True} for name in PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS},
+        "completeness": {"binding_status": "fully_bound"},
+    }
+    entry = bt.simulate_tick if backend == "python" else bt._simulate_tick_cpp
+    with pytest.raises(ValueError, match="unsupported restore domains: signal_feature_dag_warmup"):
+        entry(None, None, None, {"initial_live_state": snapshot})
+    del snapshot["signal_feature_dag_warmup"]
+    with pytest.raises(ValueError, match="missing domains: signal_feature_dag_warmup"):
+        entry(None, None, None, {"initial_live_state": snapshot})
+
+
+def test_initial_state_preserves_explicit_partial_diagnostics_and_fresh_start():
+    partial = {"markout": {"mo_ema_bid": -0.2}, "active_orders": []}
+    assert validate_replay_initial_state(partial) == partial
+    assert validate_replay_initial_state(None) == {}
+    assert validate_replay_initial_state({}, backend="cpp") == {}
+    normalized = {
+        "schema_version": "narrowgate.live_replay_initial_state.v1",
+        "reward_path_loss_cooldown": {"explicit_test_value": 1},
+        "risk_state": {"total_pnl_offset": 2.0},
+    }
+    assert validate_replay_initial_state(normalized, backend="cpp") == normalized
+    with pytest.raises(ValueError, match="use the continuous replay runner"):
+        validate_replay_initial_state(_flat_state().to_dict())
+    with pytest.raises(ValueError, match="canonical live snapshot"):
+        validate_replay_initial_state({"fill_cooldown_lineage": {"same_side_fill_units": {}}})
+    with pytest.raises(ValueError, match="must be a mapping"):
+        validate_replay_initial_state([])
+
+
+@pytest.mark.parametrize("domain", ["markout", "fill_cooldown", "active_orders", "campaign"])
+def test_cpp_initial_state_rejects_unimplemented_python_domains(domain):
+    from models import backtest_tick as bt
+
+    payload = {domain: {"state": "nonempty"}}
+    with pytest.raises(ValueError, match=f"cannot restore initial_live_state domains: {domain}"):
+        bt._simulate_tick_cpp(None, None, None, {"initial_live_state": payload})
 
 
 def test_checkpoint_roundtrip_and_tamper_detection(tmp_path) -> None:

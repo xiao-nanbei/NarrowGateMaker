@@ -26,6 +26,74 @@ RESTART_RESET_FIELDS = (
 _EPS = 1e-10
 
 
+def validate_replay_initial_state(
+    payload: Any, *, backend: str = "python"
+) -> dict[str, Any]:
+    """Distinguish partial diagnostic state from a canonical live snapshot.
+
+    The legacy dictionary is a deliberately partial replay input, not a live
+    checkpoint. A producer's completeness claim does not establish that this
+    consumer restores its signal, order-queue and control-loop state.
+    """
+    if payload is None:
+        return {}
+    if not isinstance(payload, Mapping):
+        raise ValueError("initial_live_state must be a mapping")
+    if backend not in {"python", "cpp"}:
+        raise ValueError("initial-state backend must be python or cpp")
+    schema = str(payload.get("schema_version", ""))
+    canonical_fields = {
+        "adverse_markout_pause", "fill_cooldown_lineage", "order_lifecycle",
+        "quote_policy_clocks", "signal_feature_dag_warmup",
+    }
+    if schema.startswith("narrowgate_live_initial_runtime_state.") or (
+        canonical_fields.intersection(payload)
+    ):
+        from models.replay.prospective_baseline_epoch import (
+            PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS,
+        )
+
+        missing = [
+            field for field in PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS
+            if not isinstance(payload.get(field), Mapping) or not payload[field]
+        ]
+        completeness = payload.get("completeness")
+        producer_unsupported = (
+            completeness.get("unsupported_initial_state_fields", ())
+            if isinstance(completeness, Mapping) else ()
+        )
+        detail = "; missing domains: " + ", ".join(missing) if missing else ""
+        if producer_unsupported:
+            detail += "; producer unsupported state: " + repr(producer_unsupported)
+        raise ValueError(
+            f"canonical live snapshot cannot be restored by {backend} replay: "
+            "unsupported restore domains: signal_feature_dag_warmup, "
+            "quote_policy_clocks, order_lifecycle (inherited queue/ACK state), "
+            "q90_runtime, defense_and_stale_guards, sync_degrade, "
+            "post_fill_response; adverse_markout_pause and fill_cooldown_lineage "
+            "are not the experimental replay ABI" + detail
+        )
+    if schema == SCHEMA_VERSION:
+        raise ValueError(
+            "continuous replay checkpoint must use the continuous replay runner; "
+            "it is not an initial_live_state snapshot"
+        )
+    if schema not in {"", "narrowgate.live_replay_initial_state.v1"}:
+        raise ValueError(f"unsupported initial_live_state schema: {schema}")
+    # These Python-only domains used to disappear at the native boundary.
+    if backend == "cpp":
+        unsupported = [
+            key for key in ("active_orders", "markout", "fill_cooldown", "campaign")
+            if payload.get(key)
+        ]
+        if unsupported:
+            raise ValueError(
+                "C++ replay cannot restore initial_live_state domains: "
+                + ", ".join(unsupported) + "; use Python replay"
+            )
+    return dict(payload)
+
+
 def canonical_sha256(payload: Mapping[str, Any]) -> str:
     raw = json.dumps(
         payload,

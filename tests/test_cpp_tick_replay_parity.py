@@ -722,7 +722,8 @@ def test_python_cpp_l2_cancel_ahead_synthetic_parity():
     assert cpp["pnl"] == pytest.approx(py["pnl"], abs=1e-12)
 
 
-def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity():
+@pytest.mark.parametrize("visibility_samples", [[1_000.0], [0.0, 2_000.0]])
+def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity(visibility_samples):
     bt.configure_symbol("BTCUSDC")
     ts = np.arange(0, 4_001, 1_000, dtype=np.int64)
     trades = pd.DataFrame(
@@ -767,7 +768,7 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity():
         "ml_enabled": False,
         "trace_quotes_max": 100,
         "collect_curves": False,
-        "_exec_book_visibility_delay_samples_ms": np.asarray([1_000.0]),
+        "_exec_book_visibility_delay_samples_ms": np.asarray(visibility_samples),
         "exec_book_visibility_delay_seed": 20260718,
     }
 
@@ -788,8 +789,11 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity():
         l2_data=l2,
     )
 
-    assert py["exec_book_visibility_delay_applied_avg_ms"] == 1_000.0
-    assert cpp["exec_book_visibility_delay_applied_avg_ms"] == 1_000.0
+    if visibility_samples == [1_000.0]:
+        assert py["exec_book_visibility_delay_applied_avg_ms"] == 1_000.0
+    assert cpp["exec_book_visibility_delay_applied_avg_ms"] == pytest.approx(
+        py["exec_book_visibility_delay_applied_avg_ms"]
+    )
     assert cpp["n_requotes"] == py["n_requotes"]
     assert cpp["fills_total"] == py["fills_total"]
     assert cpp["pnl"] == pytest.approx(py["pnl"], abs=1e-12)
@@ -883,10 +887,10 @@ def _simulate_policy_ext(
     return narrowgate_cpp.simulate_tick_arrays_ext_policy_v3(*args)
 
 
-def test_cpp_policy_position_timeout_closes_inventory():
+def test_cpp_policy_position_timeout_requires_an_actual_close_fill():
     ts = np.arange(6, dtype=np.int64) * 1_000
     price = np.full(6, 100.0, dtype=np.float64)
-    qty = np.full(6, 0.01, dtype=np.float64)
+    qty = np.zeros(6, dtype=np.float64)
     is_buyer_maker = np.zeros(6, dtype=np.uint8)
     params = _make_params()
     params.initial_inventory = 0.001
@@ -897,7 +901,9 @@ def test_cpp_policy_position_timeout_closes_inventory():
     result = narrowgate_cpp.simulate_tick_arrays(ts, price, qty, is_buyer_maker, params)
 
     assert result.summary.position_timeout_count == 1
-    assert result.summary.final_inventory == pytest.approx(0.0, abs=1e-12)
+    assert result.summary.final_inventory == pytest.approx(0.001, abs=1e-12)
+    assert result.summary.circuit_breaker_closing
+    assert result.summary.fills_bid == result.summary.fills_ask == 0
     assert result.summary.pnl == pytest.approx(0.0, abs=1e-12)
 
 
@@ -930,7 +936,7 @@ def test_cpp_policy_circuit_breaker_uses_price_variance_units():
     assert result.summary.pnl == pytest.approx(-0.01, abs=1e-12)
 
 
-def test_cpp_policy_maker_close_escalates_to_ioc():
+def test_cpp_policy_maker_close_ioc_expires_without_displayed_liquidity():
     ts = np.arange(0, 100_000, 10_000, dtype=np.int64)
     price = np.asarray([100.0] + [90.0] * (ts.size - 1), dtype=np.float64)
     qty = np.zeros(ts.size, dtype=np.float64)
@@ -957,10 +963,62 @@ def test_cpp_policy_maker_close_escalates_to_ioc():
 
     assert result.summary.circuit_breaker_count == 1
     assert result.summary.circuit_breaker_close_ioc_place_count >= 1
-    assert result.summary.circuit_breaker_close_ioc_fill_count == 1
-    assert result.summary.circuit_breaker_close_ioc_expire_count == 0
-    assert result.summary.circuit_breaker_closing is False
-    assert result.summary.final_inventory == pytest.approx(0.0, abs=1e-12)
+    assert result.summary.circuit_breaker_close_ioc_fill_count == 0
+    assert result.summary.circuit_breaker_close_ioc_expire_count >= 1
+    assert result.summary.circuit_breaker_closing is True
+    assert result.summary.final_inventory == pytest.approx(0.001, abs=1e-12)
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+@pytest.mark.parametrize("liquidity", ["zero", "partial", "full"])
+def test_python_cpp_ioc_sweeps_only_supplied_levels_inside_limit(initial_sign, liquidity):
+    times = np.asarray([0, 10_000, 71_001], dtype=np.int64)
+    direction = -initial_sign
+    prices = np.asarray([100.0, 100.0 + direction * 10.0, 100.0 + direction * 10.0])
+    trades = pd.DataFrame({
+        "transact_time": times, "price": prices,
+        "quantity": np.zeros(3), "is_buyer_maker": np.zeros(3, dtype=np.uint8),
+    })
+    book_ts = np.arange(0, 71_001, 1_000, dtype=np.int64)
+    mid = np.where(book_ts < 10_000, 100.0, 100.0 + direction * 10.0)
+    offsets = np.asarray([0.1, 0.2, 0.3, 0.4])
+    row_qty = {
+        "zero": [0.0, np.nan, -1.0, 10.0],
+        "partial": [0.0004, 0.0006, 0.0, 10.0],
+        "full": [0.0004, 0.0006, 0.002, 10.0],
+    }[liquidity]
+    depth = HistoricalL2Data(
+        ts_ms=book_ts, bid_px=mid[:, None] - offsets, ask_px=mid[:, None] + offsets,
+        bid_qty=np.tile(row_qty, (book_ts.size, 1)),
+        ask_qty=np.tile(row_qty, (book_ts.size, 1)),
+    )
+    params = {
+        "gamma": 0.01, "kappa": 1.0, "order_size": 0.003, "max_inventory": 0.01,
+        "requote_interval": 10.0, "rq_min": 10.0, "rq_max": 10.0,
+        "requote_clock": "fixed", "maker_fee": 0.0, "taker_fee": 0.01,
+        "tick_size": 0.1, "lot_size": 0.001, "queue_base": 0.0, "queue_decay": 0.0,
+        "maker_fill_prob": 1.0, "use_bar_pricing": False,
+        "initial_inventory": initial_sign * 0.003, "initial_entry_price": 100.0,
+        "circuit_breaker_sigma": 1.0, "circuit_breaker_exit_mode": "maker_close",
+        "pnl_volatility_horizon_s": 1.0, "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 1_000, "max_exec_book_age_s": 5.0,
+        "collect_curves": False, "position_timeout": 0.0, "markout_ema_span_fills": 0,
+        "trace_fills_max": 100, "trace_quotes_max": 100,
+    }
+    results = {
+        engine: bt._simulate_tick_with_engine(
+            engine, trades, np.asarray([0]), np.asarray([1.0]), params, l2_data=depth,
+        ) for engine in ("python", "cpp")
+    }
+    expected_qty = {"zero": 0.0, "partial": 0.001, "full": 0.003}[liquidity]
+    for result in results.values():
+        fills = result["_fill_trace"]
+        assert sum(row["fill_qty"] for row in fills) == pytest.approx(expected_qty)
+        assert result["final_inventory"] == pytest.approx(initial_sign * (0.003 - expected_qty))
+        if fills:
+            weighted_offset = 0.16 if liquidity == "partial" else (0.0004 + 0.0012 + 0.006) / 0.03
+            assert fills[0]["price"] == pytest.approx(100.0 + direction * (10.0 + weighted_offset))
+    assert results["cpp"]["pnl"] == pytest.approx(results["python"]["pnl"], abs=1e-10)
 
 
 def test_python_cpp_circuit_breaker_maker_close_parity():

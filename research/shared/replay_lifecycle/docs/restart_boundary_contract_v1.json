@@ -6,9 +6,9 @@
   "contract_id": "restart_boundary_contract.v1",
   "implementation": {
     "path": "models/replay/restart_boundary.py",
-    "sha256": "2461b369766babc6589cc1ad92b09f987cdfc7102309ff44105ed3c7552553c3"
+    "source_identity": "enclosing_execution_git_commit_or_tree"
   },
-  "last_materially_modified": "2026-08-03",
+  "last_materially_modified": "2026-08-31",
   "requirements": [
     "stop new quotes before the observed gap",
     "drain cancel requests through observable terminal events",

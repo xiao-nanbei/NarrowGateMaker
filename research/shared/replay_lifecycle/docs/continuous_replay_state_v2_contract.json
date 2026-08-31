@@ -7,9 +7,9 @@
   "contract_id": "continuous_replay_state.v2",
   "implementation": {
     "path": "models/replay/replay_state_checkpoint.py",
-    "sha256": "8b092950eaf4b620be8b2148a6207f7abb37f8a692cfbbeaa90013c75bcd73e3"
+    "source_identity": "enclosing_execution_git_commit_or_tree"
   },
-  "last_materially_modified": "2026-08-25",
+  "last_materially_modified": "2026-08-31",
   "predecessor": {
     "checkpoint_compatibility": "fail_closed",
     "contract_id": "continuous_replay_state.v1",

@@ -11,6 +11,7 @@ from models.replay_contract import (
     INDIVIDUAL_TRADES_REPAIRED_DAYS,
     KEYED_LATENCY_SAMPLER_VERSION,
     STANDARD_INITIAL_STATE_SCHEMA,
+    build_replay_contract,
     configure_fixed_latency_distribution,
     freeze_replay_contract,
     validate_frozen_replay_contract,
@@ -23,6 +24,43 @@ from strategy.replay_controls import (
     SYNC_DEGRADE_SEMANTICS,
     SYNC_DEGRADE_TAPE_SCHEMA,
 )
+
+
+@pytest.mark.parametrize("field,value", [
+    ("maker_fee", -0.00001), ("taker_fee", 0.0004),
+    ("tick_size", 0.2), ("lot_size", 0.002),
+    ("min_qty", 0.003), ("min_notional", 10.0),
+    ("max_daily_loss", 50.0), ("max_position_value", 3000.0),
+    ("emergency_close_dd", 150.0),
+])
+def test_execution_cost_filter_and_risk_changes_are_bound(tmp_path, field, value):
+    params = _contract_params(tmp_path)
+    before = build_replay_contract(params, root=tmp_path)
+    after = build_replay_contract({**params, field: value}, root=tmp_path)
+    assert before != after
+    block = (
+        after["path_dependent_controls"]["hard_risk_limits"]
+        if field in {"max_daily_loss", "max_position_value", "emergency_close_dd"}
+        else after["causal_event_semantics"]["execution"]
+    )
+    assert block[field] == value
+
+
+def test_execution_contract_discloses_unmodeled_filters_and_disabled_limits(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(max_daily_loss=None, max_position_value=None)
+    contract = build_replay_contract(params, root=tmp_path)
+    execution = contract["causal_event_semantics"]["execution"]
+    assert "declared_not_enforced" in execution["exchange_filter_limitations"]
+    assert execution["fee_sign"] == "positive_cost_negative_rebate"
+    assert contract["path_dependent_controls"]["hard_risk_limits"] == {
+        "max_daily_loss": None, "max_position_value": None, "emergency_close_dd": None,
+    }
+    json.dumps(contract, allow_nan=False)
+    with pytest.raises(ValueError, match="maker_fee must be finite"):
+        build_replay_contract({**params, "maker_fee": float("nan")}, root=tmp_path)
+    with pytest.raises(ValueError, match="max_daily_loss"):
+        build_replay_contract({**params, "max_daily_loss": float("inf")}, root=tmp_path)
 
 
 def _write_individual_trades_identity(tmp_path):

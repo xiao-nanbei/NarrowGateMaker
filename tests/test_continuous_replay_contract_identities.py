@@ -1,4 +1,3 @@
-import hashlib
 import json
 from pathlib import Path
 
@@ -15,14 +14,17 @@ SUPERSEDED_CONTRACTS = (
 )
 
 
-def test_continuous_replay_contracts_bind_current_implementation_bytes() -> None:
+def test_continuous_replay_contracts_use_execution_source_identity() -> None:
     contract_root = ROOT / "research/shared/replay_lifecycle/docs"
     for name in CURRENT_CONTRACTS:
         payload = json.loads((contract_root / name).read_text(encoding="utf-8"))
         implementation = payload["implementation"]
         implementation_path = ROOT / implementation["path"]
-        actual = hashlib.sha256(implementation_path.read_bytes()).hexdigest()
-        assert actual == implementation["sha256"], name
+        assert implementation_path.is_file(), name
+        assert "sha256" not in implementation, name
+        assert implementation["source_identity"] == (
+            "enclosing_execution_git_commit_or_tree"
+        ), name
         assert payload["authority"]["action_or_live_authority"] is False
 
 

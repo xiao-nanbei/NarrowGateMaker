@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from live.config import Config, to_backtest_params
 from models.backtest_config import build_backtest_base_params
 from models.backtest_tick import (
     _aggregate_quality_segment_results,
@@ -186,6 +187,9 @@ def test_live_to_replay_mapping_preserves_time_and_risk_contract() -> None:
             "quote_horizon_s": 5.0,
             "pnl_volatility_horizon_s": 300.0,
             "circuit_breaker_sigma": 8.0,
+            "max_daily_loss": 50.0,
+            "max_position_value": 3000.0,
+            "emergency_close_dd": 150.0,
         }
     )
     assert params["gamma"] == pytest.approx(0.05)
@@ -194,6 +198,15 @@ def test_live_to_replay_mapping_preserves_time_and_risk_contract() -> None:
     assert params["quote_horizon_s"] == pytest.approx(5.0)
     assert params["pnl_volatility_horizon_s"] == pytest.approx(300.0)
     assert params["circuit_breaker_sigma"] == pytest.approx(8.0)
+    for name in ("max_daily_loss", "max_position_value", "emergency_close_dd"):
+        assert params[name] == getattr(Config().risk, name)
+    cfg = Config()
+    cfg.risk.max_daily_loss = 7.0
+    cfg.risk.max_position_value = 80.0
+    cfg.risk.emergency_close_dd = 11.0
+    mapped = build_backtest_base_params(to_backtest_params(cfg))
+    for name in ("max_daily_loss", "max_position_value", "emergency_close_dd"):
+        assert mapped[name] == getattr(cfg.risk, name)
 
 
 def test_python_tick_replay_applies_the_shared_circuit_breaker() -> None:
@@ -285,7 +298,7 @@ def test_python_tick_replay_circuit_breaker_uses_maker_close_state() -> None:
     assert result["pnl"] == pytest.approx(-0.01, abs=1e-12)
 
 
-def test_python_tick_replay_maker_close_escalates_to_ioc() -> None:
+def test_python_tick_replay_ioc_expires_without_displayed_liquidity() -> None:
     ts = np.arange(0, 100_000, 10_000, dtype=np.int64)
     trades = pd.DataFrame(
         {
@@ -328,10 +341,10 @@ def test_python_tick_replay_maker_close_escalates_to_ioc() -> None:
     )
     assert result["circuit_breaker_count"] == 1
     assert result["circuit_breaker_close_ioc_place_count"] >= 1
-    assert result["circuit_breaker_close_ioc_fill_count"] == 1
-    assert result["circuit_breaker_close_ioc_expire_count"] == 0
-    assert result["circuit_breaker_closing"] is False
-    assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
+    assert result["circuit_breaker_close_ioc_fill_count"] == 0
+    assert result["circuit_breaker_close_ioc_expire_count"] >= 1
+    assert result["circuit_breaker_closing"] is True
+    assert result["final_inventory"] == pytest.approx(0.001, abs=1e-12)
 
 
 def test_quote_horizon_integrates_per_second_variance_explicitly() -> None:
@@ -1290,3 +1303,45 @@ def test_live_markout_resolves_at_configured_wallclock_horizon() -> None:
     assert engine._mo_pending == []
     assert engine._mo_ema_bid == pytest.approx(1.0)
     assert engine._mo_ema_all == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize("mode", ["merged", "empirical"])
+def test_explicit_replay_end_adds_nontrade_terminal_clock_between_ticks(mode):
+    trades = pd.DataFrame({
+        "transact_time": [1_000, 1_100], "price": [100.0, 101.0],
+        "quantity": [0.001, 0.002], "is_buyer_maker": [False, True],
+    })
+    events, count = build_replay_event_clock(
+        trades, mode=mode, interval_ms=1_000, end_ts_ms=2_999,
+        empirical_ts_ms=np.array([1_000, 2_000]),
+        empirical_action=np.array([2, 2]),
+    )
+    terminal = events.iloc[-1]
+    assert count == 2
+    assert terminal["transact_time"] == 2_999
+    assert terminal["price"] == 101.0
+    assert terminal["quantity"] == 0.0
+    assert not terminal["_is_execution_trade"]
+    assert events["quantity"].sum() == pytest.approx(0.003)
+
+
+@pytest.mark.parametrize("backend", ["python", "cpp"])
+def test_explicit_replay_end_reaches_both_backend_terminal_trace(backend):
+    from models import backtest_tick as bt
+
+    trades = pd.DataFrame({
+        "transact_time": [1_000, 1_100], "price": [100.0, 100.0],
+        "quantity": [0.0, 0.0], "is_buyer_maker": [False, False],
+    })
+    result = bt._simulate_tick_with_engine(
+        backend, trades, np.empty(0, dtype=np.int64), np.empty(0),
+        {"replay_event_clock": "merged", "replay_clock_interval_ms": 1_000,
+         "replay_event_clock_end_ts_ms": 2_999, "trace_quotes_max": 100,
+         "gamma": 0.01, "kappa": 1.0, "order_size": 0.001, "max_inventory": 0.01,
+         "maker_fee": 0.0, "taker_fee": 0.0, "tick_size": 0.1, "lot_size": 0.001,
+         "requote_interval": 100.0, "rq_min": 100.0, "rq_max": 100.0,
+         "max_exec_book_age_s": 0.0, "use_bar_pricing": True},
+    )
+    assert result["_quote_trace"]
+    assert all(row["outcome_ts"] == 2_999 for row in result["_quote_trace"])
+    assert result["fills_bid"] + result["fills_ask"] == 0

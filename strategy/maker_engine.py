@@ -138,7 +138,11 @@ from strategy.state_conditioned_quote_policy import (
     apply_local_add_action,
     inventory_role_for_quote,
 )
-from strategy.replay_controls import ConsecutiveLossCooldown
+from strategy.replay_controls import (
+    ConsecutiveLossCooldown,
+    cap_exposure_qty_by_position_value,
+    hard_risk_reason,
+)
 from market_fusion import default_reference_symbol, normalize_symbol
 from models.replay.prospective_baseline_epoch import (
     CPP_FEATURE_RECONSTRUCTION_CONTRACT,
@@ -5187,20 +5191,10 @@ class MakerEngine:
         fixed notional limit first; it is not equity/volatility-aware sizing.
         """
 
-        if (
-            requested_qty <= 0.0
-            or mid <= 0.0
-            or max_position_value <= 0.0
-            or lot <= 0.0
-        ):
-            return 0.0
-        max_abs_qty = max_position_value / mid
-        if side == Side.BUY:
-            room = max_abs_qty - current_qty
-        else:
-            room = max_abs_qty + current_qty
-        room = max(0.0, math.floor(max(0.0, room) / lot + 1e-12) * lot)
-        return min(requested_qty, room)
+        return cap_exposure_qty_by_position_value(
+            side=side.value, current_qty=current_qty, mid=mid,
+            requested_qty=requested_qty, max_position_value=max_position_value, lot=lot,
+        )
 
     def _fmt_price(self, price: float) -> str:
         return f"{price:.{self._price_precision}f}"
@@ -9242,21 +9236,27 @@ class MakerEngine:
 
         # Daily loss limit
         daily_pnl = self.inventory.daily_pnl
-        if daily_pnl < -cfg.max_daily_loss:
+        pos_value = abs(self.inventory.net_position) * mid
+        dd = self.inventory.drawdown
+        reason = hard_risk_reason(
+            daily_pnl=daily_pnl, position_value=pos_value, drawdown=dd,
+            max_daily_loss=cfg.max_daily_loss,
+            max_position_value=cfg.max_position_value,
+            emergency_close_dd=cfg.emergency_close_dd,
+        )
+        if reason == "daily_loss":
             logger.warning(f"RISK: Daily loss limit hit: {daily_pnl:.2f}")
             self._cancel_all_orders()
             return False
 
         # Position value limit
-        pos_value = abs(self.inventory.net_position) * mid
-        if pos_value > cfg.max_position_value:
+        if reason == "position_value":
             logger.warning(f"RISK: Position value limit: {pos_value:.0f}")
             self._cancel_all_orders()
             return False
 
         # Drawdown emergency
-        dd = self.inventory.drawdown
-        if dd > cfg.emergency_close_dd:
+        if reason == "emergency_drawdown":
             logger.critical(f"RISK: Emergency drawdown: {dd:.2f}")
             self._emergency_close(mid)
             return False

@@ -83,6 +83,7 @@ def _run(
     *,
     crossing_fill_ts_ms: int | None = None,
     crossing_side: str = "BUY",
+    keep_until_stop: bool = False,
     param_overrides: dict[str, object] | None = None,
 ):
     trades, bbo = _inputs(
@@ -90,6 +91,9 @@ def _run(
         crossing_side=crossing_side,
     )
     params = _params()
+    if keep_until_stop:
+        # These cases test stop/ACK/fill clocks, not replacement ownership.
+        params["requote_threshold_bps"] = 1.0
     if param_overrides:
         params.update(param_overrides)
     return simulate_tick(
@@ -152,8 +156,132 @@ def _write_serial_gateway_profile(
     )
 
 
+@pytest.fixture(params=["python", "cpp"])
+def control_backend(request):
+    if request.param == "cpp":
+        pytest.importorskip("narrowgate_cpp")
+        from models.backtest_tick import _simulate_tick_cpp
+
+        return _simulate_tick_cpp
+    return simulate_tick
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_position_timeout_enters_limit_close_without_inventing_fill(
+    control_backend, initial_sign,
+) -> None:
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(cancel_latency_ms=0), "planned_quote_stop_ts_ms": 0,
+         "position_timeout": 0.5, "initial_inventory": initial_sign * 0.001,
+         "initial_entry_price": 100.0, "circuit_breaker_sigma": 0.0,
+         "use_bar_pricing": False, "replay_event_clock_end_ts_ms": 3_000},
+        bbo_data=bbo,
+    )
+    assert result["n_timeouts"] == 1
+    assert result["final_inventory"] == pytest.approx(initial_sign * 0.001)
+    assert result["fills_bid"] == result["fills_ask"] == 0
+    assert result["circuit_breaker_closing"]
+    assert result["circuit_breaker_close_place_count"] == 1
+    closing = [row for row in result["_quote_trace"] if row["submit_ts"] >= 2_000]
+    assert len(closing) == 1
+    # Legacy native trace does not expose these order flags; its closing
+    # counter and actual side/price/time still verify the same transition.
+    if control_backend is simulate_tick:
+        assert all(row["reduce_only"] and row["circuit_breaker_close"] for row in closing)
+    assert {row["side"] for row in closing} == {"SELL" if initial_sign > 0 else "BUY"}
+    assert {row["price"] for row in closing} == {100.0}
+    assert min(row["submit_ts"] for row in closing) >= 2_000
+
+
+@pytest.mark.parametrize("cancel_ack_ms", [0, 1_500])
+def test_ordinary_replacement_waits_for_local_cancel_ack(control_backend, cancel_ack_ms) -> None:
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(cancel_latency_ms=0), "planned_quote_stop_ts_ms": 0,
+         "replace_pending_coalesce": False, "trace_decisions_max": 100,
+         "_cancel_exchange_effective_latency_samples_ms": [0.0],
+         "_cancel_ack_visibility_latency_samples_ms": [float(cancel_ack_ms)]},
+        bbo_data=bbo,
+    )
+    for side in ("BUY", "SELL"):
+        orders = sorted(
+            [row for row in result["_quote_trace"] if row["side"] == side],
+            key=lambda row: row["submit_ts"],
+        )
+        assert len(orders) >= 2
+        assert orders[1]["submit_ts"] == (1_000 if cancel_ack_ms == 0 else 3_000)
+        for previous, following in zip(orders[:-1], orders[1:], strict=True):
+            assert following["submit_ts"] >= previous["outcome_ts"]
+    if cancel_ack_ms:
+        assert result["decision_pending_coalesce_count"] > 0
+
+
+def test_ordinary_replacement_cannot_erase_pending_new_with_zero_cancel_delay(control_backend):
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(cancel_latency_ms=0), "planned_quote_stop_ts_ms": 0,
+         "replace_pending_coalesce": False,
+         "_new_order_exchange_effective_latency_samples_ms": [100.0],
+         "_new_order_latency_samples_ms": [2_500.0]},
+        bbo_data=bbo,
+    )
+    for side in ("BUY", "SELL"):
+        orders = sorted(
+            [row for row in result["_quote_trace"] if row["side"] == side],
+            key=lambda row: row["submit_ts"],
+        )
+        assert [row["submit_ts"] for row in orders] == [0, 3_000]
+        assert orders[0]["outcome_ts"] == 3_000
+
+
+def test_stale_active_quotes_cancel_before_next_requote(control_backend) -> None:
+    trades, _ = _inputs()
+    bbo = HistoricalBBOData(
+        ts_ms=np.asarray([0]), best_bid=np.asarray([99.9]), best_ask=np.asarray([100.1]),
+        bid_qty=np.asarray([1.0]), ask_qty=np.asarray([1.0]),
+    )
+    result = control_backend(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), "planned_quote_stop_ts_ms": 0,
+         "requote_interval": 5.0, "rq_min": 5.0, "rq_max": 5.0,
+         "use_bar_pricing": False, "max_exec_book_age_s": 0.2},
+        bbo_data=bbo,
+    )
+    canceled = [row for row in result["_quote_trace"] if row["cancel_reason"] == "stale_book"]
+    assert len(canceled) == 2
+    assert {row["outcome_ts"] for row in canceled} == {800}
+    assert result["n_requotes"] == 1
+
+
+def test_main_loop_stale_stop_runs_while_requote_is_not_due() -> None:
+    trades, _ = _inputs()
+    bbo = HistoricalBBOData(
+        ts_ms=np.asarray([0]), best_bid=np.asarray([99.9]), best_ask=np.asarray([100.1]),
+        bid_qty=np.asarray([1.0]), ask_qty=np.asarray([1.0]),
+    )
+    result = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), "planned_quote_stop_ts_ms": 0, "use_bar_pricing": False,
+         "requote_interval": 5.0, "rq_min": 5.0, "rq_max": 5.0,
+         "max_exec_book_age_s": 0.2, "replay_purpose": "diagnostic",
+         "rest_gateway_timing_mode": "sampled_serial", "replay_main_loop_sleep_ms": 100,
+         "_serial_rest_return_samples_by_operation": {
+             "new": [[0.0, 0.0, 0.0]], "cancel": [[50.0, 200.0, 100.0]],
+         }, "_serial_rest_return_sample_semantics": "synthetic_split_clocks"},
+        bbo_data=bbo,
+    )
+    canceled = [row for row in result["_quote_trace"] if row["cancel_reason"] == "stale_book"]
+    assert {row["cancel_request_ts"] for row in canceled} == {300, 400}
+    assert {row["cancel_ack_ts"] for row in canceled} == {500, 600}
+    assert result["n_requotes"] == 1
+
+
 def test_python_planned_maintenance_cancels_and_stops_new_quotes() -> None:
-    result = _run()
+    result = _run(keep_until_stop=True)
 
     assert result["planned_quote_stop_triggered"] is True
     assert result["planned_quote_stop_trigger_ts_ms"] == 2_000
@@ -346,7 +474,7 @@ def _ioc_inventory_path(
     *, initial_sign: int, maker_closes_before_ioc: bool = False, new_service_ms: float = 0.0,
 ):
     timestamps = np.asarray([0, 10_000, 70_000, 85_000, 100_000, 120_000, 140_000])
-    prices = np.asarray([100.0, 110.0, 110.0, 100.0, 90.0, 120.0, 90.0])
+    prices = np.asarray([100.0, 110.0, 110.0, 90.0, 90.0, 120.0, 90.0])
     quantities = np.asarray([0.0, 0.0, 0.0, 10.0, 0.0, 10.0, 0.0])
     maker_flags = np.asarray([0, 0, 0, 1, 0, 0, 0])
     if maker_closes_before_ioc:
@@ -367,7 +495,7 @@ def _ioc_inventory_path(
     })
     depth = HistoricalL2Data(
         ts_ms=l2_ts, bid_px=(mid - 0.1)[:, None], ask_px=(mid + 0.1)[:, None],
-        bid_qty=np.zeros((l2_ts.size, 1)), ask_qty=np.zeros((l2_ts.size, 1)),
+        bid_qty=np.full((l2_ts.size, 1), 0.001), ask_qty=np.full((l2_ts.size, 1), 0.001),
     )
     return simulate_tick(
         trades, np.asarray([0]), np.asarray([1.0]),
@@ -400,6 +528,8 @@ def test_ioc_physical_inventory_update_allows_later_reduce_only_maker_fill(initi
     assert fills[-1]["reduce_only"] is True
     assert fills[-1]["fill_ts"] == 120_000
     assert fills[0]["exchange_remaining"] == 0.0
+    assert fills[0]["exchange_accepted"] is True
+    assert fills[0]["local_new_ack_published"] is True
     assert fills[0]["last_exchange_fill_ts_ms"] == fills[0]["fill_ts"]
     assert fills[0]["last_private_fill_visible_ts_ms"] == fills[0]["fill_ts"]
     assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
@@ -415,6 +545,12 @@ def test_ioc_reduce_only_uses_exchange_inventory_while_maker_callback_pending(in
     # until 85s. The stale local position must not permit another IOC close.
     assert result["circuit_breaker_close_ioc_fill_count"] == 0
     assert result["circuit_breaker_close_ioc_expire_count"] > 0
+    expired_ioc = [
+        row for row in result["_quote_trace"]
+        if row["cancel_reason"] == "ioc_no_top_liquidity"
+    ]
+    assert expired_ioc
+    assert all(row["exchange_accepted"] is True for row in expired_ioc)
     assert len(result["_fill_trace"]) == 1
     assert result["_fill_trace"][0]["fill_fee_rate"] == 0.0
     assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
@@ -433,8 +569,7 @@ def test_ioc_trace_uses_actual_execution_boundary_not_previous_trade_timestamp()
 
 
 @pytest.mark.parametrize("initial_sign", [-1, 1])
-@pytest.mark.parametrize("close_mode", ["timeout", "immediate_taker"])
-def test_synchronous_taker_close_keeps_physical_ledger_consistent(initial_sign, close_mode) -> None:
+def test_synchronous_taker_close_keeps_physical_ledger_consistent(initial_sign) -> None:
     overrides = {
         "initial_inventory": initial_sign * 0.001,
         "initial_entry_price": 110.0 if initial_sign > 0 else 90.0,
@@ -444,11 +579,8 @@ def test_synchronous_taker_close_keeps_physical_ledger_consistent(initial_sign, 
             "new": [[0.0, 0.0, 0.0]], "cancel": [[0.0, 0.0, 0.0]],
         }, "_serial_rest_return_sample_semantics": "synthetic_zero_service",
     }
-    if close_mode == "timeout":
-        overrides["position_timeout"] = 0.5
-    else:
-        overrides.update(circuit_breaker_exit_mode="immediate_taker", circuit_breaker_sigma=1.0,
-                         pnl_volatility_horizon_s=1.0)
+    overrides.update(circuit_breaker_exit_mode="immediate_taker", circuit_breaker_sigma=1.0,
+                     pnl_volatility_horizon_s=1.0)
     result = _run(param_overrides=overrides)
     assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
     assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
@@ -900,20 +1032,23 @@ def test_serial_rest_gateway_uses_one_row_in_live_slot_order(tmp_path) -> None:
 
     assert result["rest_gateway_timing_authority"] == "diagnostic_only"
     assert result["rest_gateway_timing_profile_row_count"] == 3
-    assert result["rest_gateway_timing_sampled_row_count"] == 3
-    final_orders = {
+    assert result["rest_gateway_timing_sampled_row_count"] == 2
+    initial_orders = {
         row["side"]: row
         for row in result["_quote_trace"]
-        if row["submit_ts"] == 1_000
+        if row["submit_ts"] == 0
     }
-    assert final_orders["BUY"]["gateway_request_ts"] == 1_020
-    assert final_orders["SELL"]["gateway_request_ts"] == 1_030
-    assert final_orders["BUY"]["activate_ts"] == 1_022
-    assert final_orders["SELL"]["activate_ts"] == 1_032
-    assert final_orders["BUY"]["cancel_request_ts"] == 2_000
-    assert final_orders["SELL"]["cancel_request_ts"] == 2_010
-    assert final_orders["BUY"]["outcome_ts"] == 2_005
-    assert final_orders["SELL"]["outcome_ts"] == 2_015
+    assert initial_orders["BUY"]["gateway_request_ts"] == 0
+    assert initial_orders["SELL"]["gateway_request_ts"] == 10
+    assert initial_orders["BUY"]["activate_ts"] == 2
+    assert initial_orders["SELL"]["activate_ts"] == 12
+    assert initial_orders["BUY"]["cancel_request_ts"] == 1_000
+    assert initial_orders["SELL"]["cancel_request_ts"] == 1_010
+    assert initial_orders["BUY"]["outcome_ts"] == 1_005
+    assert initial_orders["SELL"]["outcome_ts"] == 1_015
+    # A row's future NEW slots are not authority to pre-create replacements
+    # before the preceding cancels become locally terminal.
+    assert len(result["_quote_trace"]) == 2
 
 
 def test_serial_gateway_offsets_start_after_one_shared_decision_delay(
@@ -939,17 +1074,18 @@ def test_serial_gateway_offsets_start_after_one_shared_decision_delay(
         }
     )
 
-    final_orders = {
+    initial_orders = {
         row["side"]: row
         for row in result["_quote_trace"]
-        if row["submit_ts"] == 1_000
+        if row["submit_ts"] == 0
     }
-    assert final_orders["BUY"]["gateway_request_ts"] == 1_060
-    assert final_orders["SELL"]["gateway_request_ts"] == 1_070
-    assert final_orders["BUY"]["activate_ts"] == 1_062
-    assert final_orders["SELL"]["activate_ts"] == 1_072
-    assert final_orders["BUY"]["cancel_request_ts"] == 2_000
-    assert final_orders["SELL"]["cancel_request_ts"] == 2_010
+    assert initial_orders["BUY"]["gateway_request_ts"] == 40
+    assert initial_orders["SELL"]["gateway_request_ts"] == 50
+    assert initial_orders["BUY"]["activate_ts"] == 42
+    assert initial_orders["SELL"]["activate_ts"] == 52
+    assert initial_orders["BUY"]["cancel_request_ts"] == 1_040
+    assert initial_orders["SELL"]["cancel_request_ts"] == 1_050
+    assert len(result["_quote_trace"]) == 2
 
 
 def test_serial_rest_gateway_rejects_unobserved_request_mask(tmp_path) -> None:
@@ -995,16 +1131,12 @@ def test_sampled_serial_rest_preserves_request_pairs_and_live_slot_order() -> No
     assert initial["BUY"]["outcome_ts"] == 1_090
     assert initial["SELL"]["cancel_request_ts"] == 1_090
     assert initial["SELL"]["outcome_ts"] == 1_150
-    assert final["BUY"]["gateway_request_ts"] == 1_150
-    assert final["SELL"]["gateway_request_ts"] == 1_250
+    assert final == {}
     for row in result["_quote_trace"]:
         assert row["activate_ts"] - row["gateway_request_ts"] == 40
         assert row["new_ack_ts"] - row["gateway_request_ts"] == 100
-    # Maintenance does not repeat the normal requote's compute delay.
-    assert final["BUY"]["cancel_request_ts"] == 2_000
-    assert final["SELL"]["cancel_request_ts"] == 2_060
-    assert result["rest_gateway_request_count"] == 8
-    assert result["rest_gateway_busy_ms"] == 640
+    assert result["rest_gateway_request_count"] == 4
+    assert result["rest_gateway_busy_ms"] == 320
     assert result["rest_gateway_timing_authority"] == "diagnostic_only"
     assert result["rest_gateway_sampling_assumption"] == (
         "independent_request_service_times_with_paired_effective_ack"
@@ -1357,7 +1489,7 @@ def test_serial_http_continuation_merges_native_book_boundaries(
 
 
 def test_python_planned_maintenance_preserves_fill_risk_until_cancel_ack() -> None:
-    result = _run(crossing_fill_ts_ms=2_200)
+    result = _run(crossing_fill_ts_ms=2_200, keep_until_stop=True)
 
     assert result["planned_quote_stop_triggered"] is True
     assert result["fills_bid"] == 1
@@ -1369,7 +1501,7 @@ def test_python_planned_maintenance_preserves_fill_risk_until_cancel_ack() -> No
 
 
 def test_passive_fill_publisher_preserves_sell_accounting_and_trace() -> None:
-    result = _run(crossing_fill_ts_ms=2_200, crossing_side="SELL")
+    result = _run(crossing_fill_ts_ms=2_200, crossing_side="SELL", keep_until_stop=True)
 
     assert result["fills_ask"] == 1
     assert result["sell_fill_qty"] == pytest.approx(0.001)
@@ -1379,9 +1511,10 @@ def test_passive_fill_publisher_preserves_sell_accounting_and_trace() -> None:
 
 
 def test_zero_private_fill_visibility_preserves_b0_outputs() -> None:
-    baseline = _run(crossing_fill_ts_ms=2_200)
+    baseline = _run(crossing_fill_ts_ms=2_200, keep_until_stop=True)
     zero_delay = _run(
         crossing_fill_ts_ms=2_200,
+        keep_until_stop=True,
         param_overrides={"_private_fill_visibility_latency_samples_ms": [0.0]},
     )
 
@@ -1404,6 +1537,7 @@ def test_zero_private_fill_visibility_preserves_b0_outputs() -> None:
 def test_private_fill_visibility_delays_local_state_not_exchange_fill_time() -> None:
     result = _run(
         crossing_fill_ts_ms=2_200,
+        keep_until_stop=True,
         param_overrides={"_private_fill_visibility_latency_samples_ms": [300.0]},
     )
 
@@ -1424,6 +1558,7 @@ def test_private_fill_visibility_delays_local_state_not_exchange_fill_time() -> 
 def test_private_fill_can_publish_after_cancel_ack_removed_local_order() -> None:
     result = _run(
         crossing_fill_ts_ms=2_200,
+        keep_until_stop=True,
         param_overrides={"_private_fill_visibility_latency_samples_ms": [500.0]},
     )
 
@@ -1464,6 +1599,7 @@ def test_exchange_reservation_prevents_refill_before_private_visibility() -> Non
         {
             **_params(),
             "_private_fill_visibility_latency_samples_ms": [500.0],
+            "requote_threshold_bps": 1.0,
         },
         bbo_data=bbo,
     )
@@ -1475,6 +1611,7 @@ def test_exchange_reservation_prevents_refill_before_private_visibility() -> Non
 def test_python_split_cancel_stops_matching_before_local_ack() -> None:
     result = _run(
         crossing_fill_ts_ms=2_200,
+        keep_until_stop=True,
         param_overrides={
             "_new_order_latency_samples_ms": [900.0],
             "_new_order_exchange_effective_latency_samples_ms": [300.0],
@@ -1624,9 +1761,11 @@ def test_split_new_pre_ack_fill_fails_closed_until_private_visibility_exists() -
 
 def test_split_new_ack_and_cancel_effective_tie_is_deterministic() -> None:
     result = _run(
+        keep_until_stop=True,
         param_overrides={
             "_new_order_exchange_effective_latency_samples_ms": [300.0],
-            "_new_order_latency_samples_ms": [1_100.0],
+            "_new_order_latency_samples_ms": [2_100.0],
+            "replace_pending_coalesce": True,
             "_cancel_exchange_effective_latency_samples_ms": [100.0],
             "_cancel_ack_visibility_latency_samples_ms": [450.0],
         }
@@ -1637,16 +1776,18 @@ def test_split_new_ack_and_cancel_effective_tie_is_deterministic() -> None:
         if row.get("cancel_reason") == "planned_maintenance"
     ]
     assert planned
-    tied = [row for row in planned if row["submit_ts"] == 1_000]
+    tied = [row for row in planned if row["submit_ts"] == 0]
     assert tied and all(row["local_new_ack_published"] for row in tied)
     assert {row["outcome_ts"] for row in planned} == {2_450}
 
 
 def test_split_new_ack_precedes_same_ms_cancel_ack() -> None:
     result = _run(
+        keep_until_stop=True,
         param_overrides={
             "_new_order_exchange_effective_latency_samples_ms": [300.0],
-            "_new_order_latency_samples_ms": [1_450.0],
+            "_new_order_latency_samples_ms": [2_450.0],
+            "replace_pending_coalesce": True,
             "_cancel_exchange_effective_latency_samples_ms": [100.0],
             "_cancel_ack_visibility_latency_samples_ms": [450.0],
         }
@@ -1655,7 +1796,7 @@ def test_split_new_ack_precedes_same_ms_cancel_ack() -> None:
         row
         for row in result["_quote_trace"]
         if row.get("cancel_reason") == "planned_maintenance"
-        and row["submit_ts"] == 1_000
+        and row["submit_ts"] == 0
     ]
     assert tied
     assert all(row["new_ack_ts"] == row["outcome_ts"] == 2_450 for row in tied)

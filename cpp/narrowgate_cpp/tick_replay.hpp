@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <memory_resource>
 #include <optional>
@@ -295,6 +296,9 @@ enum class CancelReason : std::uint8_t {
     SyncAdjustDegrade = 16,
     PlannedMaintenance = 17,
     CooldownDurationWashout = 18,
+    DailyLoss = 19,
+    PositionValue = 20,
+    EmergencyDrawdown = 21,
 };
 
 [[nodiscard]] std::int64_t sample_keyed_latency_ms(
@@ -347,6 +351,9 @@ enum class CancelReason : std::uint8_t {
         case CancelReason::EmergencyTakerClose: return "emergency_taker_close";
         case CancelReason::RequoteReplace: return "requote_replace";
         case CancelReason::FillCooldown: return "fill_cooldown";
+        case CancelReason::DailyLoss: return "daily_loss";
+        case CancelReason::PositionValue: return "position_value";
+        case CancelReason::EmergencyDrawdown: return "emergency_drawdown";
         case CancelReason::CircuitBreaker: return "circuit_breaker";
         case CancelReason::SideDisabled: return "side_disabled";
         case CancelReason::CircuitBreakerCloseRequote:
@@ -555,6 +562,15 @@ struct TickReplayParams {
     bool use_bar_pricing = true;
     int ret_demean_halflife = 0;
     double initial_inventory = 0.0;
+    double max_daily_loss = std::numeric_limits<double>::infinity();
+    double max_position_value = std::numeric_limits<double>::infinity();
+    double emergency_close_dd = std::numeric_limits<double>::infinity();
+    bool initial_risk_state_enabled = false;
+    std::int64_t initial_risk_utc_day = 0;
+    double initial_risk_day_start_total_pnl = 0.0;
+    double initial_risk_session_peak_pnl = 0.0;
+    double initial_risk_last_total_pnl = 0.0;
+    double initial_risk_total_pnl_offset = 0.0;
     double initial_entry_price = 0.0;
     // Stop submitting quotes at the first replay event on or after this
     // timestamp, cancel every live order with the frozen latency sampler, and
@@ -1011,6 +1027,7 @@ struct ReplayOrder {
     bool reduce_only = false;
     bool circuit_breaker_close = false;
     bool immediate_or_cancel = false;
+    bool emergency_market = false;
     bool exchange_accepted = false;
     bool activation_rejected = false;
     bool fixed_spread_probe = false;
@@ -1158,6 +1175,16 @@ struct TickReplaySummary {
     std::int64_t flat_unilateral_ask_release_count = 0;
     std::int64_t position_timeout_count = 0;
     std::int64_t circuit_breaker_count = 0;
+    std::int64_t risk_daily_loss_block_count = 0;
+    std::int64_t risk_position_value_block_count = 0;
+    std::int64_t risk_emergency_close_count = 0;
+    std::int64_t risk_notional_cap_count = 0;
+    bool risk_emergency_latched = false;
+    std::int64_t risk_utc_day = 0;
+    double risk_day_start_total_pnl = 0.0;
+    double risk_session_peak_pnl = 0.0;
+    double risk_last_total_pnl = 0.0;
+    double risk_total_pnl_offset = 0.0;
     std::int64_t circuit_breaker_close_place_count = 0;
     std::int64_t circuit_breaker_close_keep_count = 0;
     std::int64_t circuit_breaker_close_fill_count = 0;

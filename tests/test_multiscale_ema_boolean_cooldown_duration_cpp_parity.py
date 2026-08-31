@@ -87,11 +87,21 @@ def _market_path(
 
 
 def _same_event_partial_fill_path():
-    return _market_path(
-        [100.0, 101.0, 102.0, 103.0, 90.0, 90.0, 90.0, 90.0],
-        [0.0, 0.0, 0.0, 0.0, 0.01, 0.0, 0.0, 0.0],
-        [0, 0, 0, 0, 1, 0, 0, 0],
-    )
+    # First fill one order unit; after its cooldown, fill a second order in
+    # four same-timestamp pieces. Never rely on overlapping same-side orders
+    # while replacement cancellation is still awaiting local acknowledgement.
+    prices = [100.0] * 94
+    quantities = [0.0] * 94
+    buyer_maker = [0] * 94
+    prices[1], quantities[1], buyer_maker[1] = 90.0, 0.004, 1
+    prices[90:] = [90.0] * 4
+    quantities[90], buyer_maker[90] = 0.001, 1
+    trades, bbo = _market_path(prices, quantities, buyer_maker)
+    indices = np.arange(len(trades))
+    trades = trades.iloc[
+        np.repeat(indices, np.where(indices == 90, 4, 1))
+    ].reset_index(drop=True)
+    return trades, bbo
 
 
 def _right_censored_path():
@@ -246,8 +256,10 @@ def _assert_standard_fill_trace_parity(py: dict, cpp: dict) -> None:
             assert cpp_row[field] == pytest.approx(py_row[field], abs=1e-12), field
 
 
-def _assert_cpp_fork_path_matches_python_fills(py: dict, cpp: dict) -> None:
-    py_rows = py["_fill_trace"]
+def _assert_cpp_fork_path_matches_python_fills(
+    py: dict, cpp: dict, *, first_fill_index: int = 0
+) -> None:
+    py_rows = py["_fill_trace"][first_fill_index:]
     cpp_rows = cpp["_cooldown_duration_fill_path"]
     assert len(cpp_rows) == len(py_rows)
     for path_ordinal, (py_row, cpp_row) in enumerate(
@@ -308,21 +320,31 @@ def test_cpp_opportunity_census_is_path_noop_when_fork_is_disabled():
 def test_python_cpp_same_event_partial_fill_opportunity_parity():
     trades, bbo = _same_event_partial_fill_path()
     params = _base_params(fill_cooldown_s=85.0, cancel_latency_ms=10_000)
+    params.update(order_size=0.004, requote_threshold_bps=1.0)
 
     py = _run("python", trades, bbo, params)
     cpp = _run("cpp", trades, bbo, params)
     py_rows = py["_cooldown_duration_opportunity_trace"]
     cpp_rows = cpp["_cooldown_duration_opportunity_trace"]
 
-    assert len(py_rows) == len(cpp_rows) == 4
-    assert [row["exposure_fill_ordinal"] for row in cpp_rows] == [1, 2, 3, 4]
-    assert len({row["fill_visible_ts_ms"] for row in cpp_rows}) == 1
-    assert [row["order_id"] for row in cpp_rows] == [6, 4, 2, 0]
+    assert len(py_rows) == len(cpp_rows) == 5
+    partial_rows = cpp_rows[1:]
+    assert len(partial_rows) == 4
+    assert [row["exposure_fill_ordinal"] for row in partial_rows] == [2, 3, 4, 5]
+    assert len({row["fill_visible_ts_ms"] for row in partial_rows}) == 1
+    assert len({row["order_id"] for row in partial_rows}) == 1
+    assert partial_rows[0]["order_id"] != cpp_rows[0]["order_id"]
+    assert [row["fill_qty_btc"] for row in partial_rows] == [0.001] * 4
+    assert [row["unit_qty_btc"] for row in partial_rows] == [0.004] * 4
+    assert [row["consecutive_units_after"] for row in partial_rows] == [
+        1.25, 1.5, 1.75, 2.0
+    ]
     assert [row["baseline_duration_ms"] for row in cpp_rows] == [
         85_000.0,
+        106_250.0,
+        127_500.0,
+        148_750.0,
         170_000.0,
-        255_000.0,
-        340_000.0,
     ]
     for py_row, cpp_row in zip(py_rows, cpp_rows, strict=True):
         _assert_opportunity_parity(py_row, cpp_row)
@@ -331,6 +353,7 @@ def test_python_cpp_same_event_partial_fill_opportunity_parity():
 def test_python_cpp_opportunities_preserve_adaptive_multiplier():
     trades, bbo = _same_event_partial_fill_path()
     params = _base_params(fill_cooldown_s=85.0, cancel_latency_ms=10_000)
+    params.update(order_size=0.004, requote_threshold_bps=1.0)
     params.update(
         {
             "adaptive_add_cooldown_enabled": True,
@@ -355,42 +378,55 @@ def test_python_cpp_opportunities_preserve_adaptive_multiplier():
 
     assert [row["baseline_duration_ms"] for row in cpp_rows] == [
         85_000.0,
+        132_812.5,
+        191_250.0,
+        260_312.5,
         340_000.0,
-        510_000.0,
-        680_000.0,
     ]
     for py_row, cpp_row in zip(py_rows, cpp_rows, strict=True):
         _assert_opportunity_parity(py_row, cpp_row)
 
 
-def test_fixed_duration_targets_one_fill_then_same_event_fills_restore_baseline():
+@pytest.mark.parametrize("fixed_ms", [500.0, 500.5, 501.5])
+def test_fixed_duration_targets_one_fill_then_same_event_fills_restore_baseline(
+    fixed_ms: float,
+):
     trades, bbo = _same_event_partial_fill_path()
     params = _base_params(fill_cooldown_s=85.0, cancel_latency_ms=10_000)
+    params.update(order_size=0.004, requote_threshold_bps=1.0)
     census = _run("python", trades, bbo, params)
-    target = census["_cooldown_duration_opportunity_trace"][0]
+    target = census["_cooldown_duration_opportunity_trace"][1]
     fork_params = _fork_params(
         params,
         target,
         action="FIXED_DURATION_MS",
-        fixed_ms=500.0,
+        fixed_ms=fixed_ms,
     )
 
     py = _run("python", trades, bbo, fork_params)
     cpp = _run("cpp", trades, bbo, fork_params)
     _assert_standard_fill_trace_parity(py, cpp)
-    _assert_cpp_fork_path_matches_python_fills(py, cpp)
+    # The initial whole-order fill predates assignment, so only the four
+    # same-timestamp partial fills belong to this fork's outcome path.
+    assert len(py["_fill_trace"]) == len(cpp["_fill_trace"]) == 5
+    _assert_cpp_fork_path_matches_python_fills(py, cpp, first_fill_index=1)
 
     cpp_path = cpp["_cooldown_duration_fill_path"]
     assert [row["target_fill"] for row in cpp_path] == [True, False, False, False]
     assert [row["applied_duration_ms"] for row in cpp_path] == [
-        500.0,
+        fixed_ms,
+        127_500.0,
+        148_750.0,
         170_000.0,
-        255_000.0,
-        340_000.0,
     ]
     assert cpp_path[-1]["applied_deadline_ts_ms"] == (
-        cpp_path[-1]["fill_visible_ts_ms"] + 340_000
+        cpp_path[-1]["fill_visible_ts_ms"] + 170_000
     )
+    expected_target_deadline = round(float(target["fill_visible_ts_ms"]) + fixed_ms)
+    assert cpp_path[0]["applied_deadline_ts_ms"] == expected_target_deadline
+    assert cpp["_cooldown_duration_fork_trace"]["applied_deadline_ts_ms"] == (
+        py["_cooldown_duration_fork_trace"]["applied_deadline_ts_ms"]
+    ) == expected_target_deadline
     _assert_numeric_fields_equal(
         cpp,
         py,
@@ -603,6 +639,9 @@ def test_pending_cancel_ack_does_not_backdate_visible_washout_terminal():
             "requote_interval": 5.0,
             "rq_min": 5.0,
             "rq_max": 5.0,
+            # Keep the unchanged initial BUY until its reducing fill at 6s;
+            # an unrelated 5s replacement must not erase that test event.
+            "requote_threshold_bps": 1.0,
         }
     )
     census = _run("python", trades, bbo, params)
@@ -620,6 +659,8 @@ def test_pending_cancel_ack_does_not_backdate_visible_washout_terminal():
     cpp_fork = cpp["_cooldown_duration_fork_trace"]
     expected_visible_terminal_ts_ms = _BASE_TS_MS + 11_000
 
+    assert cpp["_quote_trace"][-1]["cancel_reason"] == "side_disabled"
+    assert cpp["_quote_trace"][-1]["outcome_ts"] == expected_visible_terminal_ts_ms
     assert cpp_fork["quarantine_ts_ms"] == _BASE_TS_MS + 6_000
     assert cpp_fork["terminal_ts_ms"] == expected_visible_terminal_ts_ms
     assert py_fork["terminal_ts_ms"] == expected_visible_terminal_ts_ms

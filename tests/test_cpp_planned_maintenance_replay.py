@@ -25,6 +25,9 @@ def _params(*, cancel_latency_ms: int = 500):
     params.max_inventory = 0.01
     params.requote_interval_s = 1.0
     params.requote_clock_fixed = True
+    # Keep this stable quote until maintenance; replacement/ACK ownership is
+    # tested separately and must not empty the book before the stop boundary.
+    params.requote_threshold_bps = 1.0
     params.cancel_order_latency_ms = cancel_latency_ms
     params.maker_fill_prob = 1.0
     params.trace_quotes_max = 100

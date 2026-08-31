@@ -1107,6 +1107,9 @@ def build_backtest_base_params(
         "kappa": live_params["kappa"],
         "order_size": live_params["order_size"],
         "max_inventory": live_params["max_inventory"],
+        "max_daily_loss": live_params.get("max_daily_loss"),
+        "max_position_value": live_params.get("max_position_value"),
+        "emergency_close_dd": live_params.get("emergency_close_dd"),
         "requote_interval": live_params.get("requote_interval", 10.0),
         "quote_horizon_s": live_params.get("quote_horizon_s", 1.0),
         "historical_p3_scalar_adapter_enabled": bool(

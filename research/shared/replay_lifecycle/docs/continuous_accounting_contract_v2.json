@@ -9,9 +9,9 @@
   "fee_accounting_semantics": "signed_fee_positive_cost_negative_rebate_v2",
   "implementation": {
     "path": "models/replay/continuous_accounting.py",
-    "sha256": "560faa3c6172e05725056c0b3381d75c4b8eea4c19810244ada4ffbd0dbcd64d"
+    "source_identity": "enclosing_execution_git_commit_or_tree"
   },
-  "last_materially_modified": "2026-08-25",
+  "last_materially_modified": "2026-08-31",
   "predecessor": {
     "contract_id": "continuous_accounting_contract.v1",
     "status": "immutable_superseded_semantics"

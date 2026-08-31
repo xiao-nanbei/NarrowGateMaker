@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <iomanip>
 #include <limits>
 #include <memory_resource>
@@ -3398,6 +3399,8 @@ void request_cancel_all(
         params.cancel_exchange_effective_latency_samples_ms.empty() &&
         params.cancel_ack_visibility_latency_samples_ms.empty() &&
         !(apply_decision_compute && decision_to_gateway_latency_enabled(params)) &&
+        !(apply_decision_compute && std::any_of(orders.begin(), orders.end(),
+            [](const auto& order) { return order.state == OrderState::PendingNew; })) &&
         cancel_latency_ms <= 0 && latency_jitter_ms <= 0) {
         if (result != nullptr && trace_quotes_max > 0) {
             for (const auto& order : orders) {
@@ -3411,6 +3414,9 @@ void request_cancel_all(
         return;
     }
     for (auto& order : orders) {
+        if (apply_decision_compute && order.state == OrderState::PendingNew) {
+            continue;  // No replacement cancel before the local submit ACK.
+        }
         const auto deadlines = sample_cancel_deadlines(
             ts,
             cancel_latency_ms,
@@ -3885,6 +3891,7 @@ void process_side_fill(
     double& inventory,
     double& entry_price,
     ConsecutiveLossCooldownState& loss_cooldown,
+    const std::function<void()>& observe_fill_risk,
     double& consecutive_side_fills,
     double& consecutive_other_fills,
     std::int64_t& last_side_fill_ts,
@@ -3996,6 +4003,7 @@ void process_side_fill(
             order.price,
             order.price * fill_qty * maker_fee
         );
+        if (observe_fill_risk) observe_fill_risk();
         if (std::abs(loss_cooldown.inventory - inventory) >
             std::max(1e-10, lot_size * 1e-7)) {
             throw std::runtime_error(
@@ -4123,6 +4131,42 @@ void process_side_fill(
         [lot_size](const ReplayOrder& order) { return order.remaining < lot_size; });
 }
 
+template <Side S>
+std::pair<double, double> match_ioc_order(
+    const std::vector<std::pair<double, double>>& raw_levels,
+    std::int64_t limit_tick, double quantity, double tick_size, double lot_size,
+    bool market
+) {
+    std::vector<std::pair<double, double>> levels;
+    std::set<std::int64_t> seen;
+    double available = 0.0;
+    for (const auto& [price, raw_qty] : raw_levels) {
+        if (!std::isfinite(price) || price <= 0.0) continue;
+        const auto tick = price_to_tick(price, tick_size);
+        if (!market && (is_buy_v<S> ? tick > limit_tick : tick < limit_tick)) continue;
+        if (!seen.insert(tick).second) continue;
+        const double qty = std::isfinite(raw_qty) && raw_qty > 0.0 ? raw_qty : 0.0;
+        levels.emplace_back(price, qty);
+        available += qty;
+    }
+    const double filled = std::floor(
+        std::min(std::max(0.0, quantity), available) / lot_size + 1e-12
+    ) * lot_size;
+    if (filled < lot_size) return {0.0, 0.0};
+    std::sort(levels.begin(), levels.end(), [](const auto& a, const auto& b) {
+        return is_buy_v<S> ? a.first < b.first : a.first > b.first;
+    });
+    double remaining = filled;
+    double notional = 0.0;
+    for (const auto& [price, qty] : levels) {
+        const double take = std::min(remaining, qty);
+        notional += price * take;
+        remaining -= take;
+        if (remaining <= 1e-12) break;
+    }
+    return {filled, notional / filled};
+}
+
 template <Side S, typename FillObserver>
 bool process_ioc_close_orders(
     ReplayOrders& orders,
@@ -4139,6 +4183,7 @@ bool process_ioc_close_orders(
     double& inventory,
     double& entry_price,
     ConsecutiveLossCooldownState& loss_cooldown,
+    const std::function<void()>& observe_fill_risk,
     double& consecutive_side_fills,
     double& consecutive_other_fills,
     std::int64_t& last_side_fill_ts,
@@ -4179,22 +4224,29 @@ bool process_ioc_close_orders(
             params,
             order.activate_ts
         );
-        const double touch =
-            is_buy_v<S> ? activation_book.best_ask : activation_book.best_bid;
-        const double top_qty =
-            is_buy_v<S> ? activation_book.ask_qty : activation_book.bid_qty;
-        const auto touch_tick = touch > 0.0
-            ? price_to_tick(touch, params.quote.tick_size)
-            : 0;
-        const bool marketable = touch > 0.0 && (
-            is_buy_v<S>
-                ? order.price_tick >= touch_tick
-                : order.price_tick <= touch_tick
-        );
         const double reducible = is_buy_v<S>
             ? std::max(0.0, -inventory)
             : std::max(0.0, inventory);
-        if (!marketable || reducible < lot_size) {
+        std::vector<std::pair<double, double>> levels;
+        if (l2_pos >= 0 && !input.l2_bid_px.empty()) {
+            const auto row = static_cast<std::size_t>(l2_pos);
+            const auto& prices = is_buy_v<S> ? input.l2_ask_px : input.l2_bid_px;
+            const auto& quantities = is_buy_v<S> ? input.l2_ask_qty : input.l2_bid_qty;
+            for (std::size_t col = 0; col < prices.cols; ++col) {
+                levels.emplace_back(prices(row, col), quantities(row, col));
+            }
+        } else {
+            // BBO-only is a displayed top-size bound, never full-depth truth.
+            levels.emplace_back(
+                is_buy_v<S> ? activation_book.best_ask : activation_book.best_bid,
+                is_buy_v<S> ? activation_book.ask_qty : activation_book.bid_qty
+            );
+        }
+        const auto [fill_qty, touch] = match_ioc_order<S>(
+            levels, order.price_tick, std::min(order.remaining, reducible),
+            params.quote.tick_size, lot_size, order.emergency_market
+        );
+        if (fill_qty < lot_size) {
             ++result.summary.circuit_breaker_close_ioc_expire_count;
             if (trace_quotes_max > 0 &&
                 result.quote_trace.size() <
@@ -4212,22 +4264,10 @@ bool process_ioc_close_orders(
             continue;
         }
 
-        const double available = top_qty >= lot_size
-            ? top_qty
-            : order.remaining;
-        double fill_qty = floor_lot(
-            std::min({order.remaining, reducible, available}),
-            lot_size
-        );
-        if (fill_qty < lot_size) {
-            ++result.summary.circuit_breaker_close_ioc_expire_count;
-            orders.erase(orders.begin() + static_cast<std::ptrdiff_t>(idx));
-            continue;
-        }
-
         const double q_before = inventory;
         order.price = touch;
-        order.price_tick = touch_tick;
+        // A multi-level execution VWAP need not be a legal submitted-price tick.
+        // Preserve the original limit tick; do not round the realized cash price.
         cash += side_cash_delta<S>(touch, fill_qty, taker_fee);
         inventory += inventory_delta_sign<S>() * fill_qty;
         loss_cooldown.template on_fill<S>(
@@ -4235,6 +4275,7 @@ bool process_ioc_close_orders(
             touch,
             touch * fill_qty * taker_fee
         );
+        if (observe_fill_risk) observe_fill_risk();
         if (std::abs(loss_cooldown.inventory - inventory) >
             std::max(1e-10, lot_size * 1e-7)) {
             throw std::runtime_error(
@@ -5157,6 +5198,26 @@ TickReplayResult simulate_tick_arrays(
     const TickReplayParams& params
 ) {
     input.validate();
+    for (const double limit : {params.max_daily_loss, params.max_position_value,
+                               params.emergency_close_dd}) {
+        // +infinity is the native ABI's explicit disabled sentinel.
+        if (std::isnan(limit) || limit <= 0.0) {
+            throw std::invalid_argument("hard-risk limits must be positive or disabled");
+        }
+    }
+    if (params.initial_risk_state_enabled) {
+        for (const double value : {params.initial_risk_day_start_total_pnl,
+                params.initial_risk_session_peak_pnl, params.initial_risk_last_total_pnl,
+                params.initial_risk_total_pnl_offset}) {
+            if (!std::isfinite(value)) {
+                throw std::invalid_argument("initial risk state must be finite");
+            }
+        }
+        if (!input.trade_ts_ms.empty() && params.initial_risk_utc_day >
+                input.trade_ts_ms.data()[0] / 86'400'000) {
+            throw std::invalid_argument("initial risk state is from a future UTC day");
+        }
+    }
     for (const auto sample : params.decision_to_gateway_latency_samples_ms) {
         if (!std::isfinite(sample) || sample < 0.0) {
             throw std::invalid_argument(
@@ -5772,6 +5833,40 @@ TickReplayResult simulate_tick_arrays(
     double cash = params.initial_entry_price > 0.0
         ? -params.initial_inventory * params.initial_entry_price
         : 0.0;
+    bool risk_emergency_latched = false;
+    bool risk_emergency_submit_sent = false;
+    const bool hard_risk_enabled = std::isfinite(params.max_daily_loss)
+        || std::isfinite(params.max_position_value) || std::isfinite(params.emergency_close_dd);
+    std::int64_t risk_utc_day = params.initial_risk_state_enabled
+        ? params.initial_risk_utc_day : input.trade_ts_ms.data()[0] / 86'400'000;
+    double risk_day_start = params.initial_risk_day_start_total_pnl;
+    double risk_peak = params.initial_risk_session_peak_pnl;
+    double risk_last = params.initial_risk_last_total_pnl;
+    const double risk_offset = params.initial_risk_total_pnl_offset;
+    const auto observe_risk = [&](std::int64_t now, double mark) {
+        const auto day = now / 86'400'000;
+        if (day > risk_utc_day) {
+            risk_utc_day = day;
+            risk_day_start = risk_last;
+        }
+        risk_last = cash + inventory * mark + risk_offset;
+        risk_peak = std::max(risk_peak, risk_last);
+    };
+    std::int64_t hard_risk_clock_ts = input.trade_ts_ms.data()[0];
+    double hard_risk_last_mark = input.trade_price.data()[0];
+    std::function<void()> observe_fill_risk;
+    if (hard_risk_enabled) {
+        observe_fill_risk = [&]() {
+            observe_risk(hard_risk_clock_ts, hard_risk_last_mark);
+        };
+    }
+    const auto cap_notional_qty = [&](bool buy, double quantity, double mark) {
+        if (!std::isfinite(params.max_position_value)) return quantity;
+        if (mark <= 0.0 || quantity <= 0.0) return 0.0;
+        const double room = std::max(0.0, params.max_position_value / mark
+            + (buy ? -inventory : inventory));
+        return std::min(quantity, std::floor(room / lot_size + 1e-12) * lot_size);
+    };
     bool planned_shutdown_requested = false;
     double quote_mid_state = input.trade_price.data()[0];
     double inferred_best_bid = input.trade_price.data()[0] - tick_size;
@@ -5819,6 +5914,7 @@ TickReplayResult simulate_tick_arrays(
     std::size_t l2_idx = 0;
     std::int64_t current_rq_ms = requote_ms;
     std::int64_t last_requote_ts = input.trade_ts_ms.data()[0] - current_rq_ms;
+    std::int64_t last_visible_book_ts = std::numeric_limits<std::int64_t>::min();
     std::int64_t next_trace_order_id = 0;
     double rq_sum = 0.0;
     double ema_var_fast = 0.0;
@@ -6097,6 +6193,7 @@ TickReplayResult simulate_tick_arrays(
     for (std::size_t i = 0; i < input.trade_ts_ms.size(); ++i) {
         last_processed_event_idx = i;
         const std::int64_t ts = input.trade_ts_ms.data()[i];
+        hard_risk_clock_ts = ts;
         if (f05_cooldown_runtime.has_value()) {
             if (ts <= 0 ||
                 ts > std::numeric_limits<std::int64_t>::max() / 1'000'000) {
@@ -6379,10 +6476,10 @@ TickReplayResult simulate_tick_arrays(
                 ? duration_shadow_buy_cooldown_ms
                 : duration_shadow_sell_cooldown_ms;
             const std::int64_t prior_deadline_ts_ms =
-                static_cast<std::int64_t>(std::llround(
+                round_ties_to_even(
                     static_cast<double>(previous_fill_ts) +
                     previous_cooldown_ms
-                ));
+                );
             const double baseline_duration_ms = is_buy
                 ? cooldown_ms_for_fill.template operator()<Side::Buy>(
                     inventory_before_fill,
@@ -6444,11 +6541,13 @@ TickReplayResult simulate_tick_arrays(
                     consecutive_units_after;
                 opportunity.prior_deadline_ts_ms = prior_deadline_ts_ms;
                 opportunity.baseline_duration_ms = baseline_duration_ms;
+                // Match Python/live's round(): half-millisecond cooldown
+                // projections round to even, not away from zero.
                 opportunity.baseline_deadline_ts_ms =
-                    static_cast<std::int64_t>(std::llround(
+                    round_ties_to_even(
                         static_cast<double>(fill_ts_ms) +
                         baseline_duration_ms
-                    ));
+                    );
                 opportunity.canonical_mid = markout_mid;
                 opportunity.best_bid = book.best_bid;
                 opportunity.best_ask = book.best_ask;
@@ -6535,10 +6634,10 @@ TickReplayResult simulate_tick_arrays(
                         ? baseline_duration_ms
                         : params.cooldown_duration_fork_fixed_ms;
                     cooldown_fork_trace.applied_deadline_ts_ms =
-                        static_cast<std::int64_t>(std::llround(
+                        round_ties_to_even(
                             static_cast<double>(fill_ts_ms) +
                             cooldown_fork_trace.applied_duration_ms
-                        ));
+                        );
                     cooldown_duration_target_control_deadline_ts_ms =
                         opportunity.baseline_deadline_ts_ms;
                     cooldown_fork_trace.terminal_reason = "assigned";
@@ -6693,8 +6792,8 @@ TickReplayResult simulate_tick_arrays(
                         cooldown_duration_target_control_deadline_ts_ms =
                             runtime_decision.deadline_ts_ms;
                         const auto one_shot_duration_ms =
-                            static_cast<std::int64_t>(std::llround(
-                                cooldown_fork_trace.applied_duration_ms));
+                            round_ties_to_even(
+                                cooldown_fork_trace.applied_duration_ms);
                         f05_cooldown_runtime->override_active_lineage_duration(
                             fill_side,
                             fill_ts_ms,
@@ -6755,10 +6854,10 @@ TickReplayResult simulate_tick_arrays(
                 path_row.baseline_duration_ms = baseline_duration_ms;
                 path_row.applied_duration_ms = applied_duration_ms;
                 path_row.applied_deadline_ts_ms =
-                    static_cast<std::int64_t>(std::llround(
+                    round_ties_to_even(
                         static_cast<double>(fill_ts_ms) +
                         applied_duration_ms
-                    ));
+                    );
                 result.cooldown_duration_fill_path.push_back(path_row);
             }
 
@@ -6789,6 +6888,7 @@ TickReplayResult simulate_tick_arrays(
             inventory,
             entry_price,
             loss_cooldown,
+            observe_fill_risk,
             consecutive_buy_fills,
             consecutive_sell_fills,
             last_buy_fill_ts,
@@ -6815,6 +6915,7 @@ TickReplayResult simulate_tick_arrays(
             inventory,
             entry_price,
             loss_cooldown,
+            observe_fill_risk,
             consecutive_sell_fills,
             consecutive_buy_fills,
             last_sell_fill_ts,
@@ -6845,6 +6946,7 @@ TickReplayResult simulate_tick_arrays(
                 inventory,
                 entry_price,
                 loss_cooldown,
+                observe_fill_risk,
                 consecutive_buy_fills,
                 consecutive_sell_fills,
                 last_buy_fill_ts,
@@ -6877,6 +6979,7 @@ TickReplayResult simulate_tick_arrays(
                 inventory,
                 entry_price,
                 loss_cooldown,
+                observe_fill_risk,
                 consecutive_sell_fills,
                 consecutive_buy_fills,
                 last_sell_fill_ts,
@@ -7078,36 +7181,6 @@ TickReplayResult simulate_tick_arrays(
             );
         }
 
-        const std::int64_t position_timeout_ms = std::max<std::int64_t>(
-            0,
-            static_cast<std::int64_t>(std::llround(params.position_timeout_s * 1000.0))
-        );
-        if (!fixed_spread_probe && position_timeout_ms > 0 &&
-            std::abs(inventory) >= lot_size &&
-            ts - pos_open_ts >= position_timeout_ms) {
-            const double close_qty = std::abs(inventory);
-            const bool close_buy = inventory < 0.0;
-            if (inventory > 0.0) {
-                cash += inventory * price * (1.0 - params.taker_fee);
-            } else {
-                cash += inventory * price * (1.0 + params.taker_fee);
-            }
-            record_loss_fill(
-                close_buy,
-                close_qty,
-                price,
-                params.taker_fee,
-                0.0
-            );
-            inventory = 0.0;
-            entry_price = 0.0;
-            pos_open_ts = ts;
-            update_p3_reach_budget_lifecycle(ts);
-            ++summary.position_timeout_count;
-            request_cancel_all(bid_orders, ts, 0, 0, nullptr, params, &result, params.trace_quotes_max, CancelReason::PositionTimeout);
-            request_cancel_all(ask_orders, ts, 0, 0, nullptr, params, &result, params.trace_quotes_max, CancelReason::PositionTimeout);
-            max_abs_inventory = std::max(max_abs_inventory, std::abs(inventory));
-        }
 
         if (sync_censor_event) {
             summary.sync_adjust_censored = true;
@@ -7149,7 +7222,71 @@ TickReplayResult simulate_tick_arrays(
             continue;
         }
 
-        if (loss_cooldown.active(ts)) {
+        const bool exec_book_visibility_delay_enabled =
+            !params.use_bar_pricing &&
+            (
+                !params.exec_book_visibility_delay_samples_ms.empty() ||
+                params.exec_book_visibility_delay_mean_ms > 0.0 ||
+                params.exec_book_visibility_delay_jitter_ms > 0.0
+            );
+        std::int64_t exec_book_visibility_delay_ms =
+            exec_book_visibility_delay_enabled
+            ? sample_exec_book_visibility_delay_ms(ts, params)
+            : 0;
+        std::int64_t visible_book_ts =
+            ts - exec_book_visibility_delay_ms;
+        if (exec_book_visibility_delay_enabled) {
+            visible_book_ts = std::max(last_visible_book_ts, visible_book_ts);
+            last_visible_book_ts = visible_book_ts;
+            exec_book_visibility_delay_ms = std::max<std::int64_t>(0, ts - visible_book_ts);
+        }
+        const std::ptrdiff_t visible_bbo_pos =
+            index_at_or_before(input.bbo_ts_ms, visible_book_ts);
+        const std::ptrdiff_t visible_l2_pos =
+            index_at_or_before(input.l2_ts_ms, visible_book_ts);
+        const std::size_t visible_bbo_idx = visible_bbo_pos >= 0
+            ? static_cast<std::size_t>(visible_bbo_pos)
+            : input.bbo_ts_ms.size();
+        const std::size_t visible_l2_idx = visible_l2_pos >= 0
+            ? static_cast<std::size_t>(visible_l2_pos)
+            : input.l2_ts_ms.size();
+        const auto decision_book = book_snapshot_at(
+            input,
+            visible_book_ts,
+            visible_bbo_idx,
+            visible_l2_idx,
+            inferred_best_bid,
+            inferred_best_ask,
+            tick_size,
+            params,
+            ts
+        );
+        const double risk_mark = !params.use_bar_pricing && decision_book.mid > 0.0
+            ? decision_book.mid : quote_mid_state;
+        if (hard_risk_enabled) {
+            hard_risk_last_mark = risk_mark;
+            observe_risk(ts, risk_mark);
+        }
+        if (risk_emergency_latched && risk_emergency_submit_sent) {
+            continue;
+        }
+        // Check active-order freshness before the requote interval, reusing
+        // this same snapshot if the current policy event is also quote-due.
+        if (!params.empirical_requote_clock && !params.use_bar_pricing &&
+            has_historical_book && params.max_exec_book_age_ms > 0 &&
+            (!bid_orders.empty() || !ask_orders.empty()) && !decision_book.fresh) {
+            ++summary.stale_book_skip_count;
+            paired_probe.on_decision_cancel(ts);
+            request_cancel_all(bid_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::StaleBook);
+            request_cancel_all(ask_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::StaleBook);
+            continue;
+        }
+
+        if (!risk_emergency_latched && loss_cooldown.active(ts)) {
             ++summary.consecutive_loss_cooldown_block_count;
             if (ts - loss_cooldown.last_cancel_ts_ms >= 5'000) {
                 request_cancel_all(
@@ -7185,31 +7322,11 @@ TickReplayResult simulate_tick_arrays(
                 params.trace_quotes_max, CancelReason::StaleBook);
             continue;
         }
-        if (params.empirical_requote_clock && !empirical_quote_event) {
+        if (!risk_emergency_latched && params.empirical_requote_clock && !empirical_quote_event) {
             continue;
         }
-        if (!params.empirical_requote_clock && ts - last_requote_ts < current_rq_ms) {
-            continue;
-        }
-        const auto loss_transition = loss_cooldown.on_policy_clock(ts);
-        if (loss_transition == LossCooldownTransition::Triggered ||
-            loss_transition == LossCooldownTransition::Active) {
-            request_cancel_all(
-                bid_orders, ts, params.cancel_order_latency_ms,
-                params.latency_jitter_ms,
-                &params.cancel_order_latency_samples_ms, params, &result,
-                params.trace_quotes_max,
-                CancelReason::ConsecutiveLossCooldown
-            );
-            request_cancel_all(
-                ask_orders, ts, params.cancel_order_latency_ms,
-                params.latency_jitter_ms,
-                &params.cancel_order_latency_samples_ms, params, &result,
-                params.trace_quotes_max,
-                CancelReason::ConsecutiveLossCooldown
-            );
-            ++summary.consecutive_loss_cooldown_cancel_count;
-            loss_cooldown.last_cancel_ts_ms = ts;
+        if (!risk_emergency_latched && !params.empirical_requote_clock &&
+            ts - last_requote_ts < current_rq_ms) {
             continue;
         }
         if (params.empirical_requote_clock) {
@@ -7241,40 +7358,6 @@ TickReplayResult simulate_tick_arrays(
             last_requote_ts = ts;
         }
 
-        const bool exec_book_visibility_delay_enabled =
-            !params.use_bar_pricing &&
-            (
-                !params.exec_book_visibility_delay_samples_ms.empty() ||
-                params.exec_book_visibility_delay_mean_ms > 0.0 ||
-                params.exec_book_visibility_delay_jitter_ms > 0.0
-            );
-        const std::int64_t exec_book_visibility_delay_ms =
-            exec_book_visibility_delay_enabled
-            ? sample_exec_book_visibility_delay_ms(ts, params)
-            : 0;
-        const std::int64_t visible_book_ts =
-            ts - exec_book_visibility_delay_ms;
-        const std::ptrdiff_t visible_bbo_pos =
-            index_at_or_before(input.bbo_ts_ms, visible_book_ts);
-        const std::ptrdiff_t visible_l2_pos =
-            index_at_or_before(input.l2_ts_ms, visible_book_ts);
-        const std::size_t visible_bbo_idx = visible_bbo_pos >= 0
-            ? static_cast<std::size_t>(visible_bbo_pos)
-            : input.bbo_ts_ms.size();
-        const std::size_t visible_l2_idx = visible_l2_pos >= 0
-            ? static_cast<std::size_t>(visible_l2_pos)
-            : input.l2_ts_ms.size();
-        const auto decision_book = book_snapshot_at(
-            input,
-            visible_book_ts,
-            visible_bbo_idx,
-            visible_l2_idx,
-            inferred_best_bid,
-            inferred_best_ask,
-            tick_size,
-            params,
-            ts
-        );
         if (exec_book_visibility_delay_enabled) {
             ++summary.exec_book_visibility_delay_applied_count;
             summary.exec_book_visibility_delay_sum_ms +=
@@ -7428,6 +7511,24 @@ TickReplayResult simulate_tick_arrays(
             ? decision_book.mid
             : quote_mid_state;
         const double activation_mid = mid;
+        const auto position_timeout_ms = std::max<std::int64_t>(
+            0, static_cast<std::int64_t>(std::llround(params.position_timeout_s * 1000.0))
+        );
+        if (!fixed_spread_probe && !circuit_breaker_closing && position_timeout_ms > 0 &&
+            std::abs(inventory) >= lot_size && ts - pos_open_ts >= position_timeout_ms) {
+            // TIMEOUT_CLOSING cancels first; a timeout is not itself a fill.
+            circuit_breaker_closing = true;
+            circuit_breaker_close_start_ts = ts;
+            circuit_breaker_close_gtx_reject_streak = 0;
+            ++summary.position_timeout_count;
+            request_cancel_all(bid_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::PositionTimeout);
+            request_cancel_all(ask_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::PositionTimeout);
+            continue;
+        }
         if (circuit_breaker_closing) {
             if (std::abs(inventory) < lot_size) {
                 circuit_breaker_closing = false;
@@ -7441,6 +7542,11 @@ TickReplayResult simulate_tick_arrays(
             const bool close_buy = inventory < 0.0;
             ReplayOrders& close_orders = close_buy ? bid_orders : ask_orders;
             ReplayOrders& opening_orders = close_buy ? ask_orders : bid_orders;
+            // Emergency cancellation completes before any market liquidation.
+            if (risk_emergency_latched &&
+                (!bid_orders.empty() || !ask_orders.empty())) {
+                continue;
+            }
             request_cancel_all(
                 opening_orders,
                 ts,
@@ -7454,14 +7560,15 @@ TickReplayResult simulate_tick_arrays(
             );
 
             const double close_qty = floor_lot(
-                std::min(std::abs(inventory), order_size),
+                risk_emergency_latched ? std::abs(inventory)
+                    : std::min(std::abs(inventory), order_size),
                 lot_size
             );
             if (close_qty < lot_size) {
                 continue;
             }
             const bool use_ioc =
-                circuit_breaker_close_gtx_reject_streak >= 3 ||
+                risk_emergency_latched || circuit_breaker_close_gtx_reject_streak >= 3 ||
                 (
                     circuit_breaker_close_start_ts > 0 &&
                     ts - circuit_breaker_close_start_ts >= 60'000
@@ -7623,6 +7730,8 @@ TickReplayResult simulate_tick_arrays(
             close_orders.back().reduce_only = true;
             close_orders.back().circuit_breaker_close = true;
             close_orders.back().immediate_or_cancel = use_ioc;
+            close_orders.back().emergency_market = risk_emergency_latched;
+            if (risk_emergency_latched) risk_emergency_submit_sent = true;
             ++summary.circuit_breaker_close_place_count;
             if (use_ioc) {
                 ++summary.circuit_breaker_close_ioc_place_count;
@@ -7657,6 +7766,7 @@ TickReplayResult simulate_tick_arrays(
                     0.0
                 );
                 inventory = 0.0;
+                if (observe_fill_risk) observe_fill_risk();
                 entry_price = 0.0;
                 pos_open_ts = ts;
                 update_p3_reach_budget_lifecycle(ts);
@@ -7695,6 +7805,46 @@ TickReplayResult simulate_tick_arrays(
                     CancelReason::CircuitBreaker
                 );
             }
+            continue;
+        }
+        if (risk_emergency_latched) {
+            // Never resume ordinary quoting after an emergency shutdown.
+            continue;
+        }
+        CancelReason hard_risk = CancelReason::None;
+        if (risk_last - risk_day_start < -params.max_daily_loss) {
+            hard_risk = CancelReason::DailyLoss;
+            ++summary.risk_daily_loss_block_count;
+        } else if (std::abs(inventory) * mid > params.max_position_value) {
+            hard_risk = CancelReason::PositionValue;
+            ++summary.risk_position_value_block_count;
+        } else if (std::max(0.0, risk_peak - risk_last) > params.emergency_close_dd) {
+            hard_risk = CancelReason::EmergencyDrawdown;
+            risk_emergency_latched = true;
+            circuit_breaker_closing = std::abs(inventory) >= lot_size;
+            circuit_breaker_close_start_ts = ts;
+            ++summary.risk_emergency_close_count;
+        }
+        if (hard_risk != CancelReason::None) {
+            request_cancel_all(bid_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, hard_risk);
+            request_cancel_all(ask_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, hard_risk);
+            continue;
+        }
+        const auto loss_transition = loss_cooldown.on_policy_clock(ts);
+        if (loss_transition == LossCooldownTransition::Triggered ||
+            loss_transition == LossCooldownTransition::Active) {
+            request_cancel_all(bid_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::ConsecutiveLossCooldown);
+            request_cancel_all(ask_orders, ts, params.cancel_order_latency_ms,
+                params.latency_jitter_ms, &params.cancel_order_latency_samples_ms,
+                params, &result, params.trace_quotes_max, CancelReason::ConsecutiveLossCooldown);
+            ++summary.consecutive_loss_cooldown_cancel_count;
+            loss_cooldown.last_cancel_ts_ms = ts;
             continue;
         }
         QuoteCoreResult quote;
@@ -7863,6 +8013,7 @@ TickReplayResult simulate_tick_arrays(
                 0.0
             );
             inventory = 0.0;
+            if (observe_fill_risk) observe_fill_risk();
             entry_price = 0.0;
             pos_open_ts = ts;
             update_p3_reach_budget_lifecycle(ts);
@@ -8701,6 +8852,12 @@ TickReplayResult simulate_tick_arrays(
                 }
             }
         }
+        const double capped_bid_size = cap_notional_qty(true, bid_size, mid);
+        const double capped_ask_size = cap_notional_qty(false, ask_size, mid);
+        summary.risk_notional_cap_count += (capped_bid_size + 1e-12 < bid_size)
+            + (capped_ask_size + 1e-12 < ask_size);
+        bid_size = capped_bid_size;
+        ask_size = capped_ask_size;
         bid_allowed = bid_allowed && bid_size >= lot_size;
         ask_allowed = ask_allowed && ask_size >= lot_size;
 
@@ -9156,6 +9313,11 @@ TickReplayResult simulate_tick_arrays(
                 ask_ref_order, ask_updated, tick_size);
         }
 
+        // A safety resize must not be suppressed by drift or replace throttles.
+        if (bid_ref_order && cap_notional_qty(true, bid_ref_order->remaining, mid)
+                + 1e-12 < bid_ref_order->remaining) bid_updated = true;
+        if (ask_ref_order && cap_notional_qty(false, ask_ref_order->remaining, mid)
+                + 1e-12 < ask_ref_order->remaining) ask_updated = true;
         const bool bid_pending_coalesce =
             bid_allowed && bid_updated && params.replace_pending_coalesce && bid_pending_order != nullptr;
         const bool ask_pending_coalesce =
@@ -9196,8 +9358,6 @@ TickReplayResult simulate_tick_arrays(
         } else if (!ask_updated && ask_active_before) {
             ask_action = "keep";
         }
-        count_decision_action(summary, bid_action);
-        count_decision_action(summary, ask_action);
 
         const auto append_p3_reach_trace = [&](Side side, std::string_view action) {
             if (params.trace_p3_reach_decisions_max <= 0 || !ml_ready ||
@@ -9263,8 +9423,6 @@ TickReplayResult simulate_tick_arrays(
                     : p3_ask_spread_cap_noop,
             });
         };
-        append_p3_reach_trace(Side::Buy, bid_action);
-        append_p3_reach_trace(Side::Sell, ask_action);
 
         if (bid_cancel_first) {
             if (!bid_orders.empty()) {
@@ -9283,7 +9441,10 @@ TickReplayResult simulate_tick_arrays(
                         ? CancelReason::RequoteReplace
                         : CancelReason::SideDisabled);
             }
-            if (bid_allowed) {
+            if (bid_allowed && !bid_orders.empty()) {
+                bid_action = "pending_coalesce";
+            }
+            if (bid_allowed && bid_orders.empty()) {
                 const auto new_deadlines = sample_new_order_deadlines(
                     ts,
                     params.new_order_latency_ms,
@@ -9375,7 +9536,10 @@ TickReplayResult simulate_tick_arrays(
                         ? CancelReason::RequoteReplace
                         : CancelReason::SideDisabled);
             }
-            if (ask_allowed) {
+            if (ask_allowed && !ask_orders.empty()) {
+                ask_action = "pending_coalesce";
+            }
+            if (ask_allowed && ask_orders.empty()) {
                 const auto new_deadlines = sample_new_order_deadlines(
                     ts,
                     params.new_order_latency_ms,
@@ -9449,6 +9613,11 @@ TickReplayResult simulate_tick_arrays(
                 }
             }
         }
+
+        count_decision_action(summary, bid_action);
+        count_decision_action(summary, ask_action);
+        append_p3_reach_trace(Side::Buy, bid_action);
+        append_p3_reach_trace(Side::Sell, ask_action);
 
         const auto [pending_new_count, pending_cancel_count] =
             pending_order_counts(bid_orders, ask_orders);
@@ -9741,6 +9910,12 @@ TickReplayResult simulate_tick_arrays(
     summary.pnl = final_pnl;
     summary.fills_total = summary.fills_bid + summary.fills_ask;
     summary.circuit_breaker_closing = circuit_breaker_closing;
+    summary.risk_emergency_latched = risk_emergency_latched;
+    summary.risk_utc_day = risk_utc_day;
+    summary.risk_day_start_total_pnl = risk_day_start;
+    summary.risk_session_peak_pnl = risk_peak;
+    summary.risk_last_total_pnl = risk_last;
+    summary.risk_total_pnl_offset = risk_offset;
     summary.max_abs_inventory = max_abs_inventory;
     summary.avg_markout = mo_qty_all > 0.0 ? mo_sum_all / mo_qty_all : 0.0;
     summary.avg_markout_bid = mo_qty_bid > 0.0 ? mo_sum_bid / mo_qty_bid : 0.0;

@@ -530,7 +530,7 @@ def test_message_schedule_markout_uses_same_depth_delivery_without_resampling(mo
 
 
 def test_message_schedule_markout_does_not_use_unreceived_depth_for_restored_fill() -> None:
-    inputs = _message_schedule_replay_inputs(crossing_fill=True)
+    inputs = _message_schedule_replay_inputs()
     inputs["params"].update(
         markout_ema_span_fills=1,
         markout_horizon_s=0.5,
@@ -544,13 +544,18 @@ def test_message_schedule_markout_does_not_use_unreceived_depth_for_restored_fil
     inputs["params"]["_exec_message_delivery"]["depth"]["feature_ready_ts_ns"][:] = (
         5_000_000_000
     )
+    # The inherited exchange order fills at the first physical event, before
+    # the local control wake. Only its pending markout survives the outage;
+    # the test must not require an OPEN order to evade stale-book cancellation.
+    inputs["trades_df"].loc[0, ["price", "quantity"]] = [80.0, 10.0]
     result = bt._simulate_tick_with_engine("python", **inputs)
     assert result["fills_bid"] == 1
+    assert result["_fill_trace"][0]["fill_ts"] == 0
     assert result["markout_count"] == 0
 
 
 def test_message_pending_markout_survives_thirty_second_depth_outage() -> None:
-    inputs = _message_schedule_replay_inputs(crossing_fill=True)
+    inputs = _message_schedule_replay_inputs()
     inputs["params"].update(
         markout_ema_span_fills=1, markout_horizon_s=0.5,
         requote_interval=100.0, rq_min=100.0, rq_max=100.0,
@@ -558,12 +563,16 @@ def test_message_pending_markout_survives_thirty_second_depth_outage() -> None:
             "side": "BUY", "price": 98.0, "quantity": 0.001, "status": "OPEN",
         }]},
     )
+    # Complete the inherited order before the first local control wake. The
+    # thirty-second wait concerns a pending observation, not a surviving order.
+    inputs["trades_df"].loc[0, ["price", "quantity"]] = [80.0, 10.0]
     inputs["trades_df"].loc[7, "transact_time"] = 40_000
     delivery = inputs["params"]["_exec_message_delivery"]
     delivery["trade"]["feature_ready_ts_ns"][-1] = 40_000_000_001
     delivery["depth"]["feature_ready_ts_ns"][:] = 35_000_000_001
     result = bt._simulate_tick_with_engine("python", **inputs)
     assert result["fills_bid"] == 1
+    assert result["_fill_trace"][0]["fill_ts"] == 0
     assert result["markout_count"] == 1
     assert result["avg_markout_bid"] == pytest.approx(100.8 - 98.0)
 
@@ -1089,3 +1098,116 @@ def test_source_offset_does_not_make_paired_depth_age_negative() -> None:
     assert len(first) >= 2
     assert (first["depth_age_s"] == 0.0).all()
     assert not first["reason_text"].str.contains("common_policy_hard_pause").any()
+
+
+@pytest.mark.parametrize(
+    "mode", ["sampled", "paired", "sampled_joint", "profile_source_stratified"],
+)
+def test_all_age_sampled_modes_hold_independent_visible_source_cutoffs(monkeypatch, mode) -> None:
+    inputs = _message_schedule_replay_inputs()
+    params = inputs["params"]
+    params.pop("_exec_message_delivery")
+    params.update(
+        exec_book_visibility_mode=mode,
+        _exec_book_visibility_delay_samples_ms=np.asarray([0.0, 2_000.0]),
+        _exec_book_visibility_paired_ts_ms=np.asarray([1_000]),
+        _exec_book_visibility_paired_delay_ms=np.asarray([0.0]),
+        _exec_depth_visibility_paired_delay_ms=np.asarray([0.0]),
+        _exec_trade_visibility_paired_delay_ms=np.asarray([0.0]),
+        _exec_book_visibility_paired_mid=np.asarray([np.nan]),
+        exec_source_stratified_profile_path="synthetic-profile.json",
+    )
+
+    def delays(now, **_):
+        if now < 2_000:
+            return 0, 500, 750
+        if now < 3_000:
+            return 2_000, 2_500, 1_900
+        return (0, 0, 0) if now < 4_000 else (2_000, 2_000, 2_000)
+
+    monkeypatch.setattr(bt, "_exec_book_visibility_delay_ms", lambda now, **kw: delays(now)[0])
+    monkeypatch.setattr(bt, "_sampled_joint_exec_book_visibility_state", delays)
+    monkeypatch.setattr(bt, "_source_stratified_exec_visibility_state", delays)
+    monkeypatch.setattr(
+        bt, "_paired_exec_book_visibility_state", lambda now, **kw: (*delays(now), np.nan),
+    )
+    monkeypatch.setattr(
+        bt, "_load_exec_source_stratified_visibility_profile", lambda *a, **kw: (object(), ""),
+    )
+    observed = {feed: [] for feed in ("bbo", "l2", "trade")}
+
+    def advance(cutoffs, *, feed, candidate_ts_ms):
+        value = _advance_monotonic_visibility_cutoff(
+            cutoffs, feed=feed, candidate_ts_ms=candidate_ts_ms,
+        )
+        observed[feed].append(value)
+        return value
+
+    monkeypatch.setattr(bt, "_advance_monotonic_visibility_cutoff", advance)
+    result = bt._simulate_tick_with_engine("python", **inputs)
+    rows = pd.DataFrame(result["_decision_trace"])
+    rows = rows[(rows["side"] == "BUY") & (rows["ts_ms"] > 0)].set_index("ts_ms")
+    assert [1_000, 2_000, 3_000, 4_000] == rows.index.tolist()
+    for cutoffs in observed.values():
+        # The merged 100ms control wakes advance reception even when quotes
+        # are not due. The 2s high-delay sample must retain the 1.9s state.
+        assert len(cutoffs) == 41
+        assert cutoffs == sorted(cutoffs)
+        assert cutoffs[20] == cutoffs[19]
+        assert cutoffs[40] == cutoffs[39]
+    if mode != "sampled":
+        assert observed["bbo"][20] == 1_900
+        assert observed["l2"][20] == 1_400
+        assert observed["trade"][20] == 1_150
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize("top_qty", [0.0, -1.0, np.nan, np.inf])
+def test_ioc_does_not_invent_missing_top_liquidity(side, top_qty) -> None:
+    qty, price = bt._match_ioc_order(
+        side, 100.0, 0.005, [100.0], [top_qty], tick_size=0.1, lot_size=0.001,
+    )
+    assert qty == price == 0.0
+
+
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+def test_ioc_sweeps_valid_limit_levels_with_vwap_and_bounds_market_depth(side) -> None:
+    direction = 1 if side == "BUY" else -1
+    prices = 100.0 + direction * np.asarray([0.0, 0.1, 0.1, 0.2, 1.0])
+    quantities = [0.0004, 0.0006, 99.0, 0.001, 0.002]
+    # Duplicate second level cannot inflate size; the final level is outside limit.
+    qty, price = bt._match_ioc_order(
+        side, 100.0 + direction * 0.2, 0.01, prices, quantities,
+        tick_size=0.1, lot_size=0.001,
+    )
+    assert qty == pytest.approx(0.002)
+    assert price == pytest.approx(100.0 + direction * 0.13)
+    market_qty, market_price = bt._match_ioc_order(
+        side, 100.0, 0.01, prices, quantities,
+        tick_size=0.1, lot_size=0.001, market=True,
+    )
+    assert market_qty == pytest.approx(0.004)
+    assert market_price == pytest.approx(100.0 + direction * 0.565)
+    bounded_qty, _ = bt._match_ioc_order(
+        side, 100.0, 0.001, prices, quantities,
+        tick_size=0.1, lot_size=0.001, market=True,
+    )
+    assert bounded_qty == pytest.approx(0.001)
+
+
+def test_sampled_visibility_lifecycle_trace_does_not_change_execution() -> None:
+    inputs = _message_schedule_replay_inputs(crossing_fill=True)
+    params = inputs["params"]
+    params.pop("_exec_message_delivery")
+    params.update(
+        exec_book_visibility_mode="sampled",
+        _exec_book_visibility_delay_samples_ms=np.asarray([0.0, 2_000.0]),
+    )
+    plain = bt._simulate_tick_with_engine("python", **inputs)
+    params["trace_local_order_lifecycle_max"] = 100
+    traced = bt._simulate_tick_with_engine("python", **inputs)
+    assert plain["fills_total"] > 0
+    assert plain["_fill_trace"] == traced["_fill_trace"]
+    assert plain["_quote_trace"] == traced["_quote_trace"]
+    for field in ("cash_before_terminal", "final_inventory", "pnl", "n_requotes"):
+        assert plain[field] == traced[field]

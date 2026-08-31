@@ -47,6 +47,106 @@ SYNC_REPLAY_MODES = frozenset({"disabled", "frozen_tape", "censor", "stress"})
 VISIBILITY_BATCH_AMBIGUITY_REASON = "same_ms_exchange_book_ambiguity"
 
 
+def cap_exposure_qty_by_position_value(
+    *, side: str, current_qty: float, mid: float, requested_qty: float,
+    max_position_value: float, lot: float,
+) -> float:
+    """The live quote-currency fuse, before submitting an increasing order."""
+    if requested_qty <= 0.0 or mid <= 0.0 or max_position_value <= 0.0 or lot <= 0.0:
+        return 0.0
+    side = str(side).upper()
+    if side not in {"BUY", "SELL"}:
+        raise ValueError("position-value cap requires BUY or SELL")
+    if math.isinf(max_position_value):
+        return requested_qty
+    room = max_position_value / mid + (-current_qty if side == "BUY" else current_qty)
+    room = max(0.0, math.floor(max(0.0, room) / lot + 1e-12) * lot)
+    return min(requested_qty, room)
+
+
+def hard_risk_reason(
+    *, daily_pnl: float, position_value: float, drawdown: float,
+    max_daily_loss: float, max_position_value: float, emergency_close_dd: float,
+) -> str:
+    """Live's ordered hard fuses; equality does not trip a limit."""
+    if daily_pnl < -max_daily_loss:
+        return "daily_loss"
+    if position_value > max_position_value:
+        return "position_value"
+    if drawdown > emergency_close_dd:
+        return "emergency_drawdown"
+    return ""
+
+
+def replay_hard_risk_limits(params: Mapping[str, Any]) -> tuple[float, float, float]:
+    """Legacy synthetic calls omit fuses; config-derived replay must carry them."""
+    values = []
+    for name in ("max_daily_loss", "max_position_value", "emergency_close_dd"):
+        if name not in params or params[name] is None:
+            values.append(math.inf)
+            continue
+        value = float(params[name])
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be positive and finite when supplied")
+        values.append(value)
+    return tuple(values)
+
+
+@dataclass
+class ReplayHardRiskState:
+    """Marked PnL risk clocks; UTC rollover never resets the session peak."""
+
+    utc_day: int
+    day_start_total_pnl: float = 0.0
+    session_peak_pnl: float = 0.0
+    last_total_pnl: float = 0.0
+    total_pnl_offset: float = 0.0
+
+    @classmethod
+    def restore(cls, payload: Mapping[str, Any], *, start_ts_ms: int) -> ReplayHardRiskState:
+        """Restore an explicit complete risk state, never invent missing baselines."""
+        if not isinstance(payload, Mapping):
+            raise ValueError("initial risk_state must be a mapping")
+        required = {
+            "utc_day", "day_start_total_pnl", "session_peak_pnl",
+            "last_total_pnl", "total_pnl_offset",
+        }
+        missing = required - payload.keys()
+        if missing:
+            raise ValueError("initial risk_state missing fields: " + ", ".join(sorted(missing)))
+        if set(payload) - required:
+            raise ValueError("initial risk_state contains unknown fields")
+        try:
+            values = {key: float(payload[key]) for key in required}
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("initial risk_state values must be finite numbers") from exc
+        if any(not math.isfinite(value) for value in values.values()):
+            raise ValueError("initial risk_state values must be finite")
+        day = values["utc_day"]
+        if isinstance(payload["utc_day"], bool) or day != int(day):
+            raise ValueError("initial risk_state utc_day must be an integer")
+        if day > int(start_ts_ms) // 86_400_000:
+            raise ValueError("initial risk_state cannot come from a future UTC day")
+        values["utc_day"] = int(day)
+        return cls(**values)
+
+    def observe(self, ts_ms: int, cash: float, quantity: float, mark: float) -> None:
+        day = int(ts_ms) // 86_400_000
+        if day > self.utc_day:
+            self.utc_day = day
+            self.day_start_total_pnl = self.last_total_pnl
+        self.last_total_pnl = float(cash) + float(quantity) * float(mark) + self.total_pnl_offset
+        self.session_peak_pnl = max(self.session_peak_pnl, self.last_total_pnl)
+
+    @property
+    def daily_pnl(self) -> float:
+        return self.last_total_pnl - self.day_start_total_pnl
+
+    @property
+    def drawdown(self) -> float:
+        return max(0.0, self.session_peak_pnl - self.last_total_pnl)
+
+
 def sha256_file(path: str | Path) -> str:
     resolved = Path(path).expanduser().resolve()
     digest = hashlib.sha256()
