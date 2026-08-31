@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from models.replay.continuous_accounting import (
@@ -82,6 +84,94 @@ def test_cpp_initial_state_rejects_unimplemented_python_domains(domain):
     payload = {domain: {"state": "nonempty"}}
     with pytest.raises(ValueError, match=f"cannot restore initial_live_state domains: {domain}"):
         bt._simulate_tick_cpp(None, None, None, {"initial_live_state": payload})
+
+
+def _run_restored_order(*, queue_left=None, last_requote_ts_ms=9_500):
+    from models import backtest_tick as bt
+
+    ts = np.asarray([10_000, 10_200, 10_400], dtype=np.int64)
+    trades = pd.DataFrame({
+        "transact_time": ts, "price": [97.8] * 3, "quantity": [0.0] * 3,
+        "is_buyer_maker": [1] * 3, "_is_execution_trade": [False] * 3,
+    })
+    order = {
+        "side": "BUY", "status": "OPEN", "price": 98.0,
+        "quantity": 0.002, "remaining": 0.001,
+        "submit_ts_ms": 8_000, "activate_ts_ms": 8_100, "new_ack_ts_ms": 8_300,
+        "mid_at_quote": 100.0,
+    }
+    if queue_left is not None:
+        order["queue_left"] = queue_left
+    params = {
+        "gamma": 0.01, "kappa": 1.0, "p3_kappa_eff_override": 1.0,
+        "maker_fee": 0.0, "taker_fee": 0.0, "order_size": 0.001,
+        "max_inventory": 0.02, "new_order_latency_ms": 10_000,
+        "cancel_order_latency_ms": 100, "queue_base": 0.25, "queue_decay": 0.0,
+        "maker_fill_prob": 1.0, "dynamic_cap_enabled": False,
+        "requote_interval": 1.0, "rq_min": 1.0, "rq_max": 1.0,
+        "replay_event_clock": "merged", "replay_clock_interval_ms": 100,
+        "use_bar_pricing": False, "max_exec_book_age_s": 5.0,
+        "trace_quotes_max": 10, "trace_fills_max": 10,
+        "trace_decisions_max": 10, "adverse_markout_decay_tau_s": 10.0,
+        "trace_local_order_lifecycle_max": 100,
+        "initial_live_state": {
+            "active_orders": [order], "last_requote_ts_ms": last_requote_ts_ms,
+            "markout": {"mo_ema_bid": -2.0, "mo_last_decay_ts_ms": 9_000},
+        },
+    }
+    bbo = bt.HistoricalBBOData(
+        ts_ms=ts, best_bid=np.full(3, 97.7), best_ask=np.full(3, 97.9),
+        bid_qty=np.ones(3), ask_qty=np.ones(3), source="synthetic_restore_test",
+    )
+    return bt.simulate_tick(
+        trades, np.empty(0, dtype=np.int64), np.empty(0), params, bbo_data=bbo,
+    )
+
+
+@pytest.mark.parametrize("queue_left", [None, 0.125])
+def test_restored_open_keeps_ack_age_without_new_admission(queue_left):
+    result = _run_restored_order(queue_left=queue_left)
+    assert result["n_requotes"] == 0
+    assert result["gtx_rejects"] == 0  # Current ask is below the old accepted BUY.
+    assert result["fills_total"] == 0
+    assert result["initial_live_state_orders_restored"] == 1
+    assert result["initial_live_state_queue_estimated_count"] == int(queue_left is None)
+    assert result["initial_live_state_last_requote_ts_ms"] == 9_500
+    rows = result["_quote_trace"]
+    assert len(rows) == 1
+    order = rows[0]
+    assert order["restored_order"] is True
+    assert order["submit_ts"] == 8_000
+    assert order["activate_ts"] == 8_100
+    assert order["new_ack_ts"] == 8_300
+    assert order["exchange_accepted"] is True
+    assert order["local_new_ack_published"] is True
+    assert order["price"] == 98.0
+    assert order["queue_init"] == pytest.approx(0.25 if queue_left is None else queue_left)
+    assert order["simulator_queue_source"] == "restored_unknown_queue_estimate"
+    assert order["exact_queue_path_valid"] is False
+    assert order["restored_queue_status"] == (
+        "unknown_history_boundary_estimate" if queue_left is None
+        else "supplied_diagnostic_estimate"
+    )
+    assert not any(row["event_type"] == "submit" for row in result["_local_order_lifecycle_trace"])
+
+
+def test_restored_requote_clock_cannot_be_future_or_silently_ignored_by_cpp():
+    from models import backtest_tick as bt
+
+    with pytest.raises(ValueError, match="last_requote_ts_ms is after replay start"):
+        _run_restored_order(last_requote_ts_ms=10_001)
+    with pytest.raises(ValueError, match="cannot restore last_requote_ts_ms"):
+        bt._simulate_tick_cpp(None, None, None, {
+            "initial_live_state": {"last_requote_ts_ms": 0},
+        })
+
+
+def test_restored_markout_decay_uses_recorded_clock_not_window_start():
+    result = _run_restored_order(last_requote_ts_ms=9_000)
+    first_buy = next(row for row in result["_decision_trace"] if row["side"] == "BUY")
+    assert first_buy["markout_ema"] == pytest.approx(-2.0 * np.exp(-1.0 / 10.0))
 
 
 def test_checkpoint_roundtrip_and_tamper_detection(tmp_path) -> None:

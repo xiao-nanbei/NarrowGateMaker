@@ -8132,6 +8132,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     initial_live_state_orders_restored = 0
     initial_live_state_bid_orders_restored = 0
     initial_live_state_ask_orders_restored = 0
+    initial_live_state_queue_estimated_count = 0
     q = initial_inventory
     exchange_inventory = initial_inventory
     cash = -initial_inventory * initial_entry_price if initial_entry_price > 0.0 else 0.0
@@ -8235,6 +8236,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     bid_sz = order_size
     ask_sz = order_size
     last_rq_ts = trade_ts[0] - rq_ms
+    restored_last_requote_ts = initial_live_state.get("last_requote_ts_ms")
+    if restored_last_requote_ts is not None:
+        last_rq_ts = int(restored_last_requote_ts)
+        if last_rq_ts > int(trade_ts[0]):
+            raise ValueError("restored last_requote_ts_ms is after replay start")
     mid = trade_price[0]
 
     # σ² lookup
@@ -15162,7 +15168,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order.get("queue_value_keep_cancel_action", "") or ""
             ),
         }
-        if new_order_latency_split_enabled:
+        if new_order_latency_split_enabled or order.get("restored_order", False):
             fields["new_ack_ts"] = int(order.get("new_ack_ts", 0) or 0)
             fields["exchange_accepted"] = bool(
                 order.get("exchange_accepted", False)
@@ -15170,6 +15176,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             fields["local_new_ack_published"] = bool(
                 order.get("local_new_ack_published", False)
             )
+        if order.get("restored_order", False):
+            fields["restored_order"] = True
+            fields["restored_queue_status"] = str(order.get("restored_queue_status", "unknown"))
+            fields["simulator_queue_source"] = str(order.get("simulator_queue_source", "unknown"))
+            fields["exact_queue_path_valid"] = False
         if (
             new_order_latency_split_enabled
             or cancel_latency_split_enabled
@@ -16979,7 +16990,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             or cur_best_ask
         )
-        restore_without_request = bool(serial_rest_return_enabled and restored_order)
+        restore_without_request = bool(restored_order)
         if restore_without_request:
             # The inherited order already exists at the exchange. Bootstrap
             # its ledger entry without consuming a NEW sample or HTTP lane.
@@ -17005,6 +17016,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "gateway_request_ts": int(gateway_request_ts),
             "activate_ts": int(exchange_effective_ts),
             "new_ack_ts": int(local_ack_ts),
+            **({"restored_order": True} if restored_order else {}),
             **({"new_rest_return_ts": (
                    -1 if restore_without_request
                    else int(rest_gateway_last_timing["rest_return_ts_ms"])
@@ -17236,8 +17248,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 or (side == "SELL" and q <= 1e-12)
             ),
         )
-        _record_order_lifecycle_submit(order, int(gateway_request_ts))
-        _ranked_guard_order_submitted(order)
+        if not restored_order:
+            _record_order_lifecycle_submit(order, int(gateway_request_ts))
+            _ranked_guard_order_submitted(order)
         return order
 
     def _safe_add_rearm_sample_latency_ms() -> int:
@@ -19218,6 +19231,30 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 event_ts_ms=int(now_ts_ms),
             )
 
+        # A millisecond can contain several child trades (and a timer before
+        # them). Inspect the whole execution batch, not merely the current
+        # row. Only opposite aggressors reaching this price can race with its
+        # book update; a trade at an unrelated level must not freeze its queue.
+        same_ms_buy_max_tick = None
+        same_ms_sell_min_tick = None
+        if advance.level_changes:
+            batch_left = int(np.searchsorted(trade_ts, now_ts_ms, side="left"))
+            batch_right = int(np.searchsorted(trade_ts, now_ts_ms, side="right"))
+            for batch_idx in range(batch_left, batch_right):
+                if not is_execution_trade[batch_idx] or trade_qty[batch_idx] <= 0.0:
+                    continue
+                batch_tick = _price_to_tick(float(trade_price[batch_idx]), TICK)
+                if is_seller[batch_idx]:
+                    same_ms_sell_min_tick = (
+                        batch_tick if same_ms_sell_min_tick is None
+                        else min(same_ms_sell_min_tick, batch_tick)
+                    )
+                else:
+                    same_ms_buy_max_tick = (
+                        batch_tick if same_ms_buy_max_tick is None
+                        else max(same_ms_buy_max_tick, batch_tick)
+                    )
+
         for change in advance.level_changes:
             change_ts_ms = int(change.exchange_ts_ns) // 1_000_000
             side = "BUY" if change.side == "bid" else "SELL"
@@ -19241,8 +19278,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             ambiguous = bool(
                 (
-                    execution_trade_same_ms
-                    and change_ts_ms == int(now_ts_ms)
+                    change_ts_ms == int(now_ts_ms)
+                    and (
+                        (side == "BUY" and same_ms_sell_min_tick is not None
+                         and same_ms_sell_min_tick <= int(change.price_tick))
+                        or (side == "SELL" and same_ms_buy_max_tick is not None
+                            and same_ms_buy_max_tick >= int(change.price_tick))
+                    )
                 )
                 or same_ms_activation
             )
@@ -19259,6 +19301,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             hazard_side = "BUY" if change.side == "bid" else "SELL"
             hazard_receive_ns = int(change.receive_ts_ns)
             if dynamic_fill_hazard_visibility_scheduler is None:
+                # The optional historical hazard evaluator has a separate
+                # coarse same-ms ABI shared with its C++ implementation.
+                # Do not change that research model in a matching-queue fix.
+                hazard_ambiguous = bool(
+                    same_ms_activation
+                    or (execution_trade_same_ms and change_ts_ms == int(now_ts_ms))
+                )
                 for hazard_path in dynamic_fill_hazard_paths.values():
                     if (
                         hazard_path.side == hazard_side
@@ -19270,7 +19319,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             quantity_after=float(change.quantity_after),
                             generation=int(change.segment_id),
                             receive_ts_ns=hazard_receive_ns,
-                            ambiguous=bool(ambiguous),
+                            ambiguous=hazard_ambiguous,
                         )
             if (
                 queue_value_keep_cancel_enabled
@@ -19375,8 +19424,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             "exchange_book_queue_invalidated_reason"
                         ] = "same_ms_exchange_book_ambiguity"
                     continue
-                if not bool(
+                # Exact cross-stream evidence remains invalid after a race,
+                # but that does not stop the modeled physical queue. Resume
+                # native updates in the same valid book segment; never revive
+                # a missing seed, inherited unknown queue, or sequence gap.
+                if not (
                     order.get("exchange_book_queue_path_valid", False)
+                    or (
+                        order.get("exchange_book_queue_invalidated_reason")
+                        == "same_ms_exchange_book_ambiguity"
+                        and order.get("simulator_queue_source") == "native_exchange_book"
+                        and order.get("exchange_book_queue_segment_id") == change.segment_id
+                    )
                 ):
                     continue
                 explained_trade = min(
@@ -19410,6 +19469,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     ahead,
                     cancellation * ahead_probability,
                 )
+                # A skipped ambiguous update cannot leave phantom public
+                # quantity ahead after a later unambiguous level observation.
+                removed = max(removed, ahead - max(0.0, float(change.quantity_after)))
                 if removed > 0.0:
                     order["queue_left"] = ahead - removed
                     exchange_book_queue_cancel_ahead_event_count += 1
@@ -24587,6 +24649,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             mo_ema_all = float(markout_state.get("mo_ema_all", mo_ema_all) or mo_ema_all)
             mo_pause_until_bid_ms = int(markout_state.get("mo_pause_until_bid_ms", mo_pause_until_bid_ms) or mo_pause_until_bid_ms)
             mo_pause_until_ask_ms = int(markout_state.get("mo_pause_until_ask_ms", mo_pause_until_ask_ms) or mo_pause_until_ask_ms)
+            if "mo_last_decay_ts_ms" in markout_state:
+                mo_last_decay_ts = int(markout_state["mo_last_decay_ts_ms"])
+                if mo_last_decay_ts > int(trade_ts[0]):
+                    raise ValueError("restored markout decay clock is after replay start")
 
     if initial_live_state_enabled:
         fill_cd_state = initial_live_state.get("fill_cooldown") or {}
@@ -24636,6 +24702,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     def _restore_initial_live_orders() -> None:
         nonlocal initial_live_state_orders_restored, initial_live_state_bid_orders_restored, initial_live_state_ask_orders_restored
         nonlocal initial_live_state_warning
+        nonlocal initial_live_state_queue_estimated_count
         if not initial_live_state_enabled or n_trades <= 0:
             return
         start_ts = int(trade_ts[0])
@@ -24664,14 +24731,39 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             restored["remaining"] = min(max(remaining, 0.0), max(quantity, remaining))
             restored["exchange_remaining"] = float(restored["remaining"])
             restored["restore_quote_ts"] = submit_ts
-            restored["activate_ts"] = min(start_ts, max(submit_ts, event_ts))
-            restored["new_ack_ts"] = start_ts
+            restored["activate_ts"] = int(raw_order.get("activate_ts_ms", event_ts))
+            restored["new_ack_ts"] = int(raw_order.get("new_ack_ts_ms", event_ts))
             restored["exchange_accepted"] = True
             restored["local_new_ack_published"] = True
             restored["quote_ts"] = submit_ts
             restored["mid_at_quote"] = quote_mid
             restored["inventory_at_submit"] = float(raw_order.get("inventory_at_submit", q) or q)
             status = str(raw_order.get("status", "OPEN")).upper()
+            if status not in ("PENDING_NEW", "SUBMITTING"):
+                if not (submit_ts <= restored["activate_ts"] <= restored["new_ack_ts"] <= start_ts):
+                    raise ValueError("restored acknowledged order clocks are inconsistent")
+                # An existing order must not re-enter post-only admission or
+                # receive a native new-order queue seed at the window edge.
+                queue_left = raw_order.get("queue_left")
+                if queue_left is None:
+                    queue_left = _estimate_queue_ahead(
+                        side, price, abs(float(quote_mid) - price), target_ts=start_ts,
+                    )
+                    initial_live_state_queue_estimated_count += 1
+                    queue_status = "unknown_history_boundary_estimate"
+                else:
+                    queue_status = "supplied_diagnostic_estimate"
+                queue_left = float(queue_left)
+                if not math.isfinite(queue_left) or queue_left < 0.0:
+                    raise ValueError("restored queue_left must be finite and non-negative")
+                restored.update(
+                    queue_left=queue_left, queue_init=queue_left,
+                    policy_queue_left=queue_left, policy_queue_init=queue_left,
+                    restored_queue_status=queue_status,
+                    simulator_queue_source="restored_unknown_queue_estimate",
+                    exact_queue_path_valid=False, exchange_book_queue_path_valid=False,
+                    exchange_book_queue_invalidated_reason="inherited_queue_history_unavailable",
+                )
             if status in ("PENDING_CANCEL", "CANCELING"):
                 restored["state"] = ORDER_PENDING_CANCEL
                 restored["cancel_ts"] = int(raw_order.get("cancel_ts_ms", start_ts) or start_ts)
@@ -24684,13 +24776,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
                 restored["cancel_request_ts"] = int(raw_order.get("cancel_request_ts_ms", event_ts) or event_ts)
                 restored["cancel_reason"] = str(raw_order.get("cancel_reason", "bootstrap_pending_cancel") or "bootstrap_pending_cancel")
-            else:
-                # Start as pending-new with immediate activation so queue is estimated
-                # from historical BBO/L2 at the replay boundary while preserving old quote_ts.
+            elif status in ("PENDING_NEW", "SUBMITTING"):
                 restored["state"] = ORDER_PENDING_NEW
-                restored["activate_ts"] = start_ts
                 restored["exchange_accepted"] = False
                 restored["local_new_ack_published"] = False
+            else:
+                restored["state"] = ORDER_OPEN
             if side == "BUY":
                 bid_orders.append(restored)
                 initial_live_state_bid_orders_restored += 1
@@ -32205,6 +32296,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "initial_live_state_bid_orders_restored": initial_live_state_bid_orders_restored,
         "initial_live_state_ask_orders_restored": initial_live_state_ask_orders_restored,
         "initial_live_state_warning": initial_live_state_warning,
+        **({
+            "initial_live_state_queue_estimated_count": initial_live_state_queue_estimated_count,
+            "initial_live_state_queue_scope": "inherited_queue_history_unknown_diagnostic_only",
+            "initial_live_state_last_requote_ts_ms": restored_last_requote_ts,
+            "initial_live_state_requote_clock_scope": (
+                "caller_supplied_recorded_local_clock"
+                if restored_last_requote_ts is not None else "not_restored"
+            ),
+        } if initial_live_state_enabled else {}),
         "cap_label": cap_label,
         "dynamic_cap_enabled": dynamic_cap_enabled,
         "eta": eta,
@@ -33858,6 +33958,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
+    if "last_requote_ts_ms" in (params.get("initial_live_state") or {}):
+        raise ValueError("C++ replay cannot restore last_requote_ts_ms; use Python replay")
     pre_snapshot_samples = _as_f64_array(
         params.get("_pre_snapshot_compute_latency_samples_ms")
     )

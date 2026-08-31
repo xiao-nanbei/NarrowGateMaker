@@ -1620,8 +1620,8 @@ def test_buy_q90_replays_cancel_pre_ack_fill_then_requires_new_placement(tmp_pat
                         "quantity": 0.002,
                         "remaining": 0.002,
                         "submit_ts_ms": BASE_MS + 100,
-                        "event_ts_ms": BASE_MS + 100,
-                        "status": "OPEN",
+                        "event_ts_ms": BASE_MS + 200,
+                        "status": "PENDING_NEW",
                         "mid_at_quote": 100.0,
                     }
                 ]

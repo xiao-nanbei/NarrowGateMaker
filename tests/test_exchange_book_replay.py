@@ -706,8 +706,8 @@ def test_tick_replay_seeds_queue_and_path_from_native_exchange_book() -> None:
                     "quantity": 0.001,
                     "remaining": 0.001,
                     "submit_ts_ms": BASE_MS + 100,
-                    "event_ts_ms": BASE_MS + 100,
-                    "status": "OPEN",
+                    "event_ts_ms": BASE_MS + 300,
+                    "status": "PENDING_NEW",
                     "mid_at_quote": 100.0,
                 }
             ]
@@ -914,16 +914,47 @@ def test_order_activation_between_outer_events_uses_pre_activation_book() -> Non
     assert buy_row["exchange_book_queue_path_valid"] == 1
 
 
-def test_same_millisecond_trade_and_book_change_invalidates_order_path() -> None:
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    ("same_ms_trades", "ambiguous"),
+    [
+        pytest.param([(100.0, 1)], False, id="different-price"),
+        pytest.param([(96.7, 0)], False, id="opposite-aggressor"),
+        pytest.param([(100.0, 1), (96.7, 0)], False, id="unrelated-batch"),
+        pytest.param([(96.7, 1), (100.0, 1)], True, id="related-first-child"),
+        pytest.param([(100.0, 1), (96.7, 1)], True, id="related-last-child"),
+        pytest.param([(100.0, 1), (96.6, 1)], True, id="trade-through-last-child"),
+    ],
+)
+def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
+    side: str, same_ms_trades: list[tuple[float, int]], ambiguous: bool,
+) -> None:
+    # Mirror the batch around the resting BUY/SELL price. Only a counterparty
+    # taker reaching that level makes its update ambiguous, regardless of its
+    # position in the batch. A later clear must still clear modeled ahead.
+    buy = side == "BUY"
+    order_price = 96.7 if buy else 103.4
+    level_side = "bid" if buy else "ask"
+    level_tick = 967 if buy else 1034
+    count = len(same_ms_trades)
     trades = pd.DataFrame(
         {
             "transact_time": np.asarray(
-                [BASE_MS + 200, BASE_MS + 500, BASE_MS + 1_200],
+                [BASE_MS + 200] + [BASE_MS + 500] * count
+                + [BASE_MS + 1_000, BASE_MS + 1_200],
                 dtype=np.int64,
             ),
-            "price": np.asarray([100.0, 99.0, 100.0]),
-            "quantity": np.asarray([0.0, 0.5, 0.0]),
-            "is_buyer_maker": np.ones(3, dtype=np.uint8),
+            "price": np.asarray(
+                [100.0] + [
+                    order_price + (price - 96.7) * (1 if buy else -1)
+                    for price, _ in same_ms_trades
+                ] + [order_price, 100.0]
+            ),
+            "quantity": np.asarray([0.0] + [0.5] * count + [0.001, 0.0]),
+            "is_buyer_maker": np.asarray(
+                [1] + [flag if buy else 1 - flag for _, flag in same_ms_trades]
+                + [int(buy), 1], dtype=np.uint8,
+            ),
         }
     )
     params = {
@@ -945,52 +976,88 @@ def test_same_millisecond_trade_and_book_change_invalidates_order_path() -> None
         "position_timeout": 0.0,
         "markout_ema_span_fills": 0,
         "max_exec_book_age_s": 0.0,
-        "new_order_latency_ms": 0,
+        "new_order_latency_ms": 100,
         "replace_min_price_change_ticks": 1_000.0,
         "replace_min_price_change_ticks_reducing": 1_000.0,
         "replace_min_interval_ms": 1_000_000.0,
         "replace_min_interval_ms_reducing": 1_000_000.0,
-        "initial_live_state": {
-            "active_orders": [
-                {
-                    "side": "BUY",
-                    "price": 99.0,
-                    "quantity": 0.001,
-                    "remaining": 0.001,
-                    "submit_ts_ms": BASE_MS + 100,
-                    "event_ts_ms": BASE_MS + 100,
-                    "status": "OPEN",
-                    "mid_at_quote": 100.0,
-                }
-            ]
-        },
         "trace_local_order_value_max": 20,
         "local_order_value_fill_horizon_ms": 500,
         "local_order_value_price_jump_ticks": 1.0,
         "exchange_book_queue_mode": "diagnostic",
+        "trace_quotes_max": 20,
     }
 
     params["exchange_book_queue_ambiguity_trace_max"] = 10
+    events = [
+        _event(
+            100,
+            event_type="snapshot",
+            levels=(("bid", 900, 1.0), ("bid", 967, 5.0), ("bid", 999, 2.0),
+                    ("ask", 1001, 2.0), ("ask", 1034, 5.0), ("ask", 1100, 1.0)),
+            last_update_id=100,
+            ordinal=1,
+        ),
+        _event(
+            500,
+            event_type="delta",
+            levels=((level_side, level_tick, 3.0),),
+            first_update_id=101,
+            final_update_id=101,
+            previous_final_update_id=100,
+            ordinal=2,
+        ),
+        _event(
+            750,
+            event_type="delta",
+            levels=((level_side, level_tick, 4.0),),
+            first_update_id=102,
+            final_update_id=102,
+            previous_final_update_id=101,
+            ordinal=3,
+        ),
+        _event(
+            900,
+            event_type="delta",
+            levels=((level_side, level_tick, 0.0),),
+            first_update_id=103,
+            final_update_id=103,
+            previous_final_update_id=102,
+            ordinal=4,
+        )
+    ]
     result = simulate_tick(
         trades,
         np.asarray([BASE_MS], dtype=np.int64),
         np.asarray([1.0], dtype=np.float64),
         params,
-        exchange_book_event_tape=_events(),
+        exchange_book_event_tape=events,
     )
 
-    assert result["exchange_book_queue_ambiguous_event_count"] >= 1
-    assert result["exchange_book_queue_invalidated_order_count"] >= 1
-    assert result["_exchange_book_queue_ambiguity_trace"]
-    assert result["_exchange_book_queue_ambiguity_trace"][0]["reason"] == (
-        "same_ms_exchange_book_ambiguity"
-    )
-    assert result["_exchange_book_queue_ambiguity_trace"][0]["ambiguous"] is True
+    if ambiguous:
+        assert result["exchange_book_queue_ambiguous_event_count"] >= 1
+        assert result["exchange_book_queue_invalidated_order_count"] >= 1
+        assert result["_exchange_book_queue_ambiguity_trace"][0]["reason"] == (
+            "same_ms_exchange_book_ambiguity"
+        )
+        assert result["_exchange_book_queue_ambiguity_trace"][0]["ambiguous"] is True
+    else:
+        assert result["exchange_book_queue_ambiguous_event_count"] == 0
+        assert result["exchange_book_queue_invalidated_order_count"] == 0
+        assert result["_exchange_book_queue_ambiguity_trace"] == []
     native_rows = [
         row
         for row in result["_local_order_value_trace"]
-        if row["simulator_queue_source"] == "native_exchange_book"
+        if row["simulator_queue_source"] == "native_exchange_book" and row["side"] == side
     ]
     assert native_rows
-    assert native_rows[0]["exchange_book_queue_path_valid"] == 0
-    assert native_rows[0]["exchange_book_ambiguous_event_count"] >= 1.0
+    assert native_rows[0]["exchange_book_queue_path_valid"] == int(not ambiguous)
+    assert bool(native_rows[0]["exchange_book_ambiguous_event_count"]) is ambiguous
+    target_order = next(
+        row for row in result["_quote_trace"]
+        if row["side"] == side and row["price"] == order_price
+    )
+    assert target_order["queue_init"] == pytest.approx(5.0)
+    assert target_order["queue_left"] == pytest.approx(0.0)
+    assert target_order["outcome"] == "fill"
+    assert target_order["outcome_ts"] == BASE_MS + 1_000

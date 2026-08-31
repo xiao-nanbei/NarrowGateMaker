@@ -383,6 +383,8 @@ def test_baseline_replay_emits_one_causal_observation_per_active_order() -> None
 
 
 def _native_queue_action_params(bundle_path) -> dict:
+    # These queue-action fixtures require a new-order native seed, not an
+    # inherited OPEN order whose historical priority cannot be reconstructed.
     return {
         "gamma": 0.01,
         "kappa": 1.0,
@@ -406,8 +408,8 @@ def _native_queue_action_params(bundle_path) -> dict:
                     "quantity": 0.001,
                     "remaining": 0.001,
                     "submit_ts_ms": BASE_MS + 100,
-                    "event_ts_ms": BASE_MS + 100,
-                    "status": "OPEN",
+                    "event_ts_ms": BASE_MS + 200,
+                    "status": "PENDING_NEW",
                     "mid_at_quote": 100.0,
                 }
             ],
