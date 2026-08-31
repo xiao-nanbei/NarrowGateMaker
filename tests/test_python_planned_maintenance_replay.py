@@ -213,6 +213,312 @@ def test_main_loop_requires_serial_http_return_clock() -> None:
         _run(param_overrides={"replay_main_loop_sleep_ms": 100})
 
 
+@pytest.mark.parametrize("new_clocks,cancel_clocks", [
+    ((37.0, 37.0), (80.0, 80.0, 80.0)),
+    ((2.0, 37.0), (20.0, 110.0, 80.0)),
+])
+def test_direct_rest_return_samples_match_profile_behaviour(
+    tmp_path, new_clocks, cancel_clocks,
+) -> None:
+    profile = tmp_path / "gateway.npz"
+    _write_serial_gateway_profile(
+        profile, [(True, True, True, True)],
+        new_clocks=new_clocks, cancel_clocks=cancel_clocks,
+    )
+    common = {
+        "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+        "replay_main_loop_sleep_ms": 100,
+        "_decision_to_gateway_latency_samples_ms": [40.0],
+        "_pre_snapshot_compute_latency_samples_ms": [10.0],
+        "trace_decisions_max": 100, "trace_local_order_lifecycle_max": 100,
+    }
+    profiled = _run(param_overrides={
+        **common, "rest_gateway_timing_profile_path": str(profile),
+    })
+    semantics = "measured_HTTP_duration_with_explicit_effective_and_ACK_upper_bound_proxy"
+    direct = _run(param_overrides={
+        **common,
+        "_serial_rest_return_samples_by_operation": {
+            "new": np.asarray([[*new_clocks, new_clocks[1]]]),
+            "cancel": np.asarray([cancel_clocks]),
+        },
+        "_serial_rest_return_sample_semantics": semantics,
+    })
+    for key in (
+        "pnl", "final_inventory", "n_requotes", "fills_bid", "fills_ask",
+        "_quote_trace", "_fill_trace", "_decision_trace", "rest_gateway_request_count",
+        "rest_gateway_busy_ms", "rest_gateway_pending_decision_count",
+    ):
+        assert direct[key] == profiled[key], key
+    assert direct["rest_gateway_response_clock_semantics"] == semantics
+    assert "rest_gateway_timing_profile_path" not in direct
+    assert direct["rest_gateway_response_sample_counts"] == {
+        "cancel_buy": 1, "cancel_sell": 1, "new_buy": 1, "new_sell": 1,
+    }
+
+
+@pytest.mark.parametrize("rows", [
+    [], [1.0, 2.0, 3.0], [[1.0, 2.0]], [[1.0, 2.0, 3.0, 4.0]],
+    [[float("nan"), 2.0, 3.0]], [[1.0, float("inf"), 3.0]],
+    [[-1.0, 2.0, 3.0]], [[3.0, 2.0, 4.0]], [[3.0, 4.0, 2.0]],
+])
+def test_direct_rest_return_samples_reject_invalid_clock_rows(rows) -> None:
+    with pytest.raises(ValueError, match="effective/ACK/HTTP triples"):
+        _run(param_overrides={
+            "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+            "_serial_rest_return_samples_by_operation": {
+                "new": rows, "cancel": [[1.0, 2.0, 3.0]],
+            },
+            "_serial_rest_return_sample_semantics": "explicit_test_proxy",
+        })
+
+
+@pytest.mark.parametrize("overrides,message", [
+    ({"_serial_rest_return_sample_semantics": ""}, "declare observed or proxy semantics"),
+    ({"_serial_rest_return_samples_by_operation": {"new": [[1, 2, 3]]}},
+     "require new and cancel operations"),
+    ({"rest_gateway_timing_mode": "disabled"}, "sampled_serial without a profile"),
+    ({"rest_gateway_timing_profile_path": "/not-read.npz"},
+     "sampled_serial without a profile"),
+])
+def test_direct_rest_return_samples_reject_ambiguous_input_contract(overrides, message) -> None:
+    with pytest.raises(ValueError, match=message):
+        _run(param_overrides={
+            "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+            "_serial_rest_return_samples_by_operation": {
+                "new": [[1.0, 2.0, 3.0]], "cancel": [[1.0, 2.0, 3.0]],
+            },
+            "_serial_rest_return_sample_semantics": "explicit_test_proxy",
+            **overrides,
+        })
+
+
+def test_direct_rest_return_samples_run_with_source_message_clock() -> None:
+    trades, original_bbo = _inputs()
+    base = 10_000
+    trades["transact_time"] += base
+    bbo = HistoricalBBOData(
+        ts_ms=original_bbo.ts_ms + base,
+        best_bid=original_bbo.best_bid, best_ask=original_bbo.best_ask,
+        bid_qty=original_bbo.bid_qty, ask_qty=original_bbo.ask_qty,
+    )
+    depth = HistoricalL2Data(
+        ts_ms=bbo.ts_ms, bid_px=bbo.best_bid[:, None], ask_px=bbo.best_ask[:, None],
+        bid_qty=bbo.bid_qty[:, None], ask_qty=bbo.ask_qty[:, None],
+    )
+
+    def clocks(ms):
+        ns = np.asarray(ms, dtype=np.int64) * 1_000_000
+        return {"exchange_ts_ns": ns, "receive_ts_ns": ns.copy(),
+                "feature_ready_ts_ns": ns.copy()}
+
+    variance = clocks([base - 1_000])
+    variance["receive_ts_ns"] += 1_000_000_000
+    variance["feature_ready_ts_ns"] += 1_000_000_000
+    result = simulate_tick(
+        trades, np.asarray([base - 1_000]), np.asarray([1.0]),
+        {**_params(), "replay_purpose": "diagnostic",
+         "rest_gateway_timing_mode": "sampled_serial", "replay_main_loop_sleep_ms": 100,
+         "_serial_rest_return_samples_by_operation": {
+             "new": [[37.0, 37.0, 37.0]], "cancel": [[80.0, 80.0, 80.0]],
+         },
+         "_serial_rest_return_sample_semantics": "explicit_HTTP_upper_bound_proxy",
+         "use_bar_pricing": False,
+         "_decision_to_gateway_latency_samples_ms": [40.0],
+         "_pre_snapshot_compute_latency_samples_ms": [10.0],
+         "exec_book_visibility_mode": "message_schedule", "_exec_message_delivery": {
+             "bbo": clocks(bbo.ts_ms), "depth": clocks(depth.ts_ms), "variance": variance,
+             "trade": {**clocks([base]), "last_child_row_index": np.asarray([0])},
+         },
+         "planned_quote_stop_ts_ms": base + 2_000,
+         "replay_event_clock_end_ts_ms": base + 4_000, "trace_decisions_max": 100},
+        bbo_data=bbo, l2_data=depth,
+    )
+    assert result["n_requotes"] > 0
+    assert result["rest_gateway_request_count"] > 0
+    assert result["rest_gateway_response_clock_semantics"] == "explicit_HTTP_upper_bound_proxy"
+    assert set(result["exec_message_delivery_sources"]) == {"bbo", "depth", "trade", "variance"}
+    # Inputs arriving at entry are visible at the later snapshot after compute.
+    assert result["_decision_trace"][0]["ts_ms"] == base + 10
+
+
+def _ioc_inventory_path(
+    *, initial_sign: int, maker_closes_before_ioc: bool = False, new_service_ms: float = 0.0,
+):
+    timestamps = np.asarray([0, 10_000, 70_000, 85_000, 100_000, 120_000, 140_000])
+    prices = np.asarray([100.0, 110.0, 110.0, 100.0, 90.0, 120.0, 90.0])
+    quantities = np.asarray([0.0, 0.0, 0.0, 10.0, 0.0, 10.0, 0.0])
+    maker_flags = np.asarray([0, 0, 0, 1, 0, 0, 0])
+    if maker_closes_before_ioc:
+        timestamps[2] = 35_000
+        prices[2] = 100.0
+        quantities[:] = 0.0
+        quantities[2] = 10.0
+        maker_flags[2] = 1
+    l2_ts = np.arange(0, 140_001, 1_000, dtype=np.int64)
+    mid = np.where(l2_ts < 10_000, 100.0, np.where(l2_ts < 100_000, 110.0, 90.0))
+    if initial_sign > 0:
+        prices = 200.0 - prices
+        mid = 200.0 - mid
+        maker_flags = 1 - maker_flags
+    trades = pd.DataFrame({
+        "transact_time": timestamps, "price": prices,
+        "quantity": quantities, "is_buyer_maker": maker_flags,
+    })
+    depth = HistoricalL2Data(
+        ts_ms=l2_ts, bid_px=(mid - 0.1)[:, None], ask_px=(mid + 0.1)[:, None],
+        bid_qty=np.zeros((l2_ts.size, 1)), ask_qty=np.zeros((l2_ts.size, 1)),
+    )
+    return simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**_params(), "planned_quote_stop_ts_ms": 0,
+         "replay_event_clock_end_ts_ms": 140_000, "replay_clock_interval_ms": 1_000,
+         "requote_interval": 10.0, "rq_min": 10.0, "rq_max": 10.0,
+         "initial_inventory": initial_sign * 0.001, "initial_entry_price": 100.0,
+         "use_bar_pricing": False, "circuit_breaker_sigma": 1.0,
+         "pnl_volatility_horizon_s": 1.0, "circuit_breaker_exit_mode": "maker_close",
+         "new_order_latency_ms": 0, "cancel_order_latency_ms": 0, "taker_fee": 0.01,
+         "_private_fill_visibility_latency_samples_ms": [
+             50_000.0 if maker_closes_before_ioc else 20.0,
+         ],
+         "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+         "_serial_rest_return_samples_by_operation": {
+             "new": [[new_service_ms, new_service_ms, new_service_ms]],
+             "cancel": [[0.0, 0.0, 0.0]],
+         }, "_serial_rest_return_sample_semantics": "synthetic_zero_service"},
+        l2_data=depth,
+    )
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_ioc_physical_inventory_update_allows_later_reduce_only_maker_fill(initial_sign) -> None:
+    result = _ioc_inventory_path(initial_sign=initial_sign)
+    fills = result["_fill_trace"]
+    assert len(fills) == 3
+    assert result["circuit_breaker_close_ioc_fill_count"] == 1
+    assert [row["fill_fee_rate"] for row in fills] == [0.01, 0.0, 0.0]
+    assert fills[-1]["reduce_only"] is True
+    assert fills[-1]["fill_ts"] == 120_000
+    assert fills[0]["exchange_remaining"] == 0.0
+    assert fills[0]["last_exchange_fill_ts_ms"] == fills[0]["fill_ts"]
+    assert fills[0]["last_private_fill_visible_ts_ms"] == fills[0]["fill_ts"]
+    assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_pending_quantity"] == pytest.approx(0.0, abs=1e-12)
+    assert result["private_fill_pending_visibility_count"] == 0
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_ioc_reduce_only_uses_exchange_inventory_while_maker_callback_pending(initial_sign) -> None:
+    result = _ioc_inventory_path(initial_sign=initial_sign, maker_closes_before_ioc=True)
+    # Maker already closed the physical position at 35s but its callback waits
+    # until 85s. The stale local position must not permit another IOC close.
+    assert result["circuit_breaker_close_ioc_fill_count"] == 0
+    assert result["circuit_breaker_close_ioc_expire_count"] > 0
+    assert len(result["_fill_trace"]) == 1
+    assert result["_fill_trace"][0]["fill_fee_rate"] == 0.0
+    assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_pending_quantity"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_ioc_trace_uses_actual_execution_boundary_not_previous_trade_timestamp() -> None:
+    result = _ioc_inventory_path(initial_sign=-1, new_service_ms=17.0)
+    fills = [row for row in result["_fill_trace"] if row["fill_fee_rate"] == 0.01]
+    assert fills
+    for fill in fills:
+        assert fill["fill_ts"] >= fill["activate_ts"]
+        assert fill["fill_ts"] == fill["last_exchange_fill_ts_ms"]
+        assert fill["fill_ts"] == fill["last_private_fill_visible_ts_ms"]
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+@pytest.mark.parametrize("close_mode", ["timeout", "immediate_taker"])
+def test_synchronous_taker_close_keeps_physical_ledger_consistent(initial_sign, close_mode) -> None:
+    overrides = {
+        "initial_inventory": initial_sign * 0.001,
+        "initial_entry_price": 110.0 if initial_sign > 0 else 90.0,
+        "taker_fee": 0.01, "_private_fill_visibility_latency_samples_ms": [20.0],
+        "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+        "_serial_rest_return_samples_by_operation": {
+            "new": [[0.0, 0.0, 0.0]], "cancel": [[0.0, 0.0, 0.0]],
+        }, "_serial_rest_return_sample_semantics": "synthetic_zero_service",
+    }
+    if close_mode == "timeout":
+        overrides["position_timeout"] = 0.5
+    else:
+        overrides.update(circuit_breaker_exit_mode="immediate_taker", circuit_breaker_sigma=1.0,
+                         pnl_volatility_horizon_s=1.0)
+    result = _run(param_overrides=overrides)
+    assert result["final_inventory"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
+    assert result["exchange_pending_quantity"] == pytest.approx(0.0, abs=1e-12)
+    assert result["private_fill_pending_visibility_count"] == 0
+
+
+@pytest.mark.parametrize("initial_sign", [-1, 1])
+def test_historical_passive_close_clip_keeps_order_during_30s_aggression(initial_sign) -> None:
+    timestamps = np.asarray([0, 10_000, 65_000])
+    prices = np.asarray([100.0, 110.0, 110.0])
+    book_ts = np.arange(0, 65_001, 1_000, dtype=np.int64)
+    mid = np.where(book_ts < 10_000, 100.0, 110.0)
+    if initial_sign > 0:
+        prices = 200.0 - prices
+        mid = 200.0 - mid
+    trades = pd.DataFrame({
+        "transact_time": timestamps, "price": prices,
+        "quantity": np.zeros(3), "is_buyer_maker": np.zeros(3, dtype=np.uint8),
+    })
+    bbo = HistoricalBBOData(
+        ts_ms=book_ts, best_bid=mid - 0.1, best_ask=mid + 0.1,
+        bid_qty=np.ones(book_ts.size), ask_qty=np.ones(book_ts.size),
+    )
+    params = {
+        **_params(), "planned_quote_stop_ts_ms": 0,
+        "replay_event_clock_end_ts_ms": 65_000, "replay_clock_interval_ms": 1_000,
+        "requote_interval": 5.0, "rq_min": 5.0, "rq_max": 5.0,
+        "requote_threshold_bps": 0.0,
+        "initial_inventory": initial_sign * 0.001, "initial_entry_price": 100.0,
+        "use_bar_pricing": False, "circuit_breaker_sigma": 1.0,
+        "pnl_volatility_horizon_s": 1.0, "circuit_breaker_exit_mode": "maker_close",
+        "new_order_latency_ms": 0, "cancel_order_latency_ms": 0,
+        "replay_purpose": "diagnostic",
+    }
+    default = simulate_tick(trades, np.asarray([0]), np.asarray([1.0]), params, bbo_data=bbo)
+    unclipped = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**params, "_diagnostic_passive_close_bbo_clip": False}, bbo_data=bbo,
+    )
+    clipped = simulate_tick(
+        trades, np.asarray([0]), np.asarray([1.0]),
+        {**params, "_diagnostic_passive_close_bbo_clip": True}, bbo_data=bbo,
+    )
+    assert default["_quote_trace"] == unclipped["_quote_trace"]
+    assert default["_fill_trace"] == unclipped["_fill_trace"]
+    assert default["circuit_breaker_close_gtx_reject_count"] == 3
+    assert default["circuit_breaker_close_ioc_place_count"] == 1
+    assert clipped["circuit_breaker_close_gtx_reject_count"] == 0
+    assert clipped["circuit_breaker_close_ioc_place_count"] == 0
+    assert clipped["circuit_breaker_close_keep_count"] > 0
+    closing = [row for row in clipped["_quote_trace"] if row["circuit_breaker_close"]]
+    assert len(closing) == 1
+    assert closing[0]["side"] == ("BUY" if initial_sign < 0 else "SELL")
+    assert closing[0]["price"] == pytest.approx(110.0 if initial_sign < 0 else 90.0)
+    assert clipped["_fill_trace"] == []
+
+
+@pytest.mark.parametrize("purpose", ["formal", "exploratory", ""])
+def test_historical_passive_close_clip_requires_diagnostic_purpose(purpose) -> None:
+    trades, bbo = _inputs()
+    variance_ts = np.arange(0, 4_001, 1_000, dtype=np.int64)
+    with pytest.raises(ValueError, match="passive-close BBO clipping is diagnostic-only"):
+        simulate_tick(
+            trades, variance_ts, np.ones(variance_ts.size),
+            {**_params(), "_diagnostic_passive_close_bbo_clip": True, "replay_purpose": purpose},
+            bbo_data=bbo,
+        )
+
+
 @pytest.mark.parametrize("extra_trade_events", [False, True])
 def test_main_loop_sleep_uses_actual_return_phase_not_market_or_fixed_grid(
     tmp_path, extra_trade_events,
@@ -356,7 +662,9 @@ def test_pre_snapshot_compute_pairs_with_total_without_double_counting(tmp_path,
 
 
 @pytest.mark.parametrize("stop_ms,end_ms", [(100, 4_000), (0, 100)])
-def test_pre_snapshot_compute_cannot_send_after_stop_or_window_end(tmp_path, stop_ms, end_ms) -> None:
+def test_pre_snapshot_compute_cannot_send_after_stop_or_window_end(
+    tmp_path, stop_ms, end_ms,
+) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
         profile, [(True, True, True, True)], cancel_clocks=(20.0, 60.0, 80.0),

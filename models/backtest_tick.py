@@ -6712,6 +6712,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         raise ValueError(
             "decision-to-gateway compute latency is diagnostic-only"
         )
+    diagnostic_passive_close_bbo_clip = bool(
+        params.get("_diagnostic_passive_close_bbo_clip", False)
+    )
+    if (
+        diagnostic_passive_close_bbo_clip
+        and str(params.get("replay_purpose", "")).strip().lower() != "diagnostic"
+    ):
+        raise ValueError("historical passive-close BBO clipping is diagnostic-only")
     latency_stress_enabled = bool(params.get("latency_stress_enabled", False))
     latency_stress_spike_probability = float(
         params.get("latency_stress_spike_probability", 0.0) or 0.0
@@ -6740,7 +6748,36 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     raw_gateway_path = str(
         params.get("rest_gateway_timing_profile_path", "") or ""
     ).strip()
-    serial_rest_return_enabled = bool(sampled_serial_gateway and raw_gateway_path)
+    operation_return_samples = params.get("_serial_rest_return_samples_by_operation")
+    direct_return_samples = operation_return_samples is not None
+    direct_return_semantics = str(
+        params.get("_serial_rest_return_sample_semantics", "") or ""
+    ).strip()
+    if direct_return_samples:
+        if not sampled_serial_gateway or raw_gateway_path:
+            raise ValueError("direct REST-return samples require sampled_serial without a profile")
+        if not isinstance(operation_return_samples, Mapping) or set(operation_return_samples) != {
+            "new", "cancel"
+        }:
+            raise ValueError("direct REST-return samples require new and cancel operations")
+        if not direct_return_semantics:
+            raise ValueError("direct REST-return samples must declare observed or proxy semantics")
+        operation_return_samples = dict(operation_return_samples)
+        for operation, raw_rows in operation_return_samples.items():
+            rows = np.asarray(raw_rows, dtype=np.float64)
+            if (
+                rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0
+                or not np.all(np.isfinite(rows)) or np.any(rows < 0.0)
+                or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
+            ):
+                raise ValueError(
+                    "REST-return rows must be finite nonnegative effective/ACK/HTTP triples "
+                    "with effective <= ACK and effective <= HTTP"
+                )
+            operation_return_samples[operation] = np.ascontiguousarray(rows)
+    serial_rest_return_enabled = bool(
+        sampled_serial_gateway and (raw_gateway_path or direct_return_samples)
+    )
     main_loop_sleep_raw = float(params.get("replay_main_loop_sleep_ms", 0) or 0)
     if (
         not math.isfinite(main_loop_sleep_raw)
@@ -6766,7 +6803,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     main_loop_tick_complete_ms = 0
     main_loop_tick_count = 0
     is_main_loop_wake = False
-    if rest_gateway_timing_mode == "paired_npz" or serial_rest_return_enabled:
+    if rest_gateway_timing_mode == "paired_npz" or (
+        serial_rest_return_enabled and not direct_return_samples
+    ):
         if not raw_gateway_path:
             raise ValueError(
                 "paired serial REST gateway timing requires a profile path"
@@ -6778,7 +6817,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             gateway_path
         )
     rest_return_samples: dict[str, np.ndarray] = {}
-    if serial_rest_return_enabled:
+    if direct_return_samples:
+        # Pool only the operation when telemetry cannot identify a side.  The
+        # simulator samples each request independently, retaining row pairing;
+        # it does not manufacture an observed multi-request or side assignment.
+        rest_return_samples = {
+            slot: operation_return_samples[slot.split("_", 1)[0]]
+            for slot in _REST_GATEWAY_SLOT_NAMES
+        }
+    elif serial_rest_return_enabled:
         profile = rest_gateway_timing_profile
         present = profile["request_present_mask"]
         shape = present.shape
@@ -23822,6 +23869,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             close_price = math.floor(close_mid / TICK + 1e-12) * TICK
             if aggressive_passive:
                 close_price += TICK
+        if diagnostic_passive_close_bbo_clip and not use_ioc:
+            if close_side == "SELL" and cur_best_bid > 0.0:
+                close_price = max(close_price, cur_best_bid + TICK)
+            elif close_side == "BUY" and cur_best_ask > 0.0:
+                close_price = min(close_price, cur_best_ask - TICK)
         close_price = round(close_price / TICK) * TICK
 
         existing = next(
@@ -23898,10 +23950,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                            quote_ts: int, quote_mid: float, queue_init: float,
                            queue_before: float, rem_before: float,
                            inventory_before_fill: float, order=None,
-                           fee_rate: Optional[float] = None):
+                           fee_rate: Optional[float] = None,
+                           fill_ts_ms: Optional[int] = None):
         if trace_fills is None or len(trace_fills) >= trace_fills_max:
             return
-        t_fill = trade_ts[idx]
+        t_fill = trade_ts[idx] if fill_ts_ms is None else int(fill_ts_ms)
         def _markout_at(horizon_ms: int) -> float:
             future_idx = np.searchsorted(trade_ts, t_fill + horizon_ms, side="left")
             if future_idx >= len(trade_price):
@@ -24018,7 +24071,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ) -> bool:
         """Resolve activated reduce-only IOC orders against exchange-time BBO."""
 
-        nonlocal q, cash, entry_price
+        nonlocal q, cash, entry_price, exchange_inventory
         nonlocal nfb, nfa
         nonlocal buy_fill_qty_total, sell_fill_qty_total
         nonlocal buy_fill_notional, sell_fill_notional
@@ -24064,7 +24117,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     and _order_price_tick(order, TICK)
                     >= _price_to_tick(fill_price, TICK)
                 )
-                reducible = max(0.0, -q)
+                reducible = max(
+                    0.0, -exchange_inventory if private_fill_visibility_enabled else -q,
+                )
             else:
                 fill_price = float(best_bid_at)
                 top_qty = float(bid_qty_at)
@@ -24073,7 +24128,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     and _order_price_tick(order, TICK)
                     <= _price_to_tick(fill_price, TICK)
                 )
-                reducible = max(0.0, q)
+                reducible = max(
+                    0.0, exchange_inventory if private_fill_visibility_enabled else q,
+                )
 
             if not marketable or reducible < LOT_SIZE:
                 circuit_breaker_close_ioc_expire_count += 1
@@ -24258,6 +24315,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 last_buy_fill_cooldown_ms = 0.0
                 last_buy_fill_cooldown_total_ms = 0.0
 
+            if private_fill_visibility_enabled:
+                # This IOC fill is synchronous, unlike a reserved maker fill
+                # whose private callback only updates local inventory later.
+                # Apply its physical delta without erasing pending maker fills.
+                exchange_inventory += q - q_before_fill
+
             _loss_cooldown_on_fill(
                 side,
                 float(fill_qty),
@@ -24269,6 +24332,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 0.0,
                 float(order.get("remaining", 0.0)) - fill_qty,
             )
+            if private_fill_visibility_enabled:
+                order["exchange_remaining"] = max(
+                    0.0, float(order.get("exchange_remaining", order["remaining"] + fill_qty))
+                    - fill_qty,
+                )
+                order["last_exchange_fill_ts_ms"] = int(now_ts)
+                order["last_private_fill_visible_ts_ms"] = int(now_ts)
             _post_cooldown_budget_on_fill(
                 order,
                 side=side,
@@ -24337,6 +24407,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 q_before_fill,
                 order=trace_order,
                 fee_rate=taker_fee,
+                fill_ts_ms=int(now_ts),
             )
             _append_order_outcome(
                 order,
@@ -26435,6 +26506,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 else:
                     cash -= p * aq_t * (1.0 + taker_fee)
                     close_side = "BUY"
+                if private_fill_visibility_enabled:
+                    exchange_inventory -= timeout_prev_q
                 q = 0.0
                 _cooldown_lineage_on_fill(
                     close_side,
@@ -27026,6 +27099,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     else:
                         cash -= mid * aq_t * (1.0 + taker_fee)
                         close_side = "BUY"
+                    if private_fill_visibility_enabled:
+                        exchange_inventory -= q
                     q = 0.0
                     _loss_cooldown_on_fill(
                         close_side,
@@ -31681,6 +31756,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "independent_request_service_times_with_paired_effective_ack"
                 ),
                 "rest_gateway_response_clock_semantics": (
+                    direct_return_semantics if direct_return_samples else
                     "paired_observed_upper_bound" if serial_rest_return_enabled else
                     "private_callback_bound_service_proxy"
                 ),

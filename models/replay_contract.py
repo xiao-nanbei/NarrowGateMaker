@@ -634,6 +634,27 @@ def build_replay_contract(
         raise ValueError(
             "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
         )
+    direct_return_samples = params.get("_serial_rest_return_samples_by_operation")
+    direct_return_semantics = str(
+        params.get("_serial_rest_return_sample_semantics", "") or ""
+    ).strip()
+    if direct_return_samples is not None:
+        if rest_gateway_mode != "sampled_serial" or params.get("rest_gateway_timing_profile_path"):
+            raise ValueError("direct REST-return samples require sampled_serial without a profile")
+        if not isinstance(direct_return_samples, Mapping) or set(direct_return_samples) != {
+            "new", "cancel"
+        }:
+            raise ValueError("direct REST-return samples require new and cancel operations")
+        if not direct_return_semantics:
+            raise ValueError("direct REST-return samples must declare observed or proxy semantics")
+        for values in direct_return_samples.values():
+            rows = np.asarray(values, dtype=np.float64)
+            if (
+                rows.ndim != 2 or rows.shape[1] != 3 or rows.shape[0] == 0
+                or not np.all(np.isfinite(rows)) or np.any(rows < 0.0)
+                or np.any(rows[:, 0] > rows[:, 1]) or np.any(rows[:, 0] > rows[:, 2])
+            ):
+                raise ValueError("invalid effective/ACK/HTTP REST-return sample triples")
     rest_gateway_identity: dict[str, Any] | None = None
     if rest_gateway_mode == "paired_npz":
         profile_path = _resolve_path(
@@ -692,6 +713,19 @@ def build_replay_contract(
                         "sha256": sha256_file(profile_path),
                     },
                 }
+            )
+        elif direct_return_samples is not None:
+            rest_gateway_identity.update(
+                sampling_unit="independent_request_with_paired_effective_private_return",
+                request_start="max_decision_ready_previous_rest_return",
+                response_clock_semantics=direct_return_semantics,
+                cancel_continuation="skip_new_if_not_terminal_at_rest_return",
+                sample_identity_source="operation_pooled_direct_samples",
+                sample_columns=["exchange_effective_ms", "local_ack_ms", "http_return_ms"],
+                operation_samples={
+                    operation: _sample_identity(values)
+                    for operation, values in sorted(direct_return_samples.items())
+                },
             )
     diagnostic_latency_selected = bool(
         private_fill_visibility_enabled

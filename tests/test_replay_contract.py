@@ -505,6 +505,31 @@ def test_sampled_serial_gateway_records_return_clock_separately(tmp_path):
     validate_frozen_replay_contract(params)
 
 
+def test_serial_direct_samples_record_proxy_semantics_and_paired_rows(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_serial",
+        _serial_rest_return_sample_semantics="HTTP_return_upper_bound_proxy",
+        _serial_rest_return_samples_by_operation={
+            "new": [[4.0, 4.0, 4.0], [7.0, 7.0, 7.0]],
+            "cancel": [[3.0, 3.0, 3.0]],
+        },
+    )
+    with pytest.raises(RuntimeError, match="serial REST gateway timing is diagnostic-only"):
+        freeze_replay_contract(params, root=tmp_path)
+    contract = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    identity = contract["latency"]["serial_rest_gateway"]
+    assert identity["response_clock_semantics"] == "HTTP_return_upper_bound_proxy"
+    assert identity["sample_identity_source"] == "operation_pooled_direct_samples"
+    assert identity["sample_columns"] == ["exchange_effective_ms", "local_ack_ms", "http_return_ms"]
+    assert "profile" not in identity
+    validate_frozen_replay_contract(params)
+    before = identity["operation_samples"]["new"]
+    params["_serial_rest_return_samples_by_operation"]["new"][0] = [5.0, 5.0, 5.0]
+    updated = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    assert updated["latency"]["serial_rest_gateway"]["operation_samples"]["new"] != before
+
+
 def test_full_chain_execution_controls_survive_shared_parameter_mapping():
     config = Config()
     config.risk.max_exec_book_visible_age_s = 0.4
