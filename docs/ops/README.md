@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-30
+Last materially modified: 2026-08-31
 
-Last materially synchronized: 2026-08-30
+Last materially synchronized: 2026-08-31
 
 Operations docs cover dry-run setup, private config boundaries, deployment guardrails, and telemetry. They should not contain private hosts, account details, or raw live PnL.
 
@@ -12,6 +12,35 @@ Operations docs cover dry-run setup, private config boundaries, deployment guard
 - Live deployment receipts and historical routing are owner-private and are not distributed in the public repository.
 - Binance USD-M 1000-level snapshot/diff health probe: `.venv/bin/python scripts/probe_binance_deep_book.py --help`
 - Current deployment and live commands: repository `README.md` / `README.zh-CN.md`
+
+## Authority budget
+
+SHA256 is a byte-identity primitive, not a substitute for deployment, research, or
+health semantics. Keep leaves inside the manifest that owns them and expose only
+the smallest root set needed at the next boundary.
+
+| Boundary | External identities | Deliberately not copied outward |
+| --- | --- | --- |
+| Public source | Git commit/tree and, for a release, one annotated tag | Per-file hashes of tracked source |
+| Build/runtime | Runtime or wheelhouse manifest root | Every wheel, `RECORD`, dependency, and native leaf hash |
+| Live release | Deployment-envelope root | Config, model, policy, lock, wheel, and native leaf hashes |
+| Stopped exchange barrier | Reconciliation root | Repeated account/order/position hashes in service configuration |
+| Activated live release | Activation-receipt root | Runtime-identity and reconciliation leaves already bound by the receipt |
+| Research run | Source identity, runtime root, input-manifest root, and output-receipt root | Cache keys and every input/output leaf hash |
+
+The mutable current pointer has no self-hash. It contains only `release_id`, the
+activation-receipt root, schema, and status. The deployment-envelope root is
+derived from and verified through that immutable activation receipt. The
+owner-private release inventory resolves the corresponding immutable files.
+Cache hashes are cache keys only and never grant research or live authority. Do
+not copy leaf SHA values into Python constants, environment variables, tests,
+Markdown, current pointers, or multiple receipts.
+
+Before uploading or starting a remote job, calculate the complete materialization
+closure recursively: every file referenced by an admitted manifest must either be
+inside the transport bundle or be a separately named task resource. Verify every
+leaf against its owning manifest, then bind the transport with one input-manifest
+root. A successful archive upload is not closure admission.
 
 ## Generic deployment flow
 
@@ -240,6 +269,16 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
+Run stopped reconciliation as the bounded transient systemd service shown below,
+with a unique output for every stop attempt. systemd reads the release-scoped,
+root-owned mode-`0600` environment file and injects credentials without exposing
+them in the operator's shell. That file must select the intended release config
+and envelope. The existing private release directory must be writable by
+`narrowgate` with mode `0700`. Do not reuse a previous reconciliation or interpret
+a condition-skipped oneshot's exit status as fresh success. No persistent
+reconciliation unit is needed; an ad hoc `sudo -u narrowgate` is not equivalent
+because that user cannot read the root-owned environment file.
+
 Only after all private authority gates are available should an operator atomically move a separately prepared `/opt/narrowgate/current` filesystem selector and start the service. Source publication itself never changes that selector. After `systemctl start narrowgate`, verify `systemctl status narrowgate`, `live/run.sh status`, `logs/runtime_health.json`, and recent engine logs. A running PID is insufficient: position and open-order reconciliation must converge and no ownership or execution-state safety latch may be active. Do not add `ExecStop=live/run.sh stop` to the unit: systemd must send `SIGTERM` directly and allow the full `TimeoutStopSec` grace period. The `run.sh start|status|stop` commands remain compatibility tools for a manual, non-systemd launch.
 
 After that admission succeeds, bind only the three validated activation inputs and publish the compact private current pointer. Use the canonical roots printed by the earlier commands and the absolute runtime identity written by the admitted process:
@@ -269,6 +308,137 @@ python3.12 -m live.deployment_runtime publish-current-pointer \
   --output "$CURRENT_POINTER"
 ```
 
-The JSON current pointer is only a five-field release selector. Its `release_id` is resolved through the owner-private routing inventory and the corresponding release directory; the pointer itself contains no host routing or leaf artifact inventory. `status=selected_activation` means only that this activation was selected after lineage validation. It is not a live-health assertion and never replaces service, exchange, or runtime-health checks. Older verbose receipts, command transcripts, and per-file hash inventories may be retained privately as audit attachments, but they are audit-only and must not participate in startup authority or be copied into the current pointer.
+The JSON current pointer is only a four-field release selector. Its `release_id`
+is resolved through the owner-private routing inventory and corresponding release
+directory; the pointer contains no host routing or leaf artifact inventory.
+`status=selected_activation` means only that lineage validation selected this
+activation. It is not a live-health assertion. Older verbose receipts, command
+transcripts, and per-file hash inventories may remain private audit attachments,
+but they must not participate in startup authority or be copied into the pointer.
 
 Rollback is another verified deployment, not a blind restart. Stop the service, require a clean stop result, reconcile exchange position/open orders, switch the release/config/envelope selectors to a previously verified private release, rerun preflight and static-runtime verification, then start and repeat health admission. If stop reports uncertain execution state, do not activate either release until manual reconciliation completes.
+
+## EC2 day-two operations
+
+These commands use placeholders and assume systemd is the only process owner. Do
+not combine them with the manual `run.sh start|stop` compatibility path.
+
+Normal status is a bounded read-only operation:
+
+```bash
+sudo systemctl show narrowgate \
+  --property=ActiveState,SubState,MainPID,ExecMainStatus,StateChangeTimestamp
+sudo -u narrowgate /opt/narrowgate/current/live/run.sh status
+```
+
+To stop live and then stop the instance:
+
+```bash
+set -euo pipefail
+: "${RELEASE_ID:?Set the intended release ID}"
+[[ "$RELEASE_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]
+ATTEMPT_ID="$(date -u +%Y%m%dT%H%M%SZ)-$(cat /proc/sys/kernel/random/uuid)"
+RELEASE_DIR="/opt/narrowgate/releases/$RELEASE_ID"
+RELEASE_ENV="/etc/narrowgate/releases/$RELEASE_ID.env"
+OUTPUT="/opt/narrowgate/private/releases/$RELEASE_ID/stopped-$ATTEMPT_ID.json"
+sudo systemctl stop narrowgate
+test "$(systemctl is-active narrowgate)" = inactive
+test -z "$(pgrep -f -- '[l]ive/main.py' || true)"
+sudo test -d "$RELEASE_DIR"
+sudo test -f "$RELEASE_ENV"
+sudo test ! -e "$OUTPUT"
+sudo systemd-run --wait --collect --service-type=oneshot \
+  --unit="narrowgate-reconcile-$ATTEMPT_ID" \
+  --property=User=narrowgate --property="EnvironmentFile=$RELEASE_ENV" \
+  --property="WorkingDirectory=$RELEASE_DIR" --property=UMask=0077 \
+  --property=NoNewPrivileges=true --property=TimeoutStartSec=120 \
+  "$RELEASE_DIR/live/run.sh" reconcile-stopped "$OUTPUT"
+sudo test -s "$OUTPUT"
+test "$(systemctl is-active narrowgate)" = inactive
+test -z "$(pgrep -f -- '[l]ive/main.py' || true)"
+```
+
+Run this in Bash, with exclusive operator control: no concurrent activation or
+restart. `--wait` must succeed and the previously absent output must now exist;
+any failure stops the sequence. Use this new output and its printed canonical
+root for any subsequent activation, never an older file from the same release.
+
+Only after the service is inactive, no maker PID remains, and the signed venue
+read proves zero open orders plus a stable exact position should the operator run
+`aws ec2 stop-instances --instance-ids <instance-id>` from an approved control
+host. If any check is unavailable or uncertain, leave the instance on, deny
+activation, and reconcile manually. Do not shorten `TimeoutStopSec` with an
+independent five-second kill ladder.
+
+Starting an existing instance is not a deployment. Start the instance, confirm the
+service remains inactive, verify the selected current-pointer lineage and static
+runtime, create a fresh stopped-exchange reconciliation, then start systemd and
+observe health before publishing a new activation receipt. Never use a stale
+reconciliation or treat `MainPID > 0` as admission.
+
+A routine deployment should not build dependencies or discover missing artifacts
+on the EC2 host. With a prebuilt Linux runtime and complete private bundle, the
+expected operator path is source stage (under two minutes), offline verify (a few
+minutes), stop/reconcile (normally under five minutes), and bounded activation
+observation (five to ten minutes). Native compilation, dependency download,
+missing closure, SSH repair, or manual hash cascade is a failed prerequisite, not
+normal deployment time.
+
+## Azure Batch offline replay
+
+Azure Batch is a remote offline executor, not a second source of truth. Local
+canonical market data, frozen dates, queue contract, seeds, and research permissions
+remain unchanged. A pool definition may live for the subscription period, while
+paid compute nodes scale to zero between research batches.
+
+One-time pool bootstrap must materialize:
+
+1. an exact clean source/runtime bundle;
+2. a complete input bundle plus every manifest-referenced receipt;
+3. real canonical directories for required absolute paths;
+4. bind mounts when a frozen contract requires an absolute local path;
+5. a pool-scoped admin start task only for host-root creation, bind mounts,
+   extraction, ownership normalization, and a written-last ready receipt;
+6. pool-scoped non-admin replay tasks with read-only inputs and an
+   attempt-specific writable output root;
+7. private directories owned by the replay user with mode `0700`, and private authority
+   files with mode `0600` and one hard link.
+
+Do not use a symbolic link to emulate `/Volumes/...` or another frozen absolute
+root: the safe reader intentionally rejects symlink path components. Extract with
+`--no-same-owner`, normalize ownership and modes, reject group/world-writable
+private files, and run a start-task closure probe before submitting a replay.
+Keep Azure's real `$AZ_BATCH_NODE_SHARED_DIR`, `$AZ_BATCH_TASK_WORKING_DIR`, and
+`$AZ_BATCH_TASK_DIR` separate from any compatibility bind mount. If a repair must
+materialize a small file on an already running node, use a bounded admin preparation
+task, then run the replay itself non-admin. An admin replay task is a temporary
+qualification exception, not the formal target state.
+
+The public repository does not yet expose one provider-neutral command that
+creates the Batch pool and performs that closure probe. Until that reusable
+wrapper exists, the private submission layer must perform the listed checks and
+must not submit a formal task when any check is unavailable. This section is an
+operations contract, not the name of an imaginary one-click CLI.
+
+Each formal task represents one UTC day, uses one task slot, writes to an
+attempt-specific output namespace, and writes `_SUCCESS` last. Before its event
+loop it verifies the runtime root, input-manifest root, freeze, supplement, plan,
+and every small closure resource. A failed task receives a new opaque attempt ID;
+resume skips only outputs whose manifest and success marker match exactly.
+
+Failure recovery is deliberately cheap:
+
+- disable the job first so no duplicate task starts;
+- keep an already initialized node for a bounded 30–60 minute repair window;
+- inspect only task state and error logs, not result economics;
+- deliver a small missing immutable closure as a task `ResourceFile` when the base
+  runtime and data bundle are unchanged;
+- update the pool start task and reimage only when the shared base materialization
+  itself changes;
+- after the queue drains, set target nodes to zero and confirm no paid VM, disk,
+  public IP, or load balancer remains unexpectedly allocated.
+
+Do not upload the entire local data store, rebuild a 20+ GiB bundle for a small
+receipt omission, run multiple UTC days inside one task, or let task code resolve
+dependencies from the network. Economics remain result-blind until the registered
+aggregation boundary is frozen and validated.

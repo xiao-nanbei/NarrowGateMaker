@@ -488,8 +488,13 @@ struct TickReplayParams {
     std::int64_t new_order_latency_ms = 0;
     std::int64_t cancel_order_latency_ms = 0;
     std::int64_t latency_jitter_ms = 0;
+    std::int64_t decision_to_gateway_latency_seed = -1;
+    std::vector<double> decision_to_gateway_latency_samples_ms;
     std::vector<double> new_order_latency_samples_ms;
+    std::vector<double> new_order_exchange_effective_latency_samples_ms;
     std::vector<double> cancel_order_latency_samples_ms;
+    std::vector<double> cancel_exchange_effective_latency_samples_ms;
+    std::vector<double> cancel_ack_visibility_latency_samples_ms;
     std::vector<double> exec_book_visibility_delay_samples_ms;
     double exec_book_visibility_delay_mean_ms = 0.0;
     double exec_book_visibility_delay_jitter_ms = 0.0;
@@ -992,7 +997,9 @@ struct ReplayOrder {
     std::int64_t queue_l2_seen_idx = -1;
     std::int64_t quote_ts = 0;
     std::int64_t activate_ts = 0;
+    std::int64_t new_ack_ts = 0;
     std::int64_t cancel_effective_ts = 0;
+    std::int64_t cancel_ack_ts = 0;
     CancelReason pending_cancel_reason = CancelReason::None;
     std::int64_t ttl_ms = 0;
     double mid_at_quote = 0.0;
@@ -1004,6 +1011,7 @@ struct ReplayOrder {
     bool reduce_only = false;
     bool circuit_breaker_close = false;
     bool immediate_or_cancel = false;
+    bool exchange_accepted = false;
     bool activation_rejected = false;
     bool fixed_spread_probe = false;
     bool fixed_spread_probe_activated = false;

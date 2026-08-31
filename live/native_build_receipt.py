@@ -269,7 +269,6 @@ def build_receipt(
             "execution_tree": tree,
             "annotated_operational_tag": annotated_tag,
             "annotated_operational_tag_object": tag_object,
-            "tag_peeled_commit": peeled,
         },
         "platform": "linux_x86_64",
         "python_minor": "3.12",

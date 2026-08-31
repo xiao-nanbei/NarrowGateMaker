@@ -17,6 +17,7 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import MappingProxyType
 
 import numpy as np
 
@@ -579,6 +580,12 @@ class HistoricalExchangeBookScheduler:
         self._last_local_receive_ts_ns = 0
         self._last_boundary_ns = 0
         self._last_boundary_inclusive = False
+        self._latest_batch_ts_ns: int | None = None
+        self._latest_batch_prior_asof_ns = 0
+        self._latest_batch_prior_segment_id = 0
+        self._latest_batch_prior_initialized = False
+        self._latest_batch_touched_levels: set[tuple[str, int]] = set()
+        self._latest_batch_discontinuous = False
         self._consumed = 0
         self._accepted = 0
         self._rejected = 0
@@ -719,6 +726,23 @@ class HistoricalExchangeBookScheduler:
         *,
         emitted_levels: set[tuple[str, int]] | None = None,
     ) -> tuple[tuple[ExchangeBookLevelChange, ...], bool, bool, bool]:
+        event_ts_ns = int(event.exchange_ts_ns)
+        if self._latest_batch_ts_ns != event_ts_ns:
+            # Retain only the latest timestamp's causal boundary, not a copy
+            # of the book. Repeated advances/messages at that timestamp must
+            # not replace the strictly earlier watermark with the new one.
+            self._latest_batch_ts_ns = event_ts_ns
+            self._latest_batch_prior_asof_ns = int(self._last_exchange_ts_ns)
+            self._latest_batch_prior_segment_id = int(self.segment_id)
+            self._latest_batch_prior_initialized = bool(self.sequence.initialized)
+            self._latest_batch_touched_levels.clear()
+            self._latest_batch_discontinuous = False
+        self._latest_batch_touched_levels.update(
+            (side, int(tick)) for side, tick, _ in event.levels
+        )
+        self._latest_batch_discontinuous |= event.event_type in {
+            "snapshot", "source_gap"
+        }
         self._last_local_receive_ts_ns = max(
             self._last_local_receive_ts_ns,
             int(event.local_receive_ts_ns or 0),
@@ -1115,6 +1139,54 @@ class HistoricalExchangeBookScheduler:
             snapshot_max_tick=maximum,
         )
 
+    def lookup_strictly_before(
+        self,
+        side: str,
+        price_tick: int,
+        exchange_ts_ns: int,
+    ) -> ExchangeBookLookup:
+        """Read an activation seed without consuming or rewinding events.
+
+        Callers advance to the activation boundary first. If its native batch
+        was already consumed, an untouched level is still identical to its
+        strictly prior state, provided the initialized segment did not change.
+        Touched levels and discontinuities remain unavailable: this method
+        does not choose an ordering for same-timestamp events. The touched set
+        comes from all source levels, independent of ``emitted_levels``.
+        """
+
+        target = int(exchange_ts_ns)
+        lookup = self.lookup(side, price_tick)
+        if lookup.asof_exchange_ts_ns < target:
+            return lookup
+        if (
+            lookup.asof_exchange_ts_ns > target
+            or self._latest_batch_ts_ns != target
+        ):
+            return replace(
+                lookup,
+                status="unknown",
+                reason="strict_before_state_not_retained",
+                quantity=None,
+            )
+        if (
+            self._latest_batch_discontinuous
+            or int(self.segment_id) != self._latest_batch_prior_segment_id
+            or bool(self.sequence.initialized)
+            != self._latest_batch_prior_initialized
+        ):
+            reason = "same_timestamp_book_discontinuity"
+        elif not self._latest_batch_prior_initialized:
+            reason = "strict_before_sequence_unavailable"
+        elif (lookup.side, lookup.price_tick) in self._latest_batch_touched_levels:
+            reason = "same_timestamp_level_touched"
+        else:
+            return replace(
+                lookup,
+                asof_exchange_ts_ns=self._latest_batch_prior_asof_ns,
+            )
+        return replace(lookup, status="ambiguous", reason=reason, quantity=None)
+
     def top_levels(
         self,
         count: int,
@@ -1218,6 +1290,279 @@ class HistoricalExchangeBookScheduler:
 
     def stats_dict(self) -> dict[str, object]:
         return asdict(self.stats())
+
+
+class HistoricalMessageDeliverySchedule:
+    """Immutable feature-ready delivery times for retained source messages.
+
+    Input rows are in message order, including interleaved channels sharing a
+    connection. All three clocks must already be aligned physical timestamps;
+    profile sampling and clock-offset treatment belong to the caller. By
+    default only ready-time head-of-line ordering is imposed. Opt-in callback
+    serialization also queues callback entry behind the preceding completion,
+    preserving each measured ready-minus-receive service duration exactly.
+    Neither mode samples additional CPU or network latency.
+
+    A channel identifies one ordered source array. Connection IDs determine
+    which channels share head-of-line blocking; absent IDs use one connection
+    per channel. Queries return the channel-local index, never the interleaved
+    input ordinal, and do not mutate or resample the schedule.
+    """
+
+    def __init__(
+        self,
+        exchange_ts_ns,
+        receive_ts_ns,
+        feature_ready_ts_ns,
+        *,
+        channel_ids=None,
+        connection_ids=None,
+        serialize_callback_service: bool = False,
+    ) -> None:
+        def timestamps(values, name: str) -> np.ndarray:
+            array = np.asarray(values)
+            if array.ndim != 1 or (array.size and array.dtype.kind not in "iu"):
+                raise ValueError(f"{name} must be a one-dimensional integer ns array")
+            if array.size and (np.any(array < 0) or np.any(array > np.iinfo(np.int64).max)):
+                raise ValueError(f"{name} must contain nonnegative int64 ns timestamps")
+            return array.astype(np.int64, copy=False)
+
+        exchange = timestamps(exchange_ts_ns, "exchange_ts_ns")
+        receive = timestamps(receive_ts_ns, "receive_ts_ns")
+        proposed = timestamps(feature_ready_ts_ns, "feature_ready_ts_ns")
+        if receive.shape != exchange.shape or proposed.shape != exchange.shape:
+            raise ValueError("message exchange/receive/ready arrays must be aligned")
+        if np.any(exchange > receive) or np.any(receive > proposed):
+            raise ValueError("aligned message clocks require exchange <= receive <= ready")
+
+        def labels(values, default: np.ndarray, name: str) -> np.ndarray:
+            array = default if values is None else np.asarray(values)
+            if array.shape != exchange.shape or (array.size and array.dtype.kind not in "iuUS"):
+                raise ValueError(f"{name} must be aligned integer or string labels")
+            return array
+
+        channels = labels(channel_ids, np.zeros(exchange.size, dtype=np.uint8), "channel_ids")
+        connections = labels(connection_ids, channels, "connection_ids")
+        assigned = proposed.copy()
+        assigned_receive = receive.copy()
+        connection_keys = np.unique(connections)
+        for connection in connection_keys:
+            indices = np.flatnonzero(connections == connection)
+            if not serialize_callback_service:
+                assigned[indices] = np.maximum.accumulate(proposed[indices])
+                continue
+            service = proposed[indices] - receive[indices]
+            cumulative = np.cumsum(service, dtype=np.int64)
+            if np.any(cumulative < 0) or np.any(cumulative[1:] < cumulative[:-1]):
+                raise ValueError("callback service cumulative duration exceeds int64")
+            prior = cumulative - service
+            # Max-plus FIFO recurrence, vectorized without rounding nanoseconds:
+            # finish_i = cumulative_i + max_j<=i(receive_j - cumulative_(j-1)).
+            origin = np.maximum.accumulate(receive[indices] - prior)
+            if np.any(origin > np.iinfo(np.int64).max - cumulative):
+                raise ValueError("serialized callback completion exceeds int64")
+            finish = cumulative + origin
+            assigned[indices] = finish
+            assigned_receive[indices] = finish - service
+
+        self._ready_by_channel: dict[object, np.ndarray] = {}
+        self._exchange_by_channel: dict[object, np.ndarray] = {}
+        self._receive_by_channel: dict[object, np.ndarray] = {}
+        for channel in np.unique(channels):
+            indices = np.flatnonzero(channels == channel)
+            ready = assigned[indices]
+            if np.any(ready[1:] < ready[:-1]):
+                raise ValueError(
+                    "channel delivery order regressed across connections; "
+                    "split sessions or supply an ordered connection group"
+                )
+            source = exchange[indices]
+            received = assigned_receive[indices]
+            ready.setflags(write=False)
+            source.setflags(write=False)
+            received.setflags(write=False)
+            self._ready_by_channel[channel] = ready
+            self._exchange_by_channel[channel] = source
+            self._receive_by_channel[channel] = received
+        if not exchange.size and channel_ids is None:
+            empty = np.asarray([], dtype=np.int64)
+            empty.setflags(write=False)
+            self._ready_by_channel[0] = empty
+            self._exchange_by_channel[0] = empty
+            self._receive_by_channel[0] = empty
+        adjustment = assigned - proposed
+        callback_queue = assigned_receive - receive
+        self._stats = {
+            "message_count": int(exchange.size),
+            "channel_count": len(self._ready_by_channel),
+            "connection_count": int(connection_keys.size),
+            "head_of_line_clamped_events": int(np.count_nonzero(adjustment)),
+            "max_head_of_line_delay_ns": int(adjustment.max(initial=0)),
+            "serialize_callback_service": bool(serialize_callback_service),
+            "callback_queued_events": int(np.count_nonzero(callback_queue)),
+            "max_callback_queue_delay_ns": int(callback_queue.max(initial=0)),
+        }
+
+    def _channel_key(self, channel):
+        if channel is None:
+            if len(self._ready_by_channel) != 1:
+                raise ValueError("channel is required for a multi-channel schedule")
+            return next(iter(self._ready_by_channel))
+        if channel not in self._ready_by_channel:
+            raise ValueError(f"unknown message channel: {channel!r}")
+        return channel
+
+    def ready_ns_for_channel(self, channel=None) -> np.ndarray:
+        """Return read-only assigned ready times in channel-local row order."""
+        return self._ready_by_channel[self._channel_key(channel)].view()
+
+    def exchange_ns_for_channel(self, channel=None) -> np.ndarray:
+        """Return unchanged read-only source times in channel-local row order."""
+        return self._exchange_by_channel[self._channel_key(channel)].view()
+
+    def receive_ns_for_channel(self, channel=None) -> np.ndarray:
+        """Return receive/serialized callback-entry times in channel-local order."""
+        return self._receive_by_channel[self._channel_key(channel)].view()
+
+    def latest_visible_index(
+        self, now_ts_ns: int, *, channel=None, inclusive: bool = False
+    ) -> int:
+        """Return the last delivered channel-local row, or -1 before delivery."""
+        if isinstance(now_ts_ns, (bool, np.bool_)) or not isinstance(now_ts_ns, (int, np.integer)):
+            raise ValueError("now_ts_ns must be an integer nanosecond boundary")
+        ready = self._ready_by_channel[self._channel_key(channel)]
+        return int(np.searchsorted(ready, now_ts_ns, side="right" if inclusive else "left") - 1)
+
+    def stats_dict(self) -> dict[str, int]:
+        return dict(self._stats)
+
+
+@dataclass(frozen=True)
+class _ReceiveTimeCooldownDecision:
+    action_id: str
+    duration_ms: float
+    fallback_reason: str | None
+    matched_rule_index: int | None
+    policy_sha256: str
+    predicate_bundle_sha256: str
+    snapshot_id: str
+    support_valid: bool
+
+
+@dataclass(frozen=True)
+class _ReceiveTimeCooldownSnapshot:
+    snapshot_id: str
+    assignment_id: str
+    m0_context: object
+    decision: _ReceiveTimeCooldownDecision
+    policy_input_valid: bool
+    fallback_policy_id: str | None
+    fallback_reason: str | None
+    source_bundle_sha256: str = ""
+
+
+class ReceiveTimeCooldownReplayAdapter:
+    """Replay supplied live policies using delivered depth callbacks.
+
+    This diagnostic adapter reuses each policy's own receive-time aggregation,
+    warmup and control fallback. It does not turn source-time research windows
+    into receive-time windows by changing their timestamps, and grants no
+    research-snapshot authority. The caller supplies the retained depth stream
+    (including warmup), its simulated delivery schedule and loaded policies.
+    """
+
+    def __init__(self, depth_data, delivery_schedule, *, policies, channel=None):
+        self._depth = depth_data
+        self._ready = delivery_schedule.ready_ns_for_channel(channel)
+        raw_receive = delivery_schedule.receive_ns_for_channel(channel)
+        # A depth connection cannot deliver later sequence messages before an
+        # earlier one. Sampled marginal receive delays may otherwise regress.
+        self._receive = np.maximum.accumulate(raw_receive)
+        self._receive_clamps = int(np.count_nonzero(self._receive != raw_receive))
+        exchange = delivery_schedule.exchange_ns_for_channel(channel)
+        if not np.array_equal(np.asarray(depth_data.ts_ms) * 1_000_000, exchange):
+            raise ValueError("receive-time policy depth rows and delivery clocks differ")
+        if any(
+            len(getattr(depth_data, name)) != len(exchange)
+            for name in ("bid_px", "ask_px", "bid_qty", "ask_qty")
+        ):
+            raise ValueError("receive-time policy depth arrays must be aligned")
+        self._policies = {str(side).upper(): policy for side, policy in policies.items()}
+        if not self._policies or set(self._policies) - {"BUY", "SELL"}:
+            raise ValueError("receive-time policy sides must be BUY or SELL")
+        self._cursor = 0
+        self._last_cutoff = -1
+        self._captures = 0
+        self._fallbacks = 0
+        self._evaluations = 0
+
+    def capture_exposure_fill(
+        self, *, assignment_id, fill_exchange_ts_ns, fill_visible_ts_ns, m0_context, **_lineage
+    ):
+        exchange_ns, cutoff = int(fill_exchange_ts_ns), int(fill_visible_ts_ns)
+        if exchange_ns < 0 or exchange_ns > cutoff or cutoff < self._last_cutoff:
+            raise ValueError("receive-time policy fill clocks are not causal/monotonic")
+        context = dict(m0_context)
+        if int(context["fill_visible_ts_ns"]) != cutoff:
+            raise ValueError("receive-time policy context fill clock differs")
+        side = str(context["side"]).upper()
+        policy = self._policies[side]
+        last = int(np.searchsorted(self._ready, cutoff, side="left"))
+        # All callbacks are delivered, not just the latest book. A same-time
+        # callback is withheld because its order relative to the fill is unknown.
+        for index in range(self._cursor, last):
+            bids = list(zip(self._depth.bid_px[index], self._depth.bid_qty[index], strict=True))
+            asks = list(zip(self._depth.ask_px[index], self._depth.ask_qty[index], strict=True))
+            for observer in self._policies.values():
+                observer.observe_depth(
+                    receive_ts_ns=int(self._receive[index]), bids=bids, asks=asks,
+                    market_generation=index + 1, depth_generation=index + 1,
+                )
+        self._cursor = last
+        self._last_cutoff = cutoff
+        snapshot_id = f"{assignment_id}:receive-time-policy"
+        raw = policy.evaluate(
+            side=side, baseline_duration_ms=int(round(context["baseline_duration_ms"])),
+            campaign_age_s=float(context["campaign_age_s"]), decision_ts_ns=cutoff,
+            snapshot_id=snapshot_id,
+        )
+        decision = _ReceiveTimeCooldownDecision(
+            action_id=str(raw.action_id), duration_ms=float(raw.duration_ms),
+            fallback_reason=raw.fallback_reason, matched_rule_index=raw.matched_rule_index,
+            policy_sha256=str(raw.policy_sha256),
+            predicate_bundle_sha256=str(raw.predicate_bundle_sha256),
+            snapshot_id=snapshot_id, support_valid=bool(raw.support_valid),
+        )
+        self._captures += 1
+        self._fallbacks += int(raw.fallback_reason is not None)
+        return _ReceiveTimeCooldownSnapshot(
+            snapshot_id=snapshot_id, assignment_id=str(assignment_id),
+            m0_context=MappingProxyType(context), decision=decision,
+            policy_input_valid=decision.support_valid,
+            fallback_policy_id=decision.action_id if decision.fallback_reason else None,
+            fallback_reason=decision.fallback_reason,
+        )
+
+    def evaluate(self, snapshot, baseline_duration_ms):
+        if float(baseline_duration_ms) != float(snapshot.m0_context["baseline_duration_ms"]):
+            raise ValueError("receive-time policy baseline changed after capture")
+        self._evaluations += 1
+        return snapshot.decision
+
+    def audit(self):
+        return {
+            "transport": "receive_time_policy",
+            "feature_clock": "live_policy_receive_time_windows",
+            "visibility": "depth_feature_ready_strictly_before_fill_visible",
+            "research_snapshot_authority": False,
+            "depth_rows_available": len(self._ready),
+            "depth_callbacks_consumed": self._cursor,
+            "receive_head_of_line_clamped_events": self._receive_clamps,
+            "snapshots_emitted": self._captures,
+            "fallback_snapshots": self._fallbacks,
+            "evaluations": self._evaluations,
+            "policies": {side: policy.audit() for side, policy in self._policies.items()},
+        }
 
 
 class HistoricalExchangeBookVisibilityScheduler:

@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from data.build_active_order_queue_tape import LogicalMessage
+from models import native_exchange_book_cache as cache_module
 from models.exchange_book_replay import CryptoHFTExchangeBookTape
 from models.native_exchange_book_cache import (
     ensure_native_book_hour_cache,
@@ -103,6 +106,69 @@ def test_native_hour_cache_round_trip_is_event_exact(tmp_path: Path) -> None:
     assert second.cache_hit
     assert second.data_path == first.data_path
     assert tuple(iter_native_book_hour_cache(second)) == expected
+
+
+def test_native_hour_reader_decodes_only_current_event_from_sliced_arrow_batch(monkeypatch) -> None:
+    import pyarrow.parquet as pq
+
+    source = Path("unused-source")
+    snapshot, delta = _events(source)
+    expected = (
+        replace(snapshot, levels=(("bid", 900_000, 1.0),), last_update_id=2**53 + 17),
+        replace(delta, levels=(("bid", 900_000, -0.0), ("ask", 900_002, 0.1))),
+    )
+    # Keep nonzero Arrow list offsets and unused prefix/suffix rows. Nullable
+    # IDs must never round-trip through float64, which loses large integers.
+    batch = cache_module._events_to_table([snapshot, *expected, delta]).to_batches()[0]
+    batch = batch.slice(1, 2)
+
+    def forbid_eager_conversion():
+        raise AssertionError("whole nested batch must not be expanded to Python")
+
+    view = SimpleNamespace(
+        num_rows=batch.num_rows, column=batch.column, to_pydict=forbid_eager_conversion,
+    )
+    monkeypatch.setattr(
+        pq, "ParquetFile",
+        lambda path: SimpleNamespace(iter_batches=lambda **kwargs: iter([view])),
+    )
+    artifact = cache_module.NativeBookHourCacheArtifact(source, source, "unused", 2, 3, True)
+    reader = iter_native_book_hour_cache(artifact)
+    assert next(reader) == expected[0]
+    actual = next(reader)
+    assert actual == expected[1]
+    assert [quantity.hex() for _, _, quantity in actual.levels] == ["-0x0.0p+0", 0.1.hex()]
+    with pytest.raises(StopIteration):
+        next(reader)
+
+
+@pytest.mark.parametrize("corruption", ["unequal_lengths", "null_level", "row_count"])
+def test_native_hour_reader_keeps_nested_and_count_validation(monkeypatch, corruption) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    source = Path("unused-source")
+    batch = cache_module._events_to_table(list(_events(source))).to_batches()[0]
+    expected_count = 2
+    if corruption == "row_count":
+        expected_count = 3
+    else:
+        field = batch.schema.get_field_index("level_ticks")
+        values = [[900_000], [900_000, 900_003]]
+        if corruption == "null_level":
+            values[0] = [900_000, None]
+        batch = batch.set_column(
+            field, batch.schema.field(field), pa.array(values, type=pa.list_(pa.int64())),
+        )
+    monkeypatch.setattr(
+        pq, "ParquetFile",
+        lambda path: SimpleNamespace(iter_batches=lambda **kwargs: iter([batch])),
+    )
+    artifact = cache_module.NativeBookHourCacheArtifact(
+        source, source, "unused", expected_count, 4, True,
+    )
+    with pytest.raises(ValueError):
+        tuple(iter_native_book_hour_cache(artifact))
 
 
 def test_native_hour_cache_invalidates_when_source_identity_changes(

@@ -601,6 +601,8 @@ BACKTEST_PARAM_SOURCES = (
     ("urgency_pnl_weight", ("risk", "urgency_pnl_weight")),
     ("urgency_signal_weight", ("risk", "urgency_signal_weight")),
     ("max_exec_book_age_s", ("risk", "max_exec_book_age_s")),
+    ("max_exec_book_visible_age_s", ("risk", "max_exec_book_visible_age_s")),
+    ("max_exec_book_source_lag_s", ("risk", "max_exec_book_source_lag_s")),
     ("ber_guard_thresh", ("strategy", "ber_guard_thresh")),
     ("ber_spread_mult", ("strategy", "ber_spread_mult")),
     ("ber_exposure_add_only", ("strategy", "ber_exposure_add_only")),

@@ -1505,7 +1505,12 @@ def quote_core_config_from_params(
             "risk_horizon_s", params.get("quote_horizon_s", 1.0)
         ),
         historical_p3_scalar_adapter_enabled=bool(
-            params.get("historical_p3_scalar_adapter_enabled", False)
+            # Pre-unit-split replay bundles predate this explicit identity
+            # field, but their B0 behavior always consumed the historical P3
+            # pair-spread projection.  Defaulting a missing field to False
+            # silently narrows those frozen quotes and breaks live/replay
+            # behavior identity.
+            params.get("historical_p3_scalar_adapter_enabled", True)
         ),
         p3_side_bbo_floor_enabled=bool(
             params.get("p3_side_bbo_floor_enabled", False)

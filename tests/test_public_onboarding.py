@@ -275,7 +275,7 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
         )
         self.assertEqual(requirements, compatibility_superset)
 
-    def test_ci_has_base_only_smoke_and_stable_required_check_names(self) -> None:
+    def test_ci_has_base_smoke_single_native_build_and_root_admission(self) -> None:
         workflow = yaml.safe_load(
             (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
         )
@@ -296,24 +296,26 @@ class PublicOnboardingSmokeTest(unittest.TestCase):
 
         self.assertEqual(
             jobs["python"]["name"],
-            "Python tests and lint (${{ matrix.python-version }})",
+            "Python 3.12 full public suite and native parity",
         )
-        self.assertEqual(jobs["cpp-build-smoke"]["name"], "C++ extension build smoke")
+        native_install = next(
+            step
+            for step in jobs["python"]["steps"]
+            if step.get("name") == "Install Python and native test dependencies once"
+        )["run"]
+        self.assertIn('python -m pip install -e ".[all]"', native_install)
+        self.assertIn("python -m pip install -e cpp", native_install)
+        self.assertNotIn("cpp-build-smoke", jobs)
         pytest_step = next(
             step for step in jobs["python"]["steps"] if step.get("id") == "pytest"
         )
         self.assertIsNot(pytest_step.get("continue-on-error"), True)
+        self.assertEqual(jobs["admission"]["name"], "CI admission")
 
         branch_protection = (ROOT / "docs" / "dev" / "branch_protection.md").read_text(
             encoding="utf-8"
         )
-        for required_name in (
-            "Base install smoke",
-            "Python tests and lint (3.11)",
-            "Python tests and lint (3.12)",
-            "C++ extension build smoke",
-        ):
-            self.assertIn(f"`{required_name}`", branch_protection)
+        self.assertIn("`CI admission`", branch_protection)
 
     def test_devcontainer_uses_all_and_external_data_volumes(self) -> None:
         config = json.loads(

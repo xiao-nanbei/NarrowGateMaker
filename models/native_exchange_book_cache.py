@@ -436,11 +436,46 @@ def iter_native_book_hour_cache(
     parquet = pq.ParquetFile(artifact.data_path)
     yielded = 0
     for batch in parquet.iter_batches(batch_size=batch_size):
-        columns = batch.to_pydict()
+        # Keep nested levels in Arrow buffers until their message is consumed.
+        # Converting a whole batch to Python eagerly expands all three level
+        # columns, even when the caller only needs the first event in it.
+        level_columns = []
+        for name in ("level_sides", "level_ticks", "level_quantities"):
+            array = batch.column(name)
+            offsets = array.offsets.to_numpy(zero_copy_only=False)
+            start = int(offsets[0])
+            values = array.values.slice(start, int(offsets[-1]) - start)
+            if array.null_count or values.null_count:
+                raise ValueError("native book cache levels cannot contain null lists or values")
+            level_columns.append((offsets - start, values.to_numpy(zero_copy_only=False)))
+        integer_columns = {}
+        integer_nulls = {}
+        for name in (
+            "exchange_ts_ns", "local_receive_ts_ns", "event_time_ns",
+            "transaction_time_ns", "source_ordinal", "first_update_id",
+            "final_update_id", "previous_final_update_id", "last_update_id",
+        ):
+            array = batch.column(name)
+            integer_nulls[name] = (
+                array.is_null().to_numpy(zero_copy_only=False) if array.null_count else None
+            )
+            integer_columns[name] = (
+                array.fill_null(0) if array.null_count else array
+            ).to_numpy(zero_copy_only=False)
+        text_columns = {}
+        for name in ("market_id", "event_type", "exchange_ts_source", "source"):
+            encoded = batch.column(name).dictionary_encode()
+            # String columns are low-cardinality. Reuse their decoded values
+            # rather than allocating the same market/path string for every row.
+            text_columns[name] = (
+                encoded.indices.fill_null(-1).to_numpy(zero_copy_only=False),
+                (*encoded.dictionary.to_pylist(), None),
+            )
         for index in range(batch.num_rows):
-            sides = columns["level_sides"][index]
-            ticks = columns["level_ticks"][index]
-            quantities = columns["level_quantities"][index]
+            sides, ticks, quantities = (
+                values[int(offsets[index]):int(offsets[index + 1])]
+                for offsets, values in level_columns
+            )
             levels = tuple(
                 (
                     "bid" if int(side) == 0 else "ask",
@@ -454,30 +489,33 @@ def iter_native_book_hour_cache(
                     strict=True,
                 )
             )
+            numbers = {
+                name: (
+                    None if integer_nulls[name] is not None and integer_nulls[name][index]
+                    else int(values[index])
+                )
+                for name, values in integer_columns.items()
+            }
+            strings = {
+                name: str(values[int(indices[index])])
+                for name, (indices, values) in text_columns.items()
+            }
             yielded += 1
             yield HistoricalExchangeBookEvent(
-                market_id=str(columns["market_id"][index]),
-                event_type=str(columns["event_type"][index]),
-                exchange_ts_ns=int(columns["exchange_ts_ns"][index]),
-                exchange_ts_source=str(
-                    columns["exchange_ts_source"][index]
-                ),
-                local_receive_ts_ns=int(
-                    columns["local_receive_ts_ns"][index]
-                ),
-                event_time_ns=int(columns["event_time_ns"][index]),
-                transaction_time_ns=int(
-                    columns["transaction_time_ns"][index]
-                ),
-                first_update_id=columns["first_update_id"][index],
-                final_update_id=columns["final_update_id"][index],
-                previous_final_update_id=columns[
-                    "previous_final_update_id"
-                ][index],
-                last_update_id=columns["last_update_id"][index],
+                market_id=strings["market_id"],
+                event_type=strings["event_type"],
+                exchange_ts_ns=int(numbers["exchange_ts_ns"]),
+                exchange_ts_source=strings["exchange_ts_source"],
+                local_receive_ts_ns=int(numbers["local_receive_ts_ns"]),
+                event_time_ns=int(numbers["event_time_ns"]),
+                transaction_time_ns=int(numbers["transaction_time_ns"]),
+                first_update_id=numbers["first_update_id"],
+                final_update_id=numbers["final_update_id"],
+                previous_final_update_id=numbers["previous_final_update_id"],
+                last_update_id=numbers["last_update_id"],
                 levels=levels,
-                source=str(columns["source"][index]),
-                source_ordinal=int(columns["source_ordinal"][index]),
+                source=strings["source"],
+                source_ordinal=int(numbers["source_ordinal"]),
             )
     if yielded != artifact.event_count:
         raise ValueError(

@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-08-30
 
 > Publication note: `${NARROWGATE_*}` values and deployment-epoch names are logical locators. Owner-side data and machine artifacts are in the private evidence store and are not distributed with this repository unless a repository-relative link is provided. See the [public/private documentation contract](docs/public_private_documentation_contract.md).
 
@@ -179,9 +179,9 @@ NarrowGate is useful if you want to inspect or reuse:
 
 It is not designed as a one-command profitable strategy. Public configs are templates, and private live parameters/results are intentionally not included.
 
-## Related Articles
+## Research Map and Long-Form Articles
 
-These long-form notes explain the current research and engineering boundaries:
+Use the [NarrowGate Research Project Map: 12 Scientific Questions](https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Research-Project-Map/) as the current entry point. It consolidates the repository into 12 scientific questions and links each question to its long-form study, evidence status, and family workspace. The two earlier notes below remain foundation and engineering background rather than a complete research index:
 
 - [NarrowGate: Maker Quote EV Research Framework](https://xiao-nanbei.github.io/2026/06/19/NarrowGate-Maker-Quote-EV-Research-Framework/) covers the maker alpha/evidence side: data quality, daily replay, quote EV, null baselines, order-level fill selection, campaign labels, and why old direct xmarket/quote-EV arms were downgraded.
 - [NarrowGate: Replay Throughput and Live Tail-Latency Engineering](https://xiao-nanbei.github.io/2026/07/01/NarrowGate-Cpp-Low-Latency-Market-Making/) covers the system side: Python/C++ parity, replay acceleration, compact live hot-path design, x86 soak results, and which C++ paths are suitable only for fast screening.

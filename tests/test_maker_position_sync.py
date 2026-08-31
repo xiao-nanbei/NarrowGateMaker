@@ -909,6 +909,7 @@ def test_stopped_reconciliation_double_reads_zero_orders_and_stable_position(
     assert payload["account_key_sha256"] == hashlib.sha256(
         b"fixture-key"
     ).hexdigest()
+    assert "position_lineage_sha256" not in payload
     assert set(result) == {"path", "canonical_sha256"}
     assert result["canonical_sha256"] == payload[
         "canonical_exchange_reconciliation_sha256"

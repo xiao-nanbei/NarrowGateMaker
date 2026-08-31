@@ -357,8 +357,13 @@ def configure_fixed_latency_distribution(
         raise ValueError("stress spike multiplier must be at least 1")
 
     for key in (
+        "_decision_to_gateway_latency_samples_ms",
         "_new_order_latency_samples_ms",
+        "_new_order_exchange_effective_latency_samples_ms",
         "_cancel_order_latency_samples_ms",
+        "_cancel_exchange_effective_latency_samples_ms",
+        "_cancel_ack_visibility_latency_samples_ms",
+        "_private_fill_visibility_latency_samples_ms",
         "_exec_book_visibility_delay_samples_ms",
     ):
         samples = _finite_samples(params.get(key, ()))
@@ -499,8 +504,15 @@ def build_replay_contract(
 ) -> dict[str, Any]:
     """Build a canonical replay identity from the parameters actually executed."""
     normalized_purpose = str(purpose or "formal").lower()
-    if normalized_purpose not in {"formal", "exploratory", "live_alignment"}:
-        raise ValueError("replay purpose must be formal, exploratory, or live_alignment")
+    if normalized_purpose not in {
+        "formal",
+        "exploratory",
+        "live_alignment",
+        "diagnostic",
+    }:
+        raise ValueError(
+            "replay purpose must be formal, exploratory, live_alignment, or diagnostic"
+        )
     normalized_initial = str(initial_state_mode or "fresh_start").lower()
     if normalized_initial not in {"fresh_start", "frozen_standard"}:
         raise ValueError("initial state mode must be fresh_start or frozen_standard")
@@ -544,6 +556,259 @@ def build_replay_contract(
         params.get("historical_p3_scalar_adapter_enabled", True)
     )
     p3_side_bbo_floor = bool(params.get("p3_side_bbo_floor_enabled", False))
+    private_fill_samples = _finite_samples(
+        params.get("_private_fill_visibility_latency_samples_ms", ())
+    )
+    private_fill_visibility_enabled = bool(
+        private_fill_samples.size and np.any(private_fill_samples > 0.0)
+    )
+    decision_to_gateway_samples = _finite_samples(
+        params.get("_decision_to_gateway_latency_samples_ms", ())
+    )
+    decision_to_gateway_enabled = bool(
+        decision_to_gateway_samples.size
+        and np.any(decision_to_gateway_samples > 0.0)
+    )
+    decision_to_gateway_identity: dict[str, Any] | None = None
+    if decision_to_gateway_enabled:
+        decision_to_gateway_identity = {
+            "evidence_scope": "diagnostic_only",
+            "clock": "decision_to_first_gateway_request",
+            "sampling_unit": "one_keyed_draw_per_decision",
+            "market_snapshot": "frozen_at_decision_time",
+            "serial_row_origin": "after_decision_compute_delay",
+            "scope": "normal_quote_requests_only_not_ttl_fill_or_safety",
+            "samples": _sample_identity(decision_to_gateway_samples),
+            "seed": int(
+                params.get("latency_seed", 59)
+                if params.get("decision_to_gateway_latency_seed") is None
+                else params["decision_to_gateway_latency_seed"]
+            ),
+        }
+    rest_gateway_mode = str(
+        params.get("rest_gateway_timing_mode", "disabled") or "disabled"
+    ).strip().lower()
+    pre_snapshot_samples = np.asarray(
+        params.get("_pre_snapshot_compute_latency_samples_ms", ()),
+        dtype=np.float64,
+    )
+    if pre_snapshot_samples.size and (
+        pre_snapshot_samples.ndim != 1
+        or not np.all(np.isfinite(pre_snapshot_samples))
+        or np.any(pre_snapshot_samples < 0.0)
+    ):
+        raise ValueError("pre-snapshot compute samples must be finite nonnegative 1D values")
+    if np.any(pre_snapshot_samples > 0.0):
+        total_samples = np.asarray(
+            params.get("_decision_to_gateway_latency_samples_ms", ()),
+            dtype=np.float64,
+        )
+        if (
+            total_samples.shape != pre_snapshot_samples.shape
+            or not np.all(np.isfinite(total_samples))
+            or np.any(pre_snapshot_samples > total_samples)
+        ):
+            raise ValueError("pre-snapshot compute samples must align with and not exceed total")
+        if (
+            rest_gateway_mode != "sampled_serial"
+            or float(params.get("replay_main_loop_sleep_ms", 0) or 0) <= 0
+        ):
+            raise ValueError("pre-snapshot compute requires main-loop sampled_serial replay")
+        assert decision_to_gateway_identity is not None
+        decision_to_gateway_identity.update(
+            clock="requote_entry_to_first_gateway_request",
+            market_snapshot="captured_after_pre_snapshot_compute",
+            computation_split={
+                "backend": "python_only",
+                "sampling": "same_total_sample_index_and_seed_per_requote_entry",
+                "prediction_cutoff": "requote_entry_before_pre_snapshot_compute",
+                "snapshot_capture": "requote_entry_plus_pre_snapshot_compute",
+                "pre_snapshot_samples": _sample_identity(pre_snapshot_samples),
+                "post_snapshot_compute": (
+                    "round_total_minus_round_pre_not_independently_sampled"
+                ),
+                "total_accounting": "pre_plus_post_equals_total_not_added_again",
+            },
+        )
+    if rest_gateway_mode not in {"disabled", "paired_npz", "sampled_serial"}:
+        raise ValueError(
+            "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
+        )
+    rest_gateway_identity: dict[str, Any] | None = None
+    if rest_gateway_mode == "paired_npz":
+        profile_path = _resolve_path(
+            params.get("rest_gateway_timing_profile_path"),
+            root=project_root,
+        )
+        rest_gateway_identity = {
+            "mode": rest_gateway_mode,
+            "evidence_scope": "diagnostic_only",
+            "sampling_unit": "whole_observed_request_row",
+            "request_slot_order": [
+                "cancel_buy",
+                "cancel_sell",
+                "new_buy",
+                "new_sell",
+            ],
+            "exact_request_mask_required": True,
+            "profile": {
+                "path": str(profile_path or ""),
+                "sha256": sha256_file(profile_path),
+            },
+            "seed": int(
+                params.get(
+                    "rest_gateway_timing_seed",
+                    params.get("latency_seed", 59),
+                )
+                or params.get("latency_seed", 59)
+            ),
+        }
+    elif rest_gateway_mode == "sampled_serial":
+        rest_gateway_identity = {
+            "mode": rest_gateway_mode,
+            "evidence_scope": "diagnostic_only",
+            "sampling_unit": "independent_request_with_paired_effective_ack",
+            "request_slot_order": [
+                "cancel_buy", "cancel_sell", "new_buy", "new_sell"
+            ],
+            "request_start": "max_decision_ready_previous_local_ack",
+            "joint_request_replay": False,
+            "sample_identity_source": "latency_lifecycle_samples",
+            "seed": int(params.get("latency_seed", 59)),
+        }
+        profile_path = _resolve_path(
+            params.get("rest_gateway_timing_profile_path"), root=project_root
+        )
+        if profile_path is not None:
+            rest_gateway_identity.update(
+                {
+                    "sampling_unit": "independent_request_with_paired_effective_private_return",
+                    "request_start": "max_decision_ready_previous_rest_return",
+                    "response_clock_semantics": "paired_observed_upper_bound",
+                    "cancel_continuation": "skip_new_if_not_terminal_at_rest_return",
+                    "sample_identity_source": "profile",
+                    "profile": {
+                        "path": str(profile_path),
+                        "sha256": sha256_file(profile_path),
+                    },
+                }
+            )
+    diagnostic_latency_selected = bool(
+        private_fill_visibility_enabled
+        or decision_to_gateway_identity is not None
+        or rest_gateway_identity is not None
+    )
+    visibility_mode = str(
+        params.get("exec_book_visibility_mode", "sampled") or "sampled"
+    ).strip().lower()
+    visibility_identity: dict[str, Any] | None = None
+    visibility_promotion_eligible = True
+    if visibility_mode == "sampled_joint":
+        profile_path = _resolve_path(
+            params.get("exec_book_visibility_delay_profile_path"),
+            root=project_root,
+        )
+        source_identity = {
+            "path": str(profile_path or ""),
+            "sha256": sha256_file(profile_path),
+            "profile_id": str(
+                params.get("exec_book_visibility_delay_profile_id", "") or ""
+            ),
+        }
+        raw_inputs: dict[str, np.ndarray] = {}
+        inputs_valid = True
+        for name, param_name in (
+            ("book", "_exec_book_visibility_paired_delay_ms"),
+            ("depth", "_exec_depth_visibility_paired_delay_ms"),
+            ("trade", "_exec_trade_visibility_paired_delay_ms"),
+        ):
+            try:
+                values = np.asarray(params.get(param_name, ()), dtype=np.float64)
+            except (TypeError, ValueError):
+                values = np.empty(0, dtype=np.float64)
+            raw_inputs[name] = values
+            inputs_valid = bool(
+                inputs_valid
+                and values.ndim == 1
+                and values.size > 0
+                and np.all(np.isfinite(values))
+                and np.all(values >= 0.0)
+            )
+        aligned = len({values.size for values in raw_inputs.values()}) == 1
+        complete = bool(
+            source_identity["sha256"]
+            and source_identity["profile_id"]
+            and inputs_valid
+            and aligned
+        )
+        visibility_identity = {
+            "mode": visibility_mode,
+            "evidence_scope": "formal_eligible" if complete else "diagnostic_only",
+            "source_profile": source_identity,
+            "inputs": {
+                name: _sample_identity(values)
+                for name, values in raw_inputs.items()
+            },
+        }
+        visibility_promotion_eligible = complete
+    elif visibility_mode == "profile_source_stratified":
+        profile_path = _resolve_path(
+            params.get("exec_source_stratified_profile_path"),
+            root=project_root,
+        )
+        visibility_identity = {
+            "mode": visibility_mode,
+            "evidence_scope": "diagnostic_only",
+            "source_profile": {
+                "path": str(profile_path or ""),
+                "sha256": sha256_file(profile_path),
+                "declared_sha256": str(
+                    params.get("exec_source_stratified_profile_sha256", "") or ""
+                ).lower(),
+                "profile_id": str(
+                    params.get("exec_source_stratified_profile_id", "") or ""
+                ),
+                "market_id": str(
+                    params.get("exec_source_stratified_profile_market_id", "")
+                    or ""
+                ),
+                "transport": str(
+                    params.get("exec_source_stratified_profile_transport", "")
+                    or ""
+                ).lower(),
+            },
+        }
+        visibility_promotion_eligible = False
+    elif visibility_mode == "message_schedule":
+        profile_path = _resolve_path(
+            params.get("exec_message_delivery_profile_path"), root=project_root
+        )
+        visibility_identity = {
+            "mode": visibility_mode,
+            "evidence_scope": "diagnostic_only",
+            "sampling_unit": "assigned_once_per_source_message",
+            "visibility_boundary": "feature_ready_ns_strictly_before_local_now",
+            "head_of_line": "within_declared_connection_order",
+            # The caller's existing execution recipe belongs here: source
+            # assignment, callback FIFO, parent mapping and policy producer.
+            # Do not infer these from arrays or add another leaf-hash chain.
+            "input_semantics": dict(
+                params.get("exec_message_delivery_input_semantics", {})
+            ),
+            "max_exec_book_visible_age_s": float(
+                params.get("max_exec_book_visible_age_s", 5.0)
+            ),
+            "max_exec_book_source_lag_s": float(
+                params.get("max_exec_book_source_lag_s", 5.0)
+            ),
+            "seed": int(params.get("exec_book_visibility_delay_seed", 0) or 0),
+        }
+        if profile_path is not None:
+            visibility_identity["source_profile"] = {
+                "path": str(profile_path),
+                "sha256": sha256_file(profile_path),
+            }
+        visibility_promotion_eligible = False
     contract = {
         "schema_version": FORMAL_REPLAY_CONTRACT_SCHEMA,
         "purpose": normalized_purpose,
@@ -553,6 +818,8 @@ def build_replay_contract(
             and not bool(params.get("queue_calibration_diagnostic_only", False))
             and not individual_trades_diagnostic
             and sync_promotion_eligible
+            and visibility_promotion_eligible
+            and not diagnostic_latency_selected
         ),
         "artifacts": artifacts,
         "p3": {
@@ -631,11 +898,15 @@ def build_replay_contract(
             "require_historical_bbo": bool(params.get("require_historical_bbo", False)),
             "require_formal_l2": bool(params.get("require_formal_l2", False)),
             "verify_formal_l2_hashes": bool(params.get("verify_formal_l2_hashes", False)),
-            "feature_visibility": "feature_ready_ts_lte_decision_ts",
+            "feature_visibility": (
+                "feature_ready_ns_strictly_before_local_now"
+                if visibility_mode == "message_schedule"
+                else "feature_ready_ts_lte_decision_ts"
+            ),
             "queue_event_visibility": "exchange_time_causal",
             "terminal_equity": "cash_plus_inventory_times_terminal_mark",
             "hypothetical_terminal_taker_fee_in_final_pnl": False,
-            "exec_book_visibility_mode": str(params.get("exec_book_visibility_mode", "sampled")),
+            "exec_book_visibility_mode": visibility_mode,
             "exec_depth_visibility_source_offset_ms": int(
                 params.get("exec_depth_visibility_source_offset_ms", 0) or 0
             ),
@@ -760,6 +1031,55 @@ def build_replay_contract(
             "daily_pnl_identity",
         ],
     }
+    if visibility_identity is not None:
+        contract["causal_event_semantics"][
+            "exec_book_visibility_identity"
+        ] = visibility_identity
+    main_loop_sleep_ms = float(params.get("replay_main_loop_sleep_ms", 0) or 0)
+    if main_loop_sleep_ms:
+        contract["causal_event_semantics"]["main_loop"] = {
+            "replay_main_loop_sleep_ms": main_loop_sleep_ms,
+            "wake_clock": "actual_tick_and_rest_return_then_sleep",
+            "requote_anchor": "actual_requote_start",
+            "dynamic_requote_clock": (
+                "delivered_1s_bars_before_due_check"
+                if visibility_mode == "message_schedule"
+                else "source_1s_bars_before_due_check"
+            ),
+        }
+    if private_fill_visibility_enabled:
+        contract["latency"]["private_fill_visibility"] = {
+            "evidence_scope": "diagnostic_only",
+            "clock": "exchange_fill_to_local_private_callback_visibility",
+            "samples": _sample_identity(private_fill_samples),
+        }
+    if decision_to_gateway_identity is not None:
+        contract["latency"]["decision_to_gateway"] = (
+            decision_to_gateway_identity
+        )
+    if rest_gateway_identity is not None:
+        contract["latency"]["serial_rest_gateway"] = rest_gateway_identity
+    # Optional split-lifecycle identities are emitted only when the caller
+    # actually selects the new model.  Merely upgrading the executor must not
+    # churn every legacy B0 contract/root hash with empty fields.
+    for param_name, contract_name in (
+        (
+            "_new_order_exchange_effective_latency_samples_ms",
+            "new_order_exchange_effective_samples",
+        ),
+        (
+            "_cancel_exchange_effective_latency_samples_ms",
+            "cancel_exchange_effective_samples",
+        ),
+        (
+            "_cancel_ack_visibility_latency_samples_ms",
+            "cancel_ack_visibility_samples",
+        ),
+    ):
+        if _finite_samples(params.get(param_name, ())).size:
+            contract["latency"][contract_name] = _sample_identity(
+                params.get(param_name, ())
+            )
     contract["contract_sha256"] = hashlib.sha256(_canonical_bytes(contract)).hexdigest()
     return contract
 
@@ -777,6 +1097,31 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
     loss_control = controls.get("consecutive_loss_cooldown", {})
     q90_control = controls.get("dynamic_fill_hazard_q90", {})
     sync_control = controls.get("sync_adjust_degrade", {})
+    private_fill_visibility = latency.get("private_fill_visibility") or {}
+    decision_to_gateway = latency.get("decision_to_gateway") or {}
+    serial_rest_gateway = latency.get("serial_rest_gateway") or {}
+    if private_fill_visibility and purpose != "diagnostic":
+        errors.append(
+            "private-fill visibility latency is diagnostic-only and requires "
+            "replay purpose diagnostic"
+        )
+    if decision_to_gateway and purpose != "diagnostic":
+        errors.append(
+            "decision-to-gateway compute latency is diagnostic-only and "
+            "requires replay purpose diagnostic"
+        )
+    if serial_rest_gateway and purpose != "diagnostic":
+        errors.append(
+            "serial REST gateway timing is diagnostic-only and requires "
+            "replay purpose diagnostic"
+        )
+    if (
+        serial_rest_gateway.get("mode") == "paired_npz"
+        or "profile" in serial_rest_gateway
+    ) and not str(
+        (serial_rest_gateway.get("profile") or {}).get("sha256", "") or ""
+    ):
+        errors.append("paired serial REST gateway timing profile identity is missing")
     if purpose == "formal":
         p3_delta_star = float(p3_contract.get("delta_star", 0.0) or 0.0)
         p3_kappa_eff = float(p3_contract.get("kappa_eff", 0.0) or 0.0)
@@ -882,8 +1227,21 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
             )
         except ValueError as exc:
             errors.append(str(exc))
-        if causal.get("exec_book_visibility_mode") == "paired":
+        visibility_mode = str(causal.get("exec_book_visibility_mode", ""))
+        visibility_identity = causal.get("exec_book_visibility_identity") or {}
+        if visibility_mode == "paired":
             errors.append("paired live visibility is live_alignment-only")
+        elif visibility_mode in {"profile_source_stratified", "message_schedule"}:
+            errors.append(
+                f"{visibility_mode} visibility is diagnostic-only"
+            )
+        elif visibility_mode == "sampled_joint" and str(
+            visibility_identity.get("evidence_scope", "")
+        ) != "formal_eligible":
+            errors.append(
+                "formal sampled_joint visibility requires a complete frozen "
+                "source/input identity"
+            )
         if int(causal.get("exec_depth_visibility_source_offset_ms", 0) or 0) != 0:
             errors.append("source-time boundary offsets are live_alignment-only")
         if params.get("initial_live_state"):

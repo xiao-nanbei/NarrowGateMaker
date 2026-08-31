@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ _OPT_IN_ENV = str(_AVAILABILITY["opt_in_environment_variable"])
 _OPT_IN_VALUE = str(_AVAILABILITY["opt_in_required_value"])
 
 
+@cache
 def _unavailable_tests() -> tuple[dict[str, str], dict[str, str]]:
     modules: dict[str, str] = {}
     nodeids: dict[str, str] = {}
@@ -28,25 +30,41 @@ def _unavailable_tests() -> tuple[dict[str, str], dict[str, str]]:
     return modules, nodeids
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_ignore_collect(
+    collection_path: Path,
+    config: pytest.Config,
+) -> bool | None:
+    """Do not import owner-only historical modules in a public checkout."""
+
+    del config
+    if os.environ.get(_OPT_IN_ENV) == _OPT_IN_VALUE:
+        return None
+    unavailable_modules, _ = _unavailable_tests()
+    if Path(str(collection_path)).name in unavailable_modules:
+        return True
+    return None
+
+
+def pytest_collection_modifyitems(
+    config: pytest.Config,
+    items: list[pytest.Item],
+) -> None:
     if os.environ.get(_OPT_IN_ENV) == _OPT_IN_VALUE:
         return
 
     unavailable_modules, unavailable_nodeids = _unavailable_tests()
+    selected: list[pytest.Item] = []
+    deselected: list[pytest.Item] = []
     for item in items:
         module = Path(str(item.path)).name
         reason = unavailable_nodeids.get(item.nodeid) or unavailable_modules.get(module)
         if reason is None:
+            selected.append(item)
             continue
-        item.add_marker(
-            pytest.mark.skip(
-                reason=(
-                    f"public-clone historical reproduction unavailable: {reason}; "
-                    f"restore the exact owner evidence and set {_OPT_IN_ENV}={_OPT_IN_VALUE} "
-                    "to run this module"
-                )
-            )
-        )
+        deselected.append(item)
+    if deselected:
+        items[:] = selected
+        config.hook.pytest_deselected(items=deselected)
 
 
 def _github_escape(value: object) -> str:

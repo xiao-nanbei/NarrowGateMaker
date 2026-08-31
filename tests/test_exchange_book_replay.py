@@ -8,6 +8,7 @@ from models.backtest_tick import simulate_tick
 from models.exchange_book_replay import (
     HistoricalExchangeBookScheduler,
     HistoricalExchangeBookVisibilityScheduler,
+    HistoricalMessageDeliverySchedule,
 )
 from models.tick_data_types import (
     HistoricalBBOData,
@@ -15,6 +16,77 @@ from models.tick_data_types import (
 )
 
 BASE_MS = 1_700_000_000_000
+
+
+def test_message_callback_serialization_preserves_measured_service_without_double_counting():
+    exchange = np.array([100, 200, 300, 400], dtype=np.int64)
+    receive = np.array([110, 210, 310, 600], dtype=np.int64)
+    ready = np.array([350, 220, 320, 605], dtype=np.int64)
+    legacy = HistoricalMessageDeliverySchedule(exchange, receive, ready)
+    serial = HistoricalMessageDeliverySchedule(
+        exchange, receive, ready, serialize_callback_service=True,
+    )
+    assert legacy.receive_ns_for_channel().tolist() == receive.tolist()
+    assert legacy.ready_ns_for_channel().tolist() == [350, 350, 350, 605]
+    assert serial.receive_ns_for_channel().tolist() == [110, 350, 360, 600]
+    assert serial.ready_ns_for_channel().tolist() == [350, 360, 370, 605]
+    np.testing.assert_array_equal(
+        serial.ready_ns_for_channel() - serial.receive_ns_for_channel(), ready - receive,
+    )
+    assert serial.stats_dict()["callback_queued_events"] == 2
+    assert serial.stats_dict()["max_callback_queue_delay_ns"] == 140
+    assert serial.latest_visible_index(360) == 0
+    assert serial.latest_visible_index(361) == 1
+    np.testing.assert_array_equal(receive, [110, 210, 310, 600])
+
+
+@pytest.mark.parametrize("shared_connection", [False, True])
+def test_message_callback_serialization_respects_connection_not_channel(shared_connection):
+    schedule = HistoricalMessageDeliverySchedule(
+        [100, 200, 300, 400], [110, 210, 310, 410], [500, 220, 320, 420],
+        channel_ids=["book", "trade", "book", "trade"],
+        connection_ids=["public"] * 4 if shared_connection else None,
+        serialize_callback_service=True,
+    )
+    assert schedule.receive_ns_for_channel("book").tolist() == [
+        110, 510 if shared_connection else 500,
+    ]
+    assert schedule.receive_ns_for_channel("trade").tolist() == (
+        [500, 520] if shared_connection else [210, 410]
+    )
+
+
+def test_message_callback_serialization_matches_scalar_recurrence_and_handles_empty():
+    rng = np.random.default_rng(41)
+    exchange = np.arange(100, dtype=np.int64)
+    receive = exchange + rng.integers(0, 500, size=len(exchange))
+    service = rng.integers(0, 100, size=len(exchange))
+    schedule = HistoricalMessageDeliverySchedule(
+        exchange, receive, receive + service, serialize_callback_service=True,
+    )
+    previous_finish = 0
+    starts, finishes = [], []
+    for raw_entry, duration in zip(receive, service, strict=True):
+        entry = max(int(raw_entry), previous_finish)
+        previous_finish = entry + int(duration)
+        starts.append(entry)
+        finishes.append(previous_finish)
+    assert schedule.receive_ns_for_channel().tolist() == starts
+    assert schedule.ready_ns_for_channel().tolist() == finishes
+    empty = HistoricalMessageDeliverySchedule([], [], [], serialize_callback_service=True)
+    assert empty.receive_ns_for_channel().size == 0
+    assert empty.stats_dict()["callback_queued_events"] == 0
+
+
+@pytest.mark.parametrize("cumulative_overflow", [False, True])
+def test_message_callback_serialization_rejects_int64_overflow(cumulative_overflow):
+    limit = np.iinfo(np.int64).max
+    receive = [0, 0] if cumulative_overflow else [limit - 10, limit - 9]
+    ready = [limit, limit] if cumulative_overflow else [limit, limit]
+    with pytest.raises(ValueError, match="exceeds int64"):
+        HistoricalMessageDeliverySchedule(
+            [0, 0], receive, ready, serialize_callback_service=True,
+        )
 
 
 def _event(
@@ -297,6 +369,122 @@ def test_level_filter_does_not_change_reconstructed_state() -> None:
     assert watched_changes == ()
     assert filtered.lookup("BUY", 990).quantity == pytest.approx(4.0)
     assert unfiltered.state_fingerprint() == filtered.state_fingerprint()
+
+
+@pytest.mark.parametrize(
+    ("side", "tick", "status", "quantity"),
+    [
+        ("BUY", 999, "exact", 2.0),
+        ("SELL", 1_001, "exact", 2.0),
+        ("BUY", 995, "known_zero", 0.0),
+        ("SELL", 1_005, "known_zero", 0.0),
+        ("BUY", 985, "unknown", None),
+    ],
+)
+def test_strict_before_lookup_recovers_only_unchanged_level_state(
+    side: str, tick: int, status: str, quantity: float | None,
+) -> None:
+    scheduler = HistoricalExchangeBookScheduler(_events())
+    boundary = (BASE_MS + 500) * 1_000_000
+    scheduler.advance_to(boundary, inclusive=False)
+    prior = scheduler.lookup_strictly_before(side, tick, boundary)
+    assert prior.status == status
+    assert prior.quantity == quantity
+    assert prior.asof_exchange_ts_ns == (BASE_MS + 100) * 1_000_000
+
+    advance = scheduler.advance_to(boundary, emitted_levels=set())
+    assert advance.level_changes == ()
+    assert scheduler.lookup(side, tick).asof_exchange_ts_ns == boundary
+    fingerprint = scheduler.state_fingerprint()
+    stats = scheduler.stats()
+
+    # Neither a lookup nor repeated inclusive/exclusive calls at t may erase
+    # the true prior watermark or promote an unknown level to exact support.
+    for inclusive in (True, False, True):
+        scheduler.advance_to(boundary, inclusive=inclusive)
+        assert scheduler.lookup_strictly_before(side, tick, boundary) == prior
+    assert scheduler.state_fingerprint() == fingerprint
+    assert scheduler.stats() == stats
+
+
+@pytest.mark.parametrize("emitted_levels", [None, set()])
+def test_strict_before_lookup_rejects_touched_level_even_when_not_emitted(
+    emitted_levels: set[tuple[str, int]] | None,
+) -> None:
+    scheduler = HistoricalExchangeBookScheduler(_events())
+    boundary = (BASE_MS + 500) * 1_000_000
+    scheduler.advance_to(boundary, emitted_levels=emitted_levels)
+
+    assert scheduler.lookup("BUY", 990).quantity == pytest.approx(3.0)
+    prior = scheduler.lookup_strictly_before("BUY", 990, boundary)
+    assert prior.status == "ambiguous"
+    assert prior.reason == "same_timestamp_level_touched"
+    assert prior.quantity is None
+    assert not prior.strict_usable
+
+
+def test_strict_before_lookup_retains_all_same_timestamp_scheduled_messages() -> None:
+    scheduler = HistoricalExchangeBookScheduler([])
+    snapshot, first_delta = _events()[:2]
+    boundary = first_delta.exchange_ts_ns
+    scheduler.apply_scheduled_events([snapshot], boundary_ts_ns=snapshot.exchange_ts_ns)
+    scheduler.apply_scheduled_events([first_delta], boundary_ts_ns=boundary)
+    second_delta = _event(
+        500,
+        event_type="delta",
+        levels=(("ask", 1_010, 3.0),),
+        first_update_id=102,
+        final_update_id=102,
+        previous_final_update_id=101,
+    )
+    scheduler.apply_scheduled_events(
+        [second_delta], boundary_ts_ns=boundary, emitted_levels=set(),
+    )
+    scheduler.apply_scheduled_events([], boundary_ts_ns=boundary)
+
+    for side, tick in (("BUY", 990), ("SELL", 1_010)):
+        lookup = scheduler.lookup_strictly_before(side, tick, boundary)
+        assert lookup.reason == "same_timestamp_level_touched"
+        assert not lookup.strict_usable
+    unchanged = scheduler.lookup_strictly_before("BUY", 999, boundary)
+    assert unchanged.quantity == pytest.approx(2.0)
+    assert unchanged.asof_exchange_ts_ns == snapshot.exchange_ts_ns
+
+
+@pytest.mark.parametrize("event_kind", ["snapshot", "source_gap", "sequence_gap"])
+def test_strict_before_lookup_rejects_same_timestamp_book_discontinuities(
+    event_kind: str,
+) -> None:
+    event = _event(
+        500,
+        event_type="delta" if event_kind == "sequence_gap" else event_kind,
+        levels=() if event_kind == "source_gap" else (("bid", 990, 3.0),),
+        first_update_id=101,
+        final_update_id=101,
+        previous_final_update_id=999,
+        last_update_id=200 if event_kind == "snapshot" else None,
+    )
+    scheduler = HistoricalExchangeBookScheduler(
+        [_events()[0], event], strict_sequence=False,
+    )
+    scheduler.advance_to(event.exchange_ts_ns, emitted_levels=set())
+
+    lookup = scheduler.lookup_strictly_before("SELL", 1_001, event.exchange_ts_ns)
+    assert lookup.status == "ambiguous"
+    assert lookup.reason == "same_timestamp_book_discontinuity"
+    assert lookup.quantity is None
+    assert not lookup.strict_usable
+
+
+def test_strict_before_lookup_does_not_rewind_past_retained_timestamp() -> None:
+    scheduler = HistoricalExchangeBookScheduler(_events())
+    scheduler.advance_to((BASE_MS + 750) * 1_000_000)
+
+    lookup = scheduler.lookup_strictly_before("SELL", 1_001, (BASE_MS + 500) * 1_000_000)
+    assert lookup.status == "unknown"
+    assert lookup.reason == "strict_before_state_not_retained"
+    assert lookup.quantity is None
+    assert not lookup.strict_usable
 
 
 def test_sequence_gap_invalidates_native_state_until_a_new_snapshot() -> None:

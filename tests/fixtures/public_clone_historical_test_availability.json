@@ -1,6 +1,6 @@
 {
   "schema_version": "narrowgate_public_clone_historical_test_availability.v1",
-  "default_policy": "skip_when_exact_historical_evidence_is_not_distributed",
+  "default_policy": "ignore_unavailable_modules_and_deselect_unavailable_nodes",
   "opt_in_environment_variable": "NARROWGATE_RUN_HISTORICAL_REPRODUCTION_TESTS",
   "opt_in_required_value": "1",
   "authority": {

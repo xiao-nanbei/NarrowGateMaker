@@ -202,6 +202,8 @@ def test_build_and_deploy_use_canonical_research_sources() -> None:
         assert f"../research_06_placement_fill_cif/cpp/{stem}.cpp" not in cmake
 
     assert "scripts/live_deploy_common.py source-release" in makefile
+    assert "publish-source:" in makefile
+    assert "publish-source-dry:" in makefile
     assert "$(wildcard research/families/" not in makefile
     assert "$(EC2_DIR)/research/families/" not in makefile
 

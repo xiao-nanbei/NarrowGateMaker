@@ -4,11 +4,126 @@ on:
   push:
     branches: ["main", "rebuilt-main-20260812"]
   pull_request:
+  schedule:
+    - cron: "17 18 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  changes:
+    name: Classify changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      docs: ${{ steps.filter.outputs.docs }}
+      python: ${{ steps.filter.outputs.python }}
+      native: ${{ steps.filter.outputs.native }}
+      full: ${{ steps.filter.outputs.full }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Classify paths
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          docs=false
+          python=false
+          native=false
+          full=false
+
+          if [[ "$EVENT_NAME" == "schedule" || "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            docs=true
+            python=true
+            native=true
+            full=true
+          else
+            if [[ "$EVENT_NAME" == "pull_request" ]]; then
+              base="$PR_BASE_SHA"
+            else
+              base="$BEFORE_SHA"
+            fi
+            if [[ -z "$base" || "$base" =~ ^0+$ ]] || ! git cat-file -e "${base}^{commit}"; then
+              changed_files="$(git ls-files)"
+            else
+              changed_files="$(git diff --name-only "$base" "$GITHUB_SHA")"
+            fi
+
+            while IFS= read -r path; do
+              [[ -n "$path" ]] || continue
+              case "$path" in
+                *.md|docs/*|*.csv|*.json|*.yaml|*.yml|*.toml|*.zip|*.tgz|*.tar.gz)
+                  docs=true
+                  ;;
+              esac
+              case "$path" in
+                *.py|*.sh|pyproject.toml|pytest.ini|requirements*.txt|Makefile|Dockerfile*|tests/*|narrowgate/*|live/*|strategy/*|execution/*|features/*|data/*|models/*|examples/*|research/*)
+                  if [[ "$path" != *.md ]]; then
+                    python=true
+                  fi
+                  ;;
+              esac
+              case "$path" in
+                cpp/*|strategy/quote_core.py|strategy/signal.py|models/backtest_tick.py|models/replay/*|tests/test_cpp_*|tests/*_cpp_*.py|tests/test_fill_selection_feature_parity.py)
+                  native=true
+                  ;;
+              esac
+              if [[ "$path" == ".github/workflows/ci.yml" ]]; then
+                docs=true
+                python=true
+                native=true
+              fi
+              if [[ "$path" == "scripts/audit_public_documentation.py" ]]; then
+                docs=true
+              fi
+            done <<< "$changed_files"
+          fi
+
+          {
+            echo "docs=$docs"
+            echo "python=$python"
+            echo "native=$native"
+            echo "full=$full"
+          } >> "$GITHUB_OUTPUT"
+
+  quality:
+    name: Public lint and documentation audit
+    needs: changes
+    if: ${{ needs.changes.outputs.docs == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.native == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install quality tools
+        if: ${{ needs.changes.outputs.python == 'true' }}
+        run: python -m pip install 'ruff>=0.5'
+
+      - name: Lint public style and repository correctness once
+        if: ${{ needs.changes.outputs.python == 'true' }}
+        run: |
+          ruff check narrowgate examples --select E,F,I,UP,B
+          git ls-files -z '*.py' | xargs -0 -r ruff check --
+
+      - name: Audit public documentation once
+        run: python scripts/audit_public_documentation.py --repo-root .
+
   base-install-smoke:
     name: Base install smoke
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' && needs.changes.outputs.full != 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -46,12 +161,10 @@ jobs:
             'from research.families.f07_active_order_continuation.audit.order_lifecycle_v2_runtime_compatibility_v1_6 import frozen_successor_path; print(frozen_successor_path())'
 
   python:
-    name: Python tests and lint (${{ matrix.python-version }})
+    name: Python 3.12 full public suite and native parity
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' || needs.changes.outputs.native == 'true' }}
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,99 +172,72 @@ jobs:
 
       - uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: "pip"
-
-      - name: Install package
-        run: |
-          python -m pip install --upgrade pip
-          # The full suite imports research pipelines and read-only live/data
-          # connectors.  Install both extras so collection tests the packaged
-          # dependency boundary instead of relying on runner-global modules.
-          python -m pip install -e ".[all]"
-          # The full suite includes native lifecycle-contract tests. Build the
-          # extension in every Python matrix job instead of relying on the
-          # separate C++ smoke job to affect another isolated runner.
-          python -m pip install -e cpp
-
-      - name: CLI smoke
-        run: |
-          narrowgate doctor
-          narrowgate quote-demo
-          python examples/order_level_score_demo.py
-
-      - name: Lint public style surface
-        run: |
-          ruff check narrowgate examples --select E,F,I,UP,B
-
-      - name: Lint every tracked Python file for correctness
-        run: |
-          git ls-files -z '*.py' | xargs -0 -r ruff check --
-
-      - name: Audit public documentation
-        run: |
-          python scripts/audit_public_documentation.py --repo-root .
-
-      - name: Pytest
-        id: pytest
-        run: |
-          pytest -q --junitxml=.pytest-results.xml
-
-      - name: Publish failing pytest node IDs
-        if: ${{ failure() && steps.pytest.outcome == 'failure' }}
-        run: |
-          python scripts/report_pytest_failures.py
-
-  cpp-build-smoke:
-    name: C++ extension build smoke
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
           python-version: "3.12"
           cache: "pip"
 
-      - name: Install C++ extension
+      - name: Install Python and native test dependencies once
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[all]"
-          python -VV
-          python -c "import sysconfig; print('include=', sysconfig.get_path('include')); print('platlib=', sysconfig.get_path('platlib'))"
           python -m pip install -e cpp
-
-      - name: Import smoke
-        run: |
           python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
-      - name: C++ quote-core parity tests
-        env:
-          PYTHONFAULTHANDLER: "1"
-        run: |
-          set -o pipefail
-          python -X faulthandler -m pytest tests/test_cpp_quote_core_parity.py -vv -s 2>&1 | tee cpp_quote_core_pytest.log
+      - name: Run full public suite including native tests
+        id: pytest
+        run: pytest -q --junitxml=.pytest-results.xml
 
-      - name: C++ signal parity tests
-        env:
-          PYTHONFAULTHANDLER: "1"
-        run: |
-          set -o pipefail
-          python -X faulthandler -m pytest tests/test_cpp_signal_features.py -vv -s 2>&1 | tee cpp_signal_pytest.log
+      - name: Publish failing pytest node IDs
+        if: ${{ failure() && steps.pytest.outcome == 'failure' }}
+        run: python scripts/report_pytest_failures.py
 
-      - name: C++ tick-replay parity tests
-        env:
-          PYTHONFAULTHANDLER: "1"
-        run: |
-          set -o pipefail
-          python -X faulthandler -m pytest \
-            tests/test_cpp_tick_replay_parity.py \
-            tests/test_fill_selection_feature_parity.py \
-            -vv -s 2>&1 | tee cpp_tick_replay_pytest.log
-
-      - name: Upload C++ pytest logs
-        if: always()
-        uses: actions/upload-artifact@v7
+  full-python:
+    name: Nightly Python 3.11 full suite and native parity
+    needs: changes
+    if: ${{ needs.changes.outputs.full == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
         with:
-          name: cpp-pytest-logs
-          path: cpp_*_pytest.log
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Python and native test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[all]"
+          python -m pip install -e cpp
+          python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
+
+      - name: Run full public suite
+        id: pytest
+        run: pytest -q --junitxml=.pytest-results.xml
+
+      - name: Publish failing pytest node IDs
+        if: ${{ failure() && steps.pytest.outcome == 'failure' }}
+        run: python scripts/report_pytest_failures.py
+
+  admission:
+    name: CI admission
+    needs: [changes, quality, base-install-smoke, python, full-python]
+    if: always()
+    runs-on: ubuntu-latest
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      QUALITY_RESULT: ${{ needs.quality.result }}
+      BASE_RESULT: ${{ needs['base-install-smoke'].result }}
+      PYTHON_RESULT: ${{ needs.python.result }}
+      NIGHTLY_RESULT: ${{ needs['full-python'].result }}
+    steps:
+      - name: Require every applicable boundary
+        run: |
+          test "$CHANGES_RESULT" = success
+          for result in "$QUALITY_RESULT" "$BASE_RESULT" "$PYTHON_RESULT" "$NIGHTLY_RESULT"; do
+            case "$result" in
+              success|skipped) ;;
+              *) exit 1 ;;
+            esac
+          done

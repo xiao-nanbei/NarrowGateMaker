@@ -47,6 +47,12 @@ PRIVATE_LOCATOR_PATTERNS = {
         r"\b(?:i|ami|vol|snap)-[0-9a-f]{8,}\b|\beipalloc-[0-9a-f]+\b"
     ),
 }
+EXPLICIT_LOCATOR_PLACEHOLDERS = (
+    "/Users/...",
+    "/home/...",
+    "/Volumes/...",
+    "/private/tmp/...",
+)
 IPV4_CANDIDATE_RE = re.compile(
     r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])"
 )
@@ -146,6 +152,11 @@ def _is_public_ipv4_text(value: str) -> bool:
 def _private_locator_kinds(text: str) -> list[str]:
     """Return generic private-locator findings without owner-specific values."""
 
+    # Keep examples honest without treating a literal ellipsis as an owner path.
+    # This is intentionally narrower than ignoring inline/fenced code: a real
+    # locator remains a finding even when it appears in a command example.
+    for placeholder in EXPLICIT_LOCATOR_PLACEHOLDERS:
+        text = text.replace(placeholder, "<private-path-placeholder>")
     kinds = [
         kind
         for kind, pattern in PRIVATE_LOCATOR_PATTERNS.items()

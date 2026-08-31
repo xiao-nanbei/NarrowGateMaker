@@ -59,6 +59,8 @@ TICK_DEFAULTS: Mapping[str, Any] = {
     # wall-clock lifecycle state cannot wait for the next execution trade.
     "replay_event_clock": "trade",
     "replay_clock_interval_ms": 100,
+    # Opt-in serial REST-return loop; zero retains the existing replay clock.
+    "replay_main_loop_sleep_ms": 0,
     "fill_cooldown_apply_reducing": False,
     "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
     "sync_adjust_replay_mode": "disabled",
@@ -1155,6 +1157,8 @@ def build_backtest_base_params(
         "exit_urgency_strength": live_params.get("exit_urgency_strength", 0.0),
         "circuit_breaker_sigma": live_params.get("circuit_breaker_sigma", 0.0),
         "pnl_volatility_horizon_s": live_params.get("pnl_volatility_horizon_s", 300.0),
+        "max_exec_book_visible_age_s": live_params.get("max_exec_book_visible_age_s", 5.0),
+        "max_exec_book_source_lag_s": live_params.get("max_exec_book_source_lag_s", 5.0),
         "inventory_skew_strength": live_params.get("inventory_skew_strength", 0.0),
         "inventory_asym_strength": live_params.get("inventory_asym_strength", 0.0),
         "inventory_signal_fade_strength": live_params.get("inventory_signal_fade_strength", 0.0),
@@ -1398,6 +1402,9 @@ def build_backtest_base_params(
         raw_value = live_params.get(name)
         if raw_value is not None:
             params[name] = finite_positive_quote_coefficient(name, raw_value)
+    # This is a replay execution override, not a live strategy/YAML field.
+    if "replay_main_loop_sleep_ms" in live_params:
+        params["replay_main_loop_sleep_ms"] = live_params["replay_main_loop_sleep_ms"]
     if queue_calibration is not None:
         # queue calibration 是机制对齐工具，不是 alpha；正式 OOS 评估必须用 fit 以外日期验证。
         params["_queue_calibration"] = queue_calibration

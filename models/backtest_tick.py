@@ -571,9 +571,324 @@ _LATENCY_NEW = 1
 _LATENCY_CANCEL = 2
 _LATENCY_TTL_CANCEL = 3
 _LATENCY_QUEUE_VALUE_CANCEL = 4
+_LATENCY_PRIVATE_FILL = 5
+_LATENCY_DECISION_TO_GATEWAY = 6
+_REST_GATEWAY_SLOT_NAMES = (
+    "cancel_buy",
+    "cancel_sell",
+    "new_buy",
+    "new_sell",
+)
 RANDOM_PASSIVE_SAMPLER_VERSION = "keyed_splitmix64_v1"
 _RANDOM_PASSIVE_TIMING_JITTER = 1
 _RANDOM_PASSIVE_SIDE_MIRROR = 2
+
+
+def _deterministic_decision_to_gateway_latency_ms(
+    samples_ms: "np.ndarray",
+    *,
+    seed: int,
+    decision_ts_ms: int,
+) -> int:
+    """Sample one compute delay shared by every request in a decision.
+
+    The keyed draw is deliberately independent of request side/slot.  This
+    keeps cancel BUY, cancel SELL, new BUY, and new SELL on one frozen
+    decision snapshot while shifting the entire serial gateway row together.
+    """
+
+    if samples_ms.size == 0:
+        return 0
+    mixed = int(seed)
+    for component in (int(decision_ts_ms), _LATENCY_DECISION_TO_GATEWAY):
+        mixed = _splitmix64(mixed ^ component)
+    sample = max(0.0, float(samples_ms[int(mixed % samples_ms.size)]))
+    return max(0, int(math.floor(sample + 0.5)))
+
+
+class LocalLifecycleBoundaryScheduler:
+    """Deterministic millisecond scheduler for locally visible lifecycle events.
+
+    The scheduler is deliberately independent from the native exchange-book
+    clock.  Callers own the event payload and decide how to apply it; this
+    class only provides exact boundary ordering and idempotent registration.
+    """
+
+    _PHASE_PRIORITY = {
+        "exchange_effective": 10,
+        "new_ack": 20,
+        "private_fill_visible": 30,
+        "cancel_ack": 40,
+        "rest_return": 50,
+    }
+
+    def __init__(self) -> None:
+        self._heap: list[tuple[int, int, int, str, Any]] = []
+        self._scheduled_ids: set[str] = set()
+        self._sequence = 0
+
+    def schedule(
+        self,
+        *,
+        ts_ms: int,
+        phase: str,
+        event_id: str,
+        payload: Any = None,
+    ) -> bool:
+        normalized_phase = str(phase)
+        if normalized_phase not in self._PHASE_PRIORITY:
+            raise ValueError(f"unsupported local lifecycle phase={phase!r}")
+        normalized_id = str(event_id)
+        if not normalized_id:
+            raise ValueError("local lifecycle event_id must be non-empty")
+        if normalized_id in self._scheduled_ids:
+            return False
+        timestamp = int(ts_ms)
+        if timestamp < 0:
+            raise ValueError("local lifecycle timestamp must be non-negative")
+        heapq.heappush(
+            self._heap,
+            (
+                timestamp,
+                int(self._PHASE_PRIORITY[normalized_phase]),
+                int(self._sequence),
+                normalized_id,
+                payload,
+            ),
+        )
+        self._sequence += 1
+        self._scheduled_ids.add(normalized_id)
+        return True
+
+    def drain(self, *, through_ts_ms: int, inclusive: bool) -> list[dict[str, Any]]:
+        boundary = int(through_ts_ms)
+        drained: list[dict[str, Any]] = []
+        while self._heap:
+            ts_ms, priority, sequence, event_id, payload = self._heap[0]
+            if ts_ms > boundary or (ts_ms == boundary and not inclusive):
+                break
+            heapq.heappop(self._heap)
+            drained.append(
+                {
+                    "ts_ms": int(ts_ms),
+                    "priority": int(priority),
+                    "sequence": int(sequence),
+                    "event_id": str(event_id),
+                    "payload": payload,
+                }
+            )
+        return drained
+
+    def __bool__(self) -> bool:
+        return bool(self._heap)
+
+    def next_timestamp(self) -> Optional[int]:
+        return int(self._heap[0][0]) if self._heap else None
+
+
+def _load_serial_rest_gateway_timing_profile(path: "Path") -> dict[str, Any]:
+    """Load the diagnostic row-paired REST gateway timing profile.
+
+    One row is an observed synchronous request subsequence.  Missing slots and
+    missing clocks stay missing; callers may only consume an exact observed
+    request mask, so this loader never manufactures a component latency.
+    """
+
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"serial REST gateway timing profile not found: {resolved}"
+        )
+    required = {
+        "slot_names",
+        "request_present_mask",
+        "request_start_offset_ms",
+        "exchange_effective_observed_mask",
+        "exchange_effective_latency_ms",
+        "local_visibility_observed_mask",
+        "local_visibility_latency_ms",
+    }
+    with np.load(resolved, allow_pickle=False) as archive:
+        missing = required.difference(archive.files)
+        if missing:
+            raise ValueError(
+                "serial REST gateway timing profile missing arrays: "
+                f"{sorted(missing)}"
+            )
+        slot_names = tuple(str(value) for value in archive["slot_names"].tolist())
+        if slot_names != _REST_GATEWAY_SLOT_NAMES:
+            raise ValueError(
+                "serial REST gateway slot order must be "
+                f"{_REST_GATEWAY_SLOT_NAMES}, got {slot_names}"
+            )
+        profile = {
+            "path": str(resolved),
+            "request_present_mask": np.asarray(
+                archive["request_present_mask"], dtype=np.bool_
+            ).copy(),
+            "request_start_offset_ms": np.asarray(
+                archive["request_start_offset_ms"], dtype=np.float64
+            ).copy(),
+            "exchange_effective_observed_mask": np.asarray(
+                archive["exchange_effective_observed_mask"], dtype=np.bool_
+            ).copy(),
+            "exchange_effective_latency_ms": np.asarray(
+                archive["exchange_effective_latency_ms"], dtype=np.float64
+            ).copy(),
+            "local_visibility_observed_mask": np.asarray(
+                archive["local_visibility_observed_mask"], dtype=np.bool_
+            ).copy(),
+            "local_visibility_latency_ms": np.asarray(
+                archive["local_visibility_latency_ms"], dtype=np.float64
+            ).copy(),
+        }
+        # Optional measured response bounds are separate from private-stream
+        # visibility. Older paired profiles intentionally retain their ABI.
+        for name in (
+            "rest_completion_upper_bound_observed_mask",
+            "rest_completion_upper_bound_by_next_request_ms",
+            "completion_source_callback_type",
+        ):
+            if name in archive.files:
+                profile[name] = np.asarray(archive[name]).copy()
+
+    present = profile["request_present_mask"]
+    expected_shape = present.shape
+    if present.ndim != 2 or expected_shape[1:] != (len(_REST_GATEWAY_SLOT_NAMES),):
+        raise ValueError(
+            "serial REST gateway request_present_mask must have shape [N,4]"
+        )
+    if expected_shape[0] == 0:
+        raise ValueError("serial REST gateway timing profile has no rows")
+    for name in (
+        "request_start_offset_ms",
+        "exchange_effective_observed_mask",
+        "exchange_effective_latency_ms",
+        "local_visibility_observed_mask",
+        "local_visibility_latency_ms",
+    ):
+        if profile[name].shape != expected_shape:
+            raise ValueError(
+                f"serial REST gateway {name} must have shape {expected_shape}"
+            )
+    complete = (
+        present
+        & profile["exchange_effective_observed_mask"]
+        & profile["local_visibility_observed_mask"]
+        & np.isfinite(profile["request_start_offset_ms"])
+        & np.isfinite(profile["exchange_effective_latency_ms"])
+        & np.isfinite(profile["local_visibility_latency_ms"])
+        & (profile["request_start_offset_ms"] >= 0.0)
+        & (profile["exchange_effective_latency_ms"] >= 0.0)
+        & (profile["local_visibility_latency_ms"] >= 0.0)
+    )
+    if np.any(present & ~complete):
+        raise ValueError(
+            "serial REST gateway profile has a present request without complete "
+            "start/effective/local-visibility clocks"
+        )
+    for row_index in range(expected_shape[0]):
+        offsets = profile["request_start_offset_ms"][row_index, present[row_index]]
+        if offsets.size > 1 and np.any(np.diff(offsets) < 0.0):
+            raise ValueError(
+                "serial REST gateway request starts regress within row "
+                f"{row_index}"
+            )
+    return profile
+
+
+def _sample_serial_rest_gateway_timing_row(
+    profile: Mapping[str, Any],
+    *,
+    decision_ts_ms: int,
+    request_origin_ts_ms: Optional[int] = None,
+    requested_slots: tuple[str, ...],
+    seed: int,
+) -> dict[str, dict[str, int]]:
+    """Select one exact-mask empirical row and retain all paired clocks."""
+
+    unknown = set(requested_slots).difference(_REST_GATEWAY_SLOT_NAMES)
+    if unknown:
+        raise ValueError(f"unknown serial REST gateway slots: {sorted(unknown)}")
+    requested = np.asarray(
+        [name in requested_slots for name in _REST_GATEWAY_SLOT_NAMES],
+        dtype=np.bool_,
+    )
+    if not np.any(requested):
+        return {}
+    present = np.asarray(profile["request_present_mask"], dtype=np.bool_)
+    candidates = np.flatnonzero(np.all(present == requested, axis=1))
+    if candidates.size == 0:
+        mask = "-".join(
+            name
+            for name, enabled in zip(
+                _REST_GATEWAY_SLOT_NAMES,
+                requested,
+                strict=True,
+            )
+            if enabled
+        )
+        raise ValueError(
+            "serial REST gateway profile has no exact observed request mask "
+            f"for {mask}"
+        )
+    mask_bits = sum(
+        (1 << index) for index, enabled in enumerate(requested) if enabled
+    )
+    mixed = _splitmix64(int(decision_ts_ms) ^ int(seed) ^ int(mask_bits))
+    row_index = int(candidates[int(mixed % int(candidates.size))])
+    result: dict[str, dict[str, int]] = {}
+    for slot_index, slot_name in enumerate(_REST_GATEWAY_SLOT_NAMES):
+        if not requested[slot_index]:
+            continue
+        request_offset_ms = max(
+            0,
+            int(
+                math.floor(
+                    float(profile["request_start_offset_ms"][row_index, slot_index])
+                    + 0.5
+                )
+            ),
+        )
+        effective_latency_ms = max(
+            0,
+            int(
+                math.floor(
+                    float(
+                        profile["exchange_effective_latency_ms"][
+                            row_index, slot_index
+                        ]
+                    )
+                    + 0.5
+                )
+            ),
+        )
+        local_latency_ms = max(
+            effective_latency_ms,
+            int(
+                math.floor(
+                    float(
+                        profile["local_visibility_latency_ms"][
+                            row_index, slot_index
+                        ]
+                    )
+                    + 0.5
+                )
+            ),
+        )
+        request_origin = (
+            int(decision_ts_ms)
+            if request_origin_ts_ms is None
+            else int(request_origin_ts_ms)
+        )
+        request_ts_ms = request_origin + request_offset_ms
+        result[slot_name] = {
+            "row_index": row_index,
+            "request_ts_ms": request_ts_ms,
+            "exchange_effective_ts_ms": request_ts_ms + effective_latency_ms,
+            "local_visibility_ts_ms": request_ts_ms + local_latency_ms,
+        }
+    return result
 
 
 def deterministic_random_passive_unit(
@@ -746,6 +1061,140 @@ def _paired_exec_book_visibility_state(
         max(0, int(round(float(trade_delays_ms[idx])))),
         float(observed_mid[idx]),
     )
+
+
+def _sampled_joint_exec_book_visibility_state(
+    decision_ts_ms: int,
+    *,
+    seed: int,
+    book_delays_ms: "np.ndarray",
+    depth_delays_ms: "np.ndarray",
+    trade_delays_ms: "np.ndarray",
+) -> tuple[int, int, int]:
+    """Sample one aligned live-perf source-age row without timestamp matching."""
+    lengths = {
+        book_delays_ms.size,
+        depth_delays_ms.size,
+        trade_delays_ms.size,
+    }
+    if len(lengths) != 1 or 0 in lengths:
+        raise ValueError(
+            "sampled_joint visibility requires aligned book/depth/trade age arrays"
+        )
+    mixed = _splitmix64(int(decision_ts_ms) ^ int(seed))
+    idx = int(mixed % int(book_delays_ms.size))
+    return (
+        max(0, int(round(float(book_delays_ms[idx])))),
+        max(0, int(round(float(depth_delays_ms[idx])))),
+        max(0, int(round(float(trade_delays_ms[idx])))),
+    )
+
+
+def _advance_monotonic_visibility_cutoff(
+    cutoffs_ms: dict[str, int],
+    *,
+    feed: str,
+    candidate_ts_ms: int,
+) -> int:
+    """Advance one receive-stream cutoff without forgetting visible events."""
+    name = str(feed)
+    candidate = int(candidate_ts_ms)
+    previous = cutoffs_ms.get(name)
+    visible = candidate if previous is None else max(int(previous), candidate)
+    cutoffs_ms[name] = visible
+    return visible
+
+
+def _source_stratified_exec_visibility_state(
+    decision_ts_ms: int,
+    *,
+    seed: int,
+    simulator: Any,
+    market_id: str,
+    transport: str,
+) -> tuple[int, int, int]:
+    """Sample joint book/trade transport visibility without event-age sparsity."""
+    bucket_ms = int(simulator.source_stratified_bucket_ms)
+    mixed = _splitmix64((int(decision_ts_ms) // bucket_ms) ^ int(seed))
+    common = {
+        "market_id": str(market_id),
+        "transport": str(transport).strip().lower(),
+    }
+    book_delay_ms = simulator.delay_ms(
+        {**common, "event_type": "book"},
+        mode="profile_source_stratified",
+        rng=random.Random(int(mixed)),
+    )
+    trade_delay_ms = simulator.delay_ms(
+        {**common, "event_type": "trade"},
+        mode="profile_source_stratified",
+        rng=random.Random(int(mixed)),
+    )
+    book_delay = max(0, int(round(float(book_delay_ms))))
+    return (
+        book_delay,
+        book_delay,
+        max(0, int(round(float(trade_delay_ms)))),
+    )
+
+
+def _load_exec_source_stratified_visibility_profile(
+    path: "Path",
+    *,
+    expected_sha256: str,
+    expected_profile_id: str,
+    market_id: str,
+    transport: str,
+) -> tuple[Any, str]:
+    """Load one diagnostic profile and fail closed on its external identity."""
+    from research.system_engineering.audit.market_data_latency import (
+        MarketDataLatencySimulator,
+    )
+
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"source-stratified market-data latency profile not found: {resolved}"
+        )
+    expected_sha = str(expected_sha256).strip().lower()
+    if len(expected_sha) != 64 or any(ch not in "0123456789abcdef" for ch in expected_sha):
+        raise ValueError("source-stratified latency profile requires a SHA256 identity")
+    actual_sha = hashlib.sha256(resolved.read_bytes()).hexdigest()
+    if actual_sha != expected_sha:
+        raise ValueError(
+            "source-stratified latency profile SHA256 mismatch: "
+            f"expected={expected_sha} actual={actual_sha}"
+        )
+    expected_id = str(expected_profile_id).strip()
+    source_market = str(market_id).strip()
+    source_transport = str(transport).strip().lower()
+    if not expected_id or not source_market or not source_transport:
+        raise ValueError(
+            "source-stratified latency profile requires profile-id, market, and transport"
+        )
+    simulator = MarketDataLatencySimulator.load(resolved)
+    if simulator.profile_id != expected_id:
+        raise ValueError(
+            "source-stratified latency profile id mismatch: "
+            f"expected={expected_id} actual={simulator.profile_id}"
+        )
+    sampling = simulator.profile.get("source_stratified_sampling", {})
+    if (
+        str(sampling.get("authority", "")) != "diagnostic_non_authoritative"
+        or sampling.get("promotion_eligible") is not False
+    ):
+        raise ValueError(
+            "source-stratified execution visibility requires a diagnostic, "
+            "non-promotional profile"
+        )
+    _source_stratified_exec_visibility_state(
+        0,
+        seed=0,
+        simulator=simulator,
+        market_id=source_market,
+        transport=source_transport,
+    )
+    return simulator, actual_sha
 
 
 def _paired_exec_source_visible_ts(
@@ -2252,13 +2701,14 @@ def build_rolling_variance(bars_1s, sigma_window=60):
         ssq[: min(9, cl.size)] = 1.0
     ssq = np.maximum(ssq, 1e-6)
 
-    # Map timestamp (ms) → σ²
+    # Preserve the 1s bar's left label. This row's completed close becomes
+    # available no earlier than ts_ms + 1000; consumers enforce that boundary.
     ts_ms = _index_to_epoch_ms(bars_1s.index)
     return ts_ms, ssq
 
 
 def build_trade_intensity(bars_1s, window=60):
-    """Pre-compute 60s rolling mean of trade_count as trade intensity proxy."""
+    """Return per-1s count means, left-labelled and available after ts + 1s."""
     tc = bars_1s["trade_count"].values.astype(np.float64)
     ti = (pd.Series(tc)
           .rolling(window, min_periods=1)
@@ -2270,7 +2720,7 @@ def build_trade_intensity(bars_1s, window=60):
 
 
 def build_squared_returns(bars_1s):
-    """Pre-compute 1s squared returns for dynamic RQ EMA."""
+    """Return 1s squared returns, left-labelled and available after ts + 1s."""
     cl = bars_1s["close"].values.astype(np.float64)
     ret_sq = np.empty_like(cl)
     ret_sq[0] = 0.0
@@ -4153,11 +4603,27 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             return exchange_ns + dynamic_fill_hazard_provider_trade_delay_ns
         if dynamic_fill_hazard_visibility_profile is None:
             raise RuntimeError("q90 AWS visibility profile is not initialized")
-        event_salt = 0xB00C if str(event_type) == "book" else 0x7ADE
+        source_stratified = (
+            dynamic_fill_hazard_profile_mode == "profile_source_stratified"
+        )
+        event_salt = (
+            0
+            if source_stratified
+            else (0xB00C if str(event_type) == "book" else 0x7ADE)
+        )
+        seed_clock = (
+            exchange_ns
+            // (
+                dynamic_fill_hazard_visibility_profile.source_stratified_bucket_ms
+                * 1_000_000
+            )
+            if source_stratified
+            else exchange_ns
+        )
         keyed_seed = _splitmix64(
             int(dynamic_fill_hazard_visibility_seed)
-            ^ int(exchange_ns)
-            ^ (int(source_ordinal) << 1)
+            ^ int(seed_clock)
+            ^ (0 if source_stratified else (int(source_ordinal) << 1))
             ^ event_salt
         )
         delay_ms = dynamic_fill_hazard_visibility_profile.delay_ms(
@@ -4985,8 +5451,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
     def _record_order_lifecycle_fill(
         order: dict[str, Any],
-        ts_ms: int,
+        visibility_ts_ms: int,
         *,
+        exchange_ts_ms: Optional[int] = None,
         fill_qty: float,
         remaining_before: float,
         remaining_after: float,
@@ -4999,7 +5466,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ) -> None:
         local_order_lifecycle.fill(
             order,
-            int(ts_ms),
+            int(visibility_ts_ms),
             fill_qty=float(fill_qty),
             remaining_before=float(remaining_before),
             remaining_after=float(remaining_after),
@@ -5017,8 +5484,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 remaining_after=(
                     0.0 if journal_full_fill else float(remaining_after)
                 ),
-                visibility_ts_ms=int(ts_ms),
-                exchange_ts_ms=int(ts_ms),
+                visibility_ts_ms=int(visibility_ts_ms),
+                exchange_ts_ms=int(
+                    visibility_ts_ms
+                    if exchange_ts_ms is None
+                    else exchange_ts_ms
+                ),
                 full_fill=journal_full_fill,
             )
 
@@ -6183,6 +6654,64 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         raise ValueError(
             f"unsupported latency_sampler_version={latency_sampler_version!r}"
         )
+    decision_to_gateway_latency_samples_ms = np.asarray(
+        params.get("_decision_to_gateway_latency_samples_ms", []),
+        dtype=np.float64,
+    ).ravel()
+    decision_to_gateway_latency_samples_ms = np.ascontiguousarray(
+        decision_to_gateway_latency_samples_ms[
+            np.isfinite(decision_to_gateway_latency_samples_ms)
+            & (decision_to_gateway_latency_samples_ms >= 0.0)
+        ],
+        dtype=np.float64,
+    )
+    decision_to_gateway_latency_enabled = bool(
+        decision_to_gateway_latency_samples_ms.size > 0
+        and np.any(decision_to_gateway_latency_samples_ms > 0.0)
+    )
+    pre_snapshot_compute_samples_ms = np.asarray(
+        params.get("_pre_snapshot_compute_latency_samples_ms", []), dtype=np.float64
+    )
+    if (
+        not np.all(np.isfinite(pre_snapshot_compute_samples_ms))
+        or np.any(pre_snapshot_compute_samples_ms < 0.0)
+    ):
+        raise ValueError("pre-snapshot compute samples must be finite and non-negative")
+    pre_snapshot_compute_enabled = bool(
+        np.any(pre_snapshot_compute_samples_ms > 0.0)
+    )
+    if pre_snapshot_compute_enabled:
+        raw_total = np.asarray(
+            params.get("_decision_to_gateway_latency_samples_ms", []), dtype=np.float64
+        )
+        if (
+            pre_snapshot_compute_samples_ms.ndim != 1
+            or raw_total.ndim != 1
+            or pre_snapshot_compute_samples_ms.shape != raw_total.shape
+            or not np.all(np.isfinite(raw_total))
+            or not np.all(np.isfinite(pre_snapshot_compute_samples_ms))
+            or np.any(pre_snapshot_compute_samples_ms < 0.0)
+            or np.any(pre_snapshot_compute_samples_ms > raw_total)
+        ):
+            raise ValueError(
+                "pre-snapshot/total compute samples must be aligned finite 0 <= pre <= total"
+            )
+    raw_decision_to_gateway_latency_seed = params.get(
+        "decision_to_gateway_latency_seed"
+    )
+    decision_to_gateway_latency_seed = int(
+        latency_seed
+        if raw_decision_to_gateway_latency_seed is None
+        else raw_decision_to_gateway_latency_seed
+    )
+    if (
+        decision_to_gateway_latency_enabled
+        and str(params.get("replay_purpose", "")).strip().lower()
+        != "diagnostic"
+    ):
+        raise ValueError(
+            "decision-to-gateway compute latency is diagnostic-only"
+        )
     latency_stress_enabled = bool(params.get("latency_stress_enabled", False))
     latency_stress_spike_probability = float(
         params.get("latency_stress_spike_probability", 0.0) or 0.0
@@ -6190,6 +6719,108 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     latency_stress_spike_multiplier = float(
         params.get("latency_stress_spike_multiplier", 1.0) or 1.0
     )
+    rest_gateway_timing_mode = str(
+        params.get("rest_gateway_timing_mode", "disabled") or "disabled"
+    ).strip().lower()
+    if rest_gateway_timing_mode not in {"disabled", "paired_npz", "sampled_serial"}:
+        raise ValueError(
+            "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
+        )
+    rest_gateway_timing_profile = None
+    sampled_serial_gateway = rest_gateway_timing_mode == "sampled_serial"
+    rest_gateway_timing_enabled = rest_gateway_timing_mode != "disabled"
+    rest_gateway_timing_seed = int(
+        params.get("rest_gateway_timing_seed", latency_seed) or latency_seed
+    )
+    if rest_gateway_timing_enabled:
+        if str(params.get("replay_purpose", "")).strip().lower() != "diagnostic":
+            raise ValueError(
+                "paired serial REST gateway timing is diagnostic-only"
+            )
+    raw_gateway_path = str(
+        params.get("rest_gateway_timing_profile_path", "") or ""
+    ).strip()
+    serial_rest_return_enabled = bool(sampled_serial_gateway and raw_gateway_path)
+    main_loop_sleep_raw = float(params.get("replay_main_loop_sleep_ms", 0) or 0)
+    if (
+        not math.isfinite(main_loop_sleep_raw)
+        or main_loop_sleep_raw < 0
+        or main_loop_sleep_raw != int(main_loop_sleep_raw)
+    ):
+        raise ValueError("replay_main_loop_sleep_ms must be a non-negative integer")
+    main_loop_sleep_ms = int(main_loop_sleep_raw)
+    main_loop_enabled = main_loop_sleep_ms > 0
+    if main_loop_enabled and (not serial_rest_return_enabled or replay_event_clock != "merged"):
+        raise ValueError(
+            "main-loop timing requires merged replay and sampled_serial REST-return timing"
+        )
+    if pre_snapshot_compute_enabled and not main_loop_enabled:
+        raise ValueError("pre-snapshot compute requires main-loop sampled_serial timing")
+    pending_quote_compute = None
+    active_quote_compute = None
+    pre_snapshot_compute_count = 0
+    pre_snapshot_compute_completed_count = 0
+    pre_snapshot_compute_sum_ms = 0
+    pre_snapshot_compute_discarded_count = 0
+    main_loop_next_wake_ms: Optional[int] = None
+    main_loop_tick_complete_ms = 0
+    main_loop_tick_count = 0
+    is_main_loop_wake = False
+    if rest_gateway_timing_mode == "paired_npz" or serial_rest_return_enabled:
+        if not raw_gateway_path:
+            raise ValueError(
+                "paired serial REST gateway timing requires a profile path"
+            )
+        gateway_path = Path(raw_gateway_path).expanduser()
+        if not gateway_path.is_absolute():
+            gateway_path = ROOT / gateway_path
+        rest_gateway_timing_profile = _load_serial_rest_gateway_timing_profile(
+            gateway_path
+        )
+    rest_return_samples: dict[str, np.ndarray] = {}
+    if serial_rest_return_enabled:
+        profile = rest_gateway_timing_profile
+        present = profile["request_present_mask"]
+        shape = present.shape
+        upper_mask = np.asarray(profile.get(
+            "rest_completion_upper_bound_observed_mask", np.zeros(shape)
+        ), dtype=np.bool_)
+        upper = np.asarray(profile.get(
+            "rest_completion_upper_bound_by_next_request_ms", np.full(shape, np.nan)
+        ), dtype=np.float64)
+        callback = np.asarray(profile.get(
+            "completion_source_callback_type", np.full(shape, "")
+        ))
+        if any(value.shape != shape for value in (upper_mask, upper, callback)):
+            raise ValueError("REST response-bound arrays must match request slots")
+        for index, slot in enumerate(_REST_GATEWAY_SLOT_NAMES):
+            effective = profile["exchange_effective_latency_ms"][:, index]
+            visible = profile["local_visibility_latency_ms"][:, index]
+            if slot.startswith("new_"):
+                # confirm_new is called after REST returns. WS-first activation
+                # does not observe that response and must not substitute for it.
+                valid = present[:, index] & (callback[:, index] == "rest_ack")
+                response = visible
+            else:
+                valid = present[:, index] & upper_mask[:, index]
+                response = upper[:, index]
+            valid &= np.isfinite(response) & (response >= effective)
+            rest_return_samples[slot] = np.ascontiguousarray(
+                np.column_stack((effective[valid], visible[valid], response[valid]))
+            )
+            if not rest_return_samples[slot].shape[0]:
+                raise ValueError(f"no paired observed REST-return upper bounds for {slot}")
+    active_rest_gateway_timing: dict[str, dict[str, int]] = {}
+    rest_gateway_sampled_row_count = 0
+    rest_gateway_busy_until_ms = 0
+    rest_gateway_request_count = 0
+    rest_gateway_busy_ms = 0
+    rest_gateway_request_wait_ms = 0
+    rest_gateway_decision_deferral_count = 0
+    rest_gateway_last_timing: dict[str, int] = {}
+    serial_rest_decision: Optional[dict[str, Any]] = None
+    serial_rest_sequence = 0
+    rest_return_pending_coalesce_count = 0
     new_latency_samples_ms = np.asarray(
         params.get("_new_order_latency_samples_ms", []),
         dtype=np.float64,
@@ -6200,6 +6831,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ],
         dtype=np.float64,
     )
+    new_exchange_effective_latency_samples_ms = np.asarray(
+        params.get("_new_order_exchange_effective_latency_samples_ms", []),
+        dtype=np.float64,
+    )
+    new_exchange_effective_latency_samples_ms = np.ascontiguousarray(
+        new_exchange_effective_latency_samples_ms[
+            np.isfinite(new_exchange_effective_latency_samples_ms)
+            & (new_exchange_effective_latency_samples_ms >= 0.0)
+        ],
+        dtype=np.float64,
+    )
+    new_order_latency_split_enabled = bool(
+        new_exchange_effective_latency_samples_ms.size > 0
+        or rest_gateway_timing_enabled
+        or decision_to_gateway_latency_enabled
+    )
+    if (
+        new_exchange_effective_latency_samples_ms.size > 0
+        and new_latency_samples_ms.size > 0
+        and new_exchange_effective_latency_samples_ms.size
+        != new_latency_samples_ms.size
+    ):
+        raise ValueError(
+            "paired new-order effective/ACK latency samples must have equal length"
+        )
     cancel_latency_samples_ms = np.asarray(
         params.get("_cancel_order_latency_samples_ms", []),
         dtype=np.float64,
@@ -6211,6 +6867,82 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         ],
         dtype=np.float64,
     )
+    cancel_exchange_effective_latency_samples_ms = np.asarray(
+        params.get("_cancel_exchange_effective_latency_samples_ms", []),
+        dtype=np.float64,
+    )
+    cancel_exchange_effective_latency_samples_ms = np.ascontiguousarray(
+        cancel_exchange_effective_latency_samples_ms[
+            np.isfinite(cancel_exchange_effective_latency_samples_ms)
+            & (cancel_exchange_effective_latency_samples_ms >= 0.0)
+        ],
+        dtype=np.float64,
+    )
+    cancel_ack_visibility_latency_samples_ms = np.asarray(
+        params.get("_cancel_ack_visibility_latency_samples_ms", []),
+        dtype=np.float64,
+    )
+    cancel_ack_visibility_latency_samples_ms = np.ascontiguousarray(
+        cancel_ack_visibility_latency_samples_ms[
+            np.isfinite(cancel_ack_visibility_latency_samples_ms)
+            & (cancel_ack_visibility_latency_samples_ms >= 0.0)
+        ],
+        dtype=np.float64,
+    )
+    cancel_latency_split_enabled = bool(
+        cancel_exchange_effective_latency_samples_ms.size > 0
+        or cancel_ack_visibility_latency_samples_ms.size > 0
+        or rest_gateway_timing_enabled
+        or decision_to_gateway_latency_enabled
+    )
+    if (
+        cancel_exchange_effective_latency_samples_ms.size > 0
+        and cancel_ack_visibility_latency_samples_ms.size > 0
+        and cancel_exchange_effective_latency_samples_ms.size
+        != cancel_ack_visibility_latency_samples_ms.size
+    ):
+        raise ValueError(
+            "paired cancel effective/ACK latency samples must have equal length"
+        )
+    if sampled_serial_gateway and not serial_rest_return_enabled and not all(
+        samples.size
+        for samples in (
+            new_exchange_effective_latency_samples_ms,
+            new_latency_samples_ms,
+            cancel_exchange_effective_latency_samples_ms,
+            cancel_ack_visibility_latency_samples_ms,
+        )
+    ):
+        raise ValueError(
+            "sampled_serial requires paired NEW and CANCEL effective/ACK samples"
+        )
+    private_fill_visibility_latency_samples_ms = np.asarray(
+        params.get("_private_fill_visibility_latency_samples_ms", []),
+        dtype=np.float64,
+    )
+    private_fill_visibility_latency_samples_ms = np.ascontiguousarray(
+        private_fill_visibility_latency_samples_ms[
+            np.isfinite(private_fill_visibility_latency_samples_ms)
+            & (private_fill_visibility_latency_samples_ms >= 0.0)
+        ],
+        dtype=np.float64,
+    )
+    private_fill_visibility_enabled = bool(
+        private_fill_visibility_latency_samples_ms.size > 0
+        and np.any(private_fill_visibility_latency_samples_ms > 0.0)
+    )
+    local_lifecycle_boundary_scheduler_enabled = bool(
+        new_exchange_effective_latency_samples_ms.size > 0
+        or cancel_latency_split_enabled
+        or private_fill_visibility_enabled
+    )
+    local_lifecycle_boundary_scheduler = (
+        LocalLifecycleBoundaryScheduler()
+        if local_lifecycle_boundary_scheduler_enabled
+        else None
+    )
+    private_fill_exchange_match_count = 0
+    private_fill_visible_count = 0
     exec_book_visibility_delay_samples_ms = np.asarray(
         params.get("_exec_book_visibility_delay_samples_ms", []),
         dtype=np.float64,
@@ -6236,8 +6968,49 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     exec_book_visibility_mode = str(
         params.get("exec_book_visibility_mode", "sampled") or "sampled"
     ).strip().lower()
-    if exec_book_visibility_mode not in {"sampled", "paired"}:
-        raise ValueError("exec_book_visibility_mode must be sampled or paired")
+    if exec_book_visibility_mode not in {
+        "sampled",
+        "sampled_joint",
+        "paired",
+        "profile_source_stratified",
+        "message_schedule",
+    }:
+        raise ValueError(
+            "exec_book_visibility_mode must be sampled, sampled_joint, paired, "
+            "profile_source_stratified or message_schedule"
+        )
+    exec_source_profile = None
+    exec_source_profile_sha256 = ""
+    exec_source_profile_market_id = str(
+        params.get("exec_source_stratified_profile_market_id", "") or ""
+    ).strip()
+    exec_source_profile_transport = str(
+        params.get("exec_source_stratified_profile_transport", "") or ""
+    ).strip().lower()
+    if exec_book_visibility_mode == "profile_source_stratified":
+        raw_profile_path = str(
+            params.get("exec_source_stratified_profile_path", "") or ""
+        ).strip()
+        if not raw_profile_path:
+            raise ValueError(
+                "profile_source_stratified visibility requires an explicit profile path"
+            )
+        exec_source_path = Path(raw_profile_path).expanduser()
+        if not exec_source_path.is_absolute():
+            exec_source_path = ROOT / exec_source_path
+        exec_source_profile, exec_source_profile_sha256 = (
+            _load_exec_source_stratified_visibility_profile(
+                exec_source_path,
+                expected_sha256=str(
+                    params.get("exec_source_stratified_profile_sha256", "") or ""
+                ),
+                expected_profile_id=str(
+                    params.get("exec_source_stratified_profile_id", "") or ""
+                ),
+                market_id=exec_source_profile_market_id,
+                transport=exec_source_profile_transport,
+            )
+        )
     exec_book_visibility_paired_ts_ms = np.asarray(
         params.get("_exec_book_visibility_paired_ts_ms", []), dtype=np.int64
     )
@@ -6267,6 +7040,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "paired execution-book visibility requires aligned timestamp, "
             "book-age, depth-age, trade-age, and mid arrays"
         )
+    joint_lengths = {
+        exec_book_visibility_paired_delay_ms.size,
+        exec_depth_visibility_paired_delay_ms.size,
+        exec_trade_visibility_paired_delay_ms.size,
+    }
+    if exec_book_visibility_mode == "sampled_joint" and (
+        len(joint_lengths) != 1 or 0 in joint_lengths
+    ):
+        raise ValueError(
+            "sampled_joint execution-book visibility requires aligned "
+            "book-age, depth-age, and trade-age arrays"
+        )
     exec_book_visibility_paired_max_gap_ms = max(
         0,
         int(params.get("exec_book_visibility_paired_max_gap_ms", 5) or 0),
@@ -6280,10 +7065,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     )
     exec_book_visibility_delay_enabled = bool(
-        exec_book_visibility_mode == "paired"
+        exec_book_visibility_mode
+        in {"paired", "sampled_joint", "profile_source_stratified", "message_schedule"}
         or exec_book_visibility_delay_samples_ms.size > 0
         or exec_book_visibility_delay_mean_ms > 0.0
         or exec_book_visibility_delay_jitter_ms > 0.0
+    )
+    monotonic_exec_visibility_cutoffs_ms: dict[str, int] = {}
+    monotonic_exec_visibility_enabled = bool(
+        exec_book_visibility_mode
+        in {"sampled_joint", "profile_source_stratified"}
+        and not bool(params.get("use_bar_pricing", True))
     )
     require_historical_bbo = bool(params.get("require_historical_bbo", False))
 
@@ -6355,6 +7147,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         1e-6, float(params.get("pnl_volatility_horizon_s", 300.0) or 300.0)
     )
     max_exec_book_age_ms = int(float(params.get("max_exec_book_age_s", 5.0)) * 1000.0)
+    max_exec_book_visible_age_ms = float(params.get("max_exec_book_visible_age_s", 5.0)) * 1000.0
+    max_exec_book_source_lag_ms = float(params.get("max_exec_book_source_lag_s", 5.0)) * 1000.0
+    if exec_book_visibility_mode == "message_schedule" and any(
+        not math.isfinite(value) or value <= 0.0
+        for value in (max_exec_book_visible_age_ms, max_exec_book_source_lag_ms)
+    ):
+        raise ValueError("message delivery visible-age/source-lag limits must be positive")
     inventory_asym_strength = params.get("inventory_asym_strength", 0.0)
     inventory_signal_fade_strength = params.get("inventory_signal_fade_strength", 0.0)
 
@@ -7111,11 +7910,89 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     )
     n_trades = len(trade_ts)
     last_processed_event_idx = -1
+    # Message delivery is independent of the exchange matching clock.  These
+    # arrays contain one assigned receive/ready time per source message, not a
+    # new delay draw every time a quote or markout reads the same source.
+    exec_message_schedules: dict[str, Any] = {}
+    exec_message_payload: Mapping[str, Any] = {}
+    exec_message_missing_source_skip_count = 0
+    exec_message_trade_event_rows = np.empty(0, dtype=np.int64)
+    if exec_book_visibility_mode == "message_schedule":
+        from models.exchange_book_replay import HistoricalMessageDeliverySchedule
+        from strategy.signal import QuoteDecisionSnapshot
+
+        raw_delivery = params.get("_exec_message_delivery")
+        if not isinstance(raw_delivery, Mapping):
+            raise ValueError("message_schedule requires source message delivery arrays")
+        exec_message_payload = raw_delivery
+        required_sources = {"bbo", "depth", "trade", "variance"}
+        if ml_data is not None:
+            required_sources.add("prediction")
+        if not required_sources.issubset(raw_delivery):
+            raise ValueError(
+                "message_schedule is missing source clocks: "
+                + ", ".join(sorted(required_sources - set(raw_delivery)))
+            )
+        aligned_sources = {
+            "bbo": bbo_ts,
+            "depth": l2_ts,
+            "variance": var_ts_ms,
+            "prediction": ml_ts if ml_data is not None else None,
+        }
+        for feed, rows in raw_delivery.items():
+            if not isinstance(rows, Mapping):
+                raise ValueError(f"message_schedule {feed} must contain clock arrays")
+            if {"connection_ids", "channel_ids", "source_ordinal"}.intersection(rows):
+                raise ValueError(
+                    "message_schedule shared-connection ordering must be preprojected "
+                    "across feeds before supplying source clock arrays"
+                )
+            schedule = HistoricalMessageDeliverySchedule(
+                rows["exchange_ts_ns"],
+                rows["receive_ts_ns"],
+                rows["feature_ready_ts_ns"],
+            )
+            expected = aligned_sources.get(str(feed))
+            if str(feed) in aligned_sources and (
+                expected is None
+                or not np.array_equal(
+                    schedule.exchange_ns_for_channel(),
+                    np.asarray(expected, dtype=np.int64) * 1_000_000,
+                )
+            ):
+                raise ValueError(f"message_schedule {feed} is not aligned with its values")
+            exec_message_schedules[str(feed)] = schedule
+        child_rows = np.asarray(raw_delivery["trade"].get("last_child_row_index", []))
+        if (
+            child_rows.dtype.kind not in "iu"
+            or child_rows.ndim != 1
+            or child_rows.size != len(exec_message_schedules["trade"].ready_ns_for_channel())
+            or np.any(child_rows < -1)
+            or np.any(child_rows >= n_execution_trades)
+            or np.any(child_rows[1:] < child_rows[:-1])
+        ):
+            raise ValueError("trade messages require ordered last_child_row_index mapping")
+        exec_message_trade_event_rows = np.flatnonzero(is_execution_trade)
+        parents_with_children = child_rows >= 0
+        child_exchange_ns = (
+            trade_ts[exec_message_trade_event_rows[child_rows[parents_with_children]]]
+            .astype(np.int64, copy=False) * 1_000_000
+        )
+        if np.any(
+            exec_message_schedules["trade"].ready_ns_for_channel()[parents_with_children]
+            < child_exchange_ns
+        ):
+            raise ValueError("trade message cannot be ready before its final child execution")
+        if use_bar_pricing or exec_depth_visibility_source_offset_ms:
+            raise ValueError(
+                "message_schedule requires tick pricing without a source-time offset"
+            )
     if (
         trace_first_add_decision_to_terminal is not None
         or trace_first_opener_decision_to_terminal is not None
         or trace_decisions is not None
         or ema_add_wait_fork_enabled
+        or bool(exec_message_schedules)
     ):
         execution_qty = np.where(
             is_execution_trade,
@@ -7149,6 +8026,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     initial_live_state_bid_orders_restored = 0
     initial_live_state_ask_orders_restored = 0
     q = initial_inventory
+    exchange_inventory = initial_inventory
     cash = -initial_inventory * initial_entry_price if initial_entry_price > 0.0 else 0.0
     (
         expected_loss_limit,
@@ -7231,7 +8109,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     mid = trade_price[0]
 
     # σ² lookup
-    var_idx = 0
+    var_idx = -1
     sigma_sq = 1.0
 
     # Stats
@@ -10456,6 +11334,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ema_var_fast = 0.0
     ema_var_slow = 0.0
     dyn_rq_inited = False
+    main_loop_rq_var_idx = 0
     cur_rq_ms = rq_ms
     rq_sum = 0.0
 
@@ -10482,7 +11361,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ber_role_safe_cap_collision_count = 0
     ber_role_safe_cap_infeasible_count = 0
     cur_ti = liq_baseline  # current trade intensity
-    exec_signal_visible_ts_ms = int(trade_ts[0])
+    # var_ti is mean aggregate count per 1s bar. Live QuoteState consumes
+    # mean count per completed 10s bar, held between feature publications.
+    quote_ti_source_indices = (
+        np.flatnonzero(
+            (np.asarray(var_ts_ms[:len(var_ti)], dtype=np.int64) + 1_000) % 10_000 == 0
+        ) if var_ti is not None else np.empty(0, dtype=np.int64)
+    )
+    quote_ti_cursor = 0
+    quote_ti_publish_count = 0
+    quote_ti_completed_ts_ms = -1
+    exec_signal_visible_ts_ms = (
+        0 if exec_message_schedules else int(trade_ts[0])
+    )
 
     # Markout state
     mo_alpha = (
@@ -10519,6 +11410,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
     inventory_pnl = 0.0
     prev_mark_px = trade_price[0]
+    local_path_accrual_ts_ms = int(trade_ts[0])
 
     # Ret demean state
     ema_pr = 0.0
@@ -10606,6 +11498,37 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             record["last_path_ts_ms"] = int(now_ts_ms)
             record["last_path_inventory"] = float(q)
+
+    def _accrue_local_path_to(now_ts_ms: int, mark_px: float) -> None:
+        """Accrue the pre-boundary local state through one exact millisecond."""
+        nonlocal local_path_accrual_ts_ms, prev_mark_px, inventory_pnl
+        nonlocal signed_inventory_time_s, abs_inventory_time_s
+        nonlocal sq_inventory_time_s, signed_notional_inventory_time_s
+        nonlocal notional_inventory_time_s
+
+        timestamp = int(now_ts_ms)
+        if timestamp < local_path_accrual_ts_ms:
+            raise RuntimeError("local lifecycle path clock regressed")
+        price = float(mark_px)
+        if not math.isfinite(price) or price <= 0.0:
+            price = float(prev_mark_px)
+        dt_s = float(timestamp - local_path_accrual_ts_ms) / 1_000.0
+        mark_for_interval = (
+            float(prev_mark_px) if float(prev_mark_px) > 0.0 else price
+        )
+        signed_inventory_time_s += float(q) * dt_s
+        abs_inventory_time_s += abs(float(q)) * dt_s
+        sq_inventory_time_s += float(q) * float(q) * dt_s
+        signed_notional_inventory_time_s += (
+            float(q) * mark_for_interval * dt_s
+        )
+        notional_inventory_time_s += abs(float(q)) * mark_for_interval * dt_s
+        inventory_pnl += float(q) * (price - float(prev_mark_px))
+        local_path_accrual_ts_ms = timestamp
+        prev_mark_px = price
+        _campaign_update_path(timestamp, price)
+        _fair_center_update_path(timestamp, price)
+        _cooldown_lineage_update_path(timestamp, price)
 
     def _cooldown_lineage_add_fill_value(
         record: dict[str, Any],
@@ -11679,7 +12602,22 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         target_price_tick = _order_price_tick(order, TICK)
         target_displayed_status = "unknown"
         target_displayed_qty: float | None = None
-        if exchange_book_scheduler is not None and queue_path_valid:
+        if exec_message_schedules:
+            visible_depth_index, visible_depth_ns, _ = _message_clock_state(
+                "depth", int(fill_ts_ms)
+            )
+            if visible_depth_index >= 0:
+                displayed = _l2_visible_queue_ahead(
+                    normalized_side,
+                    float(order["price"]),
+                    target_ts=visible_depth_ns // 1_000_000,
+                )
+                if displayed is not None and math.isfinite(displayed):
+                    target_displayed_qty = max(0.0, float(displayed))
+                    target_displayed_status = (
+                        "known_zero" if target_displayed_qty == 0.0 else "exact"
+                    )
+        elif exchange_book_scheduler is not None and queue_path_valid:
             target_lookup = exchange_book_scheduler.lookup(
                 normalized_side,
                 target_price_tick,
@@ -11815,7 +12753,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             lineage_revision=lineage_revision,
             partial_fill_ordinal=partial_ordinal,
             partial_fill_qty_btc=float(fill_qty),
-            fill_exchange_ts_ns=fill_visible_ts_ns,
+            fill_exchange_ts_ns=int(
+                order.get("_callback_exchange_ts_ms", fill_ts_ms)
+            ) * 1_000_000,
             fill_visible_ts_ns=fill_visible_ts_ns,
             m0_context=m0_context,
         )
@@ -11905,14 +12845,24 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         prior_deadline_ts_ms = int(
             round(float(previous_fill_ts_ms) + float(previous_cooldown_ms))
         )
+        callback_book = (
+            _decision_visible_book(
+                int(fill_ts_ms), float("nan"), advance_visibility_state=False
+            )
+            if exec_message_schedules else None
+        )
         opportunity = {
             "schema_version": (
                 "multiscale_ema_boolean_cooldown_duration_opportunity.v1"
             ),
             "exposure_fill_ordinal": ordinal,
             "fill_visible_ts_ms": int(fill_ts_ms),
-            "fill_exchange_ts_ms": int(fill_ts_ms),
+            "fill_exchange_ts_ms": int(
+                (order or {}).get("_callback_exchange_ts_ms", fill_ts_ms)
+            ),
             "fill_clock_semantics": (
+                "exchange_match_and_sampled_local_private_visibility"
+                if private_fill_visibility_enabled else
                 "native_exchange_event_revealed_at_replay_event_clock_"
                 "no_live_receive_time_claim"
             ),
@@ -11934,15 +12884,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "prior_deadline_ts_ms": prior_deadline_ts_ms,
             "baseline_duration_ms": baseline_ms,
             "baseline_deadline_ts_ms": int(round(float(fill_ts_ms) + baseline_ms)),
-            "canonical_mid": float(mid),
-            "best_bid": float(cur_best_bid),
-            "best_ask": float(cur_best_ask),
+            "canonical_mid": float(callback_book["mid"] if callback_book else mid),
+            "best_bid": float(callback_book["best_bid"] if callback_book else cur_best_bid),
+            "best_ask": float(callback_book["best_ask"] if callback_book else cur_best_ask),
             "decision_visible_bbo_index": int(
+                callback_book["bbo_idx"] if callback_book else
                 active_decision_bbo_idx
                 if active_decision_bbo_idx is not None
                 else bbo_idx
             ),
-            "decision_visible_l2_index": int(l2_idx),
+            "decision_visible_l2_index": int(
+                callback_book["l2_idx"] if callback_book else l2_idx
+            ),
             "market_event_index": int(i),
             "assignment_equity_usdc": float(cash) + float(q) * float(mid),
         }
@@ -12400,6 +13353,362 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             samples_validated=True,
         )
 
+    rest_gateway_plan_active = False
+    rest_gateway_last_slot_index = -1
+
+    def _decision_gateway_request_ts(
+        decision_ts: int, *, apply_decision_compute: bool = True
+    ) -> int:
+        if not decision_to_gateway_latency_enabled or not apply_decision_compute:
+            return int(decision_ts)
+        delay_ms = _deterministic_decision_to_gateway_latency_ms(
+            decision_to_gateway_latency_samples_ms,
+            seed=int(decision_to_gateway_latency_seed),
+            decision_ts_ms=int(decision_ts),
+        )
+        return int(decision_ts) + int(delay_ms)
+
+    def _prepare_rest_gateway_timing(
+        *,
+        decision_ts: int,
+        requested_slots: tuple[str, ...],
+        apply_decision_compute: bool = False,
+    ) -> None:
+        nonlocal active_rest_gateway_timing
+        nonlocal rest_gateway_plan_active, rest_gateway_sampled_row_count
+        nonlocal rest_gateway_last_slot_index
+        if not rest_gateway_timing_enabled:
+            return
+        if sampled_serial_gateway:
+            origin = _decision_gateway_request_ts(
+                decision_ts, apply_decision_compute=apply_decision_compute
+            )
+            active_rest_gateway_timing = {
+                slot: {"request_origin_ts_ms": origin} for slot in requested_slots
+            }
+            rest_gateway_plan_active = True
+            rest_gateway_last_slot_index = -1
+            return
+        if rest_gateway_timing_profile is None:
+            raise RuntimeError("serial REST gateway timing profile is unavailable")
+        active_rest_gateway_timing = _sample_serial_rest_gateway_timing_row(
+            rest_gateway_timing_profile,
+            decision_ts_ms=int(decision_ts),
+            request_origin_ts_ms=_decision_gateway_request_ts(
+                decision_ts, apply_decision_compute=apply_decision_compute
+            ),
+            requested_slots=tuple(requested_slots),
+            seed=int(rest_gateway_timing_seed),
+        )
+        rest_gateway_plan_active = True
+        if active_rest_gateway_timing:
+            rest_gateway_sampled_row_count += 1
+
+    def _clear_rest_gateway_timing() -> None:
+        nonlocal active_rest_gateway_timing, rest_gateway_plan_active
+        nonlocal rest_gateway_last_slot_index
+        active_rest_gateway_timing = {}
+        rest_gateway_plan_active = False
+        rest_gateway_last_slot_index = -1
+
+    def _rest_gateway_slot_timing(
+        slot: str,
+        *,
+        request_ts: int,
+        side: str,
+        operation: int,
+        order_ts: int,
+        apply_decision_compute: bool = False,
+    ) -> dict[str, int]:
+        nonlocal rest_gateway_sampled_row_count
+        nonlocal rest_gateway_busy_until_ms, rest_gateway_request_count
+        nonlocal rest_gateway_busy_ms, rest_gateway_request_wait_ms
+        nonlocal rest_gateway_last_slot_index
+        nonlocal rest_gateway_last_timing
+        normalized_slot = str(slot)
+        if not rest_gateway_timing_enabled:
+            raise RuntimeError("serial REST gateway timing is disabled")
+        if sampled_serial_gateway:
+            if rest_gateway_plan_active:
+                if normalized_slot not in active_rest_gateway_timing:
+                    raise RuntimeError("sampled_serial request is outside the decision plan")
+                index = _REST_GATEWAY_SLOT_NAMES.index(normalized_slot)
+                if index < rest_gateway_last_slot_index:
+                    raise RuntimeError("sampled_serial request order regressed")
+                rest_gateway_last_slot_index = index
+                origin = active_rest_gateway_timing[normalized_slot]["request_origin_ts_ms"]
+            else:
+                origin = _decision_gateway_request_ts(
+                    request_ts, apply_decision_compute=apply_decision_compute
+                )
+            is_new = normalized_slot.startswith("new_")
+            effective_samples = (
+                new_exchange_effective_latency_samples_ms if is_new
+                else cancel_exchange_effective_latency_samples_ms
+            )
+            ack_samples = (
+                new_latency_samples_ms if is_new
+                else cancel_ack_visibility_latency_samples_ms
+            )
+            response_samples = None
+            if serial_rest_return_enabled:
+                rows = rest_return_samples[normalized_slot]
+                effective_samples, ack_samples, response_samples = rows.T
+            effective_ms = _sample_latency_ms(
+                new_order_latency_ms if is_new else cancel_order_latency_ms,
+                effective_samples, event_ts=request_ts, side=side,
+                operation=operation, order_ts=order_ts,
+            )
+            # Reuse each request's original keyed draw, with row-aligned ACK.
+            # Different requests are independent service-time draws, NOT an
+            # observed joint burst or a synthesized missing request mask.
+            ack_ms = deterministic_latency_ms(
+                base_ms=new_order_latency_ms if is_new else 0,
+                jitter_ms=latency_jitter_ms if is_new else 0,
+                samples_ms=ack_samples, seed=latency_seed,
+                event_ts_ms=request_ts, side=side, operation=operation,
+                order_ts_ms=order_ts, stress_enabled=latency_stress_enabled,
+                stress_spike_probability=latency_stress_spike_probability,
+                stress_spike_multiplier=latency_stress_spike_multiplier,
+                samples_validated=True,
+            )
+            start = max(int(origin), rest_gateway_busy_until_ms)
+            service_ms = (
+                _sample_latency_ms(
+                    0, response_samples, event_ts=request_ts, side=side,
+                    operation=operation, order_ts=order_ts,
+                )
+                if response_samples is not None else max(effective_ms, ack_ms)
+            )
+            rest_gateway_request_count += 1
+            rest_gateway_request_wait_ms += start - int(origin)
+            rest_gateway_busy_ms += service_ms
+            rest_gateway_busy_until_ms = start + service_ms
+            rest_gateway_last_timing = {
+                "request_ts_ms": start,
+                "exchange_effective_ts_ms": start + effective_ms,
+                "local_visibility_ts_ms": start + max(effective_ms, ack_ms),
+                "rest_return_ts_ms": rest_gateway_busy_until_ms,
+            }
+            return rest_gateway_last_timing
+        if normalized_slot in active_rest_gateway_timing:
+            return active_rest_gateway_timing[normalized_slot]
+        if rest_gateway_plan_active:
+            raise RuntimeError(
+                "serial REST gateway action diverged from its sampled request mask: "
+                f"missing {normalized_slot}"
+            )
+        if rest_gateway_timing_profile is None:
+            raise RuntimeError("serial REST gateway timing profile is unavailable")
+        sampled = _sample_serial_rest_gateway_timing_row(
+            rest_gateway_timing_profile,
+            decision_ts_ms=int(request_ts),
+            request_origin_ts_ms=_decision_gateway_request_ts(
+                request_ts, apply_decision_compute=False
+            ),
+            requested_slots=(normalized_slot,),
+            seed=int(rest_gateway_timing_seed),
+        )
+        rest_gateway_sampled_row_count += 1
+        return sampled[normalized_slot]
+
+    def _sample_cancel_deadlines_ms(
+        *,
+        request_ts: int,
+        side: str,
+        operation: int,
+        order_ts: int,
+        apply_decision_compute: bool = False,
+    ) -> tuple[int, int, int]:
+        """Return request, exchange-effective, and local cancel deadlines.
+
+        Legacy latency has one boundary, so both timestamps remain identical.
+        The optional split profile models exchange fillability separately from
+        the later local ACK without changing any existing replay identity.
+        """
+
+        if rest_gateway_timing_enabled:
+            slot = "cancel_buy" if str(side).upper() == "BUY" else "cancel_sell"
+            timing = _rest_gateway_slot_timing(
+                slot,
+                request_ts=int(request_ts),
+                side=side, operation=operation, order_ts=order_ts,
+                apply_decision_compute=apply_decision_compute,
+            )
+            return (
+                int(timing["request_ts_ms"]),
+                int(timing["exchange_effective_ts_ms"]),
+                int(timing["local_visibility_ts_ms"]),
+            )
+
+        if not cancel_latency_split_enabled:
+            latency_ms = _sample_latency_ms(
+                cancel_order_latency_ms,
+                cancel_latency_samples_ms,
+                event_ts=request_ts,
+                side=side,
+                operation=operation,
+                order_ts=order_ts,
+            )
+            gateway_request_ts = _decision_gateway_request_ts(
+                request_ts, apply_decision_compute=apply_decision_compute
+            )
+            deadline = int(gateway_request_ts) + int(latency_ms)
+            return int(gateway_request_ts), deadline, deadline
+
+        gateway_request_ts = _decision_gateway_request_ts(
+            request_ts, apply_decision_compute=apply_decision_compute
+        )
+        effective_samples = (
+            cancel_exchange_effective_latency_samples_ms
+            if cancel_exchange_effective_latency_samples_ms.size > 0
+            else cancel_latency_samples_ms
+        )
+        effective_latency_ms = _sample_latency_ms(
+            cancel_order_latency_ms,
+            effective_samples,
+            event_ts=request_ts,
+            side=side,
+            operation=operation,
+            order_ts=order_ts,
+        )
+        effective_ts = int(gateway_request_ts) + int(effective_latency_ms)
+        if cancel_ack_visibility_latency_samples_ms.size == 0:
+            return int(gateway_request_ts), effective_ts, effective_ts
+        # Both arrays are row-aligned measurements from the same request.  Use
+        # the identical keyed sample index; an independent draw destroys the
+        # observed lifecycle correlation.  ACK samples are request-to-local
+        # visibility, not an increment after exchange effectiveness.
+        ack_latency_ms = deterministic_latency_ms(
+            base_ms=0,
+            jitter_ms=0,
+            samples_ms=cancel_ack_visibility_latency_samples_ms,
+            seed=latency_seed,
+            event_ts_ms=int(request_ts),
+            side=side,
+            operation=int(operation),
+            order_ts_ms=int(order_ts),
+            stress_enabled=latency_stress_enabled,
+            stress_spike_probability=latency_stress_spike_probability,
+            stress_spike_multiplier=latency_stress_spike_multiplier,
+            samples_validated=True,
+        )
+        return (
+            int(gateway_request_ts),
+            effective_ts,
+            max(effective_ts, int(gateway_request_ts) + int(ack_latency_ms)),
+        )
+
+    def _sample_new_order_deadlines_ms(
+        *,
+        request_ts: int,
+        side: str,
+        order_ts: int,
+        apply_decision_compute: bool = True,
+    ) -> tuple[int, int, int]:
+        if rest_gateway_timing_enabled:
+            slot = "new_buy" if str(side).upper() == "BUY" else "new_sell"
+            timing = _rest_gateway_slot_timing(
+                slot,
+                request_ts=int(request_ts),
+                side=side, operation=_LATENCY_NEW, order_ts=order_ts,
+                apply_decision_compute=apply_decision_compute,
+            )
+            return (
+                int(timing["request_ts_ms"]),
+                int(timing["exchange_effective_ts_ms"]),
+                int(timing["local_visibility_ts_ms"]),
+            )
+
+        if not new_order_latency_split_enabled:
+            latency_ms = _sample_latency_ms(
+                new_order_latency_ms,
+                new_latency_samples_ms,
+                event_ts=request_ts,
+                side=side,
+                operation=_LATENCY_NEW,
+                order_ts=order_ts,
+            )
+            gateway_request_ts = _decision_gateway_request_ts(
+                request_ts, apply_decision_compute=apply_decision_compute
+            )
+            deadline = int(gateway_request_ts) + int(latency_ms)
+            return int(gateway_request_ts), deadline, deadline
+        gateway_request_ts = _decision_gateway_request_ts(
+            request_ts, apply_decision_compute=apply_decision_compute
+        )
+        effective_samples = (
+            new_exchange_effective_latency_samples_ms
+            if new_exchange_effective_latency_samples_ms.size > 0
+            else new_latency_samples_ms
+        )
+        effective_latency_ms = _sample_latency_ms(
+            new_order_latency_ms,
+            effective_samples,
+            event_ts=request_ts,
+            side=side,
+            operation=_LATENCY_NEW,
+            order_ts=order_ts,
+        )
+        effective_ts = int(gateway_request_ts) + int(effective_latency_ms)
+        if new_latency_samples_ms.size == 0:
+            return int(gateway_request_ts), effective_ts, effective_ts
+        ack_latency_ms = _sample_latency_ms(
+            new_order_latency_ms,
+            new_latency_samples_ms,
+            event_ts=request_ts,
+            side=side,
+            operation=_LATENCY_NEW,
+            order_ts=order_ts,
+        )
+        return (
+            int(gateway_request_ts),
+            effective_ts,
+            max(
+                effective_ts,
+                int(gateway_request_ts) + int(ack_latency_ms),
+            ),
+        )
+
+    def _sample_private_fill_visible_ts(
+        *,
+        exchange_ts: int,
+        side: str,
+        order_ts: int,
+    ) -> int:
+        if not private_fill_visibility_enabled:
+            return int(exchange_ts)
+        latency_ms = _sample_latency_ms(
+            0,
+            private_fill_visibility_latency_samples_ms,
+            event_ts=int(exchange_ts),
+            side=str(side),
+            operation=_LATENCY_PRIVATE_FILL,
+            order_ts=int(order_ts),
+        )
+        return int(exchange_ts) + int(latency_ms)
+
+    def _order_cancel_effective_ts(order: Mapping[str, Any]) -> int:
+        effective_ts = int(order.get("cancel_effective_ts", -1) or -1)
+        if effective_ts > 0:
+            return effective_ts
+        return int(order.get("cancel_ts", -1) or -1)
+
+    def _order_exchange_fillable(order: Mapping[str, Any], ts_ms: int) -> bool:
+        effective_ts = _order_cancel_effective_ts(order)
+        if effective_ts <= 0 or int(ts_ms) < effective_ts:
+            return True
+        # Preserve the legacy same-millisecond trade/cancel ambiguity order.
+        # The native exchange-book path lets the crossing trade run before a
+        # single-boundary ACK at the same millisecond, then censors that path
+        # from formal evidence. Split profiles have a real exchange-effective
+        # boundary and therefore stop matching at that boundary.
+        return bool(
+            not cancel_latency_split_enabled
+            and int(ts_ms) == effective_ts
+            and int(order.get("cancel_ts", -1) or -1) == effective_ts
+        )
+
     def _get_l2_rows_at(target_ts: int):
         if not historical_l2 or l2_ts is None or len(l2_ts) == 0:
             return None, None, None, None
@@ -12423,7 +13732,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         """Reproduce live ``_current_l2_policy_metrics`` causally.
 
         Live averages frame-to-frame changes in combined top-20 depth over the
-        preceding wall-clock window.  BUY and SELL therefore share flip,
+        source-time window ending at the last visible depth. BUY and SELL share flip,
         refill and cancel values; only the side policy consuming them differs.
         The old replay compared one side's near depth with a single snapshot
         ten seconds earlier, which was a different variable by construction.
@@ -12457,8 +13766,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         if cur_idx < 0:
             return empty
 
-        wall_ts = int(target_ts if observation_ts is None else observation_ts)
-        start_ts = wall_ts - max(0, int(l2_refill_cancel_lookback_ms))
+        # Transport lag changes which frame is visible, not the duration of
+        # its history. Preserve the legacy non-message/native path here.
+        window_end_ts = (
+            int(l2_ts[cur_idx]) if exec_message_schedules
+            else int(target_ts if observation_ts is None else observation_ts)
+        )
+        start_ts = window_end_ts - max(0, int(l2_refill_cancel_lookback_ms))
         start_idx = int(np.searchsorted(l2_ts, start_ts, side="left"))
         if start_idx > cur_idx:
             start_idx = cur_idx
@@ -12794,7 +14108,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
 
         price_tick = _order_price_tick(order, TICK)
-        lookup = exchange_book_scheduler.lookup(side, price_tick)
+        lookup = exchange_book_scheduler.lookup_strictly_before(
+            side,
+            price_tick,
+            int(activate_ts_ms) * 1_000_000,
+        )
         strict_before_activation = (
             int(lookup.asof_exchange_ts_ns)
             < int(activate_ts_ms) * 1_000_000
@@ -13117,7 +14435,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             return None
         return min(ages)
 
-    def _decision_visible_book(now_ts: int, fallback_mid: float) -> dict[str, Any]:
+    def _message_clock_state(feed: str, now_ts_ms: int) -> tuple[int, int, int]:
+        schedule = exec_message_schedules[feed]
+        idx = schedule.latest_visible_index(int(now_ts_ms) * 1_000_000)
+        if feed == "variance":
+            # Variance arrays retain 1s left labels. Even a malformed/early
+            # delivery row cannot reveal a close before its second ends.
+            completed_idx = int(np.searchsorted(
+                schedule.exchange_ns_for_channel(),
+                (int(now_ts_ms) - 1_000) * 1_000_000, side="right",
+            )) - 1
+            idx = min(idx, completed_idx)
+        if idx < 0:
+            return -1, 0, 0
+        return (
+            idx,
+            int(schedule.exchange_ns_for_channel()[idx]),
+            int(schedule.ready_ns_for_channel()[idx]),
+        )
+
+    def _decision_visible_book(
+        now_ts: int,
+        fallback_mid: float,
+        *,
+        advance_visibility_state: bool = True,
+    ) -> dict[str, Any]:
         """Return the receive-time-visible book without changing queue truth."""
         paired_state = (
             _paired_exec_book_visibility_state(
@@ -13132,8 +14474,37 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if exec_book_visibility_mode == "paired" and not use_bar_pricing
             else None
         )
+        sampled_joint_state = (
+            _sampled_joint_exec_book_visibility_state(
+                int(now_ts),
+                seed=exec_book_visibility_delay_seed,
+                book_delays_ms=exec_book_visibility_paired_delay_ms,
+                depth_delays_ms=exec_depth_visibility_paired_delay_ms,
+                trade_delays_ms=exec_trade_visibility_paired_delay_ms,
+            )
+            if exec_book_visibility_mode == "sampled_joint" and not use_bar_pricing
+            else None
+        )
+        source_stratified_state = (
+            _source_stratified_exec_visibility_state(
+                int(now_ts),
+                seed=exec_book_visibility_delay_seed,
+                simulator=exec_source_profile,
+                market_id=exec_source_profile_market_id,
+                transport=exec_source_profile_transport,
+            )
+            if exec_book_visibility_mode == "profile_source_stratified"
+            and not use_bar_pricing
+            else None
+        )
         if paired_state is not None:
             delay_ms, depth_delay_ms, trade_delay_ms, paired_mid = paired_state
+        elif sampled_joint_state is not None:
+            delay_ms, depth_delay_ms, trade_delay_ms = sampled_joint_state
+            paired_mid = float("nan")
+        elif source_stratified_state is not None:
+            delay_ms, depth_delay_ms, trade_delay_ms = source_stratified_state
+            paired_mid = float("nan")
         else:
             delay_ms = (
                 _exec_book_visibility_delay_ms(
@@ -13143,7 +14514,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     seed=exec_book_visibility_delay_seed,
                     samples_ms=exec_book_visibility_delay_samples_ms,
                 )
-                if exec_book_visibility_delay_enabled and not use_bar_pricing
+                if exec_book_visibility_delay_enabled
+                and not use_bar_pricing
+                and not exec_message_schedules
                 else 0
             )
             depth_delay_ms = delay_ms
@@ -13156,6 +14529,49 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             + exec_depth_visibility_source_offset_ms
         )
         visible_trade_ts = int(now_ts) - int(trade_delay_ms)
+        message_clock_states = (
+            {
+                feed: _message_clock_state(feed, int(now_ts))
+                for feed in ("bbo", "depth", "trade")
+            }
+            if exec_message_schedules
+            else {}
+        )
+        if message_clock_states:
+            visible_ts = message_clock_states["bbo"][1] // 1_000_000
+            visible_l2_ts = message_clock_states["depth"][1] // 1_000_000
+            visible_trade_ts = message_clock_states["trade"][1] // 1_000_000
+            # Age is descriptive only; packet delivery was assigned once in
+            # nanoseconds and is never reconstructed as now minus a new draw.
+            delay_ms = max(0, int(now_ts) - visible_ts)
+            depth_delay_ms = max(0, int(now_ts) - visible_l2_ts)
+            trade_delay_ms = max(0, int(now_ts) - visible_trade_ts)
+        if monotonic_exec_visibility_enabled and advance_visibility_state:
+            visible_ts = _advance_monotonic_visibility_cutoff(
+                monotonic_exec_visibility_cutoffs_ms,
+                feed="bbo",
+                candidate_ts_ms=visible_ts,
+            )
+            visible_l2_ts = _advance_monotonic_visibility_cutoff(
+                monotonic_exec_visibility_cutoffs_ms,
+                feed="l2",
+                candidate_ts_ms=visible_l2_ts,
+            )
+            visible_trade_ts = _advance_monotonic_visibility_cutoff(
+                monotonic_exec_visibility_cutoffs_ms,
+                feed="trade",
+                candidate_ts_ms=visible_trade_ts,
+            )
+            # Diagnostics describe the state actually consumed after the
+            # receive-stream hold, not the discarded draw that would rewind it.
+            delay_ms = max(0, int(now_ts) - int(visible_ts))
+            depth_delay_ms = max(
+                0,
+                int(now_ts)
+                + int(exec_depth_visibility_source_offset_ms)
+                - int(visible_l2_ts),
+            )
+            trade_delay_ms = max(0, int(now_ts) - int(visible_trade_ts))
         visible_bbo_idx = (
             int(np.searchsorted(bbo_ts, visible_ts, side="right") - 1)
             if historical_bbo and bbo_ts is not None and len(bbo_ts) > 0
@@ -13166,9 +14582,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if historical_l2 and l2_ts is not None and len(l2_ts) > 0
             else -1
         )
+        if message_clock_states:
+            visible_bbo_idx = message_clock_states["bbo"][0]
+            visible_l2_idx = message_clock_states["depth"][0]
 
-        visible_bid = inferred_best_bid
-        visible_ask = inferred_best_ask
+        visible_bid = 0.0 if message_clock_states else inferred_best_bid
+        visible_ask = 0.0 if message_clock_states else inferred_best_ask
         visible_l2_bid_px = None
         visible_l2_bid_qty = None
         visible_l2_ask_px = None
@@ -13207,14 +14626,96 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             visible_bid_qty = max(0.0, float(visible_l2_bid_qty[0]))
             visible_ask_qty = max(0.0, float(visible_l2_ask_qty[0]))
 
+        guard_source = ""
+        guard_fallback_reason = ""
+        if message_clock_states:
+            # Use the same two-clock selection as live: a stale/unavailable
+            # bookTicker is optional, but cannot override the mandatory depth.
+            snapshot = QuoteDecisionSnapshot(
+                capture_ts_ns=int(now_ts) * 1_000_000,
+                market_generation=0, depth_generation=visible_l2_idx + 1,
+                book_ticker_generation=visible_bbo_idx + 1,
+                depth_exchange_ts_ms=int(visible_l2_ts),
+                depth_receive_ts_ns=(int(exec_message_schedules["depth"].receive_ns_for_channel()[visible_l2_idx])
+                                     if visible_l2_idx >= 0 else 0),
+                bids=(), asks=(),
+                best_bid=float(visible_l2_bid_px[0]) if visible_l2_idx >= 0 else 0.0,
+                best_ask=float(visible_l2_ask_px[0]) if visible_l2_idx >= 0 else 0.0,
+                mid=0.0, bar_pricing_mid=0.0,
+                book_ticker_bid=float(bbo_best_bid[visible_bbo_idx]) if visible_bbo_idx >= 0 else 0.0,
+                book_ticker_ask=float(bbo_best_ask[visible_bbo_idx]) if visible_bbo_idx >= 0 else 0.0,
+                book_ticker_exchange_ts_ms=int(visible_ts),
+                book_ticker_receive_ts_ns=(int(exec_message_schedules["bbo"].receive_ns_for_channel()[visible_bbo_idx])
+                                          if visible_bbo_idx >= 0 else 0),
+                book_ticker_sequence=None, depth_history=(), lock_wait_ns=0,
+                lock_hold_ns=0, valid=visible_l2_idx >= 0,
+            )
+            guard = snapshot.post_only_guard(
+                max_visible_age_s=max_exec_book_visible_age_ms / 1000.0,
+                max_source_lag_s=max_exec_book_source_lag_ms / 1000.0,
+            )
+            guard_source, guard_fallback_reason = guard.source, guard.fallback_reason
+            visible_bid, visible_ask = guard.best_bid, guard.best_ask
+            if guard.source == "depth" and visible_l2_idx >= 0:
+                visible_bid_qty = max(0.0, float(visible_l2_bid_qty[0]))
+                visible_ask_qty = max(0.0, float(visible_l2_ask_qty[0]))
+
         visible_mid = float(fallback_mid)
         if visible_bid > 0.0 and visible_ask > visible_bid:
             visible_mid = 0.5 * (visible_bid + visible_ask)
+        if message_clock_states and visible_l2_idx >= 0:
+            # Live snapshots price from partial depth. bookTicker is a
+            # separate post-only guard, not the quote/reference-price source.
+            visible_mid = 0.5 * (
+                float(visible_l2_bid_px[0]) + float(visible_l2_ask_px[0])
+            )
+        inventory_mark_price = 0.0
+        inventory_mark_source = "unobserved"
+        inventory_mark_ready_ns = 0
+        inventory_mark_same_ready = False
+        if message_clock_states:
+            # InventoryManager is marked by *both* public callbacks, not by
+            # depth. A late old trade may overwrite a newer exchange-time
+            # bookTicker; select by callback-ready time, never source time.
+            mark_candidates = []
+            if visible_bbo_idx >= 0:
+                bid = float(bbo_best_bid[visible_bbo_idx])
+                ask = float(bbo_best_ask[visible_bbo_idx])
+                if bid > 0.0 and ask > 0.0:
+                    mark_candidates.append((
+                        message_clock_states["bbo"][2], 1,
+                        "bookTicker", 0.5 * (bid + ask),
+                    ))
+            parent_idx = message_clock_states["trade"][0]
+            if parent_idx >= 0:
+                child_idx = int(
+                    exec_message_payload["trade"]["last_child_row_index"][parent_idx]
+                )
+                if child_idx >= 0:
+                    price = float(trade_price[exec_message_trade_event_rows[child_idx]])
+                    if price > 0.0:
+                        mark_candidates.append((
+                            message_clock_states["trade"][2], 0, "trade", price,
+                        ))
+            if mark_candidates:
+                inventory_mark_same_ready = (
+                    len(mark_candidates) == 2
+                    and mark_candidates[0][0] == mark_candidates[1][0]
+                )
+                # Separate historical feeds do not identify cross-feed order
+                # at identical ready timestamps. Keep a deterministic BBO tie
+                # break and expose that ambiguity instead of inventing lag.
+                (inventory_mark_ready_ns, _, inventory_mark_source,
+                 inventory_mark_price) = max(mark_candidates)
         observed_mid_override = bool(np.isfinite(paired_mid) and paired_mid > 0.0)
         if observed_mid_override:
             visible_mid = float(paired_mid)
             visible_bid = round(visible_mid - 0.5 * TICK, 10)
             visible_ask = round(visible_mid + 0.5 * TICK, 10)
+        depth_receive_ns = (
+            int(exec_message_schedules["depth"].receive_ns_for_channel()[visible_l2_idx])
+            if message_clock_states and visible_l2_idx >= 0 else 0
+        )
         return {
             "delay_ms": int(delay_ms),
             "depth_delay_ms": int(depth_delay_ms),
@@ -13235,6 +14736,30 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "l2_bid_qty": visible_l2_bid_qty,
             "l2_ask_px": visible_l2_ask_px,
             "l2_ask_qty": visible_l2_ask_qty,
+            **(
+                {
+                    "bbo_feature_ready_ts_ns": message_clock_states["bbo"][2],
+                    "post_only_guard_source": guard_source,
+                    "post_only_guard_fallback_reason": guard_fallback_reason,
+                    "depth_feature_ready_ts_ns": message_clock_states["depth"][2],
+                    "depth_receive_ts_ns": depth_receive_ns,
+                    "depth_visible_age_ms": (
+                        (int(now_ts) * 1_000_000 - depth_receive_ns) / 1_000_000.0
+                        if visible_l2_idx >= 0 else math.inf
+                    ),
+                    "depth_source_lag_ms": (
+                        (depth_receive_ns - message_clock_states["depth"][1]) / 1_000_000.0
+                        if visible_l2_idx >= 0 else math.inf
+                    ),
+                    "trade_feature_ready_ts_ns": message_clock_states["trade"][2],
+                    "trade_message_index": message_clock_states["trade"][0],
+                    "inventory_mark_price": inventory_mark_price,
+                    "inventory_mark_source": inventory_mark_source,
+                    "inventory_mark_ready_ts_ns": inventory_mark_ready_ns,
+                    "inventory_mark_same_ready": inventory_mark_same_ready,
+                }
+                if message_clock_states else {}
+            ),
         }
 
     def _markout_observation_mid(now_ts: int, fallback_mid: float) -> float:
@@ -13249,6 +14774,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         """
         if not historical_l2 or l2_ts is None or len(l2_ts) == 0:
             return float(fallback_mid)
+
+        if exec_message_schedules:
+            idx, _, _ = _message_clock_state("depth", int(now_ts))
+            if idx < 0:
+                return float("nan")
+            bid = float(l2_bid_px[idx, 0])
+            ask = float(l2_ask_px[idx, 0])
+            return 0.5 * (bid + ask) if bid > 0.0 and ask > bid else float("nan")
 
         visible_l2_ts = (
             int(now_ts) + exec_depth_visibility_source_offset_ms
@@ -13275,6 +14808,32 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     seed=exec_book_visibility_delay_seed,
                     samples_ms=exec_book_visibility_delay_samples_ms,
                 )
+        elif (
+            exec_book_visibility_mode == "sampled_joint"
+            and exec_depth_visibility_paired_delay_ms.size > 0
+            and not use_bar_pricing
+        ):
+            _, depth_delay_ms, _ = _sampled_joint_exec_book_visibility_state(
+                int(now_ts),
+                seed=exec_book_visibility_delay_seed,
+                book_delays_ms=exec_book_visibility_paired_delay_ms,
+                depth_delays_ms=exec_depth_visibility_paired_delay_ms,
+                trade_delays_ms=exec_trade_visibility_paired_delay_ms,
+            )
+            visible_l2_ts -= int(depth_delay_ms)
+        elif (
+            exec_book_visibility_mode == "profile_source_stratified"
+            and exec_source_profile is not None
+            and not use_bar_pricing
+        ):
+            book_delay_ms, _, _ = _source_stratified_exec_visibility_state(
+                int(now_ts),
+                seed=exec_book_visibility_delay_seed,
+                simulator=exec_source_profile,
+                market_id=exec_source_profile_market_id,
+                transport=exec_source_profile_transport,
+            )
+            visible_l2_ts -= int(book_delay_ms)
         elif exec_book_visibility_delay_enabled and not use_bar_pricing:
             visible_l2_ts -= _exec_book_visibility_delay_ms(
                 int(now_ts),
@@ -13282,6 +14841,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 jitter_ms=exec_book_visibility_delay_jitter_ms,
                 seed=exec_book_visibility_delay_seed,
                 samples_ms=exec_book_visibility_delay_samples_ms,
+            )
+
+        if monotonic_exec_visibility_enabled:
+            visible_l2_ts = _advance_monotonic_visibility_cutoff(
+                monotonic_exec_visibility_cutoffs_ms,
+                feed="l2",
+                candidate_ts_ms=visible_l2_ts,
             )
 
         visible_l2_idx = int(
@@ -13297,7 +14863,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
     def _order_trace_fields(order):
         diag = order.get("quote_diag") or {}
-        return {
+        fields = {
             "order_id": int(order.get("trace_id", -1)),
             "side": order["side"],
             "campaign_id_at_submit": int(
@@ -13467,6 +15033,52 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order.get("queue_value_keep_cancel_action", "") or ""
             ),
         }
+        if new_order_latency_split_enabled:
+            fields["new_ack_ts"] = int(order.get("new_ack_ts", 0) or 0)
+            fields["exchange_accepted"] = bool(
+                order.get("exchange_accepted", False)
+            )
+            fields["local_new_ack_published"] = bool(
+                order.get("local_new_ack_published", False)
+            )
+        if (
+            new_order_latency_split_enabled
+            or cancel_latency_split_enabled
+            or rest_gateway_timing_enabled
+            or decision_to_gateway_latency_enabled
+        ):
+            fields["gateway_request_ts"] = int(
+                order.get("gateway_request_ts", order.get("submit_ts", 0)) or 0
+            )
+            fields["cancel_request_ts"] = int(
+                order.get("cancel_request_ts", -1) or -1
+            )
+            fields["cancel_effective_ts"] = int(
+                order.get("cancel_effective_ts", -1) or -1
+            )
+            fields["cancel_ack_ts"] = int(order.get("cancel_ts", -1) or -1)
+        if serial_rest_return_enabled:
+            fields["new_rest_return_ts"] = int(order.get("new_rest_return_ts", -1))
+            fields["cancel_rest_return_ts"] = int(order.get("cancel_rest_return_ts", -1))
+            fields["restored_order"] = bool(order.get("restored_order", False))
+            fields["cancel_terminal_suppressed_full_fill"] = bool(
+                order.get("cancel_terminal_suppressed_full_fill", False)
+            )
+            if fields["cancel_terminal_suppressed_full_fill"]:
+                # This timestamp was only the sampled success-path callback.
+                # An exchange-filled order cannot produce that cancel ACK.
+                fields["cancel_ack_ts"] = -1
+        if private_fill_visibility_enabled:
+            fields["exchange_remaining"] = float(
+                order.get("exchange_remaining", order.get("remaining", 0.0))
+            )
+            fields["last_exchange_fill_ts_ms"] = int(
+                order.get("last_exchange_fill_ts_ms", 0) or 0
+            )
+            fields["last_private_fill_visible_ts_ms"] = int(
+                order.get("last_private_fill_visible_ts_ms", 0) or 0
+            )
+        return fields
 
     def _append_order_outcome(order, outcome_ts: int, outcome: str, reason: str,
                               fill_qty: float = 0.0):
@@ -13526,6 +15138,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "order_price": float(order.get("price", 0.0)),
             "order_remaining": float(order.get("remaining", 0.0)),
             "order_cancel_ts": int(order.get("cancel_ts", 0) or 0),
+            "order_cancel_effective_ts": int(
+                _order_cancel_effective_ts(order)
+            ),
             "trade_price": float(trade_price),
             "trade_qty": float(trade_qty),
             "deplete_mult": float(deplete_mult),
@@ -13585,6 +15200,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ) -> int:
         if last_execution_event_index.size == 0 or current_event_index < 0:
             return -1
+        if exec_message_schedules:
+            parent_idx, _, _ = _message_clock_state(
+                "trade", int(trade_ts[int(current_event_index)])
+            )
+            if parent_idx < 0:
+                return -1
+            child_idx = int(
+                exec_message_payload["trade"]["last_child_row_index"][parent_idx]
+            )
+            return (
+                min(int(current_event_index), int(exec_message_trade_event_rows[child_idx]))
+                if child_idx >= 0 else -1
+            )
         right = min(
             int(current_event_index) + 1,
             int(
@@ -13643,7 +15271,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             int(
                 np.searchsorted(
                     var_ts_ms,
-                    visible_trade_ts,
+                    visible_trade_ts - 1_000,
                     side="right",
                 )
                 - 1
@@ -13664,6 +15292,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if len(ml_ts) > 0
             else -1
         )
+        if exec_message_schedules:
+            feature_ready_index = _message_clock_state("variance", int(now_ts))[0]
+            prediction_index = (
+                _message_clock_state("prediction", int(now_ts))[0]
+                if "prediction" in exec_message_schedules else -1
+            )
         generation = {
             "bbo_index": int(visible_book["bbo_idx"]),
             "l2_index": int(visible_book["l2_idx"]),
@@ -13906,9 +15540,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "release_prediction_index": -1,
             "release_snapshot_mid_tick_x2": -1,
             "feature_ready_ts_ms": int(
-                ml_ts[prediction_index]
-                if 0 <= int(prediction_index) < len(ml_ts)
-                else 0
+                (
+                    _message_clock_state("prediction", int(now_ts))[2] + 999_999
+                ) // 1_000_000
+                if "prediction" in exec_message_schedules
+                else (
+                    ml_ts[prediction_index]
+                    if 0 <= int(prediction_index) < len(ml_ts)
+                    else 0
+                )
             ),
             "market_readiness": int(market_readiness),
             "mode": _decision_mode(can_post, side_ctx),
@@ -13988,6 +15628,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "raw_asym_shift": float(side_ctx.get("raw_asym_shift", 0.0) or 0.0),
             "asym": float(side_ctx.get("asym", 0.0) or 0.0),
             "sigma_sq_raw": float(quote_diag.get("sigma_sq_raw", 0.0) or 0.0),
+            **({
+                "quote_trade_intensity": float(cur_ti),
+                "quote_trade_intensity_completed_ts_ms": int(quote_ti_completed_ts_ms),
+            } if var_ti is not None else {}),
             "sigma_sq_blended": float(
                 quote_diag.get("sigma_sq_blended", 0.0) or 0.0
             ),
@@ -14127,6 +15771,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "mid": float(mid),
             "best_bid": float(cur_best_bid),
             "best_ask": float(cur_best_ask),
+            **{
+                key: side_ctx[key]
+                for key in (
+                    "inventory_mark_price", "inventory_mark_source",
+                    "inventory_mark_ready_ts_ns", "inventory_mark_same_ready",
+                )
+                if key in side_ctx
+            },
             "base_price": float(base_price),
             "final_price": float(final_price),
             "base_size": float(base_size),
@@ -14928,6 +16580,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
 
     def _drop_orders(orders, now_ts: int, reason: str):
+        if serial_rest_return_enabled:
+            # A safety decision is still a network request. Keep each order
+            # fillable until exchange cancellation, then retain local pending
+            # state until its callback. Never teleport outstanding orders out
+            # of the exchange because local inventory hit a limit.
+            _request_cancel_all(orders, int(now_ts), reason=str(reason))
+            return
         for order in orders:
             _ranked_guard_cancel_requested(
                 order,
@@ -15056,7 +16715,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         return float(imbalance), int(source_ts_ms)
 
     def _make_order(side: str, price: float, quantity: float, submit_ts: int,
-                    submit_mid: float, quote_flags=None, quote_context=None):
+                    submit_mid: float, quote_flags=None, quote_context=None,
+                    *, apply_decision_compute: bool = True, restored_order: bool = False):
         nonlocal next_trace_order_id
         nonlocal ema_add_wait_fork_descendant_submit_count
         nonlocal ema_add_wait_fork_target_order_id
@@ -15190,6 +16850,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             or cur_best_ask
         )
+        restore_without_request = bool(serial_rest_return_enabled and restored_order)
+        if restore_without_request:
+            # The inherited order already exists at the exchange. Bootstrap
+            # its ledger entry without consuming a NEW sample or HTTP lane.
+            gateway_request_ts = exchange_effective_ts = local_ack_ts = int(submit_ts)
+        else:
+            gateway_request_ts, exchange_effective_ts, local_ack_ts = (
+                _sample_new_order_deadlines_ms(
+                    request_ts=int(submit_ts),
+                    side=str(side),
+                    order_ts=int(submit_ts),
+                    apply_decision_compute=apply_decision_compute,
+                )
+            )
         order = {
             "trace_id": trace_id,
             "side": side,
@@ -15197,15 +16871,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "price_tick": _price_to_tick(float(price), TICK),
             "quantity": quantity,
             "remaining": quantity,
+            "exchange_remaining": quantity,
             "submit_ts": submit_ts,
-            "activate_ts": submit_ts + _sample_latency_ms(
-                new_order_latency_ms,
-                new_latency_samples_ms,
-                event_ts=submit_ts,
-                side=side,
-                operation=_LATENCY_NEW,
-                order_ts=submit_ts,
-            ),
+            "gateway_request_ts": int(gateway_request_ts),
+            "activate_ts": int(exchange_effective_ts),
+            "new_ack_ts": int(local_ack_ts),
+            **({"new_rest_return_ts": (
+                   -1 if restore_without_request
+                   else int(rest_gateway_last_timing["rest_return_ts_ms"])
+               ), "restored_order": restore_without_request}
+               if serial_rest_return_enabled else {}),
+            "exchange_accepted": False,
+            "local_new_ack_published": False,
+            "cancel_effective_ts": -1,
             "cancel_ts": -1,
             "state": ORDER_PENDING_NEW,
             "quote_ts": submit_ts,
@@ -15429,7 +17107,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 or (side == "SELL" and q <= 1e-12)
             ),
         )
-        _record_order_lifecycle_submit(order, int(submit_ts))
+        _record_order_lifecycle_submit(order, int(gateway_request_ts))
         _ranked_guard_order_submitted(order)
         return order
 
@@ -16907,6 +18585,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ),
                 "activate_ts_ms": int(order.get("activate_ts", -1) or -1),
                 "cancel_ts_ms": int(order.get("cancel_ts", -1) or -1),
+                "cancel_effective_ts_ms": int(
+                    _order_cancel_effective_ts(order)
+                ),
                 "queue_seed_status": str(
                     order.get("_exchange_book_queue_seed_status", "")
                 ),
@@ -17042,7 +18723,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ORDER_PENDING_CANCEL,
             ):
                 continue
-            if int(order.get("cancel_ts", -1) or -1) != int(now_ts_ms):
+            if _order_cancel_effective_ts(order) != int(now_ts_ms):
                 continue
             crosses = _trade_crosses_order_tick(
                 side,
@@ -17092,7 +18773,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ORDER_PENDING_CANCEL,
             ):
                 continue
-            if int(order.get("cancel_ts", -1) or -1) != int(now_ts_ms):
+            if _order_cancel_effective_ts(order) != int(now_ts_ms):
                 continue
             price_tick = int(
                 order.get(
@@ -17973,10 +19654,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 cancel_ts = int(order.get("cancel_ts", 0) or 0)
                 if cancel_ts > 0:
                     candidates.append(cancel_ts)
+                cancel_effective_ts = _order_cancel_effective_ts(order)
+                if cancel_effective_ts > 0:
+                    candidates.append(cancel_effective_ts)
             elif state in (ORDER_OPEN, ORDER_PENDING_CANCEL):
                 cancel_ts = int(order.get("cancel_ts", 0) or 0)
                 if cancel_ts > 0:
                     candidates.append(cancel_ts)
+                cancel_effective_ts = _order_cancel_effective_ts(order)
+                if cancel_effective_ts > 0:
+                    candidates.append(cancel_effective_ts)
             for boundary_ms in candidates:
                 boundary_ns = int(boundary_ms) * 1_000_000
                 if lower_ns < boundary_ns < target * 1_000_000:
@@ -17993,6 +19680,169 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         quote policy, guards, TTL initiation, or any other strategy decision.
         """
 
+        def apply_boundary(
+            boundary_ms: int,
+            events: tuple[dict[str, Any], ...] = (),
+        ) -> None:
+            _accrue_local_path_to(int(boundary_ms), float(fallback_mid))
+            if exchange_book_scheduler is not None:
+                before = exchange_book_scheduler.advance_to(
+                    boundary_ms * 1_000_000,
+                    inclusive=False,
+                    emitted_levels=_exchange_book_emitted_levels(),
+                )
+                _apply_exchange_book_advance(
+                    before,
+                    now_ts_ms=boundary_ms,
+                    execution_trade_same_ms=False,
+                )
+                _advance_dynamic_fill_hazard_visibility(
+                    boundary_ms * 1_000_000,
+                    inclusive=False,
+                )
+                _mark_cancel_ack_exchange_book_ambiguity(
+                    bid_orders,
+                    "BUY",
+                    boundary_ms,
+                )
+                _mark_cancel_ack_exchange_book_ambiguity(
+                    ask_orders,
+                    "SELL",
+                    boundary_ms,
+                )
+            private_fill_events = tuple(
+                event
+                for event in events
+                if str(event.get("event_id", "")).startswith("private-fill:")
+            )
+            _process_order_transitions(
+                bid_orders,
+                "BUY",
+                boundary_ms,
+                fallback_mid,
+                allow_ttl_initiation=False,
+                defer_all_cancel_ack_at_ts=bool(private_fill_events),
+            )
+            _process_order_transitions(
+                ask_orders,
+                "SELL",
+                boundary_ms,
+                fallback_mid,
+                allow_ttl_initiation=False,
+                defer_all_cancel_ack_at_ts=bool(private_fill_events),
+            )
+            for event in private_fill_events:
+                payload = dict(event.get("payload") or {})
+                q_before_visible = float(q)
+                _, filled_buy_now, filled_sell_now = _publish_passive_fill(
+                    visibility_ts_ms=int(boundary_ms),
+                    exchange_reserved=True,
+                    **payload,
+                )
+                _apply_visible_fill_inventory_state(
+                    q_before_visible=float(q_before_visible),
+                    visibility_ts_ms=int(boundary_ms),
+                    filled_buy=bool(filled_buy_now),
+                    filled_sell=bool(filled_sell_now),
+                )
+                payload_order = payload.get("order")
+                if (
+                    isinstance(payload_order, dict)
+                    and float(payload_order.get("remaining", 0.0)) < LOT_SIZE
+                ):
+                    if payload_order in bid_orders:
+                        bid_orders.remove(payload_order)
+                    if payload_order in ask_orders:
+                        ask_orders.remove(payload_order)
+            if private_fill_events:
+                _process_order_transitions(
+                    bid_orders,
+                    "BUY",
+                    boundary_ms,
+                    fallback_mid,
+                    allow_ttl_initiation=False,
+                )
+                _process_order_transitions(
+                    ask_orders,
+                    "SELL",
+                    boundary_ms,
+                    fallback_mid,
+                    allow_ttl_initiation=False,
+                )
+            for event in events:
+                payload = event.get("payload") or {}
+                if "serial_rest_plan" in payload:
+                    _continue_serial_rest_decision(
+                        payload["serial_rest_plan"], int(boundary_ms),
+                        payload.get("completed"),
+                    )
+            if exchange_book_scheduler is not None:
+                at_boundary = exchange_book_scheduler.advance_to(
+                    boundary_ms * 1_000_000,
+                    inclusive=True,
+                    emitted_levels=_exchange_book_emitted_levels(),
+                )
+                _apply_exchange_book_advance(
+                    at_boundary,
+                    now_ts_ms=boundary_ms,
+                    execution_trade_same_ms=False,
+                )
+                _advance_dynamic_fill_hazard_visibility(
+                    boundary_ms * 1_000_000,
+                    inclusive=True,
+                )
+
+        def register_local_boundaries() -> None:
+            for order in (*bid_orders, *ask_orders):
+                order_id = str(order.get("trace_id", ""))
+                state = order.get("state")
+                if state == ORDER_PENDING_NEW:
+                    activate_ts = int(order.get("activate_ts", 0) or 0)
+                    if activate_ts > 0:
+                        local_lifecycle_boundary_scheduler.schedule(
+                            ts_ms=activate_ts,
+                            phase="exchange_effective",
+                            event_id=f"order:{order_id}:activate:{activate_ts}",
+                        )
+                    new_ack_ts = int(order.get("new_ack_ts", 0) or 0)
+                    if new_ack_ts > 0:
+                        local_lifecycle_boundary_scheduler.schedule(
+                            ts_ms=new_ack_ts,
+                            phase="new_ack",
+                            event_id=f"order:{order_id}:new-ack:{new_ack_ts}",
+                        )
+                cancel_effective_ts = _order_cancel_effective_ts(order)
+                if cancel_effective_ts > 0:
+                    local_lifecycle_boundary_scheduler.schedule(
+                        ts_ms=cancel_effective_ts,
+                        phase="exchange_effective",
+                        event_id=(
+                            f"order:{order_id}:cancel-effective:"
+                            f"{cancel_effective_ts}"
+                        ),
+                    )
+                cancel_ack_ts = int(order.get("cancel_ts", 0) or 0)
+                if cancel_ack_ts > 0:
+                    local_lifecycle_boundary_scheduler.schedule(
+                        ts_ms=cancel_ack_ts,
+                        phase="cancel_ack",
+                        event_id=f"order:{order_id}:cancel-ack:{cancel_ack_ts}",
+                    )
+        if local_lifecycle_boundary_scheduler is not None:
+            while True:
+                # A fill callback or HTTP return can add a new cancel, request,
+                # or activation before the next market event. Drain one exact
+                # boundary, then discover those newly scheduled transitions.
+                register_local_boundaries()
+                boundary_ms = local_lifecycle_boundary_scheduler.next_timestamp()
+                if boundary_ms is None or boundary_ms > int(target_ts_ms):
+                    break
+                events = local_lifecycle_boundary_scheduler.drain(
+                    through_ts_ms=boundary_ms, inclusive=True,
+                )
+                apply_boundary(boundary_ms, tuple(events))
+            return
+
         if exchange_book_scheduler is None:
             return
         while True:
@@ -18002,58 +19852,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if not boundaries:
                 return
             boundary_ms = int(boundaries[0])
-            before = exchange_book_scheduler.advance_to(
-                boundary_ms * 1_000_000,
-                inclusive=False,
-                emitted_levels=_exchange_book_emitted_levels(),
-            )
-            _apply_exchange_book_advance(
-                before,
-                now_ts_ms=boundary_ms,
-                execution_trade_same_ms=False,
-            )
-            _advance_dynamic_fill_hazard_visibility(
-                boundary_ms * 1_000_000,
-                inclusive=False,
-            )
-            _mark_cancel_ack_exchange_book_ambiguity(
-                bid_orders,
-                "BUY",
-                boundary_ms,
-            )
-            _mark_cancel_ack_exchange_book_ambiguity(
-                ask_orders,
-                "SELL",
-                boundary_ms,
-            )
-            _process_order_transitions(
-                bid_orders,
-                "BUY",
-                boundary_ms,
-                fallback_mid,
-                allow_ttl_initiation=False,
-            )
-            _process_order_transitions(
-                ask_orders,
-                "SELL",
-                boundary_ms,
-                fallback_mid,
-                allow_ttl_initiation=False,
-            )
-            at_boundary = exchange_book_scheduler.advance_to(
-                boundary_ms * 1_000_000,
-                inclusive=True,
-                emitted_levels=_exchange_book_emitted_levels(),
-            )
-            _apply_exchange_book_advance(
-                at_boundary,
-                now_ts_ms=boundary_ms,
-                execution_trade_same_ms=False,
-            )
-            _advance_dynamic_fill_hazard_visibility(
-                boundary_ms * 1_000_000,
-                inclusive=True,
-            )
+            apply_boundary(boundary_ms)
 
     def _queue_value_set_first_event(
         record: dict,
@@ -18161,26 +19960,26 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if not order.get("cancel_reason"):
                 order["cancel_reason"] = reason
             return
-        order["cancel_ts"] = now_ts + _sample_latency_ms(
-            cancel_order_latency_ms,
-            cancel_latency_samples_ms,
-            event_ts=now_ts,
+        request_start_ts, effective_ts, ack_ts = _sample_cancel_deadlines_ms(
+            request_ts=int(now_ts),
             side=str(order.get("side", "BUY")),
             operation=_LATENCY_QUEUE_VALUE_CANCEL,
             order_ts=int(order.get("quote_ts", order.get("submit_ts", 0)) or 0),
         )
-        order["cancel_request_ts"] = int(now_ts)
+        order["cancel_effective_ts"] = int(effective_ts)
+        order["cancel_ts"] = int(ack_ts)
+        order["cancel_request_ts"] = int(request_start_ts)
         order["cancel_reason"] = reason
         if order["state"] == ORDER_OPEN:
             order["state"] = ORDER_PENDING_CANCEL
         _record_order_lifecycle_cancel_request(
             order,
-            int(now_ts),
+            int(request_start_ts),
             reason=str(reason),
         )
         _ranked_guard_cancel_requested(
             order,
-            visibility_ts_ms=int(now_ts),
+            visibility_ts_ms=int(request_start_ts),
             reason=str(reason),
         )
 
@@ -20136,6 +21935,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         *,
         target_order_id: str = "",
         guard_initiated_order_id: str = "",
+        request_key_ts: Optional[int] = None,
     ):
         normalized_target = str(target_order_id).strip()
         normalized_guard_target = str(guard_initiated_order_id).strip()
@@ -20144,6 +21944,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 continue
             order_id = _ranked_guard_order_id(order)
             if normalized_target and order_id != normalized_target:
+                continue
+            if serial_rest_return_enabled and order["state"] == ORDER_PENDING_NEW:
+                # Live cannot cancel an order whose submit ACK is unresolved.
+                # The next control boundary revisits it; no automatic cancel
+                # is invented at a future NEW ACK.
                 continue
             if order["cancel_ts"] > 0:
                 if not order.get("cancel_reason"):
@@ -20206,26 +22011,34 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             "replace_cancel_request_count", 0
                         )
                     ) + 1
-            order["cancel_ts"] = now_ts + _sample_latency_ms(
-                cancel_order_latency_ms,
-                cancel_latency_samples_ms,
-                event_ts=now_ts,
+            request_start_ts, effective_ts, ack_ts = _sample_cancel_deadlines_ms(
+                request_ts=int(now_ts if request_key_ts is None else request_key_ts),
                 side=str(order.get("side", "BUY")),
                 operation=_LATENCY_CANCEL,
                 order_ts=int(order.get("quote_ts", order.get("submit_ts", 0)) or 0),
+                apply_decision_compute=str(reason) in {
+                    "requote_replace", "side_disabled", "cancel_first_replace",
+                    "ranked_toxicity_guard",
+                },
             )
-            order["cancel_request_ts"] = now_ts
+            order["cancel_effective_ts"] = int(effective_ts)
+            order["cancel_ts"] = int(ack_ts)
+            order["cancel_request_ts"] = int(request_start_ts)
+            if serial_rest_return_enabled:
+                order["cancel_rest_return_ts"] = int(
+                    rest_gateway_last_timing["rest_return_ts_ms"]
+                )
             order["cancel_reason"] = reason
             if order["state"] == ORDER_OPEN:
                 order["state"] = ORDER_PENDING_CANCEL
             _record_order_lifecycle_cancel_request(
                 order,
-                int(now_ts),
+                int(request_start_ts),
                 reason=str(reason),
             )
             _ranked_guard_cancel_requested(
                 order,
-                visibility_ts_ms=int(now_ts),
+                visibility_ts_ms=int(request_start_ts),
                 reason=str(reason),
                 guard_initiated=bool(
                     normalized_guard_target
@@ -20244,6 +22057,171 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     "cancel_request",
                 )
+
+    def _serial_rest_coalesce(plan: dict[str, Any], side: str, now_ts: int) -> None:
+        nonlocal rest_return_pending_coalesce_count, decision_replace_count
+        nonlocal decision_place_count
+        if side in plan["blocked_sides"]:
+            return
+        plan["blocked_sides"].add(side)
+        if not plan["new_requested"].get(side, False):
+            return
+        rest_return_pending_coalesce_count += 1
+        action = plan["actions"][side]
+        exposure = plan["exposure"][side]
+        if action == "replace":
+            decision_replace_count -= 1
+        elif action == "place":
+            decision_place_count -= 1
+        if action in {"replace", "place"}:
+            role = "exposure" if exposure else "reducing"
+            key = f"decision_{side.lower()}_{role}_{action}_count"
+            decision_side_role_action_counts[key] -= 1
+            _count_decision_action("pending_coalesce", side=side, exposure_increasing=exposure)
+        for row in plan["trace_rows"]:
+            if row["side"] == side:
+                row["action"] = "pending_coalesce"
+                row["needs_update"] = 0
+                row["rest_return_ts_ms"] = int(now_ts)
+
+    def _continue_serial_rest_decision(
+        plan: dict[str, Any], now_ts: int, completed: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Resume a frozen quote call at HTTP return, not at private ACK.
+
+        Only intents are retained between boundaries. A NEW enters the local
+        order ledger when its actual request slot is reached, after observing
+        fills/cancel callbacks that arrived during the preceding REST call.
+        """
+        nonlocal serial_rest_decision, serial_rest_sequence, main_loop_next_wake_ms
+        if plan is not serial_rest_decision:
+            return
+        if completed is not None and completed["kind"] == "cancel":
+            old = completed["order"]
+            side_orders = bid_orders if completed["side"] == "BUY" else ask_orders
+            terminal = old not in side_orders or float(old["remaining"]) < LOT_SIZE
+            if not terminal:
+                _serial_rest_coalesce(plan, completed["side"], int(now_ts))
+        elif completed is not None and planned_quote_stop_triggered:
+            # A stop that arrived during submit could not cancel PENDING_NEW.
+            # Once the response converges, drain that accepted order without
+            # resuming the remaining NEW intents or normal quote computation.
+            order = completed.get("order")
+            if order is not None:
+                _request_cancel_all([order], int(now_ts), "planned_maintenance")
+        while plan["next"] < len(plan["steps"]):
+            if int(now_ts) < rest_gateway_busy_until_ms:
+                serial_rest_sequence += 1
+                local_lifecycle_boundary_scheduler.schedule(
+                    ts_ms=rest_gateway_busy_until_ms, phase="rest_return",
+                    event_id=f"rest-resume:{serial_rest_sequence}",
+                    payload={"serial_rest_plan": plan},
+                )
+                return
+            step = plan["steps"][plan["next"]]
+            plan["next"] += 1
+            side = step["side"]
+            side_orders = bid_orders if side == "BUY" else ask_orders
+            if step["kind"] == "new":
+                if side in plan["blocked_sides"] or planned_quote_stop_triggered:
+                    continue
+                if any(float(o["remaining"]) >= LOT_SIZE for o in side_orders):
+                    _serial_rest_coalesce(plan, side, int(now_ts))
+                    continue
+            else:
+                order = step["order"]
+                if order not in side_orders or float(order["remaining"]) < LOT_SIZE:
+                    continue
+                if order["state"] in (ORDER_PENDING_NEW, ORDER_PENDING_CANCEL):
+                    _serial_rest_coalesce(plan, side, int(now_ts))
+                    continue
+            slot = f"{step['kind']}_{side.lower()}"
+            _prepare_rest_gateway_timing(
+                decision_ts=max(int(now_ts), int(plan["ready_ts"])),
+                requested_slots=(slot,),
+            )
+            try:
+                if step["kind"] == "cancel":
+                    _request_cancel_all(
+                        [step["order"]], int(now_ts), step["reason"],
+                        guard_initiated_order_id=step.get("guard_id", ""),
+                        request_key_ts=plan["decision_ts"],
+                    )
+                else:
+                    order = _make_order(
+                        side, step["price"], step["quantity"],
+                        plan["decision_ts"], plan["submit_mid"],
+                        plan["quote_flags"], plan["quote_context"],
+                        apply_decision_compute=False,
+                    )
+                    step["order"] = order
+                    side_orders.append(order)
+            finally:
+                _clear_rest_gateway_timing()
+            serial_rest_sequence += 1
+            local_lifecycle_boundary_scheduler.schedule(
+                ts_ms=rest_gateway_busy_until_ms, phase="rest_return",
+                event_id=f"rest-return:{serial_rest_sequence}",
+                payload={"serial_rest_plan": plan, "completed": step},
+            )
+            return
+        serial_rest_decision = None
+        if main_loop_enabled:
+            main_loop_next_wake_ms = max(int(now_ts), rest_gateway_busy_until_ms) + main_loop_sleep_ms
+
+    def _begin_serial_rest_decision(
+        *, decision_ts: int, steps: list[dict[str, Any]],
+        new_requested: dict[str, bool], actions: dict[str, str],
+        exposure: dict[str, bool], submit_mid: float,
+        quote_flags: dict[str, Any], quote_context: dict[str, Any],
+        request_ready_ts: Optional[int] = None,
+    ) -> None:
+        nonlocal serial_rest_decision, serial_rest_sequence, main_loop_next_wake_ms
+        if not steps:
+            return
+        if serial_rest_decision is not None:
+            raise RuntimeError("overlapping synchronous quote decisions")
+        ready_ts = (
+            _decision_gateway_request_ts(int(decision_ts))
+            if request_ready_ts is None else int(request_ready_ts)
+        )
+        plan = {
+            "decision_ts": int(decision_ts), "ready_ts": int(ready_ts),
+            "steps": steps, "next": 0, "blocked_sides": set(),
+            "new_requested": new_requested, "actions": actions, "exposure": exposure,
+            "submit_mid": float(submit_mid), "quote_flags": dict(quote_flags),
+            "quote_context": {
+                side: dict(context) if isinstance(context, dict) else context
+                for side, context in quote_context.items()
+            },
+            "trace_rows": [row for row in (trace_decisions or [])[-2:]
+                           if row["ts_ms"] == int(decision_ts)],
+        }
+        serial_rest_decision = plan
+        if main_loop_enabled:
+            main_loop_next_wake_ms = None
+        serial_rest_sequence += 1
+        local_lifecycle_boundary_scheduler.schedule(
+            ts_ms=ready_ts, phase="rest_return",
+            event_id=f"rest-start:{serial_rest_sequence}",
+            payload={"serial_rest_plan": plan},
+        )
+
+    def _has_cancel_request_candidate(
+        orders: list[dict[str, Any]],
+        *,
+        target_order_id: str = "",
+    ) -> bool:
+        normalized_target = str(target_order_id).strip()
+        for order in orders:
+            if float(order.get("remaining", 0.0) or 0.0) < LOT_SIZE:
+                continue
+            if normalized_target and _ranked_guard_order_id(order) != normalized_target:
+                continue
+            if int(order.get("cancel_ts", -1) or -1) > 0:
+                continue
+            return True
+        return False
 
     def _recent_local_rank(now_ts: int, mid_px: float) -> tuple[float, float, float]:
         if not local_extreme_guard_enabled or mid_px <= 0.0:
@@ -20508,6 +22486,56 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             repair_features,
         )
 
+    def _publish_local_new_ack(order: dict, side: str, visibility_ts: int) -> None:
+        if bool(order.get("local_new_ack_published", False)):
+            return
+        if not bool(order.get("exchange_accepted", False)):
+            raise RuntimeError("local NEW ACK preceded exchange acceptance")
+        order["local_new_ack_published"] = True
+        order["state"] = (
+            ORDER_PENDING_CANCEL
+            if int(order.get("cancel_ts", -1) or -1) > int(visibility_ts)
+            else ORDER_OPEN
+        )
+        local_consumer_ts = (
+            int(visibility_ts)
+            if new_order_latency_split_enabled
+            else int(order["activate_ts"])
+        )
+        if dynamic_fill_hazard_action_enabled and side == "BUY":
+            hazard_lifecycle = dynamic_fill_hazard_lifecycles.get(
+                str(order["trace_id"])
+            )
+            if hazard_lifecycle is None:
+                raise RuntimeError("q90 replay lifecycle missing at activation")
+            activation_ns = int(order["activate_ts"]) * 1_000_000
+            hazard_lifecycle.activate(
+                int(local_consumer_ts) * 1_000_000,
+                exchange_ts_ns=activation_ns,
+            )
+            _append_dynamic_fill_hazard_lifecycle_journal(order, "activate")
+        ack_book = order.get("_new_ack_policy_book") or {}
+        _observe_local_order_value_order(
+            order,
+            side,
+            int(local_consumer_ts),
+            best_bid=float(ack_book.get("best_bid", 0.0) or 0.0),
+            best_ask=float(ack_book.get("best_ask", 0.0) or 0.0),
+            bid_qty=float(ack_book.get("bid_qty", 0.0) or 0.0),
+            ask_qty=float(ack_book.get("ask_qty", 0.0) or 0.0),
+        )
+        _record_order_lifecycle_activate(
+            order,
+            visibility_ts_ms=int(visibility_ts),
+            exchange_ts_ms=int(order["activate_ts"]),
+            mid=float(order.get("_new_ack_policy_mid", 0.0) or 0.0),
+        )
+        _ranked_guard_order_activated(
+            order,
+            visibility_ts_ms=int(visibility_ts),
+            exchange_ts_ms=int(order["activate_ts"]),
+        )
+
     def _process_order_transitions(
         orders,
         side: str,
@@ -20516,6 +22544,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         *,
         allow_ttl_initiation: bool = True,
         defer_cancel_ack_at_ts: bool = False,
+        defer_all_cancel_ack_at_ts: bool = False,
     ):
         nonlocal gtx_rejects, fragile_ttl_cancel_count
         nonlocal circuit_breaker_close_gtx_reject_count
@@ -20528,46 +22557,99 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             ttl_ms = int(order.get("ttl_ms", 0) or 0)
             if (
                 allow_ttl_initiation
+                and (
+                    not main_loop_enabled
+                    or (is_main_loop_wake and int(now_ts) - int(last_rq_ts) >= cur_rq_ms)
+                )
                 and ttl_ms > 0
                 and order["state"] in (ORDER_OPEN, ORDER_PENDING_CANCEL)
                 and order["cancel_ts"] <= 0
                 and now_ts - order["quote_ts"] >= ttl_ms
             ):
-                order["cancel_ts"] = now_ts + _sample_latency_ms(
-                    cancel_order_latency_ms,
-                    cancel_latency_samples_ms,
-                    event_ts=now_ts,
+                request_start_ts, effective_ts, ack_ts = (
+                    _sample_cancel_deadlines_ms(
+                    request_ts=int(now_ts),
                     side=str(order.get("side", side)),
                     operation=_LATENCY_TTL_CANCEL,
                     order_ts=int(order.get("quote_ts", order.get("submit_ts", 0)) or 0),
+                    )
                 )
-                order["cancel_request_ts"] = now_ts
+                order["cancel_effective_ts"] = int(effective_ts)
+                order["cancel_ts"] = int(ack_ts)
+                order["cancel_request_ts"] = int(request_start_ts)
                 order["cancel_reason"] = "fragile_ttl"
                 if order["state"] == ORDER_OPEN:
                     order["state"] = ORDER_PENDING_CANCEL
                 _record_order_lifecycle_cancel_request(
                     order,
-                    int(now_ts),
+                    int(request_start_ts),
                     reason="fragile_ttl",
                 )
                 _ranked_guard_cancel_requested(
                     order,
-                    visibility_ts_ms=int(now_ts),
+                    visibility_ts_ms=int(request_start_ts),
                     reason="fragile_ttl",
                 )
                 fragile_ttl_cancel_count += 1
 
+            cancel_effective_ts = _order_cancel_effective_ts(order)
+            cancel_effective_now = bool(
+                cancel_effective_ts > 0
+                and cancel_effective_ts <= int(now_ts)
+                and not (
+                    defer_cancel_ack_at_ts
+                    and cancel_effective_ts == int(now_ts)
+                    and int(order.get("cancel_ts", -1) or -1)
+                    == cancel_effective_ts
+                )
+            )
+            if cancel_effective_now:
+                if serial_rest_return_enabled and order.get("exchange_fill_terminal", False):
+                    # Matching won the race. Retain the request/HTTP return,
+                    # but do not invent CANCELED while its fill is in flight.
+                    order["cancel_terminal_suppressed_full_fill"] = True
+                else:
+                    order["exchange_cancel_effective"] = True
+                order["fill_eligible"] = False
+
+            # Local NEW visibility precedes a same-millisecond cancel ACK.
+            # Exchange-effective cancellation above still wins fillability at
+            # the boundary, while the local consumer observes NEW before the
+            # terminal cancel notification.
+            if (
+                order["state"] == ORDER_PENDING_NEW
+                and bool(order.get("exchange_accepted", False))
+                and not bool(order.get("local_new_ack_published", False))
+                and int(order.get("new_ack_ts", 0) or 0) <= int(now_ts)
+            ):
+                _publish_local_new_ack(
+                    order,
+                    side,
+                    int(order.get("new_ack_ts", now_ts) or now_ts),
+                )
+
             if (order["state"] == ORDER_PENDING_NEW and order["cancel_ts"] > 0
                     and order["cancel_ts"] <= now_ts
-                    and order["cancel_ts"] <= order["activate_ts"]
+                    and not order.get("cancel_terminal_suppressed_full_fill", False)
+                    and (
+                        cancel_effective_ts <= order["activate_ts"]
+                        or bool(order.get("exchange_accepted", False))
+                    )
                     and not (
-                        defer_cancel_ack_at_ts
-                        and int(order["cancel_ts"]) == int(now_ts)
+                        int(order["cancel_ts"]) == int(now_ts)
+                        and (
+                            defer_all_cancel_ack_at_ts
+                            or (
+                                defer_cancel_ack_at_ts
+                                and int(order["cancel_ts"])
+                                == cancel_effective_ts
+                            )
+                        )
                     )):
                 _record_order_lifecycle_cancel_ack(
                     order,
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order.get("cancel_ts", now_ts) or now_ts),
+                    exchange_ts_ms=int(cancel_effective_ts),
                     reason=str(
                         order.get("cancel_reason") or "cancel_before_active"
                     ),
@@ -20588,16 +22670,29 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     reason="cancel_ack",
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order.get("cancel_ts", now_ts) or now_ts),
+                    exchange_ts_ms=int(cancel_effective_ts),
                 )
                 orders.pop(idx)
                 continue
 
-            if order["state"] == ORDER_PENDING_NEW and order["activate_ts"] <= now_ts:
+            if (
+                order["state"] == ORDER_PENDING_NEW
+                and order["activate_ts"] <= now_ts
+                and not bool(order.get("exchange_cancel_effective", False))
+                and not bool(order.get("exchange_accepted", False))
+            ):
                 best_bid_at, best_ask_at, bid_qty_at, ask_qty_at, mid_at, _ = _book_snapshot_at(
                     order["activate_ts"], fallback_mid,
                 )
                 if order.get("time_in_force") == "IOC":
+                    if (
+                        new_order_latency_split_enabled
+                        and int(order.get("new_ack_ts", 0) or 0)
+                        > int(order["activate_ts"])
+                    ):
+                        raise RuntimeError(
+                            "split new-order ACK does not yet support pre-ACK IOC fills"
+                        )
                     # IOC is resolved below against the exchange-time book. It
                     # never receives passive queue-ahead or remains resting.
                     order["state"] = ORDER_OPEN
@@ -20680,6 +22775,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 policy_book_at = _decision_visible_book(
                     int(order["activate_ts"]),
                     float(quote_mid),
+                    advance_visibility_state=False,
                 )
                 policy_mid = float(policy_book_at["mid"])
                 policy_distance = (
@@ -20936,56 +23032,46 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order["mid_at_quote"] = quote_mid
                 order["quote_ts"] = int(order.get("restore_quote_ts", order["activate_ts"]) or order["activate_ts"])
                 order["fill_eligible"] = _new_fill_eligible(side, order["activate_ts"])
-                order["state"] = ORDER_PENDING_CANCEL if order["cancel_ts"] > now_ts else ORDER_OPEN
-                if dynamic_fill_hazard_action_enabled and side == "BUY":
-                    hazard_lifecycle = dynamic_fill_hazard_lifecycles.get(
-                        str(order["trace_id"])
-                    )
-                    if hazard_lifecycle is None:
-                        raise RuntimeError("q90 replay lifecycle missing at activation")
-                    activation_ns = int(order["activate_ts"]) * 1_000_000
-                    hazard_lifecycle.activate(
-                        activation_ns,
-                        exchange_ts_ns=activation_ns,
-                    )
-                    _append_dynamic_fill_hazard_lifecycle_journal(
-                        order,
-                        "activate",
-                    )
-                _observe_local_order_value_order(
+                order["exchange_accepted"] = True
+                order["_new_ack_policy_book"] = dict(policy_book_at)
+                order["_new_ack_policy_mid"] = float(policy_mid)
+                new_ack_ts = int(
+                    order.get("new_ack_ts", order["activate_ts"])
+                    or order["activate_ts"]
+                )
+                if new_ack_ts <= int(now_ts):
+                    _publish_local_new_ack(order, side, int(now_ts))
+
+            if (
+                order["state"] == ORDER_PENDING_NEW
+                and bool(order.get("exchange_accepted", False))
+                and not bool(order.get("local_new_ack_published", False))
+                and int(order.get("new_ack_ts", 0) or 0) <= int(now_ts)
+            ):
+                _publish_local_new_ack(
                     order,
                     side,
-                    int(order["activate_ts"]),
-                    best_bid=float(policy_book_at["best_bid"]),
-                    best_ask=float(policy_book_at["best_ask"]),
-                    bid_qty=float(policy_book_at["bid_qty"]),
-                    ask_qty=float(policy_book_at["ask_qty"]),
-                )
-                _record_order_lifecycle_activate(
-                    order,
-                    visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order["activate_ts"]),
-                    mid=float(policy_mid),
-                )
-                _ranked_guard_order_activated(
-                    order,
-                    visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order["activate_ts"]),
+                    int(order.get("new_ack_ts", now_ts) or now_ts),
                 )
 
             if (
                 order["cancel_ts"] > 0
                 and order["cancel_ts"] <= now_ts
-                and order["state"] in (ORDER_OPEN, ORDER_PENDING_CANCEL)
+                and not order.get("cancel_terminal_suppressed_full_fill", False)
+                and order["state"] in (
+                    ORDER_PENDING_NEW,
+                    ORDER_OPEN,
+                    ORDER_PENDING_CANCEL,
+                )
                 and not (
-                    defer_cancel_ack_at_ts
+                    (defer_cancel_ack_at_ts or defer_all_cancel_ack_at_ts)
                     and int(order["cancel_ts"]) == int(now_ts)
                 )
             ):
                 _record_order_lifecycle_cancel_ack(
                     order,
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order.get("cancel_ts", now_ts) or now_ts),
+                    exchange_ts_ms=int(cancel_effective_ts),
                     reason=str(order.get("cancel_reason") or "cancel_ack"),
                 )
                 _record_queue_value_cancel(order, int(now_ts))
@@ -21007,7 +23093,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     order,
                     reason="cancel_ack",
                     visibility_ts_ms=int(now_ts),
-                    exchange_ts_ms=int(order.get("cancel_ts", now_ts) or now_ts),
+                    exchange_ts_ms=int(cancel_effective_ts),
                 )
                 orders.pop(idx)
                 continue
@@ -21800,6 +23886,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             int(now_ts),
             float(close_mid),
             quote_context=close_context,
+            apply_decision_compute=False,
         )
         order["time_in_force"] = "IOC" if use_ioc else "GTX"
         close_orders.append(order)
@@ -22432,10 +24519,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             submit_ts = int(raw_order.get("submit_ts_ms", start_ts) or start_ts)
             event_ts = int(raw_order.get("event_ts_ms", start_ts) or start_ts)
             quote_mid = float(raw_order.get("mid_at_quote", mid) or mid)
-            restored = _make_order(side, price, max(quantity, remaining), submit_ts, quote_mid)
+            restored = _make_order(
+                side, price, max(quantity, remaining), submit_ts, quote_mid,
+                apply_decision_compute=False,
+                restored_order=True,
+            )
             restored["remaining"] = min(max(remaining, 0.0), max(quantity, remaining))
+            restored["exchange_remaining"] = float(restored["remaining"])
             restored["restore_quote_ts"] = submit_ts
             restored["activate_ts"] = min(start_ts, max(submit_ts, event_ts))
+            restored["new_ack_ts"] = start_ts
+            restored["exchange_accepted"] = True
+            restored["local_new_ack_published"] = True
             restored["quote_ts"] = submit_ts
             restored["mid_at_quote"] = quote_mid
             restored["inventory_at_submit"] = float(raw_order.get("inventory_at_submit", q) or q)
@@ -22443,6 +24538,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             if status in ("PENDING_CANCEL", "CANCELING"):
                 restored["state"] = ORDER_PENDING_CANCEL
                 restored["cancel_ts"] = int(raw_order.get("cancel_ts_ms", start_ts) or start_ts)
+                restored["cancel_effective_ts"] = int(
+                    raw_order.get(
+                        "cancel_effective_ts_ms",
+                        restored["cancel_ts"],
+                    )
+                    or restored["cancel_ts"]
+                )
                 restored["cancel_request_ts"] = int(raw_order.get("cancel_request_ts_ms", event_ts) or event_ts)
                 restored["cancel_reason"] = str(raw_order.get("cancel_reason", "bootstrap_pending_cancel") or "bootstrap_pending_cancel")
             else:
@@ -22450,6 +24552,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # from historical BBO/L2 at the replay boundary while preserving old quote_ts.
                 restored["state"] = ORDER_PENDING_NEW
                 restored["activate_ts"] = start_ts
+                restored["exchange_accepted"] = False
+                restored["local_new_ack_published"] = False
             if side == "BUY":
                 bid_orders.append(restored)
                 initial_live_state_bid_orders_restored += 1
@@ -22468,10 +24572,797 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             except Exception:
                 pass
 
+    def _publish_passive_fill(
+        *,
+        side: str,
+        order: dict[str, Any],
+        fill_qty: float,
+        exchange_ts_ms: int,
+        visibility_ts_ms: Optional[int] = None,
+        trade_idx: int,
+        trade_price: float,
+        trade_qty: float,
+        deplete_mult: float,
+        trade_remaining_before: float,
+        trade_remaining: float,
+        queue_before: float,
+        remaining_before: float,
+        exchange_reserved: bool = False,
+    ) -> tuple[float, bool, bool]:
+        """Publish one already-matched passive fill to all local consumers."""
+        nonlocal cash, q, nfb, nfa, circuit_breaker_close_fill_count
+        nonlocal buy_fill_qty_total, buy_fill_notional
+        nonlocal sell_fill_qty_total, sell_fill_notional
+        nonlocal fills_bid_final_compressed, fills_bid_not_final_compressed
+        nonlocal fills_bid_mid_guard, fills_bid_post_only
+        nonlocal fills_bid_adverse_guard, fills_bid_defense_guard
+        nonlocal fills_bid_local_extreme_guard
+        nonlocal fills_ask_final_compressed, fills_ask_not_final_compressed
+        nonlocal fills_ask_mid_guard, fills_ask_post_only
+        nonlocal fills_ask_adverse_guard, fills_ask_defense_guard
+        nonlocal fills_ask_local_extreme_guard, fills_while_pending_cancel
+        nonlocal dynamic_fill_hazard_cpp_lifecycle_count
+        nonlocal dynamic_fill_hazard_pre_ack_fill_count
+        nonlocal consec_buy, consec_sell, last_buy_fill_ts, last_sell_fill_ts
+        nonlocal last_buy_fill_cooldown_ms, last_buy_fill_cooldown_total_ms
+        nonlocal last_sell_fill_cooldown_ms, last_sell_fill_cooldown_total_ms
+        nonlocal post_fill_quote_response_add_fill_count
+        nonlocal post_fill_quote_response_bid_add_count
+        nonlocal post_fill_quote_response_ask_add_count
+        nonlocal post_fill_quote_response_force_bid_requote
+        nonlocal post_fill_quote_response_force_ask_requote, entry_price
+        nonlocal private_fill_visible_count
+
+        exchange_t = int(exchange_ts_ms)
+        t = int(exchange_t if visibility_ts_ms is None else visibility_ts_ms)
+        i = int(trade_idx)
+        p = float(trade_price)
+        qty = float(trade_qty)
+        trade_before_order = float(trade_remaining_before)
+        rem_before = float(remaining_before)
+        filled_buy = False
+        filled_sell = False
+        if exchange_reserved:
+            private_fill_visible_count += 1
+            order["last_private_fill_visible_ts_ms"] = int(t)
+        # A later exchange match on the same partially filled order may already
+        # be queued. Bind this callback to its own match, not the newest match
+        # on the order, and never relabel local visibility as exchange time.
+        order["_callback_exchange_ts_ms"] = int(exchange_t)
+        if side == "BUY":
+            q_before_fill = q
+            cash -= order["price"] * fill_qty * (1.0 + maker_fee)
+            q += fill_qty
+            _loss_cooldown_on_fill(
+                "BUY",
+                float(fill_qty),
+                float(order["price"]),
+                float(maker_fee),
+            )
+            order["remaining"] -= fill_qty
+            q90_lifecycle = dynamic_fill_hazard_lifecycles.get(
+                str(order.get("trace_id", ""))
+            )
+            if q90_lifecycle is not None and q90_lifecycle.fill_risk_active:
+                q90_full_fill = bool(order["remaining"] < LOT_SIZE)
+                q90_lifecycle.observe_fill(
+                    remaining_after=max(0.0, float(order["remaining"])),
+                    visibility_ts_ns=int(t) * 1_000_000,
+                    exchange_ts_ns=int(exchange_t) * 1_000_000,
+                    full_fill=q90_full_fill,
+                )
+                _append_dynamic_fill_hazard_lifecycle_journal(
+                    order,
+                    "full_fill" if q90_full_fill else "partial_fill",
+                )
+            _post_cooldown_budget_on_fill(
+                order,
+                side="BUY",
+                fill_qty_btc=float(fill_qty),
+                now_ts=int(t),
+            )
+            if dynamic_fill_hazard_cpp_runtime is not None:
+                hazard_id = str(order.get("trace_id", ""))
+                if hazard_id in dynamic_fill_hazard_paths:
+                    matching_hold = bool(
+                        dynamic_fill_hazard_hold is not None
+                        and str(
+                            dynamic_fill_hazard_hold["client_order_id"]
+                        )
+                        == hazard_id
+                    )
+                    expected_transition = (
+                        "terminal_complete_no_reentry"
+                        if matching_hold
+                        and float(order["remaining"])
+                        < float(LOT_SIZE)
+                        else "none"
+                    )
+                    cpp_transition = (
+                        dynamic_fill_hazard_cpp_runtime.on_fill(
+                            hazard_id,
+                            float(order["remaining"]),
+                            int(t) * 1_000_000,
+                        )
+                    )
+                    dynamic_fill_hazard_cpp_lifecycle_count += 1
+                    _dynamic_fill_hazard_cpp_check(
+                        cpp_transition == expected_transition,
+                        "fill_transition",
+                        now_ts_ms=int(t),
+                        client_order_id=hazard_id,
+                        remaining_after=float(order["remaining"]),
+                        python_transition=expected_transition,
+                        cpp_transition=cpp_transition,
+                    )
+            if not exchange_reserved:
+                trade_remaining -= fill_qty
+            (
+                physical_fill_identity,
+                economic_fill_legs,
+            ) = _campaign_legs_for_order_fill(
+                order,
+                ts_ms=int(t),
+                side="BUY",
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                fill_qty=float(fill_qty),
+                fill_price=float(order["price"]),
+                fee_rate=float(maker_fee),
+                remaining_before=float(rem_before),
+                remaining_after=float(order["remaining"]),
+            )
+            _record_order_lifecycle_fill(
+                order,
+                int(t),
+                exchange_ts_ms=int(exchange_t),
+                fill_qty=float(fill_qty),
+                remaining_before=float(rem_before),
+                remaining_after=float(order["remaining"]),
+                fill_price=float(order["price"]),
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                campaign_id=int(economic_fill_legs[0]["campaign_id"]),
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
+            )
+            ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
+            _ranked_guard_order_fill(
+                order,
+                remaining_after=(
+                    0.0
+                    if ranked_guard_full_fill
+                    else float(order["remaining"])
+                ),
+                visibility_ts_ms=int(t),
+                exchange_ts_ms=int(exchange_t),
+                full_fill=bool(ranked_guard_full_fill),
+            )
+            nfb += 1
+            if order.get("circuit_breaker_close", False):
+                circuit_breaker_close_fill_count += 1
+            buy_fill_qty_total += fill_qty
+            buy_fill_notional += order["price"] * fill_qty
+            filled_buy = True
+            if order.get("quote_final_compressed", False):
+                fills_bid_final_compressed += 1
+            else:
+                fills_bid_not_final_compressed += 1
+            if order.get("quote_mid_guard", False):
+                fills_bid_mid_guard += 1
+            if order.get("quote_post_only", False):
+                fills_bid_post_only += 1
+            if order.get("quote_bid_adverse", False):
+                fills_bid_adverse_guard += 1
+            if order.get("quote_bid_defense", False):
+                fills_bid_defense_guard += 1
+            if order.get("quote_local_extreme_guard", False):
+                fills_bid_local_extreme_guard += 1
+            if order["state"] == ORDER_PENDING_CANCEL:
+                fills_while_pending_cancel += 1
+                if (
+                    dynamic_fill_hazard_hold is not None
+                    and str(
+                        dynamic_fill_hazard_hold["client_order_id"]
+                    )
+                    == str(order.get("trace_id", ""))
+                ):
+                    dynamic_fill_hazard_pre_ack_fill_count += 1
+                    if (
+                        variance_time_lineage_randomized_enabled
+                        and variance_time_lineage_fail_on_q90_pre_ack_fill
+                    ):
+                        raise RuntimeError(
+                            "randomized lineage replay reached the first "
+                            "historical BUY q90 fill-before-cancel-ACK branch; "
+                            "C++ lifecycle lockstep authority is synthetic-only"
+                        )
+            order["queue_deplete_mult"] = float(deplete_mult)
+            if not exchange_reserved:
+                _append_queue_event(
+                    event="fill",
+                    trade_idx=i,
+                    order=order,
+                    trade_price=p,
+                    trade_qty=qty,
+                    deplete_mult=deplete_mult,
+                    trade_remaining_before=trade_before_order,
+                    trade_remaining_after=trade_remaining,
+                    queue_before=queue_before,
+                    queue_after=float(order["queue_left"]),
+                    fill_qty=fill_qty,
+                )
+            _append_fill_trace(
+                "BUY", i, order["price"], fill_qty,
+                order["quote_ts"], order["mid_at_quote"], order["queue_init"],
+                queue_before, rem_before, q_before_fill, order=order,
+            )
+            _append_order_outcome(order, t, "fill", "fill", fill_qty)
+            previous_fill_ts = int(last_buy_fill_ts)
+            previous_cooldown_ms = float(last_buy_fill_cooldown_ms)
+            consec_buy += fill_qty / max(order_size, LOT_SIZE)
+            consec_sell = 0.0
+            last_buy_fill_ts = t
+            new_cooldown_ms = _cooldown_ms_for_fill(
+                "BUY",
+                q_before_fill,
+                consec_buy,
+                int(t),
+                previous_fill_ts_ms=previous_fill_ts,
+                previous_cooldown_ms=previous_cooldown_ms,
+                order=order,
+                queue_ahead_before_fill_btc=float(queue_before),
+            )
+            last_buy_fill_cooldown_ms = cooldown_duration_after_same_side_fill(
+                previous_fill_ts_ms=previous_fill_ts,
+                previous_cooldown_ms=previous_cooldown_ms,
+                current_fill_ts_ms=int(t),
+                new_cooldown_ms=new_cooldown_ms,
+            )
+            last_buy_fill_cooldown_total_ms = last_buy_fill_cooldown_ms
+            _cooldown_lineage_on_fill(
+                "BUY",
+                prev_q=q_before_fill,
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+                fill_qty=float(fill_qty),
+                fee_rate=float(maker_fee),
+                consecutive_units=float(consec_buy),
+                baseline_cooldown_ms=float(new_cooldown_ms),
+            )
+            _variance_time_on_fill(
+                "BUY",
+                prev_q=q_before_fill,
+                fill_ts_ms=int(t),
+                consecutive_units=consec_buy,
+                baseline_cooldown_ms=new_cooldown_ms,
+            )
+            response_add_fill = post_fill_quote_response.record_fill(
+                side="BUY",
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                fill_qty=float(fill_qty),
+                order_size=float(order_size),
+                ts_ms=int(t),
+            )
+            if response_add_fill:
+                post_fill_quote_response_add_fill_count += 1
+                post_fill_quote_response_bid_add_count += 1
+            last_sell_fill_cooldown_ms = 0.0
+            last_sell_fill_cooldown_total_ms = 0.0
+            if _fill_cooldown_active("BUY", int(t)):
+                # Live MakerEngine calls _cancel_cooldown_side_order(side)
+                # after an exposure-increasing fill.  Replay must cancel any
+                # residual/pending same-side orders too; otherwise old
+                # same-side orders can keep filling during a period where
+                # live would already be in fill_cd pause.
+                _request_cancel_all(bid_orders, int(t), reason="fill_cooldown")
+            elif response_add_fill:
+                # Reprice the old add-side order through the normal cancel
+                # ACK/pending lifecycle. This removes the arbitrary hard
+                # silence while retaining real queue-reset and REST costs.
+                _request_cancel_all(
+                    bid_orders,
+                    int(t),
+                    reason="post_fill_quote_response",
+                )
+                post_fill_quote_response_force_bid_requote = q < max_inv - 1e-12
+            if q_before_fill <= 0.0 and q > 0.0:
+                entry_price = order["price"]
+            elif q_before_fill > 0.0:
+                entry_price = (entry_price * q_before_fill + order["price"] * fill_qty) / q
+            if abs(q) < 1e-10:
+                entry_price = 0.0
+            _record_local_action_fill(order, "BUY", int(t), float(fill_qty))
+            _record_local_order_value_fill(order, "BUY", int(t))
+            _record_queue_value_fill(
+                order,
+                "BUY",
+                int(t),
+                float(fill_qty),
+            )
+            _record_state_conditioned_fill(
+                order, "BUY", int(t), float(fill_qty)
+            )
+            _record_safe_add_rearm_fill(order, "BUY", int(t), float(fill_qty))
+            _record_state_conditioned_rearm_fill(
+                order, "BUY", int(t), float(fill_qty)
+            )
+            _record_first_add_decision_fill(
+                order,
+                "BUY",
+                inventory_before_fill=float(q_before_fill),
+                fill_qty=float(fill_qty),
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+            )
+            _record_first_opener_decision_fill(
+                order,
+                "BUY",
+                inventory_before_fill=float(q_before_fill),
+                fill_qty=float(fill_qty),
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+            )
+            _campaign_on_fill(
+                "BUY",
+                q_before_fill,
+                fill_qty,
+                int(t),
+                float(order["price"]),
+                maker_fee,
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
+            )
+            _sync_local_order_lifecycle_repair(int(t))
+            if order["remaining"] < LOT_SIZE:
+                _dynamic_fill_hazard_order_terminal(
+                    order,
+                    event="fill",
+                    now_ts=int(t),
+                )
+            if markout_ema_span_fills > 0:
+                mo_pending.append((exchange_t, order["price"], True, {
+                    "final_compressed": order.get("quote_final_compressed", False),
+                }, fill_qty))
+        elif side == "SELL":
+            q_before_fill = q
+            cash += order["price"] * fill_qty * (1.0 - maker_fee)
+            q -= fill_qty
+            _loss_cooldown_on_fill(
+                "SELL",
+                float(fill_qty),
+                float(order["price"]),
+                float(maker_fee),
+            )
+            order["remaining"] -= fill_qty
+            _post_cooldown_budget_on_fill(
+                order,
+                side="SELL",
+                fill_qty_btc=float(fill_qty),
+                now_ts=int(t),
+            )
+            if not exchange_reserved:
+                trade_remaining -= fill_qty
+            (
+                physical_fill_identity,
+                economic_fill_legs,
+            ) = _campaign_legs_for_order_fill(
+                order,
+                ts_ms=int(t),
+                side="SELL",
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                fill_qty=float(fill_qty),
+                fill_price=float(order["price"]),
+                fee_rate=float(maker_fee),
+                remaining_before=float(rem_before),
+                remaining_after=float(order["remaining"]),
+            )
+            _record_order_lifecycle_fill(
+                order,
+                int(t),
+                exchange_ts_ms=int(exchange_t),
+                fill_qty=float(fill_qty),
+                remaining_before=float(rem_before),
+                remaining_after=float(order["remaining"]),
+                fill_price=float(order["price"]),
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                campaign_id=int(economic_fill_legs[0]["campaign_id"]),
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
+            )
+            ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
+            _ranked_guard_order_fill(
+                order,
+                remaining_after=(
+                    0.0
+                    if ranked_guard_full_fill
+                    else float(order["remaining"])
+                ),
+                visibility_ts_ms=int(t),
+                exchange_ts_ms=int(exchange_t),
+                full_fill=bool(ranked_guard_full_fill),
+            )
+            nfa += 1
+            if order.get("circuit_breaker_close", False):
+                circuit_breaker_close_fill_count += 1
+            sell_fill_qty_total += fill_qty
+            sell_fill_notional += order["price"] * fill_qty
+            filled_sell = True
+            if order.get("quote_final_compressed", False):
+                fills_ask_final_compressed += 1
+            else:
+                fills_ask_not_final_compressed += 1
+            if order.get("quote_mid_guard", False):
+                fills_ask_mid_guard += 1
+            if order.get("quote_post_only", False):
+                fills_ask_post_only += 1
+            if order.get("quote_ask_adverse", False):
+                fills_ask_adverse_guard += 1
+            if order.get("quote_ask_defense", False):
+                fills_ask_defense_guard += 1
+            if order.get("quote_local_extreme_guard", False):
+                fills_ask_local_extreme_guard += 1
+            if order["state"] == ORDER_PENDING_CANCEL:
+                fills_while_pending_cancel += 1
+            order["queue_deplete_mult"] = float(deplete_mult)
+            if not exchange_reserved:
+                _append_queue_event(
+                    event="fill",
+                    trade_idx=i,
+                    order=order,
+                    trade_price=p,
+                    trade_qty=qty,
+                    deplete_mult=deplete_mult,
+                    trade_remaining_before=trade_before_order,
+                    trade_remaining_after=trade_remaining,
+                    queue_before=queue_before,
+                    queue_after=float(order["queue_left"]),
+                    fill_qty=fill_qty,
+                )
+            _append_fill_trace(
+                "SELL", i, order["price"], fill_qty,
+                order["quote_ts"], order["mid_at_quote"], order["queue_init"],
+                queue_before, rem_before, q_before_fill, order=order,
+            )
+            _append_order_outcome(order, t, "fill", "fill", fill_qty)
+            previous_fill_ts = int(last_sell_fill_ts)
+            previous_cooldown_ms = float(last_sell_fill_cooldown_ms)
+            consec_sell += fill_qty / max(order_size, LOT_SIZE)
+            consec_buy = 0.0
+            last_sell_fill_ts = t
+            new_cooldown_ms = _cooldown_ms_for_fill(
+                "SELL",
+                q_before_fill,
+                consec_sell,
+                int(t),
+                previous_fill_ts_ms=previous_fill_ts,
+                previous_cooldown_ms=previous_cooldown_ms,
+                order=order,
+                queue_ahead_before_fill_btc=float(queue_before),
+            )
+            last_sell_fill_cooldown_ms = cooldown_duration_after_same_side_fill(
+                previous_fill_ts_ms=previous_fill_ts,
+                previous_cooldown_ms=previous_cooldown_ms,
+                current_fill_ts_ms=int(t),
+                new_cooldown_ms=new_cooldown_ms,
+            )
+            last_sell_fill_cooldown_total_ms = last_sell_fill_cooldown_ms
+            _cooldown_lineage_on_fill(
+                "SELL",
+                prev_q=q_before_fill,
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+                fill_qty=float(fill_qty),
+                fee_rate=float(maker_fee),
+                consecutive_units=float(consec_sell),
+                baseline_cooldown_ms=float(new_cooldown_ms),
+            )
+            _variance_time_on_fill(
+                "SELL",
+                prev_q=q_before_fill,
+                fill_ts_ms=int(t),
+                consecutive_units=consec_sell,
+                baseline_cooldown_ms=new_cooldown_ms,
+            )
+            response_add_fill = post_fill_quote_response.record_fill(
+                side="SELL",
+                inventory_before=float(q_before_fill),
+                inventory_after=float(q),
+                fill_qty=float(fill_qty),
+                order_size=float(order_size),
+                ts_ms=int(t),
+            )
+            if response_add_fill:
+                post_fill_quote_response_add_fill_count += 1
+                post_fill_quote_response_ask_add_count += 1
+            last_buy_fill_cooldown_ms = 0.0
+            last_buy_fill_cooldown_total_ms = 0.0
+            if _fill_cooldown_active("SELL", int(t)):
+                # Match live _cancel_cooldown_side_order("SELL") semantics.
+                _request_cancel_all(ask_orders, int(t), reason="fill_cooldown")
+            elif response_add_fill:
+                _request_cancel_all(
+                    ask_orders,
+                    int(t),
+                    reason="post_fill_quote_response",
+                )
+                post_fill_quote_response_force_ask_requote = q > -max_inv + 1e-12
+            if q_before_fill >= 0.0 and q < 0.0:
+                entry_price = order["price"]
+            elif q_before_fill < 0.0:
+                entry_price = (entry_price * (-q_before_fill) + order["price"] * fill_qty) / (-q)
+            if abs(q) < 1e-10:
+                entry_price = 0.0
+            _record_local_action_fill(order, "SELL", int(t), float(fill_qty))
+            _record_local_order_value_fill(order, "SELL", int(t))
+            _record_queue_value_fill(
+                order,
+                "SELL",
+                int(t),
+                float(fill_qty),
+            )
+            _record_sell_add_skip_fill(order, int(t), float(fill_qty))
+            _record_state_conditioned_fill(
+                order, "SELL", int(t), float(fill_qty)
+            )
+            _record_safe_add_rearm_fill(order, "SELL", int(t), float(fill_qty))
+            _record_state_conditioned_rearm_fill(
+                order, "SELL", int(t), float(fill_qty)
+            )
+            _record_first_add_decision_fill(
+                order,
+                "SELL",
+                inventory_before_fill=float(q_before_fill),
+                fill_qty=float(fill_qty),
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+            )
+            _record_first_opener_decision_fill(
+                order,
+                "SELL",
+                inventory_before_fill=float(q_before_fill),
+                fill_qty=float(fill_qty),
+                fill_ts_ms=int(t),
+                fill_price=float(order["price"]),
+            )
+            _campaign_on_fill(
+                "SELL",
+                q_before_fill,
+                fill_qty,
+                int(t),
+                float(order["price"]),
+                maker_fee,
+                physical_fill_identity=physical_fill_identity,
+                economic_legs=economic_fill_legs,
+            )
+            _sync_local_order_lifecycle_repair(int(t))
+            if markout_ema_span_fills > 0:
+                mo_pending.append((exchange_t, order["price"], False, {
+                    "final_compressed": order.get("quote_final_compressed", False),
+                }, fill_qty))
+        else:
+            raise ValueError(f"unsupported passive fill side={side!r}")
+        return float(trade_remaining), bool(filled_buy), bool(filled_sell)
+
+    def _apply_visible_fill_inventory_state(
+        *,
+        q_before_visible: float,
+        visibility_ts_ms: int,
+        filled_buy: bool,
+        filled_sell: bool,
+    ) -> None:
+        nonlocal pos_open_ts
+        nonlocal post_fill_quote_response_force_bid_requote
+        nonlocal post_fill_quote_response_force_ask_requote
+        if not (filled_buy or filled_sell):
+            return
+        timestamp = int(visibility_ts_ms)
+        if abs(q) < 1e-10:
+            post_fill_quote_response.reset()
+            post_fill_quote_response_force_bid_requote = False
+            post_fill_quote_response_force_ask_requote = False
+            pos_open_ts = timestamp
+        elif (
+            abs(float(q_before_visible)) < 1e-10
+            or (float(q_before_visible) <= 0.0 < q)
+            or (float(q_before_visible) >= 0.0 > q)
+        ):
+            pos_open_ts = timestamp
+        if q >= max_inv:
+            _drop_orders(bid_orders, timestamp, "inventory_limit")
+        elif q <= -max_inv:
+            _drop_orders(ask_orders, timestamp, "inventory_limit")
+
+    def _reserve_or_publish_passive_fill(
+        *,
+        side: str,
+        order: dict[str, Any],
+        fill_qty: float,
+        exchange_ts_ms: int,
+        trade_idx: int,
+        trade_price: float,
+        trade_qty: float,
+        deplete_mult: float,
+        trade_remaining_before: float,
+        trade_remaining: float,
+        queue_before: float,
+        remaining_before: float,
+    ) -> tuple[float, bool, bool]:
+        nonlocal exchange_inventory, private_fill_exchange_match_count
+        if not private_fill_visibility_enabled:
+            return _publish_passive_fill(
+                side=side,
+                order=order,
+                fill_qty=fill_qty,
+                exchange_ts_ms=exchange_ts_ms,
+                trade_idx=trade_idx,
+                trade_price=trade_price,
+                trade_qty=trade_qty,
+                deplete_mult=deplete_mult,
+                trade_remaining_before=trade_remaining_before,
+                trade_remaining=trade_remaining,
+                queue_before=queue_before,
+                remaining_before=remaining_before,
+            )
+
+        exchange_remaining_before = float(
+            order.get("exchange_remaining", order.get("remaining", 0.0))
+        )
+        exchange_remaining_after = max(
+            0.0, exchange_remaining_before - float(fill_qty)
+        )
+        order["exchange_remaining"] = exchange_remaining_after
+        order["last_exchange_fill_ts_ms"] = int(exchange_ts_ms)
+        private_fill_exchange_match_count += 1
+        if exchange_remaining_after < LOT_SIZE:
+            order["exchange_fill_terminal"] = True
+        if side == "BUY":
+            exchange_inventory += float(fill_qty)
+        else:
+            exchange_inventory -= float(fill_qty)
+        remaining_trade = float(trade_remaining) - float(fill_qty)
+        order["queue_deplete_mult"] = float(deplete_mult)
+        _append_queue_event(
+            event="fill",
+            trade_idx=int(trade_idx),
+            order=order,
+            trade_price=float(trade_price),
+            trade_qty=float(trade_qty),
+            deplete_mult=float(deplete_mult),
+            trade_remaining_before=float(trade_remaining_before),
+            trade_remaining_after=float(remaining_trade),
+            queue_before=float(queue_before),
+            queue_after=float(order["queue_left"]),
+            fill_qty=float(fill_qty),
+        )
+        visible_ts_ms = _sample_private_fill_visible_ts(
+            exchange_ts=int(exchange_ts_ms),
+            side=side,
+            order_ts=int(order.get("submit_ts", 0) or 0),
+        )
+        visible_ts_ms = max(
+            int(visible_ts_ms),
+            int(order.get("_last_private_fill_visible_ts", exchange_ts_ms) or 0),
+        )
+        order["_last_private_fill_visible_ts"] = int(visible_ts_ms)
+        payload = {
+            "side": str(side),
+            "order": order,
+            "fill_qty": float(fill_qty),
+            "exchange_ts_ms": int(exchange_ts_ms),
+            "trade_idx": int(trade_idx),
+            "trade_price": float(trade_price),
+            "trade_qty": float(trade_qty),
+            "deplete_mult": float(deplete_mult),
+            "trade_remaining_before": float(trade_remaining_before),
+            "trade_remaining": float(remaining_trade),
+            "queue_before": float(queue_before),
+            "remaining_before": float(remaining_before),
+        }
+        if int(visible_ts_ms) == int(exchange_ts_ms):
+            q_before_visible = float(q)
+            _, filled_buy, filled_sell = _publish_passive_fill(
+                visibility_ts_ms=int(visible_ts_ms),
+                exchange_reserved=True,
+                **payload,
+            )
+            _apply_visible_fill_inventory_state(
+                q_before_visible=q_before_visible,
+                visibility_ts_ms=int(visible_ts_ms),
+                filled_buy=filled_buy,
+                filled_sell=filled_sell,
+            )
+            return remaining_trade, filled_buy, filled_sell
+        if local_lifecycle_boundary_scheduler is None:
+            raise RuntimeError("private fill visibility scheduler is unavailable")
+        trace_id = str(order.get("trace_id", ""))
+        event_id = (
+            f"private-fill:{trace_id}:{int(exchange_ts_ms)}:"
+            f"{int(visible_ts_ms)}:{exchange_remaining_after:.12f}"
+        )
+        local_lifecycle_boundary_scheduler.schedule(
+            ts_ms=int(visible_ts_ms),
+            phase="private_fill_visible",
+            event_id=event_id,
+            payload=payload,
+        )
+        return remaining_trade, False, False
+
     _restore_initial_live_orders()
     active_decision_bbo_idx: Optional[int] = None
 
-    for i in range(n_trades):
+    def _replay_events():
+        """Merge local wakeups with market truth without changing its arrays.
+
+        A wake uses only the last consumed market row. Equal-ms market rows
+        precede the wake; source-message readiness still uses strict < now.
+        Local callbacks can finish HTTP calls between market rows and schedule
+        the next sleep boundary without waiting for a trade or fixed grid.
+        """
+        nonlocal main_loop_next_wake_ms, main_loop_tick_complete_ms, main_loop_tick_count
+        if not main_loop_enabled:
+            for index in range(n_trades):
+                yield index, int(trade_ts[index]), True, False, False
+            return
+        main_loop_next_wake_ms = int(trade_ts[0])
+        end_ms = int(trade_ts[-1])
+        index = 0
+        while True:
+            market_ms = int(trade_ts[index]) if index < n_trades else end_ms + 1
+            wake_ms = main_loop_next_wake_ms
+            resume_ms = (
+                int(pending_quote_compute["capture_ts"])
+                if pending_quote_compute is not None else None
+            )
+            next_main_ms = resume_ms if resume_ms is not None else wake_ms
+            boundary_ms = local_lifecycle_boundary_scheduler.next_timestamp()
+            if (
+                boundary_ms is not None
+                and boundary_ms <= end_ms
+                and boundary_ms < market_ms
+                and (next_main_ms is None or boundary_ms <= next_main_ms)
+            ):
+                yield max(0, index - 1), int(boundary_ms), False, False, False
+                continue
+            if market_ms <= end_ms and (next_main_ms is None or market_ms <= next_main_ms):
+                yield index, market_ms, True, False, False
+                index += 1
+                continue
+            if resume_ms is not None:
+                if resume_ms > end_ms:
+                    return
+                yield max(0, index - 1), resume_ms, False, False, True
+                if serial_rest_decision is None and main_loop_next_wake_ms is None:
+                    main_loop_next_wake_ms = (
+                        max(main_loop_tick_complete_ms, rest_gateway_busy_until_ms)
+                        + main_loop_sleep_ms
+                    )
+                continue
+            if wake_ms is None or wake_ms > end_ms:
+                return
+            if serial_rest_decision is not None:
+                raise RuntimeError("main-loop wake overlaps an in-flight quote call")
+            if wake_ms < rest_gateway_busy_until_ms:
+                main_loop_next_wake_ms = rest_gateway_busy_until_ms + main_loop_sleep_ms
+                continue
+            main_loop_next_wake_ms = None
+            main_loop_tick_complete_ms = int(wake_ms)
+            main_loop_tick_count += 1
+            yield max(0, index - 1), int(wake_ms), False, True, False
+            if (main_loop_next_wake_ms is None and serial_rest_decision is None
+                    and pending_quote_compute is None):
+                main_loop_next_wake_ms = (
+                    max(main_loop_tick_complete_ms, rest_gateway_busy_until_ms) + main_loop_sleep_ms
+                )
+
+    for (i, event_ts_ms, is_market_array_event,
+         is_main_loop_wake, is_quote_compute_resume) in _replay_events():
+        active_quote_compute = pending_quote_compute if is_quote_compute_resume else None
+        if is_quote_compute_resume:
+            pending_quote_compute = None
         bounded_parent_stop_requested = bool(
             cooldown_duration_shared_prefix_executor is not None
             and not bool(cooldown_duration_shared_prefix_executor.is_arm_child)
@@ -22491,7 +25382,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             cooldown_duration_parent_stop_triggered = True
             cooldown_duration_parent_stop_trigger_ts_ms = int(trade_ts[i])
             break
-        if replay_progress_callback is not None and (
+        if is_market_array_event and replay_progress_callback is not None and (
             i == 0 or i % replay_progress_interval_events == 0
         ):
             replay_progress_callback(
@@ -22503,18 +25394,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
         last_processed_event_idx = i
         active_decision_bbo_idx = None
-        t = trade_ts[i]
+        t = event_ts_ms
         p = trade_price[i]
-        qty = trade_qty[i]
+        qty = trade_qty[i] if is_market_array_event else 0.0
         is_sell = is_seller[i]
-        is_execution_event = bool(is_execution_trade[i])
+        is_execution_event = bool(is_market_array_event and is_execution_trade[i])
         has_executable_trade = is_execution_event and float(qty) > 0.0
         trade_price_tick = _price_to_tick(float(p), TICK) if has_executable_trade else 0
         dynamic_fill_hazard_last_event_at_timestamp = bool(
             i + 1 >= n_trades or int(trade_ts[i + 1]) != int(t)
         )
         system_event_code = (
-            int(maker_event_code[i]) if not is_execution_event else 0
+            int(maker_event_code[i]) if is_market_array_event and not is_execution_event else 0
         )
         empirical_clock_action = (
             int(maker_event_code[i])
@@ -22525,7 +25416,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             )
             else 0
         )
-        if exchange_book_scheduler is not None:
+        if (
+            exchange_book_scheduler is not None
+            or local_lifecycle_boundary_scheduler is not None
+        ):
             lifecycle_fallback_mid = (
                 float(prev_mark_px)
                 if np.isfinite(prev_mark_px) and prev_mark_px > 0.0
@@ -22547,25 +25441,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         l2_idx_before_event = l2_idx
         if reference_scheduler is not None:
             reference_scheduler.advance_to(int(t) * 1_000_000)
-        _decay_markout_ema(int(t))
+        if not exec_message_schedules or not main_loop_enabled or is_main_loop_wake:
+            # Live resolves/decays markouts on the main loop. Public callbacks
+            # that arrive while quoting is blocked do not advance this state.
+            _decay_markout_ema(int(t))
 
-        if i > 0:
-            dt_s = max(0.0, float(t - trade_ts[i - 1]) / 1000.0)
-            mark_for_interval = prev_mark_px if prev_mark_px > 0.0 else p
-            signed_inventory_time_s += q * dt_s
-            abs_inventory_time_s += abs(q) * dt_s
-            sq_inventory_time_s += q * q * dt_s
-            signed_notional_inventory_time_s += q * mark_for_interval * dt_s
-            notional_inventory_time_s += abs(q) * mark_for_interval * dt_s
-            # 中文说明：inventory_pnl 是“持仓期间价格路径漂移”分解项，
-            # 不是库存风险惩罚。BUY 后价格下跌的 toxic markout 会进入
-            # 负 inventory_pnl，随后 InvAdj = final_pnl - inventory_pnl 会把
-            # 这部分加回去；因此 InvAdj 不能单独作为 alpha/promotion 判据。
-            inventory_pnl += q * (p - prev_mark_px)
-        prev_mark_px = p
-        _campaign_update_path(int(t), p)
-        _fair_center_update_path(int(t), p)
-        _cooldown_lineage_update_path(int(t), float(p))
+        # inventory_pnl 是持仓期间价格路径漂移分解项，不是库存风险惩罚。
+        # The shared clock also lets a future local lifecycle callback accrue
+        # the old inventory exactly through its visibility boundary.
+        _accrue_local_path_to(int(t), float(p))
 
         # Infer the opposite side of the touch from the latest aggressing trade.
         # aggTrade prints at bid on seller aggression and at ask on buyer aggression.
@@ -22962,7 +25846,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
 
         # Resolve at the explicit fill-to-observation wall-clock horizon.
-        if markout_ema_span_fills > 0 and mo_pending:
+        if (
+            markout_ema_span_fills > 0 and mo_pending
+            and (not main_loop_enabled or is_main_loop_wake)
+        ):
             markout_mid = _markout_observation_mid(int(t), float(mid))
             resolved = []
             for j, item in enumerate(mo_pending):
@@ -22971,9 +25858,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 fill_qty_btc = float(item[4]) if len(item) > 4 else 1.0
                 age_ms = int(t - ft)
                 if age_ms >= markout_horizon_ms:
-                    if age_ms > adverse_markout_max_resolve_gap_ms:
+                    if (not exec_message_schedules
+                            and age_ms > adverse_markout_max_resolve_gap_ms):
                         mo_stale_drop_count += 1
                         resolved.append(j)
+                        continue
+                    if exec_message_schedules and not math.isfinite(markout_mid):
+                        # An inherited fill may precede the first received
+                        # depth message. Wait for visibility; exchange truth
+                        # is not a substitute for an unobserved local markout.
                         continue
                     if is_bid:
                         mo_val = markout_mid - fpx
@@ -23056,8 +25949,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ):
                     continue
                 skip_reason = ""
-                if order["state"] not in (ORDER_OPEN, ORDER_PENDING_CANCEL):
+                if order["state"] not in (
+                    ORDER_PENDING_NEW,
+                    ORDER_OPEN,
+                    ORDER_PENDING_CANCEL,
+                ):
                     skip_reason = f"state_{order['state']}"
+                elif (
+                    order["state"] == ORDER_PENDING_NEW
+                    and not bool(order.get("exchange_accepted", False))
+                ):
+                    skip_reason = "pending_exchange_accept"
+                elif not _order_exchange_fillable(order, int(t)):
+                    skip_reason = "cancel_effective"
                 elif not order.get("fill_eligible", True):
                     skip_reason = "fill_ineligible"
                 elif order.get("remaining", 0.0) < LOT_SIZE:
@@ -23077,9 +25981,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
             live_bid_orders = sorted(
                 [o for o in bid_orders
-                 if o["state"] in (ORDER_OPEN, ORDER_PENDING_CANCEL)
+                 if o["state"] in (ORDER_PENDING_NEW, ORDER_OPEN, ORDER_PENDING_CANCEL)
+                 and (
+                     o["state"] != ORDER_PENDING_NEW
+                     or bool(o.get("exchange_accepted", False))
+                 )
+                 and _order_exchange_fillable(o, int(t))
                  and o["fill_eligible"]
-                 and o["remaining"] >= LOT_SIZE
+                 and float(
+                     o.get("exchange_remaining", o["remaining"])
+                     if private_fill_visibility_enabled
+                     else o["remaining"]
+                 ) >= LOT_SIZE
                  and _trade_tick_crosses_order_tick(
                      "BUY", trade_price_tick, _order_price_tick(o, TICK)
                  )],
@@ -23123,9 +26036,22 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         skip_reason="trade_remaining_below_lot" if trade_remaining < LOT_SIZE else "remaining_below_lot",
                     )
                     continue
-                fill_qty = min(order["remaining"], trade_remaining)
+                match_remaining = float(
+                    order.get("exchange_remaining", order["remaining"])
+                    if private_fill_visibility_enabled
+                    else order["remaining"]
+                )
+                fill_qty = min(match_remaining, trade_remaining)
                 if order.get("reduce_only", False):
-                    fill_qty = min(fill_qty, max(0.0, -q))
+                    fill_qty = min(
+                        fill_qty,
+                        max(
+                            0.0,
+                            -exchange_inventory
+                            if private_fill_visibility_enabled
+                            else -q,
+                        ),
+                    )
                 fill_qty = math.floor(fill_qty / LOT_SIZE) * LOT_SIZE
                 if fill_qty < LOT_SIZE:
                     _append_queue_event(
@@ -23143,298 +26069,32 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     )
                     continue
 
-                q_before_fill = q
-                cash -= order["price"] * fill_qty * (1.0 + maker_fee)
-                q += fill_qty
-                _loss_cooldown_on_fill(
-                    "BUY",
-                    float(fill_qty),
-                    float(order["price"]),
-                    float(maker_fee),
-                )
-                order["remaining"] -= fill_qty
-                q90_lifecycle = dynamic_fill_hazard_lifecycles.get(
-                    str(order.get("trace_id", ""))
-                )
-                if q90_lifecycle is not None and q90_lifecycle.fill_risk_active:
-                    q90_full_fill = bool(order["remaining"] < LOT_SIZE)
-                    q90_lifecycle.observe_fill(
-                        remaining_after=max(0.0, float(order["remaining"])),
-                        visibility_ts_ns=int(t) * 1_000_000,
-                        exchange_ts_ns=int(t) * 1_000_000,
-                        full_fill=q90_full_fill,
+                if (
+                    not private_fill_visibility_enabled
+                    and not bool(order.get("local_new_ack_published", True))
+                ):
+                    raise RuntimeError(
+                        "pre-ACK exchange fill requires private-fill visibility scheduling"
                     )
-                    _append_dynamic_fill_hazard_lifecycle_journal(
-                        order,
-                        "full_fill" if q90_full_fill else "partial_fill",
+
+                trade_remaining, filled_buy_now, filled_sell_now = (
+                    _reserve_or_publish_passive_fill(
+                        side="BUY",
+                        order=order,
+                        fill_qty=float(fill_qty),
+                        exchange_ts_ms=int(t),
+                        trade_idx=int(i),
+                        trade_price=float(p),
+                        trade_qty=float(qty),
+                        deplete_mult=float(deplete_mult),
+                        trade_remaining_before=float(trade_before_order),
+                        trade_remaining=float(trade_remaining),
+                        queue_before=float(queue_before),
+                        remaining_before=float(rem_before),
                     )
-                _post_cooldown_budget_on_fill(
-                    order,
-                    side="BUY",
-                    fill_qty_btc=float(fill_qty),
-                    now_ts=int(t),
                 )
-                if dynamic_fill_hazard_cpp_runtime is not None:
-                    hazard_id = str(order.get("trace_id", ""))
-                    if hazard_id in dynamic_fill_hazard_paths:
-                        matching_hold = bool(
-                            dynamic_fill_hazard_hold is not None
-                            and str(
-                                dynamic_fill_hazard_hold["client_order_id"]
-                            )
-                            == hazard_id
-                        )
-                        expected_transition = (
-                            "terminal_complete_no_reentry"
-                            if matching_hold
-                            and float(order["remaining"])
-                            < float(LOT_SIZE)
-                            else "none"
-                        )
-                        cpp_transition = (
-                            dynamic_fill_hazard_cpp_runtime.on_fill(
-                                hazard_id,
-                                float(order["remaining"]),
-                                int(t) * 1_000_000,
-                            )
-                        )
-                        dynamic_fill_hazard_cpp_lifecycle_count += 1
-                        _dynamic_fill_hazard_cpp_check(
-                            cpp_transition == expected_transition,
-                            "fill_transition",
-                            now_ts_ms=int(t),
-                            client_order_id=hazard_id,
-                            remaining_after=float(order["remaining"]),
-                            python_transition=expected_transition,
-                            cpp_transition=cpp_transition,
-                        )
-                trade_remaining -= fill_qty
-                (
-                    physical_fill_identity,
-                    economic_fill_legs,
-                ) = _campaign_legs_for_order_fill(
-                    order,
-                    ts_ms=int(t),
-                    side="BUY",
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    fill_qty=float(fill_qty),
-                    fill_price=float(order["price"]),
-                    fee_rate=float(maker_fee),
-                    remaining_before=float(rem_before),
-                    remaining_after=float(order["remaining"]),
-                )
-                _record_order_lifecycle_fill(
-                    order,
-                    int(t),
-                    fill_qty=float(fill_qty),
-                    remaining_before=float(rem_before),
-                    remaining_after=float(order["remaining"]),
-                    fill_price=float(order["price"]),
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    campaign_id=int(economic_fill_legs[0]["campaign_id"]),
-                    physical_fill_identity=physical_fill_identity,
-                    economic_legs=economic_fill_legs,
-                )
-                ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
-                _ranked_guard_order_fill(
-                    order,
-                    remaining_after=(
-                        0.0
-                        if ranked_guard_full_fill
-                        else float(order["remaining"])
-                    ),
-                    visibility_ts_ms=int(t),
-                    exchange_ts_ms=int(t),
-                    full_fill=bool(ranked_guard_full_fill),
-                )
-                nfb += 1
-                if order.get("circuit_breaker_close", False):
-                    circuit_breaker_close_fill_count += 1
-                buy_fill_qty_total += fill_qty
-                buy_fill_notional += order["price"] * fill_qty
-                filled_buy = True
-                if order.get("quote_final_compressed", False):
-                    fills_bid_final_compressed += 1
-                else:
-                    fills_bid_not_final_compressed += 1
-                if order.get("quote_mid_guard", False):
-                    fills_bid_mid_guard += 1
-                if order.get("quote_post_only", False):
-                    fills_bid_post_only += 1
-                if order.get("quote_bid_adverse", False):
-                    fills_bid_adverse_guard += 1
-                if order.get("quote_bid_defense", False):
-                    fills_bid_defense_guard += 1
-                if order.get("quote_local_extreme_guard", False):
-                    fills_bid_local_extreme_guard += 1
-                if order["state"] == ORDER_PENDING_CANCEL:
-                    fills_while_pending_cancel += 1
-                    if (
-                        dynamic_fill_hazard_hold is not None
-                        and str(
-                            dynamic_fill_hazard_hold["client_order_id"]
-                        )
-                        == str(order.get("trace_id", ""))
-                    ):
-                        dynamic_fill_hazard_pre_ack_fill_count += 1
-                        if (
-                            variance_time_lineage_randomized_enabled
-                            and variance_time_lineage_fail_on_q90_pre_ack_fill
-                        ):
-                            raise RuntimeError(
-                                "randomized lineage replay reached the first "
-                                "historical BUY q90 fill-before-cancel-ACK branch; "
-                                "C++ lifecycle lockstep authority is synthetic-only"
-                            )
-                order["queue_deplete_mult"] = float(deplete_mult)
-                _append_queue_event(
-                    event="fill",
-                    trade_idx=i,
-                    order=order,
-                    trade_price=p,
-                    trade_qty=qty,
-                    deplete_mult=deplete_mult,
-                    trade_remaining_before=trade_before_order,
-                    trade_remaining_after=trade_remaining,
-                    queue_before=queue_before,
-                    queue_after=float(order["queue_left"]),
-                    fill_qty=fill_qty,
-                )
-                _append_fill_trace(
-                    "BUY", i, order["price"], fill_qty,
-                    order["quote_ts"], order["mid_at_quote"], order["queue_init"],
-                    queue_before, rem_before, q_before_fill, order=order,
-                )
-                _append_order_outcome(order, t, "fill", "fill", fill_qty)
-                previous_fill_ts = int(last_buy_fill_ts)
-                previous_cooldown_ms = float(last_buy_fill_cooldown_ms)
-                consec_buy += fill_qty / max(order_size, LOT_SIZE)
-                consec_sell = 0.0
-                last_buy_fill_ts = t
-                new_cooldown_ms = _cooldown_ms_for_fill(
-                    "BUY",
-                    q_before_fill,
-                    consec_buy,
-                    int(t),
-                    previous_fill_ts_ms=previous_fill_ts,
-                    previous_cooldown_ms=previous_cooldown_ms,
-                    order=order,
-                    queue_ahead_before_fill_btc=float(queue_before),
-                )
-                last_buy_fill_cooldown_ms = cooldown_duration_after_same_side_fill(
-                    previous_fill_ts_ms=previous_fill_ts,
-                    previous_cooldown_ms=previous_cooldown_ms,
-                    current_fill_ts_ms=int(t),
-                    new_cooldown_ms=new_cooldown_ms,
-                )
-                last_buy_fill_cooldown_total_ms = last_buy_fill_cooldown_ms
-                _cooldown_lineage_on_fill(
-                    "BUY",
-                    prev_q=q_before_fill,
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                    fill_qty=float(fill_qty),
-                    fee_rate=float(maker_fee),
-                    consecutive_units=float(consec_buy),
-                    baseline_cooldown_ms=float(new_cooldown_ms),
-                )
-                _variance_time_on_fill(
-                    "BUY",
-                    prev_q=q_before_fill,
-                    fill_ts_ms=int(t),
-                    consecutive_units=consec_buy,
-                    baseline_cooldown_ms=new_cooldown_ms,
-                )
-                response_add_fill = post_fill_quote_response.record_fill(
-                    side="BUY",
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    fill_qty=float(fill_qty),
-                    order_size=float(order_size),
-                    ts_ms=int(t),
-                )
-                if response_add_fill:
-                    post_fill_quote_response_add_fill_count += 1
-                    post_fill_quote_response_bid_add_count += 1
-                last_sell_fill_cooldown_ms = 0.0
-                last_sell_fill_cooldown_total_ms = 0.0
-                if _fill_cooldown_active("BUY", int(t)):
-                    # Live MakerEngine calls _cancel_cooldown_side_order(side)
-                    # after an exposure-increasing fill.  Replay must cancel any
-                    # residual/pending same-side orders too; otherwise old
-                    # same-side orders can keep filling during a period where
-                    # live would already be in fill_cd pause.
-                    _request_cancel_all(bid_orders, int(t), reason="fill_cooldown")
-                elif response_add_fill:
-                    # Reprice the old add-side order through the normal cancel
-                    # ACK/pending lifecycle. This removes the arbitrary hard
-                    # silence while retaining real queue-reset and REST costs.
-                    _request_cancel_all(
-                        bid_orders,
-                        int(t),
-                        reason="post_fill_quote_response",
-                    )
-                    post_fill_quote_response_force_bid_requote = q < max_inv - 1e-12
-                if q_before_fill <= 0.0 and q > 0.0:
-                    entry_price = order["price"]
-                elif q_before_fill > 0.0:
-                    entry_price = (entry_price * q_before_fill + order["price"] * fill_qty) / q
-                if abs(q) < 1e-10:
-                    entry_price = 0.0
-                _record_local_action_fill(order, "BUY", int(t), float(fill_qty))
-                _record_local_order_value_fill(order, "BUY", int(t))
-                _record_queue_value_fill(
-                    order,
-                    "BUY",
-                    int(t),
-                    float(fill_qty),
-                )
-                _record_state_conditioned_fill(
-                    order, "BUY", int(t), float(fill_qty)
-                )
-                _record_safe_add_rearm_fill(order, "BUY", int(t), float(fill_qty))
-                _record_state_conditioned_rearm_fill(
-                    order, "BUY", int(t), float(fill_qty)
-                )
-                _record_first_add_decision_fill(
-                    order,
-                    "BUY",
-                    inventory_before_fill=float(q_before_fill),
-                    fill_qty=float(fill_qty),
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                )
-                _record_first_opener_decision_fill(
-                    order,
-                    "BUY",
-                    inventory_before_fill=float(q_before_fill),
-                    fill_qty=float(fill_qty),
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                )
-                _campaign_on_fill(
-                    "BUY",
-                    q_before_fill,
-                    fill_qty,
-                    int(t),
-                    float(order["price"]),
-                    maker_fee,
-                    physical_fill_identity=physical_fill_identity,
-                    economic_legs=economic_fill_legs,
-                )
-                _sync_local_order_lifecycle_repair(int(t))
-                if order["remaining"] < LOT_SIZE:
-                    _dynamic_fill_hazard_order_terminal(
-                        order,
-                        event="fill",
-                        now_ts=int(t),
-                    )
-                if markout_ema_span_fills > 0:
-                    mo_pending.append((t, order["price"], True, {
-                        "final_compressed": order.get("quote_final_compressed", False),
-                    }, fill_qty))
+                filled_buy = filled_buy or filled_buy_now
+                filled_sell = filled_sell or filled_sell_now
 
             bid_orders = [o for o in bid_orders if o["remaining"] >= LOT_SIZE]
 
@@ -23464,8 +26124,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ):
                     continue
                 skip_reason = ""
-                if order["state"] not in (ORDER_OPEN, ORDER_PENDING_CANCEL):
+                if order["state"] not in (
+                    ORDER_PENDING_NEW,
+                    ORDER_OPEN,
+                    ORDER_PENDING_CANCEL,
+                ):
                     skip_reason = f"state_{order['state']}"
+                elif (
+                    order["state"] == ORDER_PENDING_NEW
+                    and not bool(order.get("exchange_accepted", False))
+                ):
+                    skip_reason = "pending_exchange_accept"
+                elif not _order_exchange_fillable(order, int(t)):
+                    skip_reason = "cancel_effective"
                 elif not order.get("fill_eligible", True):
                     skip_reason = "fill_ineligible"
                 elif order.get("remaining", 0.0) < LOT_SIZE:
@@ -23485,9 +26156,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
             live_ask_orders = sorted(
                 [o for o in ask_orders
-                 if o["state"] in (ORDER_OPEN, ORDER_PENDING_CANCEL)
+                 if o["state"] in (ORDER_PENDING_NEW, ORDER_OPEN, ORDER_PENDING_CANCEL)
+                 and (
+                     o["state"] != ORDER_PENDING_NEW
+                     or bool(o.get("exchange_accepted", False))
+                 )
+                 and _order_exchange_fillable(o, int(t))
                  and o["fill_eligible"]
-                 and o["remaining"] >= LOT_SIZE
+                 and float(
+                     o.get("exchange_remaining", o["remaining"])
+                     if private_fill_visibility_enabled
+                     else o["remaining"]
+                 ) >= LOT_SIZE
                  and _trade_tick_crosses_order_tick(
                      "SELL", trade_price_tick, _order_price_tick(o, TICK)
                  )],
@@ -23530,9 +26210,22 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         skip_reason="trade_remaining_below_lot" if trade_remaining < LOT_SIZE else "remaining_below_lot",
                     )
                     continue
-                fill_qty = min(order["remaining"], trade_remaining)
+                match_remaining = float(
+                    order.get("exchange_remaining", order["remaining"])
+                    if private_fill_visibility_enabled
+                    else order["remaining"]
+                )
+                fill_qty = min(match_remaining, trade_remaining)
                 if order.get("reduce_only", False):
-                    fill_qty = min(fill_qty, max(0.0, q))
+                    fill_qty = min(
+                        fill_qty,
+                        max(
+                            0.0,
+                            exchange_inventory
+                            if private_fill_visibility_enabled
+                            else q,
+                        ),
+                    )
                 fill_qty = math.floor(fill_qty / LOT_SIZE) * LOT_SIZE
                 if fill_qty < LOT_SIZE:
                     _append_queue_event(
@@ -23550,220 +26243,32 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     )
                     continue
 
-                q_before_fill = q
-                cash += order["price"] * fill_qty * (1.0 - maker_fee)
-                q -= fill_qty
-                _loss_cooldown_on_fill(
-                    "SELL",
-                    float(fill_qty),
-                    float(order["price"]),
-                    float(maker_fee),
-                )
-                order["remaining"] -= fill_qty
-                _post_cooldown_budget_on_fill(
-                    order,
-                    side="SELL",
-                    fill_qty_btc=float(fill_qty),
-                    now_ts=int(t),
-                )
-                trade_remaining -= fill_qty
-                (
-                    physical_fill_identity,
-                    economic_fill_legs,
-                ) = _campaign_legs_for_order_fill(
-                    order,
-                    ts_ms=int(t),
-                    side="SELL",
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    fill_qty=float(fill_qty),
-                    fill_price=float(order["price"]),
-                    fee_rate=float(maker_fee),
-                    remaining_before=float(rem_before),
-                    remaining_after=float(order["remaining"]),
-                )
-                _record_order_lifecycle_fill(
-                    order,
-                    int(t),
-                    fill_qty=float(fill_qty),
-                    remaining_before=float(rem_before),
-                    remaining_after=float(order["remaining"]),
-                    fill_price=float(order["price"]),
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    campaign_id=int(economic_fill_legs[0]["campaign_id"]),
-                    physical_fill_identity=physical_fill_identity,
-                    economic_legs=economic_fill_legs,
-                )
-                ranked_guard_full_fill = float(order["remaining"]) < LOT_SIZE
-                _ranked_guard_order_fill(
-                    order,
-                    remaining_after=(
-                        0.0
-                        if ranked_guard_full_fill
-                        else float(order["remaining"])
-                    ),
-                    visibility_ts_ms=int(t),
-                    exchange_ts_ms=int(t),
-                    full_fill=bool(ranked_guard_full_fill),
-                )
-                nfa += 1
-                if order.get("circuit_breaker_close", False):
-                    circuit_breaker_close_fill_count += 1
-                sell_fill_qty_total += fill_qty
-                sell_fill_notional += order["price"] * fill_qty
-                filled_sell = True
-                if order.get("quote_final_compressed", False):
-                    fills_ask_final_compressed += 1
-                else:
-                    fills_ask_not_final_compressed += 1
-                if order.get("quote_mid_guard", False):
-                    fills_ask_mid_guard += 1
-                if order.get("quote_post_only", False):
-                    fills_ask_post_only += 1
-                if order.get("quote_ask_adverse", False):
-                    fills_ask_adverse_guard += 1
-                if order.get("quote_ask_defense", False):
-                    fills_ask_defense_guard += 1
-                if order.get("quote_local_extreme_guard", False):
-                    fills_ask_local_extreme_guard += 1
-                if order["state"] == ORDER_PENDING_CANCEL:
-                    fills_while_pending_cancel += 1
-                order["queue_deplete_mult"] = float(deplete_mult)
-                _append_queue_event(
-                    event="fill",
-                    trade_idx=i,
-                    order=order,
-                    trade_price=p,
-                    trade_qty=qty,
-                    deplete_mult=deplete_mult,
-                    trade_remaining_before=trade_before_order,
-                    trade_remaining_after=trade_remaining,
-                    queue_before=queue_before,
-                    queue_after=float(order["queue_left"]),
-                    fill_qty=fill_qty,
-                )
-                _append_fill_trace(
-                    "SELL", i, order["price"], fill_qty,
-                    order["quote_ts"], order["mid_at_quote"], order["queue_init"],
-                    queue_before, rem_before, q_before_fill, order=order,
-                )
-                _append_order_outcome(order, t, "fill", "fill", fill_qty)
-                previous_fill_ts = int(last_sell_fill_ts)
-                previous_cooldown_ms = float(last_sell_fill_cooldown_ms)
-                consec_sell += fill_qty / max(order_size, LOT_SIZE)
-                consec_buy = 0.0
-                last_sell_fill_ts = t
-                new_cooldown_ms = _cooldown_ms_for_fill(
-                    "SELL",
-                    q_before_fill,
-                    consec_sell,
-                    int(t),
-                    previous_fill_ts_ms=previous_fill_ts,
-                    previous_cooldown_ms=previous_cooldown_ms,
-                    order=order,
-                    queue_ahead_before_fill_btc=float(queue_before),
-                )
-                last_sell_fill_cooldown_ms = cooldown_duration_after_same_side_fill(
-                    previous_fill_ts_ms=previous_fill_ts,
-                    previous_cooldown_ms=previous_cooldown_ms,
-                    current_fill_ts_ms=int(t),
-                    new_cooldown_ms=new_cooldown_ms,
-                )
-                last_sell_fill_cooldown_total_ms = last_sell_fill_cooldown_ms
-                _cooldown_lineage_on_fill(
-                    "SELL",
-                    prev_q=q_before_fill,
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                    fill_qty=float(fill_qty),
-                    fee_rate=float(maker_fee),
-                    consecutive_units=float(consec_sell),
-                    baseline_cooldown_ms=float(new_cooldown_ms),
-                )
-                _variance_time_on_fill(
-                    "SELL",
-                    prev_q=q_before_fill,
-                    fill_ts_ms=int(t),
-                    consecutive_units=consec_sell,
-                    baseline_cooldown_ms=new_cooldown_ms,
-                )
-                response_add_fill = post_fill_quote_response.record_fill(
-                    side="SELL",
-                    inventory_before=float(q_before_fill),
-                    inventory_after=float(q),
-                    fill_qty=float(fill_qty),
-                    order_size=float(order_size),
-                    ts_ms=int(t),
-                )
-                if response_add_fill:
-                    post_fill_quote_response_add_fill_count += 1
-                    post_fill_quote_response_ask_add_count += 1
-                last_buy_fill_cooldown_ms = 0.0
-                last_buy_fill_cooldown_total_ms = 0.0
-                if _fill_cooldown_active("SELL", int(t)):
-                    # Match live _cancel_cooldown_side_order("SELL") semantics.
-                    _request_cancel_all(ask_orders, int(t), reason="fill_cooldown")
-                elif response_add_fill:
-                    _request_cancel_all(
-                        ask_orders,
-                        int(t),
-                        reason="post_fill_quote_response",
+                if (
+                    not private_fill_visibility_enabled
+                    and not bool(order.get("local_new_ack_published", True))
+                ):
+                    raise RuntimeError(
+                        "pre-ACK exchange fill requires private-fill visibility scheduling"
                     )
-                    post_fill_quote_response_force_ask_requote = q > -max_inv + 1e-12
-                if q_before_fill >= 0.0 and q < 0.0:
-                    entry_price = order["price"]
-                elif q_before_fill < 0.0:
-                    entry_price = (entry_price * (-q_before_fill) + order["price"] * fill_qty) / (-q)
-                if abs(q) < 1e-10:
-                    entry_price = 0.0
-                _record_local_action_fill(order, "SELL", int(t), float(fill_qty))
-                _record_local_order_value_fill(order, "SELL", int(t))
-                _record_queue_value_fill(
-                    order,
-                    "SELL",
-                    int(t),
-                    float(fill_qty),
+
+                trade_remaining, filled_buy_now, filled_sell_now = (
+                    _reserve_or_publish_passive_fill(
+                        side="SELL",
+                        order=order,
+                        fill_qty=float(fill_qty),
+                        exchange_ts_ms=int(t),
+                        trade_idx=int(i),
+                        trade_price=float(p),
+                        trade_qty=float(qty),
+                        deplete_mult=float(deplete_mult),
+                        trade_remaining_before=float(trade_before_order),
+                        trade_remaining=float(trade_remaining),
+                        queue_before=float(queue_before),
+                        remaining_before=float(rem_before),
+                    )
                 )
-                _record_sell_add_skip_fill(order, int(t), float(fill_qty))
-                _record_state_conditioned_fill(
-                    order, "SELL", int(t), float(fill_qty)
-                )
-                _record_safe_add_rearm_fill(order, "SELL", int(t), float(fill_qty))
-                _record_state_conditioned_rearm_fill(
-                    order, "SELL", int(t), float(fill_qty)
-                )
-                _record_first_add_decision_fill(
-                    order,
-                    "SELL",
-                    inventory_before_fill=float(q_before_fill),
-                    fill_qty=float(fill_qty),
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                )
-                _record_first_opener_decision_fill(
-                    order,
-                    "SELL",
-                    inventory_before_fill=float(q_before_fill),
-                    fill_qty=float(fill_qty),
-                    fill_ts_ms=int(t),
-                    fill_price=float(order["price"]),
-                )
-                _campaign_on_fill(
-                    "SELL",
-                    q_before_fill,
-                    fill_qty,
-                    int(t),
-                    float(order["price"]),
-                    maker_fee,
-                    physical_fill_identity=physical_fill_identity,
-                    economic_legs=economic_fill_legs,
-                )
-                _sync_local_order_lifecycle_repair(int(t))
-                if markout_ema_span_fills > 0:
-                    mo_pending.append((t, order["price"], False, {
-                        "final_compressed": order.get("quote_final_compressed", False),
-                    }, fill_qty))
+                filled_buy = filled_buy or filled_buy_now
+                filled_sell = filled_sell or filled_sell_now
 
             ask_orders = [o for o in ask_orders if o["remaining"] >= LOT_SIZE]
 
@@ -23780,6 +26285,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         _cooldown_duration_fork_path_update(int(t), float(mid))
 
         if planned_quote_stop_ts_ms > 0 and int(t) >= planned_quote_stop_ts_ms:
+            if pending_quote_compute is not None or active_quote_compute is not None:
+                pre_snapshot_compute_discarded_count += 1
+                pending_quote_compute = None
+                active_quote_compute = None
             if not planned_quote_stop_triggered:
                 planned_quote_stop_triggered = True
                 planned_quote_stop_trigger_ts_ms = int(t)
@@ -23787,6 +26296,24 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     float(order.get("remaining", 0.0) or 0.0) >= LOT_SIZE
                     for order in (*bid_orders, *ask_orders)
                 )
+                if rest_gateway_timing_enabled:
+                    _prepare_rest_gateway_timing(
+                        decision_ts=int(t),
+                        requested_slots=tuple(
+                            slot
+                            for slot, requested in (
+                                (
+                                    "cancel_buy",
+                                    _has_cancel_request_candidate(bid_orders),
+                                ),
+                                (
+                                    "cancel_sell",
+                                    _has_cancel_request_candidate(ask_orders),
+                                ),
+                            )
+                            if requested
+                        ),
+                    )
                 _request_cancel_all(
                     bid_orders,
                     int(t),
@@ -23797,6 +26324,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     int(t),
                     reason="planned_maintenance",
                 )
+                if rest_gateway_timing_enabled:
+                    _clear_rest_gateway_timing()
             # Existing orders remain fill-eligible until cancel ACK. The replay
             # continues through the drain interval, but no policy state or new
             # quote is generated after the planned stop.
@@ -23870,19 +26399,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             break
 
         # ── Track position open time ──
-        if filled_buy or filled_sell:
-            if abs(q) < 1e-10:
-                post_fill_quote_response.reset()
-                post_fill_quote_response_force_bid_requote = False
-                post_fill_quote_response_force_ask_requote = False
-            if abs(q) < 1e-10:
-                pos_open_ts = t
-            elif abs(q_before_trade) < 1e-10 or (q_before_trade <= 0.0 < q) or (q_before_trade >= 0.0 > q):
-                pos_open_ts = t
-            if q >= max_inv:
-                _drop_orders(bid_orders, t, "inventory_limit")
-            elif q <= -max_inv:
-                _drop_orders(ask_orders, t, "inventory_limit")
+        _apply_visible_fill_inventory_state(
+            q_before_visible=float(q_before_trade),
+            visibility_ts_ms=int(t),
+            filled_buy=bool(filled_buy),
+            filled_sell=bool(filled_sell),
+        )
 
         if circuit_breaker_closing and abs(q) < LOT_SIZE:
             circuit_breaker_closing = False
@@ -23897,7 +26419,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             entry_price = 0.0
 
         # ── Position timeout: force close at market (taker fee) ──
-        if position_timeout_ms > 0 and abs(q) > 1e-10:
+        if (
+            position_timeout_ms > 0 and abs(q) > 1e-10
+            and (
+                not main_loop_enabled
+                or (is_main_loop_wake and int(t) - int(last_rq_ts) >= cur_rq_ms)
+            )
+        ):
             if t - pos_open_ts >= position_timeout_ms:
                 timeout_prev_q = float(q)
                 aq_t = abs(q)
@@ -24010,7 +26538,37 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _process_order_transitions(ask_orders, "SELL", t, p)
             continue
 
-        if consecutive_loss_cooldown.active(int(t)):
+        if main_loop_enabled and not (is_main_loop_wake or is_quote_compute_resume):
+            # Exchange matching, native state, and private callbacks above are
+            # independent of the sleeping/REST-blocked live main thread.
+            continue
+
+        if main_loop_enabled and dynamic_rq and var_retsq is not None:
+            # Live's one-second bar callback updates these EMAs before tick()
+            # asks whether it is due. Catch up delivered bars once per wake,
+            # including bars delivered while synchronous REST blocked main.
+            # The first close only initializes the previous-close anchor.
+            rq_visible_index = (
+                _message_clock_state("variance", int(t))[0]
+                if exec_message_schedules
+                else int(np.searchsorted(var_ts_ms, int(t) - 1_000, side="right")) - 1
+            )
+            while main_loop_rq_var_idx < rq_visible_index:
+                main_loop_rq_var_idx += 1
+                rsq = float(var_retsq[main_loop_rq_var_idx])
+                if not dyn_rq_inited:
+                    ema_var_fast = ema_var_slow = rsq
+                    dyn_rq_inited = True
+                else:
+                    ema_var_fast = 0.067 * rsq + (1.0 - 0.067) * ema_var_fast
+                    ema_var_slow = 0.011 * rsq + (1.0 - 0.011) * ema_var_slow
+            cur_rq_ms = rq_ms
+            if dyn_rq_inited and ema_var_slow >= 1e-12:
+                vol_ratio = max(0.0, min(ema_var_fast / ema_var_slow, 2.0))
+                rq_f = rq_max_ms * math.exp(math.log(rq_min_ms / rq_max_ms) * vol_ratio)
+                cur_rq_ms = int(max(rq_min_ms, min(rq_max_ms, rq_f)))
+
+        if not is_quote_compute_resume and consecutive_loss_cooldown.active(int(t)):
             _cooldown_lineage_observe_early_blocker(
                 int(t),
                 "consecutive_loss_cooldown",
@@ -24064,9 +26622,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             and post_fill_quote_response_force_ask_requote
             and not ask_orders
         )
+        if is_quote_compute_resume:
+            # Continue the original call, not a newly scheduled requote. A
+            # callback during compute can separately request the next call.
+            scheduled_requote_due = active_quote_compute["scheduled_requote_due"]
+            response_force_bid_due = active_quote_compute["response_force_bid_due"]
+            response_force_ask_due = active_quote_compute["response_force_ask_due"]
+        if (
+            sampled_serial_gateway
+            and not is_quote_compute_resume
+            and (int(t) < rest_gateway_busy_until_ms or serial_rest_decision is not None)
+            and (scheduled_requote_due or response_force_bid_due or response_force_ask_due)
+        ):
+            # Exchange matching and private callbacks above still advance.
+            # A synchronous REST lane cannot begin another policy decision.
+            rest_gateway_decision_deferral_count += 1
+            continue
         if scheduled_requote_due or response_force_bid_due or response_force_ask_due:
-            loss_cooldown_transition = consecutive_loss_cooldown.on_policy_clock(
-                int(t)
+            if main_loop_enabled and not is_quote_compute_resume:
+                # Live sets its timer at actual _requote() entry, never at a
+                # missed fixed-grid deadline. Compute also occupies keep/skip
+                # calls, even when they produce no HTTP request.
+                main_loop_tick_complete_ms = _decision_gateway_request_ts(int(t))
+            loss_cooldown_transition = (
+                consecutive_loss_cooldown.on_policy_clock(int(t))
+                if not is_quote_compute_resume else "continuing_requote"
             )
             if loss_cooldown_transition in {"triggered", "active"}:
                 _cooldown_lineage_observe_early_blocker(
@@ -24094,9 +26674,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # such as fill cooldown. Fixed mode keeps the scheduler anchored to
             # the intended cadence while still using the latest observed market
             # state at this trade.
-            if scheduled_requote_due and replay_event_clock == "empirical":
+            if main_loop_enabled and not is_quote_compute_resume:
                 last_rq_ts = t
-            elif scheduled_requote_due:
+            elif scheduled_requote_due and replay_event_clock == "empirical":
+                last_rq_ts = t
+            elif scheduled_requote_due and not is_quote_compute_resume:
                 if random_passive_enabled and random_passive_timing_jitter_fraction > 0.0:
                     random_unit = deterministic_random_passive_unit(
                         seed=random_passive_seed,
@@ -24121,11 +26703,38 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     last_rq_ts += missed_intervals * cur_rq_ms
                 else:
                     last_rq_ts = t
-            if response_force_bid_due:
+            if response_force_bid_due and not is_quote_compute_resume:
                 post_fill_quote_response_force_bid_requote = False
-            if response_force_ask_due:
+            if response_force_ask_due and not is_quote_compute_resume:
                 post_fill_quote_response_force_ask_requote = False
 
+            if pre_snapshot_compute_enabled and not is_quote_compute_resume:
+                pre_ms = _deterministic_decision_to_gateway_latency_ms(
+                    pre_snapshot_compute_samples_ms,
+                    seed=decision_to_gateway_latency_seed, decision_ts_ms=int(t),
+                )
+                prediction_cutoff_ms = (
+                    _message_clock_state("prediction", int(t))[1] // 1_000_000
+                    if exec_message_schedules and "prediction" in exec_message_schedules
+                    else (int(t) // 1_000) * 1_000
+                )
+                active_quote_compute = {
+                    "entry_ts": int(t), "capture_ts": int(t) + pre_ms,
+                    "request_ready_ts": int(main_loop_tick_complete_ms),
+                    "prediction_cutoff_ms": int(prediction_cutoff_ms),
+                    "scheduled_requote_due": bool(scheduled_requote_due),
+                    "response_force_bid_due": bool(response_force_bid_due),
+                    "response_force_ask_due": bool(response_force_ask_due),
+                }
+                pre_snapshot_compute_count += 1
+                pre_snapshot_compute_sum_ms += pre_ms
+                if pre_ms > 0:
+                    pending_quote_compute = active_quote_compute
+                    active_quote_compute = None
+                    continue
+
+            if active_quote_compute is not None:
+                pre_snapshot_compute_completed_count += 1
             truth_book_state = (
                 cur_best_bid,
                 cur_best_ask,
@@ -24145,6 +26754,15 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             cur_l2_ask_px_row = decision_book["l2_ask_px"]
             cur_l2_ask_qty_row = decision_book["l2_ask_qty"]
             mid = float(decision_book["mid"])
+            if exec_message_schedules and any(
+                _message_clock_state(feed, int(t))[0] < 0
+                for feed in exec_message_schedules
+                if feed != "bbo"
+            ):
+                exec_message_missing_source_skip_count += 1
+                _request_cancel_all(bid_orders, t, "message_source_not_ready")
+                _request_cancel_all(ask_orders, t, "message_source_not_ready")
+                continue
             if exec_book_visibility_delay_enabled and not use_bar_pricing:
                 sampled_book_delay_ms = int(decision_book["delay_ms"])
                 sampled_depth_delay_ms = int(decision_book["depth_delay_ms"])
@@ -24172,15 +26790,24 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 if bool(decision_book["observed_mid_override"]):
                     exec_book_visibility_mid_override_count += 1
 
-            if (replay_event_clock != "empirical"
+            if (bool(exec_message_schedules) or (
+                    replay_event_clock != "empirical"
                     and not use_bar_pricing and max_exec_book_age_ms > 0
-                    and (historical_bbo or historical_l2)):
-                book_age_ms = _current_book_age_ms(
-                    int(t),
-                    bbo_cursor=decision_bbo_idx,
-                    l2_cursor=decision_l2_idx,
-                )
-                stale_book = book_age_ms is None or book_age_ms > max_exec_book_age_ms
+                    and (historical_bbo or historical_l2))):
+                if exec_message_schedules:
+                    book_age_ms = float(decision_book["depth_visible_age_ms"])
+                    source_lag_ms = float(decision_book["depth_source_lag_ms"])
+                    stale_book = (
+                        not math.isfinite(book_age_ms) or book_age_ms < 0.0
+                        or book_age_ms > max_exec_book_visible_age_ms
+                        or not math.isfinite(source_lag_ms) or source_lag_ms < 0.0
+                        or source_lag_ms > max_exec_book_source_lag_ms
+                    )
+                else:
+                    book_age_ms = _current_book_age_ms(
+                        int(t), bbo_cursor=decision_bbo_idx, l2_cursor=decision_l2_idx,
+                    )
+                    stale_book = book_age_ms is None or book_age_ms > max_exec_book_age_ms
                 if stale_book:
                     _cooldown_lineage_observe_early_blocker(int(t), "stale_book")
                     stale_book_skip_count += 1
@@ -24205,13 +26832,24 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 int(decision_book["visible_trade_ts"]),
             )
             exec_signal_visible_ts_ms = int(signal_visible_ts)
+            variance_visible_ts = signal_visible_ts - 1_000
+            if exec_message_schedules:
+                variance_clock = _message_clock_state("variance", int(t))
+                variance_visible_ts = (
+                    variance_clock[1] // 1_000_000 if variance_clock[0] >= 0
+                    else int(var_ts_ms[0]) - 1 if len(var_ts_ms) else -1
+                )
 
             # ── σ² lookup + per-bar EMA catch-up for dynamic RQ & BER ──
             while (var_idx < len(var_ts_ms) - 1
-                   and var_ts_ms[var_idx + 1] <= signal_visible_ts):
+                   and var_ts_ms[var_idx + 1] <= variance_visible_ts):
                 var_idx += 1
+                if var_idx == 0:
+                    # The first close anchors subsequent close differences;
+                    # it is not itself an observed squared return/EMA update.
+                    continue
                 # Dynamic RQ: update fast/slow EMA of squared returns per bar
-                if dynamic_rq and var_retsq is not None:
+                if dynamic_rq and var_retsq is not None and not main_loop_enabled:
                     rsq = var_retsq[var_idx]
                     if not dyn_rq_inited:
                         ema_var_fast = rsq
@@ -24237,16 +26875,35 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         ber_pending_ti = float(var_ti[var_idx]) * 10.0
                         ber_pending_feature_ts_ms = int(var_ts_ms[var_idx])
 
-            if var_idx < len(var_ssq):
+            if 0 <= var_idx < len(var_ssq):
                 sigma_sq = var_ssq[var_idx]
             sigma_sq = max(sigma_sq, 1e-6)
 
-            # Trade intensity
-            if var_ti is not None and var_idx < len(var_ti):
-                cur_ti = var_ti[var_idx]
+            # Only complete, delivered 10s features may change liquidity.
+            # In message mode this is the current feature publication clock,
+            # not the prediction input frozen before signal computation.
+            if var_ti is not None:
+                quote_ti_cutoff_ms = min(signal_visible_ts, variance_visible_ts + 1_000)
+                if "prediction" in exec_message_schedules:
+                    quote_ti_cutoff_ms = min(
+                        quote_ti_cutoff_ms,
+                        _message_clock_state("prediction", int(t))[1] // 1_000_000,
+                    )
+                while quote_ti_cursor < len(quote_ti_source_indices):
+                    quote_ti_source_idx = int(quote_ti_source_indices[quote_ti_cursor])
+                    completed_ts_ms = int(var_ts_ms[quote_ti_source_idx]) + 1_000
+                    if completed_ts_ms > quote_ti_cutoff_ms:
+                        break
+                    cur_ti = float(var_ti[quote_ti_source_idx]) * 10.0
+                    quote_ti_completed_ts_ms = completed_ts_ms
+                    quote_ti_publish_count += 1
+                    quote_ti_cursor += 1
 
             # ── Dynamic RQ ──
-            if dynamic_rq and dyn_rq_inited and ema_var_slow > 1e-12 and nrq > 6:
+            if (
+                not main_loop_enabled and dynamic_rq and dyn_rq_inited
+                and ema_var_slow > 1e-12 and nrq > 6
+            ):
                 vol_ratio = ema_var_fast / ema_var_slow
                 vol_ratio = max(0.0, min(vol_ratio, 2.0))
                 log_ratio = math.log(rq_min_ms / rq_max_ms)
@@ -24273,6 +26930,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 or ranked_toxicity_guard_binding_active
             ):
                 t_pred = (signal_visible_ts // 1000) * 1000
+                if exec_message_schedules:
+                    t_pred = _message_clock_state("prediction", int(t))[1] // 1_000_000
+                if active_quote_compute is not None:
+                    t_pred = int(active_quote_compute["prediction_cutoff_ms"])
                 while (ml_idx < len(ml_ts) - 1
                        and ml_ts[ml_idx + 1] <= t_pred):
                     ml_idx += 1
@@ -24337,8 +26998,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 _requote_circuit_breaker_close(int(t), float(mid))
                 continue
 
+            inventory_mark_price = float(decision_book.get("inventory_mark_price", mid))
             unrealized_pnl = (
-                (mid - entry_price) * q if entry_price > 0.0 else 0.0
+                (inventory_mark_price - entry_price) * q
+                if entry_price > 0.0 and inventory_mark_price > 0.0 else 0.0
             )
             if (
                 abs(q) > 1e-10
@@ -24520,21 +27183,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # receive-time depth age used by SignalEngine.  Deriving age from
             # the offset-selected archive frame can otherwise make it negative
             # and incorrectly trigger the hard-stale policy gate.
-            current_book_age_ms = (
-                int(decision_book["depth_delay_ms"])
-                if bool(decision_book["paired_hit"])
-                else (
-                    max(0, int(t) - int(l2_ts[decision_l2_idx]))
-                    if historical_l2
-                    and l2_ts is not None
-                    and decision_l2_idx >= 0
-                    else _current_book_age_ms(
-                        int(t),
-                        bbo_cursor=decision_bbo_idx,
-                        l2_cursor=decision_l2_idx,
-                    )
+            if exec_message_schedules:
+                current_book_age_ms = float(decision_book["depth_visible_age_ms"])
+            elif bool(decision_book["paired_hit"]):
+                current_book_age_ms = int(decision_book["depth_delay_ms"])
+            elif historical_l2 and l2_ts is not None and decision_l2_idx >= 0:
+                current_book_age_ms = max(0, int(t) - int(l2_ts[decision_l2_idx]))
+            else:
+                current_book_age_ms = _current_book_age_ms(
+                    int(t), bbo_cursor=decision_bbo_idx, l2_cursor=decision_l2_idx,
                 )
-            )
             current_book_age_s = (
                 math.inf
                 if current_book_age_ms is None
@@ -24584,6 +27242,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     else 0
                 )
             )
+            if exec_message_schedules:
+                decision_l2_feature_ready_ts_ms = (
+                    int(decision_book["depth_feature_ready_ts_ns"]) + 999_999
+                ) // 1_000_000
+                decision_bbo_feature_ready_ts_ms = (
+                    int(decision_book["bbo_feature_ready_ts_ns"]) + 999_999
+                ) // 1_000_000
             if (
                 decision_bbo_feature_ready_ts_ms > int(t)
                 or decision_l2_feature_ready_ts_ms > int(t)
@@ -24597,6 +27262,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     _side_ctx.setdefault("quote_ts_ms", int(t))
                     _side_ctx.setdefault("depth_age_s", current_book_age_s)
                     _side_ctx["decision_visible_mid_usdc_per_btc"] = float(mid)
+                    if exec_message_schedules:
+                        for _mark_key in (
+                            "inventory_mark_price", "inventory_mark_source",
+                            "inventory_mark_ready_ts_ns", "inventory_mark_same_ready",
+                        ):
+                            _side_ctx[_mark_key] = decision_book[_mark_key]
                     _side_ctx["decision_visible_best_bid_usdc_per_btc"] = float(
                         cur_best_bid
                     )
@@ -26878,44 +29549,236 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 side_orders=ask_orders,
             )
 
-            if ranked_guard_bid_cancel_order_id:
-                _request_cancel_all(
-                    bid_orders,
-                    t,
-                    "ranked_toxicity_guard",
-                    target_order_id=ranked_guard_bid_cancel_order_id,
-                    guard_initiated_order_id=ranked_guard_bid_cancel_order_id,
+            if serial_rest_return_enabled:
+                serial_steps = []
+                serial_new_requested = {}
+                for side, orders, guard_id, cancel_first, updated, can_new in (
+                    ("BUY", bid_orders, ranked_guard_bid_cancel_order_id,
+                     bid_cancel_first, bid_updated, hb_new),
+                    ("SELL", ask_orders, ranked_guard_ask_cancel_order_id,
+                     ask_cancel_first, ask_updated, ha_new),
+                ):
+                    serial_new_requested[side] = bool(
+                        not guard_id and not cancel_first and updated and can_new
+                    )
+                    if guard_id or cancel_first or updated:
+                        for old in orders:
+                            if guard_id and _ranked_guard_order_id(old) != guard_id:
+                                continue
+                            reason = (
+                                "ranked_toxicity_guard" if guard_id else
+                                "cancel_first_replace" if cancel_first else
+                                "requote_replace" if can_new else "side_disabled"
+                            )
+                            serial_steps.append({
+                                "kind": "cancel", "side": side, "order": old,
+                                "reason": reason, "guard_id": guard_id,
+                            })
+                for side, price, quantity in (
+                    ("BUY", nbid, bid_sz), ("SELL", nask, ask_sz),
+                ):
+                    if serial_new_requested[side]:
+                        serial_steps.append({
+                            "kind": "new", "side": side,
+                            "price": float(price), "quantity": float(quantity),
+                        })
+                _begin_serial_rest_decision(
+                    decision_ts=int(t), steps=serial_steps,
+                    new_requested=serial_new_requested,
+                    actions={"BUY": bid_action, "SELL": ask_action},
+                    exposure={"BUY": q >= 0.0, "SELL": q <= 0.0},
+                    submit_mid=float(p), quote_flags=quote_flags,
+                    quote_context=quote_context,
+                    request_ready_ts=(
+                        int(active_quote_compute["request_ready_ts"])
+                        if active_quote_compute is not None else None
+                    ),
                 )
-            elif bid_cancel_first:
-                if bid_orders:
-                    _request_cancel_all(bid_orders, t, "cancel_first_replace")
-            elif bid_updated:
-                if bid_orders:
+                _advance_exchange_book_through_order_lifecycle(int(t), float(p))
+            elif rest_gateway_timing_enabled:
+                bid_cancel_requested = bool(
+                    (
+                        ranked_guard_bid_cancel_order_id
+                        and _has_cancel_request_candidate(
+                            bid_orders,
+                            target_order_id=ranked_guard_bid_cancel_order_id,
+                        )
+                    )
+                    or (
+                        not ranked_guard_bid_cancel_order_id
+                        and (bid_cancel_first or bid_updated)
+                        and _has_cancel_request_candidate(bid_orders)
+                    )
+                )
+                ask_cancel_requested = bool(
+                    (
+                        ranked_guard_ask_cancel_order_id
+                        and _has_cancel_request_candidate(
+                            ask_orders,
+                            target_order_id=ranked_guard_ask_cancel_order_id,
+                        )
+                    )
+                    or (
+                        not ranked_guard_ask_cancel_order_id
+                        and (ask_cancel_first or ask_updated)
+                        and _has_cancel_request_candidate(ask_orders)
+                    )
+                )
+                bid_new_requested = bool(
+                    not ranked_guard_bid_cancel_order_id
+                    and not bid_cancel_first
+                    and bid_updated
+                    and hb_new
+                )
+                ask_new_requested = bool(
+                    not ranked_guard_ask_cancel_order_id
+                    and not ask_cancel_first
+                    and ask_updated
+                    and ha_new
+                )
+                requested_gateway_slots = tuple(
+                    slot
+                    for slot, requested in (
+                        ("cancel_buy", bid_cancel_requested),
+                        ("cancel_sell", ask_cancel_requested),
+                        ("new_buy", bid_new_requested),
+                        ("new_sell", ask_new_requested),
+                    )
+                    if requested
+                )
+                _prepare_rest_gateway_timing(
+                    decision_ts=int(t),
+                    requested_slots=requested_gateway_slots,
+                    apply_decision_compute=True,
+                )
+
+                # Live sends the synchronous requests in this slot order.  Do
+                # not let Python's historical side-by-side update order change
+                # the paired empirical row's chronology.
+                if ranked_guard_bid_cancel_order_id:
                     _request_cancel_all(
-                        bid_orders, t,
+                        bid_orders,
+                        t,
+                        "ranked_toxicity_guard",
+                        target_order_id=ranked_guard_bid_cancel_order_id,
+                        guard_initiated_order_id=ranked_guard_bid_cancel_order_id,
+                    )
+                elif bid_cancel_first:
+                    if bid_orders:
+                        _request_cancel_all(
+                            bid_orders, t, "cancel_first_replace"
+                        )
+                elif bid_updated and bid_orders:
+                    _request_cancel_all(
+                        bid_orders,
+                        t,
                         "requote_replace" if hb_new else "side_disabled",
                     )
-                if hb_new:
-                    bid_orders.append(_make_order("BUY", nbid, bid_sz, t, p, quote_flags, quote_context))
-            if ranked_guard_ask_cancel_order_id:
-                _request_cancel_all(
-                    ask_orders,
-                    t,
-                    "ranked_toxicity_guard",
-                    target_order_id=ranked_guard_ask_cancel_order_id,
-                    guard_initiated_order_id=ranked_guard_ask_cancel_order_id,
-                )
-            elif ask_cancel_first:
-                if ask_orders:
-                    _request_cancel_all(ask_orders, t, "cancel_first_replace")
-            elif ask_updated:
-                if ask_orders:
+
+                if ranked_guard_ask_cancel_order_id:
                     _request_cancel_all(
-                        ask_orders, t,
+                        ask_orders,
+                        t,
+                        "ranked_toxicity_guard",
+                        target_order_id=ranked_guard_ask_cancel_order_id,
+                        guard_initiated_order_id=ranked_guard_ask_cancel_order_id,
+                    )
+                elif ask_cancel_first:
+                    if ask_orders:
+                        _request_cancel_all(
+                            ask_orders, t, "cancel_first_replace"
+                        )
+                elif ask_updated and ask_orders:
+                    _request_cancel_all(
+                        ask_orders,
+                        t,
                         "requote_replace" if ha_new else "side_disabled",
                     )
-                if ha_new:
-                    ask_orders.append(_make_order("SELL", nask, ask_sz, t, p, quote_flags, quote_context))
+
+                if bid_new_requested:
+                    bid_orders.append(
+                        _make_order(
+                            "BUY",
+                            nbid,
+                            bid_sz,
+                            t,
+                            p,
+                            quote_flags,
+                            quote_context,
+                        )
+                    )
+                if ask_new_requested:
+                    ask_orders.append(
+                        _make_order(
+                            "SELL",
+                            nask,
+                            ask_sz,
+                            t,
+                            p,
+                            quote_flags,
+                            quote_context,
+                        )
+                    )
+                _clear_rest_gateway_timing()
+            else:
+                if ranked_guard_bid_cancel_order_id:
+                    _request_cancel_all(
+                        bid_orders,
+                        t,
+                        "ranked_toxicity_guard",
+                        target_order_id=ranked_guard_bid_cancel_order_id,
+                        guard_initiated_order_id=ranked_guard_bid_cancel_order_id,
+                    )
+                elif bid_cancel_first:
+                    if bid_orders:
+                        _request_cancel_all(bid_orders, t, "cancel_first_replace")
+                elif bid_updated:
+                    if bid_orders:
+                        _request_cancel_all(
+                            bid_orders, t,
+                            "requote_replace" if hb_new else "side_disabled",
+                    )
+                    if hb_new:
+                        bid_orders.append(
+                            _make_order(
+                                "BUY",
+                                nbid,
+                                bid_sz,
+                                t,
+                                p,
+                                quote_flags,
+                                quote_context,
+                            )
+                        )
+                if ranked_guard_ask_cancel_order_id:
+                    _request_cancel_all(
+                        ask_orders,
+                        t,
+                        "ranked_toxicity_guard",
+                        target_order_id=ranked_guard_ask_cancel_order_id,
+                        guard_initiated_order_id=ranked_guard_ask_cancel_order_id,
+                    )
+                elif ask_cancel_first:
+                    if ask_orders:
+                        _request_cancel_all(ask_orders, t, "cancel_first_replace")
+                elif ask_updated:
+                    if ask_orders:
+                        _request_cancel_all(
+                            ask_orders, t,
+                            "requote_replace" if ha_new else "side_disabled",
+                    )
+                    if ha_new:
+                        ask_orders.append(
+                            _make_order(
+                                "SELL",
+                                nask,
+                                ask_sz,
+                                t,
+                                p,
+                                quote_flags,
+                                quote_context,
+                            )
+                        )
 
             _process_order_transitions(bid_orders, "BUY", t, p)
             _process_order_transitions(ask_orders, "SELL", t, p)
@@ -28760,6 +31623,142 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         **decision_side_role_action_counts,
         "new_order_latency_sample_count": int(new_latency_samples_ms.size),
         "cancel_order_latency_sample_count": int(cancel_latency_samples_ms.size),
+        **(
+            {
+                "decision_to_gateway_latency_sample_count": int(
+                    decision_to_gateway_latency_samples_ms.size
+                ),
+                "decision_to_gateway_latency_seed": int(
+                    decision_to_gateway_latency_seed
+                ),
+                "decision_to_gateway_latency_authority": "diagnostic_only",
+                "decision_market_snapshot_clock": (
+                    "after_pre_snapshot_compute" if pre_snapshot_compute_enabled
+                    else "decision_time_frozen"
+                ),
+            }
+            if decision_to_gateway_latency_enabled
+            else {}
+        ),
+        **({
+            "pre_snapshot_compute_sample_count": int(pre_snapshot_compute_samples_ms.size),
+            "pre_snapshot_compute_count": pre_snapshot_compute_count,
+            "pre_snapshot_compute_completed_count": pre_snapshot_compute_completed_count,
+            "pre_snapshot_compute_abandoned_count": (
+                pre_snapshot_compute_count - pre_snapshot_compute_completed_count
+            ),
+            "pre_snapshot_compute_sum_ms": pre_snapshot_compute_sum_ms,
+            "pre_snapshot_compute_pending_count": int(pending_quote_compute is not None),
+            "pre_snapshot_compute_discarded_count": pre_snapshot_compute_discarded_count,
+            "pre_snapshot_prediction_clock": "requote_entry_visible_inputs",
+            "pre_snapshot_inventory_variance_clock": "capture_visible_state",
+        } if pre_snapshot_compute_enabled else {}),
+        **(
+            {
+                "rest_gateway_timing_mode": str(rest_gateway_timing_mode),
+                "rest_gateway_timing_profile_path": str(
+                    rest_gateway_timing_profile["path"]
+                ),
+                "rest_gateway_timing_profile_row_count": int(
+                    rest_gateway_timing_profile["request_present_mask"].shape[0]
+                ),
+                "rest_gateway_timing_sampled_row_count": int(
+                    rest_gateway_sampled_row_count
+                ),
+                "rest_gateway_timing_authority": "diagnostic_only",
+            }
+            if rest_gateway_timing_enabled
+            and rest_gateway_timing_profile is not None
+            else {}
+        ),
+        **(
+            {
+                "rest_gateway_timing_mode": "sampled_serial",
+                "rest_gateway_timing_authority": "diagnostic_only",
+                "rest_gateway_sampling_assumption": (
+                    "independent_requests_with_paired_effective_private_response_upper_bound"
+                    if serial_rest_return_enabled else
+                    "independent_request_service_times_with_paired_effective_ack"
+                ),
+                "rest_gateway_response_clock_semantics": (
+                    "paired_observed_upper_bound" if serial_rest_return_enabled else
+                    "private_callback_bound_service_proxy"
+                ),
+                "rest_gateway_request_count": rest_gateway_request_count,
+                "rest_gateway_busy_ms": rest_gateway_busy_ms,
+                "rest_gateway_request_wait_ms": rest_gateway_request_wait_ms,
+                "rest_gateway_busy_until_ms": rest_gateway_busy_until_ms,
+                "rest_gateway_decision_deferral_count": rest_gateway_decision_deferral_count,
+                "rest_gateway_return_pending_coalesce_count": rest_return_pending_coalesce_count,
+                "rest_gateway_pending_decision_count": int(serial_rest_decision is not None),
+                **({"rest_gateway_response_sample_counts": {
+                    slot: int(rows.shape[0]) for slot, rows in rest_return_samples.items()
+                }} if serial_rest_return_enabled else {}),
+            }
+            if sampled_serial_gateway else {}
+        ),
+        **(
+            {
+                "replay_main_loop_sleep_ms": main_loop_sleep_ms,
+                "replay_main_loop_tick_count": main_loop_tick_count,
+                "replay_main_loop_clock": "actual_tick_and_rest_return_then_sleep",
+                "replay_main_loop_requote_anchor": "actual_requote_start",
+                "replay_main_loop_dynamic_rq_clock": "delivered_1s_bars_before_due_check",
+                "replay_main_loop_dynamic_rq_bar_index": main_loop_rq_var_idx,
+                "replay_main_loop_unmodeled_work": "periodic_position_sync_and_health_io",
+            }
+            if main_loop_enabled else {}
+        ),
+        **(
+            {
+                "new_order_exchange_effective_latency_sample_count": int(
+                    new_exchange_effective_latency_samples_ms.size
+                ),
+                "cancel_exchange_effective_latency_sample_count": int(
+                    cancel_exchange_effective_latency_samples_ms.size
+                ),
+                "cancel_ack_visibility_latency_sample_count": int(
+                    cancel_ack_visibility_latency_samples_ms.size
+                ),
+                "cancel_latency_split_enabled": bool(cancel_latency_split_enabled),
+            }
+            if (
+                new_exchange_effective_latency_samples_ms.size > 0
+                or cancel_latency_split_enabled
+            )
+            else {}
+        ),
+        **(
+            {
+                "private_fill_visibility_latency_sample_count": int(
+                    private_fill_visibility_latency_samples_ms.size
+                ),
+                "private_fill_visibility_enabled": True,
+                "private_fill_exchange_match_count": int(
+                    private_fill_exchange_match_count
+                ),
+                "private_fill_visible_count": int(private_fill_visible_count),
+                "private_fill_pending_visibility_count": int(
+                    private_fill_exchange_match_count
+                    - private_fill_visible_count
+                ),
+                **({
+                    "economic_pnl_complete": (
+                        private_fill_exchange_match_count == private_fill_visible_count
+                    ),
+                    "economic_pnl_status": (
+                        "complete_local_fill_ledger"
+                        if private_fill_exchange_match_count == private_fill_visible_count
+                        else "incomplete_pending_private_fills"
+                    ),
+                    "pnl_clock_scope": "local_fill_visibility_at_window_end",
+                    "exchange_inventory_at_window_end": float(exchange_inventory),
+                    "exchange_pending_quantity": float(exchange_inventory - q),
+                } if serial_rest_return_enabled else {}),
+            }
+            if private_fill_visibility_enabled
+            else {}
+        ),
         "exec_book_visibility_delay_enabled": bool(
             exec_book_visibility_delay_enabled
         ),
@@ -28769,7 +31768,46 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "exec_book_visibility_delay_profile_path": str(
             params.get("exec_book_visibility_delay_profile_path", "")
         ),
+        **(
+            {
+                "exec_source_stratified_profile_id": str(
+                    params.get("exec_source_stratified_profile_id", "")
+                ),
+                "exec_source_stratified_profile_path": str(
+                    params.get("exec_source_stratified_profile_path", "")
+                ),
+                "exec_source_stratified_profile_sha256": (
+                    exec_source_profile_sha256
+                ),
+                "exec_source_stratified_profile_market_id": (
+                    exec_source_profile_market_id
+                ),
+                "exec_source_stratified_profile_transport": (
+                    exec_source_profile_transport
+                ),
+                "exec_source_stratified_authority": (
+                    "diagnostic_non_authoritative"
+                ),
+            }
+            if exec_source_profile is not None
+            else {}
+        ),
         "exec_book_visibility_mode": exec_book_visibility_mode,
+        **(
+            {
+                "exec_message_delivery_semantics": "per_message_assigned_ready_with_channel_head_of_line",
+                "exec_message_delivery_authority": "diagnostic_non_authoritative",
+                "exec_message_delivery_sources": {
+                    feed: schedule.stats_dict()
+                    for feed, schedule in exec_message_schedules.items()
+                },
+                "exec_message_missing_source_skip_count": exec_message_missing_source_skip_count,
+                "exec_message_delivery_input_semantics": dict(
+                    params.get("exec_message_delivery_input_semantics", {})
+                ),
+            }
+            if exec_message_schedules else {}
+        ),
         "exec_book_visibility_delay_sample_count": int(
             exec_book_visibility_delay_samples_ms.size
         ),
@@ -28883,7 +31921,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             sync_degrade_events.promotion_eligible
         ),
         "user_stream_mismatch_replayed": False,
-        "exchange_order_ack_replayed": False,
+        "exchange_order_ack_replayed": bool(
+            new_order_latency_split_enabled or cancel_latency_split_enabled
+        ),
         "multi_market_network_arrival_replayed": False,
         "replay_semantics_note": (
             "Python replay approximates queue, latency and pending order lifecycle. "
@@ -29374,6 +32414,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "ber_ema_slow_end": float(ema_ti_slow),
         "ber_active_end": bool(ber_active),
         "ber_feature_publish_count": int(ber_feature_publish_count),
+        **({
+            "quote_trade_intensity_end": float(cur_ti),
+            "quote_trade_intensity_publish_count": int(quote_ti_publish_count),
+            "quote_trade_intensity_completed_ts_ms": int(quote_ti_completed_ts_ms),
+            "quote_trade_intensity_unit": "mean_aggregate_trades_per_complete_10s_bar",
+            "quote_trade_intensity_clock": "capture_visible_completed_10s_feature",
+        } if var_ti is not None else {}),
         "ber_role_safe_decision_count": int(ber_role_safe_decision_count),
         "ber_role_safe_buy_add_count": int(ber_role_safe_buy_add_count),
         "ber_role_safe_sell_add_count": int(ber_role_safe_sell_add_count),
@@ -30548,6 +33595,35 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     中文说明：C++ replay 是加速/一致性验证工具，不是当前 live 参数选择的
     权威引擎。凡是 Python 新增但 C++ 未补齐 parity 的机制必须 fail-fast。
     """
+    pre_snapshot_samples = _as_f64_array(
+        params.get("_pre_snapshot_compute_latency_samples_ms")
+    )
+    if pre_snapshot_samples.size and np.any(pre_snapshot_samples > 0.0):
+        raise ValueError("pre-snapshot compute continuation is Python-only")
+    private_fill_latency_samples = _as_f64_array(
+        params.get("_private_fill_visibility_latency_samples_ms")
+    )
+    if private_fill_latency_samples.size and np.any(
+        private_fill_latency_samples > 0.0
+    ):
+        raise ValueError(
+            "private-fill exchange/local-visibility replay is Python-only"
+        )
+    decision_to_gateway_latency_samples = _as_f64_array(
+        params.get("_decision_to_gateway_latency_samples_ms")
+    )
+    decision_to_gateway_latency_enabled = bool(
+        decision_to_gateway_latency_samples.size
+        and np.any(decision_to_gateway_latency_samples > 0.0)
+    )
+    if (
+        decision_to_gateway_latency_enabled
+        and str(params.get("replay_purpose", "")).strip().lower()
+        != "diagnostic"
+    ):
+        raise ValueError(
+            "decision-to-gateway compute latency is diagnostic-only"
+        )
     ber_exposure_add_only = bool(params.get("ber_exposure_add_only", False))
     conditional_p3_requested = bool(
         _as_i64_array(params.get("_conditional_p3_ts_ms")).size
@@ -30698,14 +33774,27 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             "BUY q90 replay requires the Python native snapshot/delta exchange-book "
             "scheduler; C++ has no equivalent strategy-independent deep-book input"
         )
+    if str(
+        params.get("rest_gateway_timing_mode", "disabled") or "disabled"
+    ).strip().lower() != "disabled":
+        raise NotImplementedError(
+            "paired serial REST gateway timing is a Python-only diagnostic path"
+        )
     if bool(params.get("fixed_spread_probe_enabled", False)):
         raise ValueError(
             "scalar fixed-spread probe was retired after it violated paired "
             "distance monotonicity; use paired_fixed_spread_probe_enabled"
         )
-    if str(params.get("exec_book_visibility_mode", "sampled")).lower() == "paired":
+    cpp_visibility_mode = str(
+        params.get("exec_book_visibility_mode", "sampled")
+    ).lower()
+    if cpp_visibility_mode == "paired":
         raise NotImplementedError(
             "paired live execution-book visibility is a Python-only calibration path"
+        )
+    if cpp_visibility_mode in {"sampled_joint", "profile_source_stratified", "message_schedule"}:
+        raise NotImplementedError(
+            "joint live execution-book visibility is a Python-only calibration path"
         )
     if bool(params.get("queue_regime_calibration_enabled", False)) and not params.get("_queue_calibration"):
         # C++ supports the compiled per-trade queue arrays used by the daily
@@ -31130,6 +34219,25 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params.new_order_latency_ms = max(0, int(params.get("new_order_latency_ms", 0.0) or 0.0))
     cpp_params.cancel_order_latency_ms = max(0, int(params.get("cancel_order_latency_ms", 0.0) or 0.0))
     cpp_params.latency_jitter_ms = latency_jitter_ms
+    if decision_to_gateway_latency_enabled and not hasattr(
+        cpp_params, "decision_to_gateway_latency_samples_ms"
+    ):
+        raise RuntimeError(
+            "decision-to-gateway latency replay requires the current C++ ABI; "
+            "rebuild narrowgate_cpp"
+        )
+    if hasattr(cpp_params, "decision_to_gateway_latency_samples_ms"):
+        cpp_params.decision_to_gateway_latency_seed = int(
+            params.get(
+                "decision_to_gateway_latency_seed",
+                params.get("latency_seed", cpp_params.rng_seed + 17),
+            )
+        )
+        cpp_params.decision_to_gateway_latency_samples_ms = [
+            float(x)
+            for x in decision_to_gateway_latency_samples.ravel()
+            if np.isfinite(x) and x >= 0.0
+        ]
     cpp_params.new_order_latency_samples_ms = [
         float(x)
         for x in np.asarray(params.get("_new_order_latency_samples_ms", []), dtype=np.float64).ravel()
@@ -31140,6 +34248,46 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         for x in np.asarray(params.get("_cancel_order_latency_samples_ms", []), dtype=np.float64).ravel()
         if np.isfinite(x) and x >= 0.0
     ]
+    split_lifecycle_latency_requested = any(
+        np.asarray(params.get(key, []), dtype=np.float64).size > 0
+        for key in (
+            "_new_order_exchange_effective_latency_samples_ms",
+            "_cancel_exchange_effective_latency_samples_ms",
+            "_cancel_ack_visibility_latency_samples_ms",
+        )
+    )
+    if split_lifecycle_latency_requested and not hasattr(
+        cpp_params, "cancel_ack_visibility_latency_samples_ms"
+    ):
+        raise RuntimeError(
+            "split exchange-effective/local-visible latency replay requires "
+            "the current C++ ABI; rebuild narrowgate_cpp"
+        )
+    if hasattr(cpp_params, "new_order_exchange_effective_latency_samples_ms"):
+        cpp_params.new_order_exchange_effective_latency_samples_ms = [
+            float(x)
+            for x in np.asarray(
+                params.get("_new_order_exchange_effective_latency_samples_ms", []),
+                dtype=np.float64,
+            ).ravel()
+            if np.isfinite(x) and x >= 0.0
+        ]
+        cpp_params.cancel_exchange_effective_latency_samples_ms = [
+            float(x)
+            for x in np.asarray(
+                params.get("_cancel_exchange_effective_latency_samples_ms", []),
+                dtype=np.float64,
+            ).ravel()
+            if np.isfinite(x) and x >= 0.0
+        ]
+        cpp_params.cancel_ack_visibility_latency_samples_ms = [
+            float(x)
+            for x in np.asarray(
+                params.get("_cancel_ack_visibility_latency_samples_ms", []),
+                dtype=np.float64,
+            ).ravel()
+            if np.isfinite(x) and x >= 0.0
+        ]
     cpp_params.exec_book_visibility_delay_samples_ms = [
         float(x)
         for x in np.asarray(
@@ -31540,10 +34688,9 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params.trace_window_ms = max(1000, int(float(params.get("trace_fills_window_s", 10.0) or 10.0) * 1000.0))
     cpp_params.collect_curves = bool(params.get("collect_curves", True))
     var_ssq_arr = _as_f64_array(var_ssq)
-    if var_ssq_arr.size:
-        finite_var = var_ssq_arr[np.isfinite(var_ssq_arr)]
-        if finite_var.size:
-            cpp_params.initial_sigma_sq = max(float(finite_var[0]), 1e-6)
+    # Match SignalEngine/Python warmup. The first supplied variance row may
+    # describe a not-yet-completed bar and must not seed current state.
+    cpp_params.initial_sigma_sq = 1.0
     cpp_params.rng_seed = int(params.get("rng_seed", 42))
     cpp_params.latency_seed = int(params.get("latency_seed", cpp_params.rng_seed + 17))
     cpp_params.replay_contract_sha256 = str(
@@ -32396,6 +35543,41 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "latency_jitter_ms": latency_jitter_ms,
         "new_order_latency_sample_count": len(cpp_params.new_order_latency_samples_ms),
         "cancel_order_latency_sample_count": len(cpp_params.cancel_order_latency_samples_ms),
+        **(
+            {
+                "decision_to_gateway_latency_sample_count": len(
+                    cpp_params.decision_to_gateway_latency_samples_ms
+                ),
+                "decision_to_gateway_latency_seed": int(
+                    cpp_params.decision_to_gateway_latency_seed
+                ),
+                "decision_to_gateway_latency_authority": "diagnostic_only",
+                "decision_market_snapshot_clock": "decision_time_frozen",
+            }
+            if decision_to_gateway_latency_enabled
+            else {}
+        ),
+        **(
+            {
+                "new_order_exchange_effective_latency_sample_count": len(
+                    cpp_params.new_order_exchange_effective_latency_samples_ms
+                ),
+                "cancel_exchange_effective_latency_sample_count": len(
+                    cpp_params.cancel_exchange_effective_latency_samples_ms
+                ),
+                "cancel_ack_visibility_latency_sample_count": len(
+                    cpp_params.cancel_ack_visibility_latency_samples_ms
+                ),
+                "cancel_latency_split_enabled": bool(
+                    cpp_params.cancel_exchange_effective_latency_samples_ms
+                    or cpp_params.cancel_ack_visibility_latency_samples_ms
+                    or decision_to_gateway_latency_enabled
+                ),
+            }
+            if split_lifecycle_latency_requested
+            or decision_to_gateway_latency_enabled
+            else {}
+        ),
         "replay_contract_sha256": str(cpp_params.replay_contract_sha256),
         "replay_purpose": str(params.get("replay_purpose", "exploratory")),
         "replay_initial_state_mode": str(
@@ -32594,7 +35776,12 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             summary.consecutive_loss_cooldown_until_ms
         ),
         "user_stream_mismatch_replayed": False,
-        "exchange_order_ack_replayed": False,
+        "exchange_order_ack_replayed": bool(
+            cpp_params.new_order_exchange_effective_latency_samples_ms
+            or cpp_params.cancel_exchange_effective_latency_samples_ms
+            or cpp_params.cancel_ack_visibility_latency_samples_ms
+            or decision_to_gateway_latency_enabled
+        ),
         "multi_market_network_arrival_replayed": False,
         "replay_semantics_note": (
             "C++ replay consumes frozen sync-degrade events and the path-dependent "
@@ -34566,9 +37753,10 @@ def main():
         type=Path,
         default=None,
         help=(
-            "Explicit non-current live-style config arm. Omit this option and use "
-            "a pure --day/--date invocation to run the private exact current E3 "
-            "mechanics default; that default has no public or B0 fallback."
+            "Explicit live-style config arm. When omitted, use the resolved "
+            "operational baseline if one is locally available; otherwise use "
+            "the public template. This public entry point never implies the "
+            "private exact-current-E3 mechanics baseline."
         ),
     )
     ap.add_argument("--sweep", action="store_true")
@@ -34713,8 +37901,25 @@ def main():
                     help="Quote-decision/live-telemetry CSV containing receive-time depth_age_s or exec_book_age_s")
     ap.add_argument("--exec-book-visibility-profile-id", default=None,
                     help="Environment/version label stored with the replay result")
-    ap.add_argument("--exec-book-visibility-mode", choices=("sampled", "paired"), default="sampled",
-                    help="Use sampled environment ages or exact same-day paired live requote states")
+    ap.add_argument(
+        "--exec-book-visibility-mode",
+        choices=(
+            "sampled",
+            "sampled_joint",
+            "paired",
+            "profile_source_stratified",
+        ),
+        default="sampled",
+        help=(
+            "Use book-only sampled ages, sampled joint book/depth/trade ages, "
+            "or exact same-day paired live requote states"
+        ),
+    )
+    ap.add_argument("--exec-source-stratified-profile", type=Path, default=None)
+    ap.add_argument("--exec-source-stratified-profile-sha256", default=None)
+    ap.add_argument("--exec-source-stratified-profile-id", default=None)
+    ap.add_argument("--exec-source-stratified-profile-market-id", default=None)
+    ap.add_argument("--exec-source-stratified-profile-transport", default=None)
     ap.add_argument("--exec-book-visibility-delay-mean-ms", type=float, default=None,
                     help="Fallback receive-time book visibility delay mean in ms")
     ap.add_argument("--exec-book-visibility-delay-jitter-ms", type=float, default=None,
@@ -34905,7 +38110,9 @@ def main():
     )
     base["current_e3_mechanics_default"] = False
     base["baseline_selection"] = (
-        "explicit_config_arm" if args.config is not None else "public_template"
+        "explicit_config_arm"
+        if args.config is not None
+        else str(base.get("_config_source", "public_template"))
     )
     run_ml = bool(base.get("ml_enabled", False)) if args.ml is None else bool(args.ml)
     base["ml_enabled"] = run_ml
@@ -35108,6 +38315,50 @@ def main():
     elif args.exec_book_visibility_profile_id is not None:
         base["exec_book_visibility_delay_profile_id"] = str(
             args.exec_book_visibility_profile_id
+        )
+    if args.exec_source_stratified_profile is not None:
+        if args.exec_book_visibility_profile is not None:
+            raise SystemExit(
+                "source-stratified market latency and live-perf age CSV are "
+                "mutually exclusive"
+            )
+        required_source_identity = {
+            "--exec-source-stratified-profile-sha256": (
+                args.exec_source_stratified_profile_sha256
+            ),
+            "--exec-source-stratified-profile-id": (
+                args.exec_source_stratified_profile_id
+            ),
+            "--exec-source-stratified-profile-market-id": (
+                args.exec_source_stratified_profile_market_id
+            ),
+            "--exec-source-stratified-profile-transport": (
+                args.exec_source_stratified_profile_transport
+            ),
+        }
+        missing_source_identity = [
+            name for name, value in required_source_identity.items() if not value
+        ]
+        if missing_source_identity:
+            raise SystemExit(
+                "source-stratified market latency profile is missing identity: "
+                + ", ".join(missing_source_identity)
+            )
+        base["exec_book_visibility_mode"] = "profile_source_stratified"
+        base["exec_source_stratified_profile_path"] = str(
+            args.exec_source_stratified_profile
+        )
+        base["exec_source_stratified_profile_sha256"] = str(
+            args.exec_source_stratified_profile_sha256
+        )
+        base["exec_source_stratified_profile_id"] = str(
+            args.exec_source_stratified_profile_id
+        )
+        base["exec_source_stratified_profile_market_id"] = str(
+            args.exec_source_stratified_profile_market_id
+        )
+        base["exec_source_stratified_profile_transport"] = str(
+            args.exec_source_stratified_profile_transport
         )
     if args.live_perf_telemetry is not None:
         samples = _load_live_perf_latency_samples(

@@ -307,6 +307,8 @@ def _deployment_envelope_fixture(
         "execution": {
             "execution_commit": commit,
             "execution_tree": tree,
+            # Existing v2 receipts may retain this redundant commit proof.
+            "tag_peeled_commit": commit,
         },
         "soabi": install["interpreter"]["soabi"],
         "dependency_lock": {
@@ -391,10 +393,17 @@ def _activation_artifacts(
         ],
         "account_key_sha256": "a" * 64,
         "position_rows": position_rows,
-        "position_lineage_sha256": subject.canonical_sha256(
-            {"position_rows": position_rows},
-            "unused",
-        ),
+        # Published predecessor receipts may carry this redundant leaf. The
+        # canonical loader must continue to admit them while new writers omit it.
+        "position_lineage_sha256": hashlib.sha256(
+            json.dumps(
+                position_rows,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+                allow_nan=False,
+            ).encode("ascii")
+        ).hexdigest(),
     }
     reconciliation_root = subject.canonical_sha256(
         reconciliation,
@@ -418,7 +427,6 @@ def _activation_artifacts(
         "startup_exchange_reconciliation": {
             "path": str(reconciliation_path.resolve()),
             "canonical_sha256": reconciliation_root,
-            "position_lineage_sha256": reconciliation["position_lineage_sha256"],
         },
     }
     _write_private_json(runtime_path, runtime_identity)
@@ -835,6 +843,7 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
     assert _verify_install(bundle) == receipt
     assert stat.S_IMODE(bundle["receipt_path"].stat().st_mode) == 0o600
     assert bundle["receipt_path"].stat().st_nlink == 1
+    assert receipt["pip_check"] == {"passed": True}
     assert receipt["interpreter"]["version"] == platform.python_version()
     assert receipt["interpreter"]["soabi"].startswith("cpython-312")
     assert receipt["interpreter"]["openssl_runtime"]
@@ -1454,7 +1463,6 @@ def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
     assert pointer == {
         "schema_version": subject.CURRENT_POINTER_SCHEMA,
         "release_id": release_id,
-        "deployment_envelope_sha256": envelope["canonical_sha256"],
         "activation_receipt_sha256": receipt_result["canonical_sha256"],
         "status": subject.CURRENT_POINTER_STATUS,
     }
@@ -1470,6 +1478,61 @@ def test_compact_activation_receipt_and_current_pointer_bind_only_roots(
         )["pointer"]
         == pointer
     )
+    legacy_pointer = {
+        "schema_version": subject.LEGACY_CURRENT_POINTER_SCHEMA,
+        "release_id": release_id,
+        "deployment_envelope_sha256": envelope["canonical_sha256"],
+        "activation_receipt_sha256": receipt_result["canonical_sha256"],
+        "status": subject.CURRENT_POINTER_STATUS,
+    }
+    legacy_pointer_path = tmp_path / "legacy-live.current.json"
+    subject._write_json_authority(legacy_pointer_path, legacy_pointer)  # noqa: SLF001
+    assert (
+        subject.load_current_pointer(
+            legacy_pointer_path,
+            deployment_envelope_path=envelope_path,
+            activation_receipt_path=receipt_path,
+        )["pointer"]
+        == legacy_pointer
+    )
+    wrong_legacy_pointer = {
+        **legacy_pointer,
+        "deployment_envelope_sha256": "0" * 64,
+    }
+    wrong_legacy_pointer_path = tmp_path / "wrong-legacy-live.current.json"
+    subject._write_json_authority(  # noqa: SLF001
+        wrong_legacy_pointer_path,
+        wrong_legacy_pointer,
+    )
+    with pytest.raises(
+        subject.LockedRuntimeError,
+        match="current pointer deployment envelope lineage drifted",
+    ):
+        subject.load_current_pointer(
+            wrong_legacy_pointer_path,
+            deployment_envelope_path=envelope_path,
+            activation_receipt_path=receipt_path,
+        )
+    wrong_receipt = dict(receipt)
+    wrong_receipt["deployment_envelope_sha256"] = "0" * 64
+    wrong_receipt[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
+        wrong_receipt,
+        subject.ACTIVATION_RECEIPT_CANONICAL_FIELD,
+    )
+    wrong_receipt_path = tmp_path / "wrong-envelope-receipt.json"
+    subject._write_json_authority(wrong_receipt_path, wrong_receipt)  # noqa: SLF001
+    wrong_pointer = {
+        **pointer,
+        "activation_receipt_sha256": wrong_receipt[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+    }
+    wrong_pointer_path = tmp_path / "wrong-envelope-current.json"
+    subject._write_json_authority(wrong_pointer_path, wrong_pointer)  # noqa: SLF001
+    with pytest.raises(subject.LockedRuntimeError, match="deployment release root drifted"):
+        subject.load_current_pointer(
+            wrong_pointer_path,
+            deployment_envelope_path=envelope_path,
+            activation_receipt_path=wrong_receipt_path,
+        )
     model_authorization.write_text('{"changed":true}\n', encoding="utf-8")
     assert (
         subject.load_current_pointer(
@@ -1580,6 +1643,13 @@ def test_compact_receipt_and_pointer_reject_ambiguous_or_broken_lineage(
             expected_deployment_envelope_sha256="5" * 64,
             expected_release_id="release-a",
         )
+    with pytest.raises(subject.LockedRuntimeError, match="expected deployment envelope"):
+        subject.load_activation_receipt(
+            receipt_path,
+            expected_root_sha256=payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
+            expected_deployment_envelope_sha256=None,  # type: ignore[arg-type]
+            expected_release_id="release-a",
+        )
 
     ambiguous = dict(payload)
     ambiguous["copied_leaf_sha256"] = "6" * 64
@@ -1600,17 +1670,16 @@ def test_compact_receipt_and_pointer_reject_ambiguous_or_broken_lineage(
     pointer = {
         "schema_version": subject.CURRENT_POINTER_SCHEMA,
         "release_id": "release-a",
-        "deployment_envelope_sha256": "1" * 64,
         "activation_receipt_sha256": payload[subject.ACTIVATION_RECEIPT_CANONICAL_FIELD],
         "status": subject.CURRENT_POINTER_STATUS,
     }
     with pytest.raises(subject.LockedRuntimeError, match="current pointer fields drifted"):
         subject._validate_current_pointer_payload(  # noqa: SLF001
-            {**pointer, "copied_config_sha256": "7" * 64}
+            {**pointer, "deployment_envelope_sha256": "7" * 64}
         )
     with pytest.raises(subject.LockedRuntimeError, match="lowercase SHA256"):
         subject._validate_current_pointer_payload(  # noqa: SLF001
-            {**pointer, "deployment_envelope_sha256": int("1" * 64)}
+            {**pointer, "activation_receipt_sha256": int("1" * 64)}
         )
     destination = tmp_path / "current.json"
     outside = tmp_path / "outside.json"

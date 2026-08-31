@@ -1420,9 +1420,36 @@ def compute_tick_momentum(bars_1s: pd.DataFrame) -> pd.DataFrame:
     bars_1s["_tick_ewm_10s"] = ret_1s.ewm(span=10, min_periods=1).mean()
 
     # --- return distribution moments (10s rolling window on 1s data) ---
-    bars_1s["_micro_ret_std"] = ret_1s.rolling(10, min_periods=3).std()
-    bars_1s["_micro_ret_skew"] = ret_1s.rolling(10, min_periods=5).skew()
-    bars_1s["_micro_ret_kurt"] = ret_1s.rolling(10, min_periods=5).kurt()
+    moments = ret_1s.rolling(10, min_periods=3)
+    count = ret_1s.rolling(10, min_periods=1).count()
+    population_std = moments.std(ddof=0).fillna(0.0)
+    standardized = (count >= 5) & (population_std > 1e-12)
+    # Live/native use population standardized moments. Undo pandas' sample
+    # bias corrections using its vectorized rolling kernels, not rolling.apply.
+    sample_moments = ret_1s.rolling(10, min_periods=5)
+    population_skew = sample_moments.skew() * (count - 2) / np.sqrt(count * (count - 1))
+    population_kurt = (
+        sample_moments.kurt() * (count - 2) * (count - 3) / (count - 1) - 6
+    ) / (count + 1)
+    # pandas suppresses near-constant higher moments before live's 1e-12
+    # standard-deviation cutoff. Recompute only those exceptional windows,
+    # using the same two-pass centered population moments as live.
+    fallback = standardized & (
+        ~np.isfinite(population_skew) | ~np.isfinite(population_kurt)
+    )
+    returns = ret_1s.to_numpy()
+    for end in np.flatnonzero(fallback.to_numpy()):
+        sample = returns[max(0, end - 9):end + 1]
+        sample = sample[np.isfinite(sample)]
+        sd = float(np.std(sample))
+        population_std.iloc[end] = sd
+        standardized.iloc[end] = sd > 1e-12
+        z = (sample - sample.mean()) / sd if sd > 1e-12 else np.zeros_like(sample)
+        population_skew.iloc[end] = np.mean(z ** 3)
+        population_kurt.iloc[end] = np.mean(z ** 4) - 3 if sd > 1e-12 else 0.0
+    bars_1s["_micro_ret_std"] = population_std
+    bars_1s["_micro_ret_skew"] = population_skew.where(standardized, 0.0).fillna(0.0)
+    bars_1s["_micro_ret_kurt"] = population_kurt.where(standardized, 0.0).fillna(0.0)
 
     # --- tick reversal freq: sign change ratio in last 10 bars ---
     sign_change = (sign_1s.diff().abs() > 0).astype(float)
@@ -1604,19 +1631,22 @@ def add_microstructure_features(
 
     # --- 6. 大单比例 ---
     # 用 volume/trade_count 作为平均单笔量的代理
-    avg_size = df["volume"] / df["trade_count"].replace(0, np.nan)
+    avg_size = (df["volume"] / df["trade_count"].replace(0, np.nan)).fillna(0.0)
     df["avg_trade_size"] = avg_size
 
     # 滚动平均单笔量（用于判断当前是否偏大）
     df["avg_trade_size_60s"] = avg_size.rolling(
         WINDOWS_10S["60s"], min_periods=1
     ).mean()
-    df["large_trade_ratio"] = avg_size / df["avg_trade_size_60s"].replace(0, np.nan)
+    df["large_trade_ratio"] = (
+        avg_size / df["avg_trade_size_60s"].replace(0, np.nan)
+    ).fillna(1.0)
 
     # --- 7. 价格冲击 (高量bar前后的价格变动) ---
-    vol_z = (df["volume"] - df["volume"].rolling(30, min_periods=2).mean()) / \
-            df["volume"].rolling(30, min_periods=2).std().replace(0, np.nan)
-    df["volume_zscore"] = vol_z
+    volume_window = df["volume"].rolling(30, min_periods=3)
+    vol_z = (df["volume"] - volume_window.mean()) / \
+            volume_window.std(ddof=0).replace(0, np.nan)
+    df["volume_zscore"] = vol_z.fillna(0.0)
 
     # --- 额外: spread代理 (high - low) ---
     df["bar_spread"] = df["high"] - df["low"]

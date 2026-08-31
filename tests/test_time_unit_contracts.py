@@ -6,35 +6,37 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from models.backtest_config import build_backtest_base_params
 from models.backtest_tick import (
     _aggregate_quality_segment_results,
     build_replay_event_clock,
     build_rolling_variance,
-    causal_prediction_ready_indices,
+    build_trade_intensity,
     causal_complete_1s_bars,
+    causal_prediction_ready_indices,
     load_1s_bars,
     ml_feature_ready_timestamps_ms,
+    replay_elapsed_days,
     require_formal_dense_1s_timeline,
     require_formal_dense_variance_timeline,
-    replay_elapsed_days,
     simulate_tick,
 )
-from models.backtest_config import build_backtest_base_params
 from models.tick_data_types import HistoricalBBOData
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import Side
-from strategy.quote_core import reservation_price
 from strategy.quote_core import (
     QuoteCoreConfig,
     QuotePrediction,
     QuoteState,
-    compute_quote_core,
     circuit_breaker_loss_threshold,
     circuit_breaker_triggered,
+    compute_quote_core,
     price_variance_pnl_sigma,
     quote_core_config_from_params,
+    reservation_price,
     validate_p3_touch_identity,
 )
+from strategy.signal import Bar1s, SignalEngine
 
 
 def _cfg(**overrides) -> QuoteCoreConfig:
@@ -55,6 +57,91 @@ def _cfg(**overrides) -> QuoteCoreConfig:
 def test_absolute_price_variance_converts_to_quote_currency_without_mid() -> None:
     # sqrt(9 (USDC/BTC)^2/s * 4s) * 0.01 BTC = 0.06 USDC.
     assert price_variance_pnl_sigma(9.0, 4.0, 0.01) == pytest.approx(0.06)
+
+
+def test_live_trade_intensity_is_mean_count_per_completed_10s_bar() -> None:
+    start = 1_000_000
+    counts = np.arange(1, 61, dtype=np.float64)
+    bars = pd.DataFrame(
+        {"trade_count": counts},
+        index=pd.to_datetime(start + np.arange(60) * 1_000, unit="ms", utc=True),
+    )
+    _, per_second = build_trade_intensity(bars)
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal_features_enabled = False
+    for second in range(61):
+        engine._finalize_bar(Bar1s(
+            ts=start + second * 1_000,
+            open=100.0, high=100.0, low=100.0, close=100.0,
+            trade_count=second + 1,
+            volume=1.0, buy_volume=0.5, sell_volume=0.5,
+            buy_count=1, sell_count=1,
+        ))
+    engine.compute_signal()
+    published = engine._feat_history[-1]["trade_intensity_60s"]
+    assert len(engine._feat_history) == 6
+    assert published == pytest.approx(counts.reshape(6, 10).sum(axis=1).mean())
+    assert published == pytest.approx(per_second[-1] * 10.0)
+    # A second call cannot republish the unfinished next 10s bucket.
+    engine.compute_signal()
+    assert len(engine._feat_history) == 6
+    assert engine._feat_history[-1]["trade_intensity_60s"] == published
+
+
+@pytest.mark.parametrize(
+    "offset_ms,expected", [(59_999, 255.0), (60_000, 305.0), (65_000, 305.0)],
+)
+def test_replay_quote_trade_intensity_publishes_complete_bucket_then_holds(
+    offset_ms: int, expected: float,
+) -> None:
+    import models.backtest_tick as bt
+
+    start = 1_000_000
+    source_ts = start + np.arange(70, dtype=np.int64) * 1_000
+    _, per_second = build_trade_intensity(pd.DataFrame(
+        {"trade_count": np.arange(1, 71)},
+        index=pd.to_datetime(source_ts, unit="ms", utc=True),
+    ))
+    trade_ts = np.asarray([start + offset_ms, start + offset_ms + 1])
+    trades = pd.DataFrame({
+        "transact_time": trade_ts, "price": 100.0, "quantity": 0.0,
+        "is_buyer_maker": False,
+    })
+    # Both engines must consume the same actual book, not their different
+    # legacy trade-only synthetic-BBO fallbacks.
+    bbo = HistoricalBBOData(
+        trade_ts, np.full(2, 99.9), np.full(2, 100.1), np.ones(2), np.ones(2),
+    )
+    params = {
+        "gamma": 0.1, "kappa": 1.0, "maker_fee": 0.0,
+        "order_size": 0.001, "max_inventory": 1.0,
+        "requote_interval": 0.001, "rq_min": 0.001, "rq_max": 0.001,
+        "use_bar_pricing": False, "regime_enabled": True,
+        "liq_baseline": 200.0, "vol_baseline": 0.0,
+        "max_spread_bps": 0.0, "max_exec_book_age_s": 0.0,
+        "replay_event_clock": "trade", "trace_decisions_max": 10,
+        "trace_quotes_max": 10, "tick_size": 0.1, "lot_size": 0.001,
+        "position_timeout": 0.0, "markout_ema_span_fills": 0,
+    }
+    result = bt.simulate_tick(
+        trades, source_ts, np.ones(70), params, var_ti=per_second, bbo_data=bbo,
+    )
+    rows = [r for r in result["_decision_trace"] if r["ts_ms"] == trade_ts[0]]
+    assert rows
+    assert all(r["quote_trade_intensity"] == pytest.approx(expected) for r in rows)
+    pytest.importorskip("narrowgate_cpp")
+    native = bt._simulate_tick_cpp(
+        trades, source_ts, np.ones(70), params, var_ti=per_second, bbo_data=bbo,
+    )
+    assert native["avg_spread"] == pytest.approx(result["avg_spread"], abs=1e-10)
+    assert native["avg_final_spread"] == pytest.approx(
+        result["avg_final_spread"], abs=1e-10,
+    )
+    assert len(native["_quote_trace"]) == len(result["_quote_trace"]) > 0
+    for py_row, cpp_row in zip(result["_quote_trace"], native["_quote_trace"], strict=True):
+        assert py_row["side"] == cpp_row["side"]
+        for key in ("price", "mid", "best_bid", "best_ask"):
+            assert py_row[key] == pytest.approx(cpp_row[key], abs=1e-10)
 
 
 def test_circuit_breaker_uses_the_same_quote_currency_threshold() -> None:
@@ -705,6 +792,52 @@ def test_legacy_replay_gamma_override_still_rebinds_both_coefficients() -> None:
     assert cfg.a_spread == pytest.approx(0.07)
 
 
+def test_legacy_replay_without_p3_adapter_field_preserves_pair_floor() -> None:
+    """Old frozen replay params inherit the pre-split P3 B0 behavior."""
+
+    cfg = quote_core_config_from_params(
+        {
+            "gamma": 0.046,
+            "kappa": 0.073,
+            "maker_fee": 0.0,
+            "order_size": 0.001,
+            "max_inventory": 0.026,
+            "regime_enabled": True,
+            "p3_delta_star": 14.0,
+            "p3_kappa_eff": 0.067,
+            "fill_probability_event_type": "touch",
+            "fill_probability_horizon_s": 10.0,
+            "fill_probability_distance_origin": (
+                "same_side_best_bid_or_ask_at_window_start"
+            ),
+            "fill_probability_distance_unit": "USDC_per_BTC",
+            "fill_probability_side": "pooled_buy_sell",
+            "fill_probability_queue_included": False,
+            "fill_probability_artifact_sha256": "a" * 64,
+        },
+        tick_size=0.1,
+        lot_size=0.001,
+        use_ml=False,
+        use_depth_microprice=False,
+        use_depth_kappa=False,
+    )
+    result = compute_quote_core(
+        QuoteState(
+            mid=78_000.0,
+            inventory=0.0,
+            sigma_sq=0.0,
+            best_bid=77_999.9,
+            best_ask=78_000.1,
+        ),
+        cfg,
+        QuotePrediction(),
+    )
+
+    assert cfg.historical_p3_scalar_adapter_enabled is True
+    assert result.diagnostics["p3_pair_floor"] == pytest.approx(28.0)
+    assert result.spread >= 28.0
+
+
 @pytest.mark.parametrize("name", ("eta_inventory", "a_spread"))
 @pytest.mark.parametrize("value", (0.0, -1.0, float("nan"), float("inf"), True))
 def test_dimensioned_quote_coefficients_must_be_finite_and_positive(
@@ -913,6 +1046,47 @@ def test_rolling_variance_warmup_never_backfills_from_future_prices() -> None:
     )
     np.testing.assert_array_equal(prefix_variance[:9], np.ones(9))
     assert prefix_variance[9] == pytest.approx(1e-6)
+
+
+@pytest.mark.parametrize("offset_ms,expected", [(999, 1.0), (1_000, 25.0), (1_999, 25.0), (2_000, 100.0)])
+def test_replay_variance_left_label_waits_for_complete_second(offset_ms, expected) -> None:
+    import models.backtest_tick as bt
+
+    start = 1_000_000
+    source_ts = start + np.asarray([0, 1_000], dtype=np.int64)
+    timestamps = start + np.asarray([offset_ms, offset_ms + 1], dtype=np.int64)
+    trades = pd.DataFrame({
+        "transact_time": timestamps, "price": 100.0, "quantity": 0.0,
+        "is_buyer_maker": False,
+    })
+    bbo = HistoricalBBOData(
+        timestamps, np.full(2, 99.9), np.full(2, 100.1), np.ones(2), np.ones(2),
+    )
+    params = {
+        "gamma": 0.1, "kappa": 1.0, "maker_fee": 0.0,
+        "order_size": 0.001, "max_inventory": 1.0,
+        "requote_interval": 0.001, "rq_min": 0.001, "rq_max": 0.001,
+        "use_bar_pricing": False, "regime_enabled": False,
+        "max_exec_book_age_s": 0.0, "replay_event_clock": "trade",
+        "trace_decisions_max": 10, "trace_quotes_max": 10,
+        "tick_size": 0.1, "lot_size": 0.001, "position_timeout": 0.0,
+        "markout_ema_span_fills": 0,
+    }
+    variance = np.asarray([25.0, 100.0])
+    result = bt.simulate_tick(trades, source_ts, variance, params, bbo_data=bbo)
+    rows = [row for row in result["_decision_trace"] if row["ts_ms"] == timestamps[0]]
+    assert rows and all(row["sigma_sq_raw"] == expected for row in rows)
+    expected_index = -1 if offset_ms < 1_000 else 0 if offset_ms < 2_000 else 1
+    assert all(row["feature_ready_generation_index"] == expected_index for row in rows)
+    # The first supplied value is not a permitted initial-state shortcut: at
+    # 999ms neither implementation may see that bar's 1000ms completed close.
+    pytest.importorskip("narrowgate_cpp")
+    native = bt._simulate_tick_cpp(trades, source_ts, variance, params, bbo_data=bbo)
+    assert native["avg_spread"] == pytest.approx(result["avg_spread"], abs=1e-10)
+    assert native["avg_final_spread"] == pytest.approx(result["avg_final_spread"], abs=1e-10)
+    assert [row["price"] for row in native["_quote_trace"]] == pytest.approx(
+        [row["price"] for row in result["_quote_trace"]], abs=1e-10,
+    )
 
 
 def test_formal_replay_fails_closed_without_dense_1s_timeline() -> None:

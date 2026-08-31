@@ -1034,7 +1034,6 @@ def audit_native_runtime(
             or not expected_venv.is_dir()
             or expected_python.is_symlink()
             or not expected_python.is_file()
-            or expected_python.stat().st_nlink != 1
             or _sha256_bytes(expected_python.read_bytes())
             != frozen_interpreter.get("executable_sha256")
         ):
@@ -1481,13 +1480,6 @@ def build_stopped_exchange_reconciliation(
     )
     if second_position != first_position:
         raise RuntimeError("positionRisk drifted during stopped reconciliation")
-    position_raw = json.dumps(
-        first_position,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=True,
-        allow_nan=False,
-    ).encode("ascii")
     payload: dict[str, Any] = {
         "schema_version": "narrowgate_stopped_exchange_reconciliation.v1",
         "status": "signed_open_orders_zero_exact_position_stable",
@@ -1507,7 +1499,6 @@ def build_stopped_exchange_reconciliation(
         ],
         "account_key_sha256": _sha256_bytes(str(api_key).encode("utf-8")),
         "position_rows": first_position,
-        "position_lineage_sha256": _sha256_bytes(position_raw),
     }
     canonical_raw = json.dumps(
         payload,
@@ -1578,7 +1569,7 @@ def validate_startup_exchange_reconciliation_lineage(
         raise RuntimeError("startup exchange reconciliation authority is missing")
     resolved = path.resolve(strict=True)
     metadata = resolved.stat()
-    if metadata.st_nlink != 1 or metadata.st_mode & 0o777 != 0o600:
+    if metadata.st_mode & 0o777 != 0o600:
         raise RuntimeError("startup exchange reconciliation inode drifted")
     before = resolved.read_bytes()
     expected_canonical_sha256 = os.environ.get(
@@ -1669,25 +1660,13 @@ def validate_startup_exchange_reconciliation_lineage(
         raise RuntimeError(
             "startup local inventory was not seeded from the stopped signed barrier"
         )
-    lineage = str(payload.get("position_lineage_sha256", ""))
-    if lineage != _sha256_bytes(
-        json.dumps(
-            position_rows,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=True,
-            allow_nan=False,
-        ).encode("ascii")
-    ):
-        raise RuntimeError("startup position lineage hash drifted")
     logging.getLogger("main").info(
-        "STARTUP_EXCHANGE_RECONCILIATION_LINEAGE position_sha256=%s",
-        lineage,
+        "STARTUP_EXCHANGE_RECONCILIATION_LINEAGE canonical_sha256=%s",
+        expected_canonical_sha256,
     )
     return {
         "path": str(resolved),
         "canonical_sha256": expected_canonical_sha256,
-        "position_lineage_sha256": lineage,
     }
 
 

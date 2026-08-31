@@ -262,6 +262,9 @@ def test_live_core_features_match_offline_completed_bucket() -> None:
         "tick_mom_10s",
         "tick_ewm_3s",
         "tick_ewm_10s",
+        "micro_ret_std",
+        "micro_ret_skew",
+        "micro_ret_kurt",
         "flow_velocity",
         "volatility_5s",
         "volume_imbalance_5s",
@@ -275,6 +278,9 @@ def test_live_core_features_match_offline_completed_bucket() -> None:
         "price_velocity",
         "price_change_30s",
         "avg_trade_size",
+        "avg_trade_size_60s",
+        "large_trade_ratio",
+        "volume_zscore",
         "bar_spread_bps",
         "return_1",
         "return_abs",
@@ -282,6 +288,74 @@ def test_live_core_features_match_offline_completed_bucket() -> None:
     for key in keys:
         assert math.isfinite(float(row[key]))
         assert float(live[key]) == pytest.approx(float(row[key]), abs=1e-12), key
+
+
+@pytest.mark.parametrize("constant", [False, True])
+def test_offline_return_moments_match_population_definition(constant):
+    changes = np.ones(29) if constant else np.asarray([0, 1, -2, 4, -1, 0, 3] * 5)[:29]
+    close = np.r_[100.0, 100.0 + np.cumsum(changes)]
+    bars = pd.DataFrame(
+        {"close": close, "buy_volume": 1.0, "sell_volume": 0.5},
+        index=pd.date_range("2026-01-01", periods=30, freq="s", tz="UTC"),
+    )
+    result = compute_tick_momentum(bars)
+    for bucket, end in enumerate((9, 19, 29)):
+        sample = np.diff(close)[max(0, end - 10):end]
+        sd = np.std(sample, ddof=0)
+        z = (sample - sample.mean()) / sd if sd > 1e-12 else np.zeros_like(sample)
+        row = result.iloc[bucket]
+        assert row.micro_ret_std == pytest.approx(sd, abs=1e-12)
+        assert row.micro_ret_skew == pytest.approx(np.mean(z ** 3), abs=1e-12)
+        assert row.micro_ret_kurt == pytest.approx(
+            np.mean(z ** 4) - 3 if sd > 1e-12 else 0.0, abs=1e-12,
+        )
+
+
+def test_near_constant_return_moments_keep_live_population_values():
+    close = 78000.0 + 0.1 * np.arange(30)
+    bars = pd.DataFrame(
+        {"close": close, "buy_volume": 1.0, "sell_volume": 0.5},
+        index=pd.date_range("2026-01-01", periods=30, freq="s", tz="UTC"),
+    )
+    result = compute_tick_momentum(bars)
+    for bucket, end in enumerate((9, 19, 29)):
+        sample = np.diff(close)[max(0, end - 10):end]
+        sd = np.std(sample)
+        assert sd > 1e-12
+        z = (sample - sample.mean()) / sd
+        row = result.iloc[bucket]
+        assert row.micro_ret_std == pytest.approx(sd, rel=1e-12, abs=0)
+        assert row.micro_ret_skew == pytest.approx(np.mean(z ** 3), abs=1e-12)
+        assert row.micro_ret_kurt == pytest.approx(np.mean(z ** 4) - 3, abs=1e-12)
+
+
+def test_empty_buckets_contribute_zero_size_and_population_volume_zscore():
+    count = np.repeat([1, 0, 2, 0, 3, 0], 10)
+    bars = pd.DataFrame(
+        {
+            "open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0,
+            "vwap": 100.0, "trade_count": count, "volume": count * 2.0,
+            "buy_volume": count * 2.0, "sell_volume": 0.0,
+            "buy_count": count, "sell_count": 0,
+        },
+        index=pd.date_range("2026-01-01", periods=60, freq="s", tz="UTC"),
+    )
+    result = add_microstructure_features(resample_to_10s(bars), bars)
+    assert result.avg_trade_size.tolist() == [2, 0, 2, 0, 2, 0]
+    assert result.avg_trade_size_60s.iloc[-1] == 1.0
+    assert result.large_trade_ratio.iloc[-1] == 0.0
+    volumes = result.volume.to_numpy()
+    assert result.volume_zscore.iloc[-1] == pytest.approx(
+        (volumes[-1] - volumes.mean()) / volumes.std(ddof=0),
+    )
+    assert result.volume_zscore.iloc[:2].tolist() == [0.0, 0.0]
+    empty = bars.copy()
+    for name in ("trade_count", "volume", "buy_volume", "buy_count"):
+        empty[name] = 0
+    flat = add_microstructure_features(resample_to_10s(empty), empty)
+    assert flat.avg_trade_size_60s.eq(0).all()
+    assert flat.large_trade_ratio.eq(1).all()
+    assert flat.volume_zscore.eq(0).all()
 
 
 def test_feature_name_contract_is_88_unique_fields() -> None:

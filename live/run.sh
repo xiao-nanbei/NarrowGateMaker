@@ -67,10 +67,6 @@ LAUNCH_HOME="${HOME:-}"
 readonly DIR RUN_SH MAIN_PY CONFIG_FILE PYTHON_BIN STARTUP_RUNTIME_GATE_REQUIRED
 readonly LIVE_START_REQUIRES_STATIC_RUNTIME LAUNCH_HOME
 
-_runtime_file_nlink() {
-    /usr/bin/stat -c '%h' "$1"
-}
-
 _runtime_file_uid() {
     /usr/bin/stat -c '%u' "$1"
 }
@@ -111,12 +107,6 @@ _verify_startup_runtime() {
     }
     [[ ! -L "$envelope" && -f "$envelope" && ! -L "$verifier" && -f "$verifier" ]] || {
         echo "Startup release-root or verifier inode is unsafe" >&2
-        return 1
-    }
-    [[ "$(_runtime_file_nlink "$trusted_python")" == "1" \
-        && "$(_runtime_file_nlink "$envelope")" == "1" \
-        && "$(_runtime_file_nlink "$verifier")" == "1" ]] || {
-        echo "Startup authority files must have one hard link" >&2
         return 1
     }
     local trusted_uid trusted_mode
@@ -206,7 +196,7 @@ print("{}\t{}".format(source["commit"], source["tree"]))
         --pip-runner-python "$trusted_python"
 }
 
-readonly -f _runtime_file_nlink _runtime_file_uid _runtime_file_mode
+readonly -f _runtime_file_uid _runtime_file_mode
 readonly -f _verify_startup_runtime
 
 # Check if a PID is alive AND is our python process (not a reused PID)

@@ -4,9 +4,9 @@
   <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-08-30
 
 > 发布说明：`${NARROWGATE_*}` 值和 deployment-epoch 名称是逻辑定位器。所有者侧数据与机器产物保存在私有证据存储中；除非文档提供仓库相对链接，否则这些字节不会随本仓库分发。参见[公开/私有文档合同](docs/public_private_documentation_contract.zh-CN.md)。
 
@@ -179,9 +179,9 @@ python -c "import narrowgate_cpp; print(narrowgate_cpp.__file__)"
 
 它并不是一条命令就能盈利的策略。公开配置只是模板，私有 live 参数与结果不会包含在仓库中。
 
-## 相关文章
+## 研究地图与长文
 
-以下长文解释当前研究与工程边界：
+请以 [NarrowGate 研究项目地图：12 个科学问题](https://xiao-nanbei.github.io/2026/08/29/NarrowGate-Research-Project-Map/) 作为当前入口。它把仓库归并为 12 个科学问题，并为每个问题连接对应长文、证据状态与研究族工作区。下面两篇较早文章保留为基础框架和工程背景，不再承担完整研究索引的角色：
 
 - [NarrowGate: Maker Quote EV Research Framework](https://xiao-nanbei.github.io/2026/06/19/NarrowGate-Maker-Quote-EV-Research-Framework/) 介绍 maker alpha/证据侧：数据质量、daily replay、quote EV、null baseline、order-level fill selection、campaign label，以及为何旧的 direct xmarket/quote-EV arm 被降级。
 - [NarrowGate: Replay Throughput and Live Tail-Latency Engineering](https://xiao-nanbei.github.io/2026/07/01/NarrowGate-Cpp-Low-Latency-Market-Making/) 介绍系统侧：Python/C++ parity、replay 加速、紧凑 live hot-path 设计、x86 soak 结果，以及哪些 C++ 路径只适合快速筛选。

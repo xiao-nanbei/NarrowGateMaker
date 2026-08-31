@@ -1864,7 +1864,13 @@ class DailyOutputWriter:
 def _decompress_parquet_zst(path: Path) -> Path:
     with tempfile.NamedTemporaryFile(prefix="cryptohftdata-", suffix=".parquet", delete=False) as tmp:
         with open(path, "rb") as src:
-            reader = zstd.ZstdDecompressor().stream_reader(src)
+            # CryptoHFT's SDK may transparently return an already decompressed
+            # Parquet object even though the remote key retains its .zst
+            # suffix.  Preserve the raw cache key, but accept either wire
+            # representation at this boundary.
+            magic = src.read(4)
+            src.seek(0)
+            reader = src if magic == b"PAR1" else zstd.ZstdDecompressor().stream_reader(src)
             while True:
                 chunk = reader.read(8 * 1024 * 1024)
                 if not chunk:

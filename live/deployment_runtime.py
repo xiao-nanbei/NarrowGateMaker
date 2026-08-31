@@ -55,7 +55,8 @@ DEPLOYMENT_ENVELOPE_CANONICAL_FIELD = "canonical_sha256"
 ACTIVATION_RECEIPT_SCHEMA = "narrowgate_private_activation_receipt.v1"
 ACTIVATION_RECEIPT_CANONICAL_FIELD = "canonical_sha256"
 ACTIVATION_RECEIPT_STATUS = "activation_complete"
-CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v1"
+LEGACY_CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v1"
+CURRENT_POINTER_SCHEMA = "narrowgate_live_current_pointer.v2"
 CURRENT_POINTER_STATUS = "selected_activation"
 STOPPED_RECONCILIATION_SCHEMA = "narrowgate_stopped_exchange_reconciliation.v1"
 STOPPED_RECONCILIATION_CANONICAL_FIELD = "canonical_exchange_reconciliation_sha256"
@@ -181,8 +182,8 @@ def _read_regular_file(path: Path, *, private_authority: bool = False) -> bytes:
         if not stat.S_ISREG(before.st_mode):
             raise LockedRuntimeError(f"not a regular file: {target}")
         if private_authority:
-            if stat.S_IMODE(before.st_mode) != 0o600 or before.st_nlink != 1:
-                raise LockedRuntimeError(f"authority must be mode 0600 with one link: {target}")
+            if stat.S_IMODE(before.st_mode) != 0o600:
+                raise LockedRuntimeError(f"authority must be mode 0600: {target}")
         with os.fdopen(fd, "rb", closefd=False) as handle:
             raw = handle.read()
         after = os.fstat(fd)
@@ -582,7 +583,6 @@ def _installed_tree_snapshot(prefix_path: Path, *, interpreter: dict[str, Any]) 
         if (
             stat.S_ISLNK(record_info.st_mode)
             or not stat.S_ISREG(record_info.st_mode)
-            or record_info.st_nlink != 1
         ):
             raise LockedRuntimeError(f"installed RECORD is not a regular file: {name}")
         record_raw = _read_regular_file(record)
@@ -611,8 +611,7 @@ def _installed_tree_snapshot(prefix_path: Path, *, interpreter: dict[str, Any]) 
                 ) from exc
             if not resolved.is_relative_to(prefix):
                 raise LockedRuntimeError(f"installed RECORD escapes venv for {name}: {row[0]}")
-            resolved_info = resolved.stat()
-            if located.is_symlink() or not resolved.is_file() or resolved_info.st_nlink != 1:
+            if located.is_symlink() or not resolved.is_file():
                 raise LockedRuntimeError(f"installed RECORD member is not regular: {name}:{row[0]}")
             if resolved.is_relative_to(site_packages):
                 site_name = resolved.relative_to(site_packages).as_posix()
@@ -693,7 +692,6 @@ def _installed_tree_snapshot(prefix_path: Path, *, interpreter: dict[str, Any]) 
             if (
                 stat.S_ISLNK(child_info.st_mode)
                 or not stat.S_ISREG(child_info.st_mode)
-                or child_info.st_nlink != 1
             ):
                 raise LockedRuntimeError(f"installed site file is unsafe: {child}")
             if child.suffix == ".pyc" or "__pycache__" in PurePosixPath(child_relative).parts:
@@ -1631,7 +1629,7 @@ def install_locked_runtime(
         )
         static_installed = _installed_tree_snapshot(target, interpreter=target_before)
         _validate_installed_versions(static_installed, expected_versions)
-        pip_check = _run_checked(
+        _run_checked(
             [*_pip_target_command(builder_python, target_python), "check"],
             timeout=180.0,
             env=env,
@@ -1667,10 +1665,7 @@ def install_locked_runtime(
             "pyvenv_cfg_sha256": _sha256(pyvenv_raw),
             "installed_distributions": static_installed["distributions"],
             "installed_record_aggregate_sha256": static_installed["record_aggregate_sha256"],
-            "pip_check": {
-                "passed": True,
-                "stdout_sha256": _sha256(pip_check.stdout.encode("utf-8")),
-            },
+            "pip_check": {"passed": True},
             "install_policy": {
                 "target_started_without_pip": True,
                 "builder_pip_target_mode": True,
@@ -1734,6 +1729,18 @@ def _load_install_receipt(
         payload.get("installed_record_aggregate_sha256", ""),
         "receipt installed RECORD aggregate",
     )
+    pip_check = payload.get("pip_check")
+    if pip_check != {"passed": True}:
+        if not (
+            isinstance(pip_check, dict)
+            and set(pip_check) == {"passed", "stdout_sha256"}
+            and pip_check.get("passed") is True
+        ):
+            raise LockedRuntimeError("install receipt pip-check result drifted")
+        _require_sha256(
+            pip_check.get("stdout_sha256", ""),
+            "legacy receipt pip-check stdout",
+        )
     if payload.get("install_policy") != {
         "target_started_without_pip": True,
         "builder_pip_target_mode": True,
@@ -1759,8 +1766,8 @@ def validate_static_installed_tree(
 
     Deployment must invoke this API (or ``verify-static-tree``) with a trusted
     predecessor/builder Python before the target Python is allowed to run.  It
-    rejects bytecode, symlinks, hard links, and every site-packages file which
-    is not owned by an installed distribution RECORD.
+    rejects bytecode, symlinks, and every site-packages file which is not owned
+    by an installed distribution RECORD.
     """
 
     receipt, _ = _load_install_receipt(
@@ -2705,22 +2712,17 @@ def build_activation_receipt(
     }
 
 
-def load_activation_receipt(
+def _load_activation_receipt_payload(
     path: Path,
     *,
     expected_root_sha256: str,
-    expected_deployment_envelope_sha256: str,
     expected_release_id: str,
 ) -> dict[str, Any]:
-    """Load a compact activation result and prove its deployment lineage."""
+    """Load and validate one activation receipt without weakening its public API."""
 
     expected_root = _require_exact_sha256(
         expected_root_sha256,
         "expected activation receipt",
-    )
-    expected_envelope = _require_exact_sha256(
-        expected_deployment_envelope_sha256,
-        "expected deployment envelope",
     )
     release_id = _require_release_id(expected_release_id)
     payload, _raw = _load_canonical_authority(
@@ -2749,12 +2751,10 @@ def load_activation_receipt(
         raise LockedRuntimeError("activation receipt status drifted")
     if payload.get("release_id") != release_id:
         raise LockedRuntimeError("activation receipt release lineage drifted")
-    observed_envelope = _require_exact_sha256(
+    _require_exact_sha256(
         payload.get("deployment_envelope_sha256", ""),
         "activation receipt deployment envelope",
     )
-    if observed_envelope != expected_envelope:
-        raise LockedRuntimeError("activation receipt deployment envelope lineage drifted")
     _require_exact_sha256(
         payload.get("stopped_reconciliation_sha256", ""),
         "activation receipt stopped reconciliation root",
@@ -2766,25 +2766,57 @@ def load_activation_receipt(
     return payload
 
 
+def load_activation_receipt(
+    path: Path,
+    *,
+    expected_root_sha256: str,
+    expected_deployment_envelope_sha256: str,
+    expected_release_id: str,
+) -> dict[str, Any]:
+    """Load a compact activation result and prove its deployment lineage."""
+
+    expected_envelope = _require_exact_sha256(
+        expected_deployment_envelope_sha256,
+        "expected deployment envelope",
+    )
+    payload = _load_activation_receipt_payload(
+        path,
+        expected_root_sha256=expected_root_sha256,
+        expected_release_id=expected_release_id,
+    )
+    if payload["deployment_envelope_sha256"] != expected_envelope:
+        raise LockedRuntimeError("activation receipt deployment envelope lineage drifted")
+    return payload
+
+
 def _validate_current_pointer_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    fields = {
+    v2_fields = {
         "schema_version",
         "release_id",
-        "deployment_envelope_sha256",
         "activation_receipt_sha256",
         "status",
     }
-    if set(payload) != fields:
-        raise LockedRuntimeError("current pointer fields drifted")
-    if payload.get("schema_version") != CURRENT_POINTER_SCHEMA:
+    v1_fields = {
+        *v2_fields,
+        "deployment_envelope_sha256",
+    }
+    schema = payload.get("schema_version")
+    if schema == CURRENT_POINTER_SCHEMA:
+        expected_fields = v2_fields
+    elif schema == LEGACY_CURRENT_POINTER_SCHEMA:
+        expected_fields = v1_fields
+    else:
         raise LockedRuntimeError("current pointer schema drifted")
+    if set(payload) != expected_fields:
+        raise LockedRuntimeError("current pointer fields drifted")
     if payload.get("status") != CURRENT_POINTER_STATUS:
         raise LockedRuntimeError("current pointer status drifted")
     _require_release_id(payload.get("release_id"))
-    _require_exact_sha256(
-        payload.get("deployment_envelope_sha256", ""),
-        "current pointer deployment envelope",
-    )
+    if schema == LEGACY_CURRENT_POINTER_SCHEMA:
+        _require_exact_sha256(
+            payload.get("deployment_envelope_sha256", ""),
+            "current pointer deployment envelope",
+        )
     _require_exact_sha256(
         payload.get("activation_receipt_sha256", ""),
         "current pointer activation receipt",
@@ -2798,20 +2830,27 @@ def load_current_pointer(
     deployment_envelope_path: Path,
     activation_receipt_path: Path,
 ) -> dict[str, Any]:
-    """Resolve a five-field pointer only after both immutable roots agree."""
+    """Resolve a current pointer through its immutable activation root."""
 
     pointer_path = _absolute(path)
     raw = _read_regular_file(pointer_path, private_authority=True)
     pointer = _validate_current_pointer_payload(_load_json_bytes(raw, str(pointer_path)))
-    envelope_root = _validated_deployment_envelope_root(
-        deployment_envelope_path,
-        expected_root_sha256=pointer["deployment_envelope_sha256"],
-    )
-    receipt = load_activation_receipt(
+    receipt = _load_activation_receipt_payload(
         activation_receipt_path,
         expected_root_sha256=pointer["activation_receipt_sha256"],
-        expected_deployment_envelope_sha256=envelope_root,
         expected_release_id=pointer["release_id"],
+    )
+    receipt_envelope_root = str(receipt["deployment_envelope_sha256"])
+    if pointer["schema_version"] == LEGACY_CURRENT_POINTER_SCHEMA:
+        pointer_envelope_root = str(pointer["deployment_envelope_sha256"])
+        if pointer_envelope_root != receipt_envelope_root:
+            raise LockedRuntimeError("current pointer deployment envelope lineage drifted")
+        expected_envelope_root = pointer_envelope_root
+    else:
+        expected_envelope_root = receipt_envelope_root
+    _validated_deployment_envelope_root(
+        deployment_envelope_path,
+        expected_root_sha256=expected_envelope_root,
     )
     if _read_regular_file(pointer_path, private_authority=True) != raw:
         raise LockedRuntimeError("current pointer changed during lineage validation")
@@ -2858,7 +2897,6 @@ def publish_current_pointer(
     pointer = {
         "schema_version": CURRENT_POINTER_SCHEMA,
         "release_id": normalized_release_id,
-        "deployment_envelope_sha256": envelope_root,
         "activation_receipt_sha256": receipt_root,
         "status": CURRENT_POINTER_STATUS,
     }

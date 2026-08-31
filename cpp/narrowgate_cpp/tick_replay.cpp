@@ -727,6 +727,7 @@ enum class LatencyOperation : std::uint64_t {
     Cancel = 2,
     FragileTtlCancel = 3,
     QueueValueCancel = 4,
+    DecisionToGateway = 6,
 };
 
 enum class RandomPassiveOperation : std::uint64_t {
@@ -809,6 +810,201 @@ std::int64_t sample_latency_ms(
         0,
         static_cast<std::int64_t>(std::llround(std::max(0.0, latency)))
     );
+}
+
+bool decision_to_gateway_latency_enabled(const TickReplayParams& params) {
+    return std::any_of(
+        params.decision_to_gateway_latency_samples_ms.begin(),
+        params.decision_to_gateway_latency_samples_ms.end(),
+        [](double sample) { return sample > 0.0; }
+    );
+}
+
+std::int64_t decision_gateway_request_ts(
+    const TickReplayParams& params,
+    std::int64_t decision_ts_ms
+) {
+    if (!decision_to_gateway_latency_enabled(params)) {
+        return decision_ts_ms;
+    }
+    const std::int64_t latency_seed =
+        params.decision_to_gateway_latency_seed >= 0
+        ? params.decision_to_gateway_latency_seed
+        : (params.latency_seed >= 0 ? params.latency_seed : params.rng_seed + 17);
+    std::uint64_t mixed = static_cast<std::uint64_t>(latency_seed);
+    const std::array<std::uint64_t, 2> components{
+        static_cast<std::uint64_t>(decision_ts_ms),
+        static_cast<std::uint64_t>(LatencyOperation::DecisionToGateway),
+    };
+    for (const auto component : components) {
+        mixed = splitmix64(mixed ^ component);
+    }
+    const auto sample = std::max(
+        0.0,
+        params.decision_to_gateway_latency_samples_ms[
+            static_cast<std::size_t>(
+                mixed % params.decision_to_gateway_latency_samples_ms.size()
+            )
+        ]
+    );
+    return decision_ts_ms + std::max<std::int64_t>(
+        0,
+        static_cast<std::int64_t>(std::llround(sample))
+    );
+}
+
+struct CancelDeadlines {
+    std::int64_t effective_ts = 0;
+    std::int64_t ack_ts = 0;
+};
+
+struct NewOrderDeadlines {
+    std::int64_t effective_ts = 0;
+    std::int64_t ack_ts = 0;
+};
+
+NewOrderDeadlines sample_new_order_deadlines(
+    std::int64_t request_ts,
+    std::int64_t legacy_base_ms,
+    std::int64_t legacy_jitter_ms,
+    const std::vector<double>* legacy_samples,
+    const TickReplayParams& params,
+    Side side,
+    LatencyOperation operation,
+    std::int64_t order_ts,
+    bool apply_decision_compute = true
+) {
+    const auto gateway_request_ts = apply_decision_compute
+        ? decision_gateway_request_ts(params, request_ts)
+        : request_ts;
+    if (params.new_order_exchange_effective_latency_samples_ms.empty()) {
+        const auto latency = sample_latency_ms(
+            legacy_base_ms,
+            legacy_jitter_ms,
+            legacy_samples,
+            params,
+            request_ts,
+            side,
+            operation,
+            order_ts
+        );
+        const auto deadline = gateway_request_ts + latency;
+        return NewOrderDeadlines{deadline, deadline};
+    }
+    if (legacy_samples != nullptr && !legacy_samples->empty() &&
+        legacy_samples->size() !=
+            params.new_order_exchange_effective_latency_samples_ms.size()) {
+        throw std::invalid_argument(
+            "paired new-order effective/ACK latency samples must have equal length"
+        );
+    }
+    const auto effective_latency = sample_latency_ms(
+        legacy_base_ms,
+        legacy_jitter_ms,
+        &params.new_order_exchange_effective_latency_samples_ms,
+        params,
+        request_ts,
+        side,
+        operation,
+        order_ts
+    );
+    const auto effective_ts = gateway_request_ts + effective_latency;
+    if (legacy_samples == nullptr || legacy_samples->empty()) {
+        return NewOrderDeadlines{effective_ts, effective_ts};
+    }
+    // Both arrays are row-aligned request lifecycles. Reuse the same keyed
+    // index; the legacy sample is request-to-local ACK visibility, not a
+    // delay added after exchange effectiveness.
+    const auto ack_latency = sample_latency_ms(
+        legacy_base_ms,
+        legacy_jitter_ms,
+        legacy_samples,
+        params,
+        request_ts,
+        side,
+        operation,
+        order_ts
+    );
+    return NewOrderDeadlines{
+        effective_ts,
+        std::max(effective_ts, gateway_request_ts + ack_latency),
+    };
+}
+
+CancelDeadlines sample_cancel_deadlines(
+    std::int64_t request_ts,
+    std::int64_t legacy_base_ms,
+    std::int64_t legacy_jitter_ms,
+    const std::vector<double>* legacy_samples,
+    const TickReplayParams& params,
+    Side side,
+    LatencyOperation operation,
+    std::int64_t order_ts,
+    bool apply_decision_compute = false
+) {
+    const auto gateway_request_ts = apply_decision_compute
+        ? decision_gateway_request_ts(params, request_ts)
+        : request_ts;
+    const bool split =
+        !params.cancel_exchange_effective_latency_samples_ms.empty() ||
+        !params.cancel_ack_visibility_latency_samples_ms.empty();
+    if (!split) {
+        const auto latency = sample_latency_ms(
+            legacy_base_ms,
+            legacy_jitter_ms,
+            legacy_samples,
+            params,
+            request_ts,
+            side,
+            operation,
+            order_ts
+        );
+        const auto deadline = gateway_request_ts + latency;
+        return CancelDeadlines{deadline, deadline};
+    }
+
+    const std::vector<double>* effective_samples =
+        !params.cancel_exchange_effective_latency_samples_ms.empty()
+        ? &params.cancel_exchange_effective_latency_samples_ms
+        : legacy_samples;
+    const auto effective_latency = sample_latency_ms(
+        legacy_base_ms,
+        legacy_jitter_ms,
+        effective_samples,
+        params,
+        request_ts,
+        side,
+        operation,
+        order_ts
+    );
+    const auto effective_ts = gateway_request_ts + effective_latency;
+    if (params.cancel_ack_visibility_latency_samples_ms.empty()) {
+        return CancelDeadlines{effective_ts, effective_ts};
+    }
+    if (!params.cancel_exchange_effective_latency_samples_ms.empty() &&
+        params.cancel_exchange_effective_latency_samples_ms.size() !=
+            params.cancel_ack_visibility_latency_samples_ms.size()) {
+        throw std::invalid_argument(
+            "paired cancel effective/ACK latency samples must have equal length"
+        );
+    }
+    // Both arrays are row-aligned request lifecycles. Reuse the same keyed
+    // index; ACK samples are request-to-local visibility rather than a delay
+    // added after the exchange-effective boundary.
+    const auto ack_latency = sample_latency_ms(
+        0,
+        0,
+        &params.cancel_ack_visibility_latency_samples_ms,
+        params,
+        request_ts,
+        side,
+        operation,
+        order_ts
+    );
+    return CancelDeadlines{
+        effective_ts,
+        std::max(effective_ts, gateway_request_ts + ack_latency),
+    };
 }
 
 std::int64_t sample_exec_book_visibility_delay_ms(
@@ -1400,7 +1596,7 @@ void append_order_trace(
     row.cancel_reason = reason;
     row.fill_qty = fill_qty;
     row.remaining = order.remaining;
-    const bool activated = order.state != OrderState::PendingNew;
+    const bool activated = order.exchange_accepted;
     row.queue_init = activated ? order.queue_init : 0.0;
     row.queue_left = activated ? order.queue_left : 0.0;
     row.pending_cancel = order.state == OrderState::PendingCancel;
@@ -2080,6 +2276,7 @@ ReplayOrder make_order(
     double qty,
     std::int64_t ts,
     std::int64_t activate_latency_ms,
+    std::int64_t ack_latency_ms,
     double mid,
     double queue_base,
     double queue_decay,
@@ -2098,8 +2295,14 @@ ReplayOrder make_order(
     order.remaining = qty;
     order.quote_ts = ts;
     order.activate_ts = ts + std::max<std::int64_t>(0, activate_latency_ms);
+    order.new_ack_ts = ts + std::max<std::int64_t>(
+        std::max<std::int64_t>(0, activate_latency_ms),
+        ack_latency_ms
+    );
     order.cancel_effective_ts = 0;
-    order.state = activate_latency_ms > 0 ? OrderState::PendingNew : OrderState::Open;
+    order.cancel_ack_ts = 0;
+    order.exchange_accepted = activate_latency_ms <= 0;
+    order.state = ack_latency_ms > 0 ? OrderState::PendingNew : OrderState::Open;
     order.mid_at_quote = mid;
     const auto [queue_mult, exposure_increasing] =
         queue_inventory_multiplier<S>(params, inventory_at_quote);
@@ -2199,7 +2402,7 @@ void apply_l2_cancel_ahead_to_order(
 ) {
     if (!params.queue_l2_cancel_ahead_enabled ||
         current_l2_idx >= input.l2_ts_ms.size() ||
-        order.state == OrderState::PendingNew) {
+        (order.state == OrderState::PendingNew && !order.exchange_accepted)) {
         return;
     }
     if (order.queue_l2_seen_idx < 0) {
@@ -2488,21 +2691,21 @@ public:
             return;
         }
         for (const Side side : {Side::Buy, Side::Sell}) {
-            const std::int64_t latency_ms = sample_latency_ms(
+            const auto deadlines = sample_cancel_deadlines(
+                ts,
                 params_.cancel_order_latency_ms,
                 params_.latency_jitter_ms,
                 &params_.cancel_order_latency_samples_ms,
                 params_,
-                ts,
                 side,
                 LatencyOperation::Cancel,
-                ts
+                ts,
+                true
             );
-            const std::int64_t effective_ts = ts + latency_ms;
             for (auto& cohort : cohorts_) {
                 if (cohort.side == side && cohort.cancel_effective_ts == 0) {
                     cohort.cancel_request_ts = ts;
-                    cohort.cancel_effective_ts = effective_ts;
+                    cohort.cancel_effective_ts = deadlines.effective_ts;
                     for (auto& probe : cohort.orders) {
                         if (probe.order.state != OrderState::PendingNew) {
                             probe.order.state = OrderState::PendingCancel;
@@ -2527,16 +2730,18 @@ public:
         if (!enabled()) {
             return;
         }
-        const std::int64_t latency_ms = sample_latency_ms(
+        const auto deadlines = sample_new_order_deadlines(
+            ts,
             params_.new_order_latency_ms,
             params_.latency_jitter_ms,
             &params_.new_order_latency_samples_ms,
             params_,
-            ts,
             S,
             LatencyOperation::NewOrder,
             ts
         );
+        const std::int64_t latency_ms = deadlines.effective_ts - ts;
+        const std::int64_t ack_latency_ms = deadlines.ack_ts - ts;
         PairedProbeCohort cohort;
         cohort.cohort_id = next_cohort_id_++;
         cohort.side = S;
@@ -2556,6 +2761,7 @@ public:
                 order_size_,
                 ts,
                 latency_ms,
+                ack_latency_ms,
                 mid,
                 queue_base,
                 queue_decay,
@@ -3042,12 +3248,12 @@ void transition_orders(
 ) {
     for (auto& order : orders) {
         const bool canceled_before_activation =
-            order.state == OrderState::PendingNew &&
+            !order.exchange_accepted &&
             order.cancel_effective_ts > 0 &&
             order.cancel_effective_ts <= order.activate_ts &&
             ts >= order.cancel_effective_ts;
         if (!canceled_before_activation &&
-            order.state == OrderState::PendingNew &&
+            !order.exchange_accepted &&
             ts >= order.activate_ts) {
             double activation_best_bid = fallback_bid;
             double activation_best_ask = fallback_ask;
@@ -3080,7 +3286,7 @@ void transition_orders(
                     !input.bbo_ts_ms.empty() || !input.l2_ts_ms.empty(),
                     summary,
                     circuit_breaker_close_gtx_reject_streak)) {
-                order.state = OrderState::Open;
+                order.exchange_accepted = true;
                 if (!order.immediate_or_cancel) {
                     order.quote_ts = order.activate_ts;
                     if (activation_book.mid > 0.0) {
@@ -3090,29 +3296,44 @@ void transition_orders(
                         order.trace->quote_ts = order.quote_ts;
                     }
                 }
-                if (order.cancel_effective_ts > ts) {
-                    order.state = OrderState::PendingCancel;
+                if (order.new_ack_ts <= ts) {
+                    order.state = order.cancel_ack_ts > ts
+                        ? OrderState::PendingCancel
+                        : OrderState::Open;
                 }
             } else {
                 order.activation_rejected = true;
                 continue;
             }
         }
-        if (order.ttl_ms > 0 && order.state != OrderState::PendingCancel &&
+        const bool split_new_ack_pending =
+            !params.new_order_exchange_effective_latency_samples_ms.empty() &&
+            order.state == OrderState::PendingNew;
+        if (order.ttl_ms > 0 && !split_new_ack_pending &&
+            order.state != OrderState::PendingCancel &&
             ts - order.quote_ts >= order.ttl_ms) {
             order.state = OrderState::PendingCancel;
-            order.cancel_effective_ts = ts + sample_latency_ms(
+            const auto deadlines = sample_cancel_deadlines(
+                ts,
                 cancel_latency_ms,
                 latency_jitter_ms,
                 cancel_latency_samples_ms,
                 params,
-                ts,
                 order.side,
                 LatencyOperation::FragileTtlCancel,
                 order.quote_ts
             );
+            order.cancel_effective_ts = deadlines.effective_ts;
+            order.cancel_ack_ts = deadlines.ack_ts;
             order.pending_cancel_reason = CancelReason::FragileTtl;
             ++summary.fragile_ttl_cancel_count;
+        }
+        if (order.exchange_accepted &&
+            order.state == OrderState::PendingNew &&
+            ts >= order.new_ack_ts) {
+            order.state = order.cancel_ack_ts > ts
+                ? OrderState::PendingCancel
+                : OrderState::Open;
         }
     }
     for (auto it = orders.begin(); it != orders.end();) {
@@ -3121,14 +3342,17 @@ void transition_orders(
             continue;
         }
         const bool cancel_due =
-            it->cancel_effective_ts > 0 &&
-            ts >= it->cancel_effective_ts;
+            it->cancel_ack_ts > 0 &&
+            ts >= it->cancel_ack_ts;
         const bool cancel_acked = cancel_due && (
             it->state == OrderState::PendingCancel ||
             it->state == OrderState::Open ||
             (
                 it->state == OrderState::PendingNew &&
-                it->cancel_effective_ts <= it->activate_ts
+                (
+                    it->cancel_effective_ts <= it->activate_ts ||
+                    it->exchange_accepted
+                )
             )
         );
         if (!cancel_acked) {
@@ -3140,7 +3364,12 @@ void transition_orders(
             append_order_trace(
                 result,
                 *it,
-                ts,
+                // The transition is consumed before this event's policy work;
+                // record the known ACK boundary, not the later polling event.
+                (!params.cancel_exchange_effective_latency_samples_ms.empty() ||
+                 !params.cancel_ack_visibility_latency_samples_ms.empty() ||
+                 decision_to_gateway_latency_enabled(params))
+                    ? it->cancel_ack_ts : ts,
                 TraceOutcome::Cancel,
                 it->pending_cancel_reason,
                 0.0
@@ -3161,7 +3390,14 @@ void request_cancel_all(
     std::int64_t trace_quotes_max = 0,
     CancelReason reason = CancelReason::Requote
 ) {
+    const bool apply_decision_compute =
+        reason == CancelReason::Requote ||
+        reason == CancelReason::RequoteReplace ||
+        reason == CancelReason::SideDisabled;
     if ((cancel_latency_samples_ms == nullptr || cancel_latency_samples_ms->empty()) &&
+        params.cancel_exchange_effective_latency_samples_ms.empty() &&
+        params.cancel_ack_visibility_latency_samples_ms.empty() &&
+        !(apply_decision_compute && decision_to_gateway_latency_enabled(params)) &&
         cancel_latency_ms <= 0 && latency_jitter_ms <= 0) {
         if (result != nullptr && trace_quotes_max > 0) {
             for (const auto& order : orders) {
@@ -3175,34 +3411,40 @@ void request_cancel_all(
         return;
     }
     for (auto& order : orders) {
-        const std::int64_t sampled_latency_ms = sample_latency_ms(
+        const auto deadlines = sample_cancel_deadlines(
+            ts,
             cancel_latency_ms,
             latency_jitter_ms,
             cancel_latency_samples_ms,
             params,
-            ts,
             order.side,
             LatencyOperation::Cancel,
-            order.quote_ts
+            order.quote_ts,
+            apply_decision_compute
         );
         if (order.state == OrderState::Open) {
             order.state = OrderState::PendingCancel;
-            order.cancel_effective_ts = ts + sampled_latency_ms;
+            order.cancel_effective_ts = deadlines.effective_ts;
+            order.cancel_ack_ts = deadlines.ack_ts;
             order.pending_cancel_reason = reason;
         } else if (order.state == OrderState::PendingNew) {
-            order.cancel_effective_ts = ts + sampled_latency_ms;
+            order.cancel_effective_ts = deadlines.effective_ts;
+            order.cancel_ack_ts = deadlines.ack_ts;
             order.pending_cancel_reason = reason;
         }
     }
     for (auto it = orders.begin(); it != orders.end();) {
         const bool cancel_due =
-            it->cancel_effective_ts > 0 &&
-            ts >= it->cancel_effective_ts;
+            it->cancel_ack_ts > 0 &&
+            ts >= it->cancel_ack_ts;
         const bool cancel_acked = cancel_due && (
             it->state == OrderState::PendingCancel ||
             (
                 it->state == OrderState::PendingNew &&
-                it->cancel_effective_ts <= it->activate_ts
+                (
+                    it->cancel_effective_ts <= it->activate_ts ||
+                    it->exchange_accepted
+                )
             )
         );
         if (!cancel_acked) {
@@ -3214,7 +3456,10 @@ void request_cancel_all(
             append_order_trace(
                 *result,
                 *it,
-                ts,
+                (!params.cancel_exchange_effective_latency_samples_ms.empty() ||
+                 !params.cancel_ack_visibility_latency_samples_ms.empty() ||
+                 decision_to_gateway_latency_enabled(params))
+                    ? it->cancel_ack_ts : ts,
                 TraceOutcome::Cancel,
                 it->pending_cancel_reason,
                 0.0
@@ -3668,7 +3913,10 @@ void process_side_fill(
         }
     });
     for (auto& order : orders) {
-        if (order.state == OrderState::PendingNew) {
+        if (order.state == OrderState::PendingNew && !order.exchange_accepted) {
+            continue;
+        }
+        if (order.cancel_effective_ts > 0 && ts >= order.cancel_effective_ts) {
             continue;
         }
         const bool crosses = trade_crosses_order<S>(
@@ -3726,6 +3974,11 @@ void process_side_fill(
         fill_qty = floor_lot(fill_qty, lot_size);
         if (fill_qty < lot_size) {
             continue;
+        }
+        if (order.state == OrderState::PendingNew && order.exchange_accepted) {
+            throw std::runtime_error(
+                "pre-ACK exchange fill requires private-fill visibility scheduling"
+            );
         }
         if (recovered_integer_tick_crossing) {
             if constexpr (is_buy_v<S>) {
@@ -4904,6 +5157,29 @@ TickReplayResult simulate_tick_arrays(
     const TickReplayParams& params
 ) {
     input.validate();
+    for (const auto sample : params.decision_to_gateway_latency_samples_ms) {
+        if (!std::isfinite(sample) || sample < 0.0) {
+            throw std::invalid_argument(
+                "decision-to-gateway latency samples must be finite and non-negative"
+            );
+        }
+    }
+    if (!params.new_order_exchange_effective_latency_samples_ms.empty() &&
+        !params.new_order_latency_samples_ms.empty() &&
+        params.new_order_exchange_effective_latency_samples_ms.size() !=
+            params.new_order_latency_samples_ms.size()) {
+        throw std::invalid_argument(
+            "paired new-order effective/ACK latency samples must have equal length"
+        );
+    }
+    if (!params.cancel_exchange_effective_latency_samples_ms.empty() &&
+        !params.cancel_ack_visibility_latency_samples_ms.empty() &&
+        params.cancel_exchange_effective_latency_samples_ms.size() !=
+            params.cancel_ack_visibility_latency_samples_ms.size()) {
+        throw std::invalid_argument(
+            "paired cancel effective/ACK latency samples must have equal length"
+        );
+    }
     const auto& f05_cooldown_window_tape =
         params.f05_cooldown_window_tape_shared
             ? params.f05_cooldown_window_tape_shared->observations
@@ -5503,7 +5779,7 @@ TickReplayResult simulate_tick_arrays(
     double sigma_sq = std::max(params.initial_sigma_sq, 1e-6);
     QuotePrediction pred;
 
-    std::size_t var_idx = 0;
+    std::ptrdiff_t var_idx = -1;
     std::size_t ml_idx = 0;
     bool ml_ready = false;
     std::size_t last_p3_trace_ml_idx_buy = std::numeric_limits<std::size_t>::max();
@@ -5557,6 +5833,17 @@ TickReplayResult simulate_tick_arrays(
     std::int64_t ber_pending_feature_ts_ms = -1;
     std::int64_t ber_published_feature_ts_ms = -1;
     double cur_ti = params.quote.liq_baseline;
+    // Input var_ti is mean aggregate count per 1s bar. The live quote
+    // consumer holds mean count per completed 10s bar between publications.
+    std::vector<std::size_t> quote_ti_source_indices;
+    if (input.var_ti.size() == input.var_ts_ms.size()) {
+        for (std::size_t idx = 0; idx < input.var_ts_ms.size(); ++idx) {
+            if ((input.var_ts_ms.data()[idx] + 1000) % 10'000 == 0) {
+                quote_ti_source_indices.push_back(idx);
+            }
+        }
+    }
+    std::size_t quote_ti_cursor = 0;
     double consecutive_buy_fills = 0.0;
     double consecutive_sell_fills = 0.0;
     std::int64_t last_buy_fill_ts = input.trade_ts_ms.data()[0] - 999999999;
@@ -7023,8 +7310,13 @@ TickReplayResult simulate_tick_arrays(
         }
 
         if (input.var_ts_ms.size() > 0) {
-            while (var_idx + 1 < input.var_ts_ms.size() && input.var_ts_ms.data()[var_idx + 1] <= ts) {
+            while (static_cast<std::size_t>(var_idx + 1) < input.var_ts_ms.size() &&
+                   input.var_ts_ms.data()[var_idx + 1] + 1000 <= visible_book_ts) {
                 ++var_idx;
+                if (var_idx == 0) {
+                    // First complete close is the return-series anchor.
+                    continue;
+                }
                 if (dynamic_rq) {
                     const double rsq = input.var_retsq.data()[var_idx];
                     if (!dyn_rq_inited) {
@@ -7054,12 +7346,20 @@ TickReplayResult simulate_tick_arrays(
                     }
                 }
             }
-            if (input.var_ts_ms.data()[var_idx] <= ts) {
+            if (var_idx >= 0) {
                 sigma_sq = std::max(input.var_ssq.data()[var_idx], 1e-6);
-                if (input.var_ti.size() == input.var_ts_ms.size()) {
-                    cur_ti = input.var_ti.data()[var_idx];
-                }
             }
+        }
+        // This legacy native path has one common source visibility clock;
+        // do not publish a new liquidity input at a 1s left label or every
+        // intervening second. Message-level source clocks remain Python-only.
+        while (quote_ti_cursor < quote_ti_source_indices.size()) {
+            const std::size_t source_idx = quote_ti_source_indices[quote_ti_cursor];
+            if (input.var_ts_ms.data()[source_idx] + 1000 > visible_book_ts) {
+                break;
+            }
+            cur_ti = input.var_ti.data()[source_idx] * 10.0;
+            ++quote_ti_cursor;
         }
         if (dynamic_rq && dyn_rq_inited && ema_var_slow > 1e-12 && summary.n_requotes > 6) {
             double vol_ratio = ema_var_fast / ema_var_slow;
@@ -7243,16 +7543,25 @@ TickReplayResult simulate_tick_arrays(
                 circuit_breaker_close_gtx_reject_streak = 0;
             }
 
-            const std::int64_t activate_latency_ms = sample_latency_ms(
+            const auto new_deadlines = sample_new_order_deadlines(
+                ts,
                 params.new_order_latency_ms,
                 params.latency_jitter_ms,
                 &params.new_order_latency_samples_ms,
                 params,
-                ts,
                 close_buy ? Side::Buy : Side::Sell,
                 LatencyOperation::NewOrder,
-                ts
+                ts,
+                false
             );
+            const std::int64_t activate_latency_ms =
+                new_deadlines.effective_ts - ts;
+            const std::int64_t ack_latency_ms = new_deadlines.ack_ts - ts;
+            if (use_ioc && ack_latency_ms > activate_latency_ms) {
+                throw std::runtime_error(
+                    "split new-order ACK does not yet support pre-ACK IOC fills"
+                );
+            }
             SideQuoteContext close_ctx;
             TraceOrderPtr close_trace{nullptr, PmrTraceDeleter{&trace_resource}};
             if (trace_enabled) {
@@ -7280,6 +7589,7 @@ TickReplayResult simulate_tick_arrays(
                     close_qty,
                     ts,
                     activate_latency_ms,
+                    ack_latency_ms,
                     activation_mid,
                     queue_base_now,
                     queue_decay_now,
@@ -7298,6 +7608,7 @@ TickReplayResult simulate_tick_arrays(
                     close_qty,
                     ts,
                     activate_latency_ms,
+                    ack_latency_ms,
                     activation_mid,
                     queue_base_now,
                     queue_decay_now,
@@ -8973,16 +9284,19 @@ TickReplayResult simulate_tick_arrays(
                         : CancelReason::SideDisabled);
             }
             if (bid_allowed) {
-                const std::int64_t activate_latency_ms = sample_latency_ms(
+                const auto new_deadlines = sample_new_order_deadlines(
+                    ts,
                     params.new_order_latency_ms,
                     params.latency_jitter_ms,
                     &params.new_order_latency_samples_ms,
                     params,
-                    ts,
                     Side::Buy,
                     LatencyOperation::NewOrder,
                     ts
                 );
+                const std::int64_t activate_latency_ms =
+                    new_deadlines.effective_ts - ts;
+                const std::int64_t ack_latency_ms = new_deadlines.ack_ts - ts;
                 const std::int64_t activate_ts = ts + activate_latency_ms;
                 TraceOrderPtr trace{nullptr, PmrTraceDeleter{&trace_resource}};
                 if (trace_enabled) {
@@ -9014,6 +9328,7 @@ TickReplayResult simulate_tick_arrays(
                     bid_size,
                     ts,
                     activate_latency_ms,
+                    ack_latency_ms,
                     activation_mid,
                     queue_base_now,
                     queue_decay_now,
@@ -9028,7 +9343,7 @@ TickReplayResult simulate_tick_arrays(
                     bid_orders.back().fixed_spread_probe = true;
                     ++summary.fixed_spread_probe_bid_submitted_orders;
                 }
-                if (bid_orders.back().state == OrderState::Open &&
+                if (bid_orders.back().exchange_accepted &&
                     !activate_resting_order(
                         bid_orders.back(),
                         book.best_bid,
@@ -9061,16 +9376,19 @@ TickReplayResult simulate_tick_arrays(
                         : CancelReason::SideDisabled);
             }
             if (ask_allowed) {
-                const std::int64_t activate_latency_ms = sample_latency_ms(
+                const auto new_deadlines = sample_new_order_deadlines(
+                    ts,
                     params.new_order_latency_ms,
                     params.latency_jitter_ms,
                     &params.new_order_latency_samples_ms,
                     params,
-                    ts,
                     Side::Sell,
                     LatencyOperation::NewOrder,
                     ts
                 );
+                const std::int64_t activate_latency_ms =
+                    new_deadlines.effective_ts - ts;
+                const std::int64_t ack_latency_ms = new_deadlines.ack_ts - ts;
                 const std::int64_t activate_ts = ts + activate_latency_ms;
                 TraceOrderPtr trace{nullptr, PmrTraceDeleter{&trace_resource}};
                 if (trace_enabled) {
@@ -9102,6 +9420,7 @@ TickReplayResult simulate_tick_arrays(
                     ask_size,
                     ts,
                     activate_latency_ms,
+                    ack_latency_ms,
                     activation_mid,
                     queue_base_now,
                     queue_decay_now,
@@ -9116,7 +9435,7 @@ TickReplayResult simulate_tick_arrays(
                     ask_orders.back().fixed_spread_probe = true;
                     ++summary.fixed_spread_probe_ask_submitted_orders;
                 }
-                if (ask_orders.back().state == OrderState::Open &&
+                if (ask_orders.back().exchange_accepted &&
                     !activate_resting_order(
                         ask_orders.back(),
                         book.best_bid,

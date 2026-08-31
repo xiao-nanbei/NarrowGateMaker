@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-08-29
+Last materially modified: 2026-08-30
 
-Last materially synchronized: 2026-08-29
+Last materially synchronized: 2026-08-30
 
 NarrowGate research is organized into ten strategy/evidence families, one system-engineering line, and four shared infrastructure layers. All research source, evidence, shared contracts, and governance metadata live under this single `research/` subtree.
 
@@ -17,14 +17,14 @@ Versioned migration contracts live in `governance/migrations/`. `layout_v1.json`
 | ID | Directory | Status | Shared layers |
 |---|---|---|---|
 | F01 | `families/f01_fixed_parameter_racing/` | alpha family closed; screening only | D, R, S, G |
-| F02 | `families/f02_empirical_p3_touch/` | active operational baseline dependency | D, S |
-| F03 | `families/f03_causal_13_head/` | causal-v12 semantics-v6 is the active operational and backtest baseline; research q10 unresolved | D, R, S, G |
-| F04 | `families/f04_external_market_alpha/` | BABEL-P1 first-add M0/M1 waits for 30 receive-time days in parallel with completed clock-limited E6/P2 quote mechanics; no action authority | D, R, G |
+| F02 | `families/f02_empirical_p3_touch/` | frozen replay/operational comparator dependency; successor prediction infrastructure is research-only | D, S |
+| F03 | `families/f03_causal_13_head/` | causal-v12 semantics-v6 is a frozen replay/operational comparator; research q10 unresolved | D, R, S, G |
+| F04 | `families/f04_external_market_alpha/` | BABEL-P1 count gate complete; exact lifecycle, common-row denominator, and causal-clock closure remain blocked; clock-limited E6/P2 quote mechanics complete; no action authority | D, R, G |
 | F05 | `families/f05_fill_quality_quote_ev/` | evidence active; direct action archived; first-add USDC prediction closed on Development | D, R, S |
 | F06 | `families/f06_placement_fill_cif/` | placement-distance fill/value paths closed; signed marginal value unidentified on Development | D, R, G |
 | F07 | `families/f07_active_order_continuation/` | historical families closed; operational BUY trial is separate | D, R, S, G |
 | F08 | `families/f08_side_taker_lifecycle/` | identity/parity research active; hazard M0 closed | D, R |
-| F09 | `families/f09_campaign_action_uplift/` | mechanism research active, no registered action; tested cooldown temporal-permission action subspace exhausted | D, R, S, G |
+| F09 | `families/f09_campaign_action_uplift/` | frozen global-BER replay/operational comparator only; no registered action; tested cooldown temporal-permission action subspace exhausted | D, R, S, G |
 | F10 | `families/f10_live_replay_attribution/` | active diagnostic line; first-add Development evidence complete, no action authority | R, S |
 | SYS | `system_engineering/` | active engineering evidence; no alpha authority | R, S |
 
