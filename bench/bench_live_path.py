@@ -65,7 +65,11 @@ _CPP_BOOTSTRAP_DIR = _bootstrap_cpp_module_path()
 from live.config import load_config  # noqa: E402
 from strategy.inventory_manager import InventoryManager  # noqa: E402
 from strategy.maker_engine import MakerEngine, Side, _resolve_model_dir  # noqa: E402
-from strategy.signal import Prediction, SignalEngine  # noqa: E402
+from strategy.signal import (  # noqa: E402
+    Prediction,
+    SIGNAL_COMPUTE_PHASE_FIELDS,
+    SignalEngine,
+)
 
 
 def _percentile(values: list[float], pct: float) -> float:
@@ -107,6 +111,73 @@ def _time_samples(label: str, iterations: int, fn: Callable[[int], object]) -> d
         "checksum": checksum,
     }
     return row
+
+
+def _signal_span_rows(
+    label: str,
+    samples: dict[str, list[float]],
+) -> list[dict[str, float]]:
+    rows: list[dict[str, float]] = []
+    for name in (
+        *SIGNAL_COMPUTE_PHASE_FIELDS,
+        "signal_compute_accounted_us",
+        "signal_compute_residual_us",
+        "signal_compute_us",
+    ):
+        values = sorted(samples.get(name, []))
+        if not values:
+            continue
+        total_us = sum(values)
+        span_label = (
+            "total_us"
+            if name == "signal_compute_us"
+            else name.removeprefix("signal_compute_")
+        )
+        rows.append(
+            {
+                "label": f"{label} {span_label}",
+                "n": float(len(values)),
+                "mean_us": total_us / len(values),
+                "p50_us": _percentile(values, 0.50),
+                "p95_us": _percentile(values, 0.95),
+                "p99_us": _percentile(values, 0.99),
+                "p999_us": _percentile(values, 0.999),
+                "total_ms": total_us / 1000.0,
+                "checksum": 0.0,
+            }
+        )
+    return rows
+
+
+def _record_signal_spans(
+    timings: dict[str, object],
+    samples: dict[str, list[float]],
+) -> None:
+    for name in (
+        *SIGNAL_COMPUTE_PHASE_FIELDS,
+        "signal_compute_accounted_us",
+        "signal_compute_residual_us",
+        "signal_compute_us",
+    ):
+        samples.setdefault(name, []).append(float(timings[name]))
+
+
+def _compute_signal_with_wall_timing(
+    signal: SignalEngine,
+    timings: dict[str, object],
+) -> Prediction:
+    start_ns = time.perf_counter_ns()
+    try:
+        return signal.compute_signal(perf_timings=timings)
+    finally:
+        timings["signal_compute_us"] = (
+            time.perf_counter_ns() - start_ns
+        ) / 1_000.0
+        timings["signal_compute_residual_us"] = max(
+            0.0,
+            float(timings["signal_compute_us"])
+            - float(timings["signal_compute_accounted_us"]),
+        )
 
 
 def _print_table(rows: list[dict[str, float]]) -> None:
@@ -167,8 +238,17 @@ def _seed_signal(signal: SignalEngine, seconds: int, trades_per_second: int) -> 
     return start_ms + (seconds + 1) * 1000
 
 
-def _make_signal(cfg, enable_ml: bool, trades_per_second: int) -> tuple[SignalEngine, int]:
-    model_dir = _resolve_model_dir(cfg)
+def _make_signal(
+    cfg,
+    enable_ml: bool,
+    trades_per_second: int,
+    model_dir_override: str = "",
+) -> tuple[SignalEngine, int]:
+    model_dir = (
+        Path(model_dir_override).expanduser().resolve()
+        if model_dir_override
+        else _resolve_model_dir(cfg)
+    )
     signal = SignalEngine(
         model_dir=model_dir,
         enable_ml=enable_ml,
@@ -257,7 +337,12 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
     cfg.strategy.bid_quote_ev_enabled = False
     cfg.strategy.ask_quote_ev_enabled = False
 
-    signal, next_ts = _make_signal(cfg, enable_ml=bool(args.ml), trades_per_second=args.trades_per_second)
+    signal, next_ts = _make_signal(
+        cfg,
+        enable_ml=bool(args.ml),
+        trades_per_second=args.trades_per_second,
+        model_dir_override=args.model_dir,
+    )
     engine = _make_engine_shell(cfg, signal)
     pred = signal.compute_signal()
     if not args.ml:
@@ -278,10 +363,11 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
 
     mid = signal.mid_price or 65000.0
     q = float(args.inventory)
-    with _quote_core_engine(args.engine, args.strict_cpp):
-        engine._compute_quotes(mid, q, pred)
-        engine._build_side_policy(Side.BUY, mid, q, pred)
-        engine._build_side_policy(Side.SELL, mid, q, pred)
+    if not args.signal_only:
+        with _quote_core_engine(args.engine, args.strict_cpp):
+            engine._compute_quotes(mid, q, pred)
+            engine._build_side_policy(Side.BUY, mid, q, pred)
+            engine._build_side_policy(Side.SELL, mid, q, pred)
 
     gc.disable()
     rows: list[dict[str, float]] = []
@@ -297,6 +383,21 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
     signal.compute_signal()
     rows.append(_time_samples("signal cached", args.n, lambda _idx: signal.compute_signal().vol_10s))
 
+    cached_spans: dict[str, list[float]] = {}
+
+    def signal_cached_telemetry(_idx: int) -> float:
+        timings: dict[str, object] = {}
+        value = _compute_signal_with_wall_timing(signal, timings).vol_10s
+        if timings["signal_compute_path"] != "cached_no_new_bucket":
+            raise RuntimeError(f"expected cached signal path, got {timings}")
+        _record_signal_spans(timings, cached_spans)
+        return value
+
+    rows.append(
+        _time_samples("signal cached + telemetry", args.n, signal_cached_telemetry)
+    )
+    rows.extend(_signal_span_rows("cached span", cached_spans))
+
     def signal_10s(idx: int) -> float:
         nonlocal next_ts, pred
         for step in range(10):
@@ -307,24 +408,71 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
 
     rows.append(_time_samples("signal 10s features", max(1, args.signal_n), signal_10s))
 
-    with _quote_core_engine(args.engine, args.strict_cpp):
-        rows.append(_time_samples("live _compute_quotes", args.n, lambda idx: sum(engine._compute_quotes(mid + math.sin(idx / 29.0), q, pred))))
+    new_spans: dict[str, list[float]] = {}
 
-        def policy_pair(idx: int) -> float:
-            policy_bid = engine._build_side_policy(Side.BUY, mid + math.sin(idx / 31.0), q, pred)
-            policy_ask = engine._build_side_policy(Side.SELL, mid + math.sin(idx / 31.0), q, pred)
-            return policy_bid.spread_mult + policy_ask.spread_mult + policy_bid.size_mult + policy_ask.size_mult
+    def signal_10s_telemetry(idx: int) -> float:
+        nonlocal next_ts, pred
+        for step in range(10):
+            _feed_second(signal, next_ts, idx * 10 + step, args.trades_per_second)
+            next_ts += 1000
+        timings: dict[str, object] = {}
+        pred = _compute_signal_with_wall_timing(signal, timings)
+        if timings["signal_compute_path"] != "new_bucket":
+            raise RuntimeError(f"expected new signal path, got {timings}")
+        _record_signal_spans(timings, new_spans)
+        return pred.vol_10s + pred.ret_10s
 
-        rows.append(_time_samples("side policy pair", args.n, policy_pair))
+    rows.append(
+        _time_samples(
+            "signal 10s ingest + compute + telemetry",
+            max(1, args.signal_n),
+            signal_10s_telemetry,
+        )
+    )
+    rows.extend(_signal_span_rows("new span", new_spans))
 
-        def quote_policy(idx: int) -> float:
-            quote_mid = mid + math.sin(idx / 37.0)
-            bid, ask, spread = engine._compute_quotes(quote_mid, q, pred)
-            policy_bid = engine._build_side_policy(Side.BUY, quote_mid, q, pred)
-            policy_ask = engine._build_side_policy(Side.SELL, quote_mid, q, pred)
-            return bid + ask + spread + policy_bid.spread_mult + policy_ask.spread_mult
+    catch_up_spans: dict[str, list[float]] = {}
 
-        rows.append(_time_samples("quote + policy", args.n, quote_policy))
+    def signal_catch_up_telemetry(idx: int) -> float:
+        nonlocal next_ts, pred
+        for step in range(30):
+            _feed_second(signal, next_ts, idx * 30 + step, args.trades_per_second)
+            next_ts += 1000
+        timings: dict[str, object] = {}
+        pred = _compute_signal_with_wall_timing(signal, timings)
+        if timings["signal_compute_path"] != "catch_up":
+            raise RuntimeError(f"expected catch_up signal path, got {timings}")
+        _record_signal_spans(timings, catch_up_spans)
+        return pred.vol_10s + pred.ret_10s
+
+    rows.append(
+        _time_samples(
+            "signal 30s ingest + catch-up telemetry",
+            max(1, args.catch_up_n),
+            signal_catch_up_telemetry,
+        )
+    )
+    rows.extend(_signal_span_rows("catch-up span", catch_up_spans))
+
+    if not args.signal_only:
+        with _quote_core_engine(args.engine, args.strict_cpp):
+            rows.append(_time_samples("live _compute_quotes", args.n, lambda idx: sum(engine._compute_quotes(mid + math.sin(idx / 29.0), q, pred))))
+
+            def policy_pair(idx: int) -> float:
+                policy_bid = engine._build_side_policy(Side.BUY, mid + math.sin(idx / 31.0), q, pred)
+                policy_ask = engine._build_side_policy(Side.SELL, mid + math.sin(idx / 31.0), q, pred)
+                return policy_bid.spread_mult + policy_ask.spread_mult + policy_bid.size_mult + policy_ask.size_mult
+
+            rows.append(_time_samples("side policy pair", args.n, policy_pair))
+
+            def quote_policy(idx: int) -> float:
+                quote_mid = mid + math.sin(idx / 37.0)
+                bid, ask, spread = engine._compute_quotes(quote_mid, q, pred)
+                policy_bid = engine._build_side_policy(Side.BUY, quote_mid, q, pred)
+                policy_ask = engine._build_side_policy(Side.SELL, quote_mid, q, pred)
+                return bid + ask + spread + policy_bid.spread_mult + policy_ask.spread_mult
+
+            rows.append(_time_samples("quote + policy", args.n, quote_policy))
 
     gc.enable()
     return rows
@@ -334,11 +482,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--n", type=int, default=5000, help="iterations for hot live-path methods")
     parser.add_argument("--signal-n", type=int, default=500, help="10s signal feature iterations")
+    parser.add_argument("--catch-up-n", type=int, default=50, help="30s catch-up signal iterations")
     parser.add_argument("--trades-per-second", type=int, default=4, help="synthetic aggTrade events per second")
     parser.add_argument("--inventory", type=float, default=0.0)
     parser.add_argument("--engine", choices=("python", "cpp"), default="python", help="quote core engine used inside live _compute_quotes")
     parser.add_argument("--strict-cpp", action="store_true", help="raise instead of fallback when --engine cpp cannot load narrowgate_cpp")
     parser.add_argument("--ml", action="store_true", help="load and run saved LightGBM models during SignalEngine prediction")
+    parser.add_argument("--model-dir", default="", help="explicit validated 13-head model bundle for --ml")
+    parser.add_argument("--signal-only", action="store_true", help="run only signal ingestion, cadence, and telemetry benchmarks")
     parser.add_argument("--cprofile", action="store_true", help="print cProfile top cumulative functions")
     parser.add_argument("--profile-lines", type=int, default=30)
     args = parser.parse_args()

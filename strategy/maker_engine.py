@@ -132,6 +132,7 @@ from strategy.signal import (
     Prediction,
     QuoteDecisionSnapshot,
     QuotePostOnlyGuard,
+    SIGNAL_COMPUTE_PHASE_FIELDS,
     SignalEngine,
 )
 from strategy.state_conditioned_quote_policy import (
@@ -636,6 +637,15 @@ class LivePerfTelemetryLogRow:
     sync_check_us: float
     stale_check_us: float
     signal_compute_us: float
+    signal_compute_path: str
+    signal_compute_bucket_count: int
+    signal_compute_lock_wait_us: float
+    signal_compute_snapshot_feature_us: float
+    signal_compute_prediction_us: float
+    signal_compute_commit_lock_wait_us: float
+    signal_compute_commit_us: float
+    signal_compute_accounted_us: float
+    signal_compute_residual_us: float
     risk_check_us: float
     compute_quotes_us: float
     update_orders_us: float
@@ -3173,6 +3183,33 @@ class MakerEngine:
                 sync_check_us=float(timings.get("sync_check_us", 0.0)),
                 stale_check_us=float(timings.get("stale_check_us", 0.0)),
                 signal_compute_us=float(timings.get("signal_compute_us", 0.0)),
+                signal_compute_path=str(
+                    timings.get("signal_compute_path", "unknown")
+                ),
+                signal_compute_bucket_count=int(
+                    timings.get("signal_compute_bucket_count", 0)
+                ),
+                signal_compute_lock_wait_us=float(
+                    timings.get("signal_compute_lock_wait_us", 0.0)
+                ),
+                signal_compute_snapshot_feature_us=float(
+                    timings.get("signal_compute_snapshot_feature_us", 0.0)
+                ),
+                signal_compute_prediction_us=float(
+                    timings.get("signal_compute_prediction_us", 0.0)
+                ),
+                signal_compute_commit_lock_wait_us=float(
+                    timings.get("signal_compute_commit_lock_wait_us", 0.0)
+                ),
+                signal_compute_commit_us=float(
+                    timings.get("signal_compute_commit_us", 0.0)
+                ),
+                signal_compute_accounted_us=float(
+                    timings.get("signal_compute_accounted_us", 0.0)
+                ),
+                signal_compute_residual_us=float(
+                    timings.get("signal_compute_residual_us", 0.0)
+                ),
                 risk_check_us=float(timings.get("risk_check_us", 0.0)),
                 compute_quotes_us=float(timings.get("compute_quotes_us", 0.0)),
                 update_orders_us=float(timings.get("update_orders_us", 0.0)),
@@ -5770,11 +5807,22 @@ class MakerEngine:
 
         # 1. Get ML prediction
         try:
-            step_start = time.perf_counter()
-            pred = self.signal.compute_signal()
-            timings["signal_compute_us"] = (
-                time.perf_counter() - step_start
-            ) * 1_000_000.0
+            step_start_ns = time.perf_counter_ns()
+            try:
+                pred = self.signal.compute_signal(perf_timings=timings)
+            finally:
+                timings["signal_compute_us"] = (
+                    time.perf_counter_ns() - step_start_ns
+                ) / 1_000.0
+                timings["signal_compute_accounted_us"] = sum(
+                    float(timings.get(name, 0.0))
+                    for name in SIGNAL_COMPUTE_PHASE_FIELDS
+                )
+                timings["signal_compute_residual_us"] = max(
+                    0.0,
+                    timings["signal_compute_us"]
+                    - timings["signal_compute_accounted_us"],
+                )
             use_bar_pricing = getattr(cfg.strategy, 'use_bar_pricing', False)
             quote_snapshot = self.signal.quote_decision_snapshot()
             self._last_quote_decision_snapshot = quote_snapshot
