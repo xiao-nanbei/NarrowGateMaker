@@ -96,9 +96,10 @@ executes the remaining activation as one SSH transaction. It is a dry-run plan
 unless `--execute` is present. The transaction verifies the candidate before
 stopping the old service, then performs stop/quiescence, fresh reconciliation,
 start, bounded health admission, activation receipt, and current-pointer
-publication in that order. The pointer is published last. A failure never
-publishes it; a candidate that was started but fails admission is stopped, and
-the command never automatically restarts the old release. `--service-user`
+publication in that order. The pointer is published last. Any failure before
+the pointer rename leaves it unchanged; a candidate that was started but fails
+admission is stopped, and the command never automatically restarts the old
+release. `--service-user`
 defaults to the validated EC2 contract user `ec2-user` and may be set to another
 validated service identity. Hosts reachable only through a local SOCKS5 proxy
 use the bounded `--socks5-proxy HOST:PORT` option; arbitrary SSH options are not
@@ -114,7 +115,12 @@ ambiguous process fails before stop and is left unchanged.
 Health admission requires `reconciliationPending=false` and a finite
 `lastTickAge` between zero and one second. This bound follows the existing
 100 ms main-loop safety clock with allowance for bounded scheduler jitter; it
-does not require a private fill or user-stream event during admission.
+also requires a connected private user stream with one positive, stable
+connection generation across the advancing health observations. It does not
+require a private fill or user-stream event during admission. The pointer rename
+is the commit point; if its parent-directory `fsync` then fails, the command
+reports an uncertain commit and leaves the candidate running for manual
+verification rather than stopping a possibly published release.
 
 Before a remote upload or task starts, recursively calculate the complete
 materialization closure. Every manifest reference must be inside the admitted

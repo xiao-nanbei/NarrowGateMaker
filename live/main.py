@@ -1943,6 +1943,8 @@ def collect_runtime_safety_health(
         "lastTickAge": quote["last_tick_age_s"],
         "lastUserEventAge": user["last_user_event_age_s"],
         "userEventCount": int(user["user_event_count"]),
+        "userStreamConnected": bool(user["user_stream_connected"]),
+        "userStreamGeneration": int(user["user_stream_generation"]),
         "replaceTerminalContinuationArmCount": int(
             continuation.get("arm_count", 0)
         ),
@@ -2527,6 +2529,8 @@ def main():
                     f"fatalReason={runtime_safety['fatalReason'] or 'none'} "
                     f"lastTickAge={_runtime_age_text(runtime_safety['lastTickAge'])} "
                     f"lastUserEventAge={_runtime_age_text(runtime_safety['lastUserEventAge'])} "
+                    f"userStreamConnected={int(runtime_safety['userStreamConnected'])} "
+                    f"userStreamGeneration={runtime_safety['userStreamGeneration']} "
                     f"rtcArm={runtime_safety['replaceTerminalContinuationArmCount']} "
                     f"rtcPublish={runtime_safety['replaceTerminalContinuationPublishCount']} "
                     f"rtcDecision={runtime_safety['replaceTerminalContinuationDecisionCount']} "

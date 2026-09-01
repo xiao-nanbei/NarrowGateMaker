@@ -275,6 +275,8 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
         user_event_safety_snapshot=lambda **_kwargs: {
             "last_user_event_age_s": 4.0,
             "user_event_count": 7,
+            "user_stream_connected": True,
+            "user_stream_generation": 3,
         }
     )
 
@@ -288,6 +290,8 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
     assert health["ownershipConflictLatched"] is True
     assert health["lastTickAge"] == pytest.approx(3.0)
     assert health["lastUserEventAge"] == pytest.approx(4.0)
+    assert health["userStreamConnected"] is True
+    assert health["userStreamGeneration"] == 3
     assert health["reconciliationRequired"] is True
     assert health["reconciliationPending"] is True
     assert health["fatalReason"] == "ORDER_MANAGER_FATAL"
@@ -467,8 +471,9 @@ def test_listen_key_expiry_restarts_outside_callback_without_self_join(
     created_apps = []
 
     class _FakeWebSocketApp:
-        def __init__(self, _url, *, on_message, on_error, on_close):
+        def __init__(self, _url, *, on_open, on_message, on_error, on_close):
             del on_error, on_close
+            self.on_open = on_open
             self.on_message = on_message
             self.closed = threading.Event()
             self.index = len(created_apps)
@@ -480,6 +485,7 @@ def test_listen_key_expiry_restarts_outside_callback_without_self_join(
                 active_streams += 1
                 max_active_streams = max(max_active_streams, active_streams)
             try:
+                self.on_open(self)
                 if self.index == 0:
                     self.on_message(self, json.dumps({"e": "listenKeyExpired"}))
                 else:
@@ -508,6 +514,9 @@ def test_listen_key_expiry_restarts_outside_callback_without_self_join(
 
     handler._start_user_stream(rest)
     assert second_stream_started.wait(timeout=2.0)
+    connected = handler.user_event_safety_snapshot()
+    assert connected["user_stream_connected"] is True
+    assert connected["user_stream_generation"] == 2
     handler.stop()
 
     assert rest.new_listen_key.call_count == 2
@@ -515,6 +524,7 @@ def test_listen_key_expiry_restarts_outside_callback_without_self_join(
     assert active_streams == 0
     assert handler._user_thread is None
     assert handler._user_restart_thread is None
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
     engine.latch_runtime_fatal.assert_not_called()
 
 
@@ -531,6 +541,7 @@ def test_concurrent_restart_and_renewal_leave_at_most_one_user_loop(
     class _FakeWebSocketApp:
         def __init__(self, _url, **_callbacks):
             self.closed = threading.Event()
+            self.on_open = _callbacks["on_open"]
             created_apps.append(self)
 
         def run_forever(self, **_kwargs) -> None:
@@ -539,6 +550,7 @@ def test_concurrent_restart_and_renewal_leave_at_most_one_user_loop(
                 active_streams += 1
                 max_active_streams = max(max_active_streams, active_streams)
             try:
+                self.on_open(self)
                 assert self.closed.wait(timeout=2.0)
             finally:
                 with state_lock:
@@ -582,6 +594,7 @@ def test_concurrent_restart_and_renewal_leave_at_most_one_user_loop(
     assert all(not worker.is_alive() for worker in workers)
     assert max_active_streams == 1
     assert active_streams == 1
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is True
     handler.stop()
     assert active_streams == 0
     assert handler._user_thread is None
@@ -600,6 +613,12 @@ def test_verified_user_event_updates_monotonic_health_and_callback_failure_latch
         latch_runtime_fatal=Mock(),
     )
     handler = WSHandler(engine, Config())
+    handler._running = True
+    handler._user_stream_active = True
+    ws = object()
+    token = handler._install_user_stream_app(ws)
+    assert token is not None
+    handler._on_user_open(ws, token)
     monkeypatch.setattr(
         ws_handler_module,
         "time",
@@ -607,21 +626,144 @@ def test_verified_user_event_updates_monotonic_health_and_callback_failure_latch
     )
 
     handler._on_user_message(
-        None,
+        ws,
         json.dumps(
             {
                 "e": "ORDER_TRADE_UPDATE",
                 "o": {"c": "mm_B_1", "X": "NEW", "i": 41},
             }
         ),
+        token,
     )
 
     assert handler.user_event_safety_snapshot(now_monotonic_s=14.0) == {
         "user_event_count": 1,
         "last_user_event_age_s": 4.0,
+        "user_stream_connected": True,
+        "user_stream_generation": 1,
     }
     engine.latch_runtime_fatal.assert_called_once()
     assert engine.latch_runtime_fatal.call_args.kwargs["reconciliation_required"] is True
+
+
+def test_user_stream_session_fences_stale_callbacks_messages_and_late_install() -> None:
+    orders = SimpleNamespace(on_order_update=Mock())
+    handler = WSHandler(
+        SimpleNamespace(orders=orders, latch_runtime_fatal=Mock()), Config()
+    )
+    handler._running = True
+    handler._user_stream_active = True
+    ws1 = SimpleNamespace(close=Mock())
+    ws2 = SimpleNamespace(close=Mock())
+
+    token1 = handler._install_user_stream_app(ws1)
+    assert token1 is not None
+    handler._on_user_open(ws1, token1)
+    handler._on_user_open(ws1, token1)
+    assert handler.user_event_safety_snapshot()["user_stream_generation"] == 1
+
+    token2 = handler._install_user_stream_app(ws2)
+    assert token2 is not None
+    handler._on_user_open(ws2, token2)
+    handler._on_user_message(
+        ws1,
+        json.dumps({"e": "ORDER_TRADE_UPDATE", "o": {"i": 1}}),
+        token1,
+    )
+    handler._on_user_error(ws1, RuntimeError("stale"), token1)
+    handler._on_user_close(ws1, 1000, "stale", token1)
+    handler._release_user_stream_app(ws1, token1)
+    snapshot = handler.user_event_safety_snapshot()
+    assert snapshot["user_stream_connected"] is True
+    assert snapshot["user_stream_generation"] == 2
+    orders.on_order_update.assert_not_called()
+
+    handler._on_user_message(
+        ws2,
+        json.dumps({"e": "ORDER_TRADE_UPDATE", "o": {"i": 2}}),
+        token2,
+    )
+    orders.on_order_update.assert_called_once()
+    handler._on_user_error(ws2, RuntimeError("current"), token2)
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
+    assert handler._ws_user is ws2
+    handler._on_user_open(ws2, token2)
+    assert handler.user_event_safety_snapshot()["user_stream_generation"] == 3
+    assert handler._release_user_stream_app(ws2, token2) is True
+    assert handler._ws_user is None
+
+    ws3 = SimpleNamespace(close=Mock())
+    token3 = handler._install_user_stream_app(ws3)
+    assert token3 is not None
+    handler._stop_user_stream_locked()
+    assert ws3.close.call_count == 1
+    assert handler._install_user_stream_app(SimpleNamespace(close=Mock())) is None
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
+
+
+def test_user_stream_stop_drains_final_current_order_update_before_retire() -> None:
+    orders = SimpleNamespace(on_order_update=Mock())
+    handler = WSHandler(
+        SimpleNamespace(orders=orders, latch_runtime_fatal=Mock()), Config()
+    )
+    handler._running = True
+    handler._user_stream_active = True
+    session: dict[str, object] = {}
+
+    def close() -> None:
+        handler._on_user_message(
+            session["ws"],
+            json.dumps({"e": "ORDER_TRADE_UPDATE", "o": {"i": 7}}),
+            session["token"],
+        )
+
+    ws = SimpleNamespace(close=close)
+    token = handler._install_user_stream_app(ws)
+    assert token is not None
+    session.update(ws=ws, token=token)
+    handler._on_user_open(ws, token)
+
+    handler._stop_user_stream_locked()
+
+    orders.on_order_update.assert_called_once()
+    assert handler._ws_user is None
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
+
+
+def test_user_stream_run_failure_retires_connected_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import websocket
+
+    opened = threading.Event()
+
+    class _FailingWebSocketApp:
+        def __init__(self, _url, **callbacks):
+            self.on_open = callbacks["on_open"]
+
+        def run_forever(self, **_kwargs) -> None:
+            self.on_open(self)
+            opened.set()
+            handler._running = False
+            raise RuntimeError("socket loop failed")
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr(websocket, "WebSocketApp", _FailingWebSocketApp)
+    handler = WSHandler(SimpleNamespace(latch_runtime_fatal=Mock()), Config())
+    handler._running = True
+    handler._start_user_stream(
+        SimpleNamespace(new_listen_key=Mock(return_value={"listenKey": "test-key"}))
+    )
+
+    assert opened.wait(timeout=1.0)
+    assert handler._user_thread is not None
+    handler._user_thread.join(timeout=1.0)
+    assert not handler._user_thread.is_alive()
+    assert handler._ws_user is None
+    assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
+    handler.stop()
 
 
 def test_supervisor_never_restarts_execution_state_uncertainty() -> None:

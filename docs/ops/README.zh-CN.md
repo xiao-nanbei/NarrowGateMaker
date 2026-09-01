@@ -85,9 +85,10 @@ Release、private environment、active config、locked runtime 与 deployment en
 已经在主机上准备好后，`activate-prepared-release` 用一次 SSH 事务完成余下 activation。
 缺省只输出 dry-run plan；只有指定 `--execute` 才改变远端状态。事务先在旧服务仍运行时
 验证 candidate，然后严格执行 stop/quiescence、fresh reconciliation、start、bounded health
-admission、activation receipt 与 current-pointer publication；pointer 最后发布。失败时不发布
-pointer；candidate 已启动但未通过 health admission 时会停止 candidate，并且不会自动重启
-旧 release。`--service-user` 默认使用经过校验的 EC2 contract 用户 `ec2-user`，也可指定
+admission、activation receipt 与 current-pointer publication；pointer 最后发布。Pointer
+rename 前的失败不会发布 pointer；candidate 已启动但未通过 health admission 时会停止
+candidate，并且不会自动重启旧 release。`--service-user` 默认使用经过校验的 EC2 contract
+用户 `ec2-user`，也可指定
 另一个合法 service identity。只能通过本地 SOCKS5 到达的主机使用受限的
 `--socks5-proxy HOST:PORT`；命令不接受任意 SSH option。
 
@@ -98,7 +99,10 @@ working directory、正数 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 prev
 
 Health admission 还要求 `reconciliationPending=false`，并且 `lastTickAge` 是零到一秒内的
 有限值。一秒上限来自现有 100ms 主循环安全时钟，并为有界 scheduler jitter 留出空间；
-它不要求 admission 期间必须发生 private fill 或 user-stream event。
+同时要求 private user stream 已连接，且 advancing health observations 使用同一个正数
+connection generation；不要求 admission 期间必须发生 private fill 或 user-stream event。
+Pointer rename 是提交点；若随后 parent-directory `fsync` 失败，命令报告 commit uncertain，
+保留 candidate 运行供人工核验，不会停止一个可能已经发布的 release。
 
 Remote upload 或 task 启动前，递归计算完整 materialization closure。每个 manifest
 reference 必须在 admitted bundle 内，或作为显式 immutable resource 提供。Archive 上传

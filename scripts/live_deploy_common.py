@@ -989,9 +989,11 @@ def render_prepared_release_activation_shell(
         "assert h.get('reconciliationRequired') is False;"
         "assert h.get('reconciliationPending') is False;"
         "assert h.get('fatalReason')=='';"
+        "user_generation=int(h.get('userStreamGeneration',0));"
+        "assert h.get('userStreamConnected') is True and user_generation>0;"
         "age=float(h.get('lastTickAge'));assert math.isfinite(age) and 0<=age<=1.0;"
         "assert r.get('pid')==p and r.get('dry_run') is False and r.get('testnet') is False;"
-        "print(generation)"
+        "print(generation,user_generation)"
     )
     process_check = (
         "import os,sys;pid=int(sys.argv[1]);expected=os.fsencode(sys.argv[2]);"
@@ -1024,6 +1026,7 @@ pointer_stage_owned=0
 start_marker="" start_marker_owned=0
 lock="$(dirname "$current")/.narrowgate-live-activation.lock"
 cleanup_required=0
+pointer_committed=0
 quiescent() {{
   test -z "$(pgrep -f -- '[l]ive/main.py' || true)" \
     && test -z "$(pgrep -f -- '[l]ive/run.sh __supervise' || true)"
@@ -1033,7 +1036,7 @@ cleanup() {{
   trap - EXIT HUP INT TERM
   if test "$pointer_stage_owned" = 1; then rm -f -- "$pointer_stage"; fi
   if test "$start_marker_owned" = 1; then rm -f -- "$start_marker"; fi
-  if test "$cleanup_required" = 1; then
+  if test "$cleanup_required" = 1 && test "$pointer_committed" = 0; then
     cleanup_probe_deadline=$((SECONDS + 5))
     while true; do
       unit_cwd="$(systemctl show narrowgate.service -p WorkingDirectory --value 2>/dev/null || true)"
@@ -1175,7 +1178,7 @@ sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
   "$release/live/run.sh" service
 health="$release/logs/runtime_health.json"
 runtime="$release/logs/runtime_identity.json"
-observations=0 last_generation=0 candidate_pid=""
+observations=0 last_generation=0 user_generation="" candidate_pid=""
 deadline=$((SECONDS + {health_timeout_s}))
 while test "$SECONDS" -lt "$deadline"; do
   state="$(systemctl is-active narrowgate.service 2>/dev/null || true)"
@@ -1184,9 +1187,18 @@ while test "$SECONDS" -lt "$deadline"; do
   if test -n "$candidate_pid" && test "$pid" = "$candidate_pid" \
       && candidate_unit_matches "$candidate_pid" \
       && test -s "$health" && test -s "$runtime" && test "$health" -nt "$start_marker"; then
-    generation="$($trusted -c {q(health_check)} \
+    health_values="$($trusted -c {q(health_check)} \
       "$health" "$runtime" "$candidate_pid" "$start_ns" 2>/dev/null || true)"
+    read -r generation observed_user_generation extra <<<"$health_values"
     case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+    case "$observed_user_generation" in ''|*[!0-9]*) observed_user_generation=0 ;; esac
+    if test -n "${{extra:-}}" || test "$observed_user_generation" -le 0; then
+      generation=0
+    elif test "$user_generation" != "$observed_user_generation"; then
+      user_generation="$observed_user_generation"
+      observations=0
+      last_generation=0
+    fi
     if test "$generation" -gt "$last_generation"; then
       observations=$((observations + 1))
       last_generation="$generation"
@@ -1208,10 +1220,17 @@ activation_sha="$($trusted -c {q(json_get)} "$activation" canonical_sha256)"
 fresh=0 deadline=$((SECONDS + {health_timeout_s}))
 while test "$SECONDS" -lt "$deadline"; do
   candidate_unit_matches "$candidate_pid"
-  generation="$($trusted -c {q(health_check)} \
+  health_values="$($trusted -c {q(health_check)} \
     "$health" "$runtime" "$candidate_pid" "$start_ns" 2>/dev/null || true)"
+  read -r generation observed_user_generation extra <<<"$health_values"
   case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
-  if test "$generation" -gt "$last_generation"; then fresh=1; break; fi
+  case "$observed_user_generation" in ''|*[!0-9]*) observed_user_generation=0 ;; esac
+  if test -z "${{extra:-}}" && test "$observed_user_generation" = "$user_generation" \
+      && test "$generation" -gt "$last_generation"; then
+    fresh=1
+    last_generation="$generation"
+    break
+  fi
   sleep 1
 done
 test "$fresh" = 1
@@ -1226,13 +1245,20 @@ candidate_unit_matches "$candidate_pid"
 "$trusted" -c {q(pointer_check)} "$release/live/deployment_runtime.py" \
   "$pointer_stage" "$envelope" "$activation" "$rid" "$activation_sha"
 candidate_unit_matches "$candidate_pid"
-post_generation="$($trusted -c {q(health_check)} \
+post_health_values="$($trusted -c {q(health_check)} \
   "$health" "$runtime" "$candidate_pid" "$start_ns")"
+read -r post_generation post_user_generation post_extra <<<"$post_health_values"
+test -z "${{post_extra:-}}"
 test "$post_generation" -ge "$generation"
+test "$post_user_generation" = "$user_generation"
 canonical_output "$current"
 mv -f -- "$pointer_stage" "$current"
-"$trusted" -c {q(fsync_parent)} "$current"
+pointer_committed=1
 cleanup_required=0
+if ! "$trusted" -c {q(fsync_parent)} "$current"; then
+  printf 'pointer commit uncertain; candidate remains running; manual verification required\n' >&2
+  exit 85
+fi
 trap 'exit 84' HUP INT TERM
 printf 'activated %s %s %s %s\n' \
   "$rid" "$envelope_sha" "$reconciliation_sha" "$activation_sha"

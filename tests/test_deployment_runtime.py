@@ -1744,11 +1744,12 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     critical = shell.index("trap '' HUP INT TERM", receipt)
     publish = shell.index("publish-current-pointer", critical)
     pointer_verify = shell.index("load_current_pointer", publish)
-    post_check = shell.index("post_generation=", pointer_verify)
+    post_check = shell.index("post_health_values=", pointer_verify)
     final_publish = shell.index('mv -f -- "$pointer_stage" "$current"', post_check)
-    parent_fsync = shell.index('"$trusted" -c', final_publish)
-    cleanup_disarm = shell.index("cleanup_required=0", parent_fsync)
-    trap_restore = shell.index("trap 'exit 84' HUP INT TERM", cleanup_disarm)
+    committed = shell.index("pointer_committed=1", final_publish)
+    cleanup_disarm = shell.index("cleanup_required=0", committed)
+    parent_fsync = shell.index('if ! "$trusted" -c', cleanup_disarm)
+    trap_restore = shell.index("trap 'exit 84' HUP INT TERM", parent_fsync)
     assert [
         verify,
         old_pid,
@@ -1763,8 +1764,9 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
         pointer_verify,
         post_check,
         final_publish,
-        parent_fsync,
+        committed,
         cleanup_disarm,
+        parent_fsync,
         trap_restore,
     ] == sorted(
         (
@@ -1781,8 +1783,9 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
             pointer_verify,
             post_check,
             final_publish,
-            parent_fsync,
+            committed,
             cleanup_disarm,
+            parent_fsync,
             trap_restore,
         )
     )
@@ -1799,6 +1802,12 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert "reconciliationPending" in shell
     assert "lastTickAge" in shell and "math.isfinite(age)" in shell
     assert "0<=age<=1.0" in shell
+    assert "userStreamConnected" in shell and "userStreamGeneration" in shell
+    assert 'test "$user_generation" != "$observed_user_generation"' in shell
+    assert 'test "$observed_user_generation" = "$user_generation"' in shell
+    assert 'test "$post_user_generation" = "$user_generation"' in shell
+    assert 'test "$cleanup_required" = 1 && test "$pointer_committed" = 0' in shell
+    assert "pointer commit uncertain; candidate remains running" in shell
     assert '[[ "$reconciliation_sha" =~ ^[0-9a-f]{64}$ ]]' in shell
     assert shell.count('candidate_unit_matches "$candidate_pid"') >= 4
     lock_check = shell.index('canonical_output "$current"')
@@ -1814,7 +1823,7 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert marker_check < shell.index('private_parent "$start_marker"') < marker_open
     assert '--output "$pointer_stage"' in shell[publish:post_check]
     assert "activation_receipt_sha256" in shell[pointer_verify:post_check]
-    assert "os.fsync(fd)" in shell[parent_fsync:cleanup_disarm]
+    assert "os.fsync(fd)" in shell[parent_fsync:trap_restore]
     assert "load_current_pointer" not in shell[final_publish:cleanup_disarm]
     assert "start narrowgate.service" not in shell
     assert "rollback" not in shell

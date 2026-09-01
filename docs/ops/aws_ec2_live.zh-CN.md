@@ -192,8 +192,8 @@ python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 
 默认是无副作用 dry-run；只有 `--execute` 才执行一次 SSH 远端事务。Service identity 默认
 为经过校验的 EC2 contract 用户 `ec2-user`，其他合法非 root 用户通过 `--service-user`
-指定。停机前失败不会影响旧服务；停机后失败会让主机保持 stopped；candidate 已启动后
-health 失败会停止 candidate。命令不会盲目重启旧 release，并且只在 bounded health
+指定。停机前失败不会影响旧服务；停机后失败会让主机保持 stopped；candidate 已启动后且
+pointer rename 前的 health 失败会停止 candidate。命令不会盲目重启旧 release，并且只在 bounded health
 admission 通过后发布 current pointer。批准的控制路径需要 SOCKS5 时，只能使用经过校验的
 `--socks5-proxy HOST:PORT`，不能注入任意 SSH option。
 
@@ -203,8 +203,10 @@ Prepared transaction 当前只接受正在运行的 transient `narrowgate.servic
 line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。
 
 Admission 同时要求 `reconciliationPending=false`，且 `lastTickAge` 是 `[0, 1s]` 内有限值；
-该界限来自现有 100ms 主循环安全时钟及有界 scheduler allowance。观察窗口不要求必须出现
-private fill 或 user-stream event。
+该界限来自现有 100ms 主循环安全时钟及有界 scheduler allowance。Private user stream 必须
+已连接，且 advancing health observations 使用同一个正数 connection generation；观察窗口
+不要求出现 private fill 或 user-stream event。Pointer rename 是提交点；若之后 parent-directory
+`fsync` 失败，命令报告 commit uncertain，并保留 candidate 运行供人工核验。
 
 安全 activation 顺序：
 

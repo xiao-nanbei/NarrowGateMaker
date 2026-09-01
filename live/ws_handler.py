@@ -120,6 +120,9 @@ class WSHandler:
         self._user_event_stats_lock = threading.Lock()
         self._user_event_count = 0
         self._last_user_event_monotonic_s = 0.0
+        self._user_stream_connected = False
+        self._user_stream_generation = 0
+        self._user_stream_session_token = 0
 
         self._market_session_id = 0
         self._market_trade_seen: dict[str, float] = {}
@@ -1267,25 +1270,49 @@ class WSHandler:
             url = self._private_user_stream_url(self._listen_key)
             self._user_stream_active = True
 
-            def on_message(ws, message):
-                self._on_user_message(ws, message)
+            def make_callbacks():
+                session: dict[str, int] = {}
 
-            def on_error(ws, error):
-                logger.warning(f"User data WebSocket error: {error}")
+                def on_message(ws, message):
+                    self._on_user_message(ws, message, session.get("token", -1))
 
-            def on_close(ws, status_code, message):
-                self._on_user_close(ws, status_code, message)
+                def on_open(ws):
+                    self._on_user_open(ws, session.get("token", -1))
+
+                def on_error(ws, error):
+                    self._on_user_error(ws, error, session.get("token", -1))
+
+                def on_close(ws, status_code, message):
+                    self._on_user_close(
+                        ws, status_code, message, session.get("token", -1)
+                    )
+
+                return session, on_message, on_open, on_error, on_close
 
             def run():
                 while self._running and self._user_stream_active:
+                    session, on_message, on_open, on_error, on_close = make_callbacks()
+
                     ws = websocket.WebSocketApp(
                         url,
+                        on_open=on_open,
                         on_message=on_message,
                         on_error=on_error,
                         on_close=on_close,
                     )
-                    self._ws_user = ws
-                    ws.run_forever(ping_interval=20, ping_timeout=10)
+                    token = self._install_user_stream_app(ws)
+                    if token is None:
+                        close = getattr(ws, "close", None)
+                        if callable(close):
+                            close()
+                        break
+                    session["token"] = token
+                    try:
+                        ws.run_forever(ping_interval=20, ping_timeout=10)
+                    except Exception as exc:
+                        logger.warning("User data WebSocket loop failed: %s", exc)
+                    finally:
+                        self._release_user_stream_app(ws, token)
                     if self._running and self._user_stream_active:
                         time.sleep(2)
 
@@ -1354,22 +1381,29 @@ class WSHandler:
             self._stop_user_stream_locked()
 
     def _stop_user_stream_locked(self):
-        self._user_stream_active = False
-        if self._ws_user:
+        with self._user_event_stats_lock:
+            self._user_stream_active = False
+            self._user_stream_connected = False
+            ws_user = self._ws_user
+        if ws_user:
             try:
-                close = getattr(self._ws_user, "close", None)
+                close = getattr(ws_user, "close", None)
                 if callable(close):
                     close()
                 else:
-                    self._ws_user.stop()
+                    ws_user.stop()
             except Exception:
                 pass
-            self._ws_user = None
         thread = self._user_thread
         self._join_user_stream_thread(
             thread,
             thread_name="user-data WebSocket thread",
         )
+        with self._user_event_stats_lock:
+            self._user_stream_session_token += 1
+            self._user_stream_connected = False
+            if self._ws_user is ws_user:
+                self._ws_user = None
         if thread is self._user_thread:
             self._user_thread = None
 
@@ -1643,8 +1677,14 @@ class WSHandler:
         except Exception as e:
             logger.error(f"Spot message error: {e}")
 
-    def _on_user_message(self, _, message):
+    def _on_user_message(self, ws, message, token: int):
         """Route user data messages."""
+        with self._user_event_stats_lock:
+            if token != self._user_stream_session_token or ws is not self._ws_user:
+                return
+        self._on_current_user_message(message)
+
+    def _on_current_user_message(self, message) -> None:
         receive_ts_ns = time.time_ns()
         event_type = ""
         try:
@@ -1727,6 +1767,8 @@ class WSHandler:
         with self._user_event_stats_lock:
             event_count = int(self._user_event_count)
             last_event = float(self._last_user_event_monotonic_s)
+            connected = bool(self._user_stream_connected)
+            generation = int(self._user_stream_generation)
         age_s = (
             max(0.0, now_monotonic_s - last_event)
             if last_event > 0.0
@@ -1735,6 +1777,8 @@ class WSHandler:
         return {
             "user_event_count": event_count,
             "last_user_event_age_s": age_s,
+            "user_stream_connected": connected,
+            "user_stream_generation": generation,
         }
 
     def _on_market_close(self, _):
@@ -1767,7 +1811,49 @@ class WSHandler:
             time.sleep(2)
             self._reconnect_market()
 
-    def _on_user_close(self, *_):
+    def _install_user_stream_app(self, ws) -> Optional[int]:
+        with self._user_event_stats_lock:
+            if not self._running or not self._user_stream_active:
+                return None
+            self._user_stream_session_token += 1
+            token = self._user_stream_session_token
+            self._ws_user = ws
+            self._user_stream_connected = False
+            return token
+
+    def _on_user_open(self, ws, token: int) -> None:
+        with self._user_event_stats_lock:
+            if token != self._user_stream_session_token or ws is not self._ws_user:
+                return
+            if not self._running or not self._user_stream_active:
+                return
+            if self._user_stream_connected:
+                return
+            self._user_stream_generation += 1
+            self._user_stream_connected = True
+
+    def _set_user_stream_disconnected(self, ws, token: int) -> bool:
+        with self._user_event_stats_lock:
+            if token != self._user_stream_session_token or ws is not self._ws_user:
+                return False
+            self._user_stream_connected = False
+            return True
+
+    def _release_user_stream_app(self, ws, token: int) -> bool:
+        with self._user_event_stats_lock:
+            if token != self._user_stream_session_token or ws is not self._ws_user:
+                return False
+            self._user_stream_connected = False
+            self._ws_user = None
+            return True
+
+    def _on_user_error(self, ws, error, token: int) -> None:
+        if self._set_user_stream_disconnected(ws, token):
+            logger.warning(f"User data WebSocket error: {error}")
+
+    def _on_user_close(self, ws, _status_code, _message, token: int) -> None:
+        if not self._set_user_stream_disconnected(ws, token):
+            return
         logger.warning("User data WebSocket closed")
         if self._running and self._user_stream_active:
             logger.info("User data WebSocket reconnect loop will retry in 2s...")

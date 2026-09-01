@@ -202,7 +202,8 @@ It defaults to a non-mutating dry-run; `--execute` enables the one-SSH remote
 transaction. The default service identity is the validated EC2 contract user
 `ec2-user`; use `--service-user` for another valid non-root identity. Failure
 before stop leaves the old service alone. Failure after stop leaves the host
-stopped, and failure after candidate start stops that candidate. It never
+stopped, and failure after candidate start but before pointer rename stops that
+candidate. It never
 blindly restarts the old release, and it publishes the current pointer only
 after bounded health admission. When the approved control path requires SOCKS5,
 pass only the validated `--socks5-proxy HOST:PORT` option; arbitrary SSH options
@@ -216,8 +217,11 @@ unit or ambiguous process fails before stop and is not modified.
 
 Admission also requires `reconciliationPending=false` and a finite
 `lastTickAge` in `[0, 1s]`, derived from the existing 100 ms main-loop safety
-clock with bounded scheduler allowance. It deliberately does not require a
-private fill or user-stream event during the observation window.
+clock with bounded scheduler allowance. The private user stream must be
+connected with the same positive connection generation across advancing health
+observations; no private fill or user event is required. Pointer rename is the
+commit point. A later parent-directory `fsync` failure is reported as an
+uncertain commit while the candidate remains running for manual verification.
 
 Safe activation order:
 
