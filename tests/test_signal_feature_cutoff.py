@@ -1,4 +1,5 @@
 import math
+from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,6 @@ from strategy.signal import (
     FeatureCutoff,
     SignalEngine,
 )
-
 
 BASE_MS = 1_000_000
 
@@ -76,6 +76,89 @@ def _assert_feature_dicts_equal(left: dict, right: dict) -> None:
     assert left.keys() == right.keys()
     for key in left:
         assert float(left[key]) == pytest.approx(float(right[key]), abs=1e-12), key
+
+
+class _NonIterableFeatureHistory(deque):
+    """Prove metrics can address its one required history row without a full scan."""
+
+    def __iter__(self):
+        raise AssertionError("metrics must not iterate the complete feature history")
+
+
+def _append_metrics_history(engine: SignalEngine, target_ts_ms: int) -> None:
+    for index in range(72):
+        engine._metrics_history.append(
+            {
+                "ts_ms": target_ts_ms - (71 - index) * 300_000,
+                "oi": 1_000_000.0 + index * 317.0,
+                "top_ls": 1.02 + math.sin(index / 9.0) * 0.03,
+                "crowd_ls": 0.98 + math.cos(index / 8.0) * 0.02,
+                "taker_ls": 1.00 + math.sin(index / 7.0) * 0.025,
+            }
+        )
+
+
+def test_metrics_full_feature_history_matches_legacy_row_selection_without_iteration() -> None:
+    target_ts_ms = 1_780_000_000_000
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    _append_metrics_history(engine, target_ts_ms)
+    for index in range(60_480):
+        engine._feat_history.append(
+            {
+                "close": 99_000.0 + index * 0.017,
+                "return_abs": 0.00002 + (index % 31) * 0.0000002,
+                "vol_regime_6h": 0.000022 + (index % 101) * 0.00000001,
+            }
+        )
+
+    seed = {"close": 100_123.45}
+    expected = dict(seed)
+    engine._compute_metrics_features(expected, target_ts_ms)
+    full_history = list(engine._feat_history)
+    previous_oi = engine._metrics_history[-2]["oi"]
+    current_oi = engine._metrics_history[-1]["oi"]
+    legacy_old_close = full_history[-30]["close"]
+    legacy_divergence = (
+        (current_oi - previous_oi) / previous_oi
+        - (seed["close"] - legacy_old_close) / legacy_old_close
+    )
+    assert expected["oi_price_divergence"] == pytest.approx(legacy_divergence, abs=0.0)
+
+    engine._feat_history = _NonIterableFeatureHistory(full_history, maxlen=60_480)
+    actual = dict(seed)
+    engine._compute_metrics_features(actual, target_ts_ms)
+
+    assert actual.keys() == expected.keys()
+    for name, value in expected.items():
+        assert actual[name] == pytest.approx(value, abs=0.0), name
+
+
+@pytest.mark.parametrize(
+    ("history_rows", "old_close"),
+    [(0, None), (29, None), (30, 99_000.0)],
+)
+def test_metrics_oi_price_divergence_thirty_row_boundary(
+    history_rows: int,
+    old_close: float | None,
+) -> None:
+    target_ts_ms = 1_780_000_000_000
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    _append_metrics_history(engine, target_ts_ms)
+    for index in range(history_rows):
+        engine._feat_history.append({"close": 99_000.0 + index})
+
+    features = {"close": 100_123.45}
+    engine._compute_metrics_features(features, target_ts_ms)
+
+    if old_close is None:
+        assert features["oi_price_divergence"] == 0.0
+        return
+    previous_oi = engine._metrics_history[-2]["oi"]
+    current_oi = engine._metrics_history[-1]["oi"]
+    expected = (current_oi - previous_oi) / previous_oi - (
+        features["close"] - old_close
+    ) / old_close
+    assert features["oi_price_divergence"] == pytest.approx(expected, abs=0.0)
 
 
 def test_feature_cutoff_is_strictly_exclusive() -> None:
