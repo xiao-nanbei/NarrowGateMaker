@@ -104,6 +104,13 @@ validated service identity. Hosts reachable only through a local SOCKS5 proxy
 use the bounded `--socks5-proxy HOST:PORT` option; arbitrary SSH options are not
 accepted.
 
+This transaction currently supports only a running transient
+`narrowgate.service` created by the documented `systemd-run` contract. Before
+stopping it, the command proves `active/running`, `Transient=yes`, the exact
+previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
+the expected previous-release `live/main.py` command line. A persistent unit or
+ambiguous process fails before stop and is left unchanged.
+
 Before a remote upload or task starts, recursively calculate the complete
 materialization closure. Every manifest reference must be inside the admitted
 bundle or supplied as an explicit immutable resource. A successful archive

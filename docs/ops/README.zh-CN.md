@@ -91,6 +91,11 @@ pointer；candidate 已启动但未通过 health admission 时会停止 candidat
 另一个合法 service identity。只能通过本地 SOCKS5 到达的主机使用受限的
 `--socks5-proxy HOST:PORT`；命令不接受任意 SSH option。
 
+当前事务只支持由文档化 `systemd-run` contract 创建、正在运行的 transient
+`narrowgate.service`。停机前必须证明 `active/running`、`Transient=yes`、精确 previous
+working directory、正数 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的
+`live/main.py` command line。Persistent unit 或不明确进程会在 stop 前失败，并保持不变。
+
 Remote upload 或 task 启动前，递归计算完整 materialization closure。每个 manifest
 reference 必须在 admitted bundle 内，或作为显式 immutable resource 提供。Archive 上传
 成功不等于 closure admission。

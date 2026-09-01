@@ -68,8 +68,9 @@ PUBLIC_SOURCE_RELEASE_SCHEMA: Final = "narrowgate_public_source_release.v1"
 _GIT_OBJECT_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _SSH_TARGET_RE: Final = re.compile(r"^[A-Za-z0-9_.@:\[\]-]+$")
 _TAG_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-_RELEASE_ID_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_RELEASE_ID_RE: Final = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 _SERVICE_USER_RE: Final = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_SSH_USER_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
 _PROXY_HOST_RE: Final = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
 )
@@ -915,6 +916,24 @@ def _socks5_proxy(value: str | None) -> str | None:
     return f"{host}:{port}"
 
 
+def _proxy_ssh_target(value: str) -> str:
+    user, separator, host = value.rpartition("@")
+    if not separator:
+        host = value
+    elif _SSH_USER_RE.fullmatch(user) is None:
+        raise LiveDeployContractError("proxied SSH target user is malformed")
+    if _PROXY_HOST_RE.fullmatch(host) is None or any(char in host for char in "[]%*?"):
+        raise LiveDeployContractError("proxied SSH target host is malformed")
+    return value
+
+
+def _activation_path(value: str, label: str) -> str:
+    path = _absolute_posix_path(value, label)
+    if "%" in path:
+        raise LiveDeployContractError(f"{label} cannot contain percent expansion")
+    return path
+
+
 def render_prepared_release_activation_shell(
     *,
     release_id: str,
@@ -938,7 +957,7 @@ def render_prepared_release_activation_shell(
     user = _activation_value(service_user, label="service user", pattern=_SERVICE_USER_RE)
     release = _validate_public_release_dir(release_dir)
     previous = _validate_public_release_dir(previous_release_dir)
-    path = _absolute_posix_path
+    path = _activation_path
     env_file = path(private_environment_file, "private environment file")
     config = path(active_config_path, "active config")
     envelope = path(deployment_envelope_path, "deployment envelope")
@@ -947,6 +966,8 @@ def render_prepared_release_activation_shell(
     activation = path(activation_receipt_path, "activation receipt")
     current = path(current_pointer_path, "current pointer")
     envelope_sha = _require_sha256(deployment_envelope_sha256, "deployment envelope root")
+    if "%" in release or "%" in previous:
+        raise LiveDeployContractError("activation release paths cannot contain percent expansion")
     if release == previous or len({reconciliation, activation, current}) != 3:
         raise LiveDeployContractError("activation release/output paths overlap")
     if not isinstance(health_timeout_s, int) or isinstance(health_timeout_s, bool):
@@ -959,13 +980,21 @@ def render_prepared_release_activation_shell(
     )
     health_check = (
         "import json,sys;h=json.load(open(sys.argv[1]));"
-        "r=json.load(open(sys.argv[2]));p=int(sys.argv[3]);"
+        "r=json.load(open(sys.argv[2]));p=int(sys.argv[3]);start=int(sys.argv[4]);"
+        "generation=int(h.get('recordedAtNs',0));assert generation>start;"
+        "assert h.get('pid')==p;"
         "assert h.get('quoteLoopRunning') is True;"
         "assert h.get('ownershipConflictLatched') is False;"
         "assert h.get('fatalRuntimeLatched') is False;"
         "assert h.get('reconciliationRequired') is False;"
         "assert h.get('fatalReason')=='';"
-        "assert r.get('pid')==p and r.get('dry_run') is False and r.get('testnet') is False"
+        "assert r.get('pid')==p and r.get('dry_run') is False and r.get('testnet') is False;"
+        "print(generation)"
+    )
+    process_check = (
+        "import os,sys;pid=int(sys.argv[1]);expected=os.fsencode(sys.argv[2]);"
+        "args=open(f'/proc/{pid}/cmdline','rb').read().split(b'\\0');"
+        "assert expected in args"
     )
     script = f"""set -euo pipefail
 umask 077
@@ -974,7 +1003,10 @@ rid={q(rid)} release={q(release)} previous={q(previous)} user={q(user)}
 env_file={q(env_file)} config={q(config)} envelope={q(envelope)}
 envelope_sha={q(envelope_sha)} trusted={q(trusted)}
 reconciliation={q(reconciliation)} activation={q(activation)} current={q(current)}
-candidate_started=0
+pointer_stage="$(dirname "$current")/.current-$rid-$$.pending"
+pointer_stage_owned=0
+start_marker="" start_marker_owned=0
+cleanup_required=0
 quiescent() {{
   test -z "$(pgrep -f -- '[l]ive/main.py' || true)" \
     && test -z "$(pgrep -f -- '[l]ive/run.sh __supervise' || true)"
@@ -982,20 +1014,67 @@ quiescent() {{
 cleanup() {{
   rc=$?
   trap - EXIT HUP INT TERM
-  if test "$candidate_started" = 1; then
-    sudo systemctl stop narrowgate.service >/dev/null 2>&1 || true
-    quiescent || rc=83
+  if test "$pointer_stage_owned" = 1; then rm -f -- "$pointer_stage"; fi
+  if test "$start_marker_owned" = 1; then rm -f -- "$start_marker"; fi
+  if test "$cleanup_required" = 1; then
+    cleanup_probe_deadline=$((SECONDS + 5))
+    while true; do
+      unit_cwd="$(systemctl show narrowgate.service -p WorkingDirectory --value 2>/dev/null || true)"
+      if test "$unit_cwd" = "$release"; then
+        sudo systemctl stop narrowgate.service >/dev/null 2>&1 || true
+        cleanup_deadline=$((SECONDS + 30))
+        while ! quiescent; do
+          if test "$SECONDS" -ge "$cleanup_deadline"; then rc=83; break; fi
+          sleep 1
+        done
+        break
+      fi
+      test -z "$unit_cwd" || break
+      test "$SECONDS" -lt "$cleanup_probe_deadline" || break
+      sleep 0.1
+    done
   fi
   exit "$rc"
+}}
+canonical_input() {{
+  test -e "$1" && test ! -L "$1"
+  test "$(readlink -f -- "$1")" = "$1"
+  test "$(readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
+}}
+canonical_output() {{
+  test ! -L "$1" && test ! -d "$1"
+  test "$(readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
+}}
+process_matches() {{
+  case "$1" in ''|*[!0-9]*) return 1 ;; esac
+  test "$1" -gt 0
+  test "$(readlink -f -- "/proc/$1/cwd")" = "$2"
+  "$trusted" -c {q(process_check)} "$1" "$2/live/main.py"
+}}
+candidate_unit_matches() {{
+  test "$(systemctl show narrowgate.service -p ActiveState --value)" = active
+  test "$(systemctl show narrowgate.service -p SubState --value)" = running
+  test "$(systemctl show narrowgate.service -p Transient --value)" = yes
+  test "$(systemctl show narrowgate.service -p WorkingDirectory --value)" = "$release"
+  test "$(systemctl show narrowgate.service -p MainPID --value)" = "$1"
+  test "$(systemctl show narrowgate.service -p NRestarts --value)" = 0
+  process_matches "$1" "$release"
 }}
 lock="$(dirname "$current")/.narrowgate-live-activation.lock"
 exec 9>"$lock"
 flock -w 30 9
 trap cleanup EXIT
 trap 'exit 84' HUP INT TERM
+canonical_input "$release" && canonical_input "$previous"
+canonical_input "$env_file" && canonical_input "$config"
+canonical_input "$envelope" && canonical_input "$trusted"
 test -d "$release" && test -d "$previous" && test -f "$env_file"
 test -f "$config" && test -f "$envelope" && test -x "$trusted"
+canonical_output "$reconciliation" && canonical_output "$activation"
+canonical_output "$current" && canonical_output "$pointer_stage"
 test ! -e "$reconciliation" && test ! -e "$activation"
+test ! -e "$pointer_stage"
+pointer_stage_owned=1
 test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
 common=(
   --property="User=$user" --property="WorkingDirectory=$release"
@@ -1009,7 +1088,12 @@ sudo systemd-run --quiet --wait --collect --service-type=oneshot \
   --unit="narrowgate-verify-$rid" --property=NoNewPrivileges=true \
   --property=TimeoutStartSec=180 "${{common[@]}}" \
   "$release/live/run.sh" candidate-verify
+test "$(systemctl show narrowgate.service -p ActiveState --value)" = active
+test "$(systemctl show narrowgate.service -p SubState --value)" = running
+test "$(systemctl show narrowgate.service -p Transient --value)" = yes
 test "$(systemctl show narrowgate.service -p WorkingDirectory --value)" = "$previous"
+old_pid="$(systemctl show narrowgate.service -p MainPID --value)"
+process_matches "$old_pid" "$previous"
 sudo systemctl stop narrowgate.service
 quiescent
 install -d -m 0700 "$release/logs"
@@ -1023,13 +1107,22 @@ sudo systemd-run --quiet --wait --collect --service-type=oneshot \
   "$release/live/run.sh" reconcile-stopped "$reconciliation"
 reconciliation_sha="$($trusted -c {q(json_get)} \
   "$reconciliation" canonical_exchange_reconciliation_sha256)"
-test "${{#reconciliation_sha}}" = 64
+[[ "$reconciliation_sha" =~ ^[0-9a-f]{{64}}$ ]]
 deadline=$((SECONDS + 30))
 while test "$(systemctl show narrowgate.service -p LoadState --value 2>/dev/null || true)" \
     != not-found; do
   test "$SECONDS" -lt "$deadline"
   sleep 1
 done
+canonical_input "$release" && canonical_input "$env_file"
+canonical_input "$config" && canonical_input "$envelope" && canonical_input "$trusted"
+test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
+start_marker="$release/logs/.activation-start-$rid"
+test ! -e "$start_marker"
+start_marker_owned=1
+: >"$start_marker"
+start_ns="$(date +%s%N)"
+cleanup_required=1
 sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
   --property=Restart=no --property=KillSignal=SIGTERM \
   --property=TimeoutStartSec=120 --property=TimeoutStopSec=120 \
@@ -1037,23 +1130,31 @@ sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
   --setenv="NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH=$reconciliation" \
   --setenv="NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256=$reconciliation_sha" \
   "$release/live/run.sh" service
-candidate_started=1
 health="$release/logs/runtime_health.json"
 runtime="$release/logs/runtime_identity.json"
-admitted=0 deadline=$((SECONDS + {health_timeout_s}))
+observations=0 last_generation=0 candidate_pid=""
+deadline=$((SECONDS + {health_timeout_s}))
 while test "$SECONDS" -lt "$deadline"; do
   state="$(systemctl is-active narrowgate.service 2>/dev/null || true)"
   pid="$(systemctl show narrowgate.service -p MainPID --value 2>/dev/null || true)"
-  if test "$state" = active && test -s "$health" && test -s "$runtime" \
-      && "$trusted" -c {q(health_check)} "$health" "$runtime" "$pid" \
-      && test "$(systemctl show narrowgate.service -p NRestarts --value)" = 0; then
-    admitted=1
-    break
+  if test -z "$candidate_pid" && test "$state" = active; then candidate_pid="$pid"; fi
+  if test -n "$candidate_pid" && test "$pid" = "$candidate_pid" \
+      && candidate_unit_matches "$candidate_pid" \
+      && test -s "$health" && test -s "$runtime" && test "$health" -nt "$start_marker"; then
+    generation="$($trusted -c {q(health_check)} \
+      "$health" "$runtime" "$candidate_pid" "$start_ns" 2>/dev/null || true)"
+    case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+    if test "$generation" -gt "$last_generation"; then
+      observations=$((observations + 1))
+      last_generation="$generation"
+    fi
+    if test "$observations" -ge 2; then break; fi
   fi
   test "$state" != failed && test "$state" != inactive
   sleep 1
 done
-test "$admitted" = 1
+test "$observations" -ge 2
+candidate_unit_matches "$candidate_pid"
 "$trusted" -I -B "$release/live/deployment_runtime.py" build-activation-receipt \
   --release-id "$rid" --deployment-envelope "$envelope" \
   --deployment-envelope-sha256 "$envelope_sha" \
@@ -1061,14 +1162,32 @@ test "$admitted" = 1
   --stopped-reconciliation-sha256 "$reconciliation_sha" \
   --runtime-identity "$runtime" --output "$activation"
 activation_sha="$($trusted -c {q(json_get)} "$activation" canonical_sha256)"
+fresh=0 deadline=$((SECONDS + {health_timeout_s}))
+while test "$SECONDS" -lt "$deadline"; do
+  candidate_unit_matches "$candidate_pid"
+  generation="$($trusted -c {q(health_check)} \
+    "$health" "$runtime" "$candidate_pid" "$start_ns" 2>/dev/null || true)"
+  case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+  if test "$generation" -gt "$last_generation"; then fresh=1; break; fi
+  sleep 1
+done
+test "$fresh" = 1
+trap '' HUP INT TERM
+candidate_unit_matches "$candidate_pid"
 "$trusted" -I -B "$release/live/deployment_runtime.py" publish-current-pointer \
   --release-id "$rid" --deployment-envelope "$envelope" \
   --deployment-envelope-sha256 "$envelope_sha" \
   --activation-receipt "$activation" --activation-receipt-sha256 "$activation_sha" \
   --stopped-reconciliation "$reconciliation" --runtime-identity "$runtime" \
-  --output "$current"
-candidate_started=0
-trap - EXIT HUP INT TERM
+  --output "$pointer_stage"
+candidate_unit_matches "$candidate_pid"
+post_generation="$($trusted -c {q(health_check)} \
+  "$health" "$runtime" "$candidate_pid" "$start_ns")"
+test "$post_generation" -ge "$generation"
+canonical_output "$current"
+mv -f -- "$pointer_stage" "$current"
+cleanup_required=0
+trap 'exit 84' HUP INT TERM
 printf 'activated %s %s %s %s\n' \
   "$rid" "$envelope_sha" "$reconciliation_sha" "$activation_sha"
 """
@@ -1097,6 +1216,8 @@ def activate_prepared_release(
         "phases": list(PREPARED_ACTIVATION_PHASES),
     }
     proxy = _socks5_proxy(socks5_proxy)
+    if proxy is not None:
+        target = _proxy_ssh_target(target)
     if not execute:
         return {**result, "mode": "dry-run", "status": "planned"}
     if connect_timeout_s <= 0 or connect_timeout_s >= command_timeout_s:

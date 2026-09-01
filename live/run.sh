@@ -50,7 +50,7 @@ STARTUP_RUNTIME_GATE_REQUIRED=0
 LIVE_START_REQUIRES_STATIC_RUNTIME=1
 if [[ "$LIVE_START_REQUIRES_STATIC_RUNTIME" == "1" ]]; then
     case "${1:-}" in
-        start|restart|service|reconcile-stopped|__supervise) STARTUP_RUNTIME_GATE_REQUIRED=1 ;;
+        start|restart|service|candidate-verify|reconcile-stopped|__supervise) STARTUP_RUNTIME_GATE_REQUIRED=1 ;;
     esac
 fi
 if [[ -e "$DIR/.venv-active" || -L "$DIR/.venv-active" ]]; then
@@ -348,22 +348,12 @@ _run_deploy_preflight() {
     mv "$preflight_tmp" "$PREFLIGHT_STATE_FILE"
 }
 
-_run_startup_runtime_verification() {
-    if ! _verify_startup_runtime; then
-        echo "Live runtime verification failed; maker was not started." >&2
-        return 1
-    fi
-    if ! "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'; then
-        echo "Live Python version check failed; maker was not started." >&2
-        return 1
-    fi
-}
-
 candidate_verify() {
     # This is the explicit, pre-stop candidate audit used by the deployment
-    # transaction.  Static config/model/policy checks do not run again in the
-    # live startup hot path; main.py still validates the actual consumer state
-    # and publishes its dynamic startup attestation.
+    # transaction. Until startup admission is bound to one reusable receipt,
+    # service/supervise/restart intentionally repeat the full preflight; main.py
+    # also validates the actual consumer state and publishes its dynamic
+    # startup attestation.
     mkdir -p "$DIR/logs"
     _load_runtime_environment
     _run_deploy_preflight
@@ -526,7 +516,7 @@ supervise() {
     trap _cleanup_supervisor EXIT
 
     local restart_count=0
-    if ! _run_startup_runtime_verification; then
+    if ! _run_deploy_preflight; then
         _record_supervisor_state "preflight_failed" 125 "$restart_count"
         return 125
     fi
@@ -637,7 +627,7 @@ service() {
     _require_quiescent_maker
     mkdir -p "$DIR/logs"
     _load_runtime_environment
-    _run_startup_runtime_verification
+    _run_deploy_preflight
     _require_quiescent_maker
     _record_runtime_profile
     rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
@@ -885,7 +875,7 @@ restart() {
     mkdir -p "$DIR/logs"
     _reject_direct_maker_control
     _load_runtime_environment
-    _run_startup_runtime_verification
+    _run_deploy_preflight
     stop
     sleep 1
     _require_quiescent_maker

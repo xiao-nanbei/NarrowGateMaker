@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import platform
+import shlex
 import stat
 import subprocess
 import sys
@@ -1710,6 +1711,17 @@ def _prepared_activation_args() -> dict[str, Any]:
 def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    shell = source_deploy.render_prepared_release_activation_shell(
+        **_prepared_activation_args()
+    )
+    rendered_argv = shlex.split(shell)
+    subprocess.run(
+        ("bash", "-n", "-c", rendered_argv[-1]),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    shell = rendered_argv[-1]
     monkeypatch.setattr(
         source_deploy.subprocess,
         "run",
@@ -1721,24 +1733,65 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     )
     assert result["status"] == "planned"
     assert result["phases"] == list(source_deploy.PREPARED_ACTIVATION_PHASES)
-
-    shell = source_deploy.render_prepared_release_activation_shell(
-        **_prepared_activation_args()
+    verify = shell.index('"$release/live/run.sh" candidate-verify')
+    old_pid = shell.index('old_pid="$(systemctl show', verify)
+    stop = shell.index("sudo systemctl stop narrowgate.service", old_pid)
+    reconcile = shell.index('"$release/live/run.sh" reconcile-stopped', stop)
+    cleanup_arm = shell.index("cleanup_required=1", reconcile)
+    start = shell.index("--service-type=simple --unit=narrowgate", cleanup_arm)
+    admitted = shell.index('test "$observations" -ge 2', start)
+    receipt = shell.index("build-activation-receipt", admitted)
+    critical = shell.index("trap '' HUP INT TERM", receipt)
+    publish = shell.index("publish-current-pointer", critical)
+    post_check = shell.index("post_generation=", publish)
+    final_publish = shell.index('mv -f -- "$pointer_stage" "$current"', post_check)
+    cleanup_disarm = shell.index("cleanup_required=0", final_publish)
+    trap_restore = shell.index("trap 'exit 84' HUP INT TERM", cleanup_disarm)
+    assert [
+        verify,
+        old_pid,
+        stop,
+        reconcile,
+        cleanup_arm,
+        start,
+        admitted,
+        receipt,
+        critical,
+        publish,
+        post_check,
+        final_publish,
+        cleanup_disarm,
+        trap_restore,
+    ] == sorted(
+        (
+            verify,
+            old_pid,
+            stop,
+            reconcile,
+            cleanup_arm,
+            start,
+            admitted,
+            receipt,
+            critical,
+            publish,
+            post_check,
+            final_publish,
+            cleanup_disarm,
+            trap_restore,
+        )
     )
-    markers = (
-        "candidate-verify",
-        "test \"$(systemctl show narrowgate.service -p WorkingDirectory --value)\"",
-        "reconcile-stopped",
-        "--service-type=simple --unit=narrowgate",
-        "test \"$admitted\" = 1",
-        "build-activation-receipt",
-        "publish-current-pointer",
-    )
-    assert [shell.index(marker) for marker in markers] == sorted(
-        shell.index(marker) for marker in markers
-    )
-    assert "candidate_started=1" in shell
-    assert shell.index("candidate_started=1") > shell.index("--unit=narrowgate")
+    pre_stop = shell[verify:stop]
+    assert 'ActiveState --value)" = active' in pre_stop
+    assert 'SubState --value)" = running' in pre_stop
+    assert 'Transient --value)" = yes' in pre_stop
+    assert 'WorkingDirectory --value)" = "$previous"' in pre_stop
+    assert 'process_matches "$old_pid" "$previous"' in pre_stop
+    assert 'test "$unit_cwd" = "$release"' in shell[:verify]
+    assert 'rm -f -- "$pointer_stage"' in shell[:verify]
+    assert 'test "$health" -nt "$start_marker"' in shell[start:receipt]
+    assert "recordedAtNs" in shell
+    assert '[[ "$reconciliation_sha" =~ ^[0-9a-f]{64}$ ]]' in shell
+    assert shell.count('candidate_unit_matches "$candidate_pid"') >= 4
     assert "start narrowgate.service" not in shell
     assert "rollback" not in shell
 
@@ -1749,6 +1802,10 @@ def test_prepared_activation_rejects_shell_shaped_identity_and_paths() -> None:
         source_deploy.render_prepared_release_activation_shell(
             **{**args, "release_id": "release-a;id"}
         )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="release ID"):
+        source_deploy.render_prepared_release_activation_shell(
+            **{**args, "release_id": "Release-A"}
+        )
     with pytest.raises(source_deploy.LiveDeployContractError, match="service user"):
         source_deploy.render_prepared_release_activation_shell(
             **args, service_user="ec2-user;id"
@@ -1757,6 +1814,10 @@ def test_prepared_activation_rejects_shell_shaped_identity_and_paths() -> None:
         source_deploy.render_prepared_release_activation_shell(
             **{**args, "active_config_path": "relative.yaml"}
         )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="percent"):
+        source_deploy.render_prepared_release_activation_shell(
+            **{**args, "active_config_path": "/srv/private/config%2f.yaml"}
+        )
     with pytest.raises(source_deploy.LiveDeployContractError, match="SOCKS5 proxy"):
         source_deploy.activate_prepared_release(
             target="example.test",
@@ -1764,6 +1825,18 @@ def test_prepared_activation_rejects_shell_shaped_identity_and_paths() -> None:
             socks5_proxy="127.0.0.1;id:7897",
             **args,
         )
+    for target in (
+        "user@-host",
+        "user@[127.0.0.1]",
+        "user@host%eth0",
+        "user@host:22",
+    ):
+        with pytest.raises(source_deploy.LiveDeployContractError, match="SSH target"):
+            source_deploy.activate_prepared_release(
+                target=target,
+                socks5_proxy="127.0.0.1:7897",
+                **args,
+            )
 
 
 def test_prepared_activation_uses_one_ssh_and_accepts_existing_roots(

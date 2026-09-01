@@ -197,6 +197,11 @@ health 失败会停止 candidate。命令不会盲目重启旧 release，并且�
 admission 通过后发布 current pointer。批准的控制路径需要 SOCKS5 时，只能使用经过校验的
 `--socks5-proxy HOST:PORT`，不能注入任意 SSH option。
 
+Prepared transaction 当前只接受正在运行的 transient `narrowgate.service`。Stop 前会
+证明 `active/running`、`Transient=yes`、精确 previous working directory、正数
+`MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的 `live/main.py` command
+line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。
+
 安全 activation 顺序：
 
 1. 在旧服务仍运行时验证 prepared candidate 与 deployment envelope；

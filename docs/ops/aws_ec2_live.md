@@ -208,6 +208,12 @@ after bounded health admission. When the approved control path requires SOCKS5,
 pass only the validated `--socks5-proxy HOST:PORT` option; arbitrary SSH options
 are not accepted.
 
+The prepared transaction currently admits only a running transient
+`narrowgate.service`. It proves `active/running`, `Transient=yes`, the exact
+previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
+the previous release's `live/main.py` command line before stop. A persistent
+unit or ambiguous process fails before stop and is not modified.
+
 Safe activation order:
 
 1. verify the prepared candidate and deployment envelope while the old service
