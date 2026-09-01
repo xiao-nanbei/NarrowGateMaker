@@ -124,6 +124,7 @@ class WSHandler:
         self._market_session_id = 0
         self._market_trade_seen: dict[str, float] = {}
         self._market_book_seen: dict[str, float] = {}
+        self._market_depth_seen: dict[str, float] = {}
         self._spot_trade_seen: dict[str, float] = {}
         self._spot_book_seen: dict[str, float] = {}
         self._stream_watchdog_interval = 5.0
@@ -1076,6 +1077,7 @@ class WSHandler:
         self._market_trade_seen = {symbol: now for symbol in market_symbols}
 
         self._market_book_seen = {symbol: now for symbol in market_symbols}
+        self._market_depth_seen = {symbol: now for symbol in market_symbols}
 
         spot_trade_symbols = {
             self._stream_key(symbol)
@@ -1202,7 +1204,7 @@ class WSHandler:
         exec_symbol = self._stream_key(self.cfg.symbol)
         if exec_symbol not in market_symbols:
             return []
-        last_seen = self._market_book_seen.get(exec_symbol, float(now_ts))
+        last_seen = self._market_depth_seen.get(exec_symbol, float(now_ts))
         age = max(0.0, float(now_ts) - float(last_seen))
         if age <= self._exec_stream_silence_timeout:
             return []
@@ -1530,7 +1532,7 @@ class WSHandler:
                     # The execution partial-depth stream is periodic and is the
                     # only event-silence clock allowed to restart market/public
                     # transport.  bookTicker and aggTrade remain feature clocks.
-                    self._market_book_seen[event_key] = time.time()
+                    self._market_depth_seen[event_key] = time.time()
                 self.engine.signal.on_depth(
                     data,
                     receive_ts_ns=receive_ns,
