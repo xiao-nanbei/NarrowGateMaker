@@ -8216,7 +8216,12 @@ class MakerEngine:
         self._log_replace_terminal_continuation_event(payload)
         return True
 
-    def _publish_replace_terminal_continuation(self, order: Any) -> bool:
+    def _publish_replace_terminal_continuation(
+        self,
+        order: Any,
+        *,
+        generation: int = 0,
+    ) -> bool:
         """Make one armed intent visible to tick; never quote from the callback."""
 
         if not bool(
@@ -8233,6 +8238,7 @@ class MakerEngine:
             if (
                 intent is None
                 or intent.client_order_id != str(order.client_order_id)
+                or (generation > 0 and intent.generation != int(generation))
                 or intent.ready
                 or terminal_visible_ts_ns < intent.armed_ts_ns
             ):
@@ -9829,15 +9835,31 @@ class MakerEngine:
                 reason="non_continuation_cancel",
             )
         if order.is_terminal:
-            if self.orders.terminal_identity(cid) is None:
+            terminal_identity = self.orders.terminal_identity(cid)
+            if terminal_identity is None:
                 self._prune_terminal_side_order_reference(order.side)
                 return False
             if replace_continuation_generation > 0:
-                self._clear_unready_replace_terminal_continuation(
-                    side=order.side,
-                    cid=cid,
-                    generation=replace_continuation_generation,
+                terminal_ts_ns = int(
+                    getattr(getattr(order, "lifecycle", None), "terminal_ts_ns", 0)
+                    or 0
                 )
+                published = bool(
+                    terminal_identity.get("terminal_state")
+                    == OrderState.CANCELED.name
+                    and terminal_ts_ns > 0
+                    and self._publish_replace_terminal_continuation(
+                        order,
+                        generation=replace_continuation_generation,
+                    )
+                )
+                if not published:
+                    self._clear_unready_replace_terminal_continuation(
+                        side=order.side,
+                        cid=cid,
+                        generation=replace_continuation_generation,
+                        reason="terminal_before_cancel_not_publishable",
+                    )
             self._release_side_order_ownership(side=order.side, cid=cid)
             return True
 
@@ -9869,17 +9891,37 @@ class MakerEngine:
                         "cancel", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
             resolved = self.orders.get_order(cid)
+            terminal_identity = self.orders.terminal_identity(cid)
             if (
                 resolved is not None
                 and resolved.is_terminal
-                and self.orders.terminal_identity(cid) is not None
+                and terminal_identity is not None
             ):
                 if replace_continuation_generation > 0:
-                    self._clear_unready_replace_terminal_continuation(
-                        side=resolved.side,
-                        cid=cid,
-                        generation=replace_continuation_generation,
+                    terminal_ts_ns = int(
+                        getattr(
+                            getattr(resolved, "lifecycle", None),
+                            "terminal_ts_ns",
+                            0,
+                        )
+                        or 0
                     )
+                    published = bool(
+                        terminal_identity.get("terminal_state")
+                        == OrderState.CANCELED.name
+                        and terminal_ts_ns > 0
+                        and self._publish_replace_terminal_continuation(
+                            resolved,
+                            generation=replace_continuation_generation,
+                        )
+                    )
+                    if not published:
+                        self._clear_unready_replace_terminal_continuation(
+                            side=resolved.side,
+                            cid=cid,
+                            generation=replace_continuation_generation,
+                            reason="terminal_during_cancel_not_publishable",
+                        )
                 self._prune_terminal_side_order_reference(resolved.side)
                 return True
             return False
