@@ -24,7 +24,7 @@ import stat
 import threading
 import time
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -1513,6 +1513,7 @@ class MakerEngine:
             tuple[str, int], _ReplaceTerminalContinuationIntent
         ] = {}
         self._replace_terminal_continuation_event_sequence = 0
+        self._replace_terminal_continuation_wakeup: Callable[[], None] | None = None
         self._replace_terminal_continuation_telemetry = {
             "arm_count": 0,
             "publish_count": 0,
@@ -8069,6 +8070,14 @@ class MakerEngine:
             )
             return snapshot
 
+    def set_replace_terminal_continuation_wakeup(
+        self,
+        wakeup: Callable[[], None] | None,
+    ) -> None:
+        """Bind the main-loop wakeup used only after authoritative publish."""
+
+        self._replace_terminal_continuation_wakeup = wakeup
+
     def _arm_replace_terminal_continuation(
         self,
         *,
@@ -8257,6 +8266,20 @@ class MakerEngine:
                 intent=published_intent,
             )
         self._log_replace_terminal_continuation_event(payload)
+        wakeup = getattr(self, "_replace_terminal_continuation_wakeup", None)
+        if wakeup is not None:
+            try:
+                wakeup()
+            except Exception:
+                # Readiness is durable under the continuation lock. A broken
+                # optional wakeup therefore falls back to the existing 100 ms
+                # main-loop poll instead of corrupting callback delivery.
+                logger.exception(
+                    "REPLACE_TERMINAL_CONTINUATION_WAKEUP_FAILED side=%s "
+                    "generation=%d",
+                    order.side.value,
+                    int(published_intent.generation),
+                )
         return True
 
     def _take_ready_replace_terminal_continuations(
