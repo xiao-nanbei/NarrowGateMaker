@@ -11,7 +11,66 @@ from research.system_engineering.audit.market_data_latency import (
     RawWindowMarketDataLatencySimulator,
     build_latency_profile,
     main,
+    snapshot_conditioned_message_clocks,
 )
+
+
+@pytest.mark.parametrize(
+    "exchange,receive,capture,events,expected_receive,expected_ready",
+    [
+        ([0, 100], [10, 110], [20, 120], [0, 25, 100], [10, 35, 110], [10, 35, 110]),
+        ([0, 100], [5, 105], [20, 120], [0, 25, 100], [5, 30, 105], [5, 30, 105]),
+        ([0, 0, 100], [10, 10, 110], [20, 70, 120], [0, 25, 75, 100],
+         [10, 35, 85, 110], [10, 71, 85, 110]),
+        ([0, 100], [10, 110], [150, 200], [0, 50, 100], [10, 60, 110], [10, 151, 151]),
+        ([0, 60_000_000_000], [5_000_000, 60_005_000_000],
+         [10_000_000, 60_010_000_000], [30_000_000_000], [30_005_000_000], [30_005_000_000]),
+    ],
+    ids=["depth", "bookTicker", "repeated_frame", "unobserved_callback", "long_gap_not_stall"],
+)
+def test_snapshot_conditioned_source_clocks(
+    exchange, receive, capture, events, expected_receive, expected_ready,
+):
+    origin = 1_800_000_000_000_000_000
+    arrays = [origin + np.asarray(v, dtype=np.int64) for v in (events, capture, exchange, receive)]
+    originals = [v.copy() for v in arrays]
+    rx, ready, stats = snapshot_conditioned_message_clocks(*arrays)
+    np.testing.assert_array_equal(rx - origin, expected_receive)
+    np.testing.assert_array_equal(ready - origin, expected_ready)
+    assert stats["mode"] == "snapshot_conditioned_diagnostic"
+    assert stats["repeated_observation_count"] == len(exchange) - len(set(exchange))
+    assert stats["barrier_adjusted_count"] == np.count_nonzero(ready > rx)
+    assert stats["max_barrier_hold_ns"] == int((ready - rx).max(initial=0))
+    for actual, original in zip(arrays, originals, strict=True):
+        np.testing.assert_array_equal(actual, original)
+    pieces = [snapshot_conditioned_message_clocks(chunk, *arrays[1:])
+              for chunk in np.array_split(arrays[0], 2)]
+    np.testing.assert_array_equal(np.concatenate([p[0] for p in pieces]), rx)
+    np.testing.assert_array_equal(np.concatenate([p[1] for p in pieces]), ready)
+
+
+@pytest.mark.parametrize(
+    "events,capture,exchange,receive,error",
+    [
+        ([9], [20, 120], [10, 100], [15, 110], "support"),
+        ([101], [20, 120], [10, 100], [15, 110], "support"),
+        ([10], [], [], [], "nonempty"),
+        ([10], [20, 30], [10, 10], [15, 16], "repeated"),
+        ([10], [20, 30], [10, 9], [15, 16], "regressed"),
+        ([10], [20], [10], [21], "receive < capture"),
+        ([10], [20], [10], [20], "receive < capture"),
+        ([10], [20, 20], [10, 15], [15, 16], "capture bounds"),
+        ([15], [20, 21], [10, 15], [15, 16], "must precede"),
+    ],
+)
+def test_snapshot_conditioned_source_clocks_reject_invalid_support(
+    events, capture, exchange, receive, error,
+):
+    arrays = [np.asarray(v, dtype=np.int64) for v in (events, capture, exchange, receive)]
+    with pytest.raises(ValueError, match=error):
+        snapshot_conditioned_message_clocks(*arrays)
+    with pytest.raises(ValueError, match="integer"):
+        snapshot_conditioned_message_clocks(arrays[0].astype(float), *arrays[1:])
 
 
 def _raw_window_manifest(tmp_path, *, negative=False, missing=False):

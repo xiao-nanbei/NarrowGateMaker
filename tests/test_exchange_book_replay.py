@@ -916,18 +916,22 @@ def test_order_activation_between_outer_events_uses_pre_activation_book() -> Non
 
 @pytest.mark.parametrize("side", ["BUY", "SELL"])
 @pytest.mark.parametrize(
-    ("same_ms_trades", "ambiguous"),
+    ("same_ms_trades", "ambiguous", "quantity_case"),
     [
-        pytest.param([(100.0, 1)], False, id="different-price"),
-        pytest.param([(96.7, 0)], False, id="opposite-aggressor"),
-        pytest.param([(100.0, 1), (96.7, 0)], False, id="unrelated-batch"),
-        pytest.param([(96.7, 1), (100.0, 1)], True, id="related-first-child"),
-        pytest.param([(100.0, 1), (96.7, 1)], True, id="related-last-child"),
-        pytest.param([(100.0, 1), (96.6, 1)], True, id="trade-through-last-child"),
+        pytest.param([(100.0, 1)], False, "ordinary", id="different-price"),
+        pytest.param([(96.7, 0)], False, "ordinary", id="opposite-aggressor"),
+        pytest.param([(100.0, 1), (96.7, 0)], False, "ordinary", id="unrelated-batch"),
+        pytest.param([(96.7, 1), (100.0, 1)], True, "ordinary", id="related-first-child"),
+        pytest.param([(100.0, 1), (96.7, 1)], True, "ordinary", id="related-last-child"),
+        pytest.param([(100.0, 1), (96.6, 1)], True, "ordinary", id="trade-through-last-child"),
+        pytest.param([], False, "thin_level", id="one-lot-level-roundoff"),
+        pytest.param([], False, "whole_lot_depletion", id="whole-lot-depletion"),
+        pytest.param([], False, "partial_final_lot", id="partial-final-lot"),
+        pytest.param([], False, "true_sub_lot", id="true-sub-lot"),
     ],
 )
-def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
-    side: str, same_ms_trades: list[tuple[float, int]], ambiguous: bool,
+def test_native_queue_updates_preserve_fill_and_ambiguity(
+    side: str, same_ms_trades: list[tuple[float, int]], ambiguous: bool, quantity_case: str,
 ) -> None:
     # Mirror the batch around the resting BUY/SELL price. Only a counterparty
     # taker reaching that level makes its update ambiguous, regardless of its
@@ -936,32 +940,60 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
     order_price = 96.7 if buy else 103.4
     level_side = "bid" if buy else "ask"
     level_tick = 967 if buy else 1034
+    thin_level = quantity_case == "thin_level"
+    partial_fill = quantity_case == "partial_final_lot"
+    sub_lot = quantity_case == "true_sub_lot"
+    quantity_depletion = quantity_case == "whole_lot_depletion" or sub_lot
+    initial_qty = 0.190 if thin_level else 5.0
+    if quantity_depletion:
+        initial_qty = 0.010
+    elif partial_fill:
+        initial_qty = 0.0
+    order_qty = 0.011 if partial_fill else 0.001
+    final_prices = [order_price]
+    final_offsets = [1_000]
+    final_quantities = [0.001]
+    if quantity_depletion:
+        # Public trade quantities need not be whole lots. Only representation
+        # error in .011 - .010 may be corrected, not a real sub-lot remainder.
+        final_quantities = [0.01099999 if sub_lot else 0.011]
+    elif partial_fill:
+        # The last lot remains active after filling .010 of an .011 order.
+        final_quantities = [0.010]
+    if thin_level or partial_fill:
+        # In the thin-level case, .190 - .189 must not leave a residual above
+        # .001 that shaves this next trade below the one-lot fill threshold.
+        final_prices.append(order_price + (-0.1 if buy else 0.1))
+        final_offsets.append(1_100 if partial_fill else 1_000)
+        final_quantities.append(0.001)
     count = len(same_ms_trades)
     trades = pd.DataFrame(
         {
             "transact_time": np.asarray(
                 [BASE_MS + 200] + [BASE_MS + 500] * count
-                + [BASE_MS + 1_000, BASE_MS + 1_200],
+                + [BASE_MS + offset for offset in final_offsets] + [BASE_MS + 1_200],
                 dtype=np.int64,
             ),
             "price": np.asarray(
                 [100.0] + [
                     order_price + (price - 96.7) * (1 if buy else -1)
                     for price, _ in same_ms_trades
-                ] + [order_price, 100.0]
+                ] + final_prices + [100.0]
             ),
-            "quantity": np.asarray([0.0] + [0.5] * count + [0.001, 0.0]),
+            "quantity": np.asarray(
+                [0.0] + [0.5] * count + final_quantities + [0.0]
+            ),
             "is_buyer_maker": np.asarray(
                 [1] + [flag if buy else 1 - flag for _, flag in same_ms_trades]
-                + [int(buy), 1], dtype=np.uint8,
+                + [int(buy)] * len(final_prices) + [1], dtype=np.uint8,
             ),
         }
     )
     params = {
         "gamma": 0.01,
         "kappa": 1.0,
-        "order_size": 0.001,
-        "max_inventory": 0.01,
+        "order_size": order_qty,
+        "max_inventory": 0.1 if partial_fill else 0.01,
         "requote_interval": 100.0,
         "rq_min": 100.0,
         "rq_max": 100.0,
@@ -986,6 +1018,7 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
         "local_order_value_price_jump_ticks": 1.0,
         "exchange_book_queue_mode": "diagnostic",
         "trace_quotes_max": 20,
+        "trace_fills_max": 20,
     }
 
     params["exchange_book_queue_ambiguity_trace_max"] = 10
@@ -993,15 +1026,15 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
         _event(
             100,
             event_type="snapshot",
-            levels=(("bid", 900, 1.0), ("bid", 967, 5.0), ("bid", 999, 2.0),
-                    ("ask", 1001, 2.0), ("ask", 1034, 5.0), ("ask", 1100, 1.0)),
+            levels=(("bid", 900, 1.0), ("bid", 967, initial_qty), ("bid", 999, 2.0),
+                    ("ask", 1001, 2.0), ("ask", 1034, initial_qty), ("ask", 1100, 1.0)),
             last_update_id=100,
             ordinal=1,
         ),
         _event(
             500,
             event_type="delta",
-            levels=((level_side, level_tick, 3.0),),
+            levels=((level_side, level_tick, initial_qty if quantity_case != "ordinary" else 3.0),),
             first_update_id=101,
             final_update_id=101,
             previous_final_update_id=100,
@@ -1010,7 +1043,7 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
         _event(
             750,
             event_type="delta",
-            levels=((level_side, level_tick, 4.0),),
+            levels=((level_side, level_tick, initial_qty if quantity_case != "ordinary" else 4.0),),
             first_update_id=102,
             final_update_id=102,
             previous_final_update_id=101,
@@ -1019,7 +1052,8 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
         _event(
             900,
             event_type="delta",
-            levels=((level_side, level_tick, 0.0),),
+            levels=((level_side, level_tick,
+                     0.001 if thin_level else initial_qty if quantity_depletion else 0.0),),
             first_update_id=103,
             final_update_id=103,
             previous_final_update_id=102,
@@ -1057,7 +1091,35 @@ def test_same_millisecond_ambiguity_does_not_freeze_modeled_queue(
         row for row in result["_quote_trace"]
         if row["side"] == side and row["price"] == order_price
     )
-    assert target_order["queue_init"] == pytest.approx(5.0)
+    assert target_order["queue_init"] == pytest.approx(initial_qty)
     assert target_order["queue_left"] == pytest.approx(0.0)
+    if sub_lot:
+        assert target_order["outcome"] == "open_end"
+        assert target_order["fill_qty"] == 0.0
+        assert target_order["remaining"] == order_qty
+        return
+    if partial_fill:
+        # Quote trace emits each fill delta, not one cumulative terminal row.
+        # Both legs must belong to the original order, with one lot still live
+        # after the first leg and an exact zero only after the second.
+        order_rows = [
+            row for row in result["_quote_trace"]
+            if row["order_id"] == target_order["order_id"]
+        ]
+        assert target_order["quantity"] == order_qty
+        assert [
+            (row["outcome_ts"], row["fill_qty"], row["remaining"])
+            for row in order_rows
+        ] == [
+            (BASE_MS + 1_000, 0.010, 0.001), (BASE_MS + 1_100, 0.001, 0.0),
+        ]
+        assert all(row["outcome"] == "fill" for row in order_rows)
+        side_fills = [row for row in result["_fill_trace"] if row["side"] == side]
+        assert [(row["fill_ts"], row["fill_qty"]) for row in side_fills] == [
+            (BASE_MS + 1_000, 0.010), (BASE_MS + 1_100, 0.001),
+        ]
+        return
     assert target_order["outcome"] == "fill"
-    assert target_order["outcome_ts"] == BASE_MS + 1_000
+    assert target_order["fill_qty"] == order_qty
+    assert target_order["remaining"] == 0.0
+    assert target_order["outcome_ts"] == BASE_MS + final_offsets[-1]

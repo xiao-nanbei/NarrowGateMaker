@@ -7,7 +7,10 @@ import pytest
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
 
 from models import backtest_tick as bt  # noqa: E402
-from models.tick_data_types import HistoricalL2Data  # noqa: E402
+from models.tick_data_types import (  # noqa: E402
+    HistoricalExchangeBookEvent,
+    HistoricalL2Data,
+)
 from strategy import quote_core as qc  # noqa: E402
 
 
@@ -564,6 +567,102 @@ def test_cpp_queue_deplete_multiplier_increases_queue_consumption():
     assert depleted_result.summary.fills_bid == 1
 
 
+@pytest.mark.parametrize("side", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    ("queue", "order_size", "trade_quantities", "expected_fills"),
+    [
+        (0.010, 0.001, [0.011, 0.0], [0.001]),
+        (0.0, 0.011, [0.010, 0.001], [0.010, 0.001]),
+        (0.0100001, 0.001, [0.011, 0.0], []),
+    ],
+    ids=["queue-whole-lot-residual", "partial-order-whole-lot-residual", "real-fractional-queue"],
+)
+def test_python_cpp_matching_quantity_subtraction_parity(
+    side, queue, order_size, trade_quantities, expected_fills
+):
+    bt.configure_symbol("BTCUSDC")
+    ts = np.asarray([0, 1_000, 2_000, 3_000], dtype=np.int64)
+    crossing_price = 90.0 if side == "BUY" else 110.0
+    trades = pd.DataFrame(
+        {
+            "transact_time": ts,
+            "price": [100.0, crossing_price, crossing_price, 100.0],
+            "quantity": [0.0, *trade_quantities, 0.0],
+            "is_buyer_maker": [False, side == "BUY", side == "BUY", False],
+            "_is_execution_trade": [False, True, True, False],
+        }
+    )
+    # Keep the ordinary freshness guard satisfied: a trade-only fixture has
+    # no observed book age and Python correctly pauses before placing orders.
+    bbo = bt.HistoricalBBOData(
+        ts_ms=ts,
+        best_bid=np.full(ts.size, 99.9),
+        best_ask=np.full(ts.size, 100.1),
+        bid_qty=np.ones(ts.size, dtype=np.float64),
+        ask_qty=np.ones(ts.size, dtype=np.float64),
+    )
+    params = {
+        "gamma": 0.01,
+        "kappa": 1.0,
+        "maker_fee": 0.0,
+        "max_inventory": 0.05,
+        "order_size": order_size,
+        "requote_interval": 10.0,
+        "rq_min": 10.0,
+        "rq_max": 10.0,
+        "requote_clock": "fixed",
+        "queue_base": queue,
+        "queue_decay": 0.0,
+        "queue_ahead_base_mult": 1.0,
+        "queue_deplete_base_mult": 1.0,
+        "maker_fill_prob": 1.0,
+        "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 1_000,
+        "use_bar_pricing": True,
+        "dynamic_cap_enabled": False,
+        "max_spread_bps": 20.0,
+        "spread_cap_mode": "compress",
+        "ml_enabled": False,
+        "trace_quotes_max": 100,
+        "trace_fills_max": 100,
+        "collect_curves": False,
+    }
+    results = [
+        bt._simulate_tick_with_engine(
+            engine,
+            trades,
+            np.asarray([0], dtype=np.int64),
+            np.asarray([1.0], dtype=np.float64),
+            params,
+            bbo_data=bbo,
+        )
+        for engine in ("python", "cpp")
+    ]
+    for result in results:
+        # The negative case must prove an accepted, resting order receives no
+        # fill, rather than pass vacuously because a policy guard blocked it.
+        orders = {
+            row["order_id"]: row
+            for row in result["_quote_trace"]
+            if row["side"] == side
+        }
+        assert len(orders) == 1
+        order = next(iter(orders.values()))
+        assert order["submit_ts"] == order["activate_ts"] == 0
+        assert order["quantity"] == order_size
+        assert order["queue_init"] == queue
+        assert order["outcome"] in {"fill", "open_end"}
+        fills = result["_fill_trace"]
+        assert [row["side"] for row in fills] == [side] * len(expected_fills)
+        assert [row["fill_qty"] for row in fills] == expected_fills
+        assert [row["fill_ts"] for row in fills] == [1_000, 2_000][:len(expected_fills)]
+        if fills:
+            assert len({row["order_id"] for row in fills}) == 1
+        direction = 1.0 if side == "BUY" else -1.0
+        assert result["final_inventory"] == pytest.approx(direction * sum(expected_fills))
+    assert results[1]["pnl"] == pytest.approx(results[0]["pnl"], abs=1e-12)
+
+
 def test_cpp_l2_cancel_ahead_depletes_only_unprinted_queue_drop():
     ts = np.asarray([0, 1_000, 2_000, 3_000], dtype=np.int64)
     price = np.asarray([100.0, 100.0, 99.9, 100.0], dtype=np.float64)
@@ -803,6 +902,112 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity(visibili
     assert cpp["_quote_trace"][0]["best_ask"] == pytest.approx(
         py["_quote_trace"][0]["best_ask"]
     )
+
+
+def test_python_cpp_ml_lookup_uses_delayed_visible_second_at_ready_boundary():
+    bt.configure_symbol("BTCUSDC")
+    base_ts = 1_000_000
+    ts = np.arange(base_ts, base_ts + 12_001, 1_000, dtype=np.int64)
+    trades = pd.DataFrame(
+        {
+            "transact_time": ts,
+            "price": np.full(ts.size, 100.0),
+            "quantity": np.zeros(ts.size),
+            "is_buyer_maker": np.zeros(ts.size, dtype=np.uint8),
+            "_is_execution_trade": np.zeros(ts.size, dtype=np.bool_),
+        }
+    )
+    l2_ts = np.arange(base_ts - 1_000, base_ts + 12_001, 1_000, dtype=np.int64)
+    l2 = HistoricalL2Data(
+        ts_ms=l2_ts,
+        bid_px=np.full((l2_ts.size, 1), 99.9),
+        bid_qty=np.full((l2_ts.size, 1), 1.0),
+        ask_px=np.full((l2_ts.size, 1), 100.1),
+        ask_qty=np.full((l2_ts.size, 1), 1.0),
+    )
+    params = {
+        "gamma": 0.01,
+        "kappa": 1.0,
+        "maker_fee": 0.0,
+        "max_inventory": 0.01,
+        "order_size": 0.001,
+        "requote_interval": 10.0,
+        "rq_min": 10.0,
+        "rq_max": 10.0,
+        "requote_clock": "fixed",
+        "queue_base": 0.0,
+        "queue_decay": 0.0,
+        "maker_fill_prob": 1.0,
+        "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 1_000,
+        "use_bar_pricing": False,
+        "dynamic_cap_enabled": False,
+        "max_spread_bps": 1_000.0,
+        "spread_cap_mode": "compress",
+        "max_exec_book_age_s": 5.0,
+        "ml_enabled": True,
+        "vol_blend": 1.0,
+        "trace_quotes_max": 100,
+        "collect_curves": False,
+        "_exec_book_visibility_delay_samples_ms": np.asarray([400.0]),
+        "exec_book_visibility_delay_seed": 20260901,
+    }
+    old_pred_dir = 0.25
+    old_pred_ret = 0.001
+    ml_data = (
+        np.asarray([base_ts + 9_000, base_ts + 10_000], dtype=np.int64),
+        np.asarray([old_pred_dir, 0.75], dtype=np.float64),
+        np.asarray([25.0, 100.0], dtype=np.float64),
+        np.asarray([old_pred_ret, -0.002], dtype=np.float64),
+        np.asarray([0.2, 0.8], dtype=np.float64),
+        np.asarray([0.3, 0.9], dtype=np.float64),
+    )
+    var_ts = np.asarray([base_ts - 1_000], dtype=np.int64)
+    var_ssq = np.asarray([1.0], dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        var_ts,
+        var_ssq,
+        params,
+        ml_data=ml_data,
+        l2_data=l2,
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        var_ts,
+        var_ssq,
+        params,
+        ml_data=ml_data,
+        l2_data=l2,
+    )
+
+    boundary_ts = base_ts + 10_000
+    py_rows = {
+        row["side"]: row
+        for row in py["_quote_trace"]
+        if row["quote_ts"] == boundary_ts
+    }
+    cpp_rows = {
+        row["side"]: row
+        for row in cpp["_quote_trace"]
+        if row["quote_ts"] == boundary_ts
+    }
+    assert set(py_rows) == {"BUY", "SELL"}
+    assert set(cpp_rows) == set(py_rows)
+    for side in ("BUY", "SELL"):
+        assert py_rows[side]["pred_dir"] == old_pred_dir
+        assert py_rows[side]["pred_ret"] == old_pred_ret
+        assert cpp_rows[side]["pred_dir"] == py_rows[side]["pred_dir"]
+        assert cpp_rows[side]["pred_ret"] == py_rows[side]["pred_ret"]
+        assert cpp_rows[side]["raw_half_spread"] == pytest.approx(
+            py_rows[side]["raw_half_spread"],
+            rel=0.0,
+            abs=1e-12,
+        )
+        assert cpp_rows[side]["final_price"] == py_rows[side]["final_price"]
 
 
 def _empty_i64():
@@ -2248,3 +2453,269 @@ def test_cpp_policy_local_extreme_and_fragile_cancel():
     assert result.summary.local_extreme_guard_count > 0
     assert result.summary.fragile_ttl_cancel_count > 0
     assert any(row.cancel_reason == "fragile_ttl" for row in result.quote_trace)
+
+
+def _native_book_event(
+    base_ms,
+    offset_ms,
+    *,
+    event_type,
+    levels=(),
+    first_update_id=None,
+    final_update_id=None,
+    previous_final_update_id=None,
+    last_update_id=None,
+):
+    ts_ms = int(base_ms + offset_ms)
+    return HistoricalExchangeBookEvent(
+        market_id="binance_futures:perpetual:BTCUSDC",
+        event_type=event_type,
+        exchange_ts_ns=ts_ms * 1_000_000,
+        exchange_ts_source=(
+            "source_gap" if event_type == "source_gap" else "transaction"
+        ),
+        local_receive_ts_ns=(ts_ms + 1) * 1_000_000,
+        event_time_ns=ts_ms * 1_000_000,
+        transaction_time_ns=ts_ms * 1_000_000,
+        first_update_id=first_update_id,
+        final_update_id=final_update_id,
+        previous_final_update_id=previous_final_update_id,
+        last_update_id=last_update_id,
+        levels=levels,
+    )
+
+
+def _strict_native_full_replay_fixture(*, same_ms_activation=False):
+    base_ms = 1_700_000_000_000
+    delta_offset = 300 if same_ms_activation else 500
+    events = [
+        _native_book_event(
+            base_ms,
+            100,
+            event_type="snapshot",
+            levels=(
+                ("bid", 900, 1.0),
+                ("bid", 967, 5.0),
+                ("bid", 990, 5.0),
+                ("bid", 999, 2.0),
+                ("ask", 1001, 2.0),
+                ("ask", 1010, 5.0),
+                # Python and C++ retain their pre-existing half-tick rounding
+                # identity here (103.4 versus 103.3). Seed both price levels
+                # so this test isolates native scheduler parity.
+                ("ask", 1033, 5.0),
+                ("ask", 1034, 5.0),
+                ("ask", 1100, 1.0),
+            ),
+            last_update_id=100,
+        ),
+        _native_book_event(
+            base_ms,
+            delta_offset,
+            event_type="delta",
+            levels=(
+                ("bid", 967, 3.0),
+                ("ask", 1033, 3.0),
+                ("ask", 1034, 3.0),
+            ),
+            first_update_id=101,
+            final_update_id=101,
+            previous_final_update_id=100,
+        ),
+        _native_book_event(
+            base_ms,
+            750,
+            event_type="delta",
+            levels=(
+                ("bid", 967, 4.0),
+                ("ask", 1033, 4.0),
+                ("ask", 1034, 4.0),
+            ),
+            first_update_id=102,
+            final_update_id=102,
+            previous_final_update_id=101,
+        ),
+        _native_book_event(
+            base_ms,
+            900,
+            event_type="delta",
+            levels=(
+                ("bid", 967, 0.0),
+                ("ask", 1033, 0.0),
+                ("ask", 1034, 0.0),
+            ),
+            first_update_id=103,
+            final_update_id=103,
+            previous_final_update_id=102,
+        ),
+    ]
+    event_ts = np.asarray(
+        [base_ms + 200, base_ms + 1_200, base_ms + 2_200],
+        dtype=np.int64,
+    )
+    trades = pd.DataFrame(
+        {
+            "transact_time": event_ts,
+            "price": np.asarray([100.0, 96.7, 100.0]),
+            "quantity": np.asarray([0.0, 0.001, 0.0]),
+            "is_buyer_maker": np.ones(event_ts.size, dtype=np.uint8),
+            "_is_execution_trade": np.asarray([False, True, False]),
+        }
+    )
+    params = {
+        "gamma": 0.01,
+        "kappa": 1.0,
+        "order_size": 0.001,
+        "max_inventory": 0.01,
+        "requote_interval": 100.0,
+        "rq_min": 100.0,
+        "rq_max": 100.0,
+        "maker_fee": 0.0,
+        "taker_fee": 0.0,
+        "tick_size": 0.1,
+        "lot_size": 0.001,
+        "use_bar_pricing": True,
+        "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 1_000,
+        "collect_curves": False,
+        "position_timeout": 0.0,
+        "markout_ema_span_fills": 0,
+        "max_exec_book_age_s": 0.0,
+        "new_order_latency_ms": 100,
+        "replace_min_price_change_ticks": 1_000.0,
+        "replace_min_price_change_ticks_reducing": 1_000.0,
+        "replace_min_interval_ms": 1_000_000.0,
+        "replace_min_interval_ms_reducing": 1_000_000.0,
+        "exchange_book_queue_mode": "strict",
+        "exchange_book_queue_ambiguity_trace_max": 10,
+        "trace_quotes_max": 20,
+        "trace_fills_max": 20,
+    }
+    return trades, params, events, base_ms
+
+
+@pytest.mark.parametrize("same_ms_activation", [False, True])
+def test_python_cpp_strict_native_exchange_book_full_loop_parity(
+    same_ms_activation,
+):
+    trades, params, events, base_ms = _strict_native_full_replay_fixture(
+        same_ms_activation=same_ms_activation
+    )
+    variance_ts = np.asarray([base_ms], dtype=np.int64)
+    variance = np.asarray([1.0], dtype=np.float64)
+
+    python = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        variance_ts,
+        variance,
+        params,
+        exchange_book_event_tape=events,
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        variance_ts,
+        variance,
+        params,
+        exchange_book_event_tape=events,
+    )
+
+    keys = (
+        "exchange_book_events_consumed",
+        "exchange_book_events_accepted",
+        "exchange_book_events_rejected",
+        "exchange_book_snapshot_events",
+        "exchange_book_sequence_gaps",
+        "exchange_book_queue_lookup_count",
+        "exchange_book_queue_exact_count",
+        "exchange_book_queue_known_zero_count",
+        "exchange_book_queue_missing_count",
+        "exchange_book_queue_invalidated_order_count",
+        "exchange_book_queue_ambiguous_event_count",
+        "exchange_book_queue_cancel_ahead_event_count",
+        "fills_bid",
+        "fills_ask",
+    )
+    assert {key: cpp[key] for key in keys} == {
+        key: python[key] for key in keys
+    }
+    assert cpp["exchange_book_queue_cancel_ahead_qty"] == pytest.approx(
+        python["exchange_book_queue_cancel_ahead_qty"], abs=1e-12
+    )
+    assert cpp["pnl"] == pytest.approx(python["pnl"], abs=1e-12)
+    assert cpp["final_inventory"] == pytest.approx(
+        python["final_inventory"], abs=1e-12
+    )
+
+
+def test_python_cpp_strict_native_sequence_gap_fails_closed():
+    trades, params, events, base_ms = _strict_native_full_replay_fixture()
+    events[1] = _native_book_event(
+        base_ms,
+        500,
+        event_type="delta",
+        levels=(("bid", 967, 3.0),),
+        first_update_id=105,
+        final_update_id=105,
+        previous_final_update_id=104,
+    )
+    variance_ts = np.asarray([base_ms], dtype=np.int64)
+    variance = np.asarray([1.0], dtype=np.float64)
+
+    for engine in ("python", "cpp"):
+        with pytest.raises((RuntimeError, ValueError), match="sequence gap"):
+            bt._simulate_tick_with_engine(
+                engine,
+                trades,
+                variance_ts,
+                variance,
+                params,
+                exchange_book_event_tape=events,
+            )
+
+
+def test_python_cpp_strict_native_snapshot_invalidates_active_paths():
+    trades, params, events, base_ms = _strict_native_full_replay_fixture()
+    replacement_snapshot = _native_book_event(
+        base_ms,
+        500,
+        event_type="snapshot",
+        levels=(
+            ("bid", 967, 3.0),
+            ("bid", 999, 2.0),
+            ("ask", 1001, 2.0),
+            ("ask", 1033, 3.0),
+            ("ask", 1034, 3.0),
+        ),
+        last_update_id=200,
+    )
+    events = [events[0], replacement_snapshot]
+    variance_ts = np.asarray([base_ms], dtype=np.int64)
+    variance = np.asarray([1.0], dtype=np.float64)
+
+    python = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        variance_ts,
+        variance,
+        params,
+        exchange_book_event_tape=events,
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        variance_ts,
+        variance,
+        params,
+        exchange_book_event_tape=events,
+    )
+
+    assert cpp["exchange_book_snapshot_events"] == 2
+    assert cpp["exchange_book_snapshot_events"] == python[
+        "exchange_book_snapshot_events"
+    ]
+    assert cpp["exchange_book_queue_invalidated_order_count"] > 0
+    assert cpp["exchange_book_queue_invalidated_order_count"] == python[
+        "exchange_book_queue_invalidated_order_count"
+    ]

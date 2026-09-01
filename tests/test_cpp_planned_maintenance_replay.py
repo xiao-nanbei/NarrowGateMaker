@@ -269,6 +269,23 @@ def test_python_cpp_split_lifecycle_latency_parity():
             delayed_results["python"][key]
         )
 
+    default_seed_params = {**delayed_params, "rng_seed": 100}
+    default_seed_params.pop("decision_to_gateway_latency_seed")
+    default_seed_results = {
+        engine: bt._simulate_tick_with_engine(
+            engine,
+            trades,
+            np.asarray([0], dtype=np.int64),
+            np.asarray([1.0], dtype=np.float64),
+            default_seed_params,
+            bbo_data=bbo,
+        )
+        for engine in ("python", "cpp")
+    }
+    for result in default_seed_results.values():
+        assert result["latency_seed"] == 117
+        assert result["decision_to_gateway_latency_seed"] == 117
+
     # A one-element profile cannot detect compute/REST seed cross-wiring.
     # Keep the order path fixed and vary both seeds independently.
     no_fill_trades = trades.copy()

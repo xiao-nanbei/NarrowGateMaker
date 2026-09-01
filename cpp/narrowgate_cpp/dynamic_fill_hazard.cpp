@@ -437,6 +437,13 @@ NativeBookLookup NativeExchangeBookSchedulerCpp::lookup(
     const auto& book = side_book(is_bid);
     const auto found = book.find(price_tick);
     const auto& range = is_bid ? bid_snapshot_range_ : ask_snapshot_range_;
+    const auto& opposite_range = is_bid
+        ? ask_snapshot_range_
+        : bid_snapshot_range_;
+    const bool snapshot_uncrossed =
+        bid_snapshot_range_.has_value()
+        && ask_snapshot_range_.has_value()
+        && bid_snapshot_range_->second < ask_snapshot_range_->first;
     if (range) {
         value.snapshot_range_known = true;
         value.snapshot_min_tick = range->first;
@@ -458,6 +465,19 @@ NativeBookLookup NativeExchangeBookSchedulerCpp::lookup(
     if (range && range->first <= price_tick && price_tick <= range->second) {
         value.status = "known_zero";
         value.reason = "inside_snapshot_range_absent";
+        value.quantity_known = true;
+        return value;
+    }
+    if (
+        snapshot_uncrossed
+        && opposite_range
+        && (
+            (is_bid && price_tick >= opposite_range->first)
+            || (!is_bid && price_tick <= opposite_range->second)
+        )
+    ) {
+        value.status = "known_zero";
+        value.reason = "opposite_top_structural_zero";
         value.quantity_known = true;
         return value;
     }

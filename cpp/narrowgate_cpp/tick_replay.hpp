@@ -17,7 +17,7 @@
 namespace narrowgate_cpp {
 
 inline constexpr std::string_view kF05RepeatedBooleanCooldownAbi =
-    "f05_repeated_boolean_cooldown_streaming.v1";
+    "f05_repeated_boolean_cooldown_streaming.v2";
 inline constexpr std::string_view kF05BooleanCooldownControlAction =
     "CONTROL_85N";
 inline constexpr std::int64_t kF05BooleanCooldownWindowWidthNs = 100'000'000;
@@ -50,22 +50,60 @@ struct F05BooleanRule {
   std::vector<F05BooleanClause> clauses;
 };
 
+enum class F05PredicateMetric : std::uint8_t {
+  CampaignAgeGtControl = 0,
+  PositiveOrdering = 1,
+  LastCrossPositive = 2,
+  Expanding = 3,
+  Converging = 4,
+  AbsDistance = 5,
+  CrossAgeS = 6,
+  ArrangementPersistenceS = 7,
+  SignedDistance = 8,
+  SignedDistanceVelocity = 9,
+  SignedDistanceAcceleration = 10,
+};
+
+struct F05PredicatePair {
+  std::size_t fast_ema_index = 0;
+  std::size_t slow_ema_index = 0;
+};
+
+struct F05PredicateDefinition {
+  std::size_t predicate_index = 0;
+  F05PredicateMetric metric = F05PredicateMetric::CampaignAgeGtControl;
+  std::size_t pair_index = 0;
+  bool threshold_enabled = false;
+  double threshold = 0.0;
+};
+
 struct F05BooleanPolicy {
   std::string policy_sha256;
   std::string predicate_bundle_sha256;
   std::vector<std::string> predicate_columns;
   std::vector<F05BooleanRule> rules;
+  std::vector<double> ema_half_lives_s;
+  std::vector<F05PredicatePair> predicate_pairs;
+  std::vector<F05PredicateDefinition> predicate_definitions;
   std::string default_action = std::string(kF05BooleanCooldownControlAction);
 };
 
 struct F05RepeatedBooleanCooldownConfig {
   bool parity_qualified = false;
+  // Allows a current-policy candidate to execute only inside an explicitly
+  // paired, non-promotable qualification run. It is not parity authority and
+  // cannot coexist with a parity receipt.
+  bool qualification_under_test = false;
   std::string parity_qualification_sha256;
   std::string qualification_scope = "synthetic_mechanics_only";
   std::string feature_clock_semantics = "receive_time_selected_mid_v1";
   double warmup_s = 2048.0;
   double max_feature_age_s = 5.0;
+  // ``policy`` remains the SELL owner policy for ABI compatibility.  An empty
+  // BUY policy preserves the historical BUY=CONTROL behavior; a populated BUY
+  // policy is evaluated from the same receive-time window stream.
   F05BooleanPolicy policy;
+  F05BooleanPolicy buy_policy;
 };
 
 struct F05CooldownWindowObservation {
@@ -75,6 +113,10 @@ struct F05CooldownWindowObservation {
   std::int64_t market_generation = 0;
   std::int64_t depth_generation = 0;
   std::optional<double> mid_usdc_per_btc;
+  // A reset-only callback has left == right, contains no mid, and is consumed
+  // on its own feature-ready clock. It represents live's long receive-gap
+  // branch, which discards the old pending bucket before starting a new one.
+  bool reset_feature_state = false;
   bool source_gap = false;
   bool source_stale = false;
   bool warmup_admitted = false;
@@ -184,26 +226,35 @@ struct F05CooldownRuntimeAudit {
 
 struct F05RepeatedBooleanCooldownCheckpoint {
   std::string abi_version;
+  bool qualification_under_test = false;
   std::string parity_qualification_sha256;
   std::string qualification_scope;
   std::string feature_clock_semantics;
   std::string policy_sha256;
   std::string predicate_bundle_sha256;
+  std::string buy_policy_sha256;
+  std::string buy_predicate_bundle_sha256;
   double warmup_s = 0.0;
   double max_feature_age_s = 0.0;
   bool warmup_admitted = false;
   std::optional<std::int64_t> warmup_start_right_ts_ns;
   std::optional<std::int64_t> last_right_ts_ns;
+  std::optional<std::int64_t> last_input_ready_ts_ns;
   std::optional<std::int64_t> last_feature_ready_ts_ns;
   std::optional<std::int64_t> last_market_generation;
   std::optional<std::int64_t> last_depth_generation;
   bool ema_initialized = false;
+  bool buy_ema_initialized = false;
   bool current_window_observed = false;
   bool current_channel_support_valid = false;
   std::optional<std::int64_t> last_observed_ts_ns;
   std::array<double, 3> ema{0.0, 0.0, 0.0};
   F05CooldownPairState short_pair;
   F05CooldownPairState long_pair;
+  std::vector<double> buy_ema;
+  std::vector<double> buy_velocity;
+  std::vector<double> buy_acceleration;
+  std::vector<F05CooldownPairState> buy_pairs;
   F05CooldownLineageState buy_lineage;
   F05CooldownLineageState sell_lineage{false, Side::Sell};
   F05CooldownRuntimeAudit audit;
@@ -233,6 +284,8 @@ public:
   [[nodiscard]] F05RepeatedBooleanCooldownCheckpoint checkpoint() const;
   void restore(const F05RepeatedBooleanCooldownCheckpoint &checkpoint);
   [[nodiscard]] bool parity_qualified() const noexcept;
+  [[nodiscard]] bool qualification_under_test() const noexcept;
+  [[nodiscard]] bool execution_admitted() const noexcept;
   [[nodiscard]] const std::string &binding_error() const noexcept;
   [[nodiscard]] const F05RepeatedBooleanCooldownConfig &config() const noexcept;
 
@@ -242,6 +295,7 @@ private:
   bool warmup_admitted_ = false;
   std::optional<std::int64_t> warmup_start_right_ts_ns_;
   std::optional<std::int64_t> last_right_ts_ns_;
+  std::optional<std::int64_t> last_input_ready_ts_ns_;
   std::optional<std::int64_t> last_feature_ready_ts_ns_;
   std::optional<std::int64_t> last_market_generation_;
   std::optional<std::int64_t> last_depth_generation_;
@@ -252,6 +306,11 @@ private:
   std::array<double, 3> ema_{0.0, 0.0, 0.0};
   F05CooldownPairState short_pair_;
   F05CooldownPairState long_pair_;
+  bool buy_ema_initialized_ = false;
+  std::vector<double> buy_ema_;
+  std::vector<double> buy_velocity_;
+  std::vector<double> buy_acceleration_;
+  std::vector<F05CooldownPairState> buy_pairs_;
   F05CooldownLineageState buy_lineage_;
   F05CooldownLineageState sell_lineage_{false, Side::Sell};
   F05CooldownRuntimeAudit audit_;
@@ -471,6 +530,24 @@ struct TickReplayParams {
     double queue_ahead_base_mult = 1.0;
     double queue_deplete_base_mult = 1.0;
     bool queue_l2_cancel_ahead_enabled = false;
+    // Optional complete native snapshot/delta tape.  The arrays are flattened
+    // once by the Python boundary and then consumed entirely inside the C++
+    // event loop; no Python callback is permitted on the replay hot path.
+    bool native_exchange_book_enabled = false;
+    std::int64_t native_exchange_book_strict_after_ns = 0;
+    std::vector<std::int64_t> native_book_event_ts_ns;
+    std::vector<std::int64_t> native_book_receive_ts_ns;
+    std::vector<std::int64_t> native_book_event_time_ms;
+    std::vector<std::int64_t> native_book_transaction_time_ms;
+    std::vector<std::int64_t> native_book_first_update_id;
+    std::vector<std::int64_t> native_book_final_update_id;
+    std::vector<std::int64_t> native_book_previous_final_update_id;
+    std::vector<std::int64_t> native_book_last_update_id;
+    std::vector<std::int64_t> native_book_level_offsets;
+    std::vector<std::int64_t> native_book_level_price_tick;
+    std::vector<double> native_book_level_quantity;
+    std::vector<std::uint8_t> native_book_event_type;
+    std::vector<std::uint8_t> native_book_level_is_bid;
     double queue_ahead_buy_exposure_mult = 1.0;
     double queue_ahead_buy_reducing_mult = 1.0;
     double queue_ahead_sell_exposure_mult = 1.0;
@@ -1035,6 +1112,13 @@ struct ReplayOrder {
     bool fixed_spread_probe_touched = false;
     bool fixed_spread_probe_filled = false;
     std::uint8_t queue_seed_source = 0;
+    bool native_queue_path_valid = false;
+    bool native_queue_ambiguous = false;
+    bool native_queue_invalidated = false;
+    bool native_cancel_effective_processed = false;
+    bool native_cancel_ack_processed = false;
+    std::int64_t native_queue_segment_id = 0;
+    double native_queue_trade_since_update = 0.0;
     TraceOrderPtr trace{nullptr, PmrTraceDeleter{}};
 };
 
@@ -1059,6 +1143,19 @@ struct TickReplaySummary {
     std::int64_t fills_bid = 0;
     std::int64_t fills_ask = 0;
     std::int64_t fills_total = 0;
+    std::int64_t native_book_events_consumed = 0;
+    std::int64_t native_book_events_accepted = 0;
+    std::int64_t native_book_events_rejected = 0;
+    std::int64_t native_book_snapshot_events = 0;
+    std::int64_t native_book_sequence_gaps = 0;
+    std::int64_t native_queue_lookup_count = 0;
+    std::int64_t native_queue_exact_count = 0;
+    std::int64_t native_queue_known_zero_count = 0;
+    std::int64_t native_queue_missing_count = 0;
+    std::int64_t native_queue_invalidated_order_count = 0;
+    std::int64_t native_queue_ambiguous_event_count = 0;
+    std::int64_t native_queue_cancel_ahead_event_count = 0;
+    double native_queue_cancel_ahead_qty = 0.0;
     std::int64_t integer_tick_crossing_recovered_bid_candidates = 0;
     std::int64_t integer_tick_crossing_recovered_ask_candidates = 0;
     std::int64_t integer_tick_crossing_recovered_bid_fills = 0;

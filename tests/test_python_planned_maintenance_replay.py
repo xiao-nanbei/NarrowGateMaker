@@ -257,7 +257,8 @@ def test_stale_active_quotes_cancel_before_next_requote(control_backend) -> None
     assert result["n_requotes"] == 1
 
 
-def test_main_loop_stale_stop_runs_while_requote_is_not_due() -> None:
+@pytest.mark.parametrize("before_tick,requests", [(0.0, {300, 400}), (150.0, {400, 500})])
+def test_main_loop_stale_stop_runs_while_requote_is_not_due(before_tick, requests) -> None:
     trades, _ = _inputs()
     bbo = HistoricalBBOData(
         ts_ms=np.asarray([0]), best_bid=np.asarray([99.9]), best_ask=np.asarray([100.1]),
@@ -269,14 +270,16 @@ def test_main_loop_stale_stop_runs_while_requote_is_not_due() -> None:
          "requote_interval": 5.0, "rq_min": 5.0, "rq_max": 5.0,
          "max_exec_book_age_s": 0.2, "replay_purpose": "diagnostic",
          "rest_gateway_timing_mode": "sampled_serial", "replay_main_loop_sleep_ms": 100,
+         "_main_loop_work_samples_ms": [[before_tick, 0.0]],
          "_serial_rest_return_samples_by_operation": {
              "new": [[0.0, 0.0, 0.0]], "cancel": [[50.0, 200.0, 100.0]],
          }, "_serial_rest_return_sample_semantics": "synthetic_split_clocks"},
         bbo_data=bbo,
     )
     canceled = [row for row in result["_quote_trace"] if row["cancel_reason"] == "stale_book"]
-    assert {row["cancel_request_ts"] for row in canceled} == {300, 400}
-    assert {row["cancel_ack_ts"] for row in canceled} == {500, 600}
+    assert {row["cancel_request_ts"] for row in canceled} == requests
+    assert {row["cancel_ack_ts"] for row in canceled} == {t + 200 for t in requests}
+    assert result["rest_gateway_request_count"] == 4
     assert result["n_requotes"] == 1
 
 
@@ -652,8 +655,14 @@ def test_historical_passive_close_clip_requires_diagnostic_purpose(purpose) -> N
 
 
 @pytest.mark.parametrize("extra_trade_events", [False, True])
+@pytest.mark.parametrize("loop_work,tail,expected", [
+    ([[0.0, 0.0]], [0.0], [0, 1_014, 2_088, 3_162]),
+    ([[20.0, 0.0]], [30.0], [20, 1_124, 2_148, 3_172]),
+    ([[20.0, 10.0]], [30.0], [20, 1_074, 2_158, 3_242]),
+    ([[10.0, 70.0], [40.0, 20.0]], [0.0], [10, 1_154, 2_248, 3_322]),
+])
 def test_main_loop_sleep_uses_actual_return_phase_not_market_or_fixed_grid(
-    tmp_path, extra_trade_events,
+    tmp_path, extra_trade_events, loop_work, tail, expected,
 ) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
@@ -673,7 +682,10 @@ def test_main_loop_sleep_uses_actual_return_phase_not_market_or_fixed_grid(
          "rest_gateway_timing_mode": "sampled_serial",
          "rest_gateway_timing_profile_path": str(profile),
          "replay_main_loop_sleep_ms": 100,
+         "decision_to_gateway_latency_seed": 19,
          "_decision_to_gateway_latency_samples_ms": [40.0],
+         "_requote_tail_work_samples_ms": tail,
+         "_main_loop_work_samples_ms": loop_work,
          "planned_quote_stop_ts_ms": 0, "trace_decisions_max": 100},
         bbo_data=bbo,
     )
@@ -682,13 +694,20 @@ def test_main_loop_sleep_uses_actual_return_phase_not_market_or_fixed_grid(
     # Wakeups are 214, 314, ...; the 1s requote becomes due at 1014.
     # Later replace calls add two 80ms cancels, retain their new phase, and
     # anchor the next deadline to actual start rather than catch-up at 2000.
-    assert [r["ts_ms"] for r in decisions] == [0, 1_014, 2_088, 3_162]
+    assert [r["ts_ms"] for r in decisions] == expected
     assert result["replay_main_loop_requote_anchor"] == "actual_requote_start"
     assert result["replay_main_loop_unmodeled_work"] == "periodic_position_sync_and_health_io"
     assert result["rest_gateway_pending_decision_count"] == 0
 
 
-def test_main_loop_keep_still_consumes_compute_then_sleeps(tmp_path) -> None:
+@pytest.mark.parametrize("loop_work,tail,expected", [
+    ([[0.0, 0.0]], [0.0], [0, 1_014, 2_054, 3_094]),
+    ([[20.0, 0.0]], [30.0], [20, 1_124, 2_154, 3_184]),
+    ([[20.0, 10.0]], [30.0], [20, 1_074, 2_184, 3_294]),
+])
+def test_main_loop_keep_still_consumes_compute_then_sleeps(
+    tmp_path, loop_work, tail, expected,
+) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
         profile, [(True, True, True, True)],
@@ -699,35 +718,94 @@ def test_main_loop_keep_still_consumes_compute_then_sleeps(tmp_path) -> None:
         "rest_gateway_timing_profile_path": str(profile),
         "replay_main_loop_sleep_ms": 100,
         "_decision_to_gateway_latency_samples_ms": [40.0],
+        "_requote_tail_work_samples_ms": tail,
+        "_main_loop_work_samples_ms": loop_work,
         "requote_threshold_bps": 1.0,
         "planned_quote_stop_ts_ms": 0, "trace_decisions_max": 100,
     })
     decisions = [r for r in result["_decision_trace"] if r["side"] == "BUY"]
-    assert [r["ts_ms"] for r in decisions] == [0, 1_014, 2_054, 3_094]
+    assert [r["ts_ms"] for r in decisions] == expected
     assert [r["action"] for r in decisions] == ["place", "keep", "keep", "keep"]
     assert result["rest_gateway_request_count"] == 2
 
 
-def test_main_loop_long_http_call_does_not_delay_exchange_or_private_fill(tmp_path) -> None:
+@pytest.mark.parametrize("new_http,tail,fill_at,next_decision", [
+    (350.0, 0.0, 100, 840),
+    (37.0, 400.0, 200, 614),
+])
+def test_main_loop_busy_work_does_not_delay_exchange_or_private_fill(
+    tmp_path, new_http, tail, fill_at, next_decision,
+) -> None:
     profile = tmp_path / "gateway.npz"
     _write_serial_gateway_profile(
         profile, [(True, True, True, True)],
-        cancel_clocks=(20.0, 60.0, 80.0), new_clocks=(2.0, 350.0),
+        cancel_clocks=(20.0, 60.0, 80.0), new_clocks=(2.0, new_http),
     )
-    result = _run(crossing_fill_ts_ms=100, param_overrides={
+    result = _run(crossing_fill_ts_ms=fill_at, param_overrides={
         "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
         "rest_gateway_timing_profile_path": str(profile),
         "replay_main_loop_sleep_ms": 100,
         "_decision_to_gateway_latency_samples_ms": [40.0],
+        "_requote_tail_work_samples_ms": [tail],
         "_private_fill_visibility_latency_samples_ms": [10.0],
         "requote_interval": 0.2, "rq_min": 0.2, "rq_max": 0.2,
         "planned_quote_stop_ts_ms": 0, "trace_decisions_max": 100,
     })
     decisions = [r for r in result["_decision_trace"] if r["side"] == "BUY"]
-    assert [r["ts_ms"] for r in decisions[:2]] == [0, 840]
-    assert result["_fill_trace"][0]["fill_ts"] == 100
-    assert result["_fill_trace"][0]["last_private_fill_visible_ts_ms"] == 110
+    assert [r["ts_ms"] for r in decisions[:2]] == [0, next_decision]
+    assert result["_fill_trace"][0]["fill_ts"] == fill_at
+    assert result["_fill_trace"][0]["last_private_fill_visible_ts_ms"] == fill_at + 10
     assert result["private_fill_exchange_match_count"] == result["private_fill_visible_count"]
+
+
+def test_zero_loop_work_preserves_default_output() -> None:
+    baseline = _run()
+    zero = _run(param_overrides={
+        "_requote_tail_work_samples_ms": [0.0],
+        "_main_loop_work_samples_ms": [[0.0, 0.0]],
+    })
+    for key in ("pnl", "final_inventory", "n_requotes", "_quote_trace", "_fill_trace"):
+        assert zero[key] == baseline[key]
+
+
+@pytest.mark.parametrize("key,samples", [
+    ("_requote_tail_work_samples_ms", [-1.0]),
+    ("_requote_tail_work_samples_ms", [np.nan]),
+    ("_requote_tail_work_samples_ms", [[1.0]]),
+    ("_requote_tail_work_samples_ms", [1.0, 2.0]),
+    ("_main_loop_work_samples_ms", [[1.0, -1.0]]),
+    ("_main_loop_work_samples_ms", [[1.0, np.inf]]),
+    ("_main_loop_work_samples_ms", [1.0, 2.0]),
+    ("_main_loop_work_samples_ms", [[1.0]]),
+])
+def test_loop_work_rejects_invalid_samples(key, samples) -> None:
+    with pytest.raises(ValueError):
+        _run(param_overrides={
+            "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
+            "replay_main_loop_sleep_ms": 100,
+            "_serial_rest_return_samples_by_operation": {
+                "new": [[2.0, 37.0, 37.0]], "cancel": [[20.0, 60.0, 80.0]],
+            },
+            "_serial_rest_return_sample_semantics": "synthetic_split_clocks",
+            "_decision_to_gateway_latency_samples_ms": [40.0], key: samples,
+        })
+
+
+@pytest.mark.parametrize("key,samples", [
+    ("_requote_tail_work_samples_ms", [1.0]),
+    ("_main_loop_work_samples_ms", [[1.0, 2.0]]),
+])
+def test_loop_work_requires_python_main_loop(key, samples) -> None:
+    from models.backtest_tick import _simulate_tick_cpp
+
+    with pytest.raises(ValueError):
+        _run(param_overrides={"replay_purpose": "diagnostic", key: samples})
+    trades, bbo = _inputs()
+    with pytest.raises(ValueError, match="Python-only"):
+        _simulate_tick_cpp(
+            trades, np.asarray([0]), np.asarray([1.0]),
+            {**_params(), key: samples}, bbo_data=bbo,
+        )
 
 
 def test_zero_pre_snapshot_compute_preserves_off_output(tmp_path) -> None:
@@ -773,22 +851,32 @@ def test_pre_snapshot_compute_pairs_with_total_without_double_counting(tmp_path,
     )
     pre = np.asarray([20.0, 30.0, 50.0])
     total = np.asarray([40.0, 80.0, 90.0])
+    tail = np.asarray([3.0, 7.0, 9.0])
     result = _run(param_overrides={
         "replay_purpose": "diagnostic", "rest_gateway_timing_mode": "sampled_serial",
         "rest_gateway_timing_profile_path": str(profile),
         "replay_main_loop_sleep_ms": 100, "decision_to_gateway_latency_seed": seed,
         "_decision_to_gateway_latency_samples_ms": total,
         "_pre_snapshot_compute_latency_samples_ms": pre,
+        "_requote_tail_work_samples_ms": tail,
+        "requote_interval": 0.2, "rq_min": 0.2, "rq_max": 0.2,
         "trace_decisions_max": 100,
     })
     pre_ms = _deterministic_decision_to_gateway_latency_ms(pre, seed=seed, decision_ts_ms=0)
     total_ms = _deterministic_decision_to_gateway_latency_ms(total, seed=seed, decision_ts_ms=0)
-    assert (pre_ms, total_ms) in {(20, 40), (30, 80), (50, 90)}
+    tail_ms = _deterministic_decision_to_gateway_latency_ms(tail, seed=seed, decision_ts_ms=0)
+    assert (pre_ms, total_ms, tail_ms) in {(20, 40, 3), (30, 80, 7), (50, 90, 9)}
     decisions = result["_decision_trace"]
     assert decisions[0]["ts_ms"] == pre_ms
     first = [row for row in result["_quote_trace"] if row["submit_ts"] == pre_ms]
     assert [row["side"] for row in first] == ["BUY", "SELL"]
     assert [row["activate_ts"] for row in first] == [total_ms + 2, total_ms + 39]
+    next_entry = total_ms + 37 + 37 + tail_ms + 100
+    next_pre = _deterministic_decision_to_gateway_latency_ms(
+        pre, seed=seed, decision_ts_ms=next_entry,
+    )
+    buy_decisions = [row["ts_ms"] for row in decisions if row["side"] == "BUY"]
+    assert buy_decisions[:2] == [pre_ms, next_entry + next_pre]
     assert result["pre_snapshot_compute_count"] == result["pre_snapshot_compute_completed_count"]
     assert result["pre_snapshot_compute_abandoned_count"] == 0
 

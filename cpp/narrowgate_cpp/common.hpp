@@ -250,6 +250,33 @@ inline double floor_lot(double qty, double lot_size) {
     return std::floor(qty / lot) * lot;
 }
 
+inline double subtract_lot_quantity(double quantity, double consumed, double lot_size) {
+    if (!std::isfinite(quantity) || quantity < 0.0 ||
+        !std::isfinite(consumed) || consumed < 0.0 ||
+        !std::isfinite(lot_size) || lot_size <= 0.0) {
+        throw std::invalid_argument("quantity subtraction requires nonnegative finite quantities and a positive lot");
+    }
+    const auto ulp = [](double value) {
+        const double magnitude = std::abs(value);
+        const double next = std::nextafter(magnitude, std::numeric_limits<double>::infinity());
+        return std::isfinite(next)
+            ? next - magnitude
+            : magnitude - std::nextafter(magnitude, 0.0);
+    };
+    const double remaining = std::max(0.0, quantity - consumed);
+    double bound = ulp(quantity) + ulp(consumed) + ulp(remaining);
+    if (bound >= lot_size / 2.0) return remaining;
+    const double units = remaining / lot_size;
+    if (!std::isfinite(units)) return remaining;
+    const double nearest_units = std::round(units);
+    const double nearest = nearest_units * lot_size;
+    bound += ulp(nearest) + std::abs(nearest_units) * ulp(lot_size);
+    // Correct only representational dust at a lot boundary. Modeled queue
+    // quantities may be genuinely fractional and must not be quantized.
+    return bound < lot_size / 2.0 && std::abs(remaining - nearest) <= bound
+        ? nearest : remaining;
+}
+
 template <Side S>
 [[nodiscard]] double side_distance_to_mid(double mid, double price, double tick) {
     if constexpr (is_buy_v<S>) {

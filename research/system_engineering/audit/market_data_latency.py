@@ -323,6 +323,94 @@ def _build_source_stratified_sampling(
     }
 
 
+def snapshot_conditioned_message_clocks(
+    event_ts_ns: np.ndarray,
+    capture_ts_ns: np.ndarray,
+    observed_exchange_ts_ns: np.ndarray,
+    observed_receive_ts_ns: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Interpolate one source's receive clock subject to observed visibility.
+
+    This is a snapshot-conditioned diagnostic, not a recovered message tape.
+    Receive time is interpolated between observed exchange/receive pairs. A
+    later source message becomes ready only after the last capture still seeing
+    its predecessor. Ready time is therefore an earliest-release bound; unknown
+    callback work is neither measured nor borrowed from another feed. Long gaps
+    between distinct observations are interpolated, not declared stream stalls.
+    Call separately per source, including blocked snapshots, and supply boundary
+    observations: timestamps outside observed exchange support are never held.
+    """
+    arrays = []
+    for name, value in (
+        ("event", event_ts_ns), ("capture", capture_ts_ns),
+        ("observed exchange", observed_exchange_ts_ns),
+        ("observed receive", observed_receive_ts_ns),
+    ):
+        vector = np.asarray(value)
+        if vector.ndim != 1 or vector.dtype.kind not in "iu":
+            raise ValueError(f"{name} timestamps must be one-dimensional integer vectors")
+        if np.any(vector < 0) or np.any(vector > np.iinfo(np.int64).max):
+            raise ValueError(f"{name} timestamps must fit non-negative int64 nanoseconds")
+        vector = vector.astype(np.int64, copy=False)
+        if np.any(vector[1:] < vector[:-1]):
+            raise ValueError(f"{name} chronology regressed")
+        arrays.append(vector)
+    events, captures, exchange, observed_receive = arrays
+    if not len(captures) or not (len(captures) == len(exchange) == len(observed_receive)):
+        raise ValueError("snapshot timestamp vectors must be nonempty and aligned")
+    if np.any(observed_receive < exchange) or np.any(observed_receive >= captures):
+        raise ValueError("observations require exchange <= receive < capture")
+    same_exchange = exchange[1:] == exchange[:-1]
+    if np.any(same_exchange & (observed_receive[1:] != observed_receive[:-1])):
+        raise ValueError("repeated exchange timestamp must retain its observed receive time")
+    first = np.r_[0, np.flatnonzero(~same_exchange) + 1]
+    last = np.r_[first[1:] - 1, len(exchange) - 1]
+    source, received = exchange[first], observed_receive[first]
+    first_capture, last_capture = captures[first], captures[last]
+    if np.any(last_capture[:-1] >= first_capture[1:]):
+        raise ValueError("successive source observations have contradictory capture bounds")
+    if len(events) and (events[0] < source[0] or events[-1] > source[-1]):
+        raise ValueError("target event time exceeds snapshot exchange support")
+
+    right = np.searchsorted(source, events, side="left")
+    left = np.maximum(right - 1, 0)
+    between = source[right] != events
+    receive = received[right].copy()
+    spans = source[right[between]] - source[left[between]]
+    # Subtract each bracket's origin before floating-point interpolation. Never
+    # convert epoch nanoseconds to float or reinterpret visible age as transport.
+    offsets = events[between] - source[left[between]]
+    receive[between] = received[left[between]] + np.rint(
+        offsets.astype(np.float64) / spans
+        * (received[right[between]] - received[left[between]])
+    ).astype(np.int64)
+    receive = np.maximum(receive, events)
+    ready = receive.copy()
+    has_predecessor = right > 0
+    ready[has_predecessor] = np.maximum(
+        ready[has_predecessor], last_capture[right[has_predecessor] - 1] + 1,
+    )
+    if np.any(ready >= first_capture[right]):
+        raise ValueError("interpolated readiness must precede its next observed capture")
+    if np.any(receive[1:] < receive[:-1]) or np.any(ready[1:] < ready[:-1]):
+        raise ValueError("snapshot-conditioned clocks must preserve source FIFO")
+    hold = ready - receive
+    stats = {
+        "mode": "snapshot_conditioned_diagnostic",
+        "callback_semantics": "earliest_release_bound_not_measured_callback_completion",
+        "event_count": int(len(events)),
+        "observation_count": int(len(captures)),
+        "unique_exchange_count": int(len(source)),
+        "repeated_observation_count": int(len(captures) - len(source)),
+        "max_capture_gap_ns": int(np.diff(captures).max(initial=0)),
+        "max_source_bracket_gap_ns": int(np.diff(source).max(initial=0)),
+        "max_interpolation_gap_ns": int(spans.max(initial=0)),
+        "barrier_adjusted_count": int(np.count_nonzero(hold)),
+        "max_barrier_hold_ns": int(hold.max(initial=0)),
+    }
+    return receive, ready, stats
+
+
 class RawWindowMarketDataLatencySimulator:
     """Replay historical lag chronology, not an exact target-host transport trace.
 

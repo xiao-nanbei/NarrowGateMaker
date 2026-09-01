@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import pytest
 
 from models import backtest_tick as bt
+from models import data_windows as dw
 from models.data_windows import load_tick_window
+from models.native_exchange_book_cache import native_book_parser_identity
 
 
 def _trades() -> pd.DataFrame:
@@ -16,6 +20,45 @@ def _trades() -> pd.DataFrame:
             "qty": [0.001] * 20,
         }
     )
+
+
+@pytest.mark.parametrize("changed_input", ["dtype", "_read_aggtrade_csv", "_read_individual_trade_csv"])
+def test_trade_reader_change_invalidates_all_market_caches_not_native(
+    tmp_path: Path, monkeypatch, changed_input: str,
+) -> None:
+    monkeypatch.setattr(dw, "_window_source_signature", lambda *args, **kwargs: ())
+    params = {"execution_trade_source": "trades", "market_context_warmup_days": 0}
+
+    def identities():
+        return (
+            dw._window_cache_path(
+                tmp_path, "2099-01-02", params,
+                load_ml=False, require_ml=False, run_ml_inference=False,
+                feature_dir=tmp_path, require_target_feature_files=False,
+                cross_market_enabled=False, with_ml_cache=False,
+                require_historical_bbo=False,
+            ),
+            dw._window_market_context_cache_path(tmp_path, "2099-01-02", params),
+            dw._window_market_context_v2_identity("2099-01-02", params)[0],
+        )
+
+    before = identities()
+    native_before = native_book_parser_identity()
+    if changed_input == "dtype":
+        current = np.dtype(bt.AGGTRADE_DTYPES["quantity"])
+        monkeypatch.setitem(
+            bt.AGGTRADE_DTYPES, "quantity",
+            np.float32 if current == np.dtype("float64") else np.float64,
+        )
+    else:
+        def changed_reader(path):
+            raise AssertionError("identity checks must not read market data")
+
+        monkeypatch.setattr(bt, changed_input, changed_reader)
+
+    assert all(old != new for old, new in zip(before, identities(), strict=True))
+    assert native_book_parser_identity() == native_before
+    assert not list(tmp_path.iterdir())
 
 
 def test_new_window_miss_persists_reusable_component_not_monolith(

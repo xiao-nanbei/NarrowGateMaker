@@ -900,6 +900,18 @@ class LiveBuyE3CooldownPolicy:
         return self.evaluator.artifact_sha256
 
     @property
+    def ema_half_lives_s(self) -> tuple[float, ...]:
+        """Return the frozen EMA bank consumed by execution backends."""
+
+        return EMA_HALF_LIVES_S
+
+    @property
+    def ema_pairs_s(self) -> tuple[tuple[float, float], ...]:
+        """Return the frozen pair ordering used by predicate definitions."""
+
+        return EMA_PAIRS_S
+
+    @property
     def deadline_identity(self) -> str:
         return f"BUY_E3:{self.artifact_sha256}"
 

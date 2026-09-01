@@ -1,20 +1,23 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from research.families.f10_live_replay_attribution.audit import (
     current_live_held_ber_replay_baseline_50d as baseline50,
 )
-
+from research.families.f10_live_replay_attribution.audit import (
+    current_live_held_ber_strict_native_latency_baseline_50d as strict50,
+)
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("NARROWGATE_PRIVATE_RESEARCH_ROOT"),
     reason="private historical operational denominator is not configured",
-)
-from research.families.f10_live_replay_attribution.audit import (
-    current_live_held_ber_strict_native_latency_baseline_50d as strict50,
 )
 
 
@@ -109,3 +112,169 @@ def test_prepare_reuses_the_admitted_execution_plan(tmp_path) -> None:
 
     assert baseline50.prepare(tmp_path) == plan
     assert (tmp_path / "execution-plan.json").read_bytes() == before
+
+
+def test_runner_backend_contract_separates_python_and_cpp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"commit": "1" * 40, "tree": "2" * 40}
+    monkeypatch.setattr(
+        strict50,
+        "_git_source_identity",
+        lambda **_kwargs: dict(source),
+    )
+    python_backend = strict50._backend_contract("python")
+    assert python_backend["engine"] == "python"
+    assert python_backend["authoritative"] is True
+    assert python_backend["qualification_under_test"] is False
+    assert len(python_backend["backend_identity_root"]) == 64
+
+    receipt = tmp_path / "qualification.json"
+    receipt.write_text('{"schema_version":"test"}\n', encoding="utf-8")
+    receipt_root = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    cpp_backend = strict50._backend_contract(
+        "cpp",
+        cpp_qualification_receipt=receipt,
+        cpp_qualification_receipt_sha256=receipt_root,
+    )
+    assert cpp_backend == {
+        "engine": "cpp",
+        "backend_identity_root": receipt_root,
+        "source_identity": source,
+        "authoritative": True,
+        "qualification_under_test": False,
+        "qualification_receipt_path": str(receipt.resolve()),
+    }
+
+    with pytest.raises(strict50.StrictNativeLatencyError, match="cannot consume"):
+        strict50._backend_contract(
+            "python",
+            cpp_qualification_receipt=receipt,
+            cpp_qualification_receipt_sha256=receipt_root,
+        )
+    with pytest.raises(strict50.StrictNativeLatencyError, match="root drifted"):
+        strict50._backend_contract(
+            "cpp",
+            cpp_qualification_receipt=receipt,
+            cpp_qualification_receipt_sha256="3" * 64,
+        )
+
+
+def test_cpp_source_identity_rejects_a_dirty_tracked_worktree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(command, **_kwargs):
+        if command[1:3] == ["rev-parse", "HEAD"]:
+            return SimpleNamespace(stdout="1" * 40 + "\n")
+        if command[1:3] == ["rev-parse", "HEAD^{tree}"]:
+            return SimpleNamespace(stdout="2" * 40 + "\n")
+        if command[1:3] == ["status", "--porcelain"]:
+            return SimpleNamespace(stdout=" M models/backtest_tick.py\n")
+        raise AssertionError(command)
+
+    monkeypatch.setattr(strict50.subprocess, "run", fake_run)
+    with pytest.raises(
+        strict50.StrictNativeLatencyError,
+        match="tracked-clean worktree",
+    ):
+        strict50._git_source_identity(require_tracked_clean=True)
+
+
+def test_cpp_current_policy_setup_uses_central_receipt_validator(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = "4" * 64
+    backend = {
+        "engine": "cpp",
+        "backend_identity_root": root,
+        "source_identity": {"commit": "1" * 40, "tree": "2" * 40},
+        "authoritative": True,
+        "qualification_under_test": False,
+        "qualification_receipt_path": "/private/qualification.json",
+    }
+    runtime = object()
+
+    class Adapter:
+        def compile_cpp_runtime(self, cpp, **kwargs):
+            assert cpp.name == "current-extension"
+            assert kwargs == {
+                "parity_qualified": True,
+                "parity_qualification_sha256": root,
+            }
+            return runtime
+
+        def cpp_window_arrays(self):
+            return {"left_ts_ns": [1]}
+
+    def validate(params, *, require_full_replay):
+        assert require_full_replay is True
+        assert params["cooldown_duration_policy_cpp_runtime"] is runtime
+        assert params["cooldown_duration_policy_cpp_parity_receipt_sha256"] == root
+        assert "cooldown_duration_policy_cpp_qualification_under_test" not in params
+        assert "cooldown_duration_policy_cpp_event_loop_parity_qualified" not in params
+        params["_cooldown_duration_policy_cpp_validated_receipt_sha256"] = root
+        return runtime
+
+    monkeypatch.setattr(
+        strict50.bt,
+        "_load_cpp_tick_replay",
+        lambda: SimpleNamespace(name="current-extension"),
+    )
+    monkeypatch.setattr(
+        strict50.bt,
+        "_validate_f05_cpp_cooldown_runtime",
+        validate,
+    )
+    params = {"cooldown_duration_policy_evaluator": Adapter()}
+    strict50._configure_cpp_current_policy(
+        params,
+        adapter=params["cooldown_duration_policy_evaluator"],
+        backend=backend,
+    )
+    assert params["_cooldown_duration_policy_cpp_window_arrays"] == {
+        "left_ts_ns": [1]
+    }
+
+
+def test_day_cache_rejects_mixed_engines_and_backend_roots(tmp_path: Path) -> None:
+    day = "2026-04-19"
+    directory = strict50._day_dir(tmp_path, day)
+    directory.mkdir(parents=True)
+    manifest = {
+        "identity": strict50.CURRENT_IDENTITY,
+        "day": day,
+        "engine": "python",
+        "backend_identity_root": "5" * 64,
+        "backend_authoritative": True,
+        "qualification_under_test": False,
+        "current_config_sha256": "6" * 64,
+    }
+    manifest_path = directory / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (directory / strict50.DAY_SUCCESS).write_text(
+        strict50.parent._sha256_file(manifest_path) + "\n",
+        encoding="ascii",
+    )
+
+    with pytest.raises(strict50.StrictNativeLatencyError, match="engine drifted"):
+        strict50._load_day(
+            tmp_path,
+            day,
+            engine="cpp",
+            backend_identity_root="7" * 64,
+            identity=strict50.CURRENT_IDENTITY,
+            config_sha256="6" * 64,
+        )
+    with pytest.raises(
+        strict50.StrictNativeLatencyError,
+        match="backend identity drifted",
+    ):
+        strict50._load_day(
+            tmp_path,
+            day,
+            engine="python",
+            backend_identity_root="7" * 64,
+            identity=strict50.CURRENT_IDENTITY,
+            config_sha256="6" * 64,
+        )

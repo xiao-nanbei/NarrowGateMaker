@@ -1,4 +1,5 @@
 #include "tick_replay.hpp"
+#include "dynamic_fill_hazard.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 
 namespace narrowgate_cpp {
@@ -186,6 +188,8 @@ std::string
 f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
   std::ostringstream output;
   output << "abi=" << checkpoint.abi_version << '\n'
+         << "qualification_under_test="
+         << static_cast<int>(checkpoint.qualification_under_test) << '\n'
          << "qualification_sha256=" << checkpoint.parity_qualification_sha256
          << '\n'
          << "qualification_scope=" << checkpoint.qualification_scope << '\n'
@@ -193,6 +197,10 @@ f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
          << '\n'
          << "policy_sha256=" << checkpoint.policy_sha256 << '\n'
          << "predicate_bundle_sha256=" << checkpoint.predicate_bundle_sha256
+         << '\n'
+         << "buy_policy_sha256=" << checkpoint.buy_policy_sha256 << '\n'
+         << "buy_predicate_bundle_sha256="
+         << checkpoint.buy_predicate_bundle_sha256
          << '\n'
          << "warmup_s_bits=" << f05_double_bits(checkpoint.warmup_s) << '\n'
          << "max_feature_age_s_bits="
@@ -203,6 +211,8 @@ f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
          << f05_optional_i64(checkpoint.warmup_start_right_ts_ns) << '\n'
          << "last_right=" << f05_optional_i64(checkpoint.last_right_ts_ns)
          << '\n'
+         << "last_input_ready="
+         << f05_optional_i64(checkpoint.last_input_ready_ts_ns) << '\n'
          << "last_feature_ready="
          << f05_optional_i64(checkpoint.last_feature_ready_ts_ns) << '\n'
          << "last_market_generation="
@@ -210,6 +220,9 @@ f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
          << "last_depth_generation="
          << f05_optional_i64(checkpoint.last_depth_generation) << '\n'
          << "ema_initialized=" << static_cast<int>(checkpoint.ema_initialized)
+         << '\n'
+         << "buy_ema_initialized="
+         << static_cast<int>(checkpoint.buy_ema_initialized)
          << '\n'
          << "current_window_observed="
          << static_cast<int>(checkpoint.current_window_observed) << '\n'
@@ -220,6 +233,18 @@ f05_checkpoint_payload(const F05RepeatedBooleanCooldownCheckpoint &checkpoint) {
   for (std::size_t index = 0; index < checkpoint.ema.size(); ++index) {
     output << "ema" << index << "=" << f05_double_bits(checkpoint.ema[index])
            << '\n';
+  }
+  for (std::size_t index = 0; index < checkpoint.buy_ema.size(); ++index) {
+    output << "buy_ema" << index << "="
+           << f05_double_bits(checkpoint.buy_ema[index]) << '\n'
+           << "buy_velocity" << index << "="
+           << f05_double_bits(checkpoint.buy_velocity[index]) << '\n'
+           << "buy_acceleration" << index << "="
+           << f05_double_bits(checkpoint.buy_acceleration[index]) << '\n';
+  }
+  for (std::size_t index = 0; index < checkpoint.buy_pairs.size(); ++index) {
+    append_f05_pair(output, "buy_pair" + std::to_string(index),
+                    checkpoint.buy_pairs[index]);
   }
   append_f05_pair(output, "short_pair", checkpoint.short_pair);
   append_f05_pair(output, "long_pair", checkpoint.long_pair);
@@ -298,6 +323,219 @@ void update_f05_pair(F05CooldownPairState &pair, double fast, double slow,
   }
 }
 
+std::vector<F05TriState> materialize_f05_declarative_predicates(
+    const F05BooleanPolicy &policy,
+    const std::vector<double> &ema,
+    const std::vector<double> &velocity,
+    const std::vector<double> &acceleration,
+    const std::vector<F05CooldownPairState> &pairs,
+    const F05CooldownFillInput &input,
+    std::int64_t baseline_duration_ms) {
+  std::vector<F05TriState> output(policy.predicate_columns.size(),
+                                 F05TriState::Unobserved);
+  const auto numeric_state = [](std::optional<double> value,
+                                const F05PredicateDefinition &definition) {
+    if (!value.has_value() || !std::isfinite(*value) ||
+        !definition.threshold_enabled) {
+      return F05TriState::Unobserved;
+    }
+    return *value >= definition.threshold ? F05TriState::True
+                                           : F05TriState::False;
+  };
+  for (const auto &definition : policy.predicate_definitions) {
+    if (definition.metric == F05PredicateMetric::CampaignAgeGtControl) {
+      output[definition.predicate_index] =
+          input.campaign_age_s * 1'000.0 >
+                  static_cast<double>(baseline_duration_ms)
+              ? F05TriState::True
+              : F05TriState::False;
+      continue;
+    }
+    const auto &indices = policy.predicate_pairs.at(definition.pair_index);
+    const auto &pair = pairs.at(definition.pair_index);
+    const auto distance = ema.at(indices.fast_ema_index) -
+                          ema.at(indices.slow_ema_index);
+    const auto distance_velocity = velocity.at(indices.fast_ema_index) -
+                                   velocity.at(indices.slow_ema_index);
+    const auto distance_acceleration =
+        acceleration.at(indices.fast_ema_index) -
+        acceleration.at(indices.slow_ema_index);
+    switch (definition.metric) {
+    case F05PredicateMetric::PositiveOrdering:
+      output[definition.predicate_index] =
+          pair.effective_sign == 0
+              ? F05TriState::Unobserved
+              : pair.effective_sign > 0 ? F05TriState::True
+                                         : F05TriState::False;
+      break;
+    case F05PredicateMetric::LastCrossPositive:
+      output[definition.predicate_index] =
+          pair.last_cross_ts_ns.has_value()
+              ? pair.last_cross_direction > 0 ? F05TriState::True
+                                                : F05TriState::False
+              : F05TriState::Unobserved;
+      break;
+    case F05PredicateMetric::Expanding:
+      output[definition.predicate_index] =
+          distance * distance_velocity > 0.0 ? F05TriState::True
+                                             : F05TriState::False;
+      break;
+    case F05PredicateMetric::Converging:
+      output[definition.predicate_index] =
+          distance * distance_velocity < 0.0 ? F05TriState::True
+                                             : F05TriState::False;
+      break;
+    case F05PredicateMetric::AbsDistance:
+      output[definition.predicate_index] =
+          numeric_state(std::abs(distance), definition);
+      break;
+    case F05PredicateMetric::CrossAgeS: {
+      const auto value = pair.last_cross_ts_ns.has_value()
+                             ? std::optional<double>(
+                                   static_cast<double>(
+                                       input.decision_ts_ns -
+                                       *pair.last_cross_ts_ns) /
+                                   1'000'000'000.0)
+                             : std::nullopt;
+      output[definition.predicate_index] = numeric_state(value, definition);
+      break;
+    }
+    case F05PredicateMetric::ArrangementPersistenceS: {
+      const auto value = pair.arrangement_start_ts_ns.has_value()
+                             ? std::optional<double>(
+                                   static_cast<double>(
+                                       input.decision_ts_ns -
+                                       *pair.arrangement_start_ts_ns) /
+                                   1'000'000'000.0)
+                             : std::nullopt;
+      output[definition.predicate_index] = numeric_state(value, definition);
+      break;
+    }
+    case F05PredicateMetric::SignedDistance:
+      output[definition.predicate_index] = numeric_state(distance, definition);
+      break;
+    case F05PredicateMetric::SignedDistanceVelocity:
+      output[definition.predicate_index] =
+          numeric_state(distance_velocity, definition);
+      break;
+    case F05PredicateMetric::SignedDistanceAcceleration:
+      output[definition.predicate_index] =
+          numeric_state(distance_acceleration, definition);
+      break;
+    case F05PredicateMetric::CampaignAgeGtControl:
+      break;
+    }
+  }
+  return output;
+}
+
+std::string
+validate_f05_boolean_policy(const F05BooleanPolicy &policy,
+                            std::string_view error_prefix,
+                            bool require_declarative_features) {
+  const auto error = [error_prefix](std::string_view suffix) {
+    return std::string(error_prefix) + std::string(suffix);
+  };
+  if (!is_lower_sha256(policy.policy_sha256)) {
+    return error("policy_sha256_invalid");
+  }
+  if (!is_lower_sha256(policy.predicate_bundle_sha256)) {
+    return error("predicate_bundle_sha256_invalid");
+  }
+  if (policy.default_action != kF05BooleanCooldownControlAction) {
+    return error("policy_default_action_invalid");
+  }
+  if (policy.predicate_columns.empty() || policy.rules.empty()) {
+    return error("policy_structure_empty");
+  }
+  std::set<std::string> names;
+  for (const auto &name : policy.predicate_columns) {
+    if (name.empty() || !names.insert(name).second) {
+      return error("policy_predicate_columns_invalid");
+    }
+  }
+  for (const auto &rule : policy.rules) {
+    if (rule.action_id.empty() || rule.duration_ms <= 0 ||
+        rule.clauses.empty()) {
+      return error("policy_rule_invalid");
+    }
+    constexpr std::string_view prefix = "FIXED_";
+    constexpr std::string_view suffix = "S";
+    const std::string_view action = rule.action_id;
+    if (!action.starts_with(prefix) || !action.ends_with(suffix)) {
+      return error("policy_action_identity_invalid");
+    }
+    const auto seconds_text = action.substr(
+        prefix.size(), action.size() - prefix.size() - suffix.size());
+    std::int64_t seconds = 0;
+    const auto [end, parse_error] = std::from_chars(
+        seconds_text.data(), seconds_text.data() + seconds_text.size(), seconds);
+    if (parse_error != std::errc{} ||
+        end != seconds_text.data() + seconds_text.size() || seconds <= 0 ||
+        seconds > std::numeric_limits<std::int64_t>::max() / 1'000 ||
+        rule.duration_ms != seconds * 1'000) {
+      return error("policy_action_duration_drifted");
+    }
+    for (const auto &clause : rule.clauses) {
+      if (clause.literals.empty()) {
+        return error("policy_clause_invalid");
+      }
+      for (const auto &literal : clause.literals) {
+        if (literal.predicate_index >= policy.predicate_columns.size()) {
+          return error("policy_literal_index_invalid");
+        }
+      }
+    }
+  }
+  if (!require_declarative_features) {
+    return {};
+  }
+  if (policy.ema_half_lives_s.empty() || policy.predicate_pairs.empty() ||
+      policy.predicate_definitions.size() != policy.predicate_columns.size()) {
+    return error("policy_feature_definition_incomplete");
+  }
+  if (!std::all_of(policy.ema_half_lives_s.begin(),
+                   policy.ema_half_lives_s.end(), [](double value) {
+                     return std::isfinite(value) && value > 0.0;
+                   }) ||
+      !std::is_sorted(policy.ema_half_lives_s.begin(),
+                      policy.ema_half_lives_s.end()) ||
+      std::adjacent_find(policy.ema_half_lives_s.begin(),
+                         policy.ema_half_lives_s.end()) !=
+          policy.ema_half_lives_s.end()) {
+    return error("policy_ema_half_lives_invalid");
+  }
+  for (const auto &pair : policy.predicate_pairs) {
+    if (pair.fast_ema_index >= policy.ema_half_lives_s.size() ||
+        pair.slow_ema_index >= policy.ema_half_lives_s.size() ||
+        pair.fast_ema_index >= pair.slow_ema_index) {
+      return error("policy_ema_pair_invalid");
+    }
+  }
+  std::vector<bool> covered(policy.predicate_columns.size(), false);
+  for (const auto &definition : policy.predicate_definitions) {
+    if (definition.predicate_index >= covered.size() ||
+        covered[definition.predicate_index]) {
+      return error("policy_predicate_definition_index_invalid");
+    }
+    covered[definition.predicate_index] = true;
+    if (definition.metric != F05PredicateMetric::CampaignAgeGtControl &&
+        definition.pair_index >= policy.predicate_pairs.size()) {
+      return error("policy_predicate_definition_pair_invalid");
+    }
+    if (definition.threshold_enabled &&
+        !std::isfinite(definition.threshold)) {
+      return error("policy_predicate_threshold_invalid");
+    }
+  }
+  if (!std::all_of(covered.begin(), covered.end(), [](bool value) {
+        return value;
+      })) {
+    return error("policy_predicate_definition_incomplete");
+  }
+  return {};
+}
+
 std::string
 validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
   if (!std::isfinite(config.warmup_s) || config.warmup_s <= 0.0 ||
@@ -309,10 +547,12 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
       config.qualification_scope != "synthetic_full_replay_smoke" &&
       config.qualification_scope != "real_day_all_arm_full_replay_v21" &&
       config.qualification_scope != "real_day_all_arm_full_replay_v22" &&
-      config.qualification_scope != "real_day_all_arm_full_replay_v23") {
+      config.qualification_scope != "real_day_all_arm_full_replay_v23" &&
+      config.qualification_scope != "current_receive_time_full_replay_v1") {
     return "cpp_qualification_scope_invalid";
   }
   if (config.feature_clock_semantics != "receive_time_selected_mid_v1" &&
+      config.feature_clock_semantics != "receive_time_full_mid_ema_bank_v1" &&
       config.feature_clock_semantics != "historical_exchange_m2_v1") {
     return "cpp_feature_clock_semantics_invalid";
   }
@@ -322,60 +562,39 @@ validate_f05_policy(const F05RepeatedBooleanCooldownConfig &config) {
       config.feature_clock_semantics != "historical_exchange_m2_v1") {
     return "cpp_real_day_feature_clock_semantics_invalid";
   }
-  if (!is_lower_sha256(config.policy.policy_sha256)) {
-    return "policy_sha256_invalid";
+  if (config.qualification_under_test &&
+      (config.parity_qualified ||
+       !config.parity_qualification_sha256.empty())) {
+    return "qualification_under_test_conflicts_with_parity";
   }
-  if (!is_lower_sha256(config.policy.predicate_bundle_sha256)) {
-    return "predicate_bundle_sha256_invalid";
+  if (config.qualification_under_test &&
+      config.qualification_scope != "current_receive_time_full_replay_v1") {
+    return "qualification_under_test_scope_invalid";
+  }
+  if (config.parity_qualified !=
+      !config.parity_qualification_sha256.empty()) {
+    return "parity_qualification_identity_incomplete";
   }
   if (config.parity_qualified &&
       !is_lower_sha256(config.parity_qualification_sha256)) {
     return "parity_qualification_sha256_invalid";
   }
-  if (config.policy.default_action != kF05BooleanCooldownControlAction) {
-    return "policy_default_action_invalid";
+  if (const auto error =
+          validate_f05_boolean_policy(config.policy, "", false);
+      !error.empty()) {
+    return error;
   }
-  if (config.policy.predicate_columns.empty() || config.policy.rules.empty()) {
-    return "policy_structure_empty";
-  }
-  std::set<std::string> names;
-  for (const auto &name : config.policy.predicate_columns) {
-    if (name.empty() || !names.insert(name).second) {
-      return "policy_predicate_columns_invalid";
+  const bool buy_enabled = !config.buy_policy.policy_sha256.empty();
+  if (buy_enabled) {
+    if (config.feature_clock_semantics !=
+            "receive_time_full_mid_ema_bank_v1" ||
+        config.qualification_scope != "current_receive_time_full_replay_v1") {
+      return "buy_policy_clock_or_scope_invalid";
     }
-  }
-  for (const auto &rule : config.policy.rules) {
-    if (rule.action_id.empty() || rule.duration_ms <= 0 ||
-        rule.clauses.empty()) {
-      return "policy_rule_invalid";
-    }
-    constexpr std::string_view prefix = "FIXED_";
-    constexpr std::string_view suffix = "S";
-    const std::string_view action = rule.action_id;
-    if (!action.starts_with(prefix) || !action.ends_with(suffix)) {
-      return "policy_action_identity_invalid";
-    }
-    const auto seconds_text = action.substr(
-        prefix.size(), action.size() - prefix.size() - suffix.size());
-    std::int64_t seconds = 0;
-    const auto [end, error] =
-        std::from_chars(seconds_text.data(),
-                        seconds_text.data() + seconds_text.size(), seconds);
-    if (error != std::errc{} ||
-        end != seconds_text.data() + seconds_text.size() || seconds <= 0 ||
-        seconds > std::numeric_limits<std::int64_t>::max() / 1'000 ||
-        rule.duration_ms != seconds * 1'000) {
-      return "policy_action_duration_drifted";
-    }
-    for (const auto &clause : rule.clauses) {
-      if (clause.literals.empty()) {
-        return "policy_clause_invalid";
-      }
-      for (const auto &literal : clause.literals) {
-        if (literal.predicate_index >= config.policy.predicate_columns.size()) {
-          return "policy_literal_index_invalid";
-        }
-      }
+    if (const auto error = validate_f05_boolean_policy(
+            config.buy_policy, "buy_", true);
+        !error.empty()) {
+      return error;
     }
   }
   return {};
@@ -2269,6 +2488,511 @@ std::pair<double, bool> queue_inventory_multiplier(
     return {std::max(0.0, mult), exposure_increasing};
 }
 
+struct NativeTapeAdvance {
+    std::int64_t exchange_ts_ns = 0;
+    bool snapshot_reset = false;
+    bool invalidated = false;
+    std::vector<NativeBookLevelChange> changes;
+};
+
+struct NativeTapePreview {
+    std::int64_t exchange_ts_ns = 0;
+    std::int64_t event_count = 0;
+    bool snapshot_or_gap = false;
+    std::set<std::pair<bool, std::int64_t>> touched_levels;
+};
+
+// Owns the complete immutable native snapshot/delta tape while the monolithic
+// replay runs.  It deliberately exposes only causal boundary operations: book
+// messages strictly before an order lifecycle boundary, the lifecycle itself,
+// then messages exactly at that boundary.  This mirrors the Python strict path
+// without a Python callback on the hot loop.
+class NativeBookTapeRuntime {
+public:
+    explicit NativeBookTapeRuntime(const TickReplayParams& params)
+        : params_(params),
+          book_(true, params.native_exchange_book_strict_after_ns, false) {
+        validate();
+    }
+
+    [[nodiscard]] std::int64_t boundary_ns() const noexcept {
+        return boundary_ns_;
+    }
+
+    [[nodiscard]] NativeTapePreview preview_at(std::int64_t target_ns) const {
+        NativeTapePreview preview;
+        preview.exchange_ts_ns = target_ns;
+        std::size_t cursor = cursor_;
+        while (cursor < params_.native_book_event_ts_ns.size() &&
+               params_.native_book_event_ts_ns[cursor] == target_ns) {
+            ++preview.event_count;
+            const auto type = event_type(cursor);
+            preview.snapshot_or_gap = preview.snapshot_or_gap ||
+                type == NativeBookEventType::Snapshot ||
+                type == NativeBookEventType::SourceGap;
+            const auto [first, last] = level_bounds(cursor);
+            for (std::size_t level = first; level < last; ++level) {
+                preview.touched_levels.emplace(
+                    params_.native_book_level_is_bid[level] != 0,
+                    params_.native_book_level_price_tick[level]
+                );
+            }
+            ++cursor;
+        }
+        return preview;
+    }
+
+    [[nodiscard]] NativeBookLookup lookup_strictly_before(
+        bool is_bid,
+        std::int64_t price_tick,
+        std::int64_t target_ns
+    ) const {
+        const auto current = book_.lookup(is_bid, price_tick);
+        if (current.asof_exchange_ts_ns < target_ns) {
+            return current;
+        }
+        if (current.asof_exchange_ts_ns > target_ns ||
+            latest_batch_ts_ns_ != target_ns) {
+            NativeBookLookup unavailable = current;
+            unavailable.status = "unknown";
+            unavailable.reason = "strict_before_state_not_retained";
+            unavailable.quantity = 0.0;
+            unavailable.quantity_known = false;
+            return unavailable;
+        }
+        if (latest_batch_discontinuous_ ||
+            latest_batch_segment_id_ != latest_batch_prior_segment_id_ ||
+            latest_batch_initialized_ != latest_batch_prior_initialized_) {
+            NativeBookLookup unavailable = current;
+            unavailable.status = "ambiguous";
+            unavailable.reason = "same_timestamp_book_discontinuity";
+            unavailable.quantity = 0.0;
+            unavailable.quantity_known = false;
+            return unavailable;
+        }
+        if (!latest_batch_prior_initialized_) {
+            NativeBookLookup unavailable = current;
+            unavailable.status = "ambiguous";
+            unavailable.reason = "strict_before_sequence_unavailable";
+            unavailable.quantity = 0.0;
+            unavailable.quantity_known = false;
+            return unavailable;
+        }
+        if (
+            latest_batch_touched_levels_.contains({is_bid, price_tick})) {
+            NativeBookLookup unavailable = current;
+            unavailable.status = "ambiguous";
+            unavailable.reason = "same_timestamp_level_touched";
+            unavailable.quantity = 0.0;
+            unavailable.quantity_known = false;
+            return unavailable;
+        }
+        // If this batch did not touch the level and did not change the book
+        // segment, the quantity is identical on both sides of the boundary.
+        // Retain only the prior identity instead of copying the complete book
+        // for every native message batch (which is prohibitive on full L2).
+        NativeBookLookup prior = current;
+        prior.asof_exchange_ts_ns = latest_batch_prior_asof_ns_;
+        return prior;
+    }
+
+    template <typename Callback>
+    void advance_to(
+        std::int64_t target_ns,
+        bool inclusive,
+        TickReplaySummary& summary,
+        Callback&& on_batch
+    ) {
+        if (target_ns < boundary_ns_) {
+            // A zero-latency order may be created after the native batch at
+            // the same millisecond was consumed.  The retained batch identity
+            // supports its strict-before seed; older rewinds remain invalid.
+            if (target_ns == latest_batch_ts_ns_) {
+                return;
+            }
+            throw std::runtime_error("native exchange-book boundary regressed");
+        }
+        while (cursor_ < params_.native_book_event_ts_ns.size()) {
+            const auto batch_ts = params_.native_book_event_ts_ns[cursor_];
+            if (batch_ts > target_ns || (batch_ts == target_ns && !inclusive)) {
+                break;
+            }
+            latest_batch_ts_ns_ = batch_ts;
+            latest_batch_prior_asof_ns_ = book_.last_exchange_ts_ns();
+            latest_batch_prior_segment_id_ = book_.segment_id();
+            latest_batch_prior_initialized_ = book_.initialized();
+            latest_batch_touched_levels_.clear();
+            latest_batch_discontinuous_ = false;
+
+            NativeTapeAdvance advance;
+            advance.exchange_ts_ns = batch_ts;
+            while (cursor_ < params_.native_book_event_ts_ns.size() &&
+                   params_.native_book_event_ts_ns[cursor_] == batch_ts) {
+                const std::size_t event = cursor_++;
+                const auto type = event_type(event);
+                latest_batch_discontinuous_ = latest_batch_discontinuous_ ||
+                    type == NativeBookEventType::Snapshot ||
+                    type == NativeBookEventType::SourceGap;
+                std::vector<NativeBookLevel> levels;
+                const auto [first, last] = level_bounds(event);
+                levels.reserve(last - first);
+                for (std::size_t level = first; level < last; ++level) {
+                    const bool is_bid =
+                        params_.native_book_level_is_bid[level] != 0;
+                    const auto price_tick =
+                        params_.native_book_level_price_tick[level];
+                    latest_batch_touched_levels_.emplace(is_bid, price_tick);
+                    levels.push_back(NativeBookLevel{
+                        is_bid,
+                        price_tick,
+                        params_.native_book_level_quantity[level],
+                    });
+                }
+                const auto result = book_.apply_message(
+                    type,
+                    batch_ts,
+                    params_.native_book_receive_ts_ns[event],
+                    params_.native_book_event_time_ms[event],
+                    params_.native_book_transaction_time_ms[event],
+                    params_.native_book_first_update_id[event],
+                    params_.native_book_final_update_id[event],
+                    params_.native_book_previous_final_update_id[event],
+                    params_.native_book_last_update_id[event],
+                    levels
+                );
+                ++summary.native_book_events_consumed;
+                summary.native_book_events_accepted += result.accepted ? 1 : 0;
+                summary.native_book_events_rejected += result.accepted ? 0 : 1;
+                summary.native_book_snapshot_events +=
+                    result.snapshot_reset ? 1 : 0;
+                advance.snapshot_reset =
+                    advance.snapshot_reset || result.snapshot_reset;
+                advance.invalidated = advance.invalidated || result.invalidated;
+                latest_batch_discontinuous_ =
+                    latest_batch_discontinuous_ || result.invalidated;
+                advance.changes.insert(
+                    advance.changes.end(),
+                    result.changes.begin(), result.changes.end()
+                );
+            }
+            latest_batch_segment_id_ = book_.segment_id();
+            latest_batch_initialized_ = book_.initialized();
+            on_batch(advance);
+        }
+        boundary_ns_ = std::max(boundary_ns_, target_ns);
+        const auto& stats = book_.stats();
+        summary.native_book_sequence_gaps = stats.sequence_gaps;
+    }
+
+private:
+    void validate() const {
+        const auto events = params_.native_book_event_ts_ns.size();
+        const auto require_events = [events](std::size_t size, const char* name) {
+            if (size != events) {
+                throw std::invalid_argument(
+                    std::string("native ") + name + " length mismatch"
+                );
+            }
+        };
+        require_events(params_.native_book_event_type.size(), "event_type");
+        require_events(params_.native_book_receive_ts_ns.size(), "receive_ts_ns");
+        require_events(params_.native_book_event_time_ms.size(), "event_time_ms");
+        require_events(
+            params_.native_book_transaction_time_ms.size(),
+            "transaction_time_ms"
+        );
+        require_events(params_.native_book_first_update_id.size(), "first_update_id");
+        require_events(params_.native_book_final_update_id.size(), "final_update_id");
+        require_events(
+            params_.native_book_previous_final_update_id.size(),
+            "previous_final_update_id"
+        );
+        require_events(params_.native_book_last_update_id.size(), "last_update_id");
+        if (params_.native_book_level_offsets.size() != events + 1 ||
+            params_.native_book_level_offsets.empty() ||
+            params_.native_book_level_offsets.front() != 0) {
+            throw std::invalid_argument("native level offsets are malformed");
+        }
+        const auto levels = params_.native_book_level_price_tick.size();
+        if (params_.native_book_level_is_bid.size() != levels ||
+            params_.native_book_level_quantity.size() != levels ||
+            params_.native_book_level_offsets.back() !=
+                static_cast<std::int64_t>(levels)) {
+            throw std::invalid_argument("native level arrays are malformed");
+        }
+        for (std::size_t event = 0; event < events; ++event) {
+            if (params_.native_book_event_ts_ns[event] <= 0 ||
+                (event > 0 && params_.native_book_event_ts_ns[event] <
+                    params_.native_book_event_ts_ns[event - 1]) ||
+                params_.native_book_level_offsets[event] >
+                    params_.native_book_level_offsets[event + 1]) {
+                throw std::invalid_argument("native exchange-book tape is not sorted");
+            }
+            static_cast<void>(event_type(event));
+        }
+        for (const double quantity : params_.native_book_level_quantity) {
+            if (!std::isfinite(quantity) || quantity < 0.0) {
+                throw std::invalid_argument(
+                    "native exchange-book quantity must be finite and non-negative"
+                );
+            }
+        }
+    }
+
+    [[nodiscard]] NativeBookEventType event_type(std::size_t event) const {
+        switch (params_.native_book_event_type[event]) {
+            case 1: return NativeBookEventType::Snapshot;
+            case 2: return NativeBookEventType::Delta;
+            case 3: return NativeBookEventType::SourceGap;
+            default:
+                throw std::invalid_argument("unknown native exchange-book event type");
+        }
+    }
+
+    [[nodiscard]] std::pair<std::size_t, std::size_t> level_bounds(
+        std::size_t event
+    ) const {
+        const auto first = params_.native_book_level_offsets[event];
+        const auto last = params_.native_book_level_offsets[event + 1];
+        if (first < 0 || last < first) {
+            throw std::invalid_argument("native level offsets regressed");
+        }
+        return {
+            static_cast<std::size_t>(first),
+            static_cast<std::size_t>(last),
+        };
+    }
+
+    const TickReplayParams& params_;
+    NativeExchangeBookSchedulerCpp book_;
+    std::size_t cursor_ = 0;
+    std::int64_t boundary_ns_ = 0;
+    std::int64_t latest_batch_ts_ns_ = 0;
+    std::int64_t latest_batch_prior_asof_ns_ = 0;
+    std::int64_t latest_batch_prior_segment_id_ = 0;
+    std::int64_t latest_batch_segment_id_ = 0;
+    bool latest_batch_discontinuous_ = false;
+    bool latest_batch_prior_initialized_ = false;
+    bool latest_batch_initialized_ = false;
+    std::set<std::pair<bool, std::int64_t>> latest_batch_touched_levels_;
+};
+
+void invalidate_native_queue_paths(
+    ReplayOrders& orders,
+    TickReplaySummary& summary
+) {
+    for (auto& order : orders) {
+        if (order.native_queue_path_valid) {
+            ++summary.native_queue_invalidated_order_count;
+        }
+        order.native_queue_path_valid = false;
+        order.native_queue_invalidated = true;
+    }
+}
+
+void mark_native_cancel_boundary_ambiguity(
+    ReplayOrders& orders,
+    const NativeTapePreview& preview,
+    std::int64_t boundary_ms,
+    TickReplaySummary& summary
+) {
+    if (preview.event_count <= 0) {
+        return;
+    }
+    for (auto& order : orders) {
+        if ((order.state != OrderState::Open &&
+             order.state != OrderState::PendingCancel) ||
+            order.cancel_effective_ts != boundary_ms) {
+            continue;
+        }
+        const bool touched = preview.snapshot_or_gap ||
+            preview.touched_levels.contains({
+                order.side == Side::Buy,
+                order.price_tick,
+            });
+        if (!touched) {
+            continue;
+        }
+        if (!order.native_queue_ambiguous) {
+            ++summary.native_queue_ambiguous_event_count;
+        }
+        if (order.native_queue_path_valid) {
+            ++summary.native_queue_invalidated_order_count;
+        }
+        order.native_queue_path_valid = false;
+        order.native_queue_ambiguous = true;
+    }
+}
+
+void mark_native_cancel_trade_ambiguity(
+    ReplayOrders& orders,
+    std::int64_t boundary_ms,
+    std::optional<std::int64_t> sell_min_tick,
+    std::optional<std::int64_t> buy_max_tick,
+    TickReplaySummary& summary
+) {
+    for (auto& order : orders) {
+        if ((order.state != OrderState::Open &&
+             order.state != OrderState::PendingCancel) ||
+            order.cancel_effective_ts != boundary_ms) {
+            continue;
+        }
+        const bool crossed = order.side == Side::Buy
+            ? (sell_min_tick.has_value() &&
+               *sell_min_tick <= order.price_tick)
+            : (buy_max_tick.has_value() &&
+               *buy_max_tick >= order.price_tick);
+        if (!crossed) {
+            continue;
+        }
+        if (!order.native_queue_ambiguous) {
+            ++summary.native_queue_ambiguous_event_count;
+        }
+        if (order.native_queue_path_valid) {
+            ++summary.native_queue_invalidated_order_count;
+        }
+        order.native_queue_path_valid = false;
+        order.native_queue_ambiguous = true;
+    }
+}
+
+void seed_native_order_queue(
+    ReplayOrder& order,
+    NativeBookTapeRuntime& native_book,
+    TickReplaySummary& summary
+) {
+    ++summary.native_queue_lookup_count;
+    const auto lookup = native_book.lookup_strictly_before(
+        order.side == Side::Buy,
+        order.price_tick,
+        order.activate_ts * 1'000'000
+    );
+    order.native_queue_segment_id = lookup.segment_id;
+    order.native_queue_trade_since_update = 0.0;
+    order.native_queue_ambiguous = false;
+    order.native_queue_invalidated = false;
+    if (!lookup.strict_usable()) {
+        ++summary.native_queue_missing_count;
+        order.native_queue_path_valid = false;
+        return;
+    }
+    if (lookup.status == "exact") {
+        ++summary.native_queue_exact_count;
+    } else {
+        ++summary.native_queue_known_zero_count;
+    }
+    order.queue_left = std::max(0.0, lookup.quantity);
+    order.queue_init = order.queue_left;
+    order.queue_seed_source = 4;
+    order.native_queue_path_valid = true;
+    if (order.trace) {
+        order.trace->queue_init = order.queue_init;
+        order.trace->queue_left = order.queue_left;
+    }
+}
+
+void apply_native_book_advance_to_orders(
+    const NativeTapeAdvance& advance,
+    ReplayOrders& bid_orders,
+    ReplayOrders& ask_orders,
+    std::optional<std::int64_t> same_ms_sell_min_tick,
+    std::optional<std::int64_t> same_ms_buy_max_tick,
+    const TickReplayParams& params,
+    TickReplaySummary& summary
+) {
+    if (advance.snapshot_reset || advance.invalidated) {
+        invalidate_native_queue_paths(bid_orders, summary);
+        invalidate_native_queue_paths(ask_orders, summary);
+    }
+    for (const auto& change : advance.changes) {
+        auto& orders = change.is_bid ? bid_orders : ask_orders;
+        const std::int64_t change_ms = change.exchange_ts_ns / 1'000'000;
+        for (auto& order : orders) {
+            if ((order.state != OrderState::Open &&
+                 order.state != OrderState::PendingCancel) ||
+                order.price_tick != change.price_tick) {
+                continue;
+            }
+            const bool same_ms_activation = order.activate_ts == change_ms;
+            const bool trade_race = change.is_bid
+                ? (same_ms_sell_min_tick.has_value() &&
+                   *same_ms_sell_min_tick <= change.price_tick)
+                : (same_ms_buy_max_tick.has_value() &&
+                   *same_ms_buy_max_tick >= change.price_tick);
+            if (same_ms_activation || trade_race) {
+                if (!order.native_queue_ambiguous) {
+                    ++summary.native_queue_ambiguous_event_count;
+                }
+                if (order.native_queue_path_valid) {
+                    ++summary.native_queue_invalidated_order_count;
+                }
+                order.native_queue_path_valid = false;
+                order.native_queue_ambiguous = true;
+                continue;
+            }
+            const bool resumable_ambiguity =
+                order.native_queue_ambiguous &&
+                !order.native_queue_invalidated &&
+                order.queue_seed_source == 4 &&
+                order.native_queue_segment_id == change.segment_id;
+            if (!order.native_queue_path_valid && !resumable_ambiguity) {
+                continue;
+            }
+            const double explained_trade = std::min(
+                std::max(0.0, change.quantity_before),
+                std::max(0.0, order.native_queue_trade_since_update)
+            );
+            const double decrease = std::max(
+                0.0,
+                change.quantity_before - change.quantity_after
+            );
+            const double cancellation = std::max(0.0, decrease - explained_trade);
+            const double ahead = std::max(0.0, order.queue_left);
+            const double public_after_trade = std::max(
+                0.0,
+                change.quantity_before - explained_trade
+            );
+            const double behind = std::max(0.0, public_after_trade - ahead);
+            const double denominator = ahead + behind;
+            const double ahead_probability = denominator > 0.0
+                ? ahead / denominator
+                : 0.0;
+            const double removed = std::min(
+                ahead,
+                cancellation * ahead_probability
+            );
+            const double queue_after = std::min(
+                std::max(0.0, change.quantity_after),
+                subtract_lot_quantity(ahead, removed, params.quote.lot_size)
+            );
+            const double effective_removed = ahead - queue_after;
+            if (effective_removed > 0.0) {
+                order.queue_left = queue_after;
+                ++summary.native_queue_cancel_ahead_event_count;
+                summary.native_queue_cancel_ahead_qty += effective_removed;
+            }
+            order.native_queue_trade_since_update = 0.0;
+        }
+    }
+}
+
+void record_native_same_price_trade(
+    ReplayOrders& orders,
+    std::int64_t trade_tick,
+    double trade_qty
+) {
+    if (trade_qty <= 0.0) {
+        return;
+    }
+    for (auto& order : orders) {
+        if ((order.state == OrderState::Open ||
+             order.state == OrderState::PendingCancel) &&
+            order.price_tick == trade_tick) {
+            order.native_queue_trade_since_update += trade_qty;
+        }
+    }
+}
+
 template <Side S>
 ReplayOrder make_order(
     const TickReplayInput& input,
@@ -2302,8 +3026,11 @@ ReplayOrder make_order(
     );
     order.cancel_effective_ts = 0;
     order.cancel_ack_ts = 0;
-    order.exchange_accepted = activate_latency_ms <= 0;
-    order.state = ack_latency_ms > 0 ? OrderState::PendingNew : OrderState::Open;
+    order.exchange_accepted =
+        activate_latency_ms <= 0 && !params.native_exchange_book_enabled;
+    order.state = (ack_latency_ms > 0 || params.native_exchange_book_enabled)
+        ? OrderState::PendingNew
+        : OrderState::Open;
     order.mid_at_quote = mid;
     const auto [queue_mult, exposure_increasing] =
         queue_inventory_multiplier<S>(params, inventory_at_quote);
@@ -2451,7 +3178,9 @@ void apply_l2_cancel_ahead_to_order(
             const double ahead_probability = denominator > 0.0 ? ahead / denominator : 0.0;
             const double removed = std::min(ahead, cancellation * ahead_probability);
             if (removed > 0.0) {
-                order.queue_left = ahead - removed;
+                order.queue_left = subtract_lot_quantity(
+                    ahead, removed, params.quote.lot_size
+                );
                 ++summary.queue_l2_cancel_ahead_event_count;
                 summary.queue_l2_cancel_ahead_qty += removed;
                 if constexpr (is_buy_v<S>) {
@@ -2661,8 +3390,10 @@ public:
                     if (probe.order.queue_left > 0.0) {
                         const double eaten =
                             std::min(probe.order.queue_left, available);
-                        probe.order.queue_left -= eaten;
-                        available -= eaten;
+                        probe.order.queue_left = subtract_lot_quantity(
+                            probe.order.queue_left, eaten, lot_size_
+                        );
+                        available = subtract_lot_quantity(available, eaten, lot_size_);
                     }
                     fill_qty = std::min(probe.order.remaining, available);
                 }
@@ -2671,7 +3402,9 @@ public:
                     continue;
                 }
                 const bool first_fill = !probe.filled;
-                probe.order.remaining -= fill_qty;
+                probe.order.remaining = subtract_lot_quantity(
+                    probe.order.remaining, fill_qty, lot_size_
+                );
                 probe.fill_qty += fill_qty;
                 probe.filled = true;
                 if (first_fill) {
@@ -3245,7 +3978,10 @@ void transition_orders(
     TickReplaySummary& summary,
     TickReplayResult& result,
     std::int64_t trace_quotes_max,
-    std::int64_t& circuit_breaker_close_gtx_reject_streak
+    std::int64_t& circuit_breaker_close_gtx_reject_streak,
+    NativeBookTapeRuntime* native_book = nullptr,
+    bool allow_ttl_initiation = true,
+    bool defer_cancel_ack_at_ts = false
 ) {
     for (auto& order : orders) {
         const bool canceled_before_activation =
@@ -3289,6 +4025,9 @@ void transition_orders(
                     circuit_breaker_close_gtx_reject_streak)) {
                 order.exchange_accepted = true;
                 if (!order.immediate_or_cancel) {
+                    if (native_book != nullptr) {
+                        seed_native_order_queue(order, *native_book, summary);
+                    }
                     order.quote_ts = order.activate_ts;
                     if (activation_book.mid > 0.0) {
                         order.mid_at_quote = activation_book.mid;
@@ -3310,7 +4049,8 @@ void transition_orders(
         const bool split_new_ack_pending =
             !params.new_order_exchange_effective_latency_samples_ms.empty() &&
             order.state == OrderState::PendingNew;
-        if (order.ttl_ms > 0 && !split_new_ack_pending &&
+        if (allow_ttl_initiation &&
+            order.ttl_ms > 0 && !split_new_ack_pending &&
             order.state != OrderState::PendingCancel &&
             ts - order.quote_ts >= order.ttl_ms) {
             order.state = OrderState::PendingCancel;
@@ -3344,7 +4084,8 @@ void transition_orders(
         }
         const bool cancel_due =
             it->cancel_ack_ts > 0 &&
-            ts >= it->cancel_ack_ts;
+            ts >= it->cancel_ack_ts &&
+            !(defer_cancel_ack_at_ts && it->cancel_ack_ts == ts);
         const bool cancel_acked = cancel_due && (
             it->state == OrderState::PendingCancel ||
             it->state == OrderState::Open ||
@@ -3962,8 +4703,8 @@ void process_side_fill(
         }
         if (order.queue_left > 0.0) {
             const double eaten = std::min(order.queue_left, remaining_trade_qty);
-            order.queue_left -= eaten;
-            remaining_trade_qty -= eaten;
+            order.queue_left = subtract_lot_quantity(order.queue_left, eaten, lot_size);
+            remaining_trade_qty = subtract_lot_quantity(remaining_trade_qty, eaten, lot_size);
         }
         if (remaining_trade_qty < lot_size || order.remaining < lot_size) {
             continue;
@@ -4026,8 +4767,8 @@ void process_side_fill(
         if (std::abs(inventory) < 1e-10) {
             entry_price = 0.0;
         }
-        order.remaining -= fill_qty;
-        remaining_trade_qty -= fill_qty;
+        order.remaining = subtract_lot_quantity(order.remaining, fill_qty, lot_size);
+        remaining_trade_qty = subtract_lot_quantity(remaining_trade_qty, fill_qty, lot_size);
         if (order.fixed_spread_probe) {
             const std::int64_t fill_age_ms =
                 std::max<std::int64_t>(0, ts - order.activate_ts);
@@ -4161,7 +4902,7 @@ std::pair<double, double> match_ioc_order(
     for (const auto& [price, qty] : levels) {
         const double take = std::min(remaining, qty);
         notional += price * take;
-        remaining -= take;
+        remaining = subtract_lot_quantity(remaining, take, lot_size);
         if (remaining <= 1e-12) break;
     }
     return {filled, notional / filled};
@@ -4285,7 +5026,7 @@ bool process_ioc_close_orders(
         if (std::abs(inventory) < 1e-10) {
             entry_price = 0.0;
         }
-        order.remaining = std::max(0.0, order.remaining - fill_qty);
+        order.remaining = subtract_lot_quantity(order.remaining, fill_qty, lot_size);
         consecutive_side_fills += fill_qty / std::max(order_size, lot_size);
         consecutive_other_fills = 0.0;
         last_side_fill_ts = ts;
@@ -4389,12 +5130,22 @@ F05RepeatedBooleanCooldownRuntime::F05RepeatedBooleanCooldownRuntime(
   buy_lineage_.side = Side::Buy;
   sell_lineage_.side = Side::Sell;
   binding_error_ = validate_f05_policy(config_);
+  if (!config_.buy_policy.policy_sha256.empty()) {
+    const auto ema_count = config_.buy_policy.ema_half_lives_s.size();
+    buy_ema_.assign(ema_count, 0.0);
+    buy_velocity_.assign(ema_count, 0.0);
+    buy_acceleration_.assign(ema_count, 0.0);
+    buy_pairs_.assign(config_.buy_policy.predicate_pairs.size(), {});
+  }
 }
 
 void F05RepeatedBooleanCooldownRuntime::update_window(
     const F05CooldownWindowObservation &observation) {
-  if (observation.right_ts_ns - observation.left_ts_ns !=
-      kF05BooleanCooldownWindowWidthNs) {
+  const bool reset_only = observation.reset_feature_state;
+  if ((!reset_only &&
+       observation.right_ts_ns - observation.left_ts_ns !=
+           kF05BooleanCooldownWindowWidthNs) ||
+      (reset_only && observation.right_ts_ns != observation.left_ts_ns)) {
     throw std::invalid_argument("f05_window_width_drifted");
   }
   if (observation.left_ts_ns % kF05BooleanCooldownWindowWidthNs != 0 ||
@@ -4408,12 +5159,15 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
     if (observation.right_ts_ns <= *last_right_ts_ns_) {
       throw std::invalid_argument("f05_window_clock_not_increasing");
     }
-    if (observation.left_ts_ns != *last_right_ts_ns_) {
+    if (!reset_only && observation.left_ts_ns != *last_right_ts_ns_) {
       throw std::invalid_argument("f05_missing_window_not_explicit");
     }
-    if (observation.feature_ready_ts_ns < *last_feature_ready_ts_ns_) {
-      throw std::invalid_argument("f05_feature_ready_clock_regressed");
-    }
+  }
+  if (last_input_ready_ts_ns_.has_value() &&
+      observation.feature_ready_ts_ns < *last_input_ready_ts_ns_) {
+    throw std::invalid_argument("f05_feature_ready_clock_regressed");
+  }
+  if (last_market_generation_.has_value()) {
     if (observation.market_generation <= *last_market_generation_) {
       throw std::invalid_argument("f05_market_generation_not_increasing");
     }
@@ -4422,10 +5176,6 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
     }
   }
 
-  const bool invalid_window =
-      observation.source_gap || observation.source_stale;
-  const bool historical_exchange_semantics =
-      config_.feature_clock_semantics == "historical_exchange_m2_v1";
   const auto reset_feature_state = [&]() {
     warmup_admitted_ = false;
     warmup_start_right_ts_ns_.reset();
@@ -4434,8 +5184,34 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
     ema_ = {0.0, 0.0, 0.0};
     short_pair_ = {};
     long_pair_ = {};
+    buy_ema_initialized_ = false;
+    std::fill(buy_ema_.begin(), buy_ema_.end(), 0.0);
+    std::fill(buy_velocity_.begin(), buy_velocity_.end(), 0.0);
+    std::fill(buy_acceleration_.begin(), buy_acceleration_.end(), 0.0);
+    std::fill(buy_pairs_.begin(), buy_pairs_.end(), F05CooldownPairState{});
     ++audit_.feature_state_reset_count;
   };
+  if (reset_only) {
+    if (observation.mid_usdc_per_btc.has_value() || observation.source_gap ||
+        observation.source_stale || observation.warmup_admitted ||
+        observation.channel_support_valid) {
+      throw std::invalid_argument("f05_reset_marker_payload_invalid");
+    }
+    reset_feature_state();
+    current_window_observed_ = false;
+    current_channel_support_valid_ = false;
+    last_right_ts_ns_ = observation.right_ts_ns;
+    last_input_ready_ts_ns_ = observation.feature_ready_ts_ns;
+    last_feature_ready_ts_ns_.reset();
+    last_market_generation_ = observation.market_generation;
+    last_depth_generation_ = observation.depth_generation;
+    return;
+  }
+
+  const bool invalid_window =
+      observation.source_gap || observation.source_stale;
+  const bool historical_exchange_semantics =
+      config_.feature_clock_semantics == "historical_exchange_m2_v1";
   const auto gap_since_observed_s =
       last_observed_ts_ns_.has_value()
           ? static_cast<double>(observation.right_ts_ns -
@@ -4485,6 +5261,44 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
       update_f05_pair(short_pair_, ema_[0], ema_[1], observation.right_ts_ns);
       update_f05_pair(long_pair_, ema_[1], ema_[2], observation.right_ts_ns);
     }
+    if (!config_.buy_policy.policy_sha256.empty()) {
+      if (!buy_ema_initialized_) {
+        std::fill(buy_ema_.begin(), buy_ema_.end(), value);
+        std::fill(buy_velocity_.begin(), buy_velocity_.end(), 0.0);
+        std::fill(buy_acceleration_.begin(), buy_acceleration_.end(), 0.0);
+        buy_ema_initialized_ = true;
+      } else {
+        if (!last_observed_ts_ns_.has_value() ||
+            observation.right_ts_ns <= *last_observed_ts_ns_) {
+          throw std::invalid_argument("f05_buy_ema_clock_not_increasing");
+        }
+        const auto delta_s = static_cast<double>(
+                                 observation.right_ts_ns -
+                                 *last_observed_ts_ns_) /
+                             1'000'000'000.0;
+        const auto previous = buy_ema_;
+        const auto previous_velocity = buy_velocity_;
+        for (std::size_t index = 0; index < buy_ema_.size(); ++index) {
+          const auto decay = std::exp(
+              -std::log(2.0) * delta_s /
+              config_.buy_policy.ema_half_lives_s[index]);
+          const auto current =
+              decay * previous[index] + (1.0 - decay) * value;
+          const auto velocity = (current - previous[index]) / delta_s;
+          buy_ema_[index] = current;
+          buy_velocity_[index] = velocity;
+          buy_acceleration_[index] =
+              (velocity - previous_velocity[index]) / delta_s;
+        }
+        for (std::size_t index = 0; index < buy_pairs_.size(); ++index) {
+          const auto &pair = config_.buy_policy.predicate_pairs[index];
+          update_f05_pair(buy_pairs_[index],
+                          buy_ema_[pair.fast_ema_index],
+                          buy_ema_[pair.slow_ema_index],
+                          observation.right_ts_ns);
+        }
+      }
+    }
     last_observed_ts_ns_ = observation.right_ts_ns;
     const auto warmup_elapsed_s =
         static_cast<double>(observation.right_ts_ns -
@@ -4497,6 +5311,7 @@ void F05RepeatedBooleanCooldownRuntime::update_window(
     warmup_admitted_ = observation.warmup_admitted;
   }
   last_right_ts_ns_ = observation.right_ts_ns;
+  last_input_ready_ts_ns_ = observation.feature_ready_ts_ns;
   last_feature_ready_ts_ns_ = observation.feature_ready_ts_ns;
   last_market_generation_ = observation.market_generation;
   last_depth_generation_ = observation.depth_generation;
@@ -4531,8 +5346,12 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
   decision.baseline_duration_ms = baseline;
   decision.duration_ms = baseline;
   decision.action_id = std::string(kF05BooleanCooldownControlAction);
-  decision.policy_sha256 = config_.policy.policy_sha256;
-  decision.predicate_bundle_sha256 = config_.policy.predicate_bundle_sha256;
+  const bool buy_policy_enabled =
+      input.side == Side::Buy && !config_.buy_policy.policy_sha256.empty();
+  const auto &active_policy =
+      buy_policy_enabled ? config_.buy_policy : config_.policy;
+  decision.policy_sha256 = active_policy.policy_sha256;
+  decision.predicate_bundle_sha256 = active_policy.predicate_bundle_sha256;
   decision.feature_ready_ts_ns = last_feature_ready_ts_ns_.value_or(0);
   decision.feature_age_ms =
       last_feature_ready_ts_ns_.has_value()
@@ -4599,10 +5418,10 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
              input.campaign_id <= 0 || !std::isfinite(input.campaign_age_s) ||
              input.campaign_age_s < 0.0) {
     fallback("campaign_or_decision_context_invalid", false);
-  } else if (input.side == Side::Buy) {
+  } else if (input.side == Side::Buy && !buy_policy_enabled) {
     ++audit_.buy_control_count;
     fallback("buy_control_by_contract", true);
-  } else if (!parity_qualified()) {
+  } else if (!execution_admitted()) {
     fallback(binding_error_.empty()
                  ? "cpp_parity_not_qualified"
                  : "cpp_policy_binding_invalid:" + binding_error_,
@@ -4618,11 +5437,19 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
               !current_channel_support_valid_)) {
     fallback("snapshot_m2_support_invalid", false);
   } else if (!last_feature_ready_ts_ns_.has_value()) {
-    fallback("no_completed_causal_window", false);
+    fallback(config_.feature_clock_semantics ==
+                     "receive_time_full_mid_ema_bank_v1"
+                 ? "no_completed_receive_time_window"
+                 : "no_completed_causal_window",
+             false);
   } else if (input.decision_ts_ns < *last_feature_ready_ts_ns_) {
     fallback("feature_ready_state_crossed_decision_cutoff", false);
   } else if (!warmup_admitted_) {
-    fallback("ema_warmup_incomplete", false);
+    fallback(config_.feature_clock_semantics ==
+                     "receive_time_full_mid_ema_bank_v1"
+                 ? "receive_time_ema_warmup_incomplete"
+                 : "ema_warmup_incomplete",
+             false);
   } else if (config_.feature_clock_semantics == "historical_exchange_m2_v1" &&
              (!last_right_ts_ns_.has_value() ||
               input.decision_ts_ns - *last_right_ts_ns_ >=
@@ -4631,28 +5458,47 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
   } else if (config_.feature_clock_semantics != "historical_exchange_m2_v1" &&
              decision.feature_age_ms >
                  config_.max_feature_age_s * 1'000.0) {
-    fallback("feature_state_stale", false);
+    fallback(config_.feature_clock_semantics ==
+                     "receive_time_full_mid_ema_bank_v1"
+                 ? "receive_time_mid_state_stale"
+                 : "feature_state_stale",
+             false);
   } else if (!current_window_observed_) {
     fallback("latest_completed_mid_window_unobserved", false);
   } else {
     std::vector<F05TriState> predicates;
     if (!input.predicate_values.empty()) {
       if (input.predicate_values.size() !=
-          config_.policy.predicate_columns.size()) {
+          active_policy.predicate_columns.size()) {
         fallback("runtime_predicate_columns_drifted", false);
       } else {
         predicates = input.predicate_values;
       }
+    } else if (buy_policy_enabled) {
+      if (!buy_ema_initialized_ || buy_ema_.size() !=
+              config_.buy_policy.ema_half_lives_s.size() ||
+          buy_pairs_.size() != config_.buy_policy.predicate_pairs.size()) {
+        fallback("buy_feature_state_uninitialized", false);
+      } else {
+        predicates = materialize_f05_declarative_predicates(
+            config_.buy_policy,
+            buy_ema_,
+            buy_velocity_,
+            buy_acceleration_,
+            buy_pairs_,
+            input,
+            baseline);
+      }
     } else {
-      predicates.assign(config_.policy.predicate_columns.size(),
+      predicates.assign(active_policy.predicate_columns.size(),
                         F05TriState::Unobserved);
       const auto set_predicate = [&](std::string_view name, F05TriState state) {
         const auto found =
-            std::find(config_.policy.predicate_columns.begin(),
-                      config_.policy.predicate_columns.end(), name);
-        if (found != config_.policy.predicate_columns.end()) {
+            std::find(active_policy.predicate_columns.begin(),
+                      active_policy.predicate_columns.end(), name);
+        if (found != active_policy.predicate_columns.end()) {
           predicates[static_cast<std::size_t>(std::distance(
-              config_.policy.predicate_columns.begin(), found))] = state;
+              active_policy.predicate_columns.begin(), found))] = state;
         }
       };
       const auto cross_state = [&](const F05CooldownPairState &pair) {
@@ -4679,17 +5525,17 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
 
     if (decision.coverage_reason_code.empty()) {
       bool resolved = false;
-      for (std::size_t index = 0; index < config_.policy.rules.size();
+      for (std::size_t index = 0; index < active_policy.rules.size();
            ++index) {
         const auto state =
-            f05_rule_state(config_.policy.rules[index], predicates);
+            f05_rule_state(active_policy.rules[index], predicates);
         if (state == F05TriState::Unobserved) {
           fallback("rule_unobserved:" + std::to_string(index), false);
           resolved = true;
           break;
         }
         if (state == F05TriState::True) {
-          const auto &rule = config_.policy.rules[index];
+          const auto &rule = active_policy.rules[index];
           decision.action_id = rule.action_id;
           decision.duration_ms = rule.duration_ms;
           decision.matched_rule_index = index;
@@ -4802,26 +5648,36 @@ F05RepeatedBooleanCooldownCheckpoint
 F05RepeatedBooleanCooldownRuntime::checkpoint() const {
   F05RepeatedBooleanCooldownCheckpoint output;
   output.abi_version = std::string(kF05RepeatedBooleanCooldownAbi);
+  output.qualification_under_test = config_.qualification_under_test;
   output.parity_qualification_sha256 = config_.parity_qualification_sha256;
   output.qualification_scope = config_.qualification_scope;
   output.feature_clock_semantics = config_.feature_clock_semantics;
   output.policy_sha256 = config_.policy.policy_sha256;
   output.predicate_bundle_sha256 = config_.policy.predicate_bundle_sha256;
+  output.buy_policy_sha256 = config_.buy_policy.policy_sha256;
+  output.buy_predicate_bundle_sha256 =
+      config_.buy_policy.predicate_bundle_sha256;
   output.warmup_s = config_.warmup_s;
   output.max_feature_age_s = config_.max_feature_age_s;
   output.warmup_admitted = warmup_admitted_;
   output.warmup_start_right_ts_ns = warmup_start_right_ts_ns_;
   output.last_right_ts_ns = last_right_ts_ns_;
+  output.last_input_ready_ts_ns = last_input_ready_ts_ns_;
   output.last_feature_ready_ts_ns = last_feature_ready_ts_ns_;
   output.last_market_generation = last_market_generation_;
   output.last_depth_generation = last_depth_generation_;
   output.ema_initialized = ema_initialized_;
+  output.buy_ema_initialized = buy_ema_initialized_;
   output.current_window_observed = current_window_observed_;
   output.current_channel_support_valid = current_channel_support_valid_;
   output.last_observed_ts_ns = last_observed_ts_ns_;
   output.ema = ema_;
   output.short_pair = short_pair_;
   output.long_pair = long_pair_;
+  output.buy_ema = buy_ema_;
+  output.buy_velocity = buy_velocity_;
+  output.buy_acceleration = buy_acceleration_;
+  output.buy_pairs = buy_pairs_;
   output.buy_lineage = buy_lineage_;
   output.sell_lineage = sell_lineage_;
   output.audit = audit_;
@@ -4833,12 +5689,16 @@ F05RepeatedBooleanCooldownRuntime::checkpoint() const {
 void F05RepeatedBooleanCooldownRuntime::restore(
     const F05RepeatedBooleanCooldownCheckpoint &value) {
   if (value.abi_version != kF05RepeatedBooleanCooldownAbi ||
+      value.qualification_under_test != config_.qualification_under_test ||
       value.parity_qualification_sha256 !=
           config_.parity_qualification_sha256 ||
       value.qualification_scope != config_.qualification_scope ||
       value.feature_clock_semantics != config_.feature_clock_semantics ||
       value.policy_sha256 != config_.policy.policy_sha256 ||
       value.predicate_bundle_sha256 != config_.policy.predicate_bundle_sha256 ||
+      value.buy_policy_sha256 != config_.buy_policy.policy_sha256 ||
+      value.buy_predicate_bundle_sha256 !=
+          config_.buy_policy.predicate_bundle_sha256 ||
       f05_double_bits(value.warmup_s) != f05_double_bits(config_.warmup_s) ||
       f05_double_bits(value.max_feature_age_s) !=
           f05_double_bits(config_.max_feature_age_s)) {
@@ -4849,8 +5709,16 @@ void F05RepeatedBooleanCooldownRuntime::restore(
       value.checkpoint_sha256 != f05_sha256(canonical)) {
     throw std::invalid_argument("f05_checkpoint_hash_drifted");
   }
-  if (!std::all_of(value.ema.begin(), value.ema.end(),
-                   [](double item) { return std::isfinite(item); }) ||
+  const auto finite = [](double item) { return std::isfinite(item); };
+  if (!std::all_of(value.ema.begin(), value.ema.end(), finite) ||
+      !std::all_of(value.buy_ema.begin(), value.buy_ema.end(), finite) ||
+      !std::all_of(value.buy_velocity.begin(), value.buy_velocity.end(), finite) ||
+      !std::all_of(value.buy_acceleration.begin(), value.buy_acceleration.end(),
+                   finite) ||
+      value.buy_ema.size() != buy_ema_.size() ||
+      value.buy_velocity.size() != buy_velocity_.size() ||
+      value.buy_acceleration.size() != buy_acceleration_.size() ||
+      value.buy_pairs.size() != buy_pairs_.size() ||
       value.buy_lineage.side != Side::Buy ||
       value.sell_lineage.side != Side::Sell) {
     throw std::invalid_argument("f05_checkpoint_state_invalid");
@@ -4863,19 +5731,33 @@ void F05RepeatedBooleanCooldownRuntime::restore(
       throw std::invalid_argument("f05_checkpoint_pair_state_invalid");
     }
   }
+  for (const auto &pair : value.buy_pairs) {
+    if (pair.effective_sign < -1 || pair.effective_sign > 1 ||
+        pair.last_cross_direction < -1 || pair.last_cross_direction > 1 ||
+        (pair.last_cross_ts_ns.has_value() &&
+         pair.last_cross_direction == 0)) {
+      throw std::invalid_argument("f05_checkpoint_buy_pair_state_invalid");
+    }
+  }
   warmup_admitted_ = value.warmup_admitted;
   warmup_start_right_ts_ns_ = value.warmup_start_right_ts_ns;
   last_right_ts_ns_ = value.last_right_ts_ns;
+  last_input_ready_ts_ns_ = value.last_input_ready_ts_ns;
   last_feature_ready_ts_ns_ = value.last_feature_ready_ts_ns;
   last_market_generation_ = value.last_market_generation;
   last_depth_generation_ = value.last_depth_generation;
   ema_initialized_ = value.ema_initialized;
+  buy_ema_initialized_ = value.buy_ema_initialized;
   current_window_observed_ = value.current_window_observed;
   current_channel_support_valid_ = value.current_channel_support_valid;
   last_observed_ts_ns_ = value.last_observed_ts_ns;
   ema_ = value.ema;
   short_pair_ = value.short_pair;
   long_pair_ = value.long_pair;
+  buy_ema_ = value.buy_ema;
+  buy_velocity_ = value.buy_velocity;
+  buy_acceleration_ = value.buy_acceleration;
+  buy_pairs_ = value.buy_pairs;
   buy_lineage_ = value.buy_lineage;
   sell_lineage_ = value.sell_lineage;
   audit_ = value.audit;
@@ -4884,6 +5766,16 @@ void F05RepeatedBooleanCooldownRuntime::restore(
 bool F05RepeatedBooleanCooldownRuntime::parity_qualified() const noexcept {
   return config_.parity_qualified && binding_error_.empty() &&
          is_lower_sha256(config_.parity_qualification_sha256);
+}
+
+bool F05RepeatedBooleanCooldownRuntime::qualification_under_test() const noexcept {
+  return config_.qualification_under_test && binding_error_.empty() &&
+         !config_.parity_qualified &&
+         config_.parity_qualification_sha256.empty();
+}
+
+bool F05RepeatedBooleanCooldownRuntime::execution_admitted() const noexcept {
+  return parity_qualified() || qualification_under_test();
 }
 
 const std::string &
@@ -5304,16 +6196,18 @@ TickReplayResult simulate_tick_arrays(
                 );
             }
         }
-        if (!runtime.parity_qualified() ||
+        if (!runtime.execution_admitted() ||
             (config.qualification_scope != "synthetic_full_replay_smoke" &&
              config.qualification_scope !=
                  "real_day_all_arm_full_replay_v21" &&
              config.qualification_scope !=
                  "real_day_all_arm_full_replay_v22" &&
              config.qualification_scope !=
-                 "real_day_all_arm_full_replay_v23")) {
+                 "real_day_all_arm_full_replay_v23" &&
+             config.qualification_scope !=
+                 "current_receive_time_full_replay_v1")) {
             throw std::invalid_argument(
-                "F05 repeated cooldown requires a full-replay-qualified runtime"
+                "F05 repeated cooldown requires a full-replay-admitted runtime"
             );
         }
         if (std::abs(params.fill_cooldown_s - 85.0) > 1e-12 ||
@@ -5672,6 +6566,10 @@ TickReplayResult simulate_tick_arrays(
         params.trace_cooldown_duration_opportunities_max > 0 ||
         params.cooldown_duration_fork_enabled;
     auto& summary = result.summary;
+    std::optional<NativeBookTapeRuntime> native_book;
+    if (params.native_exchange_book_enabled) {
+        native_book.emplace(params);
+    }
     const bool paired_fixed_spread_probe =
         params.paired_fixed_spread_probe_enabled;
     const bool fixed_spread_probe =
@@ -6189,6 +7087,176 @@ TickReplayResult simulate_tick_arrays(
     };
 
     bool buy_soft_widen_release_target_consumed = false;
+    const auto native_same_ms_trade_ticks = [&] (std::int64_t ts_ms) {
+        std::optional<std::int64_t> sell_min;
+        std::optional<std::int64_t> buy_max;
+        const auto* begin = input.trade_ts_ms.data();
+        const auto* end = begin + input.trade_ts_ms.size();
+        auto cursor = std::lower_bound(begin, end, ts_ms);
+        while (cursor != end && *cursor == ts_ms) {
+            const auto index = static_cast<std::size_t>(cursor - begin);
+            if (input.trade_qty.data()[index] > 0.0) {
+                const auto tick = price_to_tick(
+                    input.trade_price.data()[index], tick_size
+                );
+                if (input.is_buyer_maker.data()[index] == 1) {
+                    sell_min = sell_min.has_value()
+                        ? std::min(*sell_min, tick)
+                        : tick;
+                } else {
+                    buy_max = buy_max.has_value()
+                        ? std::max(*buy_max, tick)
+                        : tick;
+                }
+            }
+            ++cursor;
+        }
+        return std::make_pair(sell_min, buy_max);
+    };
+    const auto apply_native_advance = [&] (const NativeTapeAdvance& advance) {
+        const auto [sell_min, buy_max] = native_same_ms_trade_ticks(
+            advance.exchange_ts_ns / 1'000'000
+        );
+        apply_native_book_advance_to_orders(
+            advance,
+            bid_orders,
+            ask_orders,
+            sell_min,
+            buy_max,
+            params,
+            summary
+        );
+    };
+    const auto advance_native = [&] (std::int64_t boundary_ms, bool inclusive) {
+        if (!native_book.has_value()) {
+            return;
+        }
+        native_book->advance_to(
+            boundary_ms * 1'000'000,
+            inclusive,
+            summary,
+            apply_native_advance
+        );
+    };
+    const auto mark_native_cancel_ambiguity = [&] (std::int64_t boundary_ms) {
+        if (!native_book.has_value()) {
+            return;
+        }
+        const auto preview = native_book->preview_at(boundary_ms * 1'000'000);
+        mark_native_cancel_boundary_ambiguity(
+            bid_orders, preview, boundary_ms, summary
+        );
+        mark_native_cancel_boundary_ambiguity(
+            ask_orders, preview, boundary_ms, summary
+        );
+        for (auto* orders : {&bid_orders, &ask_orders}) {
+            for (auto& order : *orders) {
+                if (order.cancel_effective_ts == boundary_ms) {
+                    order.native_cancel_effective_processed = true;
+                }
+            }
+        }
+    };
+    const auto transition_at_native_boundary = [&] (
+        std::int64_t boundary_ms,
+        double fallback_bid,
+        double fallback_ask,
+        bool defer_cancel_ack
+    ) {
+        transition_orders(
+            bid_orders,
+            input,
+            boundary_ms,
+            fallback_bid,
+            fallback_ask,
+            tick_size,
+            params.cancel_order_latency_ms,
+            params.latency_jitter_ms,
+            &params.cancel_order_latency_samples_ms,
+            params,
+            summary,
+            result,
+            params.trace_quotes_max,
+            circuit_breaker_close_gtx_reject_streak,
+            native_book.has_value() ? &*native_book : nullptr,
+            false,
+            defer_cancel_ack
+        );
+        transition_orders(
+            ask_orders,
+            input,
+            boundary_ms,
+            fallback_bid,
+            fallback_ask,
+            tick_size,
+            params.cancel_order_latency_ms,
+            params.latency_jitter_ms,
+            &params.cancel_order_latency_samples_ms,
+            params,
+            summary,
+            result,
+            params.trace_quotes_max,
+            circuit_breaker_close_gtx_reject_streak,
+            native_book.has_value() ? &*native_book : nullptr,
+            false,
+            defer_cancel_ack
+        );
+    };
+    const auto advance_native_through_lifecycle = [&] (
+        std::int64_t target_ms,
+        double fallback_bid,
+        double fallback_ask
+    ) {
+        if (!native_book.has_value()) {
+            return;
+        }
+        while (true) {
+            std::optional<std::int64_t> next_boundary;
+            for (const auto* orders : {&bid_orders, &ask_orders}) {
+                for (const auto& order : *orders) {
+                    std::array<std::int64_t, 4> candidates{
+                        !order.exchange_accepted ? order.activate_ts : 0,
+                        order.state == OrderState::PendingNew
+                            ? order.new_ack_ts : 0,
+                        order.cancel_effective_ts > 0 &&
+                                !order.native_cancel_effective_processed
+                            ? order.cancel_effective_ts : 0,
+                        order.cancel_ack_ts > 0 &&
+                                !order.native_cancel_ack_processed
+                            ? order.cancel_ack_ts : 0,
+                    };
+                    for (const auto boundary : candidates) {
+                        if (boundary <= 0 || boundary >= target_ms) {
+                            continue;
+                        }
+                        if (!next_boundary.has_value() ||
+                            boundary < *next_boundary) {
+                            next_boundary = boundary;
+                        }
+                    }
+                }
+            }
+            if (!next_boundary.has_value()) {
+                return;
+            }
+            advance_native(*next_boundary, false);
+            mark_native_cancel_ambiguity(*next_boundary);
+            transition_at_native_boundary(
+                *next_boundary,
+                fallback_bid,
+                fallback_ask,
+                false
+            );
+            for (auto* orders : {&bid_orders, &ask_orders}) {
+                for (auto& order : *orders) {
+                    if (order.cancel_ack_ts == *next_boundary) {
+                        order.native_cancel_ack_processed = true;
+                    }
+                }
+            }
+            advance_native(*next_boundary, true);
+        }
+    };
     std::size_t last_processed_event_idx = 0;
     for (std::size_t i = 0; i < input.trade_ts_ms.size(); ++i) {
         last_processed_event_idx = i;
@@ -6203,11 +7271,17 @@ TickReplayResult simulate_tick_arrays(
             }
             const auto event_ts_ns = ts * 1'000'000;
             f05_cooldown_runtime->advance_time(ts);
+            const bool withhold_same_time_receive_window =
+                f05_cooldown_runtime->config().feature_clock_semantics ==
+                "receive_time_full_mid_ema_bank_v1";
             while (
                 f05_cooldown_window_cursor <
                     f05_cooldown_window_tape.size() &&
-                f05_cooldown_window_tape[f05_cooldown_window_cursor]
-                        .feature_ready_ts_ns <= event_ts_ns
+                (f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                         .feature_ready_ts_ns < event_ts_ns ||
+                 (!withhold_same_time_receive_window &&
+                  f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                          .feature_ready_ts_ns == event_ts_ns))
             ) {
                 f05_cooldown_runtime->update_window(
                     f05_cooldown_window_tape[
@@ -6284,38 +7358,69 @@ TickReplayResult simulate_tick_arrays(
             ? book.mid
             : price;
 
-        transition_orders(
-            bid_orders,
-            input,
-            ts,
-            book.best_bid,
-            book.best_ask,
-            tick_size,
-            params.cancel_order_latency_ms,
-            params.latency_jitter_ms,
-            &params.cancel_order_latency_samples_ms,
-            params,
-            summary,
-            result,
-            params.trace_quotes_max,
-            circuit_breaker_close_gtx_reject_streak
-        );
-        transition_orders(
-            ask_orders,
-            input,
-            ts,
-            book.best_bid,
-            book.best_ask,
-            tick_size,
-            params.cancel_order_latency_ms,
-            params.latency_jitter_ms,
-            &params.cancel_order_latency_samples_ms,
-            params,
-            summary,
-            result,
-            params.trace_quotes_max,
-            circuit_breaker_close_gtx_reject_streak
-        );
+        if (native_book.has_value()) {
+            advance_native_through_lifecycle(
+                ts, book.best_bid, book.best_ask
+            );
+            advance_native(ts, false);
+            mark_native_cancel_ambiguity(ts);
+            const auto [same_ms_sell_min, same_ms_buy_max] =
+                native_same_ms_trade_ticks(ts);
+            mark_native_cancel_trade_ambiguity(
+                bid_orders,
+                ts,
+                same_ms_sell_min,
+                same_ms_buy_max,
+                summary
+            );
+            mark_native_cancel_trade_ambiguity(
+                ask_orders,
+                ts,
+                same_ms_sell_min,
+                same_ms_buy_max,
+                summary
+            );
+            transition_at_native_boundary(
+                ts,
+                book.best_bid,
+                book.best_ask,
+                execution_event
+            );
+            advance_native(ts, true);
+        } else {
+            transition_orders(
+                bid_orders,
+                input,
+                ts,
+                book.best_bid,
+                book.best_ask,
+                tick_size,
+                params.cancel_order_latency_ms,
+                params.latency_jitter_ms,
+                &params.cancel_order_latency_samples_ms,
+                params,
+                summary,
+                result,
+                params.trace_quotes_max,
+                circuit_breaker_close_gtx_reject_streak
+            );
+            transition_orders(
+                ask_orders,
+                input,
+                ts,
+                book.best_bid,
+                book.best_ask,
+                tick_size,
+                params.cancel_order_latency_ms,
+                params.latency_jitter_ms,
+                &params.cancel_order_latency_samples_ms,
+                params,
+                summary,
+                result,
+                params.trace_quotes_max,
+                circuit_breaker_close_gtx_reject_streak
+            );
+        }
         paired_probe.on_event(
             ts,
             book.best_bid,
@@ -6928,6 +8033,11 @@ TickReplayResult simulate_tick_arrays(
             cooldown_duration_fill_observer
         );
         if (execution_event && seller_aggressor) {
+            if (native_book.has_value()) {
+                record_native_same_price_trade(
+                    bid_orders, trade_price_tick, qty
+                );
+            }
             process_side_fill<Side::Buy>(
                 bid_orders,
                 result,
@@ -6961,6 +8071,11 @@ TickReplayResult simulate_tick_arrays(
                 cooldown_duration_fill_observer
             );
         } else if (execution_event) {
+            if (native_book.has_value()) {
+                record_native_same_price_trade(
+                    ask_orders, trade_price_tick, qty
+                );
+            }
             process_side_fill<Side::Sell>(
                 ask_orders,
                 result,
@@ -6993,6 +8108,24 @@ TickReplayResult simulate_tick_arrays(
                 params.trace_window_ms,
                 cooldown_duration_fill_observer
             );
+        }
+        if (native_book.has_value() && execution_event) {
+            // A cancel ACK sharing this millisecond was retained until the
+            // exchange fill boundary had been evaluated.  Publish/remove it
+            // now, matching the strict Python lifecycle ordering.
+            transition_at_native_boundary(
+                ts,
+                book.best_bid,
+                book.best_ask,
+                false
+            );
+            for (auto* orders : {&bid_orders, &ask_orders}) {
+                for (auto& order : *orders) {
+                    if (order.cancel_ack_ts == ts) {
+                        order.native_cancel_ack_processed = true;
+                    }
+                }
+            }
         }
         max_abs_inventory = std::max(max_abs_inventory, std::abs(inventory));
         update_p3_reach_budget_lifecycle(ts);
@@ -7467,8 +8600,14 @@ TickReplayResult simulate_tick_arrays(
             ++summary.ber_feature_publish_count;
         }
         if (input.ml_ts_ms.size() > 0) {
-            ml_idx = advance_index(input.ml_ts_ms, ml_idx, ts);
-            if (input.ml_ts_ms.data()[ml_idx] <= ts) {
+            const std::int64_t prediction_cutoff_ts =
+                (visible_book_ts / 1'000) * 1'000;
+            ml_idx = advance_index(
+                input.ml_ts_ms,
+                ml_idx,
+                prediction_cutoff_ts
+            );
+            if (input.ml_ts_ms.data()[ml_idx] <= prediction_cutoff_ts) {
                 ml_ready = true;
                 pred.dir_10s = input.ml_dir_10s.data()[ml_idx];
                 pred.vol_10s = input.ml_vol_10s.data()[ml_idx];
@@ -9980,10 +11119,16 @@ TickReplayResult simulate_tick_arrays(
             );
         }
         const auto end_ts_ns = end_ts * 1'000'000;
+        const bool withhold_same_time_receive_window =
+            f05_cooldown_runtime->config().feature_clock_semantics ==
+            "receive_time_full_mid_ema_bank_v1";
         if (f05_cooldown_window_cursor <
                 f05_cooldown_window_tape.size() &&
-            f05_cooldown_window_tape[f05_cooldown_window_cursor]
-                    .feature_ready_ts_ns <= end_ts_ns) {
+            (f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                     .feature_ready_ts_ns < end_ts_ns ||
+             (!withhold_same_time_receive_window &&
+              f05_cooldown_window_tape[f05_cooldown_window_cursor]
+                      .feature_ready_ts_ns == end_ts_ns))) {
             throw std::runtime_error(
                 "F05 repeated cooldown causal window tape was not fully consumed"
             );

@@ -11,6 +11,7 @@ from models.backtest_config import (
     validate_formal_replay_calibration,
 )
 from models.backtest_tick import (
+    _read_aggtrade_csv,
     _read_individual_trade_csv,
     build_replay_event_clock,
     ensure_model_feature_columns,
@@ -23,6 +24,7 @@ from research.families.f01_fixed_parameter_racing.campaign_outcome_replay_audit 
     _random_passive_null_table,
     _resolve_cpp_parity_days,
 )
+from strategy.replay_controls import subtract_lot_quantity
 
 
 def _strict_params(config_path: Path) -> dict:
@@ -83,24 +85,43 @@ def test_terminal_pnl_decomposition_is_side_symmetric():
         assert final == pytest.approx(mtm - fee)
 
 
-def test_individual_trade_loader_preserves_matching_events(tmp_path):
+@pytest.mark.parametrize(
+    "loader", [_read_individual_trade_csv, _read_aggtrade_csv], ids=["individual", "aggtrade"],
+)
+def test_trade_loader_preserves_matching_events_and_quantity(tmp_path, loader):
     path = tmp_path / "BTCUSDC-trades-2026-01-01.csv"
-    path.write_text(
-        "id,price,qty,quote_qty,time,is_buyer_maker\n"
-        "1,100.0,0.1,10.0,1767225600000,false\n"
-        "2,100.0,0.2,20.0,1767225600000,false\n",
-        encoding="utf-8",
-    )
+    if loader is _read_individual_trade_csv:
+        contents = (
+            "id,price,qty,quote_qty,time,is_buyer_maker\n"
+            "1,100.0,0.009,0.9,1767225600000,false\n"
+            "2,100.0,0.001,0.1,1767225600000,true\n"
+            "3,100.0,0.01099999,1.099999,1767225600001,false\n"
+        )
+    else:
+        contents = (
+            "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker\n"
+            "1,100.0,0.009,1,1,1767225600000,false\n"
+            "2,100.0,0.001,2,2,1767225600000,true\n"
+            "3,100.0,0.01099999,3,3,1767225600001,false\n"
+        )
+    path.write_text(contents, encoding="utf-8")
 
-    trades = _read_individual_trade_csv(path)
+    trades = loader(path)
 
-    assert trades["trade_id"].tolist() == [1, 2]
-    assert trades["quantity"].tolist() == pytest.approx([0.1, 0.2])
+    if loader is _read_individual_trade_csv:
+        assert trades["trade_id"].tolist() == [1, 2, 3]
+    # float32 followed by float64 cannot recover the original quantity. An
+    # approximate assertion would hide .009 becoming .008999999612569809.
+    assert trades["quantity"].dtype == np.dtype("float64")
+    assert trades["quantity"].tolist() == [0.009, 0.001, 0.01099999]
+    assert subtract_lot_quantity(float(trades["quantity"].iloc[0]), 0.008, 0.001) == 0.001
+    assert subtract_lot_quantity(float(trades["quantity"].iloc[2]), 0.010, 0.001) < 0.001
     assert trades["transact_time"].tolist() == [
         1767225600000,
         1767225600000,
+        1767225600001,
     ]
-    assert trades["is_buyer_maker"].tolist() == [False, False]
+    assert trades["is_buyer_maker"].tolist() == [False, True, False]
 
 
 def test_individual_trade_loader_orders_equal_ms_by_trade_id(tmp_path):

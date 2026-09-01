@@ -354,6 +354,32 @@ def test_decision_to_gateway_latency_identity_is_diagnostic_only(tmp_path):
     validate_frozen_replay_contract(diagnostic)
 
 
+def test_omitted_latency_seed_uses_rng_derived_seed_everywhere(tmp_path):
+    params = _contract_params(tmp_path)
+    params.pop("latency_seed")
+    params.update(
+        rng_seed=100,
+        replay_main_loop_sleep_ms=100,
+        rest_gateway_timing_mode="sampled_serial",
+        _decision_to_gateway_latency_samples_ms=np.asarray([2.0, 5.0, 11.0]),
+        _requote_tail_work_samples_ms=np.asarray([1.0, 3.0, 7.0]),
+        _main_loop_work_samples_ms=np.asarray([[0.2, 0.4], [0.3, 0.1]]),
+    )
+    contract = freeze_replay_contract(
+        params,
+        purpose="diagnostic",
+        root=tmp_path,
+    )
+
+    assert contract["latency"]["latency_seed"] == 117
+    assert contract["latency"]["decision_to_gateway"]["seed"] == 117
+    assert contract["latency"]["serial_rest_gateway"]["seed"] == 117
+    work = contract["causal_event_semantics"]["main_loop"]["local_work"]
+    assert work["requote_tail"]["seed"] == 117
+    assert work["loop"]["seed"] == 117
+    validate_frozen_replay_contract(params)
+
+
 def test_zero_decision_to_gateway_samples_do_not_change_contract_identity(
     tmp_path,
 ):
@@ -426,6 +452,107 @@ def test_pre_snapshot_compute_rejects_unpaired_or_unsupported_input(
     )
     with pytest.raises(ValueError, match="pre-snapshot compute"):
         freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+
+
+@pytest.mark.parametrize("main_loop", [False, True])
+def test_zero_local_work_preserves_contract_bytes(tmp_path, main_loop):
+    params = _contract_params(tmp_path)
+    if main_loop:
+        params.update(rest_gateway_timing_mode="sampled_serial", replay_main_loop_sleep_ms=100)
+    before = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    params.update(
+        _requote_tail_work_samples_ms=np.zeros(3),
+        _main_loop_work_samples_ms=np.zeros((3, 2)),
+    )
+    after = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    assert json.dumps(before, sort_keys=True) == json.dumps(after, sort_keys=True)
+
+
+def test_local_work_binds_paired_samples_without_exposing_arrays(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_serial", replay_main_loop_sleep_ms=100,
+        _decision_to_gateway_latency_samples_ms=np.asarray([2.0, 5.0, 11.0]),
+        _requote_tail_work_samples_ms=np.asarray([1.0, 7.0, 3.0]),
+        _main_loop_work_samples_ms=np.asarray([[0.2, 0.4], [0.3, 0.1]]),
+        decision_to_gateway_latency_seed=73,
+    )
+    contract = freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+    work = contract["causal_event_semantics"]["main_loop"]["local_work"]
+    assert work["backend"] == "python_only"
+    assert work["evidence_scope"] == "diagnostic_only"
+    assert work["accounting"] == "first_gateway_compute_and_rest_not_recharged"
+    assert work["requote_tail"]["seed"] == work["loop"]["seed"] == 73
+    assert work["requote_tail"]["clock"] == "after_last_http_return_or_no_request_compute"
+    assert work["requote_tail"]["samples"]["count"] == 3
+    assert work["loop"]["row_count"] == 2
+    assert work["loop"]["columns"] == ["before_tick_ms", "after_tick_ms"]
+    assert contract["promotion_eligible"] is False
+    encoded = json.dumps(contract, allow_nan=False)
+    assert "_main_loop_work_samples_ms" not in encoded
+    assert "_requote_tail_work_samples_ms" not in encoded
+    validate_frozen_replay_contract(params)
+    params["_main_loop_work_samples_ms"] = np.asarray([[0.2, 0.1], [0.3, 0.4]])
+    with pytest.raises(RuntimeError, match="identity differs"):
+        validate_frozen_replay_contract(params)
+
+
+@pytest.mark.parametrize("field,values", [
+    ("_requote_tail_work_samples_ms", [float("nan")]),
+    ("_requote_tail_work_samples_ms", [-1.0]),
+    ("_requote_tail_work_samples_ms", [[1.0]]),
+    ("_requote_tail_work_samples_ms", [1.0, 2.0]),
+    ("_main_loop_work_samples_ms", [1.0, 2.0]),
+    ("_main_loop_work_samples_ms", [[1.0]]),
+    ("_main_loop_work_samples_ms", [[float("inf"), 0.0]]),
+    ("_main_loop_work_samples_ms", [[0.0, -1.0]]),
+])
+def test_local_work_rejects_invalid_or_unpaired_samples(tmp_path, field, values):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_serial", replay_main_loop_sleep_ms=100,
+        _decision_to_gateway_latency_samples_ms=np.asarray([2.0]),
+    )
+    params[field] = np.asarray(values)
+    with pytest.raises(ValueError, match="work samples"):
+        freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+
+
+@pytest.mark.parametrize("total", [[float("nan")], [-1.0], [[2.0]]])
+def test_tail_total_samples_are_not_silently_normalized(tmp_path, total):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_serial", replay_main_loop_sleep_ms=100,
+        _decision_to_gateway_latency_samples_ms=np.asarray(total),
+        _requote_tail_work_samples_ms=np.asarray([1.0]),
+    )
+    with pytest.raises(ValueError, match="tail work samples"):
+        configure_fixed_latency_distribution(
+            params, scenario="baseline", profile_id="synthetic", environment="test",
+        )
+    with pytest.raises(ValueError, match="tail work samples"):
+        freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+
+
+@pytest.mark.parametrize("mode,sleep", [("disabled", 100), ("sampled_serial", 0)])
+def test_local_work_requires_modeled_main_loop(tmp_path, mode, sleep):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode=mode, replay_main_loop_sleep_ms=sleep,
+        _main_loop_work_samples_ms=np.asarray([[0.2, 0.4]]),
+    )
+    with pytest.raises(ValueError, match="local work requires main-loop sampled_serial"):
+        freeze_replay_contract(params, purpose="diagnostic", root=tmp_path)
+
+
+def test_local_work_cannot_promote_formal_evidence(tmp_path):
+    params = _contract_params(tmp_path)
+    params.update(
+        rest_gateway_timing_mode="sampled_serial", replay_main_loop_sleep_ms=100,
+        _main_loop_work_samples_ms=np.asarray([[0.2, 0.4]]),
+    )
+    with pytest.raises(RuntimeError, match="serial REST gateway timing is diagnostic-only"):
+        freeze_replay_contract(params, root=tmp_path)
 
 
 def test_serial_rest_gateway_profile_identity_is_diagnostic_only(tmp_path):

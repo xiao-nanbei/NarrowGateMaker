@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import array
 import gc
 import heapq
 import hashlib
@@ -93,6 +94,7 @@ from models.replay.order_lifecycle_v2_replay_adapter_strict_native import (
 )
 from models.replay.continuous_accounting import FEE_ACCOUNTING_SEMANTICS
 from models.replay.replay_state_checkpoint import validate_replay_initial_state
+from models.replay_contract import _local_work_samples
 from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     LOSS_COOLDOWN_SNAPSHOT_SCHEMA,
@@ -103,9 +105,12 @@ from strategy.replay_controls import (
     ReplayHardRiskState,
     ReplayOrderDepthPath,
     cap_exposure_qty_by_position_value,
+    effective_decision_to_gateway_latency_seed,
+    effective_latency_seed,
     hard_risk_reason,
     load_sync_degrade_events,
     replay_hard_risk_limits,
+    subtract_lot_quantity,
     synchronize_visibility_batch_ambiguity_to_cpp,
 )
 from strategy.fill_cooldown import (
@@ -1810,7 +1815,7 @@ def _match_ioc_order(
         price, available = levels[key]
         take = min(remaining, available)
         notional += take * price
-        remaining -= take
+        remaining = subtract_lot_quantity(remaining, take, lot_size)
         if remaining <= 1e-12:
             break
     return filled, notional / filled
@@ -2044,7 +2049,10 @@ AGGTRADE_COLUMNS = [
 ]
 AGGTRADE_DTYPES = {
     "price": np.float64,
-    "quantity": np.float32,
+    # Matching subtracts queue ahead and floors to exchange lots. float32 can
+    # turn .009 into .0089999996, losing an entire final .001 lot after queue
+    # depletion; promoting the rounded value later cannot recover the source.
+    "quantity": np.float64,
     "transact_time": np.int64,
 }
 AGGTRADE_USECOLS = ["price", "quantity", "transact_time", "is_buyer_maker"]
@@ -2084,7 +2092,7 @@ def _read_individual_trade_csv(path: Path) -> pd.DataFrame:
         dtype={
             "id": np.int64,
             "price": np.float64,
-            "qty": np.float32,
+            "qty": np.float64,
             "time": np.int64,
         },
         true_values=["true", "True", "TRUE"],
@@ -6705,7 +6713,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     new_order_latency_ms = max(0, int(params.get("new_order_latency_ms", 0.0) or 0.0))
     cancel_order_latency_ms = max(0, int(params.get("cancel_order_latency_ms", 0.0) or 0.0))
     latency_jitter_ms = max(0, int(params.get("latency_jitter_ms", 0.0) or 0.0))
-    latency_seed = int(params.get("latency_seed", rng_seed + 17))
+    latency_seed = effective_latency_seed(params)
     latency_sampler_version = str(
         params.get("latency_sampler_version", LATENCY_SAMPLER_VERSION)
         or LATENCY_SAMPLER_VERSION
@@ -6756,13 +6764,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             raise ValueError(
                 "pre-snapshot/total compute samples must be aligned finite 0 <= pre <= total"
             )
-    raw_decision_to_gateway_latency_seed = params.get(
-        "decision_to_gateway_latency_seed"
-    )
-    decision_to_gateway_latency_seed = int(
-        latency_seed
-        if raw_decision_to_gateway_latency_seed is None
-        else raw_decision_to_gateway_latency_seed
+    decision_to_gateway_latency_seed = effective_decision_to_gateway_latency_seed(
+        params
     )
     if (
         decision_to_gateway_latency_enabled
@@ -6853,6 +6856,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     if pre_snapshot_compute_enabled and not main_loop_enabled:
         raise ValueError("pre-snapshot compute requires main-loop sampled_serial timing")
+    requote_tail_work_samples_ms, main_loop_work_samples_ms = _local_work_samples(params)
+    requote_tail_work_enabled = bool(np.any(requote_tail_work_samples_ms > 0.0))
+    main_loop_work_enabled = bool(np.any(main_loop_work_samples_ms > 0.0))
+    if (requote_tail_work_enabled or main_loop_work_enabled) and not main_loop_enabled:
+        raise ValueError("local work samples require main-loop sampled_serial diagnostic replay")
     pending_quote_compute = None
     active_quote_compute = None
     pre_snapshot_compute_count = 0
@@ -6862,6 +6870,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     main_loop_next_wake_ms: Optional[int] = None
     main_loop_tick_complete_ms = 0
     main_loop_tick_count = 0
+    main_loop_after_tick_ms = 0
+    main_loop_quote_tail_ms = 0
+    main_loop_work_pre_sum_ms = 0
+    main_loop_work_post_sum_ms = 0
+    requote_tail_work_count = 0
+    requote_tail_work_sum_ms = 0
     is_main_loop_wake = False
     if rest_gateway_timing_mode == "paired_npz" or (
         serial_rest_return_enabled and not direct_return_samples
@@ -14432,7 +14446,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     ahead_probability = ahead / denominator if denominator > 0.0 else 0.0
                     removed = min(ahead, cancellation * ahead_probability)
                     if removed > 0.0:
-                        order["queue_left"] = ahead - removed
+                        order["queue_left"] = subtract_lot_quantity(ahead, removed, LOT_SIZE)
                         queue_l2_cancel_ahead_event_count += 1
                         queue_l2_cancel_ahead_qty += removed
                         if side == "BUY":
@@ -17985,8 +17999,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             trade_remaining = float(trade_qty_now) * float(deplete_mult)
             if order["queue_left"] > 0.0:
                 consumed = min(float(order["queue_left"]), trade_remaining)
-                order["queue_left"] -= consumed
-                trade_remaining -= consumed
+                order["queue_left"] = subtract_lot_quantity(
+                    float(order["queue_left"]), consumed, LOT_SIZE
+                )
+                trade_remaining = subtract_lot_quantity(trade_remaining, consumed, LOT_SIZE)
             if trade_remaining < LOT_SIZE or order["remaining"] < LOT_SIZE:
                 survivors.append(order)
                 continue
@@ -19471,9 +19487,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
                 # A skipped ambiguous update cannot leave phantom public
                 # quantity ahead after a later unambiguous level observation.
-                removed = max(removed, ahead - max(0.0, float(change.quantity_after)))
+                # Clamp the value itself: reconstructing this bound through
+                # subtraction can leave 0.0010000000000000009 ahead of a
+                # 0.001 level and incorrectly suppress a later whole-lot fill.
+                queue_after = min(
+                    max(0.0, float(change.quantity_after)),
+                    subtract_lot_quantity(ahead, removed, LOT_SIZE),
+                )
+                removed = ahead - queue_after
                 if removed > 0.0:
-                    order["queue_left"] = ahead - removed
+                    order["queue_left"] = queue_after
                     exchange_book_queue_cancel_ahead_event_count += 1
                     exchange_book_queue_cancel_ahead_qty += removed
                 order["exchange_book_queue_trade_since_update"] = 0.0
@@ -22280,6 +22303,42 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 row["needs_update"] = 0
                 row["rest_return_ts_ms"] = int(now_ts)
 
+    def _schedule_main_loop_tick(loop_start_ms: int) -> None:
+        """Run measured outer-loop work before entering the strategy tick.
+
+        Both columns use one keyed row; no measured tick work means no
+        invented scheduling jitter. Market and private events keep advancing
+        while this thread is occupied.
+        """
+        nonlocal main_loop_next_wake_ms, main_loop_after_tick_ms, main_loop_work_pre_sum_ms
+        before_ms = 0
+        main_loop_after_tick_ms = 0
+        if main_loop_work_enabled:
+            before_ms, main_loop_after_tick_ms = (
+                _deterministic_decision_to_gateway_latency_ms(
+                    main_loop_work_samples_ms[:, column],
+                    seed=decision_to_gateway_latency_seed, decision_ts_ms=int(loop_start_ms),
+                ) for column in (0, 1)
+            )
+            main_loop_work_pre_sum_ms += before_ms
+        main_loop_next_wake_ms = int(loop_start_ms) + before_ms
+
+    def _finish_main_loop_tick(completed_ms: int) -> None:
+        """Account for non-REST work once, after the final request/compute.
+
+        A requote residual placed here preserves measured total busy time,
+        but does not claim its unobserved between-request placement is exact.
+        The same completion rule applies to keep/skip calls with no requests.
+        """
+        nonlocal main_loop_work_post_sum_ms, main_loop_quote_tail_ms
+        main_loop_work_post_sum_ms += main_loop_after_tick_ms
+        loop_end_ms = (
+            max(int(completed_ms), main_loop_tick_complete_ms, rest_gateway_busy_until_ms)
+            + main_loop_quote_tail_ms + main_loop_after_tick_ms
+        )
+        main_loop_quote_tail_ms = 0
+        _schedule_main_loop_tick(loop_end_ms + main_loop_sleep_ms)
+
     def _continue_serial_rest_decision(
         plan: dict[str, Any], now_ts: int, completed: Optional[dict[str, Any]] = None,
     ) -> None:
@@ -22378,7 +22437,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             return
         serial_rest_decision = None
         if main_loop_enabled:
-            main_loop_next_wake_ms = max(int(now_ts), rest_gateway_busy_until_ms) + main_loop_sleep_ms
+            _finish_main_loop_tick(int(now_ts))
 
     def _begin_serial_rest_decision(
         *, decision_ts: int, steps: list[dict[str, Any]],
@@ -24456,14 +24515,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 float(taker_fee),
             )
 
-            order["remaining"] = max(
-                0.0,
-                float(order.get("remaining", 0.0)) - fill_qty,
+            order["remaining"] = subtract_lot_quantity(
+                float(order.get("remaining", 0.0)), fill_qty, LOT_SIZE,
             )
             if private_fill_visibility_enabled:
-                order["exchange_remaining"] = max(
-                    0.0, float(order.get("exchange_remaining", order["remaining"] + fill_qty))
-                    - fill_qty,
+                order["exchange_remaining"] = subtract_lot_quantity(
+                    float(order.get("exchange_remaining", order["remaining"] + fill_qty)),
+                    fill_qty, LOT_SIZE,
                 )
                 order["last_exchange_fill_ts_ms"] = int(now_ts)
                 order["last_private_fill_visible_ts_ms"] = int(now_ts)
@@ -24867,7 +24925,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 float(order["price"]),
                 float(maker_fee),
             )
-            order["remaining"] -= fill_qty
+            order["remaining"] = subtract_lot_quantity(order["remaining"], fill_qty, LOT_SIZE)
             q90_lifecycle = dynamic_fill_hazard_lifecycles.get(
                 str(order.get("trace_id", ""))
             )
@@ -24924,7 +24982,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         cpp_transition=cpp_transition,
                     )
             if not exchange_reserved:
-                trade_remaining -= fill_qty
+                trade_remaining = subtract_lot_quantity(trade_remaining, fill_qty, LOT_SIZE)
             (
                 physical_fill_identity,
                 economic_fill_legs,
@@ -25163,7 +25221,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 float(order["price"]),
                 float(maker_fee),
             )
-            order["remaining"] -= fill_qty
+            order["remaining"] = subtract_lot_quantity(order["remaining"], fill_qty, LOT_SIZE)
             _post_cooldown_budget_on_fill(
                 order,
                 side="SELL",
@@ -25171,7 +25229,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 now_ts=int(t),
             )
             if not exchange_reserved:
-                trade_remaining -= fill_qty
+                trade_remaining = subtract_lot_quantity(trade_remaining, fill_qty, LOT_SIZE)
             (
                 physical_fill_identity,
                 economic_fill_legs,
@@ -25439,8 +25497,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         exchange_remaining_before = float(
             order.get("exchange_remaining", order.get("remaining", 0.0))
         )
-        exchange_remaining_after = max(
-            0.0, exchange_remaining_before - float(fill_qty)
+        exchange_remaining_after = subtract_lot_quantity(
+            exchange_remaining_before, float(fill_qty), LOT_SIZE
         )
         order["exchange_remaining"] = exchange_remaining_after
         order["last_exchange_fill_ts_ms"] = int(exchange_ts_ms)
@@ -25451,7 +25509,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             exchange_inventory += float(fill_qty)
         else:
             exchange_inventory -= float(fill_qty)
-        remaining_trade = float(trade_remaining) - float(fill_qty)
+        remaining_trade = subtract_lot_quantity(float(trade_remaining), float(fill_qty), LOT_SIZE)
         order["queue_deplete_mult"] = float(deplete_mult)
         _append_queue_event(
             event="fill",
@@ -25535,7 +25593,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             for index in range(n_trades):
                 yield index, int(trade_ts[index]), True, False, False
             return
-        main_loop_next_wake_ms = int(trade_ts[0])
+        _schedule_main_loop_tick(int(trade_ts[0]))
         end_ms = int(trade_ts[-1])
         index = 0
         while True:
@@ -25564,10 +25622,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     return
                 yield max(0, index - 1), resume_ms, False, False, True
                 if serial_rest_decision is None and main_loop_next_wake_ms is None:
-                    main_loop_next_wake_ms = (
-                        max(main_loop_tick_complete_ms, rest_gateway_busy_until_ms)
-                        + main_loop_sleep_ms
-                    )
+                    _finish_main_loop_tick(main_loop_tick_complete_ms)
                 continue
             if wake_ms is None or wake_ms > end_ms:
                 return
@@ -25582,9 +25637,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             yield max(0, index - 1), int(wake_ms), False, True, False
             if (main_loop_next_wake_ms is None and serial_rest_decision is None
                     and pending_quote_compute is None):
-                main_loop_next_wake_ms = (
-                    max(main_loop_tick_complete_ms, rest_gateway_busy_until_ms) + main_loop_sleep_ms
-                )
+                _finish_main_loop_tick(main_loop_tick_complete_ms)
 
     for (i, event_ts_ms, is_market_array_event,
          is_main_loop_wake, is_quote_compute_resume) in _replay_events():
@@ -26237,8 +26290,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 rem_before = order["remaining"]
                 if order["queue_left"] > 0.0:
                     eat_ahead = min(order["queue_left"], trade_remaining)
-                    order["queue_left"] -= eat_ahead
-                    trade_remaining -= eat_ahead
+                    order["queue_left"] = subtract_lot_quantity(
+                        order["queue_left"], eat_ahead, LOT_SIZE
+                    )
+                    trade_remaining = subtract_lot_quantity(trade_remaining, eat_ahead, LOT_SIZE)
                     _append_queue_event(
                         event="deplete_queue",
                         trade_idx=i,
@@ -26411,8 +26466,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 rem_before = order["remaining"]
                 if order["queue_left"] > 0.0:
                     eat_ahead = min(order["queue_left"], trade_remaining)
-                    order["queue_left"] -= eat_ahead
-                    trade_remaining -= eat_ahead
+                    order["queue_left"] = subtract_lot_quantity(
+                        order["queue_left"], eat_ahead, LOT_SIZE
+                    )
+                    trade_remaining = subtract_lot_quantity(trade_remaining, eat_ahead, LOT_SIZE)
                     _append_queue_event(
                         event="deplete_queue",
                         trade_idx=i,
@@ -26872,6 +26929,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # missed fixed-grid deadline. Compute also occupies keep/skip
                 # calls, even when they produce no HTTP request.
                 main_loop_tick_complete_ms = _decision_gateway_request_ts(int(t))
+                if requote_tail_work_enabled:
+                    main_loop_quote_tail_ms = _deterministic_decision_to_gateway_latency_ms(
+                        requote_tail_work_samples_ms, seed=decision_to_gateway_latency_seed,
+                        decision_ts_ms=int(t),
+                    )
+                    requote_tail_work_count += 1
+                    requote_tail_work_sum_ms += main_loop_quote_tail_ms
             # Live main loop wakes on a wall-clock cadence. If replay resets the
             # next quote time to the current trade timestamp, sparse trade
             # periods drift slower than live and understate time-based guards
@@ -31998,6 +32062,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             "pre_snapshot_prediction_clock": "requote_entry_visible_inputs",
             "pre_snapshot_inventory_variance_clock": "capture_visible_state",
         } if pre_snapshot_compute_enabled else {}),
+        **({
+            "requote_tail_work_sample_count": int(requote_tail_work_samples_ms.size),
+            "requote_tail_work_count": requote_tail_work_count,
+            "requote_tail_work_sum_ms": requote_tail_work_sum_ms,
+            "requote_tail_work_clock": "after_last_rest_return_or_compute_before_loop_sleep",
+        } if requote_tail_work_enabled else {}),
+        **({
+            "main_loop_work_sample_count": int(main_loop_work_samples_ms.shape[0]),
+            "main_loop_work_pre_sum_ms": main_loop_work_pre_sum_ms,
+            "main_loop_work_post_sum_ms": main_loop_work_post_sum_ms,
+            "main_loop_work_clock": "paired_before_tick_and_after_tick_before_sleep",
+        } if main_loop_work_enabled else {}),
         **(
             {
                 "rest_gateway_timing_mode": str(rest_gateway_timing_mode),
@@ -33521,8 +33597,182 @@ def _load_cpp_tick_replay():
 
 
 _F05_REPEATED_BOOLEAN_COOLDOWN_CPP_ABI = (
-    "f05_repeated_boolean_cooldown_streaming.v1"
+    "f05_repeated_boolean_cooldown_streaming.v2"
 )
+_F05_CURRENT_CPP_QUALIFICATION_SCHEMA = (
+    "narrowgate_cpp_current_policy_qualification.v1"
+)
+_F05_CURRENT_CPP_QUALIFICATION_SCOPE = "current_receive_time_full_replay_v1"
+_F05_CURRENT_CPP_NATIVE_QUEUE_SCOPE = (
+    "strategy_independent_native_snapshot_delta_exchange_time_v1"
+)
+
+
+def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError(
+            "C++ cooldown qualification receipt is not canonical JSON"
+        ) from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_current_cpp_qualification_receipt(
+    params: Mapping[str, Any],
+    *,
+    evaluator: Any,
+    receipt_sha256: str,
+) -> Mapping[str, Any]:
+    """Validate one immutable current-policy C++ qualification receipt.
+
+    The file-byte digest is the only external qualification root.  Its paired
+    run and comparison roots remain opaque here; their leaf artifacts belong
+    to the qualification producer and must not be copied into replay params.
+    """
+
+    path_text = str(
+        params.get("cooldown_duration_policy_cpp_parity_receipt_path", "") or ""
+    ).strip()
+    if not path_text:
+        raise RuntimeError(
+            "current C++ cooldown qualification requires a real parity receipt file"
+        )
+    path = Path(path_text).expanduser().resolve()
+    if not path.is_file():
+        raise RuntimeError(
+            "current C++ cooldown qualification parity receipt file is missing"
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise RuntimeError(
+            "current C++ cooldown qualification parity receipt is unreadable"
+        ) from exc
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if actual_sha256 != receipt_sha256:
+        raise RuntimeError(
+            "current C++ cooldown qualification parity receipt root drifted"
+        )
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            "current C++ cooldown qualification parity receipt is invalid JSON"
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            "current C++ cooldown qualification parity receipt must be an object"
+        )
+    if payload.get("schema_version") != _F05_CURRENT_CPP_QUALIFICATION_SCHEMA:
+        raise RuntimeError("current C++ cooldown qualification receipt schema drifted")
+    if payload.get("status") != "qualified":
+        raise RuntimeError("current C++ cooldown qualification receipt is not qualified")
+    if payload.get("qualification_scope") != _F05_CURRENT_CPP_QUALIFICATION_SCOPE:
+        raise RuntimeError("current C++ cooldown qualification receipt scope drifted")
+    if payload.get("qualification_under_test") is not False:
+        raise RuntimeError(
+            "current C++ cooldown qualification receipt is marked under test"
+        )
+
+    source = payload.get("source")
+    expected_source = params.get(
+        "cooldown_duration_policy_cpp_expected_source_identity"
+    )
+    if not isinstance(source, dict) or not isinstance(expected_source, Mapping):
+        raise RuntimeError(
+            "current C++ cooldown qualification source identity is missing"
+        )
+    git_object_pattern = r"(?:[0-9a-f]{40}|[0-9a-f]{64})"
+    for key in ("commit", "tree"):
+        actual = str(source.get(key, "") or "").lower()
+        expected = str(expected_source.get(key, "") or "").lower()
+        if (
+            re.fullmatch(git_object_pattern, actual) is None
+            or re.fullmatch(git_object_pattern, expected) is None
+            or actual != expected
+        ):
+            raise RuntimeError(
+                f"current C++ cooldown qualification source {key} drifted"
+            )
+
+    runtime_binding_sha256 = str(
+        payload.get("runtime_binding_sha256", "") or ""
+    ).lower()
+    expected_runtime_binding_sha256 = str(
+        getattr(evaluator, "cpp_runtime_binding_sha256", "") or ""
+    ).lower()
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", runtime_binding_sha256) is None
+        or runtime_binding_sha256 != expected_runtime_binding_sha256
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification runtime binding drifted"
+        )
+    paired_run_manifest_sha256 = str(
+        payload.get("paired_run_manifest_sha256", "") or ""
+    ).lower()
+    if re.fullmatch(r"[0-9a-f]{64}", paired_run_manifest_sha256) is None:
+        raise RuntimeError(
+            "current C++ cooldown qualification paired-run manifest root is invalid"
+        )
+
+    comparison = payload.get("comparison")
+    if not isinstance(comparison, dict):
+        raise RuntimeError(
+            "current C++ cooldown qualification comparison is missing"
+        )
+    comparison_sha256 = str(comparison.get("sha256", "") or "").lower()
+    comparison_payload = {
+        key: value for key, value in comparison.items() if key != "sha256"
+    }
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", comparison_sha256) is None
+        or comparison_sha256 != _canonical_json_sha256(comparison_payload)
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification comparison root drifted"
+        )
+    complete_utc_days = comparison.get("complete_utc_days")
+    if (
+        isinstance(complete_utc_days, bool)
+        or not isinstance(complete_utc_days, int)
+        or complete_utc_days < 1
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification lacks a complete UTC day"
+        )
+    if comparison.get("positive_latency") is not True:
+        raise RuntimeError(
+            "current C++ cooldown qualification lacks positive latency"
+        )
+    for side in ("buy", "sell"):
+        count = comparison.get(f"{side}_policy_trigger_count")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise RuntimeError(
+                f"current C++ cooldown qualification lacks a {side.upper()} trigger"
+            )
+    for key in (
+        "quote_exact",
+        "fill_exact",
+        "policy_exact",
+        "economic_exact",
+        "native_queue_exact",
+    ):
+        if comparison.get(key) is not True:
+            raise RuntimeError(
+                f"current C++ cooldown qualification comparison failed: {key}"
+            )
+    if comparison.get("native_queue_scope") != _F05_CURRENT_CPP_NATIVE_QUEUE_SCOPE:
+        raise RuntimeError(
+            "current C++ cooldown qualification native queue scope drifted"
+        )
+    return payload
 
 
 def _validate_f05_cpp_cooldown_runtime(
@@ -33543,15 +33793,61 @@ def _validate_f05_cpp_cooldown_runtime(
             )
         ) or bool(
             params.get("cooldown_duration_policy_cpp_parity_qualified", False)
+        ) or bool(
+            params.get(
+                "cooldown_duration_policy_cpp_qualification_under_test",
+                False,
+            )
         ):
             raise RuntimeError(
                 "C++ cooldown runtime was supplied without the Python-authoritative "
                 "policy evaluator"
             )
         return None
-    if not bool(
+    parity_claimed = bool(
         params.get("cooldown_duration_policy_cpp_parity_qualified", False)
-    ):
+    )
+    qualification_under_test = bool(
+        params.get(
+            "cooldown_duration_policy_cpp_qualification_under_test",
+            False,
+        )
+    )
+    paired_under_test = bool(
+        params.get(
+            "cooldown_duration_policy_cpp_paired_execution_under_test",
+            False,
+        )
+    )
+    event_loop_claimed = bool(
+        params.get(
+            "cooldown_duration_policy_cpp_event_loop_parity_qualified",
+            False,
+        )
+    )
+    receipt_sha256 = str(
+        params.get("cooldown_duration_policy_cpp_parity_receipt_sha256", "")
+        or ""
+    )
+    if qualification_under_test:
+        if parity_claimed or event_loop_claimed or receipt_sha256:
+            raise RuntimeError(
+                "C++ cooldown qualification-under-test cannot coexist with "
+                "parity qualification or a receipt"
+            )
+        if not paired_under_test:
+            raise RuntimeError(
+                "C++ cooldown qualification-under-test is paired-execution only"
+            )
+        if bool(params.get("replay_promotion_eligible", False)):
+            raise RuntimeError(
+                "C++ cooldown qualification-under-test cannot be promotion eligible"
+            )
+    elif paired_under_test:
+        raise RuntimeError(
+            "paired C++ cooldown execution requires qualification-under-test"
+        )
+    elif not parity_claimed:
         raise NotImplementedError(
             "repeated multichannel Boolean cooldown remains Python-authoritative; "
             "C++ requires an explicit parity-qualified flag and bound runtime"
@@ -33575,58 +33871,115 @@ def _validate_f05_cpp_cooldown_runtime(
         raise RuntimeError(
             "explicit C++ cooldown qualification lacks its bound streaming runtime"
         )
-    if not bool(runtime.parity_qualified):
+    if qualification_under_test:
+        if (
+            not bool(runtime.qualification_under_test)
+            or bool(runtime.parity_qualified)
+        ):
+            binding_error = str(
+                runtime.binding_error or "cpp_qualification_under_test_not_admitted"
+            )
+            raise RuntimeError(
+                "bound C++ cooldown runtime is not admitted under test: "
+                + binding_error
+            )
+    elif not bool(runtime.parity_qualified):
         binding_error = str(runtime.binding_error or "cpp_parity_not_qualified")
         raise RuntimeError(
             "bound C++ cooldown runtime is not parity-qualified: " + binding_error
         )
 
     runtime_config = runtime.config
-    receipt_sha256 = str(
-        params.get("cooldown_duration_policy_cpp_parity_receipt_sha256", "")
-        or ""
-    )
-    if not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256):
-        raise RuntimeError(
-            "explicit C++ cooldown qualification lacks a parity receipt SHA256"
-        )
-    if receipt_sha256 != str(runtime_config.parity_qualification_sha256):
-        raise RuntimeError("C++ cooldown parity receipt identity drifted")
+    qualification_scope = str(runtime_config.qualification_scope or "")
+    event_loop_qualified = event_loop_claimed
+    if qualification_under_test:
+        if (
+            bool(runtime_config.parity_qualified)
+            or str(runtime_config.parity_qualification_sha256)
+        ):
+            raise RuntimeError(
+                "C++ cooldown qualification-under-test runtime carries parity authority"
+            )
+    else:
+        if not re.fullmatch(r"[0-9a-f]{64}", receipt_sha256):
+            raise RuntimeError(
+                "explicit C++ cooldown qualification lacks a parity receipt SHA256"
+            )
+        if receipt_sha256 != str(runtime_config.parity_qualification_sha256):
+            raise RuntimeError("C++ cooldown parity receipt identity drifted")
+        if qualification_scope == _F05_CURRENT_CPP_QUALIFICATION_SCOPE:
+            _validate_current_cpp_qualification_receipt(
+                params,
+                evaluator=evaluator,
+                receipt_sha256=receipt_sha256,
+            )
+            # Current-policy event-loop authority is a consequence of the
+            # validated paired comparison, never of the caller's boolean.
+            event_loop_qualified = True
+            params[
+                "_cooldown_duration_policy_cpp_validated_receipt_sha256"
+            ] = receipt_sha256
+            params[
+                "_cooldown_duration_policy_cpp_event_loop_receipt_qualified"
+            ] = True
 
-    expected_policy_sha256 = str(
-        getattr(evaluator, "policy_sha256", "") or ""
-    )
-    expected_predicate_sha256 = str(
-        getattr(evaluator, "predicate_bundle_sha256", "") or ""
-    )
-    if (
-        str(runtime_config.policy.policy_sha256) != expected_policy_sha256
-        or str(runtime_config.policy.predicate_bundle_sha256)
-        != expected_predicate_sha256
+    side_bindings = getattr(evaluator, "cpp_policy_bindings", None)
+    if side_bindings is not None:
+        if set(side_bindings) != {"BUY", "SELL"}:
+            raise RuntimeError(
+                "C++ cooldown runtime evaluator lacks the current BUY/SELL binding"
+            )
+        for side, compiled_policy in (
+            ("SELL", runtime_config.policy),
+            ("BUY", runtime_config.buy_policy),
+        ):
+            expected = side_bindings[side]
+            if (
+                str(compiled_policy.policy_sha256)
+                != str(expected.get("policy_sha256", ""))
+                or str(compiled_policy.predicate_bundle_sha256)
+                != str(expected.get("predicate_bundle_sha256", ""))
+            ):
+                raise RuntimeError(
+                    "C++ cooldown runtime is not bound to the Python-authoritative "
+                    f"{side} policy and predicate identities"
+                )
+    else:
+        expected_policy_sha256 = str(
+            getattr(evaluator, "policy_sha256", "") or ""
+        )
+        expected_predicate_sha256 = str(
+            getattr(evaluator, "predicate_bundle_sha256", "") or ""
+        )
+        if (
+            str(runtime_config.policy.policy_sha256) != expected_policy_sha256
+            or str(runtime_config.policy.predicate_bundle_sha256)
+            != expected_predicate_sha256
+        ):
+            raise RuntimeError(
+                "C++ cooldown runtime is not bound to the Python-authoritative "
+                "policy and predicate identities"
+            )
+
+    if qualification_under_test and qualification_scope != (
+        _F05_CURRENT_CPP_QUALIFICATION_SCOPE
     ):
         raise RuntimeError(
-            "C++ cooldown runtime is not bound to the Python-authoritative "
-            "policy and predicate identities"
+            "C++ cooldown qualification-under-test is limited to current receive-time"
         )
-
-    qualification_scope = str(runtime_config.qualification_scope or "")
     if require_full_replay:
         if qualification_scope not in {
             "synthetic_full_replay_smoke",
             "real_day_all_arm_full_replay_v21",
             "real_day_all_arm_full_replay_v22",
             "real_day_all_arm_full_replay_v23",
+            "current_receive_time_full_replay_v1",
         }:
             raise NotImplementedError(
                 "the bound C++ cooldown runtime is qualified only for synthetic "
                 "mechanics parity, not the synthetic full-replay smoke path"
             )
-        if not bool(
-            params.get(
-                "cooldown_duration_policy_cpp_event_loop_parity_qualified",
-                False,
-            )
-        ):
+        if not qualification_under_test and not event_loop_qualified:
             raise NotImplementedError(
                 "the C++ cooldown streaming ABI is qualified, but full-replay "
                 "selection remains rejected until event-loop parity is explicitly "
@@ -33638,6 +33991,7 @@ def _validate_f05_cpp_cooldown_runtime(
         "real_day_all_arm_full_replay_v21",
         "real_day_all_arm_full_replay_v22",
         "real_day_all_arm_full_replay_v23",
+        "current_receive_time_full_replay_v1",
     }:
         raise RuntimeError("C++ cooldown qualification scope is invalid")
     return runtime
@@ -33948,10 +34302,96 @@ def _conditional_p3_historical_output_marker(
     }
 
 
+def _materialize_cpp_native_exchange_book_tape(exchange_book_event_tape):
+    """Flatten one re-iterable native tape for the callback-free C++ loop."""
+
+    event_ts_ns = array.array("q")
+    event_type = array.array("B")
+    receive_ts_ns = array.array("q")
+    event_time_ms = array.array("q")
+    transaction_time_ms = array.array("q")
+    first_update_id = array.array("q")
+    final_update_id = array.array("q")
+    previous_final_update_id = array.array("q")
+    last_update_id = array.array("q")
+    level_offsets = array.array("q", [0])
+    level_is_bid = array.array("B")
+    level_price_tick = array.array("q")
+    level_quantity = array.array("d")
+    type_code = {"snapshot": 1, "delta": 2, "source_gap": 3}
+    previous_ts_ns = 0
+
+    for event in exchange_book_event_tape:
+        ts_ns = int(event.exchange_ts_ns)
+        if ts_ns <= 0 or ts_ns < previous_ts_ns:
+            raise ValueError(
+                "native exchange-book tape must be positive and exchange-time sorted"
+            )
+        previous_ts_ns = ts_ns
+        kind = str(event.event_type)
+        if kind not in type_code:
+            raise ValueError(f"unsupported native exchange-book event_type={kind!r}")
+        event_ts_ns.append(ts_ns)
+        event_type.append(type_code[kind])
+        receive_ts_ns.append(int(event.local_receive_ts_ns or 0))
+        event_time_ms.append(int(event.event_time_ns or 0) // 1_000_000)
+        transaction_time_ms.append(
+            int(event.transaction_time_ns or 0) // 1_000_000
+        )
+        for output, value in (
+            (first_update_id, event.first_update_id),
+            (final_update_id, event.final_update_id),
+            (previous_final_update_id, event.previous_final_update_id),
+            (last_update_id, event.last_update_id),
+        ):
+            output.append(-1 if value is None else int(value))
+        for side, price_tick, quantity in event.levels:
+            normalized_side = str(side).strip().lower()
+            if normalized_side not in {"bid", "ask", "buy", "sell"}:
+                raise ValueError(
+                    f"unsupported native exchange-book side={side!r}"
+                )
+            value = float(quantity)
+            if not math.isfinite(value) or value < 0.0:
+                raise ValueError(
+                    "native exchange-book quantity must be finite and non-negative"
+                )
+            level_is_bid.append(int(normalized_side in {"bid", "buy"}))
+            level_price_tick.append(int(price_tick))
+            level_quantity.append(value)
+        level_offsets.append(len(level_price_tick))
+
+    if not event_ts_ns:
+        raise ValueError("native exchange-book tape is empty")
+    return {
+        "event_ts_ns": np.frombuffer(event_ts_ns, dtype=np.int64),
+        "event_type": np.frombuffer(event_type, dtype=np.uint8),
+        "receive_ts_ns": np.frombuffer(receive_ts_ns, dtype=np.int64),
+        "event_time_ms": np.frombuffer(event_time_ms, dtype=np.int64),
+        "transaction_time_ms": np.frombuffer(
+            transaction_time_ms, dtype=np.int64
+        ),
+        "first_update_id": np.frombuffer(first_update_id, dtype=np.int64),
+        "final_update_id": np.frombuffer(final_update_id, dtype=np.int64),
+        "previous_final_update_id": np.frombuffer(
+            previous_final_update_id, dtype=np.int64
+        ),
+        "last_update_id": np.frombuffer(last_update_id, dtype=np.int64),
+        "level_offsets": np.frombuffer(level_offsets, dtype=np.int64),
+        "level_is_bid": np.frombuffer(level_is_bid, dtype=np.uint8),
+        "level_price_tick": np.frombuffer(level_price_tick, dtype=np.int64),
+        "level_quantity": np.frombuffer(level_quantity, dtype=np.float64),
+        "strict_after_ns": int(
+            getattr(exchange_book_event_tape, "day_start_ns", 0)
+        ),
+    }
+
+
 def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                        ml_data=None, bbo_data=None, l2_data=None,
                        var_ti=None, var_retsq=None,
-                       historical_fair_price_data=None):
+                       historical_fair_price_data=None,
+                       exchange_book_event_tape=None):
     """Run the experimental C++ replay engine and adapt its summary to Python output keys.
 
     中文说明：C++ replay 是加速/一致性验证工具，不是当前 live 参数选择的
@@ -33960,6 +34400,10 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     validate_replay_initial_state(params.get("initial_live_state"), backend="cpp")
     if "last_requote_ts_ms" in (params.get("initial_live_state") or {}):
         raise ValueError("C++ replay cannot restore last_requote_ts_ms; use Python replay")
+    for key in ("_requote_tail_work_samples_ms", "_main_loop_work_samples_ms"):
+        work_samples = np.asarray(params.get(key, []), dtype=np.float64)
+        if work_samples.size and np.any(work_samples != 0.0):
+            raise ValueError("main-loop local work continuation is Python-only")
     pre_snapshot_samples = _as_f64_array(
         params.get("_pre_snapshot_compute_latency_samples_ms")
     )
@@ -34172,6 +34616,31 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         )
     replay_event_clock = str(params.get("replay_event_clock", "trade") or "trade").lower()
     replay_clock_interval_ms = int(params.get("replay_clock_interval_ms", 100) or 100)
+    exchange_book_queue_mode = str(
+        params.get("exchange_book_queue_mode", "disabled") or "disabled"
+    ).strip().lower()
+    if (exchange_book_event_tape is not None) != (
+        exchange_book_queue_mode != "disabled"
+    ):
+        raise ValueError(
+            "exchange_book_event_tape and a non-disabled "
+            "exchange_book_queue_mode are required together"
+        )
+    if exchange_book_event_tape is not None:
+        if exchange_book_queue_mode != "strict":
+            raise NotImplementedError(
+                "C++ native exchange-book replay currently admits only strict mode"
+            )
+        if replay_event_clock not in {"merged", "empirical"}:
+            raise ValueError(
+                "native exchange-book replay requires replay_event_clock=merged "
+                "or empirical"
+            )
+        if bool(params.get("queue_l2_cancel_ahead_enabled", False)):
+            raise ValueError(
+                "native exchange-book queue updates cannot be combined with "
+                "sampled top-N queue_l2_cancel_ahead updates"
+            )
     sync_degrade_events = _sync_degrade_events_for_replay(params, trades_df)
     trades_df, n_execution_trades = build_replay_event_clock(
         trades_df,
@@ -34261,6 +34730,37 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     cpp_params = cpp.TickReplayParams()
     cpp_params.quote = _copy_quote_config_to_cpp(quote_core_cfg, cpp.QuoteCoreConfig())
     cpp_params.order_size = order_size
+    if exchange_book_event_tape is not None:
+        if not hasattr(cpp_params, "set_native_exchange_book_arrays"):
+            raise RuntimeError(
+                "strict native C++ replay requires the current tape ABI; "
+                "rebuild narrowgate_cpp from this source tree"
+            )
+        native_arrays = _materialize_cpp_native_exchange_book_tape(
+            exchange_book_event_tape
+        )
+        cpp_params.native_exchange_book_strict_after_ns = int(
+            native_arrays["strict_after_ns"]
+        )
+        cpp_params.set_native_exchange_book_arrays(
+            native_arrays["event_ts_ns"],
+            native_arrays["event_type"],
+            native_arrays["receive_ts_ns"],
+            native_arrays["event_time_ms"],
+            native_arrays["transaction_time_ms"],
+            native_arrays["first_update_id"],
+            native_arrays["final_update_id"],
+            native_arrays["previous_final_update_id"],
+            native_arrays["last_update_id"],
+            native_arrays["level_offsets"],
+            native_arrays["level_is_bid"],
+            native_arrays["level_price_tick"],
+            native_arrays["level_quantity"],
+        )
+        # The binding owns compact C++ vectors after this call. Drop the
+        # temporary Python buffers before entering a full-day replay instead
+        # of retaining a second complete copy of the native tape.
+        del native_arrays
     if cpp_cooldown_runtime is not None:
         shared_window_tape = params.get(
             "_cooldown_duration_policy_cpp_window_tape_handle"
@@ -34328,6 +34828,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                 "market_generation",
                 "depth_generation",
                 "mid_usdc_per_btc",
+                "reset_feature_state",
                 "source_gap",
                 "source_stale",
                 "warmup_admitted",
@@ -34347,6 +34848,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                             else np.uint8
                             if name
                             in {
+                                "reset_feature_state",
                                 "source_gap",
                                 "source_stale",
                                 "warmup_admitted",
@@ -34592,11 +35094,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             "rebuild narrowgate_cpp"
         )
     if hasattr(cpp_params, "decision_to_gateway_latency_samples_ms"):
-        cpp_params.decision_to_gateway_latency_seed = int(
-            params.get(
-                "decision_to_gateway_latency_seed",
-                params.get("latency_seed", cpp_params.rng_seed + 17),
-            )
+        cpp_params.decision_to_gateway_latency_seed = (
+            effective_decision_to_gateway_latency_seed(params)
         )
         cpp_params.decision_to_gateway_latency_samples_ms = [
             float(x)
@@ -35079,7 +35578,7 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
     # describe a not-yet-completed bar and must not seed current state.
     cpp_params.initial_sigma_sq = 1.0
     cpp_params.rng_seed = int(params.get("rng_seed", 42))
-    cpp_params.latency_seed = int(params.get("latency_seed", cpp_params.rng_seed + 17))
+    cpp_params.latency_seed = effective_latency_seed(params)
     cpp_params.replay_contract_sha256 = str(
         params.get("replay_contract_sha256", "")
     )
@@ -35662,6 +36161,8 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         None,
     )
     f05_repeated_cooldown_audit = {}
+    f05_qualification_under_test = False
+    f05_cooldown_authoritative = False
     if f05_repeated_cooldown_checkpoint is not None:
         audit = f05_repeated_cooldown_checkpoint.audit
         f05_repeated_cooldown_audit = {
@@ -35680,6 +36181,27 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
                 "lineage_clear_count",
             )
         }
+        f05_qualification_under_test = bool(
+            f05_repeated_cooldown_checkpoint.qualification_under_test
+        )
+        f05_cooldown_authoritative = bool(
+            not f05_qualification_under_test
+            and str(
+                f05_repeated_cooldown_checkpoint.parity_qualification_sha256
+            )
+        )
+        f05_repeated_cooldown_audit.update(
+            {
+                "qualification_under_test": f05_qualification_under_test,
+                "paired_execution_only": f05_qualification_under_test,
+                "authoritative": f05_cooldown_authoritative,
+                "qualification_mode": (
+                    "paired_non_authoritative_under_test"
+                    if f05_qualification_under_test
+                    else "external_parity_receipt"
+                ),
+            }
+        )
     paired_fixed_spread_fields = [
         "side",
         "distance_ticks",
@@ -35932,6 +36454,51 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         ),
         "queue_l2_cancel_ahead_qty": float(
             getattr(summary, "queue_l2_cancel_ahead_qty", 0.0)
+        ),
+        "exchange_book_events_consumed": int(
+            getattr(summary, "native_book_events_consumed", 0)
+        ),
+        "exchange_book_events_accepted": int(
+            getattr(summary, "native_book_events_accepted", 0)
+        ),
+        "exchange_book_events_rejected": int(
+            getattr(summary, "native_book_events_rejected", 0)
+        ),
+        "exchange_book_snapshot_events": int(
+            getattr(summary, "native_book_snapshot_events", 0)
+        ),
+        "exchange_book_sequence_gaps": int(
+            getattr(summary, "native_book_sequence_gaps", 0)
+        ),
+        "exchange_book_queue_lookup_count": int(
+            getattr(summary, "native_queue_lookup_count", 0)
+        ),
+        "exchange_book_queue_exact_count": int(
+            getattr(summary, "native_queue_exact_count", 0)
+        ),
+        "exchange_book_queue_known_zero_count": int(
+            getattr(summary, "native_queue_known_zero_count", 0)
+        ),
+        "exchange_book_queue_missing_count": int(
+            getattr(summary, "native_queue_missing_count", 0)
+        ),
+        "exchange_book_queue_invalidated_order_count": int(
+            getattr(summary, "native_queue_invalidated_order_count", 0)
+        ),
+        "exchange_book_queue_ambiguous_event_count": int(
+            getattr(summary, "native_queue_ambiguous_event_count", 0)
+        ),
+        "exchange_book_queue_cancel_ahead_event_count": int(
+            getattr(summary, "native_queue_cancel_ahead_event_count", 0)
+        ),
+        "exchange_book_queue_cancel_ahead_qty": float(
+            getattr(summary, "native_queue_cancel_ahead_qty", 0.0)
+        ),
+        "exchange_book_queue_mode": exchange_book_queue_mode,
+        "exchange_book_queue_scope": (
+            "strategy_independent_native_snapshot_delta_exchange_time_v1"
+            if exchange_book_event_tape is not None
+            else "disabled"
         ),
         "queue_ahead_buy_exposure_mult": cpp_params.queue_ahead_buy_exposure_mult,
         "queue_ahead_buy_reducing_mult": cpp_params.queue_ahead_buy_reducing_mult,
@@ -36752,6 +37319,25 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
             if row["exposure_fill_ordinal"] > 0
         ],
         "_cooldown_duration_policy_audit": f05_repeated_cooldown_audit,
+        "cooldown_duration_policy_cpp_qualification_under_test": (
+            f05_qualification_under_test
+        ),
+        "cooldown_duration_policy_cpp_authoritative": (
+            f05_cooldown_authoritative
+        ),
+        "cooldown_duration_policy_cpp_parity_receipt_sha256": str(
+            params.get(
+                "_cooldown_duration_policy_cpp_validated_receipt_sha256",
+                "",
+            )
+            or ""
+        ),
+        "cooldown_duration_policy_cpp_event_loop_parity_qualified": bool(
+            params.get(
+                "_cooldown_duration_policy_cpp_event_loop_receipt_qualified",
+                False,
+            )
+        ),
         "_f05_repeated_cooldown_decisions": (
             f05_repeated_cooldown_decisions
         ),
@@ -36924,12 +37510,6 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                 "variance-time full counterfactual replay is Python-authoritative "
                 "until the candidate path and native q90 scheduler reach C++ parity"
             )
-        if exchange_book_event_tape is not None:
-            raise NotImplementedError(
-                "native exchange-time snapshot/delta queue replay is "
-                "Python-authoritative until a streaming C++ scheduler reaches "
-                "parity"
-            )
         if active_order_queue_data is not None:
             raise NotImplementedError(
                 "strict sparse active-order queue replay is Python-only"
@@ -37005,6 +37585,7 @@ def _simulate_tick_with_engine(engine, trades_df, var_ts_ms, var_ssq, params,
                 var_ti=var_ti,
                 var_retsq=var_retsq,
                 historical_fair_price_data=historical_fair_price_data,
+                exchange_book_event_tape=exchange_book_event_tape,
             )
         )
     if engine == "python":

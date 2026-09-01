@@ -398,9 +398,15 @@ def _market_context_transform_identity() -> str:
     return canonical_sha256(
         {
             "schema": "narrowgate.market_context_transform.v2",
+            "aggtrade_dtypes": {
+                name: np.dtype(dtype).name
+                for name, dtype in sorted(bt.AGGTRADE_DTYPES.items())
+            },
             "functions": [
                 _callable_identity(callable_value)
                 for callable_value in (
+                    bt._read_aggtrade_csv,
+                    bt._read_individual_trade_csv,
                     bt.load_execution_trades,
                     bt.load_1s_bars,
                     bt.build_rolling_variance,
@@ -566,6 +572,7 @@ def _window_cache_path(
     )
     payload = {
         "version": WINDOW_CACHE_VERSION,
+        "transform_identity_sha256": _market_context_transform_identity(),
         "symbol": str(bt.SYMBOL).upper(),
         "day": day,
         "load_ml": bool(load_ml),
@@ -616,6 +623,7 @@ def _window_market_context_cache_path(
     payload = {
         "schema_version": "narrowgate.window_market_context.v1",
         "component_cache_version": WINDOW_COMPONENT_CACHE_VERSION,
+        "transform_identity_sha256": _market_context_transform_identity(),
         "symbol": str(bt.SYMBOL).upper(),
         "day": str(day),
         "execution_trade_source": execution_trade_source,
@@ -905,11 +913,17 @@ def load_tick_window(
     resolved_run_ml_inference = (
         bool(params.get("ml_enabled", True)) if run_ml_inference is None else bool(run_ml_inference)
     )
-    resolved_feature_dir = (
-        Path(feature_dir).expanduser().resolve()
-        if feature_dir is not None
-        else Path(os.environ.get("MM_FEATURE_DIR", bt.FEATURES_DIR)).expanduser().resolve()
-    )
+    if feature_dir is not None:
+        resolved_feature_dir = Path(feature_dir).expanduser().resolve()
+    elif str(os.environ.get("MM_FEATURE_DIR", "")).strip():
+        resolved_feature_dir = Path(os.environ["MM_FEATURE_DIR"]).expanduser().resolve()
+    elif load_ml and resolved_run_ml_inference:
+        # The selected model bundle, not the generic symbol directory, owns
+        # the feature-manifest identity.  This keeps direct/current replay on
+        # the same feature panel as the configured live model.
+        resolved_feature_dir = bt.resolve_ml_feature_dir()
+    else:
+        resolved_feature_dir = Path(bt.FEATURES_DIR).expanduser().resolve()
     formal_quality_allowed_days = _formal_quality_allowed_days(params)
     cache_path = None
     market_context_cache_path = None

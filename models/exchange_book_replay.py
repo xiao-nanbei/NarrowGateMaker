@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
+import re
 import warnings
 from collections import deque
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1461,6 +1463,162 @@ class _ReceiveTimeCooldownSnapshot:
     source_bundle_sha256: str = ""
 
 
+_CPP_FIXED_DURATION_RE = re.compile(r"FIXED_(\d+)S")
+_CPP_BUY_E3_SOURCE_RE = re.compile(
+    r"^(?:tri|value)::mid_usdc_per_btc__h"
+    r"(?P<fast>\d+(?:p\d+)?)s__h(?P<slow>\d+(?:p\d+)?)s::"
+    r"(?P<metric>[a-z_]+)$"
+)
+_CPP_BUY_E3_DIRECT_CAMPAIGN_AGE = (
+    "predicate::m0::campaign_age_gt_control_duration"
+)
+
+
+def _compile_cpp_boolean_cooldown_policy(cpp, policy, *, declarative: bool):
+    """Compile one loaded policy object into the generic native rule ABI."""
+
+    evaluator = policy.evaluator
+    columns = tuple(str(value) for value in evaluator.predicate_columns)
+    if not columns or tuple(sorted(columns)) != columns or len(set(columns)) != len(columns):
+        raise ValueError("cooldown_cpp_predicate_columns_invalid")
+    policy_sha256 = str(evaluator.policy_sha256).lower()
+    predicate_sha256 = str(evaluator.predicate_bundle_sha256).lower()
+    if (
+        re.fullmatch(r"[0-9a-f]{64}", policy_sha256) is None
+        or re.fullmatch(r"[0-9a-f]{64}", predicate_sha256) is None
+    ):
+        raise ValueError("cooldown_cpp_policy_identity_invalid")
+
+    compiled = cpp.F05BooleanPolicy()
+    compiled.policy_sha256 = policy_sha256
+    compiled.predicate_bundle_sha256 = predicate_sha256
+    compiled.predicate_columns = list(columns)
+    compiled.default_action = "CONTROL_85N"
+    column_index = {name: index for index, name in enumerate(columns)}
+    compiled_rules = []
+    for action_id, raw_clauses in evaluator.rules:
+        match = _CPP_FIXED_DURATION_RE.fullmatch(str(action_id))
+        if match is None:
+            raise ValueError("cooldown_cpp_rule_action_invalid")
+        rule = cpp.F05BooleanRule()
+        rule.action_id = str(action_id)
+        rule.duration_ms = int(match.group(1)) * 1_000
+        clauses = []
+        for raw_clause in raw_clauses:
+            clause = cpp.F05BooleanClause()
+            literals = []
+            for name, negated in raw_clause:
+                if str(name) not in column_index:
+                    raise ValueError("cooldown_cpp_rule_predicate_unbound")
+                literal = cpp.F05BooleanLiteral()
+                literal.predicate_index = column_index[str(name)]
+                literal.negated = bool(negated)
+                literals.append(literal)
+            if not literals:
+                raise ValueError("cooldown_cpp_rule_clause_empty")
+            clause.literals = literals
+            clauses.append(clause)
+        if not clauses:
+            raise ValueError("cooldown_cpp_rule_clauses_empty")
+        rule.clauses = clauses
+        compiled_rules.append(rule)
+    compiled.rules = compiled_rules
+    if not declarative:
+        return compiled
+
+    half_lives = tuple(float(value) for value in policy.ema_half_lives_s)
+    pairs = tuple(
+        (float(fast), float(slow)) for fast, slow in policy.ema_pairs_s
+    )
+    if (
+        not half_lives
+        or tuple(sorted(half_lives)) != half_lives
+        or len(set(half_lives)) != len(half_lives)
+        or any(not math.isfinite(value) or value <= 0.0 for value in half_lives)
+    ):
+        raise ValueError("cooldown_cpp_ema_half_lives_invalid")
+    half_life_index = {value: index for index, value in enumerate(half_lives)}
+    cpp_pairs = []
+    pair_index: dict[tuple[float, float], int] = {}
+    for fast, slow in pairs:
+        if fast not in half_life_index or slow not in half_life_index or fast >= slow:
+            raise ValueError("cooldown_cpp_ema_pair_invalid")
+        if (fast, slow) in pair_index:
+            raise ValueError("cooldown_cpp_ema_pair_duplicate")
+        pair_index[(fast, slow)] = len(cpp_pairs)
+        pair = cpp.F05PredicatePair()
+        pair.fast_ema_index = half_life_index[fast]
+        pair.slow_ema_index = half_life_index[slow]
+        cpp_pairs.append(pair)
+    compiled.ema_half_lives_s = list(half_lives)
+    compiled.predicate_pairs = cpp_pairs
+
+    metric_by_name = {
+        "positive_ordering": cpp.F05PredicateMetric.POSITIVE_ORDERING,
+        "last_cross_positive": cpp.F05PredicateMetric.LAST_CROSS_POSITIVE,
+        "expanding": cpp.F05PredicateMetric.EXPANDING,
+        "converging": cpp.F05PredicateMetric.CONVERGING,
+        "abs_distance": cpp.F05PredicateMetric.ABS_DISTANCE,
+        "cross_age_s": cpp.F05PredicateMetric.CROSS_AGE_S,
+        "arrangement_persistence_s": (
+            cpp.F05PredicateMetric.ARRANGEMENT_PERSISTENCE_S
+        ),
+        "signed_distance": cpp.F05PredicateMetric.SIGNED_DISTANCE,
+        "signed_distance_velocity": (
+            cpp.F05PredicateMetric.SIGNED_DISTANCE_VELOCITY
+        ),
+        "signed_distance_acceleration": (
+            cpp.F05PredicateMetric.SIGNED_DISTANCE_ACCELERATION
+        ),
+    }
+    raw_definitions = {
+        str(name): value for name, value in policy.definitions.items()
+    }
+    direct = frozenset(str(name) for name in policy.direct_predicates)
+    if direct - {_CPP_BUY_E3_DIRECT_CAMPAIGN_AGE}:
+        raise ValueError("cooldown_cpp_direct_predicate_unsupported")
+    definitions = []
+    for index, name in enumerate(columns):
+        definition = cpp.F05PredicateDefinition()
+        definition.predicate_index = index
+        if name in direct:
+            definition.metric = cpp.F05PredicateMetric.CAMPAIGN_AGE_GT_CONTROL
+            definitions.append(definition)
+            continue
+        raw = raw_definitions.get(name)
+        if not isinstance(raw, Mapping):
+            raise ValueError("cooldown_cpp_predicate_definition_missing")
+        source = str(raw.get("source_field", ""))
+        match = _CPP_BUY_E3_SOURCE_RE.fullmatch(source)
+        if match is None:
+            raise ValueError("cooldown_cpp_predicate_source_unsupported")
+        fast = float(match.group("fast").replace("p", "."))
+        slow = float(match.group("slow").replace("p", "."))
+        if (fast, slow) not in pair_index:
+            raise ValueError("cooldown_cpp_predicate_pair_unbound")
+        metric = metric_by_name.get(match.group("metric"))
+        if metric is None:
+            raise ValueError("cooldown_cpp_predicate_metric_unsupported")
+        definition.metric = metric
+        definition.pair_index = pair_index[(fast, slow)]
+        kind = str(raw.get("kind", ""))
+        if kind == "preserved_tri":
+            definition.threshold_enabled = False
+        elif kind == "quantile_ge":
+            threshold = float(raw.get("threshold"))
+            if not math.isfinite(threshold):
+                raise ValueError("cooldown_cpp_predicate_threshold_invalid")
+            definition.threshold_enabled = True
+            definition.threshold = threshold
+        else:
+            raise ValueError("cooldown_cpp_predicate_kind_unsupported")
+        definitions.append(definition)
+    if set(raw_definitions) | set(direct) != set(columns):
+        raise ValueError("cooldown_cpp_predicate_definition_set_drifted")
+    compiled.predicate_definitions = definitions
+    return compiled
+
+
 class ReceiveTimeCooldownReplayAdapter:
     """Replay supplied live policies using delivered depth callbacks.
 
@@ -1473,12 +1631,24 @@ class ReceiveTimeCooldownReplayAdapter:
 
     def __init__(self, depth_data, delivery_schedule, *, policies, channel=None):
         self._depth = depth_data
-        self._ready = delivery_schedule.ready_ns_for_channel(channel)
+        raw_ready = delivery_schedule.ready_ns_for_channel(channel)
         raw_receive = delivery_schedule.receive_ns_for_channel(channel)
         # A depth connection cannot deliver later sequence messages before an
         # earlier one. Sampled marginal receive delays may otherwise regress.
         self._receive = np.maximum.accumulate(raw_receive)
         self._receive_clamps = int(np.count_nonzero(self._receive != raw_receive))
+        # This adapter's current contract has one callback-entry clock. Keep
+        # capture visibility on the same source-order-clamped boundary rather
+        # than searching the schedule's unclamped/raw receive sequence.
+        self._ready = np.maximum.accumulate(
+            np.maximum(np.asarray(raw_ready, dtype=np.int64), self._receive)
+        )
+        self._ready_post_clamps = int(
+            np.count_nonzero(self._ready != np.asarray(raw_ready))
+        )
+        self._ready_schedule_clamps = int(
+            delivery_schedule.stats_dict().get("head_of_line_clamped_events", 0)
+        )
         exchange = delivery_schedule.exchange_ns_for_channel(channel)
         if not np.array_equal(np.asarray(depth_data.ts_ms) * 1_000_000, exchange):
             raise ValueError("receive-time policy depth rows and delivery clocks differ")
@@ -1495,6 +1665,211 @@ class ReceiveTimeCooldownReplayAdapter:
         self._captures = 0
         self._fallbacks = 0
         self._evaluations = 0
+        self._cpp_window_arrays_cache = None
+
+    @property
+    def cpp_policy_bindings(self) -> Mapping[str, Mapping[str, str]]:
+        """Return the two side-specific identities consumed by native replay."""
+
+        bindings = {}
+        for side, policy in self._policies.items():
+            evaluator = policy.evaluator
+            binding = {
+                "policy_sha256": str(evaluator.policy_sha256),
+                "predicate_bundle_sha256": str(
+                    evaluator.predicate_bundle_sha256
+                ),
+            }
+            artifact_sha256 = str(getattr(evaluator, "artifact_sha256", "") or "")
+            if artifact_sha256:
+                binding["artifact_sha256"] = artifact_sha256
+            bindings[side] = MappingProxyType(binding)
+        return MappingProxyType(bindings)
+
+    @property
+    def cpp_runtime_binding_sha256(self) -> str:
+        """Return one root identity for the compiled side-policy binding."""
+
+        payload = {
+            "schema": "current_receive_time_cooldown_cpp_binding",
+            "feature_clock": "receive_time_full_mid_ema_bank_v1",
+            "policies": {
+                side: dict(binding)
+                for side, binding in sorted(self.cpp_policy_bindings.items())
+            },
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), allow_nan=False
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def cpp_window_arrays(self) -> Mapping[str, np.ndarray]:
+        """Materialize the exact completed receive-time mid-window stream."""
+
+        if self._cpp_window_arrays_cache is not None:
+            return self._cpp_window_arrays_cache
+        width = 100_000_000
+        receive = np.asarray(self._receive, dtype=np.int64)
+        if receive.ndim != 1 or receive.size < 2 or np.any(receive <= 0):
+            raise ValueError("cooldown_cpp_receive_clock_incomplete")
+        if not np.array_equal(np.asarray(self._ready, dtype=np.int64), receive):
+            raise ValueError("cooldown_cpp_delivery_and_callback_clocks_differ")
+        if np.any(receive[1:] < receive[:-1]):
+            raise ValueError("cooldown_cpp_receive_clock_regressed")
+        buckets = (receive // width) * width
+        group_starts = np.concatenate(
+            (
+                np.asarray([0], dtype=np.int64),
+                np.flatnonzero(buckets[1:] != buckets[:-1]).astype(np.int64)
+                + 1,
+            )
+        )
+        if group_starts.size < 2:
+            raise ValueError("cooldown_cpp_no_completed_receive_time_window")
+        pending_left = buckets[group_starts[:-1]]
+        next_left = buckets[group_starts[1:]]
+        gap_counts = (next_left - pending_left) // width - 1
+        if np.any(gap_counts < 0):
+            raise ValueError("cooldown_cpp_window_clock_regressed")
+        max_feature_age_s = min(
+            float(policy.windows.max_feature_age_s)
+            for policy in self._policies.values()
+        )
+        reset_transition = (
+            gap_counts * width > max_feature_age_s * 1_000_000_000.0
+        )
+        represented_gap_counts = np.where(reset_transition, 0, gap_counts)
+        total = int(
+            len(represented_gap_counts) + int(np.sum(represented_gap_counts))
+        )
+        left = np.empty(total, dtype=np.int64)
+        right = np.empty(total, dtype=np.int64)
+        ready = np.empty(total, dtype=np.int64)
+        mid = np.full(total, np.nan, dtype=np.float64)
+        source_gap = np.ones(total, dtype=np.uint8)
+        reset_feature_state = np.zeros(total, dtype=np.uint8)
+        prior_last = group_starts[1:] - 1
+        bid = np.asarray(self._depth.bid_px)
+        ask = np.asarray(self._depth.ask_px)
+        if bid.ndim != 2 or ask.ndim != 2 or bid.shape[1] == 0 or ask.shape[1] == 0:
+            raise ValueError("cooldown_cpp_depth_bbo_missing")
+        prior_mid = (
+            np.asarray(bid[prior_last, 0], dtype=np.float64)
+            + np.asarray(ask[prior_last, 0], dtype=np.float64)
+        ) / 2.0
+        if np.any(~np.isfinite(prior_mid)) or np.any(prior_mid <= 0.0):
+            raise ValueError("cooldown_cpp_depth_bbo_invalid")
+        feature_ready = receive[group_starts[1:]]
+        cursor = 0
+        for index, gap_count in enumerate(represented_gap_counts):
+            if reset_transition[index]:
+                # The callback at next_left is the exact live reset boundary:
+                # the old pending bucket is discarded and the new bucket stays
+                # pending until a later callback completes it.
+                left[cursor] = next_left[index]
+                right[cursor] = next_left[index]
+                ready[cursor] = feature_ready[index]
+                source_gap[cursor] = 0
+                reset_feature_state[cursor] = 1
+                cursor += 1
+                continue
+            count = int(gap_count)
+            left[cursor] = pending_left[index]
+            right[cursor] = pending_left[index] + width
+            ready[cursor] = feature_ready[index]
+            mid[cursor] = prior_mid[index]
+            source_gap[cursor] = 0
+            cursor += 1
+            if count:
+                positions = slice(cursor, cursor + count)
+                left[positions] = pending_left[index] + width * np.arange(
+                    1, count + 1, dtype=np.int64
+                )
+                right[positions] = left[positions] + width
+                ready[positions] = feature_ready[index]
+                cursor += count
+        assert cursor == total
+        generation = np.arange(1, total + 1, dtype=np.int64)
+        zeros = np.zeros(total, dtype=np.uint8)
+        arrays = {
+            "left_ts_ns": left,
+            "right_ts_ns": right,
+            "feature_ready_ts_ns": ready,
+            "market_generation": generation,
+            "depth_generation": generation,
+            "mid_usdc_per_btc": mid,
+            "reset_feature_state": reset_feature_state,
+            "source_gap": source_gap,
+            "source_stale": zeros.copy(),
+            "warmup_admitted": zeros.copy(),
+            "channel_support_valid": (
+                (1 - source_gap) * (1 - reset_feature_state)
+            ).astype(np.uint8),
+        }
+        for value in arrays.values():
+            value.setflags(write=False)
+        self._cpp_window_arrays_cache = MappingProxyType(arrays)
+        return self._cpp_window_arrays_cache
+
+    def compile_cpp_runtime(
+        self,
+        cpp,
+        *,
+        parity_qualified: bool = False,
+        parity_qualification_sha256: str = "",
+        qualification_under_test: bool = False,
+    ):
+        """Compile the loaded BUY/SELL policies into one native runtime.
+
+        Compilation does not grant parity authority. A caller may set the
+        qualification fields only when it also binds the matching external
+        parity receipt through the replay parameters. ``qualification_under_test``
+        admits only an explicitly paired, non-promotable qualification run and
+        cannot coexist with a receipt.
+        """
+
+        if set(self._policies) != {"BUY", "SELL"}:
+            raise ValueError("current_cpp_cooldown_requires_buy_and_sell_policies")
+        qualification = str(parity_qualification_sha256).lower()
+        if qualification_under_test and (parity_qualified or qualification):
+            raise ValueError(
+                "cooldown_cpp_qualification_under_test_conflicts_with_parity"
+            )
+        if bool(parity_qualified) != bool(qualification):
+            raise ValueError("cooldown_cpp_parity_qualification_incomplete")
+        if qualification and re.fullmatch(r"[0-9a-f]{64}", qualification) is None:
+            raise ValueError("cooldown_cpp_parity_qualification_invalid")
+        windows = [policy.windows for policy in self._policies.values()]
+        warmup = {float(window.warmup_s) for window in windows}
+        max_age = {float(window.max_feature_age_s) for window in windows}
+        if len(warmup) != 1 or len(max_age) != 1:
+            raise ValueError("cooldown_cpp_side_clock_contracts_differ")
+
+        config = cpp.F05RepeatedBooleanCooldownConfig()
+        config.parity_qualified = bool(parity_qualified)
+        config.qualification_under_test = bool(qualification_under_test)
+        config.parity_qualification_sha256 = qualification
+        config.qualification_scope = "current_receive_time_full_replay_v1"
+        config.feature_clock_semantics = "receive_time_full_mid_ema_bank_v1"
+        config.warmup_s = warmup.pop()
+        config.max_feature_age_s = max_age.pop()
+        config.policy = _compile_cpp_boolean_cooldown_policy(
+            cpp, self._policies["SELL"], declarative=False
+        )
+        config.buy_policy = _compile_cpp_boolean_cooldown_policy(
+            cpp, self._policies["BUY"], declarative=True
+        )
+        runtime = cpp.F05RepeatedBooleanCooldownRuntime(config)
+        if (
+            bool(runtime.parity_qualified) != bool(parity_qualified)
+            or bool(runtime.qualification_under_test)
+            != bool(qualification_under_test)
+        ):
+            raise ValueError(
+                "compiled current cooldown runtime rejected its policy binding: "
+                + str(runtime.binding_error)
+            )
+        return runtime
 
     def capture_exposure_fill(
         self, *, assignment_id, fill_exchange_ts_ns, fill_visible_ts_ns, m0_context, **_lineage
@@ -1558,6 +1933,10 @@ class ReceiveTimeCooldownReplayAdapter:
             "depth_rows_available": len(self._ready),
             "depth_callbacks_consumed": self._cursor,
             "receive_head_of_line_clamped_events": self._receive_clamps,
+            "delivery_ready_head_of_line_clamped_events": (
+                self._ready_schedule_clamps
+            ),
+            "adapter_ready_post_clamped_events": self._ready_post_clamps,
             "snapshots_emitted": self._captures,
             "fallback_snapshots": self._fallbacks,
             "evaluations": self._evaluations,

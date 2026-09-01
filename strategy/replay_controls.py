@@ -47,6 +47,49 @@ SYNC_REPLAY_MODES = frozenset({"disabled", "frozen_tape", "censor", "stress"})
 VISIBILITY_BATCH_AMBIGUITY_REASON = "same_ms_exchange_book_ambiguity"
 
 
+def effective_latency_seed(params: Mapping[str, Any]) -> int:
+    """Resolve the latency seed exactly once across replay identities/backends."""
+    raw = params.get("latency_seed")
+    return int(params.get("rng_seed", 42)) + 17 if raw is None else int(raw)
+
+
+def effective_decision_to_gateway_latency_seed(params: Mapping[str, Any]) -> int:
+    """Resolve the compute/local-work seed from the effective latency seed."""
+    raw = params.get("decision_to_gateway_latency_seed")
+    return effective_latency_seed(params) if raw is None else int(raw)
+
+
+def subtract_lot_quantity(quantity: float, consumed: float, lot: float) -> float:
+    """Subtract quantities without losing a lot to binary64 cancellation.
+
+    Snap only a lot boundary inside the representation/subtraction/reconstruction
+    ULP budget. Genuine fractional queue residuals outside that budget stay
+    fractional; this is not an epsilon added to every fill or a liquidity boost.
+    Source quantity precision must justify the exchange-lot lattice: a true
+    fraction only a few ULPs from it is indistinguishable from storage roundoff.
+    """
+    if (
+        not math.isfinite(quantity) or not math.isfinite(consumed)
+        or not math.isfinite(lot) or quantity < 0.0 or consumed < 0.0 or lot <= 0.0
+    ):
+        raise ValueError(
+            "quantity subtraction requires finite nonnegative quantities and positive lot"
+        )
+    remaining = max(0.0, quantity - consumed)
+    error = math.ulp(quantity) + math.ulp(consumed) + math.ulp(remaining)
+    if error >= lot * 0.5:
+        return remaining
+    units = remaining / lot
+    if not math.isfinite(units):
+        return remaining
+    count = round(units)
+    nearest = count * lot
+    error += math.ulp(nearest) + abs(count) * math.ulp(lot)
+    if error < lot * 0.5 and abs(remaining - nearest) <= error:
+        return nearest
+    return remaining
+
+
 def cap_exposure_qty_by_position_value(
     *, side: str, current_qty: float, mid: float, requested_qty: float,
     max_position_value: float, lot: float,

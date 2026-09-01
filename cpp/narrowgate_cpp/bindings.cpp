@@ -2094,6 +2094,24 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .value("OPENER", F05CooldownFillRole::Opener)
         .value("ADD", F05CooldownFillRole::Add)
         .value("REDUCING", F05CooldownFillRole::Reducing);
+    py::enum_<F05PredicateMetric>(m, "F05PredicateMetric")
+        .value("CAMPAIGN_AGE_GT_CONTROL", F05PredicateMetric::CampaignAgeGtControl)
+        .value("POSITIVE_ORDERING", F05PredicateMetric::PositiveOrdering)
+        .value("LAST_CROSS_POSITIVE", F05PredicateMetric::LastCrossPositive)
+        .value("EXPANDING", F05PredicateMetric::Expanding)
+        .value("CONVERGING", F05PredicateMetric::Converging)
+        .value("ABS_DISTANCE", F05PredicateMetric::AbsDistance)
+        .value("CROSS_AGE_S", F05PredicateMetric::CrossAgeS)
+        .value(
+            "ARRANGEMENT_PERSISTENCE_S",
+            F05PredicateMetric::ArrangementPersistenceS)
+        .value("SIGNED_DISTANCE", F05PredicateMetric::SignedDistance)
+        .value(
+            "SIGNED_DISTANCE_VELOCITY",
+            F05PredicateMetric::SignedDistanceVelocity)
+        .value(
+            "SIGNED_DISTANCE_ACCELERATION",
+            F05PredicateMetric::SignedDistanceAcceleration);
 
     py::class_<F05BooleanLiteral>(m, "F05BooleanLiteral")
         .def(py::init<>())
@@ -2107,6 +2125,19 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite("action_id", &F05BooleanRule::action_id)
         .def_readwrite("duration_ms", &F05BooleanRule::duration_ms)
         .def_readwrite("clauses", &F05BooleanRule::clauses);
+    py::class_<F05PredicatePair>(m, "F05PredicatePair")
+        .def(py::init<>())
+        .def_readwrite("fast_ema_index", &F05PredicatePair::fast_ema_index)
+        .def_readwrite("slow_ema_index", &F05PredicatePair::slow_ema_index);
+    py::class_<F05PredicateDefinition>(m, "F05PredicateDefinition")
+        .def(py::init<>())
+        .def_readwrite(
+            "predicate_index", &F05PredicateDefinition::predicate_index)
+        .def_readwrite("metric", &F05PredicateDefinition::metric)
+        .def_readwrite("pair_index", &F05PredicateDefinition::pair_index)
+        .def_readwrite(
+            "threshold_enabled", &F05PredicateDefinition::threshold_enabled)
+        .def_readwrite("threshold", &F05PredicateDefinition::threshold);
     py::class_<F05BooleanPolicy>(m, "F05BooleanPolicy")
         .def(py::init<>())
         .def_readwrite("policy_sha256", &F05BooleanPolicy::policy_sha256)
@@ -2117,6 +2148,12 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "predicate_columns",
             &F05BooleanPolicy::predicate_columns)
         .def_readwrite("rules", &F05BooleanPolicy::rules)
+        .def_readwrite(
+            "ema_half_lives_s", &F05BooleanPolicy::ema_half_lives_s)
+        .def_readwrite(
+            "predicate_pairs", &F05BooleanPolicy::predicate_pairs)
+        .def_readwrite(
+            "predicate_definitions", &F05BooleanPolicy::predicate_definitions)
         .def_readwrite("default_action", &F05BooleanPolicy::default_action);
     py::class_<F05RepeatedBooleanCooldownConfig>(
         m,
@@ -2125,6 +2162,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "parity_qualified",
             &F05RepeatedBooleanCooldownConfig::parity_qualified)
+        .def_readwrite(
+            "qualification_under_test",
+            &F05RepeatedBooleanCooldownConfig::qualification_under_test)
         .def_readwrite(
             "parity_qualification_sha256",
             &F05RepeatedBooleanCooldownConfig::parity_qualification_sha256)
@@ -2138,7 +2178,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "max_feature_age_s",
             &F05RepeatedBooleanCooldownConfig::max_feature_age_s)
-        .def_readwrite("policy", &F05RepeatedBooleanCooldownConfig::policy);
+        .def_readwrite("policy", &F05RepeatedBooleanCooldownConfig::policy)
+        .def_readwrite(
+            "buy_policy", &F05RepeatedBooleanCooldownConfig::buy_policy);
     py::class_<F05CooldownWindowObservation>(
         m,
         "F05CooldownWindowObservation")
@@ -2159,6 +2201,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "mid_usdc_per_btc",
             &F05CooldownWindowObservation::mid_usdc_per_btc)
+        .def_readwrite(
+            "reset_feature_state",
+            &F05CooldownWindowObservation::reset_feature_state)
         .def_readwrite("source_gap", &F05CooldownWindowObservation::source_gap)
         .def_readwrite(
             "source_stale",
@@ -2344,6 +2389,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def(py::init<>())
         .def_readwrite("abi_version", &F05RepeatedBooleanCooldownCheckpoint::abi_version)
         .def_readwrite(
+            "qualification_under_test",
+            &F05RepeatedBooleanCooldownCheckpoint::qualification_under_test)
+        .def_readwrite(
             "parity_qualification_sha256",
             &F05RepeatedBooleanCooldownCheckpoint::parity_qualification_sha256)
         .def_readwrite(
@@ -2358,6 +2406,12 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .def_readwrite(
             "predicate_bundle_sha256",
             &F05RepeatedBooleanCooldownCheckpoint::predicate_bundle_sha256)
+        .def_readwrite(
+            "buy_policy_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::buy_policy_sha256)
+        .def_readwrite(
+            "buy_predicate_bundle_sha256",
+            &F05RepeatedBooleanCooldownCheckpoint::buy_predicate_bundle_sha256)
         .def_readwrite("warmup_s", &F05RepeatedBooleanCooldownCheckpoint::warmup_s)
         .def_readwrite(
             "max_feature_age_s",
@@ -2372,6 +2426,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "last_right_ts_ns",
             &F05RepeatedBooleanCooldownCheckpoint::last_right_ts_ns)
         .def_readwrite(
+            "last_input_ready_ts_ns",
+            &F05RepeatedBooleanCooldownCheckpoint::last_input_ready_ts_ns)
+        .def_readwrite(
             "last_feature_ready_ts_ns",
             &F05RepeatedBooleanCooldownCheckpoint::last_feature_ready_ts_ns)
         .def_readwrite(
@@ -2384,6 +2441,9 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "ema_initialized",
             &F05RepeatedBooleanCooldownCheckpoint::ema_initialized)
         .def_readwrite(
+            "buy_ema_initialized",
+            &F05RepeatedBooleanCooldownCheckpoint::buy_ema_initialized)
+        .def_readwrite(
             "current_window_observed",
             &F05RepeatedBooleanCooldownCheckpoint::current_window_observed)
         .def_readwrite(
@@ -2393,6 +2453,14 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "last_observed_ts_ns",
             &F05RepeatedBooleanCooldownCheckpoint::last_observed_ts_ns)
         .def_readwrite("ema", &F05RepeatedBooleanCooldownCheckpoint::ema)
+        .def_readwrite("buy_ema", &F05RepeatedBooleanCooldownCheckpoint::buy_ema)
+        .def_readwrite(
+            "buy_velocity", &F05RepeatedBooleanCooldownCheckpoint::buy_velocity)
+        .def_readwrite(
+            "buy_acceleration",
+            &F05RepeatedBooleanCooldownCheckpoint::buy_acceleration)
+        .def_readwrite(
+            "buy_pairs", &F05RepeatedBooleanCooldownCheckpoint::buy_pairs)
         .def_readwrite(
             "short_pair",
             &F05RepeatedBooleanCooldownCheckpoint::short_pair)
@@ -2431,6 +2499,12 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
             "parity_qualified",
             &F05RepeatedBooleanCooldownRuntime::parity_qualified)
         .def_property_readonly(
+            "qualification_under_test",
+            &F05RepeatedBooleanCooldownRuntime::qualification_under_test)
+        .def_property_readonly(
+            "execution_admitted",
+            &F05RepeatedBooleanCooldownRuntime::execution_admitted)
+        .def_property_readonly(
             "binding_error",
             &F05RepeatedBooleanCooldownRuntime::binding_error)
         .def_property_readonly(
@@ -2464,6 +2538,96 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite("queue_ahead_base_mult", &TickReplayParams::queue_ahead_base_mult)
         .def_readwrite("queue_deplete_base_mult", &TickReplayParams::queue_deplete_base_mult)
         .def_readwrite("queue_l2_cancel_ahead_enabled", &TickReplayParams::queue_l2_cancel_ahead_enabled)
+        .def_readwrite(
+            "native_exchange_book_enabled",
+            &TickReplayParams::native_exchange_book_enabled)
+        .def_readwrite(
+            "native_exchange_book_strict_after_ns",
+            &TickReplayParams::native_exchange_book_strict_after_ns)
+        .def(
+            "set_native_exchange_book_arrays",
+            [](TickReplayParams& params,
+               CArray<std::int64_t> event_ts_ns,
+               CArray<std::uint8_t> event_type,
+               CArray<std::int64_t> receive_ts_ns,
+               CArray<std::int64_t> event_time_ms,
+               CArray<std::int64_t> transaction_time_ms,
+               CArray<std::int64_t> first_update_id,
+               CArray<std::int64_t> final_update_id,
+               CArray<std::int64_t> previous_final_update_id,
+               CArray<std::int64_t> last_update_id,
+               CArray<std::int64_t> level_offsets,
+               CArray<std::uint8_t> level_is_bid,
+               CArray<std::int64_t> level_price_tick,
+               CArray<double> level_quantity) {
+                const auto events = event_ts_ns.size();
+                const auto levels = level_price_tick.size();
+                const auto require_events = [events](py::ssize_t size,
+                                                     const char* name) {
+                    if (size != events) {
+                        throw std::invalid_argument(
+                            std::string(name) + " length mismatch");
+                    }
+                };
+                require_events(event_type.size(), "native event_type");
+                require_events(receive_ts_ns.size(), "native receive_ts_ns");
+                require_events(event_time_ms.size(), "native event_time_ms");
+                require_events(
+                    transaction_time_ms.size(),
+                    "native transaction_time_ms");
+                require_events(first_update_id.size(), "native first_update_id");
+                require_events(final_update_id.size(), "native final_update_id");
+                require_events(
+                    previous_final_update_id.size(),
+                    "native previous_final_update_id");
+                require_events(last_update_id.size(), "native last_update_id");
+                if (level_offsets.size() != events + 1 ||
+                    level_is_bid.size() != levels ||
+                    level_quantity.size() != levels) {
+                    throw std::invalid_argument(
+                        "native exchange-book level array shape drifted");
+                }
+                const auto copy_i64 = [](const CArray<std::int64_t>& value) {
+                    if (value.size() == 0) return std::vector<std::int64_t>{};
+                    return std::vector<std::int64_t>(
+                        value.data(), value.data() + value.size());
+                };
+                const auto copy_u8 = [](const CArray<std::uint8_t>& value) {
+                    if (value.size() == 0) return std::vector<std::uint8_t>{};
+                    return std::vector<std::uint8_t>(
+                        value.data(), value.data() + value.size());
+                };
+                const auto copy_f64 = [](const CArray<double>& value) {
+                    if (value.size() == 0) return std::vector<double>{};
+                    return std::vector<double>(
+                        value.data(), value.data() + value.size());
+                };
+                params.native_book_event_ts_ns = copy_i64(event_ts_ns);
+                params.native_book_event_type = copy_u8(event_type);
+                params.native_book_receive_ts_ns = copy_i64(receive_ts_ns);
+                params.native_book_event_time_ms = copy_i64(event_time_ms);
+                params.native_book_transaction_time_ms =
+                    copy_i64(transaction_time_ms);
+                params.native_book_first_update_id = copy_i64(first_update_id);
+                params.native_book_final_update_id = copy_i64(final_update_id);
+                params.native_book_previous_final_update_id =
+                    copy_i64(previous_final_update_id);
+                params.native_book_last_update_id = copy_i64(last_update_id);
+                params.native_book_level_offsets = copy_i64(level_offsets);
+                params.native_book_level_is_bid = copy_u8(level_is_bid);
+                params.native_book_level_price_tick = copy_i64(level_price_tick);
+                params.native_book_level_quantity = copy_f64(level_quantity);
+                params.native_exchange_book_enabled = events > 0;
+                return events;
+            },
+            py::arg("event_ts_ns"), py::arg("event_type"),
+            py::arg("receive_ts_ns"), py::arg("event_time_ms"),
+            py::arg("transaction_time_ms"), py::arg("first_update_id"),
+            py::arg("final_update_id"),
+            py::arg("previous_final_update_id"),
+            py::arg("last_update_id"), py::arg("level_offsets"),
+            py::arg("level_is_bid"), py::arg("level_price_tick"),
+            py::arg("level_quantity"))
         .def_readwrite("queue_ahead_buy_exposure_mult", &TickReplayParams::queue_ahead_buy_exposure_mult)
         .def_readwrite("queue_ahead_buy_reducing_mult", &TickReplayParams::queue_ahead_buy_reducing_mult)
         .def_readwrite("queue_ahead_sell_exposure_mult", &TickReplayParams::queue_ahead_sell_exposure_mult)
@@ -2732,6 +2896,8 @@ void bind_tick_replay(py::module_& m) {
                py::array_t<double,
                            py::array::c_style | py::array::forcecast> mid,
                py::array_t<std::uint8_t,
+                           py::array::c_style | py::array::forcecast> reset,
+               py::array_t<std::uint8_t,
                            py::array::c_style | py::array::forcecast> source_gap,
                py::array_t<std::uint8_t,
                            py::array::c_style | py::array::forcecast> source_stale,
@@ -2743,11 +2909,13 @@ void bind_tick_replay(py::module_& m) {
               const auto count = left.size();
               if (left.ndim() != 1 || right.ndim() != 1 || ready.ndim() != 1 ||
                   market.ndim() != 1 || depth.ndim() != 1 || mid.ndim() != 1 ||
-                  source_gap.ndim() != 1 || source_stale.ndim() != 1 ||
+                  reset.ndim() != 1 || source_gap.ndim() != 1 ||
+                  source_stale.ndim() != 1 ||
                   warmup.ndim() != 1 || channel_support.ndim() != 1 ||
                   right.size() != count || ready.size() != count ||
                   market.size() != count || depth.size() != count ||
-                  mid.size() != count || source_gap.size() != count ||
+                  mid.size() != count || reset.size() != count ||
+                  source_gap.size() != count ||
                   source_stale.size() != count || warmup.size() != count ||
                   channel_support.size() != count) {
                 throw std::invalid_argument(
@@ -2759,6 +2927,7 @@ void bind_tick_replay(py::module_& m) {
               const auto market_view = market.unchecked<1>();
               const auto depth_view = depth.unchecked<1>();
               const auto mid_view = mid.unchecked<1>();
+              const auto reset_view = reset.unchecked<1>();
               const auto gap_view = source_gap.unchecked<1>();
               const auto stale_view = source_stale.unchecked<1>();
               const auto warmup_view = warmup.unchecked<1>();
@@ -2776,6 +2945,7 @@ void bind_tick_replay(py::module_& m) {
                 if (std::isfinite(mid_view(index))) {
                   observation.mid_usdc_per_btc = mid_view(index);
                 }
+                observation.reset_feature_state = reset_view(index) != 0;
                 observation.source_gap = gap_view(index) != 0;
                 observation.source_stale = stale_view(index) != 0;
                 observation.warmup_admitted = warmup_view(index) != 0;
@@ -2788,6 +2958,7 @@ void bind_tick_replay(py::module_& m) {
             py::arg("left_ts_ns"), py::arg("right_ts_ns"),
             py::arg("feature_ready_ts_ns"), py::arg("market_generation"),
             py::arg("depth_generation"), py::arg("mid_usdc_per_btc"),
+            py::arg("reset_feature_state"),
             py::arg("source_gap"), py::arg("source_stale"),
             py::arg("warmup_admitted"), py::arg("channel_support_valid"))
         .def_readwrite(
@@ -2811,6 +2982,8 @@ void bind_tick_replay(py::module_& m) {
            py::array_t<double,
                        py::array::c_style | py::array::forcecast> mid,
            py::array_t<std::uint8_t,
+                       py::array::c_style | py::array::forcecast> reset,
+           py::array_t<std::uint8_t,
                        py::array::c_style | py::array::forcecast> source_gap,
            py::array_t<std::uint8_t,
                        py::array::c_style | py::array::forcecast> source_stale,
@@ -2822,11 +2995,13 @@ void bind_tick_replay(py::module_& m) {
           const auto count = left.size();
           if (left.ndim() != 1 || right.ndim() != 1 || ready.ndim() != 1 ||
               market.ndim() != 1 || depth.ndim() != 1 || mid.ndim() != 1 ||
-              source_gap.ndim() != 1 || source_stale.ndim() != 1 ||
+              reset.ndim() != 1 || source_gap.ndim() != 1 ||
+              source_stale.ndim() != 1 ||
               warmup.ndim() != 1 || channel_support.ndim() != 1 ||
               right.size() != count || ready.size() != count ||
               market.size() != count || depth.size() != count ||
-              mid.size() != count || source_gap.size() != count ||
+              mid.size() != count || reset.size() != count ||
+              source_gap.size() != count ||
               source_stale.size() != count || warmup.size() != count ||
               channel_support.size() != count || content_sha256.size() != 64) {
             throw std::invalid_argument(
@@ -2838,6 +3013,7 @@ void bind_tick_replay(py::module_& m) {
           const auto market_view = market.unchecked<1>();
           const auto depth_view = depth.unchecked<1>();
           const auto mid_view = mid.unchecked<1>();
+          const auto reset_view = reset.unchecked<1>();
           const auto gap_view = source_gap.unchecked<1>();
           const auto stale_view = source_stale.unchecked<1>();
           const auto warmup_view = warmup.unchecked<1>();
@@ -2856,6 +3032,7 @@ void bind_tick_replay(py::module_& m) {
             if (std::isfinite(mid_view(index))) {
               observation.mid_usdc_per_btc = mid_view(index);
             }
+            observation.reset_feature_state = reset_view(index) != 0;
             observation.source_gap = gap_view(index) != 0;
             observation.source_stale = stale_view(index) != 0;
             observation.warmup_admitted = warmup_view(index) != 0;
@@ -2867,6 +3044,7 @@ void bind_tick_replay(py::module_& m) {
         py::arg("left_ts_ns"), py::arg("right_ts_ns"),
         py::arg("feature_ready_ts_ns"), py::arg("market_generation"),
         py::arg("depth_generation"), py::arg("mid_usdc_per_btc"),
+        py::arg("reset_feature_state"),
         py::arg("source_gap"), py::arg("source_stale"),
         py::arg("warmup_admitted"), py::arg("channel_support_valid"),
         py::arg("content_sha256"));
@@ -2893,6 +3071,19 @@ void bind_tick_replay(py::module_& m) {
         .def_readwrite("fills_bid", &TickReplaySummary::fills_bid)
         .def_readwrite("fills_ask", &TickReplaySummary::fills_ask)
         .def_readwrite("fills_total", &TickReplaySummary::fills_total)
+        .def_readwrite("native_book_events_consumed", &TickReplaySummary::native_book_events_consumed)
+        .def_readwrite("native_book_events_accepted", &TickReplaySummary::native_book_events_accepted)
+        .def_readwrite("native_book_events_rejected", &TickReplaySummary::native_book_events_rejected)
+        .def_readwrite("native_book_snapshot_events", &TickReplaySummary::native_book_snapshot_events)
+        .def_readwrite("native_book_sequence_gaps", &TickReplaySummary::native_book_sequence_gaps)
+        .def_readwrite("native_queue_lookup_count", &TickReplaySummary::native_queue_lookup_count)
+        .def_readwrite("native_queue_exact_count", &TickReplaySummary::native_queue_exact_count)
+        .def_readwrite("native_queue_known_zero_count", &TickReplaySummary::native_queue_known_zero_count)
+        .def_readwrite("native_queue_missing_count", &TickReplaySummary::native_queue_missing_count)
+        .def_readwrite("native_queue_invalidated_order_count", &TickReplaySummary::native_queue_invalidated_order_count)
+        .def_readwrite("native_queue_ambiguous_event_count", &TickReplaySummary::native_queue_ambiguous_event_count)
+        .def_readwrite("native_queue_cancel_ahead_event_count", &TickReplaySummary::native_queue_cancel_ahead_event_count)
+        .def_readwrite("native_queue_cancel_ahead_qty", &TickReplaySummary::native_queue_cancel_ahead_qty)
         .def_readwrite("integer_tick_crossing_recovered_bid_candidates", &TickReplaySummary::integer_tick_crossing_recovered_bid_candidates)
         .def_readwrite("integer_tick_crossing_recovered_ask_candidates", &TickReplaySummary::integer_tick_crossing_recovered_ask_candidates)
         .def_readwrite("integer_tick_crossing_recovered_bid_fills", &TickReplaySummary::integer_tick_crossing_recovered_bid_fills)

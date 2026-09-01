@@ -15,6 +15,8 @@ from strategy.replay_controls import (
     LOSS_COOLDOWN_SEMANTICS,
     SYNC_DEGRADE_SEMANTICS,
     SYNC_DEGRADE_TAPE_SCHEMA,
+    effective_decision_to_gateway_latency_seed,
+    effective_latency_seed,
     replay_hard_risk_limits,
 )
 
@@ -333,6 +335,36 @@ def _sample_identity(values: Any) -> dict[str, Any]:
     }
 
 
+def _local_work_samples(params: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    """Validate paired work samples before any generic latency normalization."""
+    tail = np.asarray(params.get("_requote_tail_work_samples_ms", ()), dtype=np.float64)
+    loop = np.asarray(params.get("_main_loop_work_samples_ms", ()), dtype=np.float64)
+    if tail.size and (
+        tail.ndim != 1 or not np.all(np.isfinite(tail)) or np.any(tail < 0.0)
+    ):
+        raise ValueError("requote tail work samples must be finite nonnegative 1D values")
+    if loop.size and (
+        loop.ndim != 2 or loop.shape[1] != 2
+        or not np.all(np.isfinite(loop)) or np.any(loop < 0.0)
+    ):
+        raise ValueError("main-loop work samples must be finite nonnegative Nx2 values")
+    if np.any(tail > 0.0):
+        total = np.asarray(
+            params.get("_decision_to_gateway_latency_samples_ms", ()), dtype=np.float64,
+        )
+        if (
+            total.ndim != 1 or total.shape != tail.shape
+            or not np.all(np.isfinite(total)) or np.any(total < 0.0)
+        ):
+            raise ValueError("requote tail work samples must align with finite total compute")
+    if np.any(tail > 0.0) or np.any(loop > 0.0):
+        sleep = float(params.get("replay_main_loop_sleep_ms", 0) or 0)
+        mode = str(params.get("rest_gateway_timing_mode", "disabled") or "disabled").lower()
+        if not np.isfinite(sleep) or sleep <= 0.0 or mode != "sampled_serial":
+            raise ValueError("local work requires main-loop sampled_serial replay")
+    return tail, loop
+
+
 def configure_fixed_latency_distribution(
     params: MutableMapping[str, Any],
     *,
@@ -344,6 +376,7 @@ def configure_fixed_latency_distribution(
     stress_spike_multiplier: float = 5.0,
 ) -> MutableMapping[str, Any]:
     """Freeze stable latency samples; synthetic tail spikes are stress-only."""
+    _local_work_samples(params)
     normalized_scenario = str(scenario or "baseline").lower()
     if normalized_scenario not in {"baseline", "stress"}:
         raise ValueError("latency scenario must be baseline or stress")
@@ -517,6 +550,10 @@ def build_replay_contract(
     normalized_initial = str(initial_state_mode or "fresh_start").lower()
     if normalized_initial not in {"fresh_start", "frozen_standard"}:
         raise ValueError("initial state mode must be fresh_start or frozen_standard")
+    latency_seed = effective_latency_seed(params)
+    decision_to_gateway_latency_seed = (
+        effective_decision_to_gateway_latency_seed(params)
+    )
     project_root = Path(root).expanduser().resolve() if root is not None else None
     state_path = _resolve_path(initial_state_artifact, root=project_root)
 
@@ -580,11 +617,7 @@ def build_replay_contract(
             "serial_row_origin": "after_decision_compute_delay",
             "scope": "normal_quote_requests_only_not_ttl_fill_or_safety",
             "samples": _sample_identity(decision_to_gateway_samples),
-            "seed": int(
-                params.get("latency_seed", 59)
-                if params.get("decision_to_gateway_latency_seed") is None
-                else params["decision_to_gateway_latency_seed"]
-            ),
+            "seed": decision_to_gateway_latency_seed,
         }
     rest_gateway_mode = str(
         params.get("rest_gateway_timing_mode", "disabled") or "disabled"
@@ -635,6 +668,7 @@ def build_replay_contract(
         raise ValueError(
             "rest_gateway_timing_mode must be disabled, paired_npz or sampled_serial"
         )
+    requote_tail_work_samples, main_loop_work_samples = _local_work_samples(params)
     direct_return_samples = params.get("_serial_rest_return_samples_by_operation")
     direct_return_semantics = str(
         params.get("_serial_rest_return_sample_semantics", "") or ""
@@ -677,13 +711,7 @@ def build_replay_contract(
                 "path": str(profile_path or ""),
                 "sha256": sha256_file(profile_path),
             },
-            "seed": int(
-                params.get(
-                    "rest_gateway_timing_seed",
-                    params.get("latency_seed", 59),
-                )
-                or params.get("latency_seed", 59)
-            ),
+            "seed": int(params.get("rest_gateway_timing_seed", latency_seed) or latency_seed),
         }
     elif rest_gateway_mode == "sampled_serial":
         rest_gateway_identity = {
@@ -696,7 +724,7 @@ def build_replay_contract(
             "request_start": "max_decision_ready_previous_local_ack",
             "joint_request_replay": False,
             "sample_identity_source": "latency_lifecycle_samples",
-            "seed": int(params.get("latency_seed", 59)),
+            "seed": latency_seed,
         }
         profile_path = _resolve_path(
             params.get("rest_gateway_timing_profile_path"), root=project_root
@@ -1072,7 +1100,7 @@ def build_replay_contract(
             "scenario": str(params.get("latency_scenario", "baseline")),
             "sampler_version": str(params.get("latency_sampler_version", "")),
             "rng_seed": int(params.get("rng_seed", 42)),
-            "latency_seed": int(params.get("latency_seed", 59)),
+            "latency_seed": latency_seed,
             "exec_book_visibility_seed": int(params.get("exec_book_visibility_delay_seed", 0) or 0),
             "market_data_profile": {
                 "path": str(params.get("market_data_latency_profile_path", "")),
@@ -1130,6 +1158,30 @@ def build_replay_contract(
                 else "source_1s_bars_before_due_check"
             ),
         }
+        if np.any(requote_tail_work_samples > 0.0) or np.any(main_loop_work_samples > 0.0):
+            local_work: dict[str, Any] = {
+                "backend": "python_only",
+                "evidence_scope": "diagnostic_only",
+                "scope": "total_local_work_not_exact_inter_request_gaps",
+                "accounting": "first_gateway_compute_and_rest_not_recharged",
+                "clock": "before_tick_then_tick_and_tail_then_after_tick_then_sleep",
+            }
+            if np.any(requote_tail_work_samples > 0.0):
+                local_work["requote_tail"] = {
+                    "samples": _sample_identity(requote_tail_work_samples),
+                    "sampling": "same_total_sample_index_and_seed_per_requote_entry",
+                    "seed": decision_to_gateway_latency_seed,
+                    "clock": "after_last_http_return_or_no_request_compute",
+                }
+            if np.any(main_loop_work_samples > 0.0):
+                local_work["loop"] = {
+                    "samples": _sample_identity(main_loop_work_samples),
+                    "row_count": int(main_loop_work_samples.shape[0]),
+                    "columns": ["before_tick_ms", "after_tick_ms"],
+                    "sampling": "one_keyed_paired_row_per_loop_start",
+                    "seed": decision_to_gateway_latency_seed,
+                }
+            contract["causal_event_semantics"]["main_loop"]["local_work"] = local_work
     if private_fill_visibility_enabled:
         contract["latency"]["private_fill_visibility"] = {
             "evidence_scope": "diagnostic_only",

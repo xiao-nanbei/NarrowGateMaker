@@ -276,6 +276,14 @@ class RuntimeCooldownPolicyEvaluator:
     def predicate_columns(self) -> tuple[str, ...]:
         return self._predicate_columns
 
+    @property
+    def rules(
+        self,
+    ) -> tuple[tuple[str, tuple[tuple[tuple[str, bool], ...], ...]], ...]:
+        """Return the immutable compiled rule program for runtime adapters."""
+
+        return self._rules
+
     def _control(
         self,
         *,
