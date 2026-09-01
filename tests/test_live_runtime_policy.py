@@ -257,6 +257,18 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
             "reconciliation_pending": True,
             "fatal_runtime_reason": "ORDER_MANAGER_FATAL",
             "last_tick_age_s": 3.0,
+            "replace_terminal_continuation": {
+                "arm_count": 9,
+                "publish_count": 8,
+                "decision_count": 6,
+                "drop_count": 3,
+                "pending_count": 0,
+                "in_flight_count": 0,
+                "buy_decision_count": 4,
+                "sell_decision_count": 2,
+                "decision_latency_sum_ns": 1200,
+                "decision_latency_max_ns": 500,
+            },
         }
     )
     ws = SimpleNamespace(
@@ -279,6 +291,16 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
     assert health["reconciliationRequired"] is True
     assert health["reconciliationPending"] is True
     assert health["fatalReason"] == "ORDER_MANAGER_FATAL"
+    assert health["replaceTerminalContinuationArmCount"] == 9
+    assert health["replaceTerminalContinuationPublishCount"] == 8
+    assert health["replaceTerminalContinuationDecisionCount"] == 6
+    assert health["replaceTerminalContinuationDropCount"] == 3
+    assert health["replaceTerminalContinuationPendingCount"] == 0
+    assert health["replaceTerminalContinuationInFlightCount"] == 0
+    assert health["replaceTerminalContinuationBuyDecisionCount"] == 4
+    assert health["replaceTerminalContinuationSellDecisionCount"] == 2
+    assert health["replaceTerminalContinuationDecisionLatencySumNs"] == 1200
+    assert health["replaceTerminalContinuationDecisionLatencyMaxNs"] == 500
 
 
 def test_normal_cleanup_with_final_reconciliation_pending_exits_78() -> None:
