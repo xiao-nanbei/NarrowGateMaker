@@ -164,6 +164,20 @@ def _assert_update_orders_phase_spans(timings: dict[str, float]) -> None:
     )
     assert all(timings[name] >= 0.0 for name in phases)
     assert sum(timings[name] for name in phases) > 0.0
+    prepare_parts = (
+        "update_orders_prepare_policy_us",
+        "update_orders_prepare_state_routing_us",
+        "update_orders_prepare_safeguards_us",
+        "update_orders_prepare_evidence_us",
+    )
+    assert all(timings[name] >= 0.0 for name in prepare_parts)
+    assert timings["update_orders_prepare_accounted_us"] == pytest.approx(
+        sum(timings[name] for name in prepare_parts)
+    )
+    assert timings["update_orders_prepare_us"] == pytest.approx(
+        timings["update_orders_prepare_accounted_us"]
+        + timings["update_orders_prepare_residual_us"]
+    )
 
 
 def _configure_terminal_callback(engine: MakerEngine, cid: str) -> None:
@@ -284,7 +298,7 @@ def test_update_orders_perf_spans_cover_no_action_keep_and_pending_paths(
     fail_closed = _routable_update_orders_engine()
     fail_closed._order_submit_fail_closed = True
     fail_closed_timings = _run_timed_update_orders(fail_closed)
-    assert fail_closed_timings["update_orders_prepare_us"] > 0.0
+    _assert_update_orders_phase_spans(fail_closed_timings)
     assert fail_closed_timings["update_orders_coalesce_us"] == 0.0
     assert fail_closed_timings["update_orders_action_us"] == 0.0
     assert fail_closed_timings["update_orders_journal_us"] == 0.0
@@ -379,6 +393,12 @@ def test_live_perf_telemetry_fields_include_update_orders_accounting() -> None:
 
     assert {
         "update_orders_prepare_us",
+        "update_orders_prepare_policy_us",
+        "update_orders_prepare_state_routing_us",
+        "update_orders_prepare_safeguards_us",
+        "update_orders_prepare_evidence_us",
+        "update_orders_prepare_accounted_us",
+        "update_orders_prepare_residual_us",
         "update_orders_coalesce_us",
         "update_orders_action_us",
         "update_orders_journal_us",

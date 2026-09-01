@@ -640,6 +640,12 @@ class LivePerfTelemetryLogRow:
     compute_quotes_us: float
     update_orders_us: float
     update_orders_prepare_us: float
+    update_orders_prepare_policy_us: float
+    update_orders_prepare_state_routing_us: float
+    update_orders_prepare_safeguards_us: float
+    update_orders_prepare_evidence_us: float
+    update_orders_prepare_accounted_us: float
+    update_orders_prepare_residual_us: float
     update_orders_coalesce_us: float
     update_orders_action_us: float
     update_orders_journal_us: float
@@ -3172,6 +3178,24 @@ class MakerEngine:
                 update_orders_us=float(timings.get("update_orders_us", 0.0)),
                 update_orders_prepare_us=float(
                     timings.get("update_orders_prepare_us", 0.0)
+                ),
+                update_orders_prepare_policy_us=float(
+                    timings.get("update_orders_prepare_policy_us", 0.0)
+                ),
+                update_orders_prepare_state_routing_us=float(
+                    timings.get("update_orders_prepare_state_routing_us", 0.0)
+                ),
+                update_orders_prepare_safeguards_us=float(
+                    timings.get("update_orders_prepare_safeguards_us", 0.0)
+                ),
+                update_orders_prepare_evidence_us=float(
+                    timings.get("update_orders_prepare_evidence_us", 0.0)
+                ),
+                update_orders_prepare_accounted_us=float(
+                    timings.get("update_orders_prepare_accounted_us", 0.0)
+                ),
+                update_orders_prepare_residual_us=float(
+                    timings.get("update_orders_prepare_residual_us", 0.0)
                 ),
                 update_orders_coalesce_us=float(
                     timings.get("update_orders_coalesce_us", 0.0)
@@ -6792,6 +6816,7 @@ class MakerEngine:
             and (ask_policy.allow_exposure_increase or not ask_exposure_increasing)
         )
         now_ts = time.time()
+        update_orders_prepare_policy_end_ns = time.perf_counter_ns()
 
         # Check existing bid order
         bid_order = self.orders.get_order(self._bid_cid) if self._bid_cid else None
@@ -6818,9 +6843,28 @@ class MakerEngine:
         if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.SELL)
         if self._order_submit_fail_closed:
-            perf_timings["update_orders_prepare_us"] = (
-                time.perf_counter_ns() - update_orders_start_ns
+            prepare_end_ns = time.perf_counter_ns()
+            prepare_policy_us = (
+                update_orders_prepare_policy_end_ns - update_orders_start_ns
             ) / 1_000.0
+            prepare_state_routing_us = (
+                prepare_end_ns - update_orders_prepare_policy_end_ns
+            ) / 1_000.0
+            prepare_us = (prepare_end_ns - update_orders_start_ns) / 1_000.0
+            perf_timings["update_orders_prepare_us"] = prepare_us
+            perf_timings["update_orders_prepare_policy_us"] = prepare_policy_us
+            perf_timings["update_orders_prepare_state_routing_us"] = (
+                prepare_state_routing_us
+            )
+            perf_timings["update_orders_prepare_safeguards_us"] = 0.0
+            perf_timings["update_orders_prepare_evidence_us"] = 0.0
+            perf_timings["update_orders_prepare_accounted_us"] = (
+                prepare_policy_us + prepare_state_routing_us
+            )
+            perf_timings["update_orders_prepare_residual_us"] = max(
+                0.0,
+                prepare_us - perf_timings["update_orders_prepare_accounted_us"],
+            )
             perf_timings["update_orders_coalesce_us"] = 0.0
             perf_timings["update_orders_action_us"] = 0.0
             perf_timings["update_orders_journal_us"] = 0.0
@@ -6992,6 +7036,7 @@ class MakerEngine:
                 ask_needs_update = True
                 ask_force_update = True
 
+        update_orders_prepare_state_routing_end_ns = time.perf_counter_ns()
         state_policy_max_spread = float(
             self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
         )
@@ -7107,6 +7152,8 @@ class MakerEngine:
             self._last_quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
                 ask_p3_floor_unsafe
             )
+
+        update_orders_prepare_safeguards_end_ns = time.perf_counter_ns()
 
         # Both evidence-only external projections share one causal state read.
         # Neither candidate is allowed to flow into live order routing.
@@ -7797,6 +7844,35 @@ class MakerEngine:
         perf_timings["update_orders_prepare_us"] = (
             update_orders_prepare_end_ns - update_orders_start_ns
         ) / 1_000.0
+        perf_timings["update_orders_prepare_policy_us"] = (
+            update_orders_prepare_policy_end_ns - update_orders_start_ns
+        ) / 1_000.0
+        perf_timings["update_orders_prepare_state_routing_us"] = (
+            update_orders_prepare_state_routing_end_ns
+            - update_orders_prepare_policy_end_ns
+        ) / 1_000.0
+        perf_timings["update_orders_prepare_safeguards_us"] = (
+            update_orders_prepare_safeguards_end_ns
+            - update_orders_prepare_state_routing_end_ns
+        ) / 1_000.0
+        perf_timings["update_orders_prepare_evidence_us"] = (
+            update_orders_prepare_end_ns
+            - update_orders_prepare_safeguards_end_ns
+        ) / 1_000.0
+        perf_timings["update_orders_prepare_accounted_us"] = sum(
+            perf_timings[name]
+            for name in (
+                "update_orders_prepare_policy_us",
+                "update_orders_prepare_state_routing_us",
+                "update_orders_prepare_safeguards_us",
+                "update_orders_prepare_evidence_us",
+            )
+        )
+        perf_timings["update_orders_prepare_residual_us"] = max(
+            0.0,
+            perf_timings["update_orders_prepare_us"]
+            - perf_timings["update_orders_prepare_accounted_us"],
+        )
         perf_timings["update_orders_coalesce_us"] = (
             update_orders_coalesce_end_ns - update_orders_prepare_end_ns
         ) / 1_000.0
