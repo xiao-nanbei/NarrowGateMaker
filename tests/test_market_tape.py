@@ -50,6 +50,7 @@ def test_stream_watchdog_ignores_trade_and_anchor_event_silence():
     now = 1_000.0
     handler._market_trade_seen = {"btcusdc": 0.0, "btcusdt": 0.0}
     handler._market_book_seen = {"btcusdc": now, "btcusdt": 0.0}
+    handler._market_depth_seen = {"btcusdc": now, "btcusdt": 0.0}
     handler._spot_trade_seen = {"btcusdt": 0.0}
     handler._spot_book_seen = {"btcusdt": 0.0}
 
@@ -62,7 +63,7 @@ def test_stream_watchdog_ignores_trade_and_anchor_event_silence():
 def test_stream_watchdog_restarts_for_periodic_execution_depth_silence():
     cfg = Config()
     handler = WSHandler(SimpleNamespace(), cfg)
-    handler._market_book_seen = {"btcusdc": 900.0}
+    handler._market_depth_seen = {"btcusdc": 900.0}
 
     assert handler._execution_stream_silence_reasons(
         market_symbols=["btcusdc", "btcusdt"],
@@ -74,7 +75,7 @@ def test_execution_depth_message_refreshes_watchdog_transport_clock():
     cfg = Config()
     signal = SimpleNamespace(on_depth=lambda *_args, **_kwargs: None)
     handler = WSHandler(SimpleNamespace(signal=signal), cfg)
-    handler._market_book_seen = {"btcusdc": 0.0}
+    handler._market_depth_seen = {"btcusdc": 0.0}
 
     handler._on_market_message(
         None,
@@ -89,7 +90,40 @@ def test_execution_depth_message_refreshes_watchdog_transport_clock():
         },
     )
 
+    assert handler._market_depth_seen["btcusdc"] > 0.0
+
+
+def test_book_ticker_cannot_mask_execution_depth_transport_silence():
+    cfg = Config()
+    signal = SimpleNamespace(on_book_ticker=lambda *_args, **_kwargs: None)
+    inventory = SimpleNamespace(update_mark_price=lambda *_args, **_kwargs: None)
+    engine = SimpleNamespace(
+        signal=signal,
+        inventory=inventory,
+        _best_bid=0.0,
+        _best_ask=0.0,
+    )
+    handler = WSHandler(engine, cfg)
+    handler._market_depth_seen = {"btcusdc": 900.0}
+
+    handler._on_market_message(
+        None,
+        {
+            "e": "bookTicker",
+            "s": "BTCUSDC",
+            "E": 999_999,
+            "u": 1,
+            "b": "100.0",
+            "a": "100.1",
+        },
+    )
+
     assert handler._market_book_seen["btcusdc"] > 0.0
+    assert handler._market_depth_seen["btcusdc"] == 900.0
+    assert handler._execution_stream_silence_reasons(
+        market_symbols=["btcusdc"],
+        now_ts=1_000.0,
+    ) == ["btcusdc@executionDepth 100s"]
 
 
 def test_market_tape_row_separates_transport_and_feature_latency():
