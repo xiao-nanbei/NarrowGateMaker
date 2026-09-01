@@ -705,6 +705,7 @@ class LiveBuyE3CooldownPolicy:
         self._last_fallback = ""
         self._last_decision_wall_s = 0.0
         self._binding_error = ""
+        self._binding_mode = "startup_immutable"
         self._decision_latency_us: deque[float] = deque(maxlen=2_048)
 
     @classmethod
@@ -918,28 +919,6 @@ class LiveBuyE3CooldownPolicy:
     def observe_depth(self, **kwargs: Any) -> None:
         self.windows.observe_depth(**kwargs)
 
-    def _binding_still_valid(self) -> bool:
-        opened_files: list[_OpenedBoundJson] = []
-        try:
-            for index, (path, expected) in enumerate(self._bound_files.items()):
-                opened = _open_bound_json(
-                    path,
-                    expected,
-                    f"buy_e3_runtime_bound_file_{index}",
-                )
-                opened_files.append(opened)
-                if opened.identity != self._bound_file_identities[path]:
-                    raise ValueError("runtime_artifact_file_identity_drift")
-            for opened in opened_files:
-                _revalidate_opened_file(opened)
-        except (OSError, ValueError):
-            self._binding_error = "runtime_artifact_file_hash_drift"
-            return False
-        finally:
-            _close_opened_files(opened_files)
-        self._binding_error = ""
-        return True
-
     def evaluate(
         self,
         *,
@@ -963,8 +942,6 @@ class LiveBuyE3CooldownPolicy:
         feature_age_ms = math.inf
         if str(side).upper() != "BUY":
             reason = "non_buy_control_by_contract"
-        elif not self._binding_still_valid():
-            reason = self._binding_error or "runtime_artifact_binding_invalid"
         else:
             feature_row, reason, feature_ready, feature_age_ms = self.windows.feature_row(
                 decision_ts_ns=int(decision_ts_ns)
@@ -1033,6 +1010,7 @@ class LiveBuyE3CooldownPolicy:
                 "artifact_sha256": self.evaluator.artifact_sha256,
                 "policy_sha256": self.evaluator.policy_sha256,
                 "predicate_bundle_sha256": self.evaluator.predicate_bundle_sha256,
+                "binding_mode": self._binding_mode,
                 "binding_error": self._binding_error,
             }
         return {**policy, "windows": self.windows.audit()}

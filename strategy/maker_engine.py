@@ -3350,6 +3350,7 @@ class MakerEngine:
                 "decision_latency_samples": 0,
                 "decision_latency_p99_us": 0.0,
                 "artifact_sha256": "",
+                "binding_mode": "disabled",
                 "binding_error": "",
                 "windows": {
                     "updates": 0,
