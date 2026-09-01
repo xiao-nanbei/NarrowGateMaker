@@ -639,6 +639,16 @@ class LivePerfTelemetryLogRow:
     risk_check_us: float
     compute_quotes_us: float
     update_orders_us: float
+    update_orders_prepare_us: float
+    update_orders_coalesce_us: float
+    update_orders_action_us: float
+    update_orders_journal_us: float
+    update_orders_accounted_us: float
+    update_orders_residual_us: float
+    update_orders_bid_rest_new_us: float
+    update_orders_ask_rest_new_us: float
+    update_orders_bid_rest_cancel_us: float
+    update_orders_ask_rest_cancel_us: float
     rest_new_count: int
     rest_new_sum_us: float
     rest_new_max_us: float
@@ -1614,6 +1624,7 @@ class MakerEngine:
         self._init_csv_log(
             self._live_perf_telemetry_log_path,
             list(LivePerfTelemetryLogRow.__dataclass_fields__.keys()),
+            rotate_on_header_mismatch=True,
         )
         self._init_csv_log(
             self._quote_snapshot_integrity_log_path,
@@ -2493,6 +2504,7 @@ class MakerEngine:
         self._init_csv_log(
             self._live_perf_telemetry_log_path,
             list(LivePerfTelemetryLogRow.__dataclass_fields__.keys()),
+            rotate_on_header_mismatch=True,
         )
         self._init_csv_log(
             self._quote_snapshot_integrity_log_path,
@@ -2734,10 +2746,26 @@ class MakerEngine:
         return "quote_snapshot_integrity.csv"
 
     @staticmethod
-    def _init_csv_log(path: str, headers: list[str]):
+    def _init_csv_log(
+        path: str,
+        headers: list[str],
+        *,
+        rotate_on_header_mismatch: bool = False,
+    ) -> None:
         if not path:
             return
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        if os.path.exists(path) and rotate_on_header_mismatch:
+            with open(path, newline="") as f:
+                current_headers = next(csv.reader(f), [])
+            if current_headers != headers:
+                rotated = f"{path}.schema-mismatch-{time.time_ns()}"
+                os.replace(path, rotated)
+                logger.warning(
+                    "CSV schema changed; preserved old telemetry path=%s rotated=%s",
+                    path,
+                    rotated,
+                )
         if not os.path.exists(path):
             with open(path, "w", newline="") as f:
                 csv.writer(f).writerow(headers)
@@ -3214,6 +3242,36 @@ class MakerEngine:
                 risk_check_us=float(timings.get("risk_check_us", 0.0)),
                 compute_quotes_us=float(timings.get("compute_quotes_us", 0.0)),
                 update_orders_us=float(timings.get("update_orders_us", 0.0)),
+                update_orders_prepare_us=float(
+                    timings.get("update_orders_prepare_us", 0.0)
+                ),
+                update_orders_coalesce_us=float(
+                    timings.get("update_orders_coalesce_us", 0.0)
+                ),
+                update_orders_action_us=float(
+                    timings.get("update_orders_action_us", 0.0)
+                ),
+                update_orders_journal_us=float(
+                    timings.get("update_orders_journal_us", 0.0)
+                ),
+                update_orders_accounted_us=float(
+                    timings.get("update_orders_accounted_us", 0.0)
+                ),
+                update_orders_residual_us=float(
+                    timings.get("update_orders_residual_us", 0.0)
+                ),
+                update_orders_bid_rest_new_us=float(
+                    timings.get("update_orders_bid_rest_new_us", 0.0)
+                ),
+                update_orders_ask_rest_new_us=float(
+                    timings.get("update_orders_ask_rest_new_us", 0.0)
+                ),
+                update_orders_bid_rest_cancel_us=float(
+                    timings.get("update_orders_bid_rest_cancel_us", 0.0)
+                ),
+                update_orders_ask_rest_cancel_us=float(
+                    timings.get("update_orders_ask_rest_cancel_us", 0.0)
+                ),
                 rest_new_count=int(self._perf_rest_new_count),
                 rest_new_sum_us=float(self._perf_rest_new_sum_us),
                 rest_new_max_us=float(self._perf_rest_new_max_us),
@@ -6001,8 +6059,22 @@ class MakerEngine:
             decision_group_id=decision_group_id,
             decision_start_ts_ns=decision_start_ts_ns,
             route_sides=route_sides,
+            perf_timings=timings,
         )
         timings["update_orders_us"] = (time.perf_counter() - step_start) * 1_000_000.0
+        timings["update_orders_accounted_us"] = sum(
+            float(timings.get(name, 0.0))
+            for name in (
+                "update_orders_prepare_us",
+                "update_orders_coalesce_us",
+                "update_orders_action_us",
+                "update_orders_journal_us",
+            )
+        )
+        timings["update_orders_residual_us"] = max(
+            0.0,
+            timings["update_orders_us"] - timings["update_orders_accounted_us"],
+        )
         self._log_quote_snapshot_integrity(
             quote_snapshot,
             post_only_guard,
@@ -6655,12 +6727,23 @@ class MakerEngine:
         decision_group_id: str = "",
         decision_start_ts_ns: int = 0,
         route_sides: frozenset[Side] | None = None,
+        perf_timings: dict[str, float] | None = None,
     ) -> tuple:
         """
         Apply per-side quote policy, then lazy cancel/replace orders.
 
         Returns (bid_updated, ask_updated) booleans.
         """
+        perf_timings = perf_timings if perf_timings is not None else {}
+        update_orders_start_ns = time.perf_counter_ns()
+        for metric in (
+            "update_orders_bid_rest_new_us",
+            "update_orders_ask_rest_new_us",
+            "update_orders_bid_rest_cancel_us",
+            "update_orders_ask_rest_cancel_us",
+        ):
+            perf_timings[metric] = 0.0
+
         cfg = self.cfg
         symbol = cfg.symbol
         snapshot_error = self._quote_snapshot_contract_error(
@@ -6807,6 +6890,12 @@ class MakerEngine:
         if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.SELL)
         if self._order_submit_fail_closed:
+            perf_timings["update_orders_prepare_us"] = (
+                time.perf_counter_ns() - update_orders_start_ns
+            ) / 1_000.0
+            perf_timings["update_orders_coalesce_us"] = 0.0
+            perf_timings["update_orders_action_us"] = 0.0
+            perf_timings["update_orders_journal_us"] = 0.0
             return
         ask_needs_update = True
         ask_force_update = False
@@ -7233,6 +7322,7 @@ class MakerEngine:
             ask_needs_update = False
             ask_force_update = False
 
+        update_orders_prepare_end_ns = time.perf_counter_ns()
         bid_needs_update = self._apply_replace_throttle(
             side=Side.BUY,
             now_ts=now_ts,
@@ -7306,6 +7396,15 @@ class MakerEngine:
         bid_continuation_generation = 0
         ask_continuation_generation = 0
 
+        update_orders_coalesce_end_ns = time.perf_counter_ns()
+
+        def record_side_rest_delta(
+            metric: str,
+            before_us: float,
+            after_us: float,
+        ) -> None:
+            perf_timings[metric] += max(0.0, float(after_us) - float(before_us))
+
         # Cancel only the orders that need updating
         if bid_cancel_first and bid_alive:
             bid_continuation_generation = self._arm_replace_terminal_continuation(
@@ -7313,10 +7412,16 @@ class MakerEngine:
                 cid=str(self._bid_cid),
                 can_post=bool(can_bid),
             )
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
                 replace_continuation_generation=bid_continuation_generation,
+            )
+            record_side_rest_delta(
+                "update_orders_bid_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
             )
             bid_needs_update = False
         elif bid_needs_update and bid_alive:
@@ -7325,10 +7430,16 @@ class MakerEngine:
                 cid=str(self._bid_cid),
                 can_post=bool(can_bid),
             )
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
                 replace_continuation_generation=bid_continuation_generation,
+            )
+            record_side_rest_delta(
+                "update_orders_bid_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
             )
             if bid_continuation_generation > 0:
                 # Even a very fast terminal callback cannot authorize a submit
@@ -7346,10 +7457,16 @@ class MakerEngine:
                 cid=str(self._ask_cid),
                 can_post=bool(can_ask),
             )
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
                 replace_continuation_generation=ask_continuation_generation,
+            )
+            record_side_rest_delta(
+                "update_orders_ask_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
             )
             ask_needs_update = False
         elif ask_needs_update and ask_alive:
@@ -7358,10 +7475,16 @@ class MakerEngine:
                 cid=str(self._ask_cid),
                 can_post=bool(can_ask),
             )
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
                 replace_continuation_generation=ask_continuation_generation,
+            )
+            record_side_rest_delta(
+                "update_orders_ask_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
             )
             if ask_continuation_generation > 0:
                 # See BUY above: continuation owns the next fresh decision.
@@ -7433,6 +7556,7 @@ class MakerEngine:
                         queue_reset=bid_cancel_requested,
                     ),
                 }
+                rest_before_us = float(self._perf_rest_new_sum_us)
                 bid_submitted_cid = self._place_order(
                     symbol,
                     Side.BUY,
@@ -7440,6 +7564,11 @@ class MakerEngine:
                     bid_size,
                     decision_context=decision_context,
                 ) or ""
+                record_side_rest_delta(
+                    "update_orders_bid_rest_new_us",
+                    rest_before_us,
+                    self._perf_rest_new_sum_us,
+                )
         elif not can_bid:
             bid_action = "pause"
         elif not bid_needs_update and bid_alive:
@@ -7499,6 +7628,7 @@ class MakerEngine:
                         queue_reset=ask_cancel_requested,
                     ),
                 }
+                rest_before_us = float(self._perf_rest_new_sum_us)
                 ask_submitted_cid = self._place_order(
                     symbol,
                     Side.SELL,
@@ -7506,6 +7636,11 @@ class MakerEngine:
                     ask_size,
                     decision_context=decision_context,
                 ) or ""
+                record_side_rest_delta(
+                    "update_orders_ask_rest_new_us",
+                    rest_before_us,
+                    self._perf_rest_new_sum_us,
+                )
         elif not can_ask:
             ask_action = "pause"
         elif not ask_needs_update and ask_alive:
@@ -7513,9 +7648,23 @@ class MakerEngine:
 
         # Handle inventory limits: cancel sides we shouldn't be quoting
         if bid_route_allowed and not can_bid:
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             self._cancel_active_side_orders("BUY", "QUOTE_BLOCK_CANCEL")
+            record_side_rest_delta(
+                "update_orders_bid_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
+            )
         if ask_route_allowed and not can_ask:
+            rest_before_us = float(self._perf_rest_cancel_sum_us)
             self._cancel_active_side_orders("SELL", "QUOTE_BLOCK_CANCEL")
+            record_side_rest_delta(
+                "update_orders_ask_rest_cancel_us",
+                rest_before_us,
+                self._perf_rest_cancel_sum_us,
+            )
+
+        update_orders_action_end_ns = time.perf_counter_ns()
 
         def record_exact_decision(
             *,
@@ -7716,6 +7865,19 @@ class MakerEngine:
             self._last_ask_action = ask_action
             self._last_routed_ask_price = float(ask_price)
         self._last_cpp_routing_used = int(bool(cpp_routing_used))
+        update_orders_end_ns = time.perf_counter_ns()
+        perf_timings["update_orders_prepare_us"] = (
+            update_orders_prepare_end_ns - update_orders_start_ns
+        ) / 1_000.0
+        perf_timings["update_orders_coalesce_us"] = (
+            update_orders_coalesce_end_ns - update_orders_prepare_end_ns
+        ) / 1_000.0
+        perf_timings["update_orders_action_us"] = (
+            update_orders_action_end_ns - update_orders_coalesce_end_ns
+        ) / 1_000.0
+        perf_timings["update_orders_journal_us"] = (
+            update_orders_end_ns - update_orders_action_end_ns
+        ) / 1_000.0
         return bid_needs_update, ask_needs_update
 
     def _record_cross_venue_fair_price_shadow(
