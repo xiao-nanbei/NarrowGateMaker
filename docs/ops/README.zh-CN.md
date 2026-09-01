@@ -96,6 +96,10 @@ pointer；candidate 已启动但未通过 health admission 时会停止 candidat
 working directory、正数 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的
 `live/main.py` command line。Persistent unit 或不明确进程会在 stop 前失败，并保持不变。
 
+Health admission 还要求 `reconciliationPending=false`，并且 `lastTickAge` 是零到一秒内的
+有限值。一秒上限来自现有 100ms 主循环安全时钟，并为有界 scheduler jitter 留出空间；
+它不要求 admission 期间必须发生 private fill 或 user-stream event。
+
 Remote upload 或 task 启动前，递归计算完整 materialization closure。每个 manifest
 reference 必须在 admitted bundle 内，或作为显式 immutable resource 提供。Archive 上传
 成功不等于 closure admission。

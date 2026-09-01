@@ -979,7 +979,7 @@ def render_prepared_release_activation_shell(
         "[v:=v[k] for k in sys.argv[2].split('.')];print(v)"
     )
     health_check = (
-        "import json,sys;h=json.load(open(sys.argv[1]));"
+        "import json,math,sys;h=json.load(open(sys.argv[1]));"
         "r=json.load(open(sys.argv[2]));p=int(sys.argv[3]);start=int(sys.argv[4]);"
         "generation=int(h.get('recordedAtNs',0));assert generation>start;"
         "assert h.get('pid')==p;"
@@ -987,7 +987,9 @@ def render_prepared_release_activation_shell(
         "assert h.get('ownershipConflictLatched') is False;"
         "assert h.get('fatalRuntimeLatched') is False;"
         "assert h.get('reconciliationRequired') is False;"
+        "assert h.get('reconciliationPending') is False;"
         "assert h.get('fatalReason')=='';"
+        "age=float(h.get('lastTickAge'));assert math.isfinite(age) and 0<=age<=1.0;"
         "assert r.get('pid')==p and r.get('dry_run') is False and r.get('testnet') is False;"
         "print(generation)"
     )
@@ -995,6 +997,20 @@ def render_prepared_release_activation_shell(
         "import os,sys;pid=int(sys.argv[1]);expected=os.fsencode(sys.argv[2]);"
         "args=open(f'/proc/{pid}/cmdline','rb').read().split(b'\\0');"
         "assert expected in args"
+    )
+    fsync_parent = (
+        "import os,sys;p=os.path.dirname(sys.argv[1]);"
+        "fd=os.open(p,os.O_RDONLY|getattr(os,'O_DIRECTORY',0));"
+        "os.fsync(fd);os.close(fd)"
+    )
+    pointer_check = (
+        "import runpy,sys;from pathlib import Path;"
+        "m=runpy.run_path(sys.argv[1]);"
+        "v=m['load_current_pointer'](Path(sys.argv[2]),"
+        "deployment_envelope_path=Path(sys.argv[3]),"
+        "activation_receipt_path=Path(sys.argv[4]));p=v['pointer'];"
+        "assert p['release_id']==sys.argv[5];"
+        "assert p['activation_receipt_sha256']==sys.argv[6]"
     )
     script = f"""set -euo pipefail
 umask 077
@@ -1006,6 +1022,7 @@ reconciliation={q(reconciliation)} activation={q(activation)} current={q(current
 pointer_stage="$(dirname "$current")/.current-$rid-$$.pending"
 pointer_stage_owned=0
 start_marker="" start_marker_owned=0
+lock="$(dirname "$current")/.narrowgate-live-activation.lock"
 cleanup_required=0
 quiescent() {{
   test -z "$(pgrep -f -- '[l]ive/main.py' || true)" \
@@ -1045,6 +1062,12 @@ canonical_output() {{
   test ! -L "$1" && test ! -d "$1"
   test "$(readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
 }}
+private_parent() {{
+  parent="$(dirname -- "$1")"
+  canonical_input "$parent"
+  test "$(/usr/bin/stat -c %u "$parent")" = "$(id -u)"
+  test "$(/usr/bin/stat -c %a "$parent")" = 700
+}}
 process_matches() {{
   case "$1" in ''|*[!0-9]*) return 1 ;; esac
   test "$1" -gt 0
@@ -1060,9 +1083,6 @@ candidate_unit_matches() {{
   test "$(systemctl show narrowgate.service -p NRestarts --value)" = 0
   process_matches "$1" "$release"
 }}
-lock="$(dirname "$current")/.narrowgate-live-activation.lock"
-exec 9>"$lock"
-flock -w 30 9
 trap cleanup EXIT
 trap 'exit 84' HUP INT TERM
 canonical_input "$release" && canonical_input "$previous"
@@ -1071,10 +1091,27 @@ canonical_input "$envelope" && canonical_input "$trusted"
 test -d "$release" && test -d "$previous" && test -f "$env_file"
 test -f "$config" && test -f "$envelope" && test -x "$trusted"
 canonical_output "$reconciliation" && canonical_output "$activation"
-canonical_output "$current" && canonical_output "$pointer_stage"
+canonical_output "$current" && canonical_output "$pointer_stage" && canonical_output "$lock"
 test ! -e "$reconciliation" && test ! -e "$activation"
 test ! -e "$pointer_stage"
 pointer_stage_owned=1
+private_parent "$lock"
+trap '' HUP INT TERM
+if test ! -e "$lock"; then
+  (set -o noclobber; : >"$lock") 2>/dev/null || true
+fi
+canonical_input "$lock"
+test -f "$lock"
+test "$(/usr/bin/stat -c %u "$lock")" = "$(id -u)"
+test "$(/usr/bin/stat -c %a "$lock")" = 600
+lock_identity="$(/usr/bin/stat -c %d:%i "$lock")"
+exec 9>>"$lock"
+trap 'exit 84' HUP INT TERM
+flock -w 30 9
+canonical_input "$lock"
+test "$(/usr/bin/stat -c %d:%i "$lock")" = "$lock_identity"
+test "$(readlink -f -- "/proc/$$/fd/9")" = "$lock"
+test "$(/usr/bin/stat -Lc %d:%i "/proc/$$/fd/9")" = "$lock_identity"
 test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
 common=(
   --property="User=$user" --property="WorkingDirectory=$release"
@@ -1119,8 +1156,14 @@ canonical_input "$config" && canonical_input "$envelope" && canonical_input "$tr
 test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
 start_marker="$release/logs/.activation-start-$rid"
 test ! -e "$start_marker"
-start_marker_owned=1
+canonical_output "$start_marker"
+private_parent "$start_marker"
+trap '' HUP INT TERM
+set -o noclobber
 : >"$start_marker"
+set +o noclobber
+start_marker_owned=1
+trap 'exit 84' HUP INT TERM
 start_ns="$(date +%s%N)"
 cleanup_required=1
 sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
@@ -1180,12 +1223,15 @@ candidate_unit_matches "$candidate_pid"
   --activation-receipt "$activation" --activation-receipt-sha256 "$activation_sha" \
   --stopped-reconciliation "$reconciliation" --runtime-identity "$runtime" \
   --output "$pointer_stage"
+"$trusted" -c {q(pointer_check)} "$release/live/deployment_runtime.py" \
+  "$pointer_stage" "$envelope" "$activation" "$rid" "$activation_sha"
 candidate_unit_matches "$candidate_pid"
 post_generation="$($trusted -c {q(health_check)} \
   "$health" "$runtime" "$candidate_pid" "$start_ns")"
 test "$post_generation" -ge "$generation"
 canonical_output "$current"
 mv -f -- "$pointer_stage" "$current"
+"$trusted" -c {q(fsync_parent)} "$current"
 cleanup_required=0
 trap 'exit 84' HUP INT TERM
 printf 'activated %s %s %s %s\n' \

@@ -214,6 +214,11 @@ previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
 the previous release's `live/main.py` command line before stop. A persistent
 unit or ambiguous process fails before stop and is not modified.
 
+Admission also requires `reconciliationPending=false` and a finite
+`lastTickAge` in `[0, 1s]`, derived from the existing 100 ms main-loop safety
+clock with bounded scheduler allowance. It deliberately does not require a
+private fill or user-stream event during the observation window.
+
 Safe activation order:
 
 1. verify the prepared candidate and deployment envelope while the old service

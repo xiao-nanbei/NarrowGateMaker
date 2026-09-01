@@ -202,6 +202,10 @@ Prepared transaction 当前只接受正在运行的 transient `narrowgate.servic
 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的 `live/main.py` command
 line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。
 
+Admission 同时要求 `reconciliationPending=false`，且 `lastTickAge` 是 `[0, 1s]` 内有限值；
+该界限来自现有 100ms 主循环安全时钟及有界 scheduler allowance。观察窗口不要求必须出现
+private fill 或 user-stream event。
+
 安全 activation 顺序：
 
 1. 在旧服务仍运行时验证 prepared candidate 与 deployment envelope；

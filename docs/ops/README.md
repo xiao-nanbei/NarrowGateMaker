@@ -111,6 +111,11 @@ previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
 the expected previous-release `live/main.py` command line. A persistent unit or
 ambiguous process fails before stop and is left unchanged.
 
+Health admission requires `reconciliationPending=false` and a finite
+`lastTickAge` between zero and one second. This bound follows the existing
+100 ms main-loop safety clock with allowance for bounded scheduler jitter; it
+does not require a private fill or user-stream event during admission.
+
 Before a remote upload or task starts, recursively calculate the complete
 materialization closure. Every manifest reference must be inside the admitted
 bundle or supplied as an explicit immutable resource. A successful archive

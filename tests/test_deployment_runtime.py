@@ -1743,9 +1743,11 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     receipt = shell.index("build-activation-receipt", admitted)
     critical = shell.index("trap '' HUP INT TERM", receipt)
     publish = shell.index("publish-current-pointer", critical)
-    post_check = shell.index("post_generation=", publish)
+    pointer_verify = shell.index("load_current_pointer", publish)
+    post_check = shell.index("post_generation=", pointer_verify)
     final_publish = shell.index('mv -f -- "$pointer_stage" "$current"', post_check)
-    cleanup_disarm = shell.index("cleanup_required=0", final_publish)
+    parent_fsync = shell.index('"$trusted" -c', final_publish)
+    cleanup_disarm = shell.index("cleanup_required=0", parent_fsync)
     trap_restore = shell.index("trap 'exit 84' HUP INT TERM", cleanup_disarm)
     assert [
         verify,
@@ -1758,8 +1760,10 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
         receipt,
         critical,
         publish,
+        pointer_verify,
         post_check,
         final_publish,
+        parent_fsync,
         cleanup_disarm,
         trap_restore,
     ] == sorted(
@@ -1774,8 +1778,10 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
             receipt,
             critical,
             publish,
+            pointer_verify,
             post_check,
             final_publish,
+            parent_fsync,
             cleanup_disarm,
             trap_restore,
         )
@@ -1790,8 +1796,26 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert 'rm -f -- "$pointer_stage"' in shell[:verify]
     assert 'test "$health" -nt "$start_marker"' in shell[start:receipt]
     assert "recordedAtNs" in shell
+    assert "reconciliationPending" in shell
+    assert "lastTickAge" in shell and "math.isfinite(age)" in shell
+    assert "0<=age<=1.0" in shell
     assert '[[ "$reconciliation_sha" =~ ^[0-9a-f]{64}$ ]]' in shell
     assert shell.count('candidate_unit_matches "$candidate_pid"') >= 4
+    lock_check = shell.index('canonical_output "$current"')
+    lock_open = shell.index('exec 9>>"$lock"')
+    assert lock_check < shell.index('private_parent "$lock"') < lock_open
+    assert shell.index("set -o noclobber", lock_check) < lock_open
+    assert 'test -f "$lock"' in shell[lock_check:lock_open]
+    assert "/proc/$$/fd/9" in shell[lock_open:start]
+    assert 'rm -f -- "$lock"' not in shell
+    marker_check = shell.index('canonical_output "$start_marker"')
+    marker_open = shell.index(': >"$start_marker"')
+    assert marker_check < shell.index("set -o noclobber", marker_check) < marker_open
+    assert marker_check < shell.index('private_parent "$start_marker"') < marker_open
+    assert '--output "$pointer_stage"' in shell[publish:post_check]
+    assert "activation_receipt_sha256" in shell[pointer_verify:post_check]
+    assert "os.fsync(fd)" in shell[parent_fsync:cleanup_disarm]
+    assert "load_current_pointer" not in shell[final_publish:cleanup_disarm]
     assert "start narrowgate.service" not in shell
     assert "rollback" not in shell
 
