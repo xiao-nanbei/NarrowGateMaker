@@ -78,9 +78,26 @@ inline constexpr std::array<std::string_view, 13> kSignalExecutionL2FeatureNames
 using SignalExecutionL2FeatureValues =
     std::array<double, kSignalExecutionL2FeatureNames.size()>;
 
+inline constexpr std::array<std::string_view, 4>
+    kSignalExecutionL2PolicyMetricNames = {
+        "l2_quote_flip_rate",
+        "l2_book_refresh_ratio",
+        "l2_book_cancel_ratio",
+        "l2_near_depth_total",
+    };
+
+using SignalExecutionL2PolicyMetricValues =
+    std::array<double, kSignalExecutionL2PolicyMetricNames.size()>;
+
 [[nodiscard]] SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     std::span<const SignalExecutionL2Snapshot> snapshots,
     double bucket_end_ms
+);
+
+[[nodiscard]] SignalExecutionL2PolicyMetricValues
+compute_signal_execution_l2_policy_metrics(
+    std::span<const SignalExecutionL2Snapshot> snapshots,
+    double end_exchange_ms
 );
 
 template <typename T>

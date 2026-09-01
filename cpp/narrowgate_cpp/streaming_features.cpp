@@ -481,6 +481,59 @@ SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     return values;
 }
 
+SignalExecutionL2PolicyMetricValues
+compute_signal_execution_l2_policy_metrics(
+    std::span<const SignalExecutionL2Snapshot> snapshots,
+    double end_exchange_ms
+) {
+    SignalExecutionL2PolicyMetricValues values{};
+    const double start_exchange_ms = end_exchange_ms - 10'000.0;
+
+    std::optional<SignalExecutionL2Summary> previous;
+    double flip_count = 0.0;
+    double refresh_sum = 0.0;
+    double cancel_sum = 0.0;
+    std::size_t sample_count = 0;
+    for (const auto& snapshot : snapshots) {
+        // Match MakerEngine._current_l2_policy_metrics exactly: both ends of
+        // the exchange-time window are inclusive and no pre-window snapshot
+        // seeds the first in-window delta.
+        if (snapshot.ts_ms < start_exchange_ms ||
+            snapshot.ts_ms > end_exchange_ms) {
+            continue;
+        }
+        const auto summary = summarize_signal_execution_l2_snapshot(snapshot);
+        if (!summary.has_value()) {
+            continue;
+        }
+        values[3] = summary->state[6];
+        if (previous.has_value()) {
+            if (summary->best_bid != previous->best_bid ||
+                summary->best_ask != previous->best_ask) {
+                flip_count += 1.0;
+            }
+            if (previous->total_depth > 0.0) {
+                const double delta_depth = summary->total_depth - previous->total_depth;
+                if (delta_depth > 0.0) {
+                    refresh_sum += delta_depth / previous->total_depth;
+                } else if (delta_depth < 0.0) {
+                    cancel_sum += -delta_depth / previous->total_depth;
+                }
+            }
+        }
+        previous = summary;
+        ++sample_count;
+    }
+
+    if (sample_count > 0) {
+        const double denominator = static_cast<double>(sample_count);
+        values[0] = flip_count / denominator;
+        values[1] = refresh_sum / denominator;
+        values[2] = cancel_sum / denominator;
+    }
+    return values;
+}
+
 void SignalFeatureEngine::reset() {
     bars_.clear();
     history_.clear();

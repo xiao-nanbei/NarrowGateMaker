@@ -200,6 +200,13 @@ EXECUTION_L2_FEATURE_COLS = [
     "l2_book_cancel_ratio",
 ]
 
+EXECUTION_L2_POLICY_METRIC_COLS = (
+    "l2_quote_flip_rate",
+    "l2_book_refresh_ratio",
+    "l2_book_cancel_ratio",
+    "l2_near_depth_total",
+)
+
 TAKER_TEMPO_WINDOWS_SEC = (5, 10, 30, 60)
 TAKER_TEMPO_FEATURE_COLS = [
     *(f"taker_quote_imbalance_{window}s" for window in TAKER_TEMPO_WINDOWS_SEC),
@@ -619,6 +626,7 @@ class SignalEngine:
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
         )
         self._cpp_execution_l2_disabled_after_error = False
+        self._cpp_l2_policy_disabled_after_error = False
         self._cpp_global_flow_requested = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
         )
@@ -2879,6 +2887,65 @@ class SignalEngine:
                 raise
             logger.warning("C++ execution L2 features disabled after error: %s", exc)
             self._cpp_execution_l2_disabled_after_error = True
+            return None
+
+    def _compute_cpp_l2_policy_values(
+        self,
+        snapshots: Sequence[DepthSnapshot | QuoteDepthObservation],
+        end_exchange_ms: float,
+    ) -> np.ndarray | None:
+        if (
+            not self._cpp_signal_features_enabled
+            or self._cpp_signal is None
+            or self._cpp_l2_policy_disabled_after_error
+        ):
+            return None
+        native_compute = getattr(
+            self._cpp_signal,
+            "compute_signal_execution_l2_policy_metric_values",
+            None,
+        )
+        if native_compute is None:
+            error = RuntimeError(
+                "narrowgate_cpp missing execution L2 policy metric batch ABI"
+            )
+            if _cpp_signal_strict():
+                raise error
+            logger.warning("C++ L2 policy metrics unavailable: %s", error)
+            self._cpp_l2_policy_disabled_after_error = True
+            return None
+        try:
+            native_names = tuple(
+                getattr(
+                    self._cpp_signal,
+                    "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
+                    (),
+                )
+            )
+            if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
+                raise RuntimeError(
+                    "C++ execution L2 policy metric order changed: "
+                    f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
+                    f"actual={native_names}"
+                )
+            values = np.asarray(
+                native_compute(snapshots, float(end_exchange_ms)),
+                dtype=np.float64,
+            )
+            expected_shape = (len(EXECUTION_L2_POLICY_METRIC_COLS),)
+            if values.shape != expected_shape:
+                raise RuntimeError(
+                    "C++ execution L2 policy metric row shape changed: "
+                    f"expected={expected_shape} actual={values.shape}"
+                )
+            if not values.flags.c_contiguous:
+                values = np.ascontiguousarray(values, dtype=np.float64)
+            return values
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning("C++ L2 policy metrics disabled after error: %s", exc)
+            self._cpp_l2_policy_disabled_after_error = True
             return None
 
     def _compute_execution_l2_features(self, f: dict, bucket_end_ms: int):
