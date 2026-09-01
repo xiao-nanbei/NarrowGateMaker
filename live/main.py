@@ -1901,6 +1901,7 @@ def collect_runtime_safety_health(
     )
     quote = engine.runtime_safety_snapshot(now_monotonic_s=now_monotonic_s)
     user = ws.user_event_safety_snapshot(now_monotonic_s=now_monotonic_s)
+    continuation = quote.get("replace_terminal_continuation", {})
     return {
         "schemaVersion": RUNTIME_HEALTH_SCHEMA,
         "recordedAtNs": time.time_ns(),
@@ -1918,6 +1919,36 @@ def collect_runtime_safety_health(
         "lastTickAge": quote["last_tick_age_s"],
         "lastUserEventAge": user["last_user_event_age_s"],
         "userEventCount": int(user["user_event_count"]),
+        "replaceTerminalContinuationArmCount": int(
+            continuation.get("arm_count", 0)
+        ),
+        "replaceTerminalContinuationPublishCount": int(
+            continuation.get("publish_count", 0)
+        ),
+        "replaceTerminalContinuationDecisionCount": int(
+            continuation.get("decision_count", 0)
+        ),
+        "replaceTerminalContinuationDropCount": int(
+            continuation.get("drop_count", 0)
+        ),
+        "replaceTerminalContinuationPendingCount": int(
+            continuation.get("pending_count", 0)
+        ),
+        "replaceTerminalContinuationInFlightCount": int(
+            continuation.get("in_flight_count", 0)
+        ),
+        "replaceTerminalContinuationBuyDecisionCount": int(
+            continuation.get("buy_decision_count", 0)
+        ),
+        "replaceTerminalContinuationSellDecisionCount": int(
+            continuation.get("sell_decision_count", 0)
+        ),
+        "replaceTerminalContinuationDecisionLatencySumNs": int(
+            continuation.get("decision_latency_sum_ns", 0)
+        ),
+        "replaceTerminalContinuationDecisionLatencyMaxNs": int(
+            continuation.get("decision_latency_max_ns", 0)
+        ),
     }
 
 
@@ -2457,6 +2488,16 @@ def main():
                     f"fatalReason={runtime_safety['fatalReason'] or 'none'} "
                     f"lastTickAge={_runtime_age_text(runtime_safety['lastTickAge'])} "
                     f"lastUserEventAge={_runtime_age_text(runtime_safety['lastUserEventAge'])} "
+                    f"rtcArm={runtime_safety['replaceTerminalContinuationArmCount']} "
+                    f"rtcPublish={runtime_safety['replaceTerminalContinuationPublishCount']} "
+                    f"rtcDecision={runtime_safety['replaceTerminalContinuationDecisionCount']} "
+                    f"rtcDrop={runtime_safety['replaceTerminalContinuationDropCount']} "
+                    f"rtcPending={runtime_safety['replaceTerminalContinuationPendingCount']} "
+                    f"rtcInFlight={runtime_safety['replaceTerminalContinuationInFlightCount']} "
+                    f"rtcBuy={runtime_safety['replaceTerminalContinuationBuyDecisionCount']} "
+                    f"rtcSell={runtime_safety['replaceTerminalContinuationSellDecisionCount']} "
+                    f"rtcDecisionLatencySumNs={runtime_safety['replaceTerminalContinuationDecisionLatencySumNs']} "
+                    f"rtcDecisionLatencyMaxNs={runtime_safety['replaceTerminalContinuationDecisionLatencyMaxNs']} "
                     f"rpnl={snap.realized_pnl:.2f} "
                     f"upnl={snap.unrealized_pnl:.2f} "
                     f"daily={engine.inventory.daily_pnl:.2f} "

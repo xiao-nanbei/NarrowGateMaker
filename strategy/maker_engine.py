@@ -1480,6 +1480,20 @@ class MakerEngine:
         self._replace_terminal_continuation_intents: dict[
             str, _ReplaceTerminalContinuationIntent
         ] = {}
+        self._replace_terminal_continuation_in_flight: dict[
+            tuple[str, int], _ReplaceTerminalContinuationIntent
+        ] = {}
+        self._replace_terminal_continuation_event_sequence = 0
+        self._replace_terminal_continuation_telemetry = {
+            "arm_count": 0,
+            "publish_count": 0,
+            "decision_count": 0,
+            "drop_count": 0,
+            "buy_decision_count": 0,
+            "sell_decision_count": 0,
+            "decision_latency_sum_ns": 0,
+            "decision_latency_max_ns": 0,
+        }
 
         # Exchange filter (updated in start() via exchange_info)
         self._min_qty: float = cfg.lot_size
@@ -2979,6 +2993,7 @@ class MakerEngine:
                 side=order.side,
                 cid=order.client_order_id,
                 event_ts_ns=int(event.get("_local_receive_ts_ns", 0) or 0),
+                reason="cancel_rejected",
             )
         self._record_exact_order_event(order, event_type, event)
 
@@ -5531,37 +5546,71 @@ class MakerEngine:
         # blocker must consume the wakeup, not retain it and unexpectedly
         # reopen the side after that blocker expires.
         continuation_sides = frozenset()
-        if not self._order_manager_callback_dispatch_active():
-            continuation_sides = self._take_ready_replace_terminal_continuations()
+        continuation_intents: dict[
+            Side, _ReplaceTerminalContinuationIntent
+        ] = {}
+        try:
+            if not self._order_manager_callback_dispatch_active():
+                continuation_intents = (
+                    self._take_ready_replace_terminal_continuations()
+                )
+                continuation_sides = frozenset(continuation_intents)
 
-        # Quote-stop freshness is a safety clock, not a requote feature.  An
-        # active maker order must not remain live for another 5--10 second
-        # requote interval after its execution book has already gone stale.
-        if self._enforce_stale_quote_stop():
-            return
+            # Quote-stop freshness is a safety clock, not a requote feature.  An
+            # active maker order must not remain live for another 5--10 second
+            # requote interval after its execution book has already gone stale.
+            if self._enforce_stale_quote_stop():
+                self._drop_replace_terminal_continuations(
+                    continuation_intents,
+                    reason="stale_quote_stop",
+                )
+                return
 
-        # Cooldown after loss
-        if now < self._cooldown_until:
-            if self.orders.has_active_orders() and now - self._last_cooldown_cancel_time >= 5.0:
-                self._cancel_all_orders()
-                self._last_cooldown_cancel_time = now
-            return
-        # Reset consecutive losses after cooldown expires so we don't
-        # immediately re-enter cooldown (was causing infinite cooldown loop)
-        if self._cooldown_until > 0:
-            self.inventory.reset_consecutive_losses()
-            self._cooldown_until = 0.0
-            self._last_cooldown_cancel_time = 0.0
-            self._loss_cooldown_expiry_count += 1
+            # Cooldown after loss
+            if now < self._cooldown_until:
+                if (
+                    self.orders.has_active_orders()
+                    and now - self._last_cooldown_cancel_time >= 5.0
+                ):
+                    self._cancel_all_orders()
+                    self._last_cooldown_cancel_time = now
+                self._drop_replace_terminal_continuations(
+                    continuation_intents,
+                    reason="loss_cooldown",
+                )
+                return
+            # Reset consecutive losses after cooldown expires so we don't
+            # immediately re-enter cooldown (was causing infinite cooldown loop)
+            if self._cooldown_until > 0:
+                self.inventory.reset_consecutive_losses()
+                self._cooldown_until = 0.0
+                self._last_cooldown_cancel_time = 0.0
+                self._loss_cooldown_expiry_count += 1
 
-        # Lifecycle callbacks only publish readiness.  The main loop owns the
-        # fresh snapshot, policy/risk checks, and any REST request.
-        if continuation_sides and self.signal.is_warmed_up:
-            self._requote(
-                route_sides=continuation_sides,
-                advance_requote_clock=False,
+            # Lifecycle callbacks only publish readiness.  The main loop owns the
+            # fresh snapshot, policy/risk checks, and any REST request.
+            if continuation_sides and self.signal.is_warmed_up:
+                requote_kwargs: dict[str, Any] = {
+                    "route_sides": continuation_sides,
+                    "advance_requote_clock": False,
+                }
+                if continuation_intents:
+                    requote_kwargs["replace_terminal_continuations"] = (
+                        continuation_intents
+                    )
+                self._requote(**requote_kwargs)
+                return
+            if continuation_sides:
+                self._drop_replace_terminal_continuations(
+                    continuation_intents,
+                    reason="signal_warmup",
+                )
+        except BaseException:
+            self._drop_replace_terminal_continuations(
+                continuation_intents,
+                reason="tick_exception",
             )
-            return
+            raise
 
         # Requote interval check (dynamic or static)
         rq_interval = self._effective_rq_interval()
@@ -5614,6 +5663,9 @@ class MakerEngine:
         *,
         route_sides: frozenset[Side] | None = None,
         advance_requote_clock: bool = True,
+        replace_terminal_continuations: Mapping[
+            Side, _ReplaceTerminalContinuationIntent
+        ] | None = None,
     ):
         """Core requote logic — compute quotes, manage orders, risk check."""
         requote_start_perf = time.perf_counter()
@@ -5633,17 +5685,30 @@ class MakerEngine:
         timings["sync_check_us"] = (time.perf_counter() - step_start) * 1_000_000.0
 
         # 1. Get ML prediction
-        step_start = time.perf_counter()
-        pred = self.signal.compute_signal()
-        timings["signal_compute_us"] = (time.perf_counter() - step_start) * 1_000_000.0
-        use_bar_pricing = getattr(cfg.strategy, 'use_bar_pricing', False)
-        quote_snapshot = self.signal.quote_decision_snapshot()
-        self._last_quote_decision_snapshot = quote_snapshot
-        post_only_guard = self._post_only_guard_for_snapshot(quote_snapshot)
-        self._last_post_only_guard = post_only_guard
-        # The actionable decision clock begins only after prediction and the
-        # immutable execution-book view have both been assembled.
-        decision_start_ts_ns = quote_snapshot.capture_ts_ns
+        try:
+            step_start = time.perf_counter()
+            pred = self.signal.compute_signal()
+            timings["signal_compute_us"] = (
+                time.perf_counter() - step_start
+            ) * 1_000_000.0
+            use_bar_pricing = getattr(cfg.strategy, 'use_bar_pricing', False)
+            quote_snapshot = self.signal.quote_decision_snapshot()
+            self._last_quote_decision_snapshot = quote_snapshot
+            post_only_guard = self._post_only_guard_for_snapshot(quote_snapshot)
+            self._last_post_only_guard = post_only_guard
+            # The actionable decision clock begins only after prediction and
+            # the immutable execution-book view have both been assembled.
+            decision_start_ts_ns = quote_snapshot.capture_ts_ns
+        except BaseException:
+            self._drop_replace_terminal_continuations(
+                replace_terminal_continuations or {},
+                reason="decision_start_failed",
+            )
+            raise
+        self._record_replace_terminal_continuation_decisions(
+            replace_terminal_continuations or {},
+            decision_start_ts_ns=decision_start_ts_ns,
+        )
         snapshot_error = self._quote_snapshot_contract_error(
             quote_snapshot,
             use_bar_pricing=bool(use_bar_pricing),
@@ -7757,6 +7822,180 @@ class MakerEngine:
             return False
         return getattr(order, "state", None) in (OrderState.PENDING_NEW, OrderState.PENDING_CANCEL)
 
+    @staticmethod
+    def _empty_replace_terminal_continuation_telemetry() -> dict[str, int]:
+        return dict.fromkeys(
+            (
+                "arm_count",
+                "publish_count",
+                "decision_count",
+                "drop_count",
+                "buy_decision_count",
+                "sell_decision_count",
+                "decision_latency_sum_ns",
+                "decision_latency_max_ns",
+            ),
+            0,
+        )
+
+    def _replace_terminal_continuation_event_locked(
+        self,
+        *,
+        event: str,
+        side: Side,
+        intent: _ReplaceTerminalContinuationIntent,
+        decision_start_ts_ns: int = 0,
+        decision_latency_ns: int = 0,
+        reason: str = "none",
+    ) -> dict[str, Any]:
+        """Commit one event while the caller holds the continuation lock."""
+
+        latency_ns = max(0, int(decision_latency_ns))
+        telemetry = getattr(
+            self,
+            "_replace_terminal_continuation_telemetry",
+            None,
+        )
+        if telemetry is None:
+            telemetry = self._empty_replace_terminal_continuation_telemetry()
+            self._replace_terminal_continuation_telemetry = telemetry
+        telemetry[f"{event}_count"] += 1
+        if event == "decision":
+            telemetry[
+                "buy_decision_count"
+                if side == Side.BUY
+                else "sell_decision_count"
+            ] += 1
+            telemetry["decision_latency_sum_ns"] += latency_ns
+            telemetry["decision_latency_max_ns"] = max(
+                telemetry["decision_latency_max_ns"],
+                latency_ns,
+            )
+        sequence = int(
+            getattr(self, "_replace_terminal_continuation_event_sequence", 0)
+        ) + 1
+        self._replace_terminal_continuation_event_sequence = sequence
+        return {
+            "event": event,
+            "sequence": sequence,
+            "side": side.value,
+            "generation": int(intent.generation),
+            "cid": intent.client_order_id,
+            "armed_ts_ns": int(intent.armed_ts_ns),
+            "terminal_visible_ts_ns": int(intent.terminal_visible_ts_ns),
+            "decision_start_ts_ns": int(decision_start_ts_ns),
+            "decision_latency_ns": latency_ns,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _log_replace_terminal_continuation_event(payload: Mapping[str, Any]) -> None:
+        logger.info(
+            "REPLACE_TERMINAL_CONTINUATION event=%s sequence=%d side=%s generation=%d "
+            "cid=%s armed_ts_ns=%d terminal_visible_ts_ns=%d "
+            "decision_start_ts_ns=%d decision_latency_ns=%d reason=%s",
+            payload["event"],
+            payload["sequence"],
+            payload["side"],
+            payload["generation"],
+            payload["cid"],
+            payload["armed_ts_ns"],
+            payload["terminal_visible_ts_ns"],
+            payload["decision_start_ts_ns"],
+            payload["decision_latency_ns"],
+            payload["reason"],
+        )
+
+    def _finalize_replace_terminal_continuations(
+        self,
+        continuations: dict[Side, _ReplaceTerminalContinuationIntent],
+        *,
+        event: str,
+        decision_start_ts_ns: int = 0,
+        reason: str = "none",
+    ) -> None:
+        payloads = []
+        with self._replace_terminal_continuation_lock:
+            in_flight = getattr(
+                self,
+                "_replace_terminal_continuation_in_flight",
+                {},
+            )
+            for side, intent in continuations.items():
+                key = (side.value, int(intent.generation))
+                if in_flight.get(key) != intent:
+                    continue
+                del in_flight[key]
+                latency_ns = max(
+                    0,
+                    int(decision_start_ts_ns)
+                    - int(intent.terminal_visible_ts_ns),
+                ) if event == "decision" else 0
+                payloads.append(
+                    self._replace_terminal_continuation_event_locked(
+                        event=event,
+                        side=side,
+                        intent=intent,
+                        decision_start_ts_ns=decision_start_ts_ns,
+                        decision_latency_ns=latency_ns,
+                        reason=reason,
+                    )
+                )
+            continuations.clear()
+        for payload in payloads:
+            self._log_replace_terminal_continuation_event(payload)
+
+    def _drop_replace_terminal_continuations(
+        self,
+        continuations: dict[Side, _ReplaceTerminalContinuationIntent],
+        *,
+        reason: str,
+    ) -> None:
+        self._finalize_replace_terminal_continuations(
+            continuations,
+            event="drop",
+            reason=reason,
+        )
+
+    def _record_replace_terminal_continuation_decisions(
+        self,
+        continuations: dict[Side, _ReplaceTerminalContinuationIntent],
+        *,
+        decision_start_ts_ns: int,
+    ) -> None:
+        self._finalize_replace_terminal_continuations(
+            continuations,
+            event="decision",
+            decision_start_ts_ns=decision_start_ts_ns,
+        )
+
+    def replace_terminal_continuation_telemetry_snapshot(self) -> dict[str, int]:
+        """Return process-epoch continuation counts and exact decision latency."""
+
+        lock = getattr(self, "_replace_terminal_continuation_lock", None)
+        if lock is None:
+            snapshot = self._empty_replace_terminal_continuation_telemetry()
+            snapshot.update(pending_count=0, in_flight_count=0)
+            return snapshot
+        with lock:
+            telemetry = getattr(
+                self,
+                "_replace_terminal_continuation_telemetry",
+                None,
+            )
+            snapshot = dict(
+                telemetry
+                if telemetry is not None
+                else self._empty_replace_terminal_continuation_telemetry()
+            )
+            snapshot["pending_count"] = len(
+                getattr(self, "_replace_terminal_continuation_intents", {})
+            )
+            snapshot["in_flight_count"] = len(
+                getattr(self, "_replace_terminal_continuation_in_flight", {})
+            )
+            return snapshot
+
     def _arm_replace_terminal_continuation(
         self,
         *,
@@ -7773,19 +8012,40 @@ class MakerEngine:
         ):
             return 0
         side_name = side.value
+        payloads = []
         with self._replace_terminal_continuation_lock:
+            dropped_intent = self._replace_terminal_continuation_intents.get(
+                side_name
+            )
+            if dropped_intent is not None:
+                payloads.append(
+                    self._replace_terminal_continuation_event_locked(
+                        event="drop",
+                        side=side,
+                        intent=dropped_intent,
+                        reason="superseded_by_new_arm",
+                    )
+                )
             generation = (
                 self._replace_terminal_continuation_generation.get(side_name, 0)
                 + 1
             )
             self._replace_terminal_continuation_generation[side_name] = generation
-            self._replace_terminal_continuation_intents[side_name] = (
-                _ReplaceTerminalContinuationIntent(
-                    client_order_id=str(cid),
-                    generation=generation,
-                    armed_ts_ns=time.time_ns(),
+            intent = _ReplaceTerminalContinuationIntent(
+                client_order_id=str(cid),
+                generation=generation,
+                armed_ts_ns=time.time_ns(),
+            )
+            self._replace_terminal_continuation_intents[side_name] = intent
+            payloads.append(
+                self._replace_terminal_continuation_event_locked(
+                    event="arm",
+                    side=side,
+                    intent=intent,
                 )
             )
+        for payload in payloads:
+            self._log_replace_terminal_continuation_event(payload)
         return generation
 
     def _clear_replace_terminal_continuation(
@@ -7795,6 +8055,7 @@ class MakerEngine:
         cid: str,
         generation: int = 0,
         event_ts_ns: int = 0,
+        reason: str = "cleared",
     ) -> bool:
         """Clear only the cancel intent identified by side, CID, and generation."""
 
@@ -7812,9 +8073,21 @@ class MakerEngine:
             if event_ts_ns > 0 and int(event_ts_ns) < intent.armed_ts_ns:
                 return False
             del intents[side_name]
-            return True
+            payload = self._replace_terminal_continuation_event_locked(
+                event="drop",
+                side=side,
+                intent=intent,
+                reason=reason,
+            )
+        self._log_replace_terminal_continuation_event(payload)
+        return True
 
-    def _clear_side_replace_terminal_continuation(self, side: Side) -> bool:
+    def _clear_side_replace_terminal_continuation(
+        self,
+        side: Side,
+        *,
+        reason: str = "side_superseded",
+    ) -> bool:
         """Let a non-replacement side action supersede any pending wakeup."""
 
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
@@ -7822,13 +8095,20 @@ class MakerEngine:
         if lock is None or intents is None:
             return False
         with lock:
-            return (
-                intents.pop(
-                    side.value,
-                    None,
-                )
-                is not None
+            dropped_intent = intents.pop(
+                side.value,
+                None,
             )
+            if dropped_intent is None:
+                return False
+            payload = self._replace_terminal_continuation_event_locked(
+                event="drop",
+                side=side,
+                intent=dropped_intent,
+                reason=reason,
+            )
+        self._log_replace_terminal_continuation_event(payload)
+        return True
 
     def _clear_unready_replace_terminal_continuation(
         self,
@@ -7836,6 +8116,7 @@ class MakerEngine:
         side: Side,
         cid: str,
         generation: int,
+        reason: str = "terminal_before_callback",
     ) -> bool:
         """Resolve arm-before-terminal races without consuming a ready ACK."""
 
@@ -7853,7 +8134,14 @@ class MakerEngine:
             ):
                 return False
             del intents[side.value]
-            return True
+            payload = self._replace_terminal_continuation_event_locked(
+                event="drop",
+                side=side,
+                intent=intent,
+                reason=reason,
+            )
+        self._log_replace_terminal_continuation_event(payload)
+        return True
 
     def _publish_replace_terminal_continuation(self, order: Any) -> bool:
         """Make one armed intent visible to tick; never quote from the callback."""
@@ -7881,34 +8169,73 @@ class MakerEngine:
                 ready=True,
                 terminal_visible_ts_ns=terminal_visible_ts_ns,
             )
-            return True
+            published_intent = self._replace_terminal_continuation_intents[
+                side_name
+            ]
+            payload = self._replace_terminal_continuation_event_locked(
+                event="publish",
+                side=order.side,
+                intent=published_intent,
+            )
+        self._log_replace_terminal_continuation_event(payload)
+        return True
 
-    def _take_ready_replace_terminal_continuations(self) -> frozenset[Side]:
+    def _take_ready_replace_terminal_continuations(
+        self,
+    ) -> dict[Side, _ReplaceTerminalContinuationIntent]:
         """Consume ready terminal wakeups exactly once on the main loop."""
 
         if not bool(
             getattr(self.cfg.strategy, "replace_terminal_continuation", False)
         ):
-            return frozenset()
-        ready: set[Side] = set()
+            return {}
+        ready: dict[Side, _ReplaceTerminalContinuationIntent] = {}
         with self._replace_terminal_continuation_lock:
+            in_flight = getattr(
+                self,
+                "_replace_terminal_continuation_in_flight",
+                None,
+            )
+            if in_flight is None:
+                in_flight = {}
+                self._replace_terminal_continuation_in_flight = in_flight
             for side in (Side.BUY, Side.SELL):
                 intent = self._replace_terminal_continuation_intents.get(side.value)
                 if intent is None or not intent.ready:
                     continue
-                ready.add(side)
+                ready[side] = intent
+                in_flight[(side.value, int(intent.generation))] = intent
                 del self._replace_terminal_continuation_intents[side.value]
-        return frozenset(ready)
+        return ready
 
-    def _clear_all_replace_terminal_continuations(self) -> None:
+    def _clear_all_replace_terminal_continuations(
+        self,
+        *,
+        reason: str = "clear_all",
+    ) -> None:
         """Drop callback wakeups when the process can no longer quote."""
 
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         intents = getattr(self, "_replace_terminal_continuation_intents", None)
         if lock is None or intents is None:
             return
+        payloads = []
         with lock:
+            for side in (Side.BUY, Side.SELL):
+                intent = intents.get(side.value)
+                if intent is None:
+                    continue
+                payloads.append(
+                    self._replace_terminal_continuation_event_locked(
+                        event="drop",
+                        side=side,
+                        intent=intent,
+                        reason=reason,
+                    )
+                )
             intents.clear()
+        for payload in payloads:
+            self._log_replace_terminal_continuation_event(payload)
 
     def _apply_pending_replace_coalesce(
         self,
@@ -9349,7 +9676,7 @@ class MakerEngine:
 
     def _cancel_all_orders(self) -> bool:
         """Cancel all active orders."""
-        self._clear_all_replace_terminal_continuations()
+        self._clear_all_replace_terminal_continuations(reason="cancel_all")
         self._prune_terminal_side_order_reference(Side.BUY)
         self._prune_terminal_side_order_reference(Side.SELL)
         active = self.orders.get_active_orders()
@@ -9414,7 +9741,11 @@ class MakerEngine:
         order = self.orders.get_order(cid)
         if order is None:
             for side in (Side.BUY, Side.SELL):
-                self._clear_replace_terminal_continuation(side=side, cid=cid)
+                self._clear_replace_terminal_continuation(
+                    side=side,
+                    cid=cid,
+                    reason="order_missing",
+                )
                 if self._side_order_reference(side) == cid:
                     self._prune_terminal_side_order_reference(side)
             return False
@@ -9422,6 +9753,7 @@ class MakerEngine:
             self._clear_replace_terminal_continuation(
                 side=order.side,
                 cid=cid,
+                reason="non_continuation_cancel",
             )
         if order.is_terminal:
             if self.orders.terminal_identity(cid) is None:
@@ -9485,6 +9817,7 @@ class MakerEngine:
                     side=order.side,
                     cid=cid,
                     generation=replace_continuation_generation,
+                    reason="cancel_request_failed",
                 )
             logger.error(f"Cancel order {cid} failed: {e}")
             return False
@@ -9496,7 +9829,10 @@ class MakerEngine:
     def _cancel_active_side_orders(self, side: str, reason: str):
         """Request side cancellation without releasing unresolved ownership."""
         side_enum = Side.BUY if side == "BUY" else Side.SELL
-        self._clear_side_replace_terminal_continuation(side_enum)
+        self._clear_side_replace_terminal_continuation(
+            side_enum,
+            reason=str(reason).lower(),
+        )
         if side == "BUY":
             active_orders = self.orders.get_bid_orders()
         else:
@@ -9520,7 +9856,10 @@ class MakerEngine:
     def _cancel_tracked_order_before_replacement(self, side: Side) -> bool:
         """Return true only after the tracked order is authoritatively terminal."""
 
-        self._clear_side_replace_terminal_continuation(side)
+        self._clear_side_replace_terminal_continuation(
+            side,
+            reason="tracked_replacement_superseded",
+        )
         self._prune_terminal_side_order_reference(side)
         cid = self._bid_cid if side == Side.BUY else self._ask_cid
         if not cid:
@@ -9537,7 +9876,10 @@ class MakerEngine:
     ) -> bool:
         """Wait for unresolved lifecycle ownership; replace only after terminal ACK."""
 
-        self._clear_side_replace_terminal_continuation(side)
+        self._clear_side_replace_terminal_continuation(
+            side,
+            reason="closing_replacement_superseded",
+        )
         self._prune_terminal_side_order_reference(side)
         cid = self._side_order_reference(side)
         if not cid:
@@ -10048,6 +10390,7 @@ class MakerEngine:
             self._clear_replace_terminal_continuation(
                 side=order.side,
                 cid=order.client_order_id,
+                reason=f"terminal_{reason}",
             )
 
     def _on_fill(self, order, event):
@@ -10481,7 +10824,7 @@ class MakerEngine:
         inventory is left for explicit operator/risk handling.
         """
         self._running = False
-        self._clear_all_replace_terminal_continuations()
+        self._clear_all_replace_terminal_continuations(reason="shutdown")
         logger.info("MakerEngine stopping...")
         checkpoint_error: Optional[Exception] = None
         shutdown_reconciliation_error: Optional[Exception] = None
@@ -10591,7 +10934,7 @@ class MakerEngine:
                     or defer_reconciliation
                 )
             self._running = False
-        self._clear_all_replace_terminal_continuations()
+        self._clear_all_replace_terminal_continuations(reason="runtime_fatal")
         if not first_latch:
             if (
                 reconciliation_required
@@ -10839,6 +11182,7 @@ class MakerEngine:
             fatal_reason = "ORDER_MANAGER_FATAL:" + str(
                 order_status.get("reason", "unknown")
             )
+        continuation = self.replace_terminal_continuation_telemetry_snapshot()
         return {
             "quote_loop_running": bool(self._running and not order_fatal),
             "ownership_conflict_latched": conflict_latched,
@@ -10851,6 +11195,7 @@ class MakerEngine:
                 if last_tick > 0.0
                 else None
             ),
+            "replace_terminal_continuation": continuation,
         }
 
     # ── exchange sync ──
