@@ -3140,11 +3140,10 @@ class SignalEngine:
 
         # 8. OI-price divergence
         close = f.get("close", 0)
-        fh = list(self._feat_history)
-        if len(mh) >= 2 and len(fh) >= 30 and close > 0:
+        if len(mh) >= 2 and len(self._feat_history) >= 30 and close > 0:
             prev_oi = mh[-2]["oi"]
             oi_ret = (oi - prev_oi) / prev_oi if prev_oi > 0 else 0.0
-            old_close = fh[-30].get("close", close)
+            old_close = self._feat_history[-30].get("close", close)
             price_ret = (close - old_close) / old_close if old_close > 0 else 0.0
             f["oi_price_divergence"] = oi_ret - price_ret
         else:
