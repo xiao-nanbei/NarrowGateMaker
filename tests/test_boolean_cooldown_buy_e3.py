@@ -249,7 +249,10 @@ def test_full_mid_ema_state_matches_offline_projector() -> None:
             assert observed == expected
 
 
-def test_warmup_unobserved_and_hash_drift_fail_closed(tmp_path: Path) -> None:
+def test_loaded_policy_is_immutable_and_evaluate_performs_no_file_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     runtime, paths = _artifact(tmp_path)
     before = runtime.evaluate(
         side="BUY",
@@ -262,16 +265,26 @@ def test_warmup_unobserved_and_hash_drift_fail_closed(tmp_path: Path) -> None:
     assert before.fallback_reason == "no_completed_receive_time_window"
 
     paths["policy"].write_text("{}\n", encoding="ascii")
-    drift = runtime.evaluate(
+    monkeypatch.setattr(
+        subject,
+        "_open_bound_json",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("evaluate attempted artifact file I/O")
+        ),
+    )
+    after = runtime.evaluate(
         side="BUY",
         baseline_duration_ms=170_000,
         campaign_age_s=200.0,
         decision_ts_ns=2,
-        snapshot_id="hash-drift",
+        snapshot_id="loaded-policy-remains-bound",
     )
-    assert drift.action_id == subject.CONTROL_ACTION
-    assert drift.support_valid is False
-    assert drift.fallback_reason == "runtime_artifact_file_hash_drift"
+    assert after.action_id == subject.CONTROL_ACTION
+    assert after.support_valid is False
+    assert after.fallback_reason == "no_completed_receive_time_window"
+    audit = runtime.audit()
+    assert audit["binding_mode"] == "startup_immutable"
+    assert audit["binding_error"] == ""
 
 
 def _runtime_reload_kwargs(paths: dict[str, Path]) -> dict[str, object]:
@@ -287,6 +300,15 @@ def _runtime_reload_kwargs(paths: dict[str, Path]) -> dict[str, object]:
         "warmup_s": 2048.0,
         "max_feature_age_s": 1.0,
     }
+
+
+def test_artifact_hash_drift_is_rejected_at_startup(tmp_path: Path) -> None:
+    _runtime, paths = _artifact(tmp_path)
+    kwargs = _runtime_reload_kwargs(paths)
+    paths["policy"].write_text("{}\n", encoding="ascii")
+
+    with pytest.raises(ValueError, match="sha256_mismatch"):
+        subject.LiveBuyE3CooldownPolicy.from_files(**kwargs)
 
 
 def test_artifact_load_rejects_non_private_mode(tmp_path: Path) -> None:
