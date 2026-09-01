@@ -4310,19 +4310,37 @@ class MakerEngine:
         quote_snapshot: Optional[QuoteDecisionSnapshot] = None,
         *,
         mutate_state: bool = True,
+        shared_inputs: Optional[dict[str, Any]] = None,
     ) -> SidePolicyDecision:
         cfg = self.cfg
         side_name = side.value
         max_inv = max(cfg.strategy.max_inventory, 1e-9)
         inventory_ratio = min(abs(q) / max_inv, 1.0)
-        tox_bid, tox_ask = self._toxicity_probs(pred)
+        toxicity_probs = (
+            shared_inputs.get("toxicity_probs")
+            if shared_inputs is not None
+            else None
+        )
+        if toxicity_probs is None:
+            toxicity_probs = self._toxicity_probs(pred)
+            if shared_inputs is not None:
+                shared_inputs["toxicity_probs"] = toxicity_probs
+        tox_bid, tox_ask = toxicity_probs
         toxicity = tox_bid if side == Side.BUY else tox_ask
         markout_ema = self._mo_ema_bid if side == Side.BUY else self._mo_ema_ask
         metrics = (
-            self._current_l2_policy_metrics(mid, quote_snapshot)
-            if quote_snapshot is not None
-            else self._current_l2_policy_metrics(mid)
+            shared_inputs.get("l2_policy_metrics")
+            if shared_inputs is not None
+            else None
         )
+        if metrics is None:
+            metrics = (
+                self._current_l2_policy_metrics(mid, quote_snapshot)
+                if quote_snapshot is not None
+                else self._current_l2_policy_metrics(mid)
+            )
+            if shared_inputs is not None:
+                shared_inputs["l2_policy_metrics"] = metrics
         decision = SidePolicyDecision(
             side=side_name,
             inventory_ratio=inventory_ratio,
@@ -6773,6 +6791,11 @@ class MakerEngine:
         base_ask_price = ask_price
         self._last_prediction = pred
 
+        # Both side policies consume the same immutable decision snapshot and
+        # prediction.  The first side lazily populates these pure inputs; the
+        # second reuses them instead of walking the full 10-second L2 history.
+        shared_side_policy_inputs: dict[str, Any] = {}
+
         bid_policy = self._build_side_policy(
             Side.BUY,
             mid,
@@ -6780,6 +6803,7 @@ class MakerEngine:
             pred,
             quote_snapshot,
             mutate_state=bid_route_allowed,
+            shared_inputs=shared_side_policy_inputs,
         )
         ask_policy = self._build_side_policy(
             Side.SELL,
@@ -6788,6 +6812,7 @@ class MakerEngine:
             pred,
             quote_snapshot,
             mutate_state=ask_route_allowed,
+            shared_inputs=shared_side_policy_inputs,
         )
         if bid_route_allowed and ask_route_allowed:
             self._apply_flat_unilateral_ttl(q, bid_policy, ask_policy)

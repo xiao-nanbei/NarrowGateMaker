@@ -155,6 +155,70 @@ def _run_timed_update_orders(
     return timings
 
 
+def test_side_policy_reuses_immutable_l2_summary_without_changing_decisions() -> None:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine._mo_ema_bid = 1.25
+    engine._mo_ema_ask = -2.5
+    engine._mo_ref = 50.0
+    engine._fill_cooldown_until = {"BUY": 0.0, "SELL": 0.0}
+    engine._last_quote_context = {"BUY": {}, "SELL": {}}
+    metrics = {
+        "depth_age_s": 0.012,
+        "microprice_shift_bps": 0.3,
+        "l2_quote_flip_rate": 0.2,
+        "l2_book_refresh_ratio": 0.4,
+        "l2_book_cancel_ratio": 0.1,
+        "l2_near_depth_total": 12.0,
+    }
+    calls = {"metrics": 0, "toxicity": 0}
+
+    def current_metrics(*_args, **_kwargs):
+        calls["metrics"] += 1
+        return dict(metrics)
+
+    def toxicity_probs(_pred):
+        calls["toxicity"] += 1
+        return 0.2, 0.7
+
+    engine._current_l2_policy_metrics = current_metrics
+    engine._toxicity_probs = toxicity_probs
+    pred = SimpleNamespace(dir_10s=0.5)
+    snapshot = SimpleNamespace()
+
+    independent = tuple(
+        engine._build_side_policy(
+            side,
+            100_000.0,
+            0.0,
+            pred,
+            snapshot,
+            mutate_state=False,
+        )
+        for side in (Side.BUY, Side.SELL)
+    )
+    assert calls == {"metrics": 2, "toxicity": 2}
+    calls.update(metrics=0, toxicity=0)
+    shared_inputs: dict[str, object] = {}
+    shared = tuple(
+        engine._build_side_policy(
+            side,
+            100_000.0,
+            0.0,
+            pred,
+            snapshot,
+            mutate_state=False,
+            shared_inputs=shared_inputs,
+        )
+        for side in (Side.BUY, Side.SELL)
+    )
+
+    assert shared == independent
+    assert calls == {"metrics": 1, "toxicity": 1}
+    assert shared_inputs["toxicity_probs"] == (0.2, 0.7)
+    assert shared_inputs["l2_policy_metrics"] == metrics
+
+
 def _assert_update_orders_phase_spans(timings: dict[str, float]) -> None:
     phases = (
         "update_orders_prepare_us",
