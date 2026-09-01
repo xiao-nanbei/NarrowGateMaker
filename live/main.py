@@ -36,6 +36,7 @@ import signal
 import subprocess
 import sys
 import sysconfig
+import threading
 import time
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -90,6 +91,7 @@ DEFAULT_DRY_RUN_TIMEOUT_S = 30.0
 DRY_RUN_TIMEOUT_EXIT_CODE = 124
 EXECUTION_STATE_UNCERTAIN_EXIT_CODE = 78
 RUNTIME_HEALTH_SCHEMA = "narrowgate.live_runtime_health.v1"
+LIVE_MAIN_LOOP_FALLBACK_WAIT_S = 0.1
 
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
@@ -102,6 +104,28 @@ PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
 
 class FormalDryRunTimeout(TimeoutError):
     """Raised when local validation exceeds its explicit deadline."""
+
+
+class _LiveMainLoopWakeup:
+    """Wake the sole decision loop without changing its 100 ms safety clock."""
+
+    def __init__(self, fallback_wait_s: float = LIVE_MAIN_LOOP_FALLBACK_WAIT_S):
+        self._event = threading.Event()
+        self._fallback_wait_s = float(fallback_wait_s)
+
+    def notify_replacement_terminal(self) -> None:
+        self._event.set()
+
+    def notify_shutdown(self) -> None:
+        self._event.set()
+
+    def wait(self) -> bool:
+        notified = self._event.wait(timeout=self._fallback_wait_s)
+        # Clear only after the wait. If a notifier races with this clear, its
+        # authoritative ready/shutdown state is consumed by the immediately
+        # following loop iteration; it cannot be delayed by another wait.
+        self._event.clear()
+        return notified
 
 
 def _positive_finite_seconds(value: str) -> float:
@@ -2152,6 +2176,10 @@ def main():
 
     # Create engine
     engine = MakerEngine(cfg, rest, artifact_authority=safety_authority)
+    main_loop_wakeup = _LiveMainLoopWakeup()
+    engine.set_replace_terminal_continuation_wakeup(
+        main_loop_wakeup.notify_replacement_terminal
+    )
     restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
     logger.info(
         "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "
@@ -2210,6 +2238,7 @@ def main():
             logger.warning("Force exit")
             sys.exit(1)
         shutdown_event = True
+        main_loop_wakeup.notify_shutdown()
         logger.info(f"Received signal {signum}, shutting down...")
 
     signal.signal(signal.SIGINT, handle_shutdown)
@@ -2695,8 +2724,14 @@ def main():
                     )
                 last_health = now
 
-            # Sleep to avoid busy loop (short sleep, events arrive via WS callbacks)
-            time.sleep(0.1)
+            # Keep the existing 100 ms safety/maintenance cadence, but let an
+            # authoritative replacement terminal or shutdown end the wait.
+            # Ordinary market callbacks never receive this wakeup handle and
+            # therefore cannot turn the 5--10 second quote cadence into a
+            # market-event-driven cadence.
+            if shutdown_event:
+                break
+            main_loop_wakeup.wait()
 
     except BaseException as exc:
         fatal_error = exc
