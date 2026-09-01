@@ -392,6 +392,17 @@ def test_live_perf_telemetry_fields_include_update_orders_accounting() -> None:
     fields = LivePerfTelemetryLogRow.__dataclass_fields__
 
     assert {
+        "signal_compute_path",
+        "signal_compute_bucket_count",
+        "signal_compute_lock_wait_us",
+        "signal_compute_snapshot_feature_us",
+        "signal_compute_prediction_us",
+        "signal_compute_commit_lock_wait_us",
+        "signal_compute_commit_us",
+        "signal_compute_accounted_us",
+        "signal_compute_residual_us",
+    }.issubset(fields)
+    assert {
         "update_orders_prepare_us",
         "update_orders_prepare_policy_us",
         "update_orders_prepare_state_routing_us",
@@ -454,6 +465,7 @@ def test_live_perf_telemetry_rotates_old_header_before_new_row(
         "symbol",
         "event",
         "status",
+        "signal_compute_path",
         "bid_action",
         "ask_action",
     }
@@ -1103,8 +1115,21 @@ def test_side_only_requote_preserves_unrouted_quote_context_and_records_latency(
         mid=100.0,
         bar_pricing_mid=100.0,
     )
+
+    def compute_signal(*, perf_timings):
+        perf_timings.update(
+            signal_compute_path="cached_no_new_bucket",
+            signal_compute_bucket_count=0,
+            signal_compute_lock_wait_us=0.001,
+            signal_compute_snapshot_feature_us=0.002,
+            signal_compute_prediction_us=0.0,
+            signal_compute_commit_lock_wait_us=0.0,
+            signal_compute_commit_us=0.0,
+        )
+        return SimpleNamespace()
+
     engine.signal = SimpleNamespace(
-        compute_signal=lambda: SimpleNamespace(),
+        compute_signal=compute_signal,
         quote_decision_snapshot=lambda: snapshot,
     )
     engine._post_only_guard_for_snapshot = lambda _snapshot: SimpleNamespace()
@@ -1174,6 +1199,13 @@ def test_side_only_requote_preserves_unrouted_quote_context_and_records_latency(
     assert logged_perf["update_orders_us"] >= 0.004
     assert logged_perf["update_orders_residual_us"] == pytest.approx(
         logged_perf["update_orders_us"] - 0.004
+    )
+    assert logged_perf["signal_compute_path"] == "cached_no_new_bucket"
+    assert logged_perf["signal_compute_bucket_count"] == 0
+    assert logged_perf["signal_compute_accounted_us"] == 0.003
+    assert logged_perf["signal_compute_us"] >= 0.003
+    assert logged_perf["signal_compute_residual_us"] == pytest.approx(
+        logged_perf["signal_compute_us"] - 0.003
     )
     telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
     assert telemetry["arm_count"] == 1

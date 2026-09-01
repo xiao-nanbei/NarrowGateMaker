@@ -57,6 +57,18 @@ logger = logging.getLogger("signal")
 TEN_SECOND_FEATURE_DAG_SHA256 = TEN_SECOND_CAUSAL_GRAPH.sha256()
 SIGNAL_FEATURE_CPP_ABI_VERSION = "signal_feature_cutoff.v1"
 
+# Live signal telemetry records coarse, stable ownership boundaries rather
+# than timing individual features.  The snapshot/feature span is lock-held;
+# prediction covers every chronological bucket in a catch-up call; commit has
+# its own lock wait so contention is not mislabeled as assignment work.
+SIGNAL_COMPUTE_PHASE_FIELDS = (
+    "signal_compute_lock_wait_us",
+    "signal_compute_snapshot_feature_us",
+    "signal_compute_prediction_us",
+    "signal_compute_commit_lock_wait_us",
+    "signal_compute_commit_us",
+)
+
 MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "saved"
 
 _CPP_SIGNAL_MODULE = None
@@ -2229,34 +2241,109 @@ class SignalEngine:
             outputs.append(features)
         return outputs
 
-    def compute_signal(self) -> Prediction:
+    @staticmethod
+    def _reset_signal_compute_timings(perf_timings: dict[str, Any]) -> None:
+        perf_timings["signal_compute_path"] = "unknown"
+        perf_timings["signal_compute_bucket_count"] = 0
+        for name in SIGNAL_COMPUTE_PHASE_FIELDS:
+            perf_timings[name] = 0.0
+        perf_timings["signal_compute_accounted_us"] = 0.0
+        perf_timings["signal_compute_residual_us"] = 0.0
+
+    @staticmethod
+    def _finish_signal_compute_accounting(perf_timings: dict[str, Any]) -> None:
+        perf_timings["signal_compute_accounted_us"] = sum(
+            float(perf_timings.get(name, 0.0))
+            for name in SIGNAL_COMPUTE_PHASE_FIELDS
+        )
+
+    def compute_signal(
+        self,
+        *,
+        perf_timings: Optional[dict[str, Any]] = None,
+    ) -> Prediction:
         """
         Compute features from current buffers and run ML inference.
         Only produces a NEW prediction when a complete 10s bucket has elapsed
         since the last computation, matching the fixed-10s cadence used
         during offline training.  Intermediate calls return the cached prediction.
 
+        When ``perf_timings`` is supplied, populate coarse live-path spans in
+        that caller-owned mapping without changing the returned prediction.
+
         Returns Prediction with dir/vol/ret estimates.
         """
-        with self._lock:
-            if len(self._bar_buffer) < 30:
+        trace = perf_timings is not None
+        if trace:
+            self._reset_signal_compute_timings(perf_timings)
+
+        try:
+            lock_wait_start_ns = time.perf_counter_ns() if trace else 0
+            with self._lock:
+                lock_acquired_ns = time.perf_counter_ns() if trace else 0
+                if trace:
+                    perf_timings["signal_compute_lock_wait_us"] = (
+                        lock_acquired_ns - lock_wait_start_ns
+                    ) / 1_000.0
+                try:
+                    if len(self._bar_buffer) < 30:
+                        if trace:
+                            perf_timings["signal_compute_path"] = (
+                                "cached_no_new_bucket"
+                            )
+                        return self._last_prediction
+                    feature_batches = self._process_completed_feature_buckets_locked(
+                        list(self._bar_buffer)
+                    )
+                finally:
+                    if trace:
+                        perf_timings["signal_compute_snapshot_feature_us"] = (
+                            time.perf_counter_ns() - lock_acquired_ns
+                        ) / 1_000.0
+
+            bucket_count = len(feature_batches)
+            if trace:
+                perf_timings["signal_compute_bucket_count"] = bucket_count
+                if bucket_count == 0:
+                    perf_timings["signal_compute_path"] = "cached_no_new_bucket"
+                elif bucket_count == 1:
+                    perf_timings["signal_compute_path"] = "new_bucket"
+                else:
+                    perf_timings["signal_compute_path"] = "catch_up"
+            if not feature_batches:
                 return self._last_prediction
-            feature_batches = self._process_completed_feature_buckets_locked(
-                list(self._bar_buffer)
-            )
 
-        if not feature_batches:
-            return self._last_prediction
+            # Catch-up inference remains chronological so stateful demeaning and
+            # feature dumps see the same one-point-per-bucket stream as live.
+            prediction = self._last_prediction
+            prediction_start_ns = time.perf_counter_ns() if trace else 0
+            try:
+                for features in feature_batches:
+                    prediction = self._predict(features)
+            finally:
+                if trace:
+                    perf_timings["signal_compute_prediction_us"] = (
+                        time.perf_counter_ns() - prediction_start_ns
+                    ) / 1_000.0
 
-        # Catch-up inference remains chronological so stateful demeaning and
-        # feature dumps see the same one-point-per-bucket stream as live.
-        prediction = self._last_prediction
-        for features in feature_batches:
-            prediction = self._predict(features)
-
-        with self._lock:
-            self._last_prediction = prediction
-        return prediction
+            commit_lock_wait_start_ns = time.perf_counter_ns() if trace else 0
+            with self._lock:
+                commit_lock_acquired_ns = time.perf_counter_ns() if trace else 0
+                if trace:
+                    perf_timings["signal_compute_commit_lock_wait_us"] = (
+                        commit_lock_acquired_ns - commit_lock_wait_start_ns
+                    ) / 1_000.0
+                try:
+                    self._last_prediction = prediction
+                finally:
+                    if trace:
+                        perf_timings["signal_compute_commit_us"] = (
+                            time.perf_counter_ns() - commit_lock_acquired_ns
+                        ) / 1_000.0
+            return prediction
+        finally:
+            if trace:
+                self._finish_signal_compute_accounting(perf_timings)
 
     def _aggregate_bars(self, bars: List[Bar1s]) -> dict:
         """Aggregate list of 1s bars into a single 10s bar dict."""
