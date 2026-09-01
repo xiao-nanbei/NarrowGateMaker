@@ -1,3 +1,4 @@
+import csv
 import logging
 import threading
 import time
@@ -6,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from live.config import Config
-from strategy.maker_engine import MakerEngine
+from strategy.maker_engine import LivePerfTelemetryLogRow, MakerEngine, SidePolicyDecision
 from strategy.order_manager import (
     Order,
     OrderManager,
@@ -42,6 +43,64 @@ def _engine() -> MakerEngine:
     return engine
 
 
+def _routable_update_orders_engine() -> MakerEngine:
+    engine = _engine()
+    engine.cfg.strategy.replace_min_price_change_ticks = 0.0
+    engine.cfg.strategy.replace_min_price_change_ticks_reducing = 0.0
+    engine.cfg.strategy.replace_min_interval_ms = 0.0
+    engine.cfg.strategy.replace_min_interval_ms_reducing = 0.0
+    engine.orders = OrderManager()
+    engine._bid_cid = None
+    engine._ask_cid = None
+    engine._order_ref_lock = threading.RLock()
+    engine._order_context_lock = threading.RLock()
+    engine._order_policy_context = {}
+    engine._order_submit_fail_closed = False
+    engine._min_qty = engine.cfg.lot_size
+    engine._last_quote_diagnostics = {"max_spread": 0.0}
+    engine._last_quote_context = {"BUY": {}, "SELL": {}}
+    engine._last_bid_action = "none"
+    engine._last_ask_action = "none"
+    engine._last_cpp_routing_used = 0
+    engine._quote_log_path = ""
+    engine._perf_rest_new_sum_us = 0.0
+    engine._perf_rest_cancel_sum_us = 0.0
+    engine._build_side_policy = lambda side, *args, **kwargs: SidePolicyDecision(
+        side=side.value
+    )
+    engine._apply_flat_unilateral_ttl = lambda *args, **kwargs: None
+    engine._apply_sync_adjust_degrade_policy = lambda *args, **kwargs: None
+    engine._apply_post_fill_quote_response = lambda **kwargs: (
+        kwargs["bid_price"],
+        kwargs["ask_price"],
+    )
+    engine._apply_post_policy_spread_cap = (
+        lambda mid, bid, ask, **kwargs: (bid, ask, False)
+    )
+    engine._maybe_apply_state_conditioned_quote_policy = (
+        lambda **kwargs: (kwargs["baseline_price"], False)
+    )
+    engine._evaluate_dynamic_fill_hazard_prospective_recovery = lambda **kwargs: None
+    engine._dynamic_fill_hazard_buy_blocked = lambda q: False
+    engine._apply_final_p3_side_bbo_floor = lambda **kwargs: (
+        kwargs["bid_price"],
+        kwargs["ask_price"],
+        kwargs["best_bid"],
+        kwargs["best_ask"],
+        False,
+        False,
+        False,
+        False,
+    )
+    engine._exact_opportunity_tape_enabled = lambda: False
+    engine._record_cross_venue_fair_price_shadow = lambda **kwargs: None
+    engine._quote_snapshot_contract_error = lambda *args, **kwargs: ""
+    engine._quote_routing_contract_error = lambda **kwargs: ""
+    engine._append_row = lambda *args, **kwargs: None
+    engine._cancel_active_side_orders = lambda *args, **kwargs: None
+    return engine
+
+
 def _order(side: Side, price: float, age_ms: float, state: OrderState = OrderState.OPEN) -> Order:
     return Order(
         client_order_id=f"test_{side.value}",
@@ -70,6 +129,41 @@ def _cancel_update(cid: str, *, visible_ts_ns: int) -> dict[str, object]:
         "T": visible_ts_ns // 1_000_000,
         "_local_receive_ts_ns": visible_ts_ns,
     }
+
+
+def _run_timed_update_orders(
+    engine: MakerEngine,
+    *,
+    route_sides: frozenset[Side] | None = None,
+) -> dict[str, float]:
+    timings: dict[str, float] = {}
+    engine._update_orders(
+        mid=100_000.0,
+        bid_price=99_000.0,
+        ask_price=101_000.0,
+        q=0.0,
+        pred=SimpleNamespace(),
+        quote_snapshot=SimpleNamespace(),
+        post_only_guard=SimpleNamespace(
+            best_bid=99_000.0,
+            best_ask=101_000.0,
+            source="test",
+        ),
+        route_sides=route_sides,
+        perf_timings=timings,
+    )
+    return timings
+
+
+def _assert_update_orders_phase_spans(timings: dict[str, float]) -> None:
+    phases = (
+        "update_orders_prepare_us",
+        "update_orders_coalesce_us",
+        "update_orders_action_us",
+        "update_orders_journal_us",
+    )
+    assert all(timings[name] >= 0.0 for name in phases)
+    assert sum(timings[name] for name in phases) > 0.0
 
 
 def _configure_terminal_callback(engine: MakerEngine, cid: str) -> None:
@@ -171,6 +265,193 @@ def test_pending_replace_coalesce_does_not_block_pause_cancel_path() -> None:
         needs_update=True,
         can_post=False,
     )
+
+
+def test_update_orders_perf_spans_cover_no_action_keep_and_pending_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("strategy.maker_engine._get_live_routing_cpp", lambda: None)
+
+    no_action = _routable_update_orders_engine()
+    no_action._place_order = lambda *args, **kwargs: pytest.fail("unexpected new")
+    no_action._cancel_order = lambda *args, **kwargs: pytest.fail("unexpected cancel")
+    no_action_timings = _run_timed_update_orders(
+        no_action,
+        route_sides=frozenset(),
+    )
+    _assert_update_orders_phase_spans(no_action_timings)
+
+    fail_closed = _routable_update_orders_engine()
+    fail_closed._order_submit_fail_closed = True
+    fail_closed_timings = _run_timed_update_orders(fail_closed)
+    assert fail_closed_timings["update_orders_prepare_us"] > 0.0
+    assert fail_closed_timings["update_orders_coalesce_us"] == 0.0
+    assert fail_closed_timings["update_orders_action_us"] == 0.0
+    assert fail_closed_timings["update_orders_journal_us"] == 0.0
+
+    keep = _routable_update_orders_engine()
+    keep_cid = keep.orders.create_order(
+        "BTCUSDC", Side.BUY, price=99_000.0, quantity=0.001
+    )
+    keep.orders.confirm_new(keep_cid, 101)
+    keep._bid_cid = keep_cid
+    keep._place_order = lambda *args, **kwargs: pytest.fail("unexpected new")
+    keep._cancel_order = lambda *args, **kwargs: pytest.fail("unexpected cancel")
+    keep_timings = _run_timed_update_orders(
+        keep,
+        route_sides=frozenset({Side.BUY}),
+    )
+    _assert_update_orders_phase_spans(keep_timings)
+    assert keep._last_bid_action == "keep"
+
+    pending = _routable_update_orders_engine()
+    pending_cid = pending.orders.create_order(
+        "BTCUSDC", Side.BUY, price=98_000.0, quantity=0.001
+    )
+    pending.orders.confirm_new(pending_cid, 102)
+    pending.orders.mark_pending_cancel(pending_cid)
+    pending._bid_cid = pending_cid
+    pending._place_order = lambda *args, **kwargs: pytest.fail("unexpected new")
+    pending._cancel_order = lambda *args, **kwargs: pytest.fail("unexpected cancel")
+    pending_timings = _run_timed_update_orders(
+        pending,
+        route_sides=frozenset({Side.BUY}),
+    )
+    _assert_update_orders_phase_spans(pending_timings)
+    assert pending._last_bid_action == "pending_coalesce"
+    assert all(
+        pending_timings[name] == 0.0
+        for name in (
+            "update_orders_bid_rest_new_us",
+            "update_orders_ask_rest_new_us",
+            "update_orders_bid_rest_cancel_us",
+            "update_orders_ask_rest_cancel_us",
+        )
+    )
+
+
+def test_update_orders_perf_attributes_cancel_and_new_rest_by_side(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("strategy.maker_engine._get_live_routing_cpp", lambda: None)
+    engine = _routable_update_orders_engine()
+    for side, price, order_id in (
+        (Side.BUY, 98_000.0, 201),
+        (Side.SELL, 102_000.0, 202),
+    ):
+        cid = engine.orders.create_order(
+            "BTCUSDC", side, price=price, quantity=0.001
+        )
+        engine.orders.confirm_new(cid, order_id)
+        if side == Side.BUY:
+            engine._bid_cid = cid
+        else:
+            engine._ask_cid = cid
+
+    def cancel_order(cid: str, **kwargs) -> bool:
+        order = engine.orders.get_order(cid)
+        assert order is not None
+        engine._perf_rest_cancel_sum_us += (
+            110.0 if order.side == Side.BUY else 220.0
+        )
+        return True
+
+    def place_order(symbol: str, side: Side, *args, **kwargs) -> str:
+        engine._perf_rest_new_sum_us += 330.0 if side == Side.BUY else 440.0
+        return f"new_{side.value}"
+
+    engine._cancel_order = cancel_order
+    engine._place_order = place_order
+
+    timings = _run_timed_update_orders(engine)
+
+    _assert_update_orders_phase_spans(timings)
+    assert timings["update_orders_bid_rest_cancel_us"] == 110.0
+    assert timings["update_orders_ask_rest_cancel_us"] == 220.0
+    assert timings["update_orders_bid_rest_new_us"] == 330.0
+    assert timings["update_orders_ask_rest_new_us"] == 440.0
+    assert engine._last_bid_action == "replace"
+    assert engine._last_ask_action == "replace"
+
+
+def test_live_perf_telemetry_fields_include_update_orders_accounting() -> None:
+    fields = LivePerfTelemetryLogRow.__dataclass_fields__
+
+    assert {
+        "update_orders_prepare_us",
+        "update_orders_coalesce_us",
+        "update_orders_action_us",
+        "update_orders_journal_us",
+        "update_orders_accounted_us",
+        "update_orders_residual_us",
+        "update_orders_bid_rest_new_us",
+        "update_orders_ask_rest_new_us",
+        "update_orders_bid_rest_cancel_us",
+        "update_orders_ask_rest_cancel_us",
+    }.issubset(fields)
+
+
+def test_live_perf_telemetry_rotates_old_header_before_new_row(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "live_perf_telemetry.csv"
+    old_headers = ["timestamp", "symbol", "event", "status"]
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=old_headers)
+        writer.writeheader()
+        writer.writerow(
+            {
+                "timestamp": "old",
+                "symbol": "BTCUSDC",
+                "event": "requote",
+                "status": "ok",
+            }
+        )
+
+    monkeypatch.setattr("strategy.maker_engine.time.time_ns", lambda: 123456789)
+    headers = list(LivePerfTelemetryLogRow.__dataclass_fields__)
+    MakerEngine._init_csv_log(
+        str(path),
+        headers,
+        rotate_on_header_mismatch=True,
+    )
+
+    rotated = tmp_path / "live_perf_telemetry.csv.schema-mismatch-123456789"
+    with rotated.open(newline="") as f:
+        old_rows = list(csv.DictReader(f))
+    assert old_rows == [
+        {
+            "timestamp": "old",
+            "symbol": "BTCUSDC",
+            "event": "requote",
+            "status": "ok",
+        }
+    ]
+
+    string_fields = {
+        "timestamp",
+        "symbol",
+        "event",
+        "status",
+        "bid_action",
+        "ask_action",
+    }
+    payload = {
+        name: ("ok" if name in string_fields else 0)
+        for name in headers
+    }
+    row = LivePerfTelemetryLogRow(**payload)
+    engine = object.__new__(MakerEngine)
+    engine._csv_log_lock = threading.Lock()
+    engine._append_row(str(path), row)
+
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        new_rows = list(reader)
+        assert reader.fieldnames == headers
+    assert len(new_rows) == 1
+    assert None not in new_rows[0]
 
 
 def test_stale_pending_cancel_open_order_absence_keeps_ownership() -> None:
@@ -828,11 +1109,20 @@ def test_side_only_requote_preserves_unrouted_quote_context_and_records_latency(
     def update_orders(*args, **kwargs):
         routed_context.update(engine._last_quote_context)
         assert kwargs["route_sides"] == frozenset({Side.BUY})
+        kwargs["perf_timings"].update(
+            update_orders_prepare_us=0.001,
+            update_orders_coalesce_us=0.001,
+            update_orders_action_us=0.001,
+            update_orders_journal_us=0.001,
+        )
         return False, False
 
     engine._update_orders = update_orders
     engine._log_quote_snapshot_integrity = lambda *args, **kwargs: None
-    engine._log_live_perf_telemetry = lambda *args, **kwargs: None
+    logged_perf = {}
+    engine._log_live_perf_telemetry = lambda **kwargs: logged_perf.update(
+        kwargs["timings"]
+    )
     order = _order(Side.BUY, price=100.0, age_ms=2000.0)
     generation = engine._arm_replace_terminal_continuation(
         side=Side.BUY,
@@ -860,6 +1150,11 @@ def test_side_only_requote_preserves_unrouted_quote_context_and_records_latency(
         "nested": {"value": 7},
     }
     assert engine._last_quote_context["SELL"] == routed_context["SELL"]
+    assert logged_perf["update_orders_accounted_us"] == 0.004
+    assert logged_perf["update_orders_us"] >= 0.004
+    assert logged_perf["update_orders_residual_us"] == pytest.approx(
+        logged_perf["update_orders_us"] - 0.004
+    )
     telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
     assert telemetry["arm_count"] == 1
     assert telemetry["publish_count"] == 1
