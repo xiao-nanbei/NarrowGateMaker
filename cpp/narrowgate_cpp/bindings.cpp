@@ -112,6 +112,51 @@ py::array_t<double> signal_feature_array(const SignalFeatureVector& features) {
     return out;
 }
 
+std::vector<SignalExecutionL2Snapshot> signal_execution_l2_from_python(
+    py::handle snapshots_obj
+) {
+    std::vector<SignalExecutionL2Snapshot> snapshots;
+    for (py::handle snapshot_obj :
+         py::reinterpret_borrow<py::iterable>(snapshots_obj)) {
+        SignalExecutionL2Snapshot snapshot;
+        snapshot.ts_ms = py::cast<double>(py::getattr(snapshot_obj, "ts"));
+        const py::object bids_obj = py::getattr(snapshot_obj, "bids");
+        const py::object asks_obj = py::getattr(snapshot_obj, "asks");
+        if (!bids_obj.is_none() && !asks_obj.is_none()) {
+            const auto bids = py::reinterpret_borrow<py::sequence>(bids_obj);
+            const auto asks = py::reinterpret_borrow<py::sequence>(asks_obj);
+            snapshot.depth = std::min<std::size_t>({
+                static_cast<std::size_t>(py::len(bids)),
+                static_cast<std::size_t>(py::len(asks)),
+                kSignalExecutionL2MaxDepth,
+            });
+            for (std::size_t index = 0; index < snapshot.depth; ++index) {
+                const auto bid = py::reinterpret_borrow<py::sequence>(bids[index]);
+                const auto ask = py::reinterpret_borrow<py::sequence>(asks[index]);
+                if (py::len(bid) < 2 || py::len(ask) < 2) {
+                    throw std::invalid_argument(
+                        "execution L2 price levels must contain price and quantity"
+                    );
+                }
+                snapshot.bid_price[index] = py::cast<double>(bid[0]);
+                snapshot.bid_quantity[index] = py::cast<double>(bid[1]);
+                snapshot.ask_price[index] = py::cast<double>(ask[0]);
+                snapshot.ask_quantity[index] = py::cast<double>(ask[1]);
+            }
+        }
+        snapshots.push_back(snapshot);
+    }
+    return snapshots;
+}
+
+py::array_t<double> signal_execution_l2_feature_array(
+    const SignalExecutionL2FeatureValues& features
+) {
+    py::array_t<double> out(features.size());
+    std::copy(features.begin(), features.end(), out.mutable_data());
+    return out;
+}
+
 py::dict sparse_order_lifecycle_dict(
     const SparseOrderLifecycleResult& result
 ) {
@@ -4700,6 +4745,17 @@ void bind_streaming_features(py::module_& m) {
         feature_names[i] = py::str(kSignalFeatureNames[i].data(), kSignalFeatureNames[i].size());
     }
     m.attr("SIGNAL_FEATURE_NAMES") = std::move(feature_names);
+    m.attr("SIGNAL_EXECUTION_L2_FEATURE_ABI_VERSION") =
+        "signal_execution_l2_window.v1";
+    py::tuple execution_l2_feature_names(kSignalExecutionL2FeatureNames.size());
+    for (std::size_t i = 0; i < kSignalExecutionL2FeatureNames.size(); ++i) {
+        execution_l2_feature_names[i] = py::str(
+            kSignalExecutionL2FeatureNames[i].data(),
+            kSignalExecutionL2FeatureNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_EXECUTION_L2_FEATURE_NAMES") =
+        std::move(execution_l2_feature_names);
 
     py::class_<Bar1s>(m, "Bar1s")
         .def(py::init<>())
@@ -4823,6 +4879,24 @@ void bind_streaming_features(py::module_& m) {
         py::arg("all_bars"),
         py::arg("feature_history"),
         py::arg("bar_10s")
+    );
+
+    m.def(
+        "compute_signal_execution_l2_feature_values",
+        [](py::iterable snapshots, double bucket_end_ms) {
+            const auto native_snapshots = signal_execution_l2_from_python(snapshots);
+            SignalExecutionL2FeatureValues values;
+            {
+                py::gil_scoped_release release;
+                values = compute_signal_execution_l2_features(
+                    native_snapshots,
+                    bucket_end_ms
+                );
+            }
+            return signal_execution_l2_feature_array(values);
+        },
+        py::arg("snapshots"),
+        py::arg("bucket_end_ms")
     );
 
 }

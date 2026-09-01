@@ -48,6 +48,41 @@ struct FeatureHistoryRow {
     double vol_regime_6h = 0.0;
 };
 
+inline constexpr std::size_t kSignalExecutionL2MaxDepth = 10;
+
+struct SignalExecutionL2Snapshot {
+    double ts_ms = 0.0;
+    std::size_t depth = 0;
+    std::array<double, kSignalExecutionL2MaxDepth> bid_price{};
+    std::array<double, kSignalExecutionL2MaxDepth> bid_quantity{};
+    std::array<double, kSignalExecutionL2MaxDepth> ask_price{};
+    std::array<double, kSignalExecutionL2MaxDepth> ask_quantity{};
+};
+
+inline constexpr std::array<std::string_view, 13> kSignalExecutionL2FeatureNames = {
+    "l2_spread_bps",
+    "l2_microprice_offset_bps",
+    "l2_imbalance_l1",
+    "l2_imbalance_l3",
+    "l2_imbalance_l5",
+    "l2_imbalance_l10",
+    "l2_near_depth_total",
+    "l2_depth_slope",
+    "l2_depth_convexity",
+    "l2_queue_concentration",
+    "l2_quote_flip_rate",
+    "l2_book_refresh_ratio",
+    "l2_book_cancel_ratio",
+};
+
+using SignalExecutionL2FeatureValues =
+    std::array<double, kSignalExecutionL2FeatureNames.size()>;
+
+[[nodiscard]] SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
+    std::span<const SignalExecutionL2Snapshot> snapshots,
+    double bucket_end_ms
+);
+
 template <typename T>
 class SegmentedSpanView {
 public:
