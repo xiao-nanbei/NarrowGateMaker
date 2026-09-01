@@ -504,8 +504,16 @@ def iter_cryptohft_logical_messages(
             dtype=bool,
         )
 
-    current_key: tuple[object, ...] | None = None
-    current: LogicalMessage | None = None
+    # CryptoHFT can interleave row fragments from multiple logical messages
+    # that share one exchange timestamp.  In particular, a large snapshot may
+    # be split into several chunks with rows from the immediately adjacent
+    # update between them.  A single "current message" therefore truncates the
+    # snapshot and makes the reconstructed book one-sided.  Buffer all message
+    # identities at the current exchange timestamp, preserving first-seen
+    # message order, and emit them only when that timestamp is complete.
+    pending_exchange_ms: int | None = None
+    pending_order: list[tuple[object, ...]] = []
+    pending_messages: dict[tuple[object, ...], LogicalMessage] = {}
     temporary: Path | None = None
     try:
         temporary = _decompress_parquet_zst(path)
@@ -646,7 +654,19 @@ def iter_cryptohft_logical_messages(
                     ]
                 else:
                     levels = []
-                if current is not None and key == current_key:
+                group_exchange_ms = int(exchange_ms[start])
+                if (
+                    pending_exchange_ms is not None
+                    and group_exchange_ms != pending_exchange_ms
+                ):
+                    for pending_key in pending_order:
+                        yield pending_messages[pending_key]
+                    pending_order.clear()
+                    pending_messages.clear()
+                pending_exchange_ms = group_exchange_ms
+
+                current = pending_messages.get(key)
+                if current is not None:
                     current.receive_time_ms = max(
                         current.receive_time_ms,
                         int(receive_ms[start]),
@@ -657,12 +677,11 @@ def iter_cryptohft_logical_messages(
                     )
                     current.levels.extend(levels)
                     continue
-                if current is not None:
-                    yield current
-                current_key = key
-                current = LogicalMessage(
+
+                pending_order.append(key)
+                pending_messages[key] = LogicalMessage(
                     event_type=event_type,
-                    exchange_ts_ms=int(exchange_ms[start]),
+                    exchange_ts_ms=group_exchange_ms,
                     receive_time_ms=int(receive_ms[start]),
                     receive_time_ns=int(receive_ns[start]),
                     event_time_ms=int(event_ms[start]),
@@ -675,8 +694,8 @@ def iter_cryptohft_logical_messages(
                     last_update_id=None if last_id < 0 else last_id,
                     levels=levels,
                 )
-        if current is not None:
-            yield current
+        for pending_key in pending_order:
+            yield pending_messages[pending_key]
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()

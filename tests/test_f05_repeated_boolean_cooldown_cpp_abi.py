@@ -79,11 +79,27 @@ def _write_current_qualification_receipt(
         "positive_latency": True,
         "buy_policy_trigger_count": 1,
         "sell_policy_trigger_count": 1,
-        "quote_exact": True,
+        "action_exact": True,
+        "action_difference_count": 0,
+        "order_exact": True,
+        "order_difference_count": 0,
         "fill_exact": True,
         "policy_exact": True,
         "economic_exact": True,
         "native_queue_exact": True,
+        "raw_quote_diagnostics": {
+            "allowlisted_fields": list(
+                bt._F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ALLOWLIST
+            ),
+            "absolute_tolerance": (
+                bt._F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ABS_TOLERANCE
+            ),
+            "max_absolute_error": 1.6e-11,
+            "difference_count": 47,
+            "non_numeric_difference_count": 0,
+            "non_allowlisted_difference_count": 0,
+            "within_tolerance": True,
+        },
         "native_queue_scope": (
             "strategy_independent_native_snapshot_delta_exchange_time_v1"
         ),
@@ -421,6 +437,31 @@ def test_current_policy_artifact_compiler_materializes_every_buy_e3_metric(
         observed.support_valid,
     ) == (expected[0], expected[1], expected[2], expected[3], expected[4])
     assert observed.action_id == "FIXED_79S"
+
+    gap = cpp.F05CooldownWindowObservation()
+    gap.left_ts_ns = base_ns + len(mids) * 100_000_000
+    gap.right_ts_ns = gap.left_ts_ns + 100_000_000
+    gap.feature_ready_ts_ns = gap.right_ts_ns
+    gap.market_generation = len(mids) + 1
+    gap.depth_generation = len(mids) + 1
+    gap.source_gap = True
+    gap.warmup_admitted = True
+    gap.channel_support_valid = False
+    runtime.update_window(gap)
+    gap_fill = _fill(
+        side=cpp.Side.Buy,
+        role=cpp.F05CooldownFillRole.OPENER,
+        fill_ts_ms=(gap.feature_ready_ts_ns + 1) // 1_000_000,
+        decision_ts_ns=gap.feature_ready_ts_ns + 1,
+        campaign_id=2,
+        campaign_age_s=100.0,
+        inventory_before=0.0,
+        inventory_after=0.001,
+    )
+    gap_decision = runtime.apply_fill(gap_fill)
+    assert gap_decision.action_id == "CONTROL_85N"
+    assert gap_decision.fallback_reason == "selected_predicate_state_unobserved"
+
     checkpoint = runtime.checkpoint()
     assert checkpoint.buy_policy_sha256 == "4" * 64
     assert len(checkpoint.buy_ema) == len(EMA_HALF_LIVES_S)
@@ -536,12 +577,67 @@ def test_current_cpp_formal_qualification_requires_validated_receipt(tmp_path) -
                 lambda row, field=key: row["comparison"].__setitem__(field, False),
             )
             for key in (
-                "quote_exact",
+                "action_exact",
+                "order_exact",
                 "fill_exact",
                 "policy_exact",
                 "economic_exact",
                 "native_queue_exact",
             )
+        ),
+        (
+            "action-difference-count",
+            lambda row: row["comparison"].__setitem__(
+                "action_difference_count", 1
+            ),
+        ),
+        (
+            "order-difference-count",
+            lambda row: row["comparison"].__setitem__(
+                "order_difference_count", 1
+            ),
+        ),
+        (
+            "raw-quote-allowlist",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "allowlisted_fields", ["raw_price"]
+            ),
+        ),
+        (
+            "raw-quote-tolerance",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "absolute_tolerance", 1.0e-9
+            ),
+        ),
+        (
+            "raw-quote-max-error",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "max_absolute_error", 1.1e-10
+            ),
+        ),
+        (
+            "raw-quote-non-allowlisted",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "non_allowlisted_difference_count", 1
+            ),
+        ),
+        (
+            "raw-quote-non-numeric",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "non_numeric_difference_count", 1
+            ),
+        ),
+        (
+            "raw-quote-difference-count",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "difference_count", -1
+            ),
+        ),
+        (
+            "raw-quote-within-tolerance",
+            lambda row: row["comparison"]["raw_quote_diagnostics"].__setitem__(
+                "within_tolerance", False
+            ),
         ),
         (
             "native-scope",
@@ -563,7 +659,7 @@ def test_current_cpp_formal_qualification_requires_validated_receipt(tmp_path) -
 
     bad_comparison_root = params_for_receipt(
         name="bad-comparison-root.json",
-        mutate=lambda row: row["comparison"].__setitem__("quote_exact", False),
+        mutate=lambda row: row["comparison"].__setitem__("action_exact", False),
         recompute=False,
     )
     with pytest.raises(RuntimeError, match="comparison root drifted"):

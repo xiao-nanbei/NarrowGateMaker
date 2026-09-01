@@ -75,6 +75,21 @@ def sparse_queue_tape(tmp_path_factory):
             quantity=3.0,
             last_update_id=100,
         ),
+        # A recorder may interleave a row from the adjacent update while one
+        # large snapshot is still being emitted.  The parser must retain the
+        # complete snapshot rather than treating its later chunks as new book
+        # resets.  This stale update is a separate logical message and is
+        # rejected by sequence handling after the complete snapshot.
+        row(
+            1_000,
+            event_type="update",
+            side="ask",
+            price=100.3,
+            quantity=9.0,
+            first_update_id=99,
+            final_update_id=100,
+            prev_final_update_id=98,
+        ),
         row(
             1_000,
             event_type="snapshot",
@@ -254,6 +269,15 @@ def test_logical_message_stream_is_batch_size_invariant(
     )
 
     assert tiny == normal
+    assert normal[0].event_type == "snapshot"
+    assert normal[0].levels == [
+        ("bid", 1_000, 5.0),
+        ("bid", 998, 3.0),
+        ("ask", 1_002, 4.0),
+        ("ask", 1_004, 2.0),
+    ]
+    assert normal[1].event_type == "update"
+    assert normal[1].levels == [("ask", 1_003, 9.0)]
 
 
 def test_header_only_logical_messages_preserve_sequence_identity(

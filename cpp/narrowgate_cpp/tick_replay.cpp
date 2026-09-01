@@ -4701,6 +4701,7 @@ void process_side_fill(
                 ++result.summary.integer_tick_crossing_recovered_ask_candidates;
             }
         }
+        const double queue_before = order.queue_left;
         if (order.queue_left > 0.0) {
             const double eaten = std::min(order.queue_left, remaining_trade_qty);
             order.queue_left = subtract_lot_quantity(order.queue_left, eaten, lot_size);
@@ -4710,7 +4711,6 @@ void process_side_fill(
             continue;
         }
 
-        const double queue_before = order.queue_left;
         const double rem_before = order.remaining;
         double fill_qty = std::min(order.remaining, remaining_trade_qty);
         if (order.reduce_only) {
@@ -5464,7 +5464,15 @@ F05CooldownDecision F05RepeatedBooleanCooldownRuntime::apply_fill(
                  : "feature_state_stale",
              false);
   } else if (!current_window_observed_) {
-    fallback("latest_completed_mid_window_unobserved", false);
+    // BUY E3 materializes its selected predicates from the feature row.  A
+    // missing current mid therefore becomes an unobserved selected predicate,
+    // while the legacy SELL policy reports the transport-level window reason.
+    // Preserve those side-specific public reason-code semantics even though
+    // both paths take the same fail-closed CONTROL action.
+    fallback(buy_policy_enabled
+                 ? "selected_predicate_state_unobserved"
+                 : "latest_completed_mid_window_unobserved",
+             false);
   } else {
     std::vector<F05TriState> predicates;
     if (!input.predicate_values.empty()) {
@@ -6812,7 +6820,19 @@ TickReplayResult simulate_tick_arrays(
     std::size_t l2_idx = 0;
     std::int64_t current_rq_ms = requote_ms;
     std::int64_t last_requote_ts = input.trade_ts_ms.data()[0] - current_rq_ms;
-    std::int64_t last_visible_book_ts = std::numeric_limits<std::int64_t>::min();
+    const bool exec_book_visibility_delay_enabled =
+        !params.use_bar_pricing &&
+        (
+            !params.exec_book_visibility_delay_samples_ms.empty() ||
+            params.exec_book_visibility_delay_mean_ms > 0.0 ||
+            params.exec_book_visibility_delay_jitter_ms > 0.0
+        );
+    // Python tracks receive-time visibility independently by feed.  Markout
+    // observations consume partial depth without advancing bookTicker, while a
+    // later quote decision advances both monotonic cutoffs.  A shared cutoff
+    // lets a markout reveal a BBO message that was never visible to live.
+    std::int64_t last_visible_bbo_ts = std::numeric_limits<std::int64_t>::min();
+    std::int64_t last_visible_l2_ts = std::numeric_limits<std::int64_t>::min();
     std::int64_t next_trace_order_id = 0;
     double rq_sum = 0.0;
     double ema_var_fast = 0.0;
@@ -7353,7 +7373,7 @@ TickReplayResult simulate_tick_arrays(
             inferred_best_bid, inferred_best_ask, tick_size, params);
         const bool has_historical_book =
             input.bbo_ts_ms.size() > 0 || input.l2_ts_ms.size() > 0;
-        const double markout_mid =
+        const double current_loop_mid =
             (!params.use_bar_pricing && has_historical_book && book.mid > 0.0)
             ? book.mid
             : price;
@@ -7468,6 +7488,37 @@ TickReplayResult simulate_tick_arrays(
         }
 
         if (markout_enabled && !pending_markouts.empty()) {
+            // The live/Python markout observer reads partial depth through its
+            // own receive-time clock only while an observation is pending.
+            // Do not advance this feed merely because another market event was
+            // processed; that would leak future depth into the next decision.
+            double markout_observation_mid = current_loop_mid;
+            if (!params.use_bar_pricing && !input.l2_ts_ms.empty() &&
+                !input.l2_bid_px.empty() && !input.l2_ask_px.empty()) {
+                const std::int64_t sampled_delay_ms =
+                    exec_book_visibility_delay_enabled
+                    ? sample_exec_book_visibility_delay_ms(ts, params)
+                    : 0;
+                std::int64_t markout_visible_l2_ts = ts - sampled_delay_ms;
+                if (exec_book_visibility_delay_enabled) {
+                    markout_visible_l2_ts = std::max(
+                        last_visible_l2_ts,
+                        markout_visible_l2_ts
+                    );
+                    last_visible_l2_ts = markout_visible_l2_ts;
+                }
+                const std::ptrdiff_t markout_l2_pos =
+                    index_at_or_before(input.l2_ts_ms, markout_visible_l2_ts);
+                if (markout_l2_pos >= 0) {
+                    const auto markout_l2_idx =
+                        static_cast<std::size_t>(markout_l2_pos);
+                    const double markout_bid = input.l2_bid_px(markout_l2_idx, 0);
+                    const double markout_ask = input.l2_ask_px(markout_l2_idx, 0);
+                    if (markout_bid > 0.0 && markout_ask > markout_bid) {
+                        markout_observation_mid = 0.5 * (markout_bid + markout_ask);
+                    }
+                }
+            }
             std::size_t write = 0;
             for (std::size_t j = 0; j < pending_markouts.size(); ++j) {
                 const auto& item = pending_markouts[j];
@@ -7478,8 +7529,8 @@ TickReplayResult simulate_tick_arrays(
                         continue;
                     }
                     const double mo_val = item.is_bid
-                        ? markout_mid - item.fill_price
-                        : item.fill_price - markout_mid;
+                        ? markout_observation_mid - item.fill_price
+                        : item.fill_price - markout_observation_mid;
                     if (item.is_bid) {
                         mo_ema_bid = mo_alpha * mo_val + (1.0 - mo_alpha) * mo_ema_bid;
                         mo_sum_bid += mo_val * item.fill_qty_btc;
@@ -7653,7 +7704,7 @@ TickReplayResult simulate_tick_arrays(
                         static_cast<double>(fill_ts_ms) +
                         baseline_duration_ms
                     );
-                opportunity.canonical_mid = markout_mid;
+                opportunity.canonical_mid = current_loop_mid;
                 opportunity.best_bid = book.best_bid;
                 opportunity.best_ask = book.best_ask;
                 opportunity.decision_visible_bbo_index =
@@ -7672,7 +7723,7 @@ TickReplayResult simulate_tick_arrays(
                     static_cast<std::int64_t>(event_idx);
                 opportunity.assignment_equity_usdc =
                     cash_after_fill +
-                    inventory_after_fill * markout_mid;
+                    inventory_after_fill * current_loop_mid;
 
                 if (params.trace_cooldown_duration_opportunities_max > 0) {
                     if (result.cooldown_duration_opportunity_trace.size() >=
@@ -8239,7 +8290,7 @@ TickReplayResult simulate_tick_arrays(
             }
         }
         if (cooldown_duration_fork_assigned) {
-            update_cooldown_duration_fork_path(ts, markout_mid);
+            update_cooldown_duration_fork_path(ts, current_loop_mid);
             if (!cooldown_duration_fork_quarantine &&
                 std::abs(inventory) <= 1e-10 &&
                 cooldown_duration_active_campaign_id == 0) {
@@ -8355,28 +8406,24 @@ TickReplayResult simulate_tick_arrays(
             continue;
         }
 
-        const bool exec_book_visibility_delay_enabled =
-            !params.use_bar_pricing &&
-            (
-                !params.exec_book_visibility_delay_samples_ms.empty() ||
-                params.exec_book_visibility_delay_mean_ms > 0.0 ||
-                params.exec_book_visibility_delay_jitter_ms > 0.0
-            );
         std::int64_t exec_book_visibility_delay_ms =
             exec_book_visibility_delay_enabled
             ? sample_exec_book_visibility_delay_ms(ts, params)
             : 0;
-        std::int64_t visible_book_ts =
+        std::int64_t visible_bbo_ts =
             ts - exec_book_visibility_delay_ms;
+        std::int64_t visible_l2_ts = visible_bbo_ts;
         if (exec_book_visibility_delay_enabled) {
-            visible_book_ts = std::max(last_visible_book_ts, visible_book_ts);
-            last_visible_book_ts = visible_book_ts;
-            exec_book_visibility_delay_ms = std::max<std::int64_t>(0, ts - visible_book_ts);
+            visible_bbo_ts = std::max(last_visible_bbo_ts, visible_bbo_ts);
+            visible_l2_ts = std::max(last_visible_l2_ts, visible_l2_ts);
+            last_visible_bbo_ts = visible_bbo_ts;
+            last_visible_l2_ts = visible_l2_ts;
+            exec_book_visibility_delay_ms = std::max<std::int64_t>(0, ts - visible_bbo_ts);
         }
         const std::ptrdiff_t visible_bbo_pos =
-            index_at_or_before(input.bbo_ts_ms, visible_book_ts);
+            index_at_or_before(input.bbo_ts_ms, visible_bbo_ts);
         const std::ptrdiff_t visible_l2_pos =
-            index_at_or_before(input.l2_ts_ms, visible_book_ts);
+            index_at_or_before(input.l2_ts_ms, visible_l2_ts);
         const std::size_t visible_bbo_idx = visible_bbo_pos >= 0
             ? static_cast<std::size_t>(visible_bbo_pos)
             : input.bbo_ts_ms.size();
@@ -8385,7 +8432,7 @@ TickReplayResult simulate_tick_arrays(
             : input.l2_ts_ms.size();
         const auto decision_book = book_snapshot_at(
             input,
-            visible_book_ts,
+            std::max(visible_bbo_ts, visible_l2_ts),
             visible_bbo_idx,
             visible_l2_idx,
             inferred_best_bid,
@@ -8527,7 +8574,7 @@ TickReplayResult simulate_tick_arrays(
 
         if (input.var_ts_ms.size() > 0) {
             while (static_cast<std::size_t>(var_idx + 1) < input.var_ts_ms.size() &&
-                   input.var_ts_ms.data()[var_idx + 1] + 1000 <= visible_book_ts) {
+                   input.var_ts_ms.data()[var_idx + 1] + 1000 <= visible_bbo_ts) {
                 ++var_idx;
                 if (var_idx == 0) {
                     // First complete close is the return-series anchor.
@@ -8571,7 +8618,7 @@ TickReplayResult simulate_tick_arrays(
         // intervening second. Message-level source clocks remain Python-only.
         while (quote_ti_cursor < quote_ti_source_indices.size()) {
             const std::size_t source_idx = quote_ti_source_indices[quote_ti_cursor];
-            if (input.var_ts_ms.data()[source_idx] + 1000 > visible_book_ts) {
+            if (input.var_ts_ms.data()[source_idx] + 1000 > visible_bbo_ts) {
                 break;
             }
             cur_ti = input.var_ti.data()[source_idx] * 10.0;
@@ -8601,7 +8648,7 @@ TickReplayResult simulate_tick_arrays(
         }
         if (input.ml_ts_ms.size() > 0) {
             const std::int64_t prediction_cutoff_ts =
-                (visible_book_ts / 1'000) * 1'000;
+                (visible_bbo_ts / 1'000) * 1'000;
             ml_idx = advance_index(
                 input.ml_ts_ms,
                 ml_idx,
@@ -8638,7 +8685,7 @@ TickReplayResult simulate_tick_arrays(
         quote_cfg.use_bar_pricing = params.use_bar_pricing;
         const DepthView depth = params.use_bar_pricing
             ? DepthView{}
-            : l2_depth_at(input, visible_book_ts, visible_l2_idx);
+            : l2_depth_at(input, visible_l2_ts, visible_l2_idx);
         // Queue/fill truth uses the exchange-time `book` above. Quote decisions
         // use `decision_book`, which can be delayed by an environment-specific
         // receive-time visibility profile.
@@ -9120,7 +9167,7 @@ TickReplayResult simulate_tick_arrays(
         const L2RefillCancelMetrics l2_metrics =
             l2_refill_cancel_metrics_at(
                 input,
-                visible_book_ts,
+                visible_l2_ts,
                 ts,
                 visible_l2_idx,
                 params

@@ -904,6 +904,107 @@ def test_python_cpp_exec_book_visibility_delay_keeps_quote_clock_parity(visibili
     )
 
 
+def test_python_cpp_markout_observer_uses_delayed_l2_visibility():
+    bt.configure_symbol("BTCUSDC")
+    event_ts = np.asarray([1_000, 2_000, 3_000, 4_000, 5_000], dtype=np.int64)
+    trades = pd.DataFrame(
+        {
+            "transact_time": event_ts,
+            "price": np.asarray([100.0, 100.8, 102.0, 102.0, 102.0]),
+            "quantity": np.asarray([0.0, 1.0, 0.0, 0.0, 0.0]),
+            "is_buyer_maker": np.zeros(event_ts.size, dtype=np.uint8),
+            "_is_execution_trade": np.asarray(
+                [False, True, False, False, False], dtype=np.bool_
+            ),
+        }
+    )
+    l2_ts = np.asarray([0, 1_000, 2_000, 3_000, 4_000, 5_000], dtype=np.int64)
+    l2_mid = np.asarray([100.0, 100.0, 101.0, 102.0, 102.0, 102.0])
+    l2 = HistoricalL2Data(
+        ts_ms=l2_ts,
+        bid_px=(l2_mid - 0.1)[:, None],
+        bid_qty=np.ones((l2_ts.size, 1), dtype=np.float64),
+        ask_px=(l2_mid + 0.1)[:, None],
+        ask_qty=np.ones((l2_ts.size, 1), dtype=np.float64),
+    )
+    params = {
+        "gamma": 0.01,
+        "kappa": 1.0,
+        "p3_kappa_eff_override": 1.0,
+        "maker_fee": 0.0,
+        "max_inventory": 0.01,
+        "order_size": 0.001,
+        "requote_interval": 1.0,
+        "rq_min": 1.0,
+        "rq_max": 1.0,
+        "requote_clock": "fixed",
+        "queue_base": 0.0,
+        "queue_decay": 0.0,
+        "maker_fill_prob": 1.0,
+        "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 1_000,
+        "use_bar_pricing": False,
+        "dynamic_cap_enabled": False,
+        "max_spread_bps": 100.0,
+        "spread_cap_mode": "compress",
+        "max_exec_book_age_s": 5.0,
+        "ml_enabled": False,
+        "markout_horizon_s": 1.0,
+        "markout_ema_span_fills": 1.0,
+        "markout_spread_scale": 0.2,
+        "trace_quotes_max": 100,
+        "trace_fills_max": 100,
+        "collect_curves": False,
+        "_exec_book_visibility_delay_samples_ms": np.asarray([1_000.0]),
+        "exec_book_visibility_delay_seed": 20260901,
+    }
+    empty_i64 = np.empty(0, dtype=np.int64)
+    empty_f64 = np.empty(0, dtype=np.float64)
+
+    py = bt._simulate_tick_with_engine(
+        "python",
+        trades,
+        empty_i64,
+        empty_f64,
+        params,
+        l2_data=l2,
+    )
+    cpp = bt._simulate_tick_with_engine(
+        "cpp",
+        trades,
+        empty_i64,
+        empty_f64,
+        params,
+        l2_data=l2,
+    )
+
+    def rows_at(result, quote_ts):
+        return {
+            row["side"]: row
+            for row in result["_quote_trace"]
+            if row["quote_ts"] == quote_ts
+        }
+
+    py_rows = rows_at(py, 3_000)
+    cpp_rows = rows_at(cpp, 3_000)
+    assert py_rows
+    assert set(cpp_rows) == set(py_rows)
+    for side in py_rows:
+        assert py_rows[side]["mo_ema_ask"] == pytest.approx(-0.5)
+        assert cpp_rows[side]["mo_ema_ask"] == pytest.approx(
+            py_rows[side]["mo_ema_ask"], abs=1e-12
+        )
+        assert cpp_rows[side]["raw_half_spread"] == pytest.approx(
+            py_rows[side]["raw_half_spread"], abs=1e-12
+        )
+        assert cpp_rows[side]["asym"] == pytest.approx(
+            py_rows[side]["asym"], abs=1e-12
+        )
+        assert cpp_rows[side]["final_price"] == py_rows[side]["final_price"]
+    assert cpp["fills_total"] == py["fills_total"] == 1
+    assert cpp["pnl"] == pytest.approx(py["pnl"], abs=1e-12)
+
+
 def test_python_cpp_ml_lookup_uses_delayed_visible_second_at_ready_boundary():
     bt.configure_symbol("BTCUSDC")
     base_ts = 1_000_000
@@ -1276,6 +1377,7 @@ def test_python_cpp_circuit_breaker_maker_close_parity():
         "position_timeout": 0.0,
         "markout_ema_span_fills": 0,
         "trace_fills_max": 100,
+        "trace_quotes_max": 100,
     }
     py = bt._simulate_tick_with_engine(
         "python",
@@ -1317,6 +1419,17 @@ def test_python_cpp_circuit_breaker_maker_close_parity():
         py["_fill_trace"][0]["quote_px"],
         abs=1e-12,
     )
+    for result in (py, cpp):
+        fill_order_id = result["_fill_trace"][0]["order_id"]
+        close_row = next(
+            row
+            for row in result["_quote_trace"]
+            if row["order_id"] == fill_order_id
+        )
+        assert close_row["inventory"] == pytest.approx(0.001, abs=1e-12)
+        assert close_row["mid"] == pytest.approx(90.0, abs=1e-12)
+        assert close_row["best_bid"] == pytest.approx(89.9, abs=1e-12)
+        assert close_row["best_ask"] == pytest.approx(90.1, abs=1e-12)
 
 
 def test_python_cpp_ioc_close_uses_activation_book_without_resetting_quote_clock():
@@ -2646,6 +2759,10 @@ def test_python_cpp_strict_native_exchange_book_full_loop_parity(
     assert cpp["pnl"] == pytest.approx(python["pnl"], abs=1e-12)
     assert cpp["final_inventory"] == pytest.approx(
         python["final_inventory"], abs=1e-12
+    )
+    assert len(cpp["_fill_trace"]) == len(python["_fill_trace"]) == 1
+    assert [row["queue_before"] for row in cpp["_fill_trace"]] == pytest.approx(
+        [row["queue_before"] for row in python["_fill_trace"]], abs=1e-12
     )
 
 

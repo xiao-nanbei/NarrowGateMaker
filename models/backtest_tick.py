@@ -18863,11 +18863,48 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 event_ts_ms=event_ts_ms,
             )
 
+    same_ms_trade_extremes_cache_ts: int | None = None
+    same_ms_trade_extremes_cache: tuple[int | None, int | None] = (None, None)
+
+    def _same_ms_execution_trade_tick_extremes(
+        now_ts_ms: int,
+    ) -> tuple[int | None, int | None]:
+        """Return all-trade SELL-min/BUY-max ticks for one exchange millisecond."""
+
+        nonlocal same_ms_trade_extremes_cache_ts
+        nonlocal same_ms_trade_extremes_cache
+
+        timestamp = int(now_ts_ms)
+        if same_ms_trade_extremes_cache_ts == timestamp:
+            return same_ms_trade_extremes_cache
+        sell_min_tick = None
+        buy_max_tick = None
+        batch_left = int(np.searchsorted(trade_ts, timestamp, side="left"))
+        batch_right = int(np.searchsorted(trade_ts, timestamp, side="right"))
+        for batch_idx in range(batch_left, batch_right):
+            if not is_execution_trade[batch_idx] or trade_qty[batch_idx] <= 0.0:
+                continue
+            batch_tick = _price_to_tick(float(trade_price[batch_idx]), TICK)
+            if is_seller[batch_idx]:
+                sell_min_tick = (
+                    batch_tick
+                    if sell_min_tick is None
+                    else min(sell_min_tick, batch_tick)
+                )
+            else:
+                buy_max_tick = (
+                    batch_tick
+                    if buy_max_tick is None
+                    else max(buy_max_tick, batch_tick)
+                )
+        same_ms_trade_extremes_cache_ts = timestamp
+        same_ms_trade_extremes_cache = (sell_min_tick, buy_max_tick)
+        return same_ms_trade_extremes_cache
+
     def _mark_cancel_ack_trade_ambiguity(
         orders: list[dict],
         side: str,
         now_ts_ms: int,
-        trade_price_now: float,
     ) -> None:
         """Censor cancel/fill races without a common exchange sequence."""
 
@@ -18875,6 +18912,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
 
         if exchange_book_scheduler is None:
             return
+        sell_min_tick, buy_max_tick = _same_ms_execution_trade_tick_extremes(
+            int(now_ts_ms)
+        )
         for order in orders:
             if order.get("state") not in (
                 ORDER_OPEN,
@@ -18883,11 +18923,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 continue
             if _order_cancel_effective_ts(order) != int(now_ts_ms):
                 continue
-            crosses = _trade_crosses_order_tick(
-                side,
-                float(trade_price_now),
-                float(order["price"]),
-                TICK,
+            order_tick = _order_price_tick(order, TICK)
+            crosses = bool(
+                (
+                    side == "BUY"
+                    and sell_min_tick is not None
+                    and sell_min_tick <= order_tick
+                )
+                or (
+                    side == "SELL"
+                    and buy_max_tick is not None
+                    and buy_max_tick >= order_tick
+                )
             )
             if not crosses:
                 continue
@@ -19251,25 +19298,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         # them). Inspect the whole execution batch, not merely the current
         # row. Only opposite aggressors reaching this price can race with its
         # book update; a trade at an unrelated level must not freeze its queue.
-        same_ms_buy_max_tick = None
         same_ms_sell_min_tick = None
+        same_ms_buy_max_tick = None
         if advance.level_changes:
-            batch_left = int(np.searchsorted(trade_ts, now_ts_ms, side="left"))
-            batch_right = int(np.searchsorted(trade_ts, now_ts_ms, side="right"))
-            for batch_idx in range(batch_left, batch_right):
-                if not is_execution_trade[batch_idx] or trade_qty[batch_idx] <= 0.0:
-                    continue
-                batch_tick = _price_to_tick(float(trade_price[batch_idx]), TICK)
-                if is_seller[batch_idx]:
-                    same_ms_sell_min_tick = (
-                        batch_tick if same_ms_sell_min_tick is None
-                        else min(same_ms_sell_min_tick, batch_tick)
-                    )
-                else:
-                    same_ms_buy_max_tick = (
-                        batch_tick if same_ms_buy_max_tick is None
-                        else max(same_ms_buy_max_tick, batch_tick)
-                    )
+            (
+                same_ms_sell_min_tick,
+                same_ms_buy_max_tick,
+            ) = _same_ms_execution_trade_tick_extremes(int(now_ts_ms))
 
         for change in advance.level_changes:
             change_ts_ms = int(change.exchange_ts_ns) // 1_000_000
@@ -24151,6 +24186,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 "reduce_only": True,
                 "circuit_breaker_close": True,
                 "order_ttl_ms": 0,
+                "inventory": float(q),
+                "mid": float(close_mid),
+                "best_bid": float(cur_best_bid),
+                "best_ask": float(cur_best_ask),
             }
         }
         if ema_add_wait_fork_assigned:
@@ -25919,13 +25958,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     bid_orders,
                     "BUY",
                     int(t),
-                    float(p),
                 )
                 _mark_cancel_ack_trade_ambiguity(
                     ask_orders,
                     "SELL",
                     int(t),
-                    float(p),
                 )
             _process_order_transitions(
                 bid_orders,
@@ -25958,13 +25995,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     bid_orders,
                     "BUY",
                     int(t),
-                    float(p),
                 )
                 _mark_cancel_ack_trade_ambiguity(
                     ask_orders,
                     "SELL",
                     int(t),
-                    float(p),
                 )
             exchange_book_advance = exchange_book_scheduler.advance_to(
                 int(t) * 1_000_000,
@@ -33606,6 +33641,19 @@ _F05_CURRENT_CPP_QUALIFICATION_SCOPE = "current_receive_time_full_replay_v1"
 _F05_CURRENT_CPP_NATIVE_QUEUE_SCOPE = (
     "strategy_independent_native_snapshot_delta_exchange_time_v1"
 )
+_F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ABS_TOLERANCE = 1.0e-10
+_F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ALLOWLIST = (
+    "asym",
+    "fair",
+    "microprice_shift_bps",
+    "raw_asym_shift",
+    "raw_distance_to_mid",
+    "raw_mid_shift",
+    "raw_pair_spread",
+    "raw_price",
+    "raw_quote_delta_to_bbo",
+    "raw_quote_skew",
+)
 
 
 def _canonical_json_sha256(payload: Mapping[str, Any]) -> str:
@@ -33758,7 +33806,8 @@ def _validate_current_cpp_qualification_receipt(
                 f"current C++ cooldown qualification lacks a {side.upper()} trigger"
             )
     for key in (
-        "quote_exact",
+        "action_exact",
+        "order_exact",
         "fill_exact",
         "policy_exact",
         "economic_exact",
@@ -33768,6 +33817,86 @@ def _validate_current_cpp_qualification_receipt(
             raise RuntimeError(
                 f"current C++ cooldown qualification comparison failed: {key}"
             )
+    for key in ("action_difference_count", "order_difference_count"):
+        count = comparison.get(key)
+        if isinstance(count, bool) or not isinstance(count, int) or count != 0:
+            raise RuntimeError(
+                f"current C++ cooldown qualification comparison failed: {key}"
+            )
+    quote_diagnostics = comparison.get("raw_quote_diagnostics")
+    if not isinstance(quote_diagnostics, dict):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostics are missing"
+        )
+    if quote_diagnostics.get("allowlisted_fields") != list(
+        _F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ALLOWLIST
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostic allowlist "
+            "drifted"
+        )
+    absolute_tolerance = quote_diagnostics.get("absolute_tolerance")
+    max_absolute_error = quote_diagnostics.get("max_absolute_error")
+    if (
+        isinstance(absolute_tolerance, bool)
+        or not isinstance(absolute_tolerance, (int, float))
+        or not math.isfinite(float(absolute_tolerance))
+        or float(absolute_tolerance)
+        != _F05_CURRENT_CPP_QUOTE_DIAGNOSTIC_ABS_TOLERANCE
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostic tolerance "
+            "drifted"
+        )
+    if (
+        isinstance(max_absolute_error, bool)
+        or not isinstance(max_absolute_error, (int, float))
+        or not math.isfinite(float(max_absolute_error))
+        or float(max_absolute_error) < 0.0
+        or float(max_absolute_error) > float(absolute_tolerance)
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostic error "
+            "exceeded tolerance"
+        )
+    difference_count = quote_diagnostics.get("difference_count")
+    if (
+        isinstance(difference_count, bool)
+        or not isinstance(difference_count, int)
+        or difference_count < 0
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostic difference "
+            "count is invalid"
+        )
+    non_numeric_difference_count = quote_diagnostics.get(
+        "non_numeric_difference_count"
+    )
+    if (
+        isinstance(non_numeric_difference_count, bool)
+        or not isinstance(non_numeric_difference_count, int)
+        or non_numeric_difference_count != 0
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostics contain "
+            "non-numeric differences"
+        )
+    non_allowlisted_difference_count = quote_diagnostics.get(
+        "non_allowlisted_difference_count"
+    )
+    if (
+        isinstance(non_allowlisted_difference_count, bool)
+        or not isinstance(non_allowlisted_difference_count, int)
+        or non_allowlisted_difference_count != 0
+    ):
+        raise RuntimeError(
+            "current C++ cooldown qualification has non-allowlisted quote "
+            "differences"
+        )
+    if quote_diagnostics.get("within_tolerance") is not True:
+        raise RuntimeError(
+            "current C++ cooldown qualification raw quote diagnostics failed"
+        )
     if comparison.get("native_queue_scope") != _F05_CURRENT_CPP_NATIVE_QUEUE_SCOPE:
         raise RuntimeError(
             "current C++ cooldown qualification native queue scope drifted"

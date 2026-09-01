@@ -611,19 +611,37 @@ def test_strict_native_mode_marks_unknown_seed_without_dropping_day(
     assert record["native_exchange_seed_supported_at_decision"] == 0
 
 
-def test_same_ms_cancel_ack_and_crossing_trade_is_censored_and_fill_first(
+@pytest.mark.parametrize(
+    ("same_ms_prices", "expected_fill_count"),
+    [((99.0,), 1), ((100.0, 99.0), 0)],
+)
+def test_same_ms_cancel_ack_crossing_consumes_the_full_trade_batch(
     tmp_path,
+    same_ms_prices: tuple[float, ...],
+    expected_fill_count: int,
 ) -> None:
     bundle_path = _write_bundle(tmp_path)
     trades = pd.DataFrame(
         {
             "transact_time": np.asarray(
-                [BASE_MS + 200, BASE_MS + 500, BASE_MS + 1_200],
+                [
+                    BASE_MS + 200,
+                    *([BASE_MS + 500] * len(same_ms_prices)),
+                    BASE_MS + 1_200,
+                ],
                 dtype=np.int64,
             ),
-            "price": np.asarray([100.0, 99.0, 100.0]),
-            "quantity": np.asarray([0.0, 10.0, 0.0]),
-            "is_buyer_maker": np.ones(3, dtype=np.uint8),
+            # The second case starts with a non-crossing trade and crosses on
+            # a later child trade in the same millisecond.  The cancel/fill
+            # race must consume the whole exchange-time batch.
+            "price": np.asarray([100.0, *same_ms_prices, 100.0]),
+            "quantity": np.asarray(
+                [0.0, *([10.0] * len(same_ms_prices)), 0.0]
+            ),
+            "is_buyer_maker": np.ones(
+                len(same_ms_prices) + 2,
+                dtype=np.uint8,
+            ),
         }
     )
     params = _native_queue_action_params(bundle_path)
@@ -656,8 +674,9 @@ def test_same_ms_cancel_ack_and_crossing_trade_is_censored_and_fill_first(
         record["exchange_book_queue_invalidated_reason"]
         == "same_ms_cancel_ack_trade_ambiguity"
     )
-    assert record["intervention_fill_count"] == 1
-    assert record["fill_ts_ns"] == (BASE_MS + 500) * 1_000_000
+    assert record["intervention_fill_count"] == expected_fill_count
+    if expected_fill_count:
+        assert record["fill_ts_ns"] == (BASE_MS + 500) * 1_000_000
 
 
 @pytest.mark.parametrize(
