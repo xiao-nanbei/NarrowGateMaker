@@ -121,13 +121,20 @@ Artifact closure 不完整属于 staging failure，不能通过允许 live host 
 - 新 release 仍通过 native import 与 Python/C++ parity smoke；
 - operator 从新 clean commit 构建新的 Python root wheel。
 
+第一项必须比较两份实际运行的 immutable release tree，包括 `cpp/`、
+`pyproject.toml`、native build options 与 dependency/toolchain identity。不能假定
+`git diff <old> <new>` 一定可用：cherry-pick 形成的 release graph 或最小 Git bundle
+可能不包含旧 commit object。只要 release-tree comparison 发现任一 native 输入变化，
+就必须重建 native wheel。
+
 复用 native wheel **不代表**可以复用旧 virtual environment、install receipt、native
 receipt、envelope 或 reconciliation；这些记录绑定旧 source/runtime 关系。
 
 增量流程：
 
 1. 发布新的精确 source release；
-2. 复制或引用已准入 native wheel，不重新编译；
+2. 比较新旧 immutable native-input tree；只有完全相同时才复制或引用已准入 native
+   wheel；
 3. 从新 commit 构建新的 root wheel；
 4. 使用冻结 wheelhouse 创建新的 `venv-<new-execution-commit>`；
 5. 生成并验证新的 install receipt；

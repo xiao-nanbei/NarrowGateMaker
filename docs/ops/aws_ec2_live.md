@@ -125,6 +125,13 @@ all of the following are true:
 - the new release still passes the native import and Python/C++ parity smoke;
 - the operator builds a new Python root wheel from the new clean commit.
 
+Prove the first condition by comparing the two immutable release trees that
+will actually run, including `cpp/`, `pyproject.toml`, the native build options,
+and the dependency/toolchain identity. Do not assume `git diff <old> <new>` is
+available: a cherry-picked release graph or a minimal Git bundle may not contain
+the old commit object. If the release-tree comparison finds any native input
+change, rebuild the native wheel.
+
 Reusing the native wheel does **not** authorize reusing the old virtual
 environment, install receipt, native receipt, envelope, or reconciliation. Those
 records bind the old source/runtime relationship.
@@ -132,7 +139,8 @@ records bind the old source/runtime relationship.
 The incremental sequence is:
 
 1. publish the new exact source release;
-2. copy or reference the already admitted native wheel without rebuilding it;
+2. compare the old and new immutable native-input trees, then copy or reference
+   the already admitted native wheel only when they are equal;
 3. build the new root wheel from the new commit;
 4. create a new `venv-<new-execution-commit>` from the frozen wheelhouse;
 5. generate and verify a new install receipt;
