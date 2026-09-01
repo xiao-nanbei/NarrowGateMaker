@@ -24,6 +24,7 @@
 #include "global_flow.hpp"
 #include "streaming_features.hpp"
 #include "tick_replay.hpp"
+#include "transport_contract.hpp"
 
 namespace py = pybind11;
 
@@ -1226,6 +1227,187 @@ void bind_dynamic_fill_hazard(py::module_& m) {
             &DynamicFillHazardRuntimeCpp::has_tracked_path,
             py::arg("client_order_id")
         );
+}
+
+void bind_transport_contract(py::module_& m) {
+    py::enum_<TransportProduct>(m, "TransportProduct")
+        .value("UsdMFutures", TransportProduct::UsdMFutures);
+
+    py::enum_<TransportBackendKind>(m, "TransportBackendKind")
+        .value("Unspecified", TransportBackendKind::Unspecified)
+        .value("PythonUsdmLegacy", TransportBackendKind::PythonUsdmLegacy)
+        .value("CppUsdmWebSocket", TransportBackendKind::CppUsdmWebSocket)
+        .value("CppUsdmRest", TransportBackendKind::CppUsdmRest)
+        .value("CppUsdmFix", TransportBackendKind::CppUsdmFix);
+
+    py::enum_<CanonicalEventKind>(m, "CanonicalEventKind")
+        .value("Unspecified", CanonicalEventKind::Unspecified)
+        .value("MarketTrade", CanonicalEventKind::MarketTrade)
+        .value("BookTicker", CanonicalEventKind::BookTicker)
+        .value("DepthDelta", CanonicalEventKind::DepthDelta)
+        .value("OrderUpdate", CanonicalEventKind::OrderUpdate)
+        .value("AccountUpdate", CanonicalEventKind::AccountUpdate)
+        .value("SessionState", CanonicalEventKind::SessionState);
+
+    py::enum_<CanonicalOrderType>(m, "CanonicalOrderType")
+        .value("Unspecified", CanonicalOrderType::Unspecified)
+        .value("Limit", CanonicalOrderType::Limit)
+        .value("Market", CanonicalOrderType::Market);
+
+    py::enum_<CanonicalSide>(m, "CanonicalSide")
+        .value("Unspecified", CanonicalSide::Unspecified)
+        .value("Buy", CanonicalSide::Buy)
+        .value("Sell", CanonicalSide::Sell);
+
+    py::enum_<CanonicalTimeInForce>(m, "CanonicalTimeInForce")
+        .value("Unspecified", CanonicalTimeInForce::Unspecified)
+        .value("Gtx", CanonicalTimeInForce::Gtx)
+        .value("Ioc", CanonicalTimeInForce::Ioc);
+
+    py::enum_<TransportPhase>(m, "TransportPhase")
+        .value("Unspecified", TransportPhase::Unspecified)
+        .value("LocalValidated", TransportPhase::LocalValidated)
+        .value("Enqueued", TransportPhase::Enqueued)
+        .value("WireDispatched", TransportPhase::WireDispatched)
+        .value("ExchangeAckAccepted", TransportPhase::ExchangeAckAccepted)
+        .value("ExchangeAckRejected", TransportPhase::ExchangeAckRejected)
+        .value("ExchangeUpdate", TransportPhase::ExchangeUpdate)
+        .value("ExchangeTerminal", TransportPhase::ExchangeTerminal);
+
+    py::enum_<TransportUnknownState>(m, "TransportUnknownState")
+        .value("None_", TransportUnknownState::None)
+        .value(
+            "ConfirmedNotDispatched",
+            TransportUnknownState::ConfirmedNotDispatched
+        )
+        .value(
+            "MayHaveBeenDispatched",
+            TransportUnknownState::MayHaveBeenDispatched
+        )
+        .value(
+            "AwaitingReconciliation",
+            TransportUnknownState::AwaitingReconciliation
+        );
+
+    py::class_<CanonicalEventHeader>(m, "CanonicalEventHeader")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &CanonicalEventHeader::abi_version)
+        .def_readwrite("product", &CanonicalEventHeader::product)
+        .def_readwrite("backend", &CanonicalEventHeader::backend)
+        .def_readwrite("event_kind", &CanonicalEventHeader::event_kind)
+        .def_readwrite("venue", &CanonicalEventHeader::venue)
+        .def_readwrite("symbol", &CanonicalEventHeader::symbol)
+        .def_readwrite("session_id", &CanonicalEventHeader::session_id)
+        .def_readwrite("correlation_id", &CanonicalEventHeader::correlation_id)
+        .def_readwrite("generation", &CanonicalEventHeader::generation)
+        .def_readwrite(
+            "exchange_event_time_ns",
+            &CanonicalEventHeader::exchange_event_time_ns
+        )
+        .def_readwrite(
+            "local_receive_time_ns",
+            &CanonicalEventHeader::local_receive_time_ns
+        )
+        .def_readwrite(
+            "feature_ready_time_ns",
+            &CanonicalEventHeader::feature_ready_time_ns
+        )
+        .def_readwrite("source_sequence", &CanonicalEventHeader::source_sequence)
+        .def_readwrite("ingress_sequence", &CanonicalEventHeader::ingress_sequence)
+        .def_readwrite("snapshot", &CanonicalEventHeader::snapshot)
+        .def_readwrite("reconciled", &CanonicalEventHeader::reconciled);
+
+    py::class_<CanonicalOrderIntent>(m, "CanonicalOrderIntent")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &CanonicalOrderIntent::abi_version)
+        .def_readwrite("product", &CanonicalOrderIntent::product)
+        .def_readwrite("request_id", &CanonicalOrderIntent::request_id)
+        .def_readwrite("decision_id", &CanonicalOrderIntent::decision_id)
+        .def_readwrite("client_order_id", &CanonicalOrderIntent::client_order_id)
+        .def_readwrite("symbol", &CanonicalOrderIntent::symbol)
+        .def_readwrite("side", &CanonicalOrderIntent::side)
+        .def_readwrite("order_type", &CanonicalOrderIntent::order_type)
+        .def_readwrite("time_in_force", &CanonicalOrderIntent::time_in_force)
+        .def_readwrite("price", &CanonicalOrderIntent::price)
+        .def_readwrite("quantity", &CanonicalOrderIntent::quantity)
+        .def_readwrite("reduce_only", &CanonicalOrderIntent::reduce_only)
+        .def_readwrite("post_only", &CanonicalOrderIntent::post_only)
+        .def_readwrite("recv_window_ms", &CanonicalOrderIntent::recv_window_ms)
+        .def_readwrite("deadline_time_ns", &CanonicalOrderIntent::deadline_time_ns)
+        .def_readwrite(
+            "expected_ownership_generation",
+            &CanonicalOrderIntent::expected_ownership_generation
+        )
+        .def("validation_error", &CanonicalOrderIntent::validation_error)
+        .def("is_structurally_valid", &CanonicalOrderIntent::is_structurally_valid);
+
+    py::class_<CanonicalCancelIntent>(m, "CanonicalCancelIntent")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &CanonicalCancelIntent::abi_version)
+        .def_readwrite("product", &CanonicalCancelIntent::product)
+        .def_readwrite("request_id", &CanonicalCancelIntent::request_id)
+        .def_readwrite("decision_id", &CanonicalCancelIntent::decision_id)
+        .def_readwrite("client_order_id", &CanonicalCancelIntent::client_order_id)
+        .def_readwrite("exchange_order_id", &CanonicalCancelIntent::exchange_order_id)
+        .def_readwrite("symbol", &CanonicalCancelIntent::symbol)
+        .def_readwrite("reason", &CanonicalCancelIntent::reason)
+        .def_readwrite(
+            "expected_ownership_generation",
+            &CanonicalCancelIntent::expected_ownership_generation
+        )
+        .def("validation_error", &CanonicalCancelIntent::validation_error)
+        .def("is_structurally_valid", &CanonicalCancelIntent::is_structurally_valid);
+
+    py::class_<CanonicalCancelAllIntent>(m, "CanonicalCancelAllIntent")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &CanonicalCancelAllIntent::abi_version)
+        .def_readwrite("product", &CanonicalCancelAllIntent::product)
+        .def_readwrite("request_id", &CanonicalCancelAllIntent::request_id)
+        .def_readwrite("decision_id", &CanonicalCancelAllIntent::decision_id)
+        .def_readwrite("symbol", &CanonicalCancelAllIntent::symbol)
+        .def_readwrite("reason", &CanonicalCancelAllIntent::reason)
+        .def_readwrite(
+            "expected_ownership_generation",
+            &CanonicalCancelAllIntent::expected_ownership_generation
+        )
+        .def("validation_error", &CanonicalCancelAllIntent::validation_error)
+        .def("is_structurally_valid", &CanonicalCancelAllIntent::is_structurally_valid);
+
+    py::class_<TransportReceipt>(m, "TransportReceipt")
+        .def(py::init<>())
+        .def_readwrite("abi_version", &TransportReceipt::abi_version)
+        .def_readwrite("request_id", &TransportReceipt::request_id)
+        .def_readwrite("backend", &TransportReceipt::backend)
+        .def_readwrite("phase", &TransportReceipt::phase)
+        .def_readwrite("unknown_state", &TransportReceipt::unknown_state)
+        .def_readwrite("generation", &TransportReceipt::generation)
+        .def_readwrite("local_time_ns", &TransportReceipt::local_time_ns)
+        .def_readwrite("exchange_time_ns", &TransportReceipt::exchange_time_ns)
+        .def_readwrite("reason", &TransportReceipt::reason)
+        .def(
+            "allows_cross_backend_retry",
+            &TransportReceipt::allows_cross_backend_retry
+        );
+
+    m.attr("TRANSPORT_CONTRACT_ABI_VERSION") = kTransportContractAbiVersion;
+    m.attr("TRANSPORT_CONTRACT_SCHEMA_VERSION") =
+        kTransportContractSchemaVersion;
+    m.attr("DEFAULT_TRANSPORT_BACKEND") =
+        py::cast(TransportBackendKind::PythonUsdmLegacy);
+    m.attr("CPP_USDM_FIX_AVAILABLE") = py::bool_(false);
+
+    m.def(
+        "transport_backend_available",
+        &transport_backend_available,
+        py::arg("backend")
+    );
+    m.def(
+        "transport_backend_unavailable_reason",
+        [](TransportBackendKind backend) {
+            return std::string(transport_backend_unavailable_reason(backend));
+        },
+        py::arg("backend")
+    );
 }
 
 void bind_quote_core(py::module_& m) {
@@ -5454,6 +5636,7 @@ void bind_order_lifecycle_journal_v2_mirror(py::module_& m) {
 PYBIND11_MODULE(narrowgate_cpp, m) {
     m.doc() = "C++ acceleration hooks for NarrowGate.";
     narrowgate_cpp::bind_common(m);
+    narrowgate_cpp::bind_transport_contract(m);
     narrowgate_cpp::bind_dynamic_fill_hazard(m);
     narrowgate_cpp::bind_quote_core(m);
     narrowgate_cpp::bind_tick_replay(m);

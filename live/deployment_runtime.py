@@ -3015,7 +3015,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     current = subparsers.add_parser(
         "publish-current-pointer",
-        help="validate activation lineage and atomically publish its five-field pointer",
+        help="validate activation lineage and atomically publish its four-field pointer",
     )
     current.add_argument("--release-id", required=True)
     current.add_argument("--deployment-envelope", type=Path, required=True)

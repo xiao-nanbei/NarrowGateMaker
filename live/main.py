@@ -2116,11 +2116,21 @@ def main():
         )
         sys.exit(1)
 
-    # Create REST client
+    # Create the current compatibility transport.  Naming the three roles here
+    # keeps today's UMFutures behavior unchanged while allowing a native order
+    # gateway and event source to replace only their own hot paths later.
     rest = create_rest_client(cfg)
+    order_gateway = rest
+    reconciliation_client = rest
 
     # Create engine
-    engine = MakerEngine(cfg, rest, artifact_authority=safety_authority)
+    engine = MakerEngine(
+        cfg,
+        rest,
+        artifact_authority=safety_authority,
+        order_gateway=order_gateway,
+        reconciliation_client=reconciliation_client,
+    )
     restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
     logger.info(
         "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "
@@ -2168,7 +2178,7 @@ def main():
 
     # Create WebSocket handler
     ws = WSHandler(engine, cfg)
-    engine.set_ws_handler(ws)
+    engine.set_event_source(ws)
 
     # Graceful shutdown
     shutdown_event = False

@@ -7,7 +7,37 @@ import pytest
 from live.config import Config
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
-from strategy.order_manager import OrderManager, Side
+from strategy.order_manager import OrderManager, OrderState, Side
+
+
+def test_live_transport_roles_default_to_legacy_and_split_independently() -> None:
+    engine = object.__new__(MakerEngine)
+    legacy = object()
+    order_gateway = object()
+    reconciliation_client = object()
+    engine.rest = legacy
+
+    assert engine._order_transport() is legacy
+    assert engine._reconciliation_transport() is legacy
+
+    engine.order_gateway = order_gateway
+    engine.reconciliation_client = reconciliation_client
+    assert engine._order_transport() is order_gateway
+    assert engine._reconciliation_transport() is reconciliation_client
+
+    engine.order_gateway = None
+    with pytest.raises(RuntimeError, match="order_gateway is unavailable"):
+        engine._order_transport()
+
+    engine.order_gateway = order_gateway
+    engine.reconciliation_client = None
+    with pytest.raises(RuntimeError, match="reconciliation_client is unavailable"):
+        engine._reconciliation_transport()
+
+    event_source = object()
+    engine.set_event_source(event_source)
+    assert engine._active_event_source() is event_source
+    assert engine._ws_handler is event_source
 
 
 class _RestClient:
@@ -36,6 +66,16 @@ class _RestClient:
     def cancel_open_orders(self, **params):
         self.cancel_calls.append(params)
         return []
+
+
+class _QueryClient:
+    def __init__(self, response):
+        self.response = response
+        self.calls = []
+
+    def query_order(self, **params):
+        self.calls.append(params)
+        return self.response
 
 
 class _AuthoritativeExchangeError(RuntimeError):
@@ -131,6 +171,46 @@ def test_close_caller_selected_ioc_reaches_exchange_and_stays_latched() -> None:
     assert rest.calls[0]["timeInForce"] == "IOC"
     assert rest.calls[0]["reduceOnly"] == "true"
     assert engine._close_gtx_rejects == 3
+
+
+def test_close_submit_uses_hot_gateway_and_reconcile_uses_cold_client() -> None:
+    poison_legacy = _RestClient(error=AssertionError("legacy REST hot path used"))
+    hot = _RestClient(response={"orderId": 7, "status": "NEW"})
+    cold = _QueryClient(
+        {
+            "orderId": 7,
+            "clientOrderId": "unused",
+            "symbol": "BTCUSDC",
+            "side": "BUY",
+            "status": "NEW",
+            "price": "100.4",
+            "origQty": "0.001",
+            "executedQty": "0",
+            "avgPrice": "0",
+        }
+    )
+    engine = _engine(poison_legacy)
+    engine.order_gateway = hot
+    engine.reconciliation_client = cold
+
+    engine._place_close_order(
+        "BTCUSDC",
+        Side.BUY,
+        100.4,
+        0.001,
+        use_ioc=False,
+    )
+
+    assert len(hot.calls) == 1
+    assert poison_legacy.calls == []
+    order = engine.orders.get_order(engine._bid_cid)
+    assert order is not None
+    order.state = OrderState.PENDING_NEW
+    cold.response["clientOrderId"] = order.client_order_id
+    resolution = engine.reconcile_pending_new_order(order)
+    assert resolution == "exchange_status_new_reconciled"
+    assert len(cold.calls) == 1
+    assert poison_legacy.calls == []
 
 
 def test_ioc_expired_response_preserves_partial_fill_and_unknown_activation() -> None:

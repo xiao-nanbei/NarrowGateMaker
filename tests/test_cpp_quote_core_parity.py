@@ -7,6 +7,131 @@ from strategy import quote_core as qc
 from strategy.policy_guards import CommonSidePolicyInput, evaluate_common_side_policy
 
 
+def test_cpp_transport_contract_is_usdm_only_and_native_backends_default_off():
+    assert narrowgate_cpp.TRANSPORT_CONTRACT_ABI_VERSION == 1
+    assert (
+        narrowgate_cpp.TRANSPORT_CONTRACT_SCHEMA_VERSION
+        == "narrowgate_cpp_transport_contract.v1"
+    )
+    assert narrowgate_cpp.DEFAULT_TRANSPORT_BACKEND == (
+        narrowgate_cpp.TransportBackendKind.PythonUsdmLegacy
+    )
+    assert narrowgate_cpp.CPP_USDM_FIX_AVAILABLE is False
+    assert narrowgate_cpp.transport_backend_available(
+        narrowgate_cpp.TransportBackendKind.PythonUsdmLegacy
+    )
+    for backend in (
+        narrowgate_cpp.TransportBackendKind.CppUsdmWebSocket,
+        narrowgate_cpp.TransportBackendKind.CppUsdmRest,
+        narrowgate_cpp.TransportBackendKind.CppUsdmFix,
+    ):
+        assert not narrowgate_cpp.transport_backend_available(backend)
+
+    reason = narrowgate_cpp.transport_backend_unavailable_reason(
+        narrowgate_cpp.TransportBackendKind.CppUsdmFix
+    )
+    assert "USD-M Futures FIX is unavailable" in reason
+    assert "official Futures FIX documentation" in reason
+
+    header = narrowgate_cpp.CanonicalEventHeader()
+    header.backend = narrowgate_cpp.TransportBackendKind.PythonUsdmLegacy
+    header.event_kind = narrowgate_cpp.CanonicalEventKind.OrderUpdate
+    header.symbol = "BTCUSDC"
+    header.generation = 7
+    header.exchange_event_time_ns = 101
+    header.local_receive_time_ns = 102
+    header.feature_ready_time_ns = 103
+    header.source_sequence = 11
+    header.ingress_sequence = 12
+    assert header.product == narrowgate_cpp.TransportProduct.UsdMFutures
+    assert header.venue == "BINANCE"
+    assert header.symbol == "BTCUSDC"
+    assert header.generation == 7
+    assert header.ingress_sequence == 12
+
+    intent = narrowgate_cpp.CanonicalOrderIntent()
+    assert not intent.is_structurally_valid()
+    assert intent.validation_error() == "request_id is required"
+    intent.request_id = "request-1"
+    intent.decision_id = "decision-1"
+    intent.client_order_id = "cid-1"
+    intent.symbol = "BTCUSDC"
+    intent.side = narrowgate_cpp.CanonicalSide.Buy
+    intent.order_type = narrowgate_cpp.CanonicalOrderType.Limit
+    intent.time_in_force = narrowgate_cpp.CanonicalTimeInForce.Gtx
+    intent.price = 100_000.1
+    intent.quantity = 0.001
+    intent.post_only = True
+    intent.expected_ownership_generation = 7
+    assert intent.product == narrowgate_cpp.TransportProduct.UsdMFutures
+    assert intent.order_type == narrowgate_cpp.CanonicalOrderType.Limit
+    assert intent.time_in_force == narrowgate_cpp.CanonicalTimeInForce.Gtx
+    assert intent.expected_ownership_generation == 7
+    assert intent.is_structurally_valid()
+    assert intent.validation_error() == ""
+
+    emergency = narrowgate_cpp.CanonicalOrderIntent()
+    emergency.request_id = "emergency-1"
+    emergency.client_order_id = "cid-emergency-1"
+    emergency.symbol = "BTCUSDC"
+    emergency.side = narrowgate_cpp.CanonicalSide.Buy
+    emergency.order_type = narrowgate_cpp.CanonicalOrderType.Market
+    emergency.quantity = 0.001
+    emergency.reduce_only = True
+    assert emergency.order_type == narrowgate_cpp.CanonicalOrderType.Market
+    assert emergency.is_structurally_valid()
+
+    emergency.post_only = True
+    assert not emergency.is_structurally_valid()
+    assert emergency.validation_error() == "post_only requires a GTX limit order"
+
+    cancel = narrowgate_cpp.CanonicalCancelIntent()
+    cancel.request_id = "cancel-1"
+    cancel.client_order_id = "cid-1"
+    cancel.exchange_order_id = 123
+    cancel.symbol = "BTCUSDC"
+    cancel.reason = "replacement"
+    cancel.expected_ownership_generation = 7
+    assert cancel.product == narrowgate_cpp.TransportProduct.UsdMFutures
+    assert cancel.exchange_order_id == 123
+    assert cancel.expected_ownership_generation == 7
+    assert cancel.is_structurally_valid()
+
+    cancel_all = narrowgate_cpp.CanonicalCancelAllIntent()
+    cancel_all.request_id = "cancel-all-1"
+    cancel_all.symbol = "BTCUSDC"
+    cancel_all.reason = "risk_stop"
+    cancel_all.expected_ownership_generation = 8
+    assert cancel_all.product == narrowgate_cpp.TransportProduct.UsdMFutures
+    assert cancel_all.expected_ownership_generation == 8
+    assert cancel_all.is_structurally_valid()
+
+
+def test_cpp_transport_unknown_dispatch_blocks_cross_backend_retry():
+    receipt = narrowgate_cpp.TransportReceipt()
+    receipt.request_id = "request-1"
+    receipt.backend = narrowgate_cpp.TransportBackendKind.CppUsdmRest
+    receipt.phase = narrowgate_cpp.TransportPhase.LocalValidated
+    receipt.unknown_state = (
+        narrowgate_cpp.TransportUnknownState.ConfirmedNotDispatched
+    )
+    assert receipt.allows_cross_backend_retry()
+
+    receipt.phase = narrowgate_cpp.TransportPhase.WireDispatched
+    assert not receipt.allows_cross_backend_retry()
+
+    receipt.phase = narrowgate_cpp.TransportPhase.Enqueued
+    receipt.unknown_state = (
+        narrowgate_cpp.TransportUnknownState.MayHaveBeenDispatched
+    )
+    assert not receipt.allows_cross_backend_retry()
+
+    receipt.unknown_state = (
+        narrowgate_cpp.TransportUnknownState.AwaitingReconciliation
+    )
+    assert not receipt.allows_cross_backend_retry()
+
+
 def _cfg(**overrides):
     values = dict(
         gamma=0.01,

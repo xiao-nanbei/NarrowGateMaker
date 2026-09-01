@@ -1238,6 +1238,9 @@ def _load_buy_e3_cooldown_live_policy(
     )
 
 
+_LEGACY_TRANSPORT_DEFAULT = object()
+
+
 class MakerEngine:
     """
     Event-driven market making engine.
@@ -1254,13 +1257,38 @@ class MakerEngine:
         rest_client,
         *,
         artifact_authority: Mapping[str, Any] | None = None,
+        order_gateway=_LEGACY_TRANSPORT_DEFAULT,
+        reconciliation_client=_LEGACY_TRANSPORT_DEFAULT,
     ):
         """
         cfg: live.config.Config
-        rest_client: binance.um_futures.UMFutures instance
+        rest_client: compatibility default for both transport roles
+        order_gateway: latency-sensitive new/cancel transport
+        reconciliation_client: low-frequency account and exchange query transport
         """
         self.cfg = cfg
+        # Keep ``rest`` as a compatibility alias for older integrations and
+        # tests, while giving the hot order path and cold reconciliation path
+        # independent replacement boundaries.  The current runtime passes the
+        # same UMFutures instance for all three names, so this split is behavior
+        # preserving until an admitted native transport is selected.
         self.rest = rest_client
+        if order_gateway is None:
+            raise ValueError("order_gateway cannot be None when provided explicitly")
+        if reconciliation_client is None:
+            raise ValueError(
+                "reconciliation_client cannot be None when provided explicitly"
+            )
+        self.order_gateway = (
+            rest_client
+            if order_gateway is _LEGACY_TRANSPORT_DEFAULT
+            else order_gateway
+        )
+        self.reconciliation_client = (
+            rest_client
+            if reconciliation_client is _LEGACY_TRANSPORT_DEFAULT
+            else reconciliation_client
+        )
         self._base_asset, self._quote_asset = _infer_symbol_assets(cfg.symbol)
         self._settlement_asset = self._quote_asset
         self._commission_unit_error: Optional[str] = None
@@ -1289,7 +1317,7 @@ class MakerEngine:
         )
         self.signal = SignalEngine(model_dir=model_path,
                                    enable_ml=cfg.ml.enabled,
-                                   rest_client=rest_client,
+                                   rest_client=self.reconciliation_client,
                                    symbol=cfg.symbol,
                                    reference_symbol=getattr(multi, "reference_symbol", None),
                                    stablecoin_anchor_symbol=getattr(
@@ -1344,6 +1372,7 @@ class MakerEngine:
             self._dynamic_fill_hazard_action_policy,
         ) = _load_dynamic_fill_hazard_shadow(cfg)
         self._state_conditioned_policy_campaigns: set[int] = set()
+        self._event_source = None
         self._ws_handler = None
         self._order_policy_context: Dict[str, dict] = {}
         self._last_quote_context: Dict[str, dict[str, Any]] = {}
@@ -1596,9 +1625,50 @@ class MakerEngine:
             f"quote_snapshot_integrity_log={self._quote_snapshot_integrity_log_path}"
         )
 
+    def set_event_source(self, event_source):
+        """Register the admitted market/private event source transport."""
+
+        self._event_source = event_source
+        # Compatibility alias for old fixtures and the current WS transport.
+        self._ws_handler = event_source
+
     def set_ws_handler(self, ws_handler):
-        """Register WS handler so config reload can update stream settings."""
-        self._ws_handler = ws_handler
+        """Compatibility alias for the legacy WebSocket event source."""
+
+        self.set_event_source(ws_handler)
+
+    def _active_event_source(self):
+        """Return the configured event source, including legacy fixtures."""
+
+        event_source = getattr(self, "_event_source", None)
+        if event_source is not None:
+            return event_source
+        return getattr(self, "_ws_handler", None)
+
+    def _order_transport(self):
+        """Return the admitted latency-sensitive order transport.
+
+        The fallback keeps narrow unit fixtures that construct ``MakerEngine``
+        with ``__new__`` compatible while the production constructor always
+        binds this role explicitly.
+        """
+
+        if not hasattr(self, "order_gateway"):
+            return self.rest
+        client = self.order_gateway
+        if client is None:
+            raise RuntimeError("order_gateway is unavailable")
+        return client
+
+    def _reconciliation_transport(self):
+        """Return the admitted low-frequency account/query transport."""
+
+        if not hasattr(self, "reconciliation_client"):
+            return self.rest
+        client = self.reconciliation_client
+        if client is None:
+            raise RuntimeError("reconciliation_client is unavailable")
+        return client
 
     def set_order_lifecycle_live_writer_v2(
         self,
@@ -2319,8 +2389,9 @@ class MakerEngine:
             self.signal._enable_ml = False
             logger.info("Config reload: ML disabled")
 
-        if self._ws_handler is not None and hasattr(self._ws_handler, "on_config_reload"):
-            self._ws_handler.on_config_reload(old_cfg, cfg)
+        event_source = self._active_event_source()
+        if event_source is not None and hasattr(event_source, "on_config_reload"):
+            event_source.on_config_reload(old_cfg, cfg)
 
         logger.info(
             "Config applied: "
@@ -2735,12 +2806,13 @@ class MakerEngine:
             abs_qty_threshold,
             recent_abs_qty,
         )
+        event_source = self._active_event_source()
         if (
             bool(getattr(risk_cfg, "sync_adjust_reconnect_user_stream", True))
-            and self._ws_handler is not None
+            and event_source is not None
             and now - self._last_sync_adjust_user_reconnect >= 30.0
         ):
-            restart = getattr(self._ws_handler, "restart_user_stream", None)
+            restart = getattr(event_source, "restart_user_stream", None)
             if callable(restart):
                 restart("SYNC_ADJUST_DEGRADE")
                 self._last_sync_adjust_user_reconnect = now
@@ -3053,7 +3125,7 @@ class MakerEngine:
         中文说明：这里故意只读 WSHandler 的已见时间戳，不参与风控；
         真实风控仍由 ws_handler 的 silence watchdog 和 depth stale guard 负责。
         """
-        ws = self._ws_handler
+        ws = self._active_event_source()
         symbol = str(getattr(self.cfg, "symbol", "") or "").lower()
         if ws is None or not symbol:
             return {
@@ -3532,7 +3604,7 @@ class MakerEngine:
     ) -> tuple[dict[str, Any], Any]:
         """Read one atomic current-book view for a fresh BUY candidate."""
 
-        ws = self._ws_handler
+        ws = self._active_event_source()
         if ws is None:
             return {}, {}
         provider = getattr(
@@ -3641,7 +3713,7 @@ class MakerEngine:
         observation: Any,
     ) -> str:
         policy = self._dynamic_fill_hazard_action_policy
-        ws = self._ws_handler
+        ws = self._active_event_source()
         if policy is None or ws is None:
             return "baseline"
         score = (
@@ -3748,7 +3820,7 @@ class MakerEngine:
 
         runtime = getattr(self, "_dynamic_fill_hazard_shadow_runtime", None)
         bundle = self._dynamic_fill_hazard_shadow_bundle
-        ws = self._ws_handler
+        ws = self._active_event_source()
         if runtime is None or bundle is None or ws is None:
             return
         visible_snapshot_fn = getattr(
@@ -8663,7 +8735,7 @@ class MakerEngine:
             rest_start = time.perf_counter()
             try:
                 request_started = True
-                resp = self.rest.new_order(**params)
+                resp = self._order_transport().new_order(**params)
             finally:
                 if record_requote_perf:
                     self._record_perf_rest_latency(
@@ -8813,7 +8885,7 @@ class MakerEngine:
             rest_start = time.perf_counter()
             try:
                 request_started = True
-                resp = self.rest.new_order(**params)
+                resp = self._order_transport().new_order(**params)
             finally:
                 self._record_perf_rest_latency(
                     "new", (time.perf_counter() - rest_start) * 1_000_000.0
@@ -9264,7 +9336,7 @@ class MakerEngine:
 
         if order is None or getattr(order, "state", None) != OrderState.PENDING_NEW:
             return "not_pending_new"
-        query_order = getattr(self.rest, "query_order", None)
+        query_order = getattr(self._reconciliation_transport(), "query_order", None)
         if not callable(query_order):
             return "query_order_unavailable"
         cid = str(order.client_order_id)
@@ -9308,7 +9380,7 @@ class MakerEngine:
 
         if order is None or getattr(order, "state", None) != OrderState.PENDING_CANCEL:
             return "not_pending_cancel"
-        query_order = getattr(self.rest, "query_order", None)
+        query_order = getattr(self._reconciliation_transport(), "query_order", None)
         if not callable(query_order):
             return "query_order_unavailable"
         cid = str(order.client_order_id)
@@ -9381,7 +9453,7 @@ class MakerEngine:
         try:
             rest_start = time.perf_counter()
             try:
-                self.rest.cancel_open_orders(symbol=self.cfg.symbol)
+                self._order_transport().cancel_open_orders(symbol=self.cfg.symbol)
             finally:
                 self._record_perf_rest_latency(
                     "cancel_all", (time.perf_counter() - rest_start) * 1_000_000.0
@@ -9454,7 +9526,7 @@ class MakerEngine:
         try:
             rest_start = time.perf_counter()
             try:
-                self.rest.cancel_order(
+                self._order_transport().cancel_order(
                     symbol=self.cfg.symbol,
                     origClientOrderId=cid,
                 )
@@ -9847,7 +9919,7 @@ class MakerEngine:
                 rest_start = time.perf_counter()
                 try:
                     request_started = True
-                    resp = self.rest.new_order(
+                    resp = self._order_transport().new_order(
                         symbol=self.cfg.symbol,
                         side=side_str,
                         type="MARKET",
@@ -9962,7 +10034,7 @@ class MakerEngine:
         *,
         terminal_reason: str,
     ) -> None:
-        ws = self._ws_handler
+        ws = self._active_event_source()
         if ws is not None and hasattr(ws, "terminal_active_order_depth_path"):
             ws.terminal_active_order_depth_path(order.client_order_id)
         runtime = self._dynamic_fill_hazard_shadow_runtime
@@ -10357,7 +10429,7 @@ class MakerEngine:
     def _sync_exchange_filters(self):
         """Fetch exchange filters and override config with actual values."""
         try:
-            info = self.rest.exchange_info()
+            info = self._reconciliation_transport().exchange_info()
             for s in info.get("symbols", []):
                 if s["symbol"] == self.cfg.symbol:
                     self._base_asset = str(s.get("baseAsset") or self._base_asset).upper()
@@ -10396,7 +10468,7 @@ class MakerEngine:
             trades = []
             next_start = start_ms
             for _ in range(8):
-                batch = self.rest.agg_trades(
+                batch = self._reconciliation_transport().agg_trades(
                     symbol=self.cfg.symbol,
                     startTime=next_start,
                     endTime=end_ms,
@@ -10452,7 +10524,7 @@ class MakerEngine:
 
         # Cancel any stale orders left from crashed/killed previous session
         try:
-            self.rest.cancel_open_orders(symbol=self.cfg.symbol)
+            self._order_transport().cancel_open_orders(symbol=self.cfg.symbol)
             logger.info("Startup: canceled all existing exchange orders")
         except Exception as e:
             # Only a structured exchange -2011 response establishes that no
@@ -10465,7 +10537,7 @@ class MakerEngine:
 
         # Set leverage
         try:
-            self.rest.change_leverage(
+            self._reconciliation_transport().change_leverage(
                 symbol=self.cfg.symbol,
                 leverage=self.cfg.strategy.leverage,
             )
@@ -10746,7 +10818,7 @@ class MakerEngine:
         """Cancel exchange exposure without requiring a mutable local ledger."""
 
         try:
-            self.rest.cancel_open_orders(symbol=self.cfg.symbol)
+            self._order_transport().cancel_open_orders(symbol=self.cfg.symbol)
             logger.critical(
                 "FATAL_EXCHANGE_CANCEL_ALL_ACCEPTED symbol=%s; local ownership retained",
                 self.cfg.symbol,
@@ -10879,7 +10951,7 @@ class MakerEngine:
             "limit": 1000,
         }
         for _page in range(100):
-            page = self.rest.get_account_trades(**request)
+            page = self._reconciliation_transport().get_account_trades(**request)
             if not isinstance(page, list):
                 raise RuntimeError("account-trade response was not a list")
             if not page:
@@ -11165,14 +11237,18 @@ class MakerEngine:
         )
         for attempt in range(1, max(1, int(max_attempts)) + 1):
             first = self._parse_position_reconciliation_snapshot(
-                self.rest.get_position_risk(symbol=self.cfg.symbol)
+                self._reconciliation_transport().get_position_risk(
+                    symbol=self.cfg.symbol
+                )
             )
             trades = self._account_trades_through_snapshot(
                 snapshot_update_time_ms=first[2],
                 previous_snapshot_update_time_ms=previous_update_time_ms,
             )
             second = self._parse_position_reconciliation_snapshot(
-                self.rest.get_position_risk(symbol=self.cfg.symbol)
+                self._reconciliation_transport().get_position_risk(
+                    symbol=self.cfg.symbol
+                )
             )
             if first == second:
                 return self._exchange_reconciliation_payload(
