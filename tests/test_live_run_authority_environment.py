@@ -335,11 +335,31 @@ def test_live_startup_authority_uses_one_release_root() -> None:
         assert obsolete not in script
 
     deploy_preflight = script.split("_run_deploy_preflight() {", 1)[1].split(
-        "\nprofile() {", 1
+        "\n_run_startup_runtime_verification() {", 1
     )[0]
     supervisor = script.split("supervise() {", 1)[1].split("\n_require_quiescent_maker() {", 1)[0]
     assert deploy_preflight.count("_verify_startup_runtime") == 1
     assert "_verify_startup_runtime" not in supervisor
+    assert "_run_deploy_preflight" not in supervisor
+    assert "_run_startup_runtime_verification" in supervisor
+
+
+def test_candidate_verify_owns_static_deploy_preflight(tmp_path: Path) -> None:
+    root, profile, capture, args_capture = _stage_run_sh(tmp_path)
+    environment = _base_environment(root, profile, capture, args_capture)
+
+    subprocess.run(
+        ["bash", str(root / "live" / "run.sh"), "candidate-verify"],
+        cwd=root,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert set(_read_records(capture)) == {"preflight"}
+    assert "preflight_live_deploy.py" in args_capture.read_text(encoding="utf-8")
 
 
 def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -> None:
@@ -354,7 +374,7 @@ def test_run_sh_preserves_invocation_only_deployment_authority(tmp_path: Path) -
     _run_start(root, environment, ["bash", str(root / "live" / "run.sh"), "start"])
 
     records = _read_records(capture)
-    assert set(records) == {"preflight", "main"}
+    assert set(records) == {"main"}
     for record in records.values():
         for name, value in invocation.items():
             assert record[name] == f"SET:{value}"
@@ -384,7 +404,7 @@ def test_run_sh_rollback_env_unsets_cannot_be_reintroduced(tmp_path: Path) -> No
     _run_start(root, environment, command)
 
     records = _read_records(capture)
-    assert set(records) == {"preflight", "main"}
+    assert set(records) == {"main"}
     for record in records.values():
         for name in AUTHORITY_ENV:
             assert record[name] == "UNSET"
@@ -479,7 +499,7 @@ def test_service_propagates_fatal_main_exit_to_systemd(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 78
-    assert set(_read_records(capture)) == {"preflight", "main"}
+    assert set(_read_records(capture)) == {"main"}
     assert "--config" in args_capture.read_text(encoding="utf-8")
     service = (root / "live" / "run.sh").read_text(encoding="utf-8").split(
         "service() {", 1

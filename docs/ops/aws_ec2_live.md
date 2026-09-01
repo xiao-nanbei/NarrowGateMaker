@@ -190,19 +190,38 @@ not add a second five-second kill ladder through `ExecStop`.
 Every start, restart, rollback, or instance resume needs a newly created stopped
 exchange reconciliation. A previous file proves only an earlier stopped moment.
 
+For a release whose source, private environment, active config, locked runtime,
+and deployment envelope are already prepared on EC2, use the single transaction
+entry point rather than manually stitching the activation steps together:
+
+```bash
+python3.12 scripts/live_deploy_common.py activate-prepared-release --help
+```
+
+It defaults to a non-mutating dry-run; `--execute` enables the one-SSH remote
+transaction. The default service identity is the validated EC2 contract user
+`ec2-user`; use `--service-user` for another valid non-root identity. Failure
+before stop leaves the old service alone. Failure after stop leaves the host
+stopped, and failure after candidate start stops that candidate. It never
+blindly restarts the old release, and it publishes the current pointer only
+after bounded health admission. When the approved control path requires SOCKS5,
+pass only the validated `--socks5-proxy HOST:PORT` option; arbitrary SSH options
+are not accepted.
+
 Safe activation order:
 
-1. stop systemd and wait for graceful process exit;
-2. confirm no maker process remains;
-3. create a unique, previously absent reconciliation output while live is fully
+1. verify the prepared candidate and deployment envelope while the old service
+   is still running;
+2. stop systemd and wait for graceful process exit;
+3. confirm no maker process remains;
+4. create a unique, previously absent reconciliation output while live is fully
    stopped;
-4. require the signed venue reads to show zero open orders and a stable exact
+5. require the signed venue reads to show zero open orders and a stable exact
    position under the intended credential/config;
-5. verify the new release's static runtime and deployment envelope;
-6. atomically switch `/opt/narrowgate/current` to the prepared release;
-7. start systemd;
-8. observe process and runtime health;
-9. only then build the activation receipt and publish the current pointer.
+6. start the prepared release through systemd;
+7. observe process and runtime health for a bounded interval;
+8. build the activation receipt;
+9. publish the current pointer last.
 
 Run reconciliation through a bounded transient systemd unit so it receives the
 same root-owned environment without exposing credentials in the operator shell.

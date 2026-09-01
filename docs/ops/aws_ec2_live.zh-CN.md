@@ -183,18 +183,32 @@ systemd 必须直接发送 `SIGTERM` 并保留完整 stop grace period。不要�
 每次 start、restart、rollback 或 instance resume 都要新建 stopped exchange
 reconciliation。旧文件只能证明过去某个 stopped 时刻。
 
+如果 source、private environment、active config、locked runtime 与 deployment
+envelope 已在 EC2 上准备完成，使用单一事务入口，不再人工拼接 activation 步骤：
+
+```bash
+python3.12 scripts/live_deploy_common.py activate-prepared-release --help
+```
+
+默认是无副作用 dry-run；只有 `--execute` 才执行一次 SSH 远端事务。Service identity 默认
+为经过校验的 EC2 contract 用户 `ec2-user`，其他合法非 root 用户通过 `--service-user`
+指定。停机前失败不会影响旧服务；停机后失败会让主机保持 stopped；candidate 已启动后
+health 失败会停止 candidate。命令不会盲目重启旧 release，并且只在 bounded health
+admission 通过后发布 current pointer。批准的控制路径需要 SOCKS5 时，只能使用经过校验的
+`--socks5-proxy HOST:PORT`，不能注入任意 SSH option。
+
 安全 activation 顺序：
 
-1. 停止 systemd，等待进程优雅退出；
-2. 确认没有 maker process；
-3. 在 live 完全停止时创建唯一、此前不存在的 reconciliation output；
-4. 要求 signed venue read 在目标 credential/config 下显示 zero open orders 与 stable
+1. 在旧服务仍运行时验证 prepared candidate 与 deployment envelope；
+2. 停止 systemd，等待进程优雅退出；
+3. 确认没有 maker process；
+4. 在 live 完全停止时创建唯一、此前不存在的 reconciliation output；
+5. 要求 signed venue read 在目标 credential/config 下显示 zero open orders 与 stable
    exact position；
-5. 验证新 release 的 static runtime 与 deployment envelope；
-6. 原子切换 `/opt/narrowgate/current` 到已准备 release；
-7. 启动 systemd；
-8. 观察 process 与 runtime health；
-9. 之后才能构建 activation receipt 并发布 current pointer。
+6. 通过 systemd 启动 prepared release；
+7. 在 bounded interval 内观察 process 与 runtime health；
+8. 构建 activation receipt；
+9. 最后发布 current pointer。
 
 Reconciliation 应通过 bounded transient systemd unit 运行，这样它能读取同一个
 root-owned environment，而不会把 credential 暴露到 operator shell。每次 attempt 使用

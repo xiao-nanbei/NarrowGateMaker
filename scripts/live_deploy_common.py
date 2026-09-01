@@ -68,6 +68,20 @@ PUBLIC_SOURCE_RELEASE_SCHEMA: Final = "narrowgate_public_source_release.v1"
 _GIT_OBJECT_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _SSH_TARGET_RE: Final = re.compile(r"^[A-Za-z0-9_.@:\[\]-]+$")
 _TAG_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+_RELEASE_ID_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_SERVICE_USER_RE: Final = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_PROXY_HOST_RE: Final = re.compile(
+    r"^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"
+)
+PREPARED_ACTIVATION_PHASES: Final = (
+    "verify",
+    "stop_quiescence",
+    "fresh_reconcile",
+    "start",
+    "bounded_health",
+    "activation_receipt",
+    "publish_current",
+)
 
 
 def canonical_sha256(value: Any) -> str:
@@ -879,6 +893,254 @@ def deploy_public_source_release(
         }
 
 
+def _activation_value(value: str, *, label: str, pattern: re.Pattern[str]) -> str:
+    normalized = str(value).strip()
+    if pattern.fullmatch(normalized) is None:
+        raise LiveDeployContractError(f"{label} is malformed")
+    return normalized
+
+
+def _socks5_proxy(value: str | None) -> str | None:
+    if value is None:
+        return None
+    host, separator, port_text = str(value).strip().rpartition(":")
+    if separator != ":" or _PROXY_HOST_RE.fullmatch(host) is None:
+        raise LiveDeployContractError("SOCKS5 proxy must be HOST:PORT")
+    try:
+        port = int(port_text)
+    except ValueError as exc:
+        raise LiveDeployContractError("SOCKS5 proxy port is malformed") from exc
+    if not 1 <= port <= 65535 or str(port) != port_text:
+        raise LiveDeployContractError("SOCKS5 proxy port is malformed")
+    return f"{host}:{port}"
+
+
+def render_prepared_release_activation_shell(
+    *,
+    release_id: str,
+    release_dir: str,
+    previous_release_dir: str,
+    private_environment_file: str,
+    active_config_path: str,
+    deployment_envelope_path: str,
+    deployment_envelope_sha256: str,
+    trusted_python_path: str,
+    stopped_reconciliation_path: str,
+    activation_receipt_path: str,
+    current_pointer_path: str,
+    service_user: str = "ec2-user",
+    health_timeout_s: int = 180,
+) -> str:
+    """Render one fixed transaction over an already prepared release."""
+
+    q = shlex.quote
+    rid = _activation_value(release_id, label="release ID", pattern=_RELEASE_ID_RE)
+    user = _activation_value(service_user, label="service user", pattern=_SERVICE_USER_RE)
+    release = _validate_public_release_dir(release_dir)
+    previous = _validate_public_release_dir(previous_release_dir)
+    path = _absolute_posix_path
+    env_file = path(private_environment_file, "private environment file")
+    config = path(active_config_path, "active config")
+    envelope = path(deployment_envelope_path, "deployment envelope")
+    trusted = path(trusted_python_path, "trusted Python")
+    reconciliation = path(stopped_reconciliation_path, "stopped reconciliation")
+    activation = path(activation_receipt_path, "activation receipt")
+    current = path(current_pointer_path, "current pointer")
+    envelope_sha = _require_sha256(deployment_envelope_sha256, "deployment envelope root")
+    if release == previous or len({reconciliation, activation, current}) != 3:
+        raise LiveDeployContractError("activation release/output paths overlap")
+    if not isinstance(health_timeout_s, int) or isinstance(health_timeout_s, bool):
+        raise LiveDeployContractError("health timeout must be an integer")
+    if not 10 <= health_timeout_s <= 900:
+        raise LiveDeployContractError("health timeout must be between 10 and 900 seconds")
+    json_get = (
+        "import json,sys;v=json.load(open(sys.argv[1]));"
+        "[v:=v[k] for k in sys.argv[2].split('.')];print(v)"
+    )
+    health_check = (
+        "import json,sys;h=json.load(open(sys.argv[1]));"
+        "r=json.load(open(sys.argv[2]));p=int(sys.argv[3]);"
+        "assert h.get('quoteLoopRunning') is True;"
+        "assert h.get('ownershipConflictLatched') is False;"
+        "assert h.get('fatalRuntimeLatched') is False;"
+        "assert h.get('reconciliationRequired') is False;"
+        "assert h.get('fatalReason')=='';"
+        "assert r.get('pid')==p and r.get('dry_run') is False and r.get('testnet') is False"
+    )
+    script = f"""set -euo pipefail
+umask 077
+export PATH=/usr/bin:/bin
+rid={q(rid)} release={q(release)} previous={q(previous)} user={q(user)}
+env_file={q(env_file)} config={q(config)} envelope={q(envelope)}
+envelope_sha={q(envelope_sha)} trusted={q(trusted)}
+reconciliation={q(reconciliation)} activation={q(activation)} current={q(current)}
+candidate_started=0
+quiescent() {{
+  test -z "$(pgrep -f -- '[l]ive/main.py' || true)" \
+    && test -z "$(pgrep -f -- '[l]ive/run.sh __supervise' || true)"
+}}
+cleanup() {{
+  rc=$?
+  trap - EXIT HUP INT TERM
+  if test "$candidate_started" = 1; then
+    sudo systemctl stop narrowgate.service >/dev/null 2>&1 || true
+    quiescent || rc=83
+  fi
+  exit "$rc"
+}}
+lock="$(dirname "$current")/.narrowgate-live-activation.lock"
+exec 9>"$lock"
+flock -w 30 9
+trap cleanup EXIT
+trap 'exit 84' HUP INT TERM
+test -d "$release" && test -d "$previous" && test -f "$env_file"
+test -f "$config" && test -f "$envelope" && test -x "$trusted"
+test ! -e "$reconciliation" && test ! -e "$activation"
+test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
+common=(
+  --property="User=$user" --property="WorkingDirectory=$release"
+  --property="EnvironmentFile=$env_file" --property=UMask=0077
+  --setenv="NARROWGATE_LIVE_CONFIG=$config"
+  --setenv="NARROWGATE_DEPLOYMENT_ENVELOPE_PATH=$envelope"
+  --setenv="NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256=$envelope_sha"
+  --setenv="NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH=$trusted"
+)
+sudo systemd-run --quiet --wait --collect --service-type=oneshot \
+  --unit="narrowgate-verify-$rid" --property=NoNewPrivileges=true \
+  --property=TimeoutStartSec=180 "${{common[@]}}" \
+  "$release/live/run.sh" candidate-verify
+test "$(systemctl show narrowgate.service -p WorkingDirectory --value)" = "$previous"
+sudo systemctl stop narrowgate.service
+quiescent
+install -d -m 0700 "$release/logs"
+if test -f "$previous/logs/fill_cooldown_state.json"; then
+  install -m 0600 "$previous/logs/fill_cooldown_state.json" \
+    "$release/logs/fill_cooldown_state.json"
+fi
+sudo systemd-run --quiet --wait --collect --service-type=oneshot \
+  --unit="narrowgate-reconcile-$rid" --property=NoNewPrivileges=true \
+  --property=TimeoutStartSec=180 "${{common[@]}}" \
+  "$release/live/run.sh" reconcile-stopped "$reconciliation"
+reconciliation_sha="$($trusted -c {q(json_get)} \
+  "$reconciliation" canonical_exchange_reconciliation_sha256)"
+test "${{#reconciliation_sha}}" = 64
+deadline=$((SECONDS + 30))
+while test "$(systemctl show narrowgate.service -p LoadState --value 2>/dev/null || true)" \
+    != not-found; do
+  test "$SECONDS" -lt "$deadline"
+  sleep 1
+done
+sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
+  --property=Restart=no --property=KillSignal=SIGTERM \
+  --property=TimeoutStartSec=120 --property=TimeoutStopSec=120 \
+  "${{common[@]}}" \
+  --setenv="NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_PATH=$reconciliation" \
+  --setenv="NARROWGATE_STARTUP_EXCHANGE_RECONCILIATION_CANONICAL_SHA256=$reconciliation_sha" \
+  "$release/live/run.sh" service
+candidate_started=1
+health="$release/logs/runtime_health.json"
+runtime="$release/logs/runtime_identity.json"
+admitted=0 deadline=$((SECONDS + {health_timeout_s}))
+while test "$SECONDS" -lt "$deadline"; do
+  state="$(systemctl is-active narrowgate.service 2>/dev/null || true)"
+  pid="$(systemctl show narrowgate.service -p MainPID --value 2>/dev/null || true)"
+  if test "$state" = active && test -s "$health" && test -s "$runtime" \
+      && "$trusted" -c {q(health_check)} "$health" "$runtime" "$pid" \
+      && test "$(systemctl show narrowgate.service -p NRestarts --value)" = 0; then
+    admitted=1
+    break
+  fi
+  test "$state" != failed && test "$state" != inactive
+  sleep 1
+done
+test "$admitted" = 1
+"$trusted" -I -B "$release/live/deployment_runtime.py" build-activation-receipt \
+  --release-id "$rid" --deployment-envelope "$envelope" \
+  --deployment-envelope-sha256 "$envelope_sha" \
+  --stopped-reconciliation "$reconciliation" \
+  --stopped-reconciliation-sha256 "$reconciliation_sha" \
+  --runtime-identity "$runtime" --output "$activation"
+activation_sha="$($trusted -c {q(json_get)} "$activation" canonical_sha256)"
+"$trusted" -I -B "$release/live/deployment_runtime.py" publish-current-pointer \
+  --release-id "$rid" --deployment-envelope "$envelope" \
+  --deployment-envelope-sha256 "$envelope_sha" \
+  --activation-receipt "$activation" --activation-receipt-sha256 "$activation_sha" \
+  --stopped-reconciliation "$reconciliation" --runtime-identity "$runtime" \
+  --output "$current"
+candidate_started=0
+trap - EXIT HUP INT TERM
+printf 'activated %s %s %s %s\n' \
+  "$rid" "$envelope_sha" "$reconciliation_sha" "$activation_sha"
+"""
+    return f"/bin/bash --noprofile --norc -c {q(script)}"
+
+
+def activate_prepared_release(
+    *,
+    target: str,
+    execute: bool = False,
+    connect_timeout_s: int = 20,
+    command_timeout_s: int = 900,
+    socks5_proxy: str | None = None,
+    **activation: Any,
+) -> dict[str, Any]:
+    """Plan or execute one fixed prepared-release activation transaction."""
+
+    target = _validate_ssh_target(target)
+    remote_shell = render_prepared_release_activation_shell(**activation)
+    release_id = _activation_value(
+        str(activation["release_id"]), label="release ID", pattern=_RELEASE_ID_RE
+    )
+    result = {
+        "target": target,
+        "release_id": release_id,
+        "phases": list(PREPARED_ACTIVATION_PHASES),
+    }
+    proxy = _socks5_proxy(socks5_proxy)
+    if not execute:
+        return {**result, "mode": "dry-run", "status": "planned"}
+    if connect_timeout_s <= 0 or connect_timeout_s >= command_timeout_s:
+        raise LiveDeployContractError("activation SSH timeouts are invalid")
+    ssh_options = ["-o", "BatchMode=yes", "-o", f"ConnectTimeout={connect_timeout_s}"]
+    if proxy is not None:
+        ssh_options.extend(("-o", f"ProxyCommand=nc -x {proxy} -X 5 %h %p"))
+    completed = subprocess.run(
+        (
+            "ssh",
+            *ssh_options,
+            target,
+            remote_shell,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=float(command_timeout_s),
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()[-2000:]
+        raise LiveDeployContractError(
+            f"prepared release activation failed (rc={completed.returncode}): {detail}"
+        )
+    lines = [line.split() for line in completed.stdout.splitlines() if line.strip()]
+    fields = lines[-1] if lines else []
+    if len(fields) != 5 or fields[:2] != ["activated", release_id]:
+        raise LiveDeployContractError("prepared release activation result is malformed")
+    envelope_root = _require_sha256(fields[2], "envelope root")
+    expected_envelope_root = _require_sha256(
+        str(activation["deployment_envelope_sha256"]), "deployment envelope root"
+    )
+    if envelope_root != expected_envelope_root:
+        raise LiveDeployContractError("prepared release activation envelope root drifted")
+    return {
+        **result,
+        "mode": "execute",
+        "status": "activated",
+        "deployment_envelope_sha256": envelope_root,
+        "stopped_reconciliation_sha256": _require_sha256(fields[3], "reconciliation root"),
+        "activation_receipt_sha256": _require_sha256(fields[4], "activation root"),
+    }
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -896,6 +1158,28 @@ def _build_parser() -> argparse.ArgumentParser:
     source.add_argument("--dry-run", action="store_true")
     source.add_argument("--connect-timeout-s", type=int, default=20)
     source.add_argument("--command-timeout-s", type=int, default=600)
+    activation = subparsers.add_parser("activate-prepared-release")
+    for name in (
+        "target",
+        "release-id",
+        "release-dir",
+        "previous-release-dir",
+        "private-environment-file",
+        "active-config",
+        "deployment-envelope",
+        "deployment-envelope-sha256",
+        "trusted-python",
+        "stopped-reconciliation",
+        "activation-receipt",
+        "current-pointer",
+    ):
+        activation.add_argument(f"--{name}", required=True)
+    activation.add_argument("--service-user", default="ec2-user")
+    activation.add_argument("--health-timeout-s", type=int, default=180)
+    activation.add_argument("--connect-timeout-s", type=int, default=20)
+    activation.add_argument("--command-timeout-s", type=int, default=900)
+    activation.add_argument("--socks5-proxy")
+    activation.add_argument("--execute", action="store_true")
     return parser
 
 
@@ -913,6 +1197,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 connect_timeout_s=args.connect_timeout_s,
                 command_timeout_s=args.command_timeout_s,
             )
+        elif args.command == "activate-prepared-release":
+            result = activate_prepared_release(
+                target=args.target,
+                execute=args.execute,
+                connect_timeout_s=args.connect_timeout_s,
+                command_timeout_s=args.command_timeout_s,
+                socks5_proxy=args.socks5_proxy,
+                release_id=args.release_id,
+                release_dir=args.release_dir,
+                previous_release_dir=args.previous_release_dir,
+                private_environment_file=args.private_environment_file,
+                active_config_path=args.active_config,
+                deployment_envelope_path=args.deployment_envelope,
+                deployment_envelope_sha256=args.deployment_envelope_sha256,
+                trusted_python_path=args.trusted_python,
+                stopped_reconciliation_path=args.stopped_reconciliation,
+                activation_receipt_path=args.activation_receipt,
+                current_pointer_path=args.current_pointer,
+                service_user=args.service_user,
+                health_timeout_s=args.health_timeout_s,
+            )
         else:  # pragma: no cover - argparse owns the command set.
             raise LiveDeployContractError(f"unsupported command: {args.command}")
     except (OSError, subprocess.SubprocessError, LiveDeployContractError) as exc:
@@ -925,10 +1230,12 @@ __all__ = [
     "BASE_RESULT_FIELDS",
     "EvidenceKind",
     "LiveDeployContractError",
+    "PREPARED_ACTIVATION_PHASES",
     "PROCESS_FAMILY_IDENTITY_FIELDS",
     "PROCESS_FAMILY_RESULT_FIELDS",
     "PUBLIC_SOURCE_RELEASE_SCHEMA",
     "RESULT_FIELDS",
+    "activate_prepared_release",
     "canonical_sha256",
     "command_result",
     "create_public_source_bundle",
@@ -939,6 +1246,7 @@ __all__ = [
     "render_bounded_readiness_shell",
     "render_containment_shell",
     "render_fenced_action_shell",
+    "render_prepared_release_activation_shell",
     "render_process_epoch_probe_shell",
     "render_process_family_probe_shell",
     "render_public_source_publish_shell",

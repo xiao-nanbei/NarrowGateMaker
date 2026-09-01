@@ -1689,3 +1689,128 @@ def test_compact_receipt_and_pointer_reject_ambiguous_or_broken_lineage(
     with pytest.raises(subject.LockedRuntimeError, match="symlink"):
         subject._write_json_pointer_atomic(destination, pointer)  # noqa: SLF001
     assert outside.read_text(encoding="utf-8") == "outside\n"
+
+
+def _prepared_activation_args() -> dict[str, Any]:
+    return {
+        "release_id": "release-a",
+        "release_dir": "/srv/narrowgate/releases/release-a",
+        "previous_release_dir": "/srv/narrowgate/releases/release-old",
+        "private_environment_file": "/srv/narrowgate/private/live.env",
+        "active_config_path": "/srv/narrowgate/private/config.yaml",
+        "deployment_envelope_path": "/srv/narrowgate/private/envelope.json",
+        "deployment_envelope_sha256": "1" * 64,
+        "trusted_python_path": "/srv/narrowgate/runtime/bin/python",
+        "stopped_reconciliation_path": "/srv/narrowgate/private/reconcile.json",
+        "activation_receipt_path": "/srv/narrowgate/private/activation.json",
+        "current_pointer_path": "/srv/narrowgate/private/current.json",
+    }
+
+
+def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        source_deploy.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("dry-run must not open SSH"),
+    )
+    result = source_deploy.activate_prepared_release(
+        target="example.test",
+        **_prepared_activation_args(),
+    )
+    assert result["status"] == "planned"
+    assert result["phases"] == list(source_deploy.PREPARED_ACTIVATION_PHASES)
+
+    shell = source_deploy.render_prepared_release_activation_shell(
+        **_prepared_activation_args()
+    )
+    markers = (
+        "candidate-verify",
+        "test \"$(systemctl show narrowgate.service -p WorkingDirectory --value)\"",
+        "reconcile-stopped",
+        "--service-type=simple --unit=narrowgate",
+        "test \"$admitted\" = 1",
+        "build-activation-receipt",
+        "publish-current-pointer",
+    )
+    assert [shell.index(marker) for marker in markers] == sorted(
+        shell.index(marker) for marker in markers
+    )
+    assert "candidate_started=1" in shell
+    assert shell.index("candidate_started=1") > shell.index("--unit=narrowgate")
+    assert "start narrowgate.service" not in shell
+    assert "rollback" not in shell
+
+
+def test_prepared_activation_rejects_shell_shaped_identity_and_paths() -> None:
+    args = _prepared_activation_args()
+    with pytest.raises(source_deploy.LiveDeployContractError, match="release ID"):
+        source_deploy.render_prepared_release_activation_shell(
+            **{**args, "release_id": "release-a;id"}
+        )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="service user"):
+        source_deploy.render_prepared_release_activation_shell(
+            **args, service_user="ec2-user;id"
+        )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="absolute"):
+        source_deploy.render_prepared_release_activation_shell(
+            **{**args, "active_config_path": "relative.yaml"}
+        )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="SOCKS5 proxy"):
+        source_deploy.activate_prepared_release(
+            target="example.test",
+            execute=True,
+            socks5_proxy="127.0.0.1;id:7897",
+            **args,
+        )
+
+
+def test_prepared_activation_uses_one_ssh_and_accepts_existing_roots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Any, ...]] = []
+
+    def fake_run(argv: tuple[Any, ...], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=f"activated release-a {'1' * 64} {'2' * 64} {'3' * 64}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(source_deploy.subprocess, "run", fake_run)
+    result = source_deploy.activate_prepared_release(
+        target="example.test",
+        execute=True,
+        socks5_proxy="127.0.0.1:7897",
+        **_prepared_activation_args(),
+    )
+    assert len(calls) == 1
+    assert calls[0][:5] == ("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20")
+    assert calls[0][5:7] == (
+        "-o",
+        "ProxyCommand=nc -x 127.0.0.1:7897 -X 5 %h %p",
+    )
+    assert result["status"] == "activated"
+    assert result["stopped_reconciliation_sha256"] == "2" * 64
+    assert result["activation_receipt_sha256"] == "3" * 64
+
+    def drifted_run(
+        argv: tuple[Any, ...], **_kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout=f"activated release-a {'4' * 64} {'2' * 64} {'3' * 64}\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(source_deploy.subprocess, "run", drifted_run)
+    with pytest.raises(source_deploy.LiveDeployContractError, match="envelope root drifted"):
+        source_deploy.activate_prepared_release(
+            target="example.test",
+            execute=True,
+            **_prepared_activation_args(),
+        )

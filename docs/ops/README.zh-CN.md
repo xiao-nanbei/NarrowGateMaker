@@ -78,7 +78,18 @@ python3.12 -m live.deployment_runtime build-activation-receipt --help
 python3.12 -m live.deployment_runtime publish-current-pointer --help
 python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
+python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 ```
+
+Release、private environment、active config、locked runtime 与 deployment envelope
+已经在主机上准备好后，`activate-prepared-release` 用一次 SSH 事务完成余下 activation。
+缺省只输出 dry-run plan；只有指定 `--execute` 才改变远端状态。事务先在旧服务仍运行时
+验证 candidate，然后严格执行 stop/quiescence、fresh reconciliation、start、bounded health
+admission、activation receipt 与 current-pointer publication；pointer 最后发布。失败时不发布
+pointer；candidate 已启动但未通过 health admission 时会停止 candidate，并且不会自动重启
+旧 release。`--service-user` 默认使用经过校验的 EC2 contract 用户 `ec2-user`，也可指定
+另一个合法 service identity。只能通过本地 SOCKS5 到达的主机使用受限的
+`--socks5-proxy HOST:PORT`；命令不接受任意 SSH option。
 
 Remote upload 或 task 启动前，递归计算完整 materialization closure。每个 manifest
 reference 必须在 admitted bundle 内，或作为显式 immutable resource 提供。Archive 上传

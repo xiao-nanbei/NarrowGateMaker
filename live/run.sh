@@ -348,6 +348,27 @@ _run_deploy_preflight() {
     mv "$preflight_tmp" "$PREFLIGHT_STATE_FILE"
 }
 
+_run_startup_runtime_verification() {
+    if ! _verify_startup_runtime; then
+        echo "Live runtime verification failed; maker was not started." >&2
+        return 1
+    fi
+    if ! "$PYTHON_BIN" -I -B -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else "NarrowGate requires Python >=3.11")'; then
+        echo "Live Python version check failed; maker was not started." >&2
+        return 1
+    fi
+}
+
+candidate_verify() {
+    # This is the explicit, pre-stop candidate audit used by the deployment
+    # transaction.  Static config/model/policy checks do not run again in the
+    # live startup hot path; main.py still validates the actual consumer state
+    # and publishes its dynamic startup attestation.
+    mkdir -p "$DIR/logs"
+    _load_runtime_environment
+    _run_deploy_preflight
+}
+
 profile() {
     _load_runtime_environment
     echo "Profile: ${NARROWGATE_LIVE_PROFILE_NAME:-unmanaged}"
@@ -505,7 +526,7 @@ supervise() {
     trap _cleanup_supervisor EXIT
 
     local restart_count=0
-    if ! _run_deploy_preflight; then
+    if ! _run_startup_runtime_verification; then
         _record_supervisor_state "preflight_failed" 125 "$restart_count"
         return 125
     fi
@@ -616,7 +637,7 @@ service() {
     _require_quiescent_maker
     mkdir -p "$DIR/logs"
     _load_runtime_environment
-    _run_deploy_preflight
+    _run_startup_runtime_verification
     _require_quiescent_maker
     _record_runtime_profile
     rm -f "$CHILD_PID_FILE" "$SUPERVISOR_STATE_FILE" "$RUNTIME_HEALTH_FILE"
@@ -864,7 +885,7 @@ restart() {
     mkdir -p "$DIR/logs"
     _reject_direct_maker_control
     _load_runtime_environment
-    _run_deploy_preflight
+    _run_startup_runtime_verification
     stop
     sleep 1
     _require_quiescent_maker
@@ -950,6 +971,7 @@ case "${1:-help}" in
         shift
         reconcile_stopped "$@"
         ;;
+    candidate-verify) candidate_verify ;;
     start)   start   ;;
     stop)    stop    ;;
     restart) restart ;;
@@ -959,7 +981,7 @@ case "${1:-help}" in
     reload)  reload  ;;
     logs)    logs    ;;
     *)
-        echo "Usage: $0 {start|service|stop|restart|status|dry-run|reconcile-stopped ABSOLUTE_PATH|profile|reload|logs}"
+        echo "Usage: $0 {start|service|stop|restart|status|dry-run|candidate-verify|reconcile-stopped ABSOLUTE_PATH|profile|reload|logs}"
         exit 1
         ;;
 esac

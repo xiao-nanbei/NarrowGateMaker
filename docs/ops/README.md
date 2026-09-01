@@ -87,7 +87,22 @@ python3.12 -m live.deployment_runtime build-activation-receipt --help
 python3.12 -m live.deployment_runtime publish-current-pointer --help
 python3.12 -m live.native_build_receipt --help
 python3.12 scripts/live_deploy_common.py source-release --help
+python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 ```
+
+Once the release, private environment, active config, locked runtime, and
+deployment envelope already exist on the host, `activate-prepared-release`
+executes the remaining activation as one SSH transaction. It is a dry-run plan
+unless `--execute` is present. The transaction verifies the candidate before
+stopping the old service, then performs stop/quiescence, fresh reconciliation,
+start, bounded health admission, activation receipt, and current-pointer
+publication in that order. The pointer is published last. A failure never
+publishes it; a candidate that was started but fails admission is stopped, and
+the command never automatically restarts the old release. `--service-user`
+defaults to the validated EC2 contract user `ec2-user` and may be set to another
+validated service identity. Hosts reachable only through a local SOCKS5 proxy
+use the bounded `--socks5-proxy HOST:PORT` option; arbitrary SSH options are not
+accepted.
 
 Before a remote upload or task starts, recursively calculate the complete
 materialization closure. Every manifest reference must be inside the admitted
