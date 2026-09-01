@@ -2422,9 +2422,38 @@ class SignalEngine:
         all_bars: List[Bar1s],
         cutoff: Optional[FeatureCutoff] = None,
     ) -> Optional[dict]:
+        """Compatibility mapping for diagnostics and direct callers.
+
+        The live feature path uses :meth:`_compute_cpp_feature_values` so it
+        can avoid an intermediate Python list.  This wrapper deliberately
+        remains mapping-shaped for the established test and diagnostic API.
+        """
+        values = self._compute_cpp_feature_values(bar_10s, all_bars, cutoff)
+        if values is None:
+            return None
+        return {
+            name: float(value)
+            for name, value in zip(
+                self._cpp_signal_feature_names,
+                values,
+                strict=True,
+            )
+        }
+
+    def _compute_cpp_feature_values(
+        self,
+        bar_10s: dict,
+        all_bars: List[Bar1s],
+        cutoff: Optional[FeatureCutoff] = None,
+    ) -> Optional[np.ndarray]:
+        """Return one contiguous fixed-order native row for a completed bucket."""
         if not self._cpp_signal_features_enabled or self._cpp_signal is None:
             return None
         try:
+            if not self._cpp_signal_feature_names:
+                self._cpp_signal_feature_names = tuple(
+                    getattr(self._cpp_signal, "SIGNAL_FEATURE_NAMES", ())
+                )
             cutoff = cutoff or FeatureCutoff(int(bar_10s.get("ts", 0)) + 1_000)
             cpp_bar_10s = self._cpp_signal.Bar1s()
             cpp_bar_10s.ts_ms = int(bar_10s.get("ts", 0))
@@ -2457,19 +2486,24 @@ class SignalEngine:
                     ),
                     dtype=np.float64,
                 )
-                return dict(
-                    zip(
-                        self._cpp_signal_feature_names,
-                        values.tolist(),
-                        strict=True,
+                expected_shape = (len(self._cpp_signal_feature_names),)
+                if values.shape != expected_shape:
+                    raise RuntimeError(
+                        "C++ signal feature row shape changed: "
+                        f"expected={expected_shape} actual={values.shape}"
+                    )
+                if not values.flags.c_contiguous:
+                    values = np.ascontiguousarray(values, dtype=np.float64)
+                return values
+            if hasattr(engine, "compute_at_cutoff"):
+                legacy = dict(
+                    engine.compute_at_cutoff(
+                        cpp_bar_10s, int(cutoff.cutoff_exclusive_ms)
                     )
                 )
-            if hasattr(engine, "compute_at_cutoff"):
-                return dict(
-                    engine.compute_at_cutoff(
-                        cpp_bar_10s,
-                        int(cutoff.cutoff_exclusive_ms),
-                    )
+                return np.ascontiguousarray(
+                    [legacy[name] for name in self._cpp_signal_feature_names],
+                    dtype=np.float64,
                 )
             raise RuntimeError("narrowgate_cpp lacks cutoff-aware signal feature ABI")
         except Exception as exc:
@@ -2513,9 +2547,16 @@ class SignalEngine:
         f["buy_count"] = bar_10s["buy_count"]
         f["sell_count"] = bar_10s["sell_count"]
 
-        cpp_overlay = self._compute_cpp_feature_overlay(bar_10s, all_bars, cutoff)
-        if cpp_overlay is not None:
-            f.update(cpp_overlay)
+        cpp_values = self._compute_cpp_feature_values(bar_10s, all_bars, cutoff)
+        if cpp_values is not None:
+            f.update(
+                (name, float(value))
+                for name, value in zip(
+                    self._cpp_signal_feature_names,
+                    cpp_values,
+                    strict=True,
+                )
+            )
             self._compute_execution_l2_features(
                 f,
                 bucket_end_ms=int(cutoff.cutoff_exclusive_ms),
@@ -3200,6 +3241,19 @@ class SignalEngine:
         except Exception as exc:
             logger.warning("Live feature dump write failed: %s", exc)
 
+    def _shared_model_feature_schema(self) -> tuple[str, ...]:
+        """Return the one feature schema shared by the complete model bundle."""
+
+        schemas = {
+            tuple(self._model_feature_cols.get(name, FEATURE_NAMES_BASE))
+            for name in REQUIRED_MODEL_HEADS
+        }
+        if len(schemas) != 1:
+            raise RuntimeError(
+                "runtime model heads do not share one feature schema"
+            )
+        return next(iter(schemas))
+
     def _predict(self, features: dict) -> Prediction:
         """Run each model head against its saved causal feature schema."""
         pred = Prediction(ts=time.time())
@@ -3213,17 +3267,30 @@ class SignalEngine:
         if set(self._models) != set(REQUIRED_MODEL_HEADS):
             raise RuntimeError("ML is enabled without a complete 13-head bundle")
 
-        # FEATURE_NAMES_BASE is a legacy diagnostic vector.  The authoritative
-        # runtime schema is the per-head metadata list validated below.
-        X_base = self._feature_array(features, FEATURE_NAMES_BASE)
+        # Model-bundle validation requires one shared feature schema across all
+        # 13 heads.  Build that row once; the old implementation rebuilt the
+        # same Python list/NumPy matrix independently for every head.
+        model_feature_names = self._shared_model_feature_schema()
+        X_model = self._feature_array(
+            features,
+            list(model_feature_names),
+            strict=True,
+        )
+
+        # FEATURE_NAMES_BASE remains the legacy diagnostic vector.  Reuse the
+        # model row when it has the same schema; otherwise materialize this
+        # diagnostic row once without changing the authoritative model input.
+        X_base = (
+            X_model
+            if model_feature_names == tuple(FEATURE_NAMES_BASE)
+            else self._feature_array(features, FEATURE_NAMES_BASE)
+        )
 
         for h in [10, 30, 60]:
             name = f"ret_{h}s"
             if name in self._models:
                 try:
-                    cols = self._model_feature_cols.get(name, FEATURE_NAMES_BASE)
-                    X_ret = self._feature_array(features, cols, strict=True)
-                    val = float(self._models[name].predict(X_ret)[0])
+                    val = float(self._models[name].predict(X_model)[0])
                     if h == 10:
                         pred.ret_10s = val
                     elif h == 30:
@@ -3233,18 +3300,12 @@ class SignalEngine:
                 except Exception as exc:
                     raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
-        def _model_input(name, model):
-            cols = self._model_feature_cols.get(name)
-            if cols:
-                return self._feature_array(features, cols, strict=True)
-            return X_base
-
         # Run dir/vol models
         for name, model in self._models.items():
             if name.startswith("ret_"):
                 continue  # already processed in stage 1
             try:
-                val = model.predict(_model_input(name, model))[0]
+                val = model.predict(X_model)[0]
                 if name == "dir_10s":
                     pred.dir_10s = float(val)
                 elif name == "dir_30s":

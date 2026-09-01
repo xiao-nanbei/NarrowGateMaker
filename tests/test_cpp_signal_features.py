@@ -42,9 +42,13 @@ def test_cpp_signal_feature_overlay_matches_python_core_features():
     engine._cpp_signal_features_enabled = True
     cpp_features = engine._compute_features(bar_10s, all_bars)
     cpp_overlay = engine._compute_cpp_feature_overlay(bar_10s, all_bars)
+    cpp_values = engine._compute_cpp_feature_values(bar_10s, all_bars)
 
     assert cpp_overlay is not None
     assert len(cpp_overlay) == 80
+    assert cpp_values is not None
+    assert cpp_values.shape == (80,)
+    assert cpp_values.flags.c_contiguous
     for key, value in cpp_overlay.items():
         assert value == pytest.approx(py_features[key], abs=1e-12), key
 

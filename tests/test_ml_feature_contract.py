@@ -19,6 +19,12 @@ from strategy.model_contract import (
     canonicalize_model_variance_unit_contract,
     f03_direct_quote_action_contract,
 )
+from strategy.quote_core import (
+    QuoteCoreConfig,
+    QuotePrediction,
+    QuoteState,
+    compute_quote_core,
+)
 from strategy.signal import FEATURE_NAMES_BASE, SignalEngine
 
 
@@ -28,6 +34,16 @@ class _ConstantModel:
 
     def predict(self, values):
         assert values.shape == (1, len(FEATURE_NAMES_BASE))
+        return np.array([self.value], dtype=np.float64)
+
+
+class _RecordingFeatureModel:
+    def __init__(self, value: float, seen: list[np.ndarray]):
+        self.value = value
+        self.seen = seen
+
+    def predict(self, values):
+        self.seen.append(values)
         return np.array([self.value], dtype=np.float64)
 
 
@@ -252,6 +268,97 @@ def test_live_prediction_uses_canonical_features_without_ret_stacking() -> None:
     assert prediction.features.shape == (len(FEATURE_NAMES_BASE),)
     assert prediction.feature_dict == features
     assert not any(name.startswith("stacked_ret_") for name in prediction.feature_dict)
+
+
+def test_live_prediction_shares_one_model_matrix_and_preserves_quote_action() -> None:
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    engine._enable_ml = True
+    seen: list[np.ndarray] = []
+    values = {
+        "dir_10s": 0.61,
+        "dir_30s": 0.57,
+        "dir_60s": 0.54,
+        "vol_10s": 3.25,
+        "vol_30s": 4.5,
+        "vol_60s": 6.75,
+        "ret_10s": 0.0002,
+        "ret_30s": -0.0001,
+        "ret_60s": 0.0003,
+        "tox_bid_5s": 0.72,
+        "tox_ask_5s": 0.31,
+        "tox_bid_10s": 0.68,
+        "tox_ask_10s": 0.36,
+    }
+    engine._models = {
+        name: _RecordingFeatureModel(values[name], seen)
+        for name in REQUIRED_MODEL_HEADS
+    }
+    engine._model_feature_cols = {
+        name: list(FEATURE_NAMES_BASE) for name in REQUIRED_MODEL_HEADS
+    }
+    features = {
+        name: float(index + 1)
+        for index, name in enumerate(FEATURE_NAMES_BASE)
+    }
+
+    prediction = engine._predict(features)
+
+    assert len(seen) == len(REQUIRED_MODEL_HEADS)
+    assert len({id(matrix) for matrix in seen}) == 1
+    expected_row = np.asarray(
+        [[features[name] for name in FEATURE_NAMES_BASE]], dtype=np.float64
+    )
+    for row in seen:
+        assert row == pytest.approx(expected_row, abs=0.0)
+    assert prediction.dir_10s == values["dir_10s"]
+    assert prediction.vol_10s == values["vol_10s"]
+    assert prediction.ret_10s == values["ret_10s"]
+    assert prediction.tox_bid_10s == values["tox_bid_10s"]
+    assert prediction.tox_ask_10s == values["tox_ask_10s"]
+
+    state = QuoteState(
+        mid=100.0,
+        inventory=0.001,
+        sigma_sq=4.0,
+        best_bid=99.9,
+        best_ask=100.1,
+    )
+    cfg = QuoteCoreConfig(
+        gamma=0.046,
+        kappa=0.01,
+        tick_size=0.1,
+        lot_size=0.001,
+        maker_fee=0.0,
+        order_size=0.001,
+        max_inventory=0.026,
+        ml_enabled=True,
+        vol_blend=0.5,
+        dir_threshold=0.05,
+        skew_strength=0.1,
+    )
+    optimized_action = compute_quote_core(
+        state,
+        cfg,
+        QuotePrediction(
+            dir_10s=prediction.dir_10s,
+            vol_10s=prediction.vol_10s,
+            ret_10s=prediction.ret_10s,
+            tox_bid=prediction.tox_bid_10s,
+            tox_ask=prediction.tox_ask_10s,
+        ),
+    )
+    reference_action = compute_quote_core(
+        state,
+        cfg,
+        QuotePrediction(
+            dir_10s=values["dir_10s"],
+            vol_10s=values["vol_10s"],
+            ret_10s=values["ret_10s"],
+            tox_bid=values["tox_bid_10s"],
+            tox_ask=values["tox_ask_10s"],
+        ),
+    )
+    assert optimized_action == reference_action
 
 
 def test_live_prediction_fails_closed_when_runtime_feature_is_missing() -> None:
