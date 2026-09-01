@@ -54,6 +54,34 @@ def _order(side: Side, price: float, age_ms: float, state: OrderState = OrderSta
     )
 
 
+def _cancel_update(cid: str, *, visible_ts_ns: int) -> dict[str, object]:
+    return {
+        "c": cid,
+        "i": 123,
+        "s": "BTCUSDC",
+        "S": "BUY",
+        "X": "CANCELED",
+        "o": "LIMIT",
+        "p": "100.0",
+        "q": "0.001",
+        "z": "0",
+        "l": "0",
+        "L": "0",
+        "T": visible_ts_ns // 1_000_000,
+        "_local_receive_ts_ns": visible_ts_ns,
+    }
+
+
+def _configure_terminal_callback(engine: MakerEngine, cid: str) -> None:
+    engine._bid_cid = cid
+    engine._ask_cid = None
+    engine._order_ref_lock = threading.RLock()
+    engine._order_context_lock = threading.RLock()
+    engine._order_policy_context = {}
+    engine._exact_opportunity_tape_runtime = None
+    engine._on_dynamic_fill_hazard_order_terminal = lambda *args, **kwargs: None
+
+
 def test_replace_throttle_keeps_small_exposure_increasing_price_move() -> None:
     engine = _engine()
     order = _order(Side.BUY, price=100.0, age_ms=2000.0)
@@ -304,7 +332,14 @@ def test_replace_terminal_continuation_is_cid_bound_and_one_shot() -> None:
 
     assert generation_2 == generation_1 + 1
     assert not engine._publish_replace_terminal_continuation(stale)
-    assert engine._publish_replace_terminal_continuation(current)
+    assert not engine._publish_replace_terminal_continuation(
+        current,
+        generation=generation_1,
+    )
+    assert engine._publish_replace_terminal_continuation(
+        current,
+        generation=generation_2,
+    )
     assert not engine._publish_replace_terminal_continuation(current)
     assert set(engine._take_ready_replace_terminal_continuations()) == {
         Side.BUY
@@ -860,7 +895,10 @@ def test_side_only_requote_preserves_unrouted_quote_context_and_records_latency(
     ) in event_messages[-1]
 
 
-def test_authoritative_terminal_before_callback_clears_unready_arm() -> None:
+def test_authoritative_terminal_older_than_arm_drops_unready_intent(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO, logger="maker_engine")
     engine = _engine()
     engine.cfg.strategy.replace_terminal_continuation = True
     engine.orders = OrderManager()
@@ -871,25 +909,8 @@ def test_authoritative_terminal_before_callback_clears_unready_arm() -> None:
         quantity=0.001,
     )
     engine.orders.confirm_new(cid, 123)
-    engine.orders.on_order_update(
-        {
-            "c": cid,
-            "i": 123,
-            "s": "BTCUSDC",
-            "S": "BUY",
-            "X": "CANCELED",
-            "o": "LIMIT",
-            "p": "100.0",
-            "q": "0.001",
-            "z": "0",
-            "l": "0",
-            "L": "0",
-            "T": 1,
-        }
-    )
-    engine._bid_cid = cid
-    engine._ask_cid = None
-    engine._order_ref_lock = threading.RLock()
+    engine.orders.on_order_update(_cancel_update(cid, visible_ts_ns=time.time_ns()))
+    _configure_terminal_callback(engine, cid)
     generation = engine._arm_replace_terminal_continuation(
         side=Side.BUY,
         cid=cid,
@@ -900,6 +921,107 @@ def test_authoritative_terminal_before_callback_clears_unready_arm() -> None:
         replace_continuation_generation=generation,
     )
     assert engine._replace_terminal_continuation_intents == {}
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["publish_count"] == 0
+    assert telemetry["drop_count"] == 1
+    assert "reason=terminal_before_cancel_not_publishable" in caplog.text
+
+
+def test_terminal_after_arm_before_cancel_call_publishes_once() -> None:
+    engine = _engine()
+    engine.cfg.strategy.replace_terminal_continuation = True
+    engine.orders = OrderManager()
+    cid = engine.orders.create_order(
+        "BTCUSDC",
+        Side.BUY,
+        price=100.0,
+        quantity=0.001,
+    )
+    engine.orders.confirm_new(cid, 123)
+    _configure_terminal_callback(engine, cid)
+    generation = engine._arm_replace_terminal_continuation(
+        side=Side.BUY,
+        cid=cid,
+    )
+    armed_ts_ns = engine._replace_terminal_continuation_intents["BUY"].armed_ts_ns
+    engine.orders.on_order_update(
+        _cancel_update(cid, visible_ts_ns=armed_ts_ns + 1_000)
+    )
+
+    assert engine._cancel_order(
+        cid,
+        replace_continuation_generation=generation,
+    )
+    resolved = engine.orders.get_order(cid)
+    assert resolved is not None
+    engine._on_order_terminal(resolved, "cancel_ack")
+
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["publish_count"] == 1
+    assert telemetry["drop_count"] == 0
+    ready = engine._take_ready_replace_terminal_continuations()
+    assert set(ready) == {Side.BUY}
+    engine._record_replace_terminal_continuation_decisions(
+        ready,
+        decision_start_ts_ns=armed_ts_ns + 2_000,
+    )
+    assert engine._take_ready_replace_terminal_continuations() == {}
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["decision_count"] == 1
+
+
+def test_terminal_during_cancel_rest_publishes_once_before_late_callback() -> None:
+    engine = _engine()
+    engine.cfg.strategy.replace_terminal_continuation = True
+    engine.orders = OrderManager(
+        on_terminal=lambda order, reason: engine._on_order_terminal(order, reason)
+    )
+    cid = engine.orders.create_order(
+        "BTCUSDC",
+        Side.BUY,
+        price=100.0,
+        quantity=0.001,
+    )
+    engine.orders.confirm_new(cid, 123)
+    _configure_terminal_callback(engine, cid)
+    engine._record_perf_rest_latency = lambda *args, **kwargs: None
+    generation = engine._arm_replace_terminal_continuation(
+        side=Side.BUY,
+        cid=cid,
+    )
+    terminal_ts_ns = 0
+
+    def cancel_order(**_kwargs) -> None:
+        nonlocal terminal_ts_ns
+        terminal_ts_ns = time.time_ns() + 1_000
+        engine.orders.on_order_update(
+            _cancel_update(cid, visible_ts_ns=terminal_ts_ns)
+        )
+
+    engine.rest = SimpleNamespace(cancel_order=cancel_order)
+
+    assert engine._cancel_order(
+        cid,
+        replace_continuation_generation=generation,
+    )
+    resolved = engine.orders.get_order(cid)
+    assert resolved is not None
+    # The OrderManager callback already published while REST was in flight.
+    # A later duplicate terminal callback must remain a no-op.
+    engine._on_order_terminal(resolved, "cancel_ack")
+
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["publish_count"] == 1
+    assert telemetry["drop_count"] == 0
+    ready = engine._take_ready_replace_terminal_continuations()
+    assert set(ready) == {Side.BUY}
+    engine._record_replace_terminal_continuation_decisions(
+        ready,
+        decision_start_ts_ns=terminal_ts_ns + 1_000,
+    )
+    assert engine._take_ready_replace_terminal_continuations() == {}
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["decision_count"] == 1
 
 
 def test_read_only_side_policy_does_not_advance_side_runtime_state() -> None:
