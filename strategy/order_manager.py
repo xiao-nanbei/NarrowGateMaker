@@ -348,10 +348,22 @@ class OrderManager:
             return self._callback_dispatch_drainer_thread_id == get_ident()
 
     def callback_dispatch_active(self) -> bool:
-        """Return whether any thread is still delivering external callbacks."""
+        """Return whether committed callback work is not fully quiescent.
+
+        A committed batch briefly exists before a thread claims the drainer.
+        Treat that interval as active too: consumers must not act on callback-
+        produced state until the queue is empty and every committed sequence
+        has been dispatched.
+        """
 
         with self._callback_dispatch_condition:
-            return self._callback_dispatch_drainer_thread_id is not None
+            return bool(
+                self._callback_dispatch_drainer_thread_id is not None
+                or self._callback_dispatch_queue
+                or self._callback_commit_sequence
+                != self._callback_dispatched_sequence
+                or self._callback_dispatch_failure is not None
+            )
 
     def _invoke_callback(
         self,

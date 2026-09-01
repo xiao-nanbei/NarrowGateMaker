@@ -1142,6 +1142,17 @@ def build_replay_contract(
             "daily_pnl_identity",
         ],
     }
+    if bool(params.get("replace_terminal_continuation", False)):
+        contract["path_dependent_controls"][
+            "replace_terminal_continuation"
+        ] = {
+            "enabled": True,
+            "trigger": "replacement_cancel_authoritative_local_terminal",
+            "decision_clock": "next_merged_100ms_wake",
+            "side_scope": "terminal_side_only",
+            "quote_state": "fresh_recompute_no_cached_price_or_quantity",
+            "normal_cadence_advanced": False,
+        }
     if visibility_identity is not None:
         contract["causal_event_semantics"][
             "exec_book_visibility_identity"
@@ -1232,9 +1243,24 @@ def _formal_contract_errors(params: Mapping[str, Any], contract: Mapping[str, An
     loss_control = controls.get("consecutive_loss_cooldown", {})
     q90_control = controls.get("dynamic_fill_hazard_q90", {})
     sync_control = controls.get("sync_adjust_degrade", {})
+    replacement_continuation = controls.get(
+        "replace_terminal_continuation",
+        {},
+    )
     private_fill_visibility = latency.get("private_fill_visibility") or {}
     decision_to_gateway = latency.get("decision_to_gateway") or {}
     serial_rest_gateway = latency.get("serial_rest_gateway") or {}
+    if bool(replacement_continuation.get("enabled", False)):
+        if causal.get("replay_event_clock") != "merged" or int(
+            causal.get("replay_clock_interval_ms", 0) or 0
+        ) != 100:
+            errors.append(
+                "replacement terminal continuation requires merged 100ms replay clock"
+            )
+        if float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0:
+            errors.append(
+                "replacement terminal continuation does not support main-loop timing"
+            )
     if private_fill_visibility and purpose != "diagnostic":
         errors.append(
             "private-fill visibility latency is diagnostic-only and requires "

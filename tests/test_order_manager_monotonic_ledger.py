@@ -80,6 +80,39 @@ def test_orphan_callbacks_can_reenter_order_manager_without_deadlock() -> None:
     assert adopted.filled_qty == pytest.approx(0.0004)
 
 
+def test_callback_dispatch_active_covers_committed_unclaimed_queue() -> None:
+    """A committed callback batch is active before a drainer claims it."""
+
+    manager, cid = _tracked_order(on_fill=lambda _order, _event: None)
+    committed_before_claim = threading.Event()
+    release_dispatch = threading.Event()
+    original_dispatch = manager._dispatch_callbacks
+
+    def delayed_dispatch(batch) -> None:
+        committed_before_claim.set()
+        if not release_dispatch.wait(timeout=2.0):
+            raise TimeoutError("test did not release callback dispatch")
+        original_dispatch(batch)
+
+    manager._dispatch_callbacks = delayed_dispatch
+    worker = threading.Thread(
+        target=manager.on_order_update,
+        args=(_event(cid, "PARTIALLY_FILLED", "0.0004"),),
+    )
+    worker.start()
+
+    assert committed_before_claim.wait(timeout=1.0)
+    assert manager._callback_dispatch_drainer_thread_id is None
+    assert manager._callback_dispatch_queue
+    assert manager._callback_commit_sequence > manager._callback_dispatched_sequence
+    assert manager.callback_dispatch_active()
+
+    release_dispatch.set()
+    worker.join(timeout=1.0)
+    assert not worker.is_alive()
+    assert not manager.callback_dispatch_active()
+
+
 def test_ws_and_rest_fill_callbacks_follow_ledger_commit_sequence() -> None:
     first_callback_entered = threading.Event()
     release_first_callback = threading.Event()
@@ -147,6 +180,7 @@ def test_ws_and_rest_fill_callbacks_follow_ledger_commit_sequence() -> None:
     committed = manager.get_order(cid)
     assert committed is not None
     assert committed.filled_qty == pytest.approx(0.001)
+    assert manager.callback_dispatch_active()
     assert rest_thread.is_alive()
     assert delivered_cumulative == []
 
@@ -236,6 +270,7 @@ def test_callback_failure_blocks_later_committed_rest_delivery() -> None:
     assert committed is not None
     assert committed.filled_qty == pytest.approx(0.001)
     assert manager.reconciliation_required is True
+    assert manager.callback_dispatch_active()
 
 
 @pytest.mark.parametrize(

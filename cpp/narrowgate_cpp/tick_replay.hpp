@@ -568,6 +568,7 @@ struct TickReplayParams {
     double replace_min_interval_ms = 0.0;
     double replace_min_interval_ms_reducing = 0.0;
     bool replace_pending_coalesce = false;
+    bool replace_terminal_continuation = false;
     bool replace_cancel_first_exposure_increasing = false;
     std::int64_t new_order_latency_ms = 0;
     std::int64_t cancel_order_latency_ms = 0;
@@ -1117,6 +1118,7 @@ struct ReplayOrder {
     bool native_queue_invalidated = false;
     bool native_cancel_effective_processed = false;
     bool native_cancel_ack_processed = false;
+    bool replace_terminal_continuation_armed = false;
     std::int64_t native_queue_segment_id = 0;
     double native_queue_trade_since_update = 0.0;
     TraceOrderPtr trace{nullptr, PmrTraceDeleter{}};
@@ -1312,6 +1314,12 @@ struct TickReplaySummary {
     std::int64_t decision_none_count = 0;
     std::int64_t decision_pending_coalesce_count = 0;
     std::int64_t decision_cancel_first_count = 0;
+    std::int64_t replace_terminal_continuation_terminal_count = 0;
+    std::int64_t replace_terminal_continuation_decision_count = 0;
+    std::int64_t replace_terminal_continuation_bid_decision_count = 0;
+    std::int64_t replace_terminal_continuation_ask_decision_count = 0;
+    std::int64_t replace_terminal_continuation_decision_latency_sum_ms = 0;
+    std::int64_t replace_terminal_continuation_decision_latency_max_ms = 0;
     std::int64_t max_pending_new_orders = 0;
     std::int64_t max_pending_cancel_orders = 0;
     std::int64_t buy_fill_selection_live_eval_count = 0;

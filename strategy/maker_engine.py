@@ -13,6 +13,7 @@ NarrowGate Maker Engine Core — 做市引擎主循环。
 
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -542,6 +543,17 @@ class _BuyHazardCancelHold:
     terminal_seen: bool = False
     cancel_succeeded: bool = False
     exchange_terminal_ts_ns: int = 0
+
+
+@dataclass(frozen=True)
+class _ReplaceTerminalContinuationIntent:
+    """One same-side wakeup bound to the exact order generation being canceled."""
+
+    client_order_id: str
+    generation: int
+    armed_ts_ns: int
+    ready: bool = False
+    terminal_visible_ts_ns: int = 0
 
 
 @dataclass
@@ -1255,6 +1267,7 @@ class MakerEngine:
         self._csv_log_lock = threading.Lock()
         self._order_ref_lock = threading.RLock()
         self._order_context_lock = threading.RLock()
+        self._replace_terminal_continuation_lock = threading.Lock()
         self._reconciliation_lock = threading.Lock()
         self._runtime_fatal_lock = threading.Lock()
         self._order_lifecycle_journal_lock = threading.Lock()
@@ -1463,6 +1476,10 @@ class MakerEngine:
         self._last_replace_pending_coalesce_log = {"BUY": 0.0, "SELL": 0.0}
         self._replace_cancel_first_counts = {"BUY": 0, "SELL": 0}
         self._last_replace_cancel_first_log = {"BUY": 0.0, "SELL": 0.0}
+        self._replace_terminal_continuation_generation = {"BUY": 0, "SELL": 0}
+        self._replace_terminal_continuation_intents: dict[
+            str, _ReplaceTerminalContinuationIntent
+        ] = {}
 
         # Exchange filter (updated in start() via exchange_info)
         self._min_qty: float = cfg.lot_size
@@ -2957,6 +2974,12 @@ class MakerEngine:
                 error=ownership_conflict,
                 reconciliation_required=True,
             )
+        if event_type == "cancel_rejected":
+            self._clear_replace_terminal_continuation(
+                side=order.side,
+                cid=order.client_order_id,
+                event_ts_ns=int(event.get("_local_receive_ts_ns", 0) or 0),
+            )
         self._record_exact_order_event(order, event_type, event)
 
     def record_reconciled_order_lifecycle(
@@ -4149,6 +4172,8 @@ class MakerEngine:
         q: float,
         pred: Prediction,
         quote_snapshot: Optional[QuoteDecisionSnapshot] = None,
+        *,
+        mutate_state: bool = True,
     ) -> SidePolicyDecision:
         cfg = self.cfg
         side_name = side.value
@@ -4178,7 +4203,8 @@ class MakerEngine:
         exposure_increasing = (side == Side.BUY and q >= 0.0) or (side == Side.SELL and q <= 0.0)
         reducing_cooldown_enabled = float(getattr(cfg.strategy, "fill_cooldown_reducing", 0.0) or 0.0) > 0.0
         now = time.time()
-        self._expire_fill_cooldown_state(side_name, now)
+        if mutate_state:
+            self._expire_fill_cooldown_state(side_name, now)
         cooldown_until = self._fill_cooldown_until.get(side_name, 0.0)
         quote_ctx = self._last_quote_context.get(side_name, {})
         if not isinstance(quote_ctx, dict):
@@ -4222,14 +4248,15 @@ class MakerEngine:
         decision.size_mult = common.size_mult
         decision.reason_mask = common.reason_mask
 
-        self._apply_buy_fill_selection_live_arm(
-            side=side,
-            mid=mid,
-            q=q,
-            decision=decision,
-            quote_ctx=quote_ctx,
-            pred=pred,
-        )
+        if mutate_state:
+            self._apply_buy_fill_selection_live_arm(
+                side=side,
+                mid=mid,
+                q=q,
+                decision=decision,
+                quote_ctx=quote_ctx,
+                pred=pred,
+            )
 
         if not decision.allow_post:
             decision.mode = "pause"
@@ -5500,6 +5527,13 @@ class MakerEngine:
             self._resolve_pending_markouts(now, markout_mid)
         self._evaluate_dynamic_fill_hazard_shadow(time.time_ns())
 
+        # Drain replacement-cancel wakeups before blockers.  A later safety
+        # blocker must consume the wakeup, not retain it and unexpectedly
+        # reopen the side after that blocker expires.
+        continuation_sides = frozenset()
+        if not self._order_manager_callback_dispatch_active():
+            continuation_sides = self._take_ready_replace_terminal_continuations()
+
         # Quote-stop freshness is a safety clock, not a requote feature.  An
         # active maker order must not remain live for another 5--10 second
         # requote interval after its execution book has already gone stale.
@@ -5519,6 +5553,15 @@ class MakerEngine:
             self._cooldown_until = 0.0
             self._last_cooldown_cancel_time = 0.0
             self._loss_cooldown_expiry_count += 1
+
+        # Lifecycle callbacks only publish readiness.  The main loop owns the
+        # fresh snapshot, policy/risk checks, and any REST request.
+        if continuation_sides and self.signal.is_warmed_up:
+            self._requote(
+                route_sides=continuation_sides,
+                advance_requote_clock=False,
+            )
+            return
 
         # Requote interval check (dynamic or static)
         rq_interval = self._effective_rq_interval()
@@ -5566,7 +5609,12 @@ class MakerEngine:
         self._block_stale_quote_data(observed_age_s, observed_limit_s)
         return True
 
-    def _requote(self):
+    def _requote(
+        self,
+        *,
+        route_sides: frozenset[Side] | None = None,
+        advance_requote_clock: bool = True,
+    ):
         """Core requote logic — compute quotes, manage orders, risk check."""
         requote_start_perf = time.perf_counter()
         timings: dict[str, float] = {}
@@ -5576,7 +5624,8 @@ class MakerEngine:
         self._last_cpp_routing_used = 0
         requote_start_ts_ns = time.time_ns()
         now = requote_start_ts_ns / 1_000_000_000.0
-        self._last_requote_time = now
+        if advance_requote_clock:
+            self._last_requote_time = now
         self._requote_count += 1
         cfg = self.cfg
         step_start = time.perf_counter()
@@ -5765,6 +5814,17 @@ class MakerEngine:
 
         # 6. Compute AS quotes with ML enhancement
         step_start = time.perf_counter()
+        preserved_unrouted_quote_context: dict[str, tuple[bool, Any]] = {}
+        if route_sides is not None:
+            for side in (Side.BUY, Side.SELL):
+                if side in route_sides:
+                    continue
+                side_name = side.value
+                side_present = side_name in self._last_quote_context
+                preserved_unrouted_quote_context[side_name] = (
+                    side_present,
+                    copy.deepcopy(self._last_quote_context.get(side_name)),
+                )
         bid_price, ask_price, spread = self._compute_quotes(
             quote_snapshot,
             q,
@@ -5772,6 +5832,17 @@ class MakerEngine:
             pricing_mid=mid,
             post_only_guard=post_only_guard,
         )
+        # Quote core computes a pair and replaces both diagnostic contexts.
+        # A terminal continuation owns only its triggering side, so restore
+        # the opposite side before policy evaluation to avoid advancing or
+        # releasing state that belongs to the normal cadence.
+        for side_name, (side_present, side_context) in (
+            preserved_unrouted_quote_context.items()
+        ):
+            if side_present:
+                self._last_quote_context[side_name] = side_context
+            else:
+                self._last_quote_context.pop(side_name, None)
         timings["compute_quotes_us"] = (time.perf_counter() - step_start) * 1_000_000.0
 
         # 7. Cancel and replace orders
@@ -5790,6 +5861,7 @@ class MakerEngine:
             post_only_guard=post_only_guard,
             decision_group_id=decision_group_id,
             decision_start_ts_ns=decision_start_ts_ns,
+            route_sides=route_sides,
         )
         timings["update_orders_us"] = (time.perf_counter() - step_start) * 1_000_000.0
         self._log_quote_snapshot_integrity(
@@ -6443,6 +6515,7 @@ class MakerEngine:
         post_only_guard: QuotePostOnlyGuard,
         decision_group_id: str = "",
         decision_start_ts_ns: int = 0,
+        route_sides: frozenset[Side] | None = None,
     ) -> tuple:
         """
         Apply per-side quote policy, then lazy cancel/replace orders.
@@ -6471,18 +6544,31 @@ class MakerEngine:
         )
         bid_decision_id = f"{decision_group_id}:BUY"
         ask_decision_id = f"{decision_group_id}:SELL"
+        bid_route_allowed = route_sides is None or Side.BUY in route_sides
+        ask_route_allowed = route_sides is None or Side.SELL in route_sides
         threshold = cfg.strategy.requote_threshold_bps / 10000.0
         base_bid_price = bid_price
         base_ask_price = ask_price
         self._last_prediction = pred
 
         bid_policy = self._build_side_policy(
-            Side.BUY, mid, q, pred, quote_snapshot
+            Side.BUY,
+            mid,
+            q,
+            pred,
+            quote_snapshot,
+            mutate_state=bid_route_allowed,
         )
         ask_policy = self._build_side_policy(
-            Side.SELL, mid, q, pred, quote_snapshot
+            Side.SELL,
+            mid,
+            q,
+            pred,
+            quote_snapshot,
+            mutate_state=ask_route_allowed,
         )
-        self._apply_flat_unilateral_ttl(q, bid_policy, ask_policy)
+        if bid_route_allowed and ask_route_allowed:
+            self._apply_flat_unilateral_ttl(q, bid_policy, ask_policy)
         self._apply_sync_adjust_degrade_policy(q, bid_policy, ask_policy)
 
         bid_price = self._apply_side_policy_price(Side.BUY, mid, bid_price, bid_policy.spread_mult)
@@ -6496,6 +6582,7 @@ class MakerEngine:
             ask_policy=ask_policy,
             best_bid=best_bid,
             best_ask=best_ask,
+            mutate_state=bid_route_allowed and ask_route_allowed,
         )
         bid_price, ask_price, post_policy_cap_hit = self._apply_post_policy_spread_cap(
             mid,
@@ -6761,50 +6848,55 @@ class MakerEngine:
                 if cap_bps > 0.0 and mid > 0.0
                 else 0.0
             )
-        bid_price, bid_state_policy_applied = (
-            self._maybe_apply_state_conditioned_quote_policy(
-                side=Side.BUY,
-                mid=mid,
-                q=q,
-                baseline_price=bid_price,
-                pre_guard_price=base_bid_price,
-                other_side_price=ask_price,
-                max_pair_spread=state_policy_max_spread,
-                can_post=bool(can_bid),
-                order_active=bool(bid_alive),
-                order_pending=bool(bid_pending_lifecycle),
-                decision=bid_policy,
-                best_bid=best_bid,
-                best_ask=best_ask,
+        bid_state_policy_applied = False
+        if bid_route_allowed:
+            bid_price, bid_state_policy_applied = (
+                self._maybe_apply_state_conditioned_quote_policy(
+                    side=Side.BUY,
+                    mid=mid,
+                    q=q,
+                    baseline_price=bid_price,
+                    pre_guard_price=base_bid_price,
+                    other_side_price=ask_price,
+                    max_pair_spread=state_policy_max_spread,
+                    can_post=bool(can_bid),
+                    order_active=bool(bid_alive),
+                    order_pending=bool(bid_pending_lifecycle),
+                    decision=bid_policy,
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                )
             )
-        )
-        ask_price, ask_state_policy_applied = (
-            self._maybe_apply_state_conditioned_quote_policy(
-                side=Side.SELL,
-                mid=mid,
-                q=q,
-                baseline_price=ask_price,
-                pre_guard_price=base_ask_price,
-                other_side_price=bid_price,
-                max_pair_spread=state_policy_max_spread,
-                can_post=bool(can_ask),
-                order_active=bool(ask_alive),
-                order_pending=bool(ask_pending_lifecycle),
-                decision=ask_policy,
-                best_bid=best_bid,
-                best_ask=best_ask,
+        ask_state_policy_applied = False
+        if ask_route_allowed:
+            ask_price, ask_state_policy_applied = (
+                self._maybe_apply_state_conditioned_quote_policy(
+                    side=Side.SELL,
+                    mid=mid,
+                    q=q,
+                    baseline_price=ask_price,
+                    pre_guard_price=base_ask_price,
+                    other_side_price=bid_price,
+                    max_pair_spread=state_policy_max_spread,
+                    can_post=bool(can_ask),
+                    order_active=bool(ask_alive),
+                    order_pending=bool(ask_pending_lifecycle),
+                    decision=ask_policy,
+                    best_bid=best_bid,
+                    best_ask=best_ask,
+                )
             )
-        )
         if bid_state_policy_applied:
             bid_force_update = True
         if ask_state_policy_applied:
             ask_force_update = True
 
-        self._evaluate_dynamic_fill_hazard_prospective_recovery(
-            candidate_price=float(bid_price),
-            inventory=float(q),
-            now_ns=int(decision_start_ts_ns),
-        )
+        if bid_route_allowed:
+            self._evaluate_dynamic_fill_hazard_prospective_recovery(
+                candidate_price=float(bid_price),
+                inventory=float(q),
+                now_ns=int(decision_start_ts_ns),
+            )
         if self._dynamic_fill_hazard_buy_blocked(q):
             bid_policy.allow_exposure_increase = False
             bid_policy.mode = "hazard_hold"
@@ -6845,18 +6937,20 @@ class MakerEngine:
         if ask_p3_floor_unsafe:
             ask_needs_update = True
             ask_force_update = True
-        self._last_quote_context["BUY"]["p3_final_side_floor_changed"] = bool(
-            p3_final_bid_changed
-        )
-        self._last_quote_context["SELL"]["p3_final_side_floor_changed"] = bool(
-            p3_final_ask_changed
-        )
-        self._last_quote_context["BUY"]["p3_active_order_floor_unsafe"] = bool(
-            bid_p3_floor_unsafe
-        )
-        self._last_quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
-            ask_p3_floor_unsafe
-        )
+        if bid_route_allowed:
+            self._last_quote_context["BUY"]["p3_final_side_floor_changed"] = bool(
+                p3_final_bid_changed
+            )
+            self._last_quote_context["BUY"]["p3_active_order_floor_unsafe"] = bool(
+                bid_p3_floor_unsafe
+            )
+        if ask_route_allowed:
+            self._last_quote_context["SELL"]["p3_final_side_floor_changed"] = bool(
+                p3_final_ask_changed
+            )
+            self._last_quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
+                ask_p3_floor_unsafe
+            )
 
         # Both evidence-only external projections share one causal state read.
         # Neither candidate is allowed to flow into live order routing.
@@ -6993,6 +7087,13 @@ class MakerEngine:
                 "exact_queue_reset": bool(queue_reset),
             }
 
+        if not bid_route_allowed:
+            bid_needs_update = False
+            bid_force_update = False
+        if not ask_route_allowed:
+            ask_needs_update = False
+            ask_force_update = False
+
         bid_needs_update = self._apply_replace_throttle(
             side=Side.BUY,
             now_ts=now_ts,
@@ -7063,36 +7164,71 @@ class MakerEngine:
         )
         bid_cancel_requested = False
         ask_cancel_requested = False
+        bid_continuation_generation = 0
+        ask_continuation_generation = 0
 
         # Cancel only the orders that need updating
         if bid_cancel_first and bid_alive:
+            bid_continuation_generation = self._arm_replace_terminal_continuation(
+                side=Side.BUY,
+                cid=str(self._bid_cid),
+                can_post=bool(can_bid),
+            )
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
+                replace_continuation_generation=bid_continuation_generation,
             )
             bid_needs_update = False
         elif bid_needs_update and bid_alive:
+            bid_continuation_generation = self._arm_replace_terminal_continuation(
+                side=Side.BUY,
+                cid=str(self._bid_cid),
+                can_post=bool(can_bid),
+            )
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
+                replace_continuation_generation=bid_continuation_generation,
             )
-            if bid_cancel_requested:
+            if bid_continuation_generation > 0:
+                # Even a very fast terminal callback cannot authorize a submit
+                # from this stale decision.  tick() will recompute the side.
+                bid_needs_update = False
+                bid_pending_coalesce = True
+            elif bid_cancel_requested:
                 self._prune_terminal_side_order_reference(Side.BUY)
             else:
                 bid_needs_update = False
                 bid_pending_coalesce = True
         if ask_cancel_first and ask_alive:
+            ask_continuation_generation = self._arm_replace_terminal_continuation(
+                side=Side.SELL,
+                cid=str(self._ask_cid),
+                can_post=bool(can_ask),
+            )
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
+                replace_continuation_generation=ask_continuation_generation,
             )
             ask_needs_update = False
         elif ask_needs_update and ask_alive:
+            ask_continuation_generation = self._arm_replace_terminal_continuation(
+                side=Side.SELL,
+                cid=str(self._ask_cid),
+                can_post=bool(can_ask),
+            )
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
+                replace_continuation_generation=ask_continuation_generation,
             )
-            if ask_cancel_requested:
+            if ask_continuation_generation > 0:
+                # See BUY above: continuation owns the next fresh decision.
+                ask_needs_update = False
+                ask_pending_coalesce = True
+            elif ask_cancel_requested:
                 self._prune_terminal_side_order_reference(Side.SELL)
             else:
                 ask_needs_update = False
@@ -7237,9 +7373,9 @@ class MakerEngine:
             ask_action = "keep"
 
         # Handle inventory limits: cancel sides we shouldn't be quoting
-        if not can_bid:
+        if bid_route_allowed and not can_bid:
             self._cancel_active_side_orders("BUY", "QUOTE_BLOCK_CANCEL")
-        if not can_ask:
+        if ask_route_allowed and not can_ask:
             self._cancel_active_side_orders("SELL", "QUOTE_BLOCK_CANCEL")
 
         def record_exact_decision(
@@ -7255,6 +7391,10 @@ class MakerEngine:
             cancel_requested: bool,
             target_quantity: float,
         ) -> None:
+            if side == "BUY" and not bid_route_allowed:
+                return
+            if side == "SELL" and not ask_route_allowed:
+                return
             if not exact_tape_enabled:
                 return
             executed_action = str(action)
@@ -7347,8 +7487,16 @@ class MakerEngine:
             target_quantity=ask_size_final,
         )
 
-        self._append_row(
-            self._quote_log_path,
+        def append_routed_quote_decision(
+            side: Side,
+            row: QuoteDecisionLogRow,
+        ) -> None:
+            if route_sides is not None and side not in route_sides:
+                return
+            self._append_row(self._quote_log_path, row)
+
+        append_routed_quote_decision(
+            Side.BUY,
             QuoteDecisionLogRow(
                 timestamp=f"{time.time():.3f}",
                 symbol=symbol,
@@ -7384,8 +7532,8 @@ class MakerEngine:
                 action=bid_action,
             ),
         )
-        self._append_row(
-            self._quote_log_path,
+        append_routed_quote_decision(
+            Side.SELL,
             QuoteDecisionLogRow(
                 timestamp=f"{time.time():.3f}",
                 symbol=symbol,
@@ -7422,11 +7570,13 @@ class MakerEngine:
             ),
         )
 
-        self._last_bid_action = bid_action
-        self._last_ask_action = ask_action
+        if bid_route_allowed:
+            self._last_bid_action = bid_action
+            self._last_routed_bid_price = float(bid_price)
+        if ask_route_allowed:
+            self._last_ask_action = ask_action
+            self._last_routed_ask_price = float(ask_price)
         self._last_cpp_routing_used = int(bool(cpp_routing_used))
-        self._last_routed_bid_price = float(bid_price)
-        self._last_routed_ask_price = float(ask_price)
         return bid_needs_update, ask_needs_update
 
     def _record_cross_venue_fair_price_shadow(
@@ -7607,6 +7757,159 @@ class MakerEngine:
             return False
         return getattr(order, "state", None) in (OrderState.PENDING_NEW, OrderState.PENDING_CANCEL)
 
+    def _arm_replace_terminal_continuation(
+        self,
+        *,
+        side: Side,
+        cid: str,
+        can_post: bool = True,
+    ) -> int:
+        """Bind one future same-side wakeup to the cancel about to be sent."""
+
+        if not can_post:
+            return 0
+        if not bool(
+            getattr(self.cfg.strategy, "replace_terminal_continuation", False)
+        ):
+            return 0
+        side_name = side.value
+        with self._replace_terminal_continuation_lock:
+            generation = (
+                self._replace_terminal_continuation_generation.get(side_name, 0)
+                + 1
+            )
+            self._replace_terminal_continuation_generation[side_name] = generation
+            self._replace_terminal_continuation_intents[side_name] = (
+                _ReplaceTerminalContinuationIntent(
+                    client_order_id=str(cid),
+                    generation=generation,
+                    armed_ts_ns=time.time_ns(),
+                )
+            )
+        return generation
+
+    def _clear_replace_terminal_continuation(
+        self,
+        *,
+        side: Side,
+        cid: str,
+        generation: int = 0,
+        event_ts_ns: int = 0,
+    ) -> bool:
+        """Clear only the cancel intent identified by side, CID, and generation."""
+
+        side_name = side.value
+        lock = getattr(self, "_replace_terminal_continuation_lock", None)
+        intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        if lock is None or intents is None:
+            return False
+        with lock:
+            intent = intents.get(side_name)
+            if intent is None or intent.client_order_id != str(cid):
+                return False
+            if generation > 0 and intent.generation != int(generation):
+                return False
+            if event_ts_ns > 0 and int(event_ts_ns) < intent.armed_ts_ns:
+                return False
+            del intents[side_name]
+            return True
+
+    def _clear_side_replace_terminal_continuation(self, side: Side) -> bool:
+        """Let a non-replacement side action supersede any pending wakeup."""
+
+        lock = getattr(self, "_replace_terminal_continuation_lock", None)
+        intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        if lock is None or intents is None:
+            return False
+        with lock:
+            return (
+                intents.pop(
+                    side.value,
+                    None,
+                )
+                is not None
+            )
+
+    def _clear_unready_replace_terminal_continuation(
+        self,
+        *,
+        side: Side,
+        cid: str,
+        generation: int,
+    ) -> bool:
+        """Resolve arm-before-terminal races without consuming a ready ACK."""
+
+        lock = getattr(self, "_replace_terminal_continuation_lock", None)
+        intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        if lock is None or intents is None:
+            return False
+        with lock:
+            intent = intents.get(side.value)
+            if (
+                intent is None
+                or intent.client_order_id != str(cid)
+                or intent.generation != int(generation)
+                or intent.ready
+            ):
+                return False
+            del intents[side.value]
+            return True
+
+    def _publish_replace_terminal_continuation(self, order: Any) -> bool:
+        """Make one armed intent visible to tick; never quote from the callback."""
+
+        if not bool(
+            getattr(self.cfg.strategy, "replace_terminal_continuation", False)
+        ):
+            return False
+        side_name = order.side.value
+        lifecycle = getattr(order, "lifecycle", None)
+        terminal_visible_ts_ns = int(
+            getattr(lifecycle, "terminal_ts_ns", 0) or time.time_ns()
+        )
+        with self._replace_terminal_continuation_lock:
+            intent = self._replace_terminal_continuation_intents.get(side_name)
+            if (
+                intent is None
+                or intent.client_order_id != str(order.client_order_id)
+                or intent.ready
+                or terminal_visible_ts_ns < intent.armed_ts_ns
+            ):
+                return False
+            self._replace_terminal_continuation_intents[side_name] = replace(
+                intent,
+                ready=True,
+                terminal_visible_ts_ns=terminal_visible_ts_ns,
+            )
+            return True
+
+    def _take_ready_replace_terminal_continuations(self) -> frozenset[Side]:
+        """Consume ready terminal wakeups exactly once on the main loop."""
+
+        if not bool(
+            getattr(self.cfg.strategy, "replace_terminal_continuation", False)
+        ):
+            return frozenset()
+        ready: set[Side] = set()
+        with self._replace_terminal_continuation_lock:
+            for side in (Side.BUY, Side.SELL):
+                intent = self._replace_terminal_continuation_intents.get(side.value)
+                if intent is None or not intent.ready:
+                    continue
+                ready.add(side)
+                del self._replace_terminal_continuation_intents[side.value]
+        return frozenset(ready)
+
+    def _clear_all_replace_terminal_continuations(self) -> None:
+        """Drop callback wakeups when the process can no longer quote."""
+
+        lock = getattr(self, "_replace_terminal_continuation_lock", None)
+        intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        if lock is None or intents is None:
+            return
+        with lock:
+            intents.clear()
+
     def _apply_pending_replace_coalesce(
         self,
         *,
@@ -7721,6 +8024,7 @@ class MakerEngine:
         best_bid: float,
         best_ask: float,
         now_ms: int | None = None,
+        mutate_state: bool = True,
     ) -> tuple[float, float]:
         """Apply the same discrete I/A quote transform used by Python replay."""
 
@@ -7734,27 +8038,46 @@ class MakerEngine:
             if q < 0.0
             else 0.0
         )
-        response = self._post_fill_quote_response.quote(
-            now_ms=int(now_ms if now_ms is not None else time.time() * 1000.0),
-            inventory=float(q),
-            order_size=float(cfg.strategy.order_size),
-            baseline_bid=float(bid_price),
-            baseline_ask=float(ask_price),
-            tick_size=float(cfg.tick_size),
-            max_pair_spread=float(
-                self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
-            ),
-            best_bid=float(best_bid),
-            best_ask=float(best_ask),
-            volatility_bps=(
-                math.sqrt(max(float(getattr(pred, "vol_10s", 0.0) or 0.0), 0.0))
-                / max(0.5 * (float(bid_price) + float(ask_price)), 1e-12)
-                * 10_000.0
-            ),
-            refill_edge=refill_edge,
-            repair_probability=math.nan,
-        )
-        if response.active and self._requote_count % 6 == 0:
+        response_state = None
+        if not mutate_state:
+            response_state = (
+                self._post_fill_quote_response._add_side,
+                self._post_fill_quote_response._excitation,
+                self._post_fill_quote_response._last_update_ms,
+                self._post_fill_quote_response._last_half_life_s,
+            )
+        try:
+            response = self._post_fill_quote_response.quote(
+                now_ms=int(now_ms if now_ms is not None else time.time() * 1000.0),
+                inventory=float(q),
+                order_size=float(cfg.strategy.order_size),
+                baseline_bid=float(bid_price),
+                baseline_ask=float(ask_price),
+                tick_size=float(cfg.tick_size),
+                max_pair_spread=float(
+                    self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
+                ),
+                best_bid=float(best_bid),
+                best_ask=float(best_ask),
+                volatility_bps=(
+                    math.sqrt(
+                        max(float(getattr(pred, "vol_10s", 0.0) or 0.0), 0.0)
+                    )
+                    / max(0.5 * (float(bid_price) + float(ask_price)), 1e-12)
+                    * 10_000.0
+                ),
+                refill_edge=refill_edge,
+                repair_probability=math.nan,
+            )
+        finally:
+            if response_state is not None:
+                (
+                    self._post_fill_quote_response._add_side,
+                    self._post_fill_quote_response._excitation,
+                    self._post_fill_quote_response._last_update_ms,
+                    self._post_fill_quote_response._last_half_life_s,
+                ) = response_state
+        if mutate_state and response.active and self._requote_count % 6 == 0:
             logger.info(
                 "POST_FILL_QUOTE_RESPONSE mode=%s q=%+.6f add_side=%s "
                 "inventory_ticks=%d add_ticks=%d half_life_s=%.3f",
@@ -9026,6 +9349,7 @@ class MakerEngine:
 
     def _cancel_all_orders(self) -> bool:
         """Cancel all active orders."""
+        self._clear_all_replace_terminal_continuations()
         self._prune_terminal_side_order_reference(Side.BUY)
         self._prune_terminal_side_order_reference(Side.SELL)
         active = self.orders.get_active_orders()
@@ -9084,18 +9408,31 @@ class MakerEngine:
         *,
         record_requote_perf: bool = True,
         trigger_decision_id: str = "",
+        replace_continuation_generation: int = 0,
     ) -> bool:
         """Cancel a single order by client order id."""
         order = self.orders.get_order(cid)
         if order is None:
             for side in (Side.BUY, Side.SELL):
+                self._clear_replace_terminal_continuation(side=side, cid=cid)
                 if self._side_order_reference(side) == cid:
                     self._prune_terminal_side_order_reference(side)
             return False
+        if replace_continuation_generation <= 0:
+            self._clear_replace_terminal_continuation(
+                side=order.side,
+                cid=cid,
+            )
         if order.is_terminal:
             if self.orders.terminal_identity(cid) is None:
                 self._prune_terminal_side_order_reference(order.side)
                 return False
+            if replace_continuation_generation > 0:
+                self._clear_unready_replace_terminal_continuation(
+                    side=order.side,
+                    cid=cid,
+                    generation=replace_continuation_generation,
+                )
             self._release_side_order_ownership(side=order.side, cid=cid)
             return True
 
@@ -9132,11 +9469,23 @@ class MakerEngine:
                 and resolved.is_terminal
                 and self.orders.terminal_identity(cid) is not None
             ):
+                if replace_continuation_generation > 0:
+                    self._clear_unready_replace_terminal_continuation(
+                        side=resolved.side,
+                        cid=cid,
+                        generation=replace_continuation_generation,
+                    )
                 self._prune_terminal_side_order_reference(resolved.side)
                 return True
             return False
         except Exception as e:
             self.orders.cancel_rejected(cid, str(e))
+            if replace_continuation_generation > 0:
+                self._clear_replace_terminal_continuation(
+                    side=order.side,
+                    cid=cid,
+                    generation=replace_continuation_generation,
+                )
             logger.error(f"Cancel order {cid} failed: {e}")
             return False
 
@@ -9146,6 +9495,8 @@ class MakerEngine:
 
     def _cancel_active_side_orders(self, side: str, reason: str):
         """Request side cancellation without releasing unresolved ownership."""
+        side_enum = Side.BUY if side == "BUY" else Side.SELL
+        self._clear_side_replace_terminal_continuation(side_enum)
         if side == "BUY":
             active_orders = self.orders.get_bid_orders()
         else:
@@ -9169,6 +9520,7 @@ class MakerEngine:
     def _cancel_tracked_order_before_replacement(self, side: Side) -> bool:
         """Return true only after the tracked order is authoritatively terminal."""
 
+        self._clear_side_replace_terminal_continuation(side)
         self._prune_terminal_side_order_reference(side)
         cid = self._bid_cid if side == Side.BUY else self._ask_cid
         if not cid:
@@ -9185,6 +9537,7 @@ class MakerEngine:
     ) -> bool:
         """Wait for unresolved lifecycle ownership; replace only after terminal ACK."""
 
+        self._clear_side_replace_terminal_continuation(side)
         self._prune_terminal_side_order_reference(side)
         cid = self._side_order_reference(side)
         if not cid:
@@ -9686,6 +10039,16 @@ class MakerEngine:
             order,
             terminal_reason=str(reason),
         )
+        # Only an authoritative cancel ACK completes a normal replace.  A
+        # racing fill/reject/expiry changes the economic path and must not
+        # inherit the canceled quote's replacement intent.
+        if str(reason) == "cancel_ack":
+            self._publish_replace_terminal_continuation(order)
+        else:
+            self._clear_replace_terminal_continuation(
+                side=order.side,
+                cid=order.client_order_id,
+            )
 
     def _on_fill(self, order, event):
         """Called when an order is filled (from OrderManager)."""
@@ -9986,12 +10349,7 @@ class MakerEngine:
 
     def _on_cancel(self, order):
         """Called when an order is canceled."""
-        self._release_side_order_ownership(
-            side=order.side,
-            cid=order.client_order_id,
-        )
         self._log_order_outcome("canceled", order)
-        self._pop_order_context(order.client_order_id)
         logger.debug(f"ORDER_CANCELED: {order.client_order_id}")
 
     # ── lifecycle ──
@@ -10123,6 +10481,7 @@ class MakerEngine:
         inventory is left for explicit operator/risk handling.
         """
         self._running = False
+        self._clear_all_replace_terminal_continuations()
         logger.info("MakerEngine stopping...")
         checkpoint_error: Optional[Exception] = None
         shutdown_reconciliation_error: Optional[Exception] = None
@@ -10232,6 +10591,7 @@ class MakerEngine:
                     or defer_reconciliation
                 )
             self._running = False
+        self._clear_all_replace_terminal_continuations()
         if not first_latch:
             if (
                 reconciliation_required

@@ -219,6 +219,383 @@ def test_ordinary_replacement_waits_for_local_cancel_ack(control_backend, cancel
         assert result["decision_pending_coalesce_count"] > 0
 
 
+def test_replacement_terminal_continuation_uses_next_100ms_wake(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=0),
+            "planned_quote_stop_ts_ms": 0,
+            "replace_pending_coalesce": False,
+            "replace_terminal_continuation": True,
+            "_cancel_exchange_effective_latency_samples_ms": [0.0],
+            "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+        },
+        bbo_data=bbo,
+    )
+
+    for side in ("BUY", "SELL"):
+        orders = sorted(
+            [row for row in result["_quote_trace"] if row["side"] == side],
+            key=lambda row: row["submit_ts"],
+        )
+        assert [row["submit_ts"] for row in orders[:2]] == [0, 2_600]
+        assert orders[0]["outcome_ts"] == 2_550
+    assert result["replace_terminal_continuation_terminal_count"] == 2
+    assert result["replace_terminal_continuation_decision_count"] == 2
+    assert result["replace_terminal_continuation_bid_decision_count"] == 1
+    assert result["replace_terminal_continuation_ask_decision_count"] == 1
+    assert result["replace_terminal_continuation_decision_latency_sum_ms"] == 100
+    assert result["replace_terminal_continuation_decision_latency_max_ms"] == 50
+
+
+def test_replacement_terminal_continuation_precedes_same_wake_normal_cadence(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs(crossing_fill_ts_ms=1_200, crossing_side="BUY")
+    # A market-data event one millisecond after the collision must not steal
+    # the still-overdue normal cadence from the next 100ms timer wake.
+    insert_at = int(np.searchsorted(bbo.ts_ms, 2_001))
+    bbo = HistoricalBBOData(
+        ts_ms=np.insert(bbo.ts_ms, insert_at, 2_001),
+        best_bid=np.insert(bbo.best_bid, insert_at, 99.9),
+        best_ask=np.insert(bbo.best_ask, insert_at, 100.1),
+        bid_qty=np.insert(bbo.bid_qty, insert_at, 1.0),
+        ask_qty=np.insert(bbo.ask_qty, insert_at, 1.0),
+    )
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=0),
+            "planned_quote_stop_ts_ms": 0,
+            "replace_pending_coalesce": False,
+            "replace_terminal_continuation": True,
+            "_cancel_exchange_effective_latency_samples_ms": [1_000.0],
+            "_cancel_ack_visibility_latency_samples_ms": [1_000.0],
+            "replay_event_clock_end_ts_ms": 3_000,
+            "trace_decisions_max": 100,
+        },
+        bbo_data=bbo,
+    )
+
+    submits = {
+        side: [
+            row["submit_ts"]
+            for row in result["_quote_trace"]
+            if row["side"] == side
+        ]
+        for side in ("BUY", "SELL")
+    }
+    # SELL terminal continuation owns the 2000ms wake. BUY is not routed
+    # until the still-overdue ordinary cadence runs at the next 100ms wake.
+    assert 2_000 not in submits["BUY"]
+    assert 2_000 in submits["SELL"]
+    assert 2_001 not in submits["BUY"]
+    assert 2_100 in submits["BUY"]
+    assert result["replace_terminal_continuation_bid_decision_count"] == 0
+    assert result["replace_terminal_continuation_ask_decision_count"] == 1
+    assert result["replace_terminal_continuation_decision_latency_sum_ms"] == 0
+    if control_backend is simulate_tick:
+        at_terminal = [
+            row for row in result["_decision_trace"] if row["ts_ms"] == 2_000
+        ]
+        assert {row["side"]: row["action"] for row in at_terminal} == {
+            "SELL": "place",
+        }
+        at_next_wake = [
+            row for row in result["_decision_trace"] if row["ts_ms"] == 2_100
+        ]
+        assert {row["side"]: row["action"] for row in at_next_wake}["BUY"] == "place"
+
+
+def test_sell_continuation_preserves_non_target_current_policy_state(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs(crossing_fill_ts_ms=1_200, crossing_side="BUY")
+    common_params = {
+        **_params(cancel_latency_ms=0),
+        "planned_quote_stop_ts_ms": 0,
+        "replace_pending_coalesce": False,
+        "replace_terminal_continuation": True,
+        "_cancel_exchange_effective_latency_samples_ms": [1_000.0],
+        "_cancel_ack_visibility_latency_samples_ms": [1_000.0],
+        "campaign_soft_control_enabled": True,
+        "campaign_soft_inv_threshold": 0.0005,
+        "campaign_soft_age_s": 0.0,
+        "campaign_soft_spread_mult": 1.25,
+    }
+    if control_backend is simulate_tick:
+        common_params["post_fill_quote_response_enabled"] = True
+
+    snapshots = {}
+    for end_ts_ms in (1_900, 2_000):
+        bbo_mask = bbo.ts_ms <= end_ts_ms
+        sliced_bbo = HistoricalBBOData(
+            ts_ms=bbo.ts_ms[bbo_mask],
+            best_bid=bbo.best_bid[bbo_mask],
+            best_ask=bbo.best_ask[bbo_mask],
+            bid_qty=bbo.bid_qty[bbo_mask],
+            ask_qty=bbo.ask_qty[bbo_mask],
+        )
+        result = control_backend(
+            trades.loc[trades["transact_time"] <= end_ts_ms].copy(),
+            np.asarray([0]),
+            np.asarray([1.0]),
+            {
+                **common_params,
+                "replay_event_clock_end_ts_ms": end_ts_ms,
+            },
+            bbo_data=sliced_bbo,
+        )
+        snapshots[end_ts_ms] = {
+            "bid_campaign_soft_control_count": result[
+                "bid_campaign_soft_control_count"
+            ],
+            "buy_fill_selection_live_eval_count": result[
+                "buy_fill_selection_live_eval_count"
+            ],
+            "post_fill_quote_response_eval_count": result.get(
+                "post_fill_quote_response_eval_count",
+                0,
+            ),
+        }
+        if end_ts_ms == 2_000:
+            assert result[
+                "replace_terminal_continuation_ask_decision_count"
+            ] == 1
+            assert result[
+                "replace_terminal_continuation_bid_decision_count"
+            ] == 0
+
+    # The extra 2000ms decision is SELL-only. Its non-target BUY policy and
+    # shared pair response must be observationally read-only, matching live's
+    # mutate_state=False route contract.
+    assert snapshots[2_000] == snapshots[1_900]
+
+
+@pytest.mark.parametrize("intermediate_source", ["bbo", "l2", "trade"])
+def test_replacement_terminal_waits_through_intermediate_market_event(
+    control_backend,
+    intermediate_source,
+) -> None:
+    trades, bbo = _inputs()
+    l2 = None
+    if intermediate_source == "bbo":
+        ts_ms = np.sort(np.append(bbo.ts_ms, np.int64(2_551)))
+        bbo = HistoricalBBOData(
+            ts_ms=ts_ms,
+            best_bid=np.full(ts_ms.size, 99.9),
+            best_ask=np.full(ts_ms.size, 100.1),
+            bid_qty=np.ones(ts_ms.size),
+            ask_qty=np.ones(ts_ms.size),
+        )
+    elif intermediate_source == "l2":
+        l2 = HistoricalL2Data(
+            ts_ms=np.asarray([2_551], dtype=np.int64),
+            bid_px=np.asarray([[99.9]]),
+            bid_qty=np.asarray([[1.0]]),
+            ask_px=np.asarray([[100.1]]),
+            ask_qty=np.asarray([[1.0]]),
+        )
+    else:
+        trades = pd.concat(
+            [
+                trades,
+                pd.DataFrame(
+                    {
+                        "transact_time": [2_551],
+                        "price": [100.0],
+                        "quantity": [0.001],
+                        "is_buyer_maker": [True],
+                    }
+                ),
+            ],
+            ignore_index=True,
+        ).sort_values("transact_time", kind="stable", ignore_index=True)
+
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=0),
+            "planned_quote_stop_ts_ms": 0,
+            "replace_pending_coalesce": False,
+            "replace_terminal_continuation": True,
+            "_cancel_exchange_effective_latency_samples_ms": [0.0],
+            "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+        },
+        bbo_data=bbo,
+        l2_data=l2,
+    )
+
+    submits = [row["submit_ts"] for row in result["_quote_trace"]]
+    assert 2_551 not in submits
+    assert submits.count(2_600) == 2
+    assert result["replace_terminal_continuation_decision_count"] == 2
+    assert result["replace_terminal_continuation_decision_latency_sum_ms"] == 100
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"replay_event_clock": "trade"},
+        {"replay_clock_interval_ms": 200},
+        {"replay_main_loop_sleep_ms": 100},
+    ],
+)
+def test_replacement_terminal_continuation_backend_admission_matches(
+    control_backend,
+    overrides,
+) -> None:
+    trades, bbo = _inputs()
+    params = {
+        **_params(cancel_latency_ms=0),
+        "replace_terminal_continuation": True,
+        **overrides,
+    }
+    with pytest.raises(
+        ValueError,
+        match="replace_terminal_continuation requires merged 100ms replay clock",
+    ):
+        control_backend(
+            trades,
+            np.asarray([0]),
+            np.asarray([1.0]),
+            params,
+            bbo_data=bbo,
+        )
+
+
+def test_disabled_replacement_terminal_continuation_preserves_b0(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs()
+    params = {
+        **_params(cancel_latency_ms=0),
+        "planned_quote_stop_ts_ms": 0,
+        "replace_pending_coalesce": False,
+        "_cancel_exchange_effective_latency_samples_ms": [0.0],
+        "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+    }
+    omitted = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        params,
+        bbo_data=bbo,
+    )
+    explicit_false = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {**params, "replace_terminal_continuation": False},
+        bbo_data=bbo,
+    )
+
+    assert omitted["_quote_trace"] == explicit_false["_quote_trace"]
+    for field in (
+        "n_requotes",
+        "fills_bid",
+        "fills_ask",
+        "final_inventory",
+        "decision_place_count",
+        "decision_replace_count",
+        "decision_pending_coalesce_count",
+    ):
+        assert omitted[field] == explicit_false[field]
+    assert "replace_terminal_continuation" not in omitted
+    assert "replace_terminal_continuation" not in explicit_false
+
+
+def test_full_fill_does_not_arm_replacement_continuation_or_route_other_side(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs(crossing_fill_ts_ms=1_200, crossing_side="BUY")
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=0),
+            "planned_quote_stop_ts_ms": 0,
+            "replace_pending_coalesce": False,
+            "replace_terminal_continuation": True,
+            "_cancel_exchange_effective_latency_samples_ms": [1_000.0],
+            "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+            "replay_event_clock_end_ts_ms": 3_000,
+        },
+        bbo_data=bbo,
+    )
+
+    bid_submits = {
+        row["submit_ts"]
+        for row in result["_quote_trace"]
+        if row["side"] == "BUY"
+    }
+    ask_submits = {
+        row["submit_ts"]
+        for row in result["_quote_trace"]
+        if row["side"] == "SELL"
+    }
+    assert 2_600 not in bid_submits
+    assert 2_600 in ask_submits
+    assert result["replace_terminal_continuation_bid_decision_count"] == 0
+    assert result["replace_terminal_continuation_ask_decision_count"] == 1
+
+
+def test_safety_cancel_does_not_arm_replacement_continuation(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=500),
+            "replace_terminal_continuation": True,
+            "requote_threshold_bps": 1.0,
+        },
+        bbo_data=bbo,
+    )
+
+    assert result["replace_terminal_continuation_terminal_count"] == 0
+    assert result["replace_terminal_continuation_decision_count"] == 0
+
+
+def test_safety_blocker_consumes_due_without_later_requote(
+    control_backend,
+) -> None:
+    trades, bbo = _inputs()
+    result = control_backend(
+        trades,
+        np.asarray([0]),
+        np.asarray([1.0]),
+        {
+            **_params(cancel_latency_ms=0),
+            "planned_quote_stop_ts_ms": 2_600,
+            "replace_pending_coalesce": False,
+            "replace_terminal_continuation": True,
+            "_cancel_exchange_effective_latency_samples_ms": [0.0],
+            "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+        },
+        bbo_data=bbo,
+    )
+
+    assert result["replace_terminal_continuation_terminal_count"] == 2
+    assert result["replace_terminal_continuation_decision_count"] == 0
+    assert not any(
+        row["submit_ts"] >= 2_600 for row in result["_quote_trace"]
+    )
+
+
 def test_ordinary_replacement_cannot_erase_pending_new_with_zero_cancel_delay(control_backend):
     trades, bbo = _inputs()
     result = control_backend(

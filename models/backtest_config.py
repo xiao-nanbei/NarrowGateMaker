@@ -61,6 +61,7 @@ TICK_DEFAULTS: Mapping[str, Any] = {
     "replay_clock_interval_ms": 100,
     # Opt-in serial REST-return loop; zero retains the existing replay clock.
     "replay_main_loop_sleep_ms": 0,
+    "replace_terminal_continuation": False,
     "fill_cooldown_apply_reducing": False,
     "consecutive_loss_cooldown_semantics": LOSS_COOLDOWN_SEMANTICS,
     "sync_adjust_replay_mode": "disabled",
@@ -1150,6 +1151,9 @@ def build_backtest_base_params(
             live_params.get("replace_min_interval_ms", 0.0),
         ),
         "replace_pending_coalesce": bool(live_params.get("replace_pending_coalesce", False)),
+        "replace_terminal_continuation": bool(
+            live_params.get("replace_terminal_continuation", False)
+        ),
         "replace_cancel_first_exposure_increasing": bool(
             live_params.get("replace_cancel_first_exposure_increasing", False)
         ),

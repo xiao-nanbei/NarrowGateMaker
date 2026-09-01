@@ -1289,6 +1289,20 @@ struct PendingMarkout {
 using ReplayOrders = std::pmr::vector<ReplayOrder>;
 using PendingMarkouts = std::pmr::vector<PendingMarkout>;
 
+struct ReplacementTerminalContinuationRuntime {
+    std::int64_t bid_terminal_ts = -1;
+    std::int64_t ask_terminal_ts = -1;
+
+    void arm(Side side, std::int64_t terminal_ts, TickReplaySummary& summary) {
+        if (side == Side::Buy) {
+            bid_terminal_ts = terminal_ts;
+        } else {
+            ask_terminal_ts = terminal_ts;
+        }
+        ++summary.replace_terminal_continuation_terminal_count;
+    }
+};
+
 double top_depth_total(const DepthView& depth, int levels) {
     const int n_levels = std::max(1, levels);
     double total = 0.0;
@@ -3979,6 +3993,7 @@ void transition_orders(
     TickReplayResult& result,
     std::int64_t trace_quotes_max,
     std::int64_t& circuit_breaker_close_gtx_reject_streak,
+    ReplacementTerminalContinuationRuntime* replacement_continuation = nullptr,
     NativeBookTapeRuntime* native_book = nullptr,
     bool allow_ttl_initiation = true,
     bool defer_cancel_ack_at_ts = false
@@ -4117,6 +4132,16 @@ void transition_orders(
                 0.0
             );
         }
+        if (params.replace_terminal_continuation &&
+            replacement_continuation != nullptr &&
+            it->replace_terminal_continuation_armed &&
+            it->pending_cancel_reason == CancelReason::RequoteReplace) {
+            replacement_continuation->arm(
+                it->side,
+                it->cancel_ack_ts,
+                summary
+            );
+        }
         it = orders.erase(it);
     }
 }
@@ -4136,13 +4161,23 @@ void request_cancel_all(
         reason == CancelReason::Requote ||
         reason == CancelReason::RequoteReplace ||
         reason == CancelReason::SideDisabled;
+    const bool replacement_continuation_cancel =
+        params.replace_terminal_continuation &&
+        reason == CancelReason::RequoteReplace;
+    if (params.replace_terminal_continuation &&
+        reason != CancelReason::RequoteReplace) {
+        for (auto& order : orders) {
+            order.replace_terminal_continuation_armed = false;
+        }
+    }
     if ((cancel_latency_samples_ms == nullptr || cancel_latency_samples_ms->empty()) &&
         params.cancel_exchange_effective_latency_samples_ms.empty() &&
         params.cancel_ack_visibility_latency_samples_ms.empty() &&
         !(apply_decision_compute && decision_to_gateway_latency_enabled(params)) &&
         !(apply_decision_compute && std::any_of(orders.begin(), orders.end(),
             [](const auto& order) { return order.state == OrderState::PendingNew; })) &&
-        cancel_latency_ms <= 0 && latency_jitter_ms <= 0) {
+        cancel_latency_ms <= 0 && latency_jitter_ms <= 0 &&
+        !replacement_continuation_cancel) {
         if (result != nullptr && trace_quotes_max > 0) {
             for (const auto& order : orders) {
                 if (result->quote_trace.size() >= static_cast<std::size_t>(trace_quotes_max)) {
@@ -4174,11 +4209,21 @@ void request_cancel_all(
             order.cancel_effective_ts = deadlines.effective_ts;
             order.cancel_ack_ts = deadlines.ack_ts;
             order.pending_cancel_reason = reason;
+            order.replace_terminal_continuation_armed =
+                replacement_continuation_cancel;
         } else if (order.state == OrderState::PendingNew) {
             order.cancel_effective_ts = deadlines.effective_ts;
             order.cancel_ack_ts = deadlines.ack_ts;
             order.pending_cancel_reason = reason;
+            order.replace_terminal_continuation_armed =
+                replacement_continuation_cancel;
         }
+    }
+    if (replacement_continuation_cancel) {
+        // A zero-latency replacement cancel is still consumed as an
+        // authoritative local terminal at the next replay wake. This keeps
+        // the continuation distinct from the decision that requested it.
+        return;
     }
     for (auto it = orders.begin(); it != orders.end();) {
         const bool cancel_due =
@@ -6667,6 +6712,8 @@ TickReplayResult simulate_tick_arrays(
     std::mt19937_64 rng(static_cast<std::uint64_t>(params.rng_seed));
     ReplayOrders bid_orders{&replay_resource};
     ReplayOrders ask_orders{&replay_resource};
+    ReplacementTerminalContinuationRuntime replacement_continuation;
+    std::int64_t replacement_terminal_cadence_defer_until_ts = -1;
 
     double inventory = params.initial_inventory;
     double entry_price = std::abs(params.initial_inventory) > 1e-10 ? params.initial_entry_price : 0.0;
@@ -7198,6 +7245,7 @@ TickReplayResult simulate_tick_arrays(
             result,
             params.trace_quotes_max,
             circuit_breaker_close_gtx_reject_streak,
+            &replacement_continuation,
             native_book.has_value() ? &*native_book : nullptr,
             false,
             defer_cancel_ack
@@ -7217,6 +7265,7 @@ TickReplayResult simulate_tick_arrays(
             result,
             params.trace_quotes_max,
             circuit_breaker_close_gtx_reject_streak,
+            &replacement_continuation,
             native_book.has_value() ? &*native_book : nullptr,
             false,
             defer_cancel_ack
@@ -7422,7 +7471,8 @@ TickReplayResult simulate_tick_arrays(
                 summary,
                 result,
                 params.trace_quotes_max,
-                circuit_breaker_close_gtx_reject_streak
+                circuit_breaker_close_gtx_reject_streak,
+                &replacement_continuation
             );
             transition_orders(
                 ask_orders,
@@ -7438,7 +7488,8 @@ TickReplayResult simulate_tick_arrays(
                 summary,
                 result,
                 params.trace_quotes_max,
-                circuit_breaker_close_gtx_reject_streak
+                circuit_breaker_close_gtx_reject_streak,
+                &replacement_continuation
             );
         }
         paired_probe.on_event(
@@ -7448,6 +7499,40 @@ TickReplayResult simulate_tick_arrays(
             l2_idx,
             l2_idx != l2_idx_before_event
         );
+        const bool continuation_pending_bid =
+            params.replace_terminal_continuation &&
+            replacement_continuation.bid_terminal_ts >= 0 &&
+            bid_orders.empty();
+        const bool continuation_pending_ask =
+            params.replace_terminal_continuation &&
+            replacement_continuation.ask_terminal_ts >= 0 &&
+            ask_orders.empty();
+        // The canonical adapter admits this mechanism only for the merged
+        // 100ms clock. Market-data events between timer boundaries can reveal
+        // the terminal callback, but they cannot consume its continuation.
+        const bool continuation_timer_wake =
+            params.replace_terminal_continuation && ts % 100 == 0;
+        const bool continuation_force_bid_due =
+            continuation_pending_bid && continuation_timer_wake;
+        const bool continuation_force_ask_due =
+            continuation_pending_ask && continuation_timer_wake;
+        const bool continuation_side_routing =
+            continuation_force_bid_due || continuation_force_ask_due;
+        const bool bid_route_due =
+            !continuation_side_routing || continuation_force_bid_due;
+        const bool ask_route_due =
+            !continuation_side_routing || continuation_force_ask_due;
+        const bool pair_route_due = bid_route_due && ask_route_due;
+        const std::int64_t continuation_bid_terminal_ts =
+            replacement_continuation.bid_terminal_ts;
+        const std::int64_t continuation_ask_terminal_ts =
+            replacement_continuation.ask_terminal_ts;
+        if (continuation_force_bid_due) {
+            replacement_continuation.bid_terminal_ts = -1;
+        }
+        if (continuation_force_ask_due) {
+            replacement_continuation.ask_terminal_ts = -1;
+        }
         if (params.queue_l2_cancel_ahead_enabled && l2_idx != l2_idx_before_event) {
             apply_l2_cancel_ahead<Side::Buy>(
                 bid_orders,
@@ -8502,40 +8587,97 @@ TickReplayResult simulate_tick_arrays(
                 params.trace_quotes_max, CancelReason::StaleBook);
             continue;
         }
-        if (!risk_emergency_latched && params.empirical_requote_clock && !empirical_quote_event) {
+        const bool scheduled_requote_due_raw =
+            (risk_emergency_latched ||
+             (params.empirical_requote_clock
+                ? empirical_quote_event
+                : ts - last_requote_ts >= current_rq_ms));
+        const bool cadence_defer_ready =
+            replacement_terminal_cadence_defer_until_ts >= 0 &&
+            continuation_timer_wake &&
+            ts >= replacement_terminal_cadence_defer_until_ts;
+        bool scheduled_requote_due =
+            scheduled_requote_due_raw &&
+            (
+                replacement_terminal_cadence_defer_until_ts >= 0
+                    ? cadence_defer_ready
+                    : !(continuation_pending_bid || continuation_pending_ask)
+            );
+        if (cadence_defer_ready) {
+            replacement_terminal_cadence_defer_until_ts = -1;
+        }
+        if (continuation_side_routing && scheduled_requote_due_raw) {
+            replacement_terminal_cadence_defer_until_ts = std::max(
+                replacement_terminal_cadence_defer_until_ts,
+                ts + 100
+            );
+            scheduled_requote_due = false;
+        }
+        if (!scheduled_requote_due &&
+            !continuation_force_bid_due &&
+            !continuation_force_ask_due) {
             continue;
         }
-        if (!risk_emergency_latched && !params.empirical_requote_clock &&
-            ts - last_requote_ts < current_rq_ms) {
-            continue;
+        const auto consume_continuation = [&] (
+            Side side,
+            std::int64_t terminal_ts
+        ) {
+            const auto latency_ms = std::max<std::int64_t>(0, ts - terminal_ts);
+            ++summary.replace_terminal_continuation_decision_count;
+            if (side == Side::Buy) {
+                ++summary.replace_terminal_continuation_bid_decision_count;
+            } else {
+                ++summary.replace_terminal_continuation_ask_decision_count;
+            }
+            summary.replace_terminal_continuation_decision_latency_sum_ms +=
+                latency_ms;
+            summary.replace_terminal_continuation_decision_latency_max_ms =
+                std::max(
+                    summary.replace_terminal_continuation_decision_latency_max_ms,
+                    latency_ms
+                );
+        };
+        if (continuation_force_bid_due) {
+            consume_continuation(
+                Side::Buy,
+                continuation_bid_terminal_ts
+            );
         }
-        if (params.empirical_requote_clock) {
-            last_requote_ts = ts;
-        } else if (params.random_passive_enabled && params.random_passive_timing_jitter_fraction > 0.0) {
-            const double jitter_fraction = clamp(
-                params.random_passive_timing_jitter_fraction, 0.0, 0.95);
-            const double centered = 2.0 * keyed_random_passive_unit(
-                params.random_passive_seed,
-                ts,
-                static_cast<std::int64_t>(i),
-                RandomPassiveOperation::TimingJitter
-            ) - 1.0;
-            const double interval_mult = 1.0 + centered * jitter_fraction;
-            const std::int64_t target_interval_ms = std::max<std::int64_t>(
-                1,
-                static_cast<std::int64_t>(std::llround(
-                    static_cast<double>(current_rq_ms) * interval_mult))
+        if (continuation_force_ask_due) {
+            consume_continuation(
+                Side::Sell,
+                continuation_ask_terminal_ts
             );
-            last_requote_ts = ts + target_interval_ms - current_rq_ms;
-            ++summary.random_passive_timing_jitter_count;
-        } else if (params.requote_clock_fixed) {
-            const std::int64_t intervals = std::max<std::int64_t>(
-                1,
-                (ts - last_requote_ts) / std::max<std::int64_t>(current_rq_ms, 1)
-            );
-            last_requote_ts += intervals * current_rq_ms;
-        } else {
-            last_requote_ts = ts;
+        }
+        if (scheduled_requote_due) {
+            if (params.empirical_requote_clock) {
+                last_requote_ts = ts;
+            } else if (params.random_passive_enabled && params.random_passive_timing_jitter_fraction > 0.0) {
+                const double jitter_fraction = clamp(
+                    params.random_passive_timing_jitter_fraction, 0.0, 0.95);
+                const double centered = 2.0 * keyed_random_passive_unit(
+                    params.random_passive_seed,
+                    ts,
+                    static_cast<std::int64_t>(i),
+                    RandomPassiveOperation::TimingJitter
+                ) - 1.0;
+                const double interval_mult = 1.0 + centered * jitter_fraction;
+                const std::int64_t target_interval_ms = std::max<std::int64_t>(
+                    1,
+                    static_cast<std::int64_t>(std::llround(
+                        static_cast<double>(current_rq_ms) * interval_mult))
+                );
+                last_requote_ts = ts + target_interval_ms - current_rq_ms;
+                ++summary.random_passive_timing_jitter_count;
+            } else if (params.requote_clock_fixed) {
+                const std::int64_t intervals = std::max<std::int64_t>(
+                    1,
+                    (ts - last_requote_ts) / std::max<std::int64_t>(current_rq_ms, 1)
+                );
+                last_requote_ts += intervals * current_rq_ms;
+            } else {
+                last_requote_ts = ts;
+            }
         }
 
         if (exec_book_visibility_delay_enabled) {
@@ -9340,18 +9482,19 @@ TickReplayResult simulate_tick_arrays(
                     ask_refill_edge,
                     ask_micro_reversion
                 );
-            if (bid_campaign_soft) {
+            if (bid_route_due && bid_campaign_soft) {
                 bid_policy_mult = std::max(bid_policy_mult, params.campaign_soft_spread_mult);
                 ++summary.campaign_soft_control_count;
                 ++summary.bid_campaign_soft_control_count;
             }
-            if (ask_campaign_soft) {
+            if (ask_route_due && ask_campaign_soft) {
                 ask_policy_mult = std::max(ask_policy_mult, params.campaign_soft_spread_mult);
                 ++summary.campaign_soft_control_count;
                 ++summary.ask_campaign_soft_control_count;
             }
         }
-        if (params.buy_soft_widen_release_probe_enabled &&
+        if (bid_route_due &&
+            params.buy_soft_widen_release_probe_enabled &&
             !buy_soft_widen_release_target_consumed &&
             ts == params.buy_soft_widen_release_target_ts_ms) {
             buy_soft_widen_release_target_consumed = true;
@@ -9417,7 +9560,9 @@ TickReplayResult simulate_tick_arrays(
                 bid_policy_mult = selected_mult;
             }
         }
-        if (params.buy_fill_selection_live_enabled && !params.buy_fill_selection_models.empty()) {
+        if (bid_route_due &&
+            params.buy_fill_selection_live_enabled &&
+            !params.buy_fill_selection_models.empty()) {
             const bool bid_exposure_increasing_for_score = inventory >= 0.0;
             if (bid_exposure_increasing_for_score || params.buy_fill_selection_live_apply_reducing) {
                 const auto score = score_buy_fill_selection_cpp(
@@ -9815,7 +9960,9 @@ TickReplayResult simulate_tick_arrays(
             ask_allowed = false;
         }
 
-        if (flat_unilateral_max_ms > 0 && std::abs(inventory) <= lot_size * 0.5) {
+        if (pair_route_due &&
+            flat_unilateral_max_ms > 0 &&
+            std::abs(inventory) <= lot_size * 0.5) {
             const bool bid_blocked =
                 !bid_allowed && inventory >= 0.0 && order_size >= lot_size && inventory < params.max_inventory;
             const bool ask_blocked =
@@ -9848,7 +9995,7 @@ TickReplayResult simulate_tick_arrays(
                     flat_unilateral_ask_started_ms = 0;
                 }
             }
-        } else {
+        } else if (pair_route_due) {
             flat_unilateral_bid_started_ms = 0;
             flat_unilateral_ask_started_ms = 0;
         }
@@ -9856,12 +10003,14 @@ TickReplayResult simulate_tick_arrays(
         // A spread cap is a risk threshold in pause_exposure mode. Apply this
         // after flat-unilateral release so the safety TTL cannot reopen a side
         // whose required quote width still exceeds the cap.
-        if (bid_quote_context.cap_exposure_block && inventory >= 0.0) {
+        if (bid_route_due &&
+            bid_quote_context.cap_exposure_block && inventory >= 0.0) {
             bid_allowed = false;
             ++summary.cap_exposure_block_count;
             ++summary.bid_cap_exposure_block_count;
         }
-        if (ask_quote_context.cap_exposure_block && inventory <= 0.0) {
+        if (ask_route_due &&
+            ask_quote_context.cap_exposure_block && inventory <= 0.0) {
             ask_allowed = false;
             ++summary.cap_exposure_block_count;
             ++summary.ask_cap_exposure_block_count;
@@ -9869,6 +10018,7 @@ TickReplayResult simulate_tick_arrays(
 
         if (params.campaign_stop_add_enabled) {
             const bool bid_campaign_stop =
+                bid_route_due &&
                 bid_allowed &&
                 campaign_exposure_risk_active<Side::Buy>(
                     params,
@@ -9880,6 +10030,7 @@ TickReplayResult simulate_tick_arrays(
                     params.campaign_stop_add_age_s
                 );
             const bool ask_campaign_stop =
+                ask_route_due &&
                 ask_allowed &&
                 campaign_exposure_risk_active<Side::Sell>(
                     params,
@@ -9902,7 +10053,9 @@ TickReplayResult simulate_tick_arrays(
             }
         }
 
-        if (consecutive_buy_fills > 1e-10 && last_buy_fill_cooldown_ms > 0.0) {
+        if (bid_route_due &&
+            consecutive_buy_fills > 1e-10 &&
+            last_buy_fill_cooldown_ms > 0.0) {
             if (static_cast<double>(ts - last_buy_fill_ts) >= last_buy_fill_cooldown_ms) {
                 if (fill_cooldown_reset_consec_on_expiry) {
                     consecutive_buy_fills = 0.0;
@@ -9921,7 +10074,9 @@ TickReplayResult simulate_tick_arrays(
                 }
             }
         }
-        if (consecutive_sell_fills > 1e-10 && last_sell_fill_cooldown_ms > 0.0) {
+        if (ask_route_due &&
+            consecutive_sell_fills > 1e-10 &&
+            last_sell_fill_cooldown_ms > 0.0) {
             if (static_cast<double>(ts - last_sell_fill_ts) >= last_sell_fill_cooldown_ms) {
                 if (fill_cooldown_reset_consec_on_expiry) {
                     consecutive_sell_fills = 0.0;
@@ -10188,7 +10343,7 @@ TickReplayResult simulate_tick_arrays(
         if (!fixed_spread_probe && params.conditional_p3_reach_gate_enabled) {
             const auto bid_price_tick = price_to_tick(bid_quote_price, tick_size);
             const auto ask_price_tick = price_to_tick(ask_quote_price, tick_size);
-            if (bid_allowed && p3_bid_exposure) {
+            if (bid_route_due && bid_allowed && p3_bid_exposure) {
                 ++summary.p3_reach_gate_eval_count;
                 p3_bid_gate_status = p3_gate_status_for(
                     Side::Buy, p3_bid_opener, p3_bid_distance_ticks);
@@ -10205,7 +10360,7 @@ TickReplayResult simulate_tick_arrays(
                     ++summary.p3_reach_gate_pass_count;
                 }
             }
-            if (ask_allowed && p3_ask_exposure) {
+            if (ask_route_due && ask_allowed && p3_ask_exposure) {
                 ++summary.p3_reach_gate_eval_count;
                 p3_ask_gate_status = p3_gate_status_for(
                     Side::Sell, p3_ask_opener, p3_ask_distance_ticks);
@@ -10273,13 +10428,14 @@ TickReplayResult simulate_tick_arrays(
 
         if (!fixed_spread_probe && params.conditional_p3_reach_budget_policy_enabled) {
             const auto prepare_episode = [&](Side side,
+                                             bool route_allowed,
                                              bool opener,
                                              bool exposure_increasing,
                                              std::int64_t baseline_distance_ticks,
                                              double toxicity_score,
                                              double toxicity_threshold,
                                              P3ReachBudgetEpisode& episode) {
-                if (!exposure_increasing || !ml_ready) {
+                if (!route_allowed || !exposure_increasing || !ml_ready) {
                     return false;
                 }
                 const auto bucket_start = input.ml_ts_ms.data()[ml_idx];
@@ -10341,6 +10497,7 @@ TickReplayResult simulate_tick_arrays(
 
             const bool bid_activated_now = prepare_episode(
                 Side::Buy,
+                bid_route_due,
                 p3_bid_opener,
                 p3_bid_exposure,
                 p3_bid_distance_ticks,
@@ -10350,6 +10507,7 @@ TickReplayResult simulate_tick_arrays(
             );
             const bool ask_activated_now = prepare_episode(
                 Side::Sell,
+                ask_route_due,
                 p3_ask_opener,
                 p3_ask_exposure,
                 p3_ask_distance_ticks,
@@ -10358,13 +10516,17 @@ TickReplayResult simulate_tick_arrays(
                 p3_reach_budget_sell_episode
             );
             const bool bid_episode_exposure =
+                bid_route_due &&
                 p3_reach_budget_buy_episode.active && p3_bid_exposure;
             const bool ask_episode_exposure =
+                ask_route_due &&
                 p3_reach_budget_sell_episode.active && p3_ask_exposure;
-            if (p3_reach_budget_buy_episode.active && !p3_bid_exposure) {
+            if (bid_route_due &&
+                p3_reach_budget_buy_episode.active && !p3_bid_exposure) {
                 ++summary.p3_reach_budget_reducing_unchanged_count;
             }
-            if (p3_reach_budget_sell_episode.active && !p3_ask_exposure) {
+            if (ask_route_due &&
+                p3_reach_budget_sell_episode.active && !p3_ask_exposure) {
                 ++summary.p3_reach_budget_reducing_unchanged_count;
             }
             if (bid_episode_exposure) {
@@ -10504,6 +10666,12 @@ TickReplayResult simulate_tick_arrays(
                 + 1e-12 < bid_ref_order->remaining) bid_updated = true;
         if (ask_ref_order && cap_notional_qty(false, ask_ref_order->remaining, mid)
                 + 1e-12 < ask_ref_order->remaining) ask_updated = true;
+        if (!bid_route_due) {
+            bid_updated = false;
+        }
+        if (!ask_route_due) {
+            ask_updated = false;
+        }
         const bool bid_pending_coalesce =
             bid_allowed && bid_updated && params.replace_pending_coalesce && bid_pending_order != nullptr;
         const bool ask_pending_coalesce =
@@ -10543,6 +10711,12 @@ TickReplayResult simulate_tick_arrays(
             ask_action = "pause";
         } else if (!ask_updated && ask_active_before) {
             ask_action = "keep";
+        }
+        if (!bid_route_due) {
+            bid_action = "none";
+        }
+        if (!ask_route_due) {
+            ask_action = "none";
         }
 
         const auto append_p3_reach_trace = [&](Side side, std::string_view action) {

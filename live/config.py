@@ -72,6 +72,8 @@ class StrategyConfig:
     replace_min_interval_ms_reducing: float = 0.0
     replace_pending_coalesce: bool = True             # do not stack replaces while local order state is pending
     replace_cancel_first_exposure_increasing: bool = False  # optional soak arm: cancel add-side quote before sending replacement
+    # Wake the same-side quote path after authoritative cancel terminal.
+    replace_terminal_continuation: bool = False
     dynamic_cap_enabled: bool = False     # volatility-scaled spread cap
     dynamic_cap_base_bps: float = 0.0     # base cap in bps when dynamic cap is enabled
     dynamic_cap_alpha: float = 0.5        # cap multiplier exponent on sigma^2 / sigma0^2
@@ -555,6 +557,7 @@ BACKTEST_PARAM_SOURCES = (
     ("replace_min_interval_ms_reducing", ("strategy", "replace_min_interval_ms_reducing")),
     ("replace_pending_coalesce", ("strategy", "replace_pending_coalesce")),
     ("replace_cancel_first_exposure_increasing", ("strategy", "replace_cancel_first_exposure_increasing")),
+    ("replace_terminal_continuation", ("strategy", "replace_terminal_continuation")),
     ("rq_min", ("strategy", "rq_min")),
     ("rq_max", ("strategy", "rq_max")),
     ("eta", ("strategy", "eta")),

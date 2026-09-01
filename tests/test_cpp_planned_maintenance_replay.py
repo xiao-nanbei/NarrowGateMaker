@@ -205,6 +205,7 @@ def test_python_cpp_split_lifecycle_latency_parity():
             row["activate_ts"] - row["submit_ts"] for row in planned_cancels
         } == {300}
 
+
     pre_ack_trades = trades.copy()
     pre_ack_trades.loc[:, "quantity"] = 0.0
     pre_ack_trades.loc[:, "price"] = 100.0
@@ -343,3 +344,93 @@ def test_python_cpp_split_lifecycle_latency_parity():
             assert rest_draws[rest_seed, 73, side] == rest_draws[rest_seed, 91, side]
         for compute_seed in (73, 91):
             assert compute_draws[59, compute_seed, side] == compute_draws[103, compute_seed, side]
+
+
+def test_python_cpp_replacement_terminal_continuation_parity():
+    ts = np.arange(0, 4_001, 100, dtype=np.int64)
+    bbo_ts = np.sort(np.append(ts, np.int64(2_551)))
+    trades = pd.DataFrame(
+        {
+            "transact_time": ts,
+            "price": np.full(ts.size, 100.0),
+            "quantity": np.zeros(ts.size),
+            "is_buyer_maker": np.ones(ts.size, dtype=bool),
+        }
+    )
+    bbo = HistoricalBBOData(
+        ts_ms=bbo_ts,
+        best_bid=np.full(bbo_ts.size, 99.9),
+        best_ask=np.full(bbo_ts.size, 100.1),
+        bid_qty=np.ones(bbo_ts.size),
+        ask_qty=np.ones(bbo_ts.size),
+    )
+    params = {
+        "gamma": 0.01,
+        "kappa": 1.0,
+        "order_size": 0.001,
+        "max_inventory": 0.01,
+        "requote_interval": 1.0,
+        "rq_min": 1.0,
+        "rq_max": 1.0,
+        "requote_clock": "fixed",
+        "replace_pending_coalesce": False,
+        "replace_terminal_continuation": True,
+        "maker_fee": 0.0,
+        "taker_fee": 0.0,
+        "tick_size": 0.1,
+        "lot_size": 0.001,
+        "queue_base": 0.0,
+        "queue_decay": 0.0,
+        "maker_fill_prob": 1.0,
+        "use_bar_pricing": True,
+        "replay_event_clock": "merged",
+        "replay_clock_interval_ms": 100,
+        "max_exec_book_age_s": 0.0,
+        "collect_curves": False,
+        "position_timeout": 0.0,
+        "markout_ema_span_fills": 0,
+        "cancel_order_latency_ms": 0,
+        "planned_quote_stop_ts_ms": 0,
+        "replay_event_clock_end_ts_ms": 4_000,
+        "_cancel_exchange_effective_latency_samples_ms": [0.0],
+        "_cancel_ack_visibility_latency_samples_ms": [1_550.0],
+        "trace_quotes_max": 100,
+    }
+    results = {
+        engine: bt._simulate_tick_with_engine(
+            engine,
+            trades,
+            np.asarray([0], dtype=np.int64),
+            np.asarray([1.0], dtype=np.float64),
+            params,
+            bbo_data=bbo,
+        )
+        for engine in ("python", "cpp")
+    }
+    trace_identity = {
+        engine: [
+            (
+                row["side"],
+                row["submit_ts"],
+                row["outcome_ts"],
+                row["cancel_reason"],
+            )
+            for row in result["_quote_trace"]
+        ]
+        for engine, result in results.items()
+    }
+    assert trace_identity["python"] == trace_identity["cpp"]
+    for field in (
+        "replace_terminal_continuation_terminal_count",
+        "replace_terminal_continuation_decision_count",
+        "replace_terminal_continuation_bid_decision_count",
+        "replace_terminal_continuation_ask_decision_count",
+        "replace_terminal_continuation_decision_latency_sum_ms",
+        "replace_terminal_continuation_decision_latency_max_ms",
+    ):
+        assert results["python"][field] == results["cpp"][field]
+    assert results["python"]["replace_terminal_continuation_decision_count"] == 2
+    assert not any(row["submit_ts"] == 2_551 for row in results["python"]["_quote_trace"])
+    assert sum(
+        row["submit_ts"] == 2_600 for row in results["python"]["_quote_trace"]
+    ) == 2

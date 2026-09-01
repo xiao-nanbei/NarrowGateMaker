@@ -4120,6 +4120,17 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         )
     replay_event_clock = str(params.get("replay_event_clock", "trade") or "trade").lower()
     replay_clock_interval_ms = int(params.get("replay_clock_interval_ms", 100) or 100)
+    replace_terminal_continuation = bool(
+        params.get("replace_terminal_continuation", False)
+    )
+    if replace_terminal_continuation and (
+        replay_event_clock != "merged"
+        or replay_clock_interval_ms != 100
+        or float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0
+    ):
+        raise ValueError(
+            "replace_terminal_continuation requires merged 100ms replay clock"
+        )
     exchange_book_queue_mode = str(
         params.get("exchange_book_queue_mode", "disabled") or "disabled"
     ).strip().lower()
@@ -11407,6 +11418,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     decision_skip_filter_count = 0
     decision_pending_coalesce_count = 0
     decision_cancel_first_count = 0
+    replacement_terminal_due_ts = {"BUY": -1, "SELL": -1}
+    replacement_terminal_cadence_defer_until_ms = -1
+    replacement_terminal_terminal_count = 0
+    replacement_terminal_decision_count = 0
+    replacement_terminal_bid_decision_count = 0
+    replacement_terminal_ask_decision_count = 0
+    replacement_terminal_decision_latency_sum_ms = 0
+    replacement_terminal_decision_latency_max_ms = 0
     decision_side_role_action_counts: dict[str, int] = {}
     fills_while_pending_cancel = 0
     max_pending_new_orders = 0
@@ -12468,9 +12487,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     record["variance_ready_ts_ms"] = int(episode.ready_ts_ms)
                     record["variance_ready_status"] = "observed"
 
-    def _fill_cooldown_active(side: str, now_ts_ms: int) -> bool:
+    def _fill_cooldown_active(
+        side: str,
+        now_ts_ms: int,
+        *,
+        mutate_state: bool = True,
+    ) -> bool:
         if fill_cooldown_clock_mode == "variance_time":
-            episode = _advance_variance_episode(side, int(now_ts_ms))
+            episode = (
+                _advance_variance_episode(side, int(now_ts_ms))
+                if mutate_state
+                else _variance_episode_for_side(side)
+            )
             return bool(episode is not None and episode.active)
         if fill_cooldown_clock_mode == "randomized_lineage":
             record = _cooldown_lineage_record(side)
@@ -12479,7 +12507,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 and str(record.get("action", ""))
                 == LINEAGE_CANDIDATE_ACTION
             ):
-                episode = _advance_variance_episode(side, int(now_ts_ms))
+                episode = (
+                    _advance_variance_episode(side, int(now_ts_ms))
+                    if mutate_state
+                    else _variance_episode_for_side(side)
+                )
                 return bool(episode is not None and episode.active)
         if side == "BUY":
             return bool(
@@ -15503,7 +15535,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         side_ctx: dict,
         quote_diag: dict,
         block_reasons: list[str],
+        route_allowed: bool = True,
     ) -> None:
+        if not route_allowed:
+            return
         _cooldown_lineage_observe_decision(
             side,
             int(now_ts),
@@ -22188,12 +22223,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
     ):
         normalized_target = str(target_order_id).strip()
         normalized_guard_target = str(guard_initiated_order_id).strip()
+        replacement_reason = str(reason) in {
+            "requote_replace",
+            "cancel_first_replace",
+        }
         for order in orders:
             if float(order.get("remaining", 0.0) or 0.0) < LOT_SIZE:
                 continue
             order_id = _ranked_guard_order_id(order)
             if normalized_target and order_id != normalized_target:
                 continue
+            if replace_terminal_continuation and not replacement_reason:
+                order["replace_terminal_continuation_armed"] = False
             if order["state"] == ORDER_PENDING_NEW and (
                 serial_rest_return_enabled or reason in {
                     "requote_replace", "side_disabled", "cancel_first_replace",
@@ -22283,6 +22324,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     rest_gateway_last_timing["rest_return_ts_ms"]
                 )
             order["cancel_reason"] = reason
+            if replace_terminal_continuation and replacement_reason:
+                order["replace_terminal_continuation_armed"] = True
             if order["state"] == ORDER_OPEN:
                 order["state"] = ORDER_PENDING_CANCEL
             _record_order_lifecycle_cancel_request(
@@ -22581,11 +22624,20 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         adj = math.ceil((quote_mid + dist * spread_mult) / TICK) * TICK
         return max(adj, quote_mid + TICK)
 
-    def _replay_common_side_policy(side: str, quote_ctx: dict):
+    def _replay_common_side_policy(
+        side: str,
+        quote_ctx: dict,
+        *,
+        mutate_state: bool = True,
+    ):
         markout_ema = mo_ema_bid if side == "BUY" else mo_ema_ask
         toxicity = cur_tox_bid if side == "BUY" else cur_tox_ask
         exposure_increasing = q >= 0.0 if side == "BUY" else q <= 0.0
-        cooldown_active = _fill_cooldown_active(side, int(t))
+        cooldown_active = _fill_cooldown_active(
+            side,
+            int(t),
+            mutate_state=mutate_state,
+        )
         quote_ctx["policy_markout"] = bool(markout_ema < 0.0 and markout_spread_scale > 0.0)
         near_depth = float(
             quote_ctx.get(
@@ -22855,6 +22907,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         nonlocal circuit_breaker_close_gtx_reject_count
         nonlocal circuit_breaker_close_gtx_reject_streak
         nonlocal dynamic_fill_hazard_cpp_activation_count
+        nonlocal replacement_terminal_terminal_count
         idx = 0
         while idx < len(orders):
             order = orders[idx]
@@ -23365,6 +23418,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 order["cancel_ts"] > 0
                 and order["cancel_ts"] <= now_ts
                 and not order.get("cancel_terminal_suppressed_full_fill", False)
+                and not (
+                    replace_terminal_continuation
+                    and bool(
+                        order.get(
+                            "replace_terminal_continuation_armed",
+                            False,
+                        )
+                    )
+                    and int(order.get("cancel_request_ts", -1)) >= int(now_ts)
+                )
                 and order["state"] in (
                     ORDER_PENDING_NEW,
                     ORDER_OPEN,
@@ -23402,6 +23465,21 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     visibility_ts_ms=int(now_ts),
                     exchange_ts_ms=int(cancel_effective_ts),
                 )
+                if (
+                    replace_terminal_continuation
+                    and bool(
+                        order.get(
+                            "replace_terminal_continuation_armed",
+                            False,
+                        )
+                    )
+                    and str(order.get("cancel_reason") or "")
+                    in {"requote_replace", "cancel_first_replace"}
+                ):
+                    replacement_terminal_due_ts[side] = int(
+                        order.get("cancel_ts", now_ts) or now_ts
+                    )
+                    replacement_terminal_terminal_count += 1
                 orders.pop(idx)
                 continue
 
@@ -25750,6 +25828,43 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 int(t),
                 lifecycle_fallback_mid,
             )
+        continuation_pending_bid = bool(
+            replace_terminal_continuation
+            and replacement_terminal_due_ts["BUY"] >= 0
+            and not bid_orders
+        )
+        continuation_pending_ask = bool(
+            replace_terminal_continuation
+            and replacement_terminal_due_ts["SELL"] >= 0
+            and not ask_orders
+        )
+        # The merged replay clock contains 1ms market-data boundaries as well
+        # as the fixed 100ms policy timer. A terminal callback may become
+        # visible at either kind of boundary, but live continuation is a main
+        # loop action: keep it pending until the next actual timer wake.
+        continuation_timer_wake = bool(
+            replace_terminal_continuation
+            and replay_event_clock == "merged"
+            and (
+                (main_loop_enabled and is_main_loop_wake)
+                or (
+                    not main_loop_enabled
+                    and int(t) % replay_clock_interval_ms == 0
+                )
+            )
+        )
+        continuation_force_bid_due = bool(
+            continuation_pending_bid and continuation_timer_wake
+        )
+        continuation_force_ask_due = bool(
+            continuation_pending_ask and continuation_timer_wake
+        )
+        continuation_bid_terminal_ts = replacement_terminal_due_ts["BUY"]
+        continuation_ask_terminal_ts = replacement_terminal_due_ts["SELL"]
+        if continuation_force_bid_due:
+            replacement_terminal_due_ts["BUY"] = -1
+        if continuation_force_ask_due:
+            replacement_terminal_due_ts["SELL"] = -1
         exchange_book_pre_advance = (
             exchange_book_scheduler.advance_to(
                 int(t) * 1_000_000,
@@ -26927,11 +27042,40 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             continue
         if replay_event_clock == "empirical" and empirical_clock_action != 2:
             continue
-        scheduled_requote_due = (
+        scheduled_requote_due_raw = (
             empirical_clock_action == 2
             if replay_event_clock == "empirical"
             else t - last_rq_ts >= cur_rq_ms
         )
+        # Terminal continuation wins a same-wake collision with the ordinary
+        # cadence. It performs a fresh side-only decision without advancing
+        # last_rq_ts; the overdue ordinary cadence remains due at the following
+        # 100ms wake. While waiting for that wake, intermediate market events
+        # cannot consume the continuation or start a normal quote decision.
+        cadence_defer_ready = bool(
+            replacement_terminal_cadence_defer_until_ms >= 0
+            and continuation_timer_wake
+            and int(t) >= replacement_terminal_cadence_defer_until_ms
+        )
+        if replacement_terminal_cadence_defer_until_ms >= 0:
+            scheduled_requote_due = bool(
+                scheduled_requote_due_raw and cadence_defer_ready
+            )
+            if cadence_defer_ready:
+                replacement_terminal_cadence_defer_until_ms = -1
+        else:
+            scheduled_requote_due = bool(
+                scheduled_requote_due_raw
+                and not (continuation_pending_bid or continuation_pending_ask)
+            )
+        if (
+            continuation_force_bid_due or continuation_force_ask_due
+        ) and scheduled_requote_due_raw:
+            replacement_terminal_cadence_defer_until_ms = max(
+                replacement_terminal_cadence_defer_until_ms,
+                int(t) + replay_clock_interval_ms,
+            )
+            scheduled_requote_due = False
         response_force_bid_due = bool(
             post_fill_quote_response_cfg.enabled
             and post_fill_quote_response_force_bid_requote
@@ -26948,17 +27092,63 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             scheduled_requote_due = active_quote_compute["scheduled_requote_due"]
             response_force_bid_due = active_quote_compute["response_force_bid_due"]
             response_force_ask_due = active_quote_compute["response_force_ask_due"]
+            continuation_force_bid_due = active_quote_compute[
+                "continuation_force_bid_due"
+            ]
+            continuation_force_ask_due = active_quote_compute[
+                "continuation_force_ask_due"
+            ]
+            continuation_bid_terminal_ts = active_quote_compute[
+                "continuation_bid_terminal_ts"
+            ]
+            continuation_ask_terminal_ts = active_quote_compute[
+                "continuation_ask_terminal_ts"
+            ]
+            if continuation_force_bid_due:
+                replacement_terminal_due_ts["BUY"] = -1
+            if continuation_force_ask_due:
+                replacement_terminal_due_ts["SELL"] = -1
+        continuation_side_routing = bool(
+            continuation_force_bid_due or continuation_force_ask_due
+        )
+        bid_route_due = bool(
+            not continuation_side_routing or continuation_force_bid_due
+        )
+        ask_route_due = bool(
+            not continuation_side_routing or continuation_force_ask_due
+        )
+        pair_route_due = bool(bid_route_due and ask_route_due)
         if (
             sampled_serial_gateway
             and not is_quote_compute_resume
             and (int(t) < rest_gateway_busy_until_ms or serial_rest_decision is not None)
-            and (scheduled_requote_due or response_force_bid_due or response_force_ask_due)
+            and (
+                scheduled_requote_due
+                or response_force_bid_due
+                or response_force_ask_due
+                or continuation_force_bid_due
+                or continuation_force_ask_due
+            )
         ):
             # Exchange matching and private callbacks above still advance.
             # A synchronous REST lane cannot begin another policy decision.
+            if continuation_force_bid_due:
+                replacement_terminal_due_ts["BUY"] = int(
+                    continuation_bid_terminal_ts
+                )
+            if continuation_force_ask_due:
+                replacement_terminal_due_ts["SELL"] = int(
+                    continuation_ask_terminal_ts
+                )
             rest_gateway_decision_deferral_count += 1
             continue
-        if scheduled_requote_due or response_force_bid_due or response_force_ask_due:
+        if (
+            scheduled_requote_due
+            or response_force_bid_due
+            or response_force_ask_due
+            or continuation_force_bid_due
+            or continuation_force_ask_due
+        ):
             if main_loop_enabled and not is_quote_compute_resume:
                 # Live sets its timer at actual _requote() entry, never at a
                 # missed fixed-grid deadline. Compute also occupies keep/skip
@@ -26977,7 +27167,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # such as fill cooldown. Fixed mode keeps the scheduler anchored to
             # the intended cadence while still using the latest observed market
             # state at this trade.
-            if main_loop_enabled and not is_quote_compute_resume:
+            if (
+                main_loop_enabled
+                and not is_quote_compute_resume
+                and not continuation_side_routing
+            ):
                 last_rq_ts = t
             elif scheduled_requote_due and replay_event_clock == "empirical":
                 last_rq_ts = t
@@ -27028,16 +27222,60 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "scheduled_requote_due": bool(scheduled_requote_due),
                     "response_force_bid_due": bool(response_force_bid_due),
                     "response_force_ask_due": bool(response_force_ask_due),
+                    "continuation_force_bid_due": bool(
+                        continuation_force_bid_due
+                    ),
+                    "continuation_force_ask_due": bool(
+                        continuation_force_ask_due
+                    ),
+                    "continuation_bid_terminal_ts": int(
+                        continuation_bid_terminal_ts
+                    ),
+                    "continuation_ask_terminal_ts": int(
+                        continuation_ask_terminal_ts
+                    ),
                 }
                 pre_snapshot_compute_count += 1
                 pre_snapshot_compute_sum_ms += pre_ms
                 if pre_ms > 0:
+                    if continuation_force_bid_due:
+                        replacement_terminal_due_ts["BUY"] = int(
+                            continuation_bid_terminal_ts
+                        )
+                    if continuation_force_ask_due:
+                        replacement_terminal_due_ts["SELL"] = int(
+                            continuation_ask_terminal_ts
+                        )
                     pending_quote_compute = active_quote_compute
                     active_quote_compute = None
                     continue
 
             if active_quote_compute is not None:
                 pre_snapshot_compute_completed_count += 1
+            if continuation_force_bid_due:
+                replacement_terminal_decision_count += 1
+                replacement_terminal_bid_decision_count += 1
+                latency_ms = max(
+                    0,
+                    int(t) - int(continuation_bid_terminal_ts),
+                )
+                replacement_terminal_decision_latency_sum_ms += latency_ms
+                replacement_terminal_decision_latency_max_ms = max(
+                    replacement_terminal_decision_latency_max_ms,
+                    latency_ms,
+                )
+            if continuation_force_ask_due:
+                replacement_terminal_decision_count += 1
+                replacement_terminal_ask_decision_count += 1
+                latency_ms = max(
+                    0,
+                    int(t) - int(continuation_ask_terminal_ts),
+                )
+                replacement_terminal_decision_latency_sum_ms += latency_ms
+                replacement_terminal_decision_latency_max_ms = max(
+                    replacement_terminal_decision_latency_max_ms,
+                    latency_ms,
+                )
             truth_book_state = (
                 cur_best_bid,
                 cur_best_ask,
@@ -27774,17 +28012,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # Live parity: side policy widens quotes after quote_core, so replay
             # must apply the same policy before enforcing the final cap.
             bid_common_policy, bid_policy_mult = _replay_common_side_policy(
-                "BUY", quote_context["BUY"]
+                "BUY",
+                quote_context["BUY"],
+                mutate_state=bid_route_due,
             )
             ask_common_policy, ask_policy_mult = _replay_common_side_policy(
-                "SELL", quote_context["SELL"]
+                "SELL",
+                quote_context["SELL"],
+                mutate_state=ask_route_due,
             )
             quote_context["BUY"]["campaign_soft_control"] = False
             quote_context["SELL"]["campaign_soft_control"] = False
             quote_context["BUY"]["campaign_soft_spread_mult"] = 1.0
             quote_context["SELL"]["campaign_soft_spread_mult"] = 1.0
-            bid_campaign_soft = _campaign_soft_control_active("BUY", int(t), quote_context["BUY"])
-            ask_campaign_soft = _campaign_soft_control_active("SELL", int(t), quote_context["SELL"])
+            bid_campaign_soft = bool(
+                bid_route_due
+                and _campaign_soft_control_active(
+                    "BUY", int(t), quote_context["BUY"]
+                )
+            )
+            ask_campaign_soft = bool(
+                ask_route_due
+                and _campaign_soft_control_active(
+                    "SELL", int(t), quote_context["SELL"]
+                )
+            )
             if bid_campaign_soft:
                 quote_context["BUY"]["campaign_soft_control"] = True
                 quote_context["BUY"]["campaign_soft_spread_mult"] = campaign_soft_spread_mult
@@ -27799,6 +28051,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ask_campaign_soft_control_count += 1
 
             if (
+                bid_route_due
+                and
                 buy_soft_widen_release_probe_enabled
                 and not buy_soft_widen_release_target_consumed
                 and int(t) == buy_soft_widen_release_target_ts_ms
@@ -27881,7 +28135,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             quote_context["BUY"]["buy_fill_selection_live_hit"] = False
             quote_context["BUY"]["buy_fill_selection_live_threshold_hit"] = False
             quote_context["BUY"]["buy_fill_selection_live_missing_features"] = 0
-            if buy_fill_selection_live_enabled and buy_fill_selection_model is not None:
+            if (
+                bid_route_due
+                and buy_fill_selection_live_enabled
+                and buy_fill_selection_model is not None
+            ):
                 bid_exposure_increasing_for_score = q >= 0.0
                 if bid_exposure_increasing_for_score or buy_fill_selection_live_apply_reducing:
                     base_bid_px = float(
@@ -27978,24 +28236,41 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             refill_edge = float(
                 add_ctx.get("l2_book_refresh_ratio", 0.0) or 0.0
             ) - float(add_ctx.get("l2_book_cancel_ratio", 0.0) or 0.0)
-            response_decision = post_fill_quote_response.quote(
-                now_ms=int(t),
-                inventory=float(q),
-                order_size=float(order_size),
-                baseline_bid=float(nbid),
-                baseline_ask=float(nask),
-                tick_size=float(TICK),
-                max_pair_spread=max_spread_post_policy,
-                best_bid=float(cur_best_bid),
-                best_ask=float(cur_best_ask),
-                volatility_bps=(
-                    math.sqrt(max(float(sigma_sq), 0.0))
-                    / max(float(mid), 1e-12)
-                    * 10_000.0
-                ),
-                refill_edge=refill_edge,
-                repair_probability=repair_probability,
-            )
+            response_state = None
+            if not pair_route_due:
+                response_state = (
+                    post_fill_quote_response._add_side,
+                    post_fill_quote_response._excitation,
+                    post_fill_quote_response._last_update_ms,
+                    post_fill_quote_response._last_half_life_s,
+                )
+            try:
+                response_decision = post_fill_quote_response.quote(
+                    now_ms=int(t),
+                    inventory=float(q),
+                    order_size=float(order_size),
+                    baseline_bid=float(nbid),
+                    baseline_ask=float(nask),
+                    tick_size=float(TICK),
+                    max_pair_spread=max_spread_post_policy,
+                    best_bid=float(cur_best_bid),
+                    best_ask=float(cur_best_ask),
+                    volatility_bps=(
+                        math.sqrt(max(float(sigma_sq), 0.0))
+                        / max(float(mid), 1e-12)
+                        * 10_000.0
+                    ),
+                    refill_edge=refill_edge,
+                    repair_probability=repair_probability,
+                )
+            finally:
+                if response_state is not None:
+                    (
+                        post_fill_quote_response._add_side,
+                        post_fill_quote_response._excitation,
+                        post_fill_quote_response._last_update_ms,
+                        post_fill_quote_response._last_half_life_s,
+                    ) = response_state
             if (
                 ber_exposure_add_only
                 and ber_active
@@ -28005,7 +28280,11 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "role-safe BER current-stack identity requires the frozen "
                     "post-fill quote response to remain disabled"
                 )
-            if post_fill_quote_response_cfg.enabled and abs(q) > 1e-12:
+            if (
+                pair_route_due
+                and post_fill_quote_response_cfg.enabled
+                and abs(q) > 1e-12
+            ):
                 post_fill_quote_response_eval_count += 1
                 post_fill_quote_response_half_life_sum += (
                     response_decision.effective_half_life_s
@@ -28099,6 +28378,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 and len(trace_post_fill_quote_response)
                 < trace_post_fill_quote_response_max
                 and post_fill_quote_response_cfg.enabled
+                and pair_route_due
             ):
                 trace_post_fill_quote_response.append(
                     {
@@ -28138,7 +28418,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             nask = response_decision.ask_price
 
             mirror_eligible = (
-                random_passive_enabled
+                pair_route_due
+                and random_passive_enabled
                 and (
                     not random_passive_preserve_inventory_skew
                     or abs(q) <= LOT_SIZE * 0.5
@@ -28410,7 +28691,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     )
                     ask_notional_capped = capped < ask_sz
                     ask_sz = capped
-                risk_notional_cap_count += int(bid_notional_capped) + int(ask_notional_capped)
+                risk_notional_cap_count += int(
+                    bid_route_due and bid_notional_capped
+                ) + int(ask_route_due and ask_notional_capped)
 
             bid_can_post_after_inventory = q < max_inv and bid_sz >= LOT_SIZE
             ask_can_post_after_inventory = q > -max_inv and ask_sz >= LOT_SIZE
@@ -28475,8 +28758,16 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # reducers, and vice versa for a short campaign.
             quote_context["BUY"]["campaign_stop_add"] = False
             quote_context["SELL"]["campaign_stop_add"] = False
-            bid_campaign_stop_add = hb_new and _campaign_stop_add_active("BUY", int(t))
-            ask_campaign_stop_add = ha_new and _campaign_stop_add_active("SELL", int(t))
+            bid_campaign_stop_add = bool(
+                bid_route_due
+                and hb_new
+                and _campaign_stop_add_active("BUY", int(t))
+            )
+            ask_campaign_stop_add = bool(
+                ask_route_due
+                and ha_new
+                and _campaign_stop_add_active("SELL", int(t))
+            )
             if bid_campaign_stop_add:
                 hb_new = False
                 quote_context["BUY"]["campaign_stop_add"] = True
@@ -29146,11 +29437,12 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             # These are live controls, not experimental arm outputs. Apply
             # them after every policy that can reopen a side so a downstream
             # shadow action cannot bypass the production blocker.
-            _evaluate_dynamic_fill_hazard_prospective_recovery(
-                candidate_price=float(nbid),
-                now_ts=int(t),
-            )
-            if _dynamic_fill_hazard_buy_blocked() and hb_new:
+            if bid_route_due:
+                _evaluate_dynamic_fill_hazard_prospective_recovery(
+                    candidate_price=float(nbid),
+                    now_ts=int(t),
+                )
+            if bid_route_due and _dynamic_fill_hazard_buy_blocked() and hb_new:
                 hb_new = False
                 bid_block_reasons.append("dynamic_fill_hazard_q90")
                 quote_context["BUY"]["dynamic_fill_hazard_q90_block"] = True
@@ -29163,47 +29455,59 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
             quote_context["BUY"]["sync_adjust_degrade_block"] = False
             quote_context["SELL"]["sync_adjust_degrade_block"] = False
             if sync_adjust_active:
-                if q >= -max(float(LOT_SIZE) * 0.5, 1e-12) and hb_new:
+                if (
+                    bid_route_due
+                    and q >= -max(float(LOT_SIZE) * 0.5, 1e-12)
+                    and hb_new
+                ):
                     hb_new = False
                     bid_block_reasons.append("sync_adjust_degrade")
                     quote_context["BUY"]["sync_adjust_degrade_block"] = True
                     sync_adjust_degrade_block_bid_count += 1
-                if q <= max(float(LOT_SIZE) * 0.5, 1e-12) and ha_new:
+                if (
+                    ask_route_due
+                    and q <= max(float(LOT_SIZE) * 0.5, 1e-12)
+                    and ha_new
+                ):
                     ha_new = False
                     ask_block_reasons.append("sync_adjust_degrade")
                     quote_context["SELL"]["sync_adjust_degrade_block"] = True
                     sync_adjust_degrade_block_ask_count += 1
 
-            _post_cooldown_budget_observe_release_surface(
-                "BUY",
-                now_ts=int(t),
-                can_post=bool(hb_new),
-                side_orders=bid_orders,
-                block_reasons=bid_block_reasons,
-            )
-            _post_cooldown_budget_observe_release_surface(
-                "SELL",
-                now_ts=int(t),
-                can_post=bool(ha_new),
-                side_orders=ask_orders,
-                block_reasons=ask_block_reasons,
-            )
-
-            nbid, bid_multi_short_price_changed = (
-                _apply_multi_short_repair_quote(
-                    int(t),
-                    baseline_bid=float(nbid),
-                    best_bid=float(cur_best_bid),
-                    best_ask=float(cur_best_ask),
-                    mark_px=float(mid),
+            if bid_route_due:
+                _post_cooldown_budget_observe_release_surface(
+                    "BUY",
+                    now_ts=int(t),
                     can_post=bool(hb_new),
-                    defense_pause_observed=bool(bid_defense_hard_pause),
-                    defense_override_requested=bool(
-                        bid_multi_short_defense_override_requested
-                    ),
-                    side_ctx=quote_context["BUY"],
+                    side_orders=bid_orders,
+                    block_reasons=bid_block_reasons,
                 )
-            )
+            if ask_route_due:
+                _post_cooldown_budget_observe_release_surface(
+                    "SELL",
+                    now_ts=int(t),
+                    can_post=bool(ha_new),
+                    side_orders=ask_orders,
+                    block_reasons=ask_block_reasons,
+                )
+
+            bid_multi_short_price_changed = False
+            if bid_route_due:
+                nbid, bid_multi_short_price_changed = (
+                    _apply_multi_short_repair_quote(
+                        int(t),
+                        baseline_bid=float(nbid),
+                        best_bid=float(cur_best_bid),
+                        best_ask=float(cur_best_ask),
+                        mark_px=float(mid),
+                        can_post=bool(hb_new),
+                        defense_pause_observed=bool(bid_defense_hard_pause),
+                        defense_override_requested=bool(
+                            bid_multi_short_defense_override_requested
+                        ),
+                        side_ctx=quote_context["BUY"],
+                    )
+                )
             if (
                 bid_multi_short_price_changed
                 or bid_multi_short_defense_override_requested
@@ -29217,17 +29521,19 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nask,
                 )
 
-            nask, ask_price_penalty_applied = (
-                _apply_sell_add_price_penalty_action(
-                    int(t),
-                    baseline_bid=float(nbid),
-                    baseline_ask=float(nask),
-                    mark_px=float(mid),
-                    max_pair_spread=float(max_spread_post_policy),
-                    can_post=bool(ha_new),
-                    side_ctx=quote_context["SELL"],
+            ask_price_penalty_applied = False
+            if ask_route_due:
+                nask, ask_price_penalty_applied = (
+                    _apply_sell_add_price_penalty_action(
+                        int(t),
+                        baseline_bid=float(nbid),
+                        baseline_ask=float(nask),
+                        mark_px=float(mid),
+                        max_pair_spread=float(max_spread_post_policy),
+                        can_post=bool(ha_new),
+                        side_ctx=quote_context["SELL"],
+                    )
                 )
-            )
             if ask_price_penalty_applied:
                 _refresh_final_quote_context(
                     quote_context,
@@ -29238,16 +29544,18 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     nask,
                 )
 
-            nbid, nask, fair_center_pair_changed = _apply_fair_center_shift(
-                int(t),
-                baseline_bid=float(nbid),
-                baseline_ask=float(nask),
-                best_bid=float(cur_best_bid),
-                best_ask=float(cur_best_ask),
-                mark_px=float(mid),
-                bid_can_post=bool(hb_new),
-                ask_can_post=bool(ha_new),
-            )
+            fair_center_pair_changed = False
+            if pair_route_due:
+                nbid, nask, fair_center_pair_changed = _apply_fair_center_shift(
+                    int(t),
+                    baseline_bid=float(nbid),
+                    baseline_ask=float(nask),
+                    best_bid=float(cur_best_bid),
+                    best_ask=float(cur_best_ask),
+                    mark_px=float(mid),
+                    bid_can_post=bool(hb_new),
+                    ask_can_post=bool(ha_new),
+                )
             if fair_center_pair_changed:
                 _refresh_final_quote_context(
                     quote_context,
@@ -29282,7 +29590,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
                 bid_gate_status = 0
                 ask_gate_status = 0
-                if hb_new and bid_exposure:
+                if bid_route_due and hb_new and bid_exposure:
                     conditional_p3_reach_gate_eval_count += 1
                     bid_gate_status = _conditional_p3_status_for(
                         side="BUY",
@@ -29298,7 +29606,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         float(cur_tox_bid)
                         >= conditional_p3_reach_gate_buy_toxicity_threshold
                     )
-                if ha_new and ask_exposure:
+                if ask_route_due and ha_new and ask_exposure:
                     conditional_p3_reach_gate_eval_count += 1
                     ask_gate_status = _conditional_p3_status_for(
                         side="SELL",
@@ -29324,8 +29632,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     lot_size=float(LOT_SIZE),
                     tick_size=float(TICK),
                     max_pair_spread=float(max_spread_post_policy),
-                    bid_allowed=bool(hb_new),
-                    ask_allowed=bool(ha_new),
+                    bid_allowed=bool(bid_route_due and hb_new),
+                    ask_allowed=bool(ask_route_due and ha_new),
                     tox_bid=float(cur_tox_bid),
                     tox_ask=float(cur_tox_ask),
                     bid_toxicity_threshold=(
@@ -29408,12 +29716,14 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 )
                 bid_exposure_increasing = bool(q >= 0.0)
                 ask_exposure_increasing = bool(q <= 0.0)
-                ranked_guard_bid_decision_id = (
-                    f"BTCUSDC:{int(t)}:{int(i)}:BUY"
-                )
-                ranked_guard_ask_decision_id = (
-                    f"BTCUSDC:{int(t)}:{int(i)}:SELL"
-                )
+                if bid_route_due:
+                    ranked_guard_bid_decision_id = (
+                        f"BTCUSDC:{int(t)}:{int(i)}:BUY"
+                    )
+                if ask_route_due:
+                    ranked_guard_ask_decision_id = (
+                        f"BTCUSDC:{int(t)}:{int(i)}:SELL"
+                    )
                 bid_active_exposure_order_id = (
                     _ranked_guard_order_id(bid_ref_order)
                     if bid_exposure_increasing
@@ -29428,8 +29738,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     and int(ask_ref_order.get("cancel_ts", -1) or -1) <= 0
                     else ""
                 )
-                ranked_guard_bid_directive = (
-                    ranked_toxicity_guard_binding.on_quote_decision(
+                if bid_route_due:
+                    ranked_guard_bid_directive = ranked_toxicity_guard_binding.on_quote_decision(
                         decision_id=ranked_guard_bid_decision_id,
                         decision_ts_ns=int(t) * 1_000_000,
                         side="BUY",
@@ -29455,9 +29765,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         ),
                         untreated_lineage_ordinal=untreated_lineage_ordinal,
                     )
-                )
-                ranked_guard_ask_directive = (
-                    ranked_toxicity_guard_binding.on_quote_decision(
+                if ask_route_due:
+                    ranked_guard_ask_directive = ranked_toxicity_guard_binding.on_quote_decision(
                         decision_id=ranked_guard_ask_decision_id,
                         decision_ts_ns=int(t) * 1_000_000,
                         side="SELL",
@@ -29483,26 +29792,35 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         ),
                         untreated_lineage_ordinal=untreated_lineage_ordinal,
                     )
-                )
                 if (
-                    bid_exposure_increasing
+                    bid_route_due
+                    and ranked_guard_bid_directive is not None
+                    and bid_exposure_increasing
                     and not ranked_guard_bid_directive.allow_exposure_submission
                 ):
                     hb_new = False
                     bid_block_reasons.append("ranked_toxicity_guard")
                     quote_context["BUY"]["ranked_toxicity_guard_block"] = True
                 if (
-                    ask_exposure_increasing
+                    ask_route_due
+                    and ranked_guard_ask_directive is not None
+                    and ask_exposure_increasing
                     and not ranked_guard_ask_directive.allow_exposure_submission
                 ):
                     ha_new = False
                     ask_block_reasons.append("ranked_toxicity_guard")
                     quote_context["SELL"]["ranked_toxicity_guard_block"] = True
-                if ranked_guard_bid_directive.request_cancel_once:
+                if (
+                    ranked_guard_bid_directive is not None
+                    and ranked_guard_bid_directive.request_cancel_once
+                ):
                     ranked_guard_bid_cancel_order_id = str(
                         ranked_guard_bid_directive.cancel_order_id
                     )
-                if ranked_guard_ask_directive.request_cancel_once:
+                if (
+                    ranked_guard_ask_directive is not None
+                    and ranked_guard_ask_directive.request_cancel_once
+                ):
                     ranked_guard_ask_cancel_order_id = str(
                         ranked_guard_ask_directive.cancel_order_id
                     )
@@ -29671,6 +29989,13 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ask_updated = False
                 quote_context["SELL"]["queue_value_forced_keep"] = True
 
+            if not bid_route_due:
+                bid_updated = False
+                ranked_guard_bid_cancel_order_id = ""
+            if not ask_route_due:
+                ask_updated = False
+                ranked_guard_ask_cancel_order_id = ""
+
             bid_pending_coalesce = (
                 hb_new and bid_updated and replace_pending_coalesce and bid_pending_order is not None
             )
@@ -29793,6 +30118,10 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 ask_action = "pause"
             elif not ask_updated and ask_active_before:
                 ask_action = "keep"
+            if not bid_route_due:
+                bid_action = "none"
+            if not ask_route_due:
+                ask_action = "none"
             if (
                 ema_add_wait_fork_enabled
                 and ema_add_wait_fork_assigned
@@ -29816,60 +30145,64 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                         f"actual={ema_add_wait_fork_target_actual_action}"
                     )
             if ranked_toxicity_guard_binding_active:
-                ranked_toxicity_guard_binding.on_final_quote_action(
-                    decision_id=ranked_guard_bid_decision_id,
+                if bid_route_due:
+                    ranked_toxicity_guard_binding.on_final_quote_action(
+                        decision_id=ranked_guard_bid_decision_id,
+                        side="BUY",
+                        role=inventory_role_for_quote(
+                            "BUY", float(q), float(order_size)
+                        ),
+                        exposure_increasing=bool(q >= 0.0),
+                        candidate_action=str(bid_action),
+                        candidate_price=float(nbid),
+                        candidate_quantity=float(bid_sz),
+                        candidate_order_id=(
+                            _ranked_guard_order_id(bid_ref_order)
+                            if bid_ref_order is not None
+                            else ""
+                        ),
+                        event_ts_ns=int(t) * 1_000_000,
+                    )
+                if ask_route_due:
+                    ranked_toxicity_guard_binding.on_final_quote_action(
+                        decision_id=ranked_guard_ask_decision_id,
+                        side="SELL",
+                        role=inventory_role_for_quote(
+                            "SELL", float(q), float(order_size)
+                        ),
+                        exposure_increasing=bool(q <= 0.0),
+                        candidate_action=str(ask_action),
+                        candidate_price=float(nask),
+                        candidate_quantity=float(ask_sz),
+                        candidate_order_id=(
+                            _ranked_guard_order_id(ask_ref_order)
+                            if ask_ref_order is not None
+                            else ""
+                        ),
+                        event_ts_ns=int(t) * 1_000_000,
+                    )
+            if bid_route_due:
+                _multi_short_repair_record_final_decision(
+                    int(t),
+                    can_post=bool(hb_new),
+                    bid_action=str(bid_action),
+                    price_changed=bool(bid_multi_short_price_changed),
+                    defense_override_requested=bool(
+                        bid_multi_short_defense_override_requested
+                    ),
+                    block_reasons=bid_block_reasons,
+                )
+                _count_decision_action(
+                    bid_action,
                     side="BUY",
-                    role=inventory_role_for_quote(
-                        "BUY", float(q), float(order_size)
-                    ),
-                    exposure_increasing=bool(q >= 0.0),
-                    candidate_action=str(bid_action),
-                    candidate_price=float(nbid),
-                    candidate_quantity=float(bid_sz),
-                    candidate_order_id=(
-                        _ranked_guard_order_id(bid_ref_order)
-                        if bid_ref_order is not None
-                        else ""
-                    ),
-                    event_ts_ns=int(t) * 1_000_000,
+                    exposure_increasing=q >= 0.0,
                 )
-                ranked_toxicity_guard_binding.on_final_quote_action(
-                    decision_id=ranked_guard_ask_decision_id,
+            if ask_route_due:
+                _count_decision_action(
+                    ask_action,
                     side="SELL",
-                    role=inventory_role_for_quote(
-                        "SELL", float(q), float(order_size)
-                    ),
-                    exposure_increasing=bool(q <= 0.0),
-                    candidate_action=str(ask_action),
-                    candidate_price=float(nask),
-                    candidate_quantity=float(ask_sz),
-                    candidate_order_id=(
-                        _ranked_guard_order_id(ask_ref_order)
-                        if ask_ref_order is not None
-                        else ""
-                    ),
-                    event_ts_ns=int(t) * 1_000_000,
+                    exposure_increasing=q <= 0.0,
                 )
-            _multi_short_repair_record_final_decision(
-                int(t),
-                can_post=bool(hb_new),
-                bid_action=str(bid_action),
-                price_changed=bool(bid_multi_short_price_changed),
-                defense_override_requested=bool(
-                    bid_multi_short_defense_override_requested
-                ),
-                block_reasons=bid_block_reasons,
-            )
-            _count_decision_action(
-                bid_action,
-                side="BUY",
-                exposure_increasing=q >= 0.0,
-            )
-            _count_decision_action(
-                ask_action,
-                side="SELL",
-                exposure_increasing=q <= 0.0,
-            )
 
             _append_decision_trace(
                 "BUY",
@@ -29903,6 +30236,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 side_ctx=quote_context["BUY"],
                 quote_diag=diag,
                 block_reasons=bid_block_reasons,
+                route_allowed=bid_route_due,
             )
             _append_decision_trace(
                 "SELL",
@@ -29936,29 +30270,36 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 side_ctx=quote_context["SELL"],
                 quote_diag=diag,
                 block_reasons=ask_block_reasons,
+                route_allowed=ask_route_due,
             )
-            _maybe_submit_safe_add_rearm_probe(
-                "BUY",
-                int(t),
-                final_price=float(nbid),
-                final_size=float(bid_sz),
-                side_ctx=quote_context["BUY"],
-                block_reasons=bid_block_reasons,
-                can_post_after_inventory=bool(bid_can_post_after_inventory),
-                exposure_increasing=bool(q >= 0.0),
-                side_orders=bid_orders,
-            )
-            _maybe_submit_safe_add_rearm_probe(
-                "SELL",
-                int(t),
-                final_price=float(nask),
-                final_size=float(ask_sz),
-                side_ctx=quote_context["SELL"],
-                block_reasons=ask_block_reasons,
-                can_post_after_inventory=bool(ask_can_post_after_inventory),
-                exposure_increasing=bool(q <= 0.0),
-                side_orders=ask_orders,
-            )
+            if bid_route_due:
+                _maybe_submit_safe_add_rearm_probe(
+                    "BUY",
+                    int(t),
+                    final_price=float(nbid),
+                    final_size=float(bid_sz),
+                    side_ctx=quote_context["BUY"],
+                    block_reasons=bid_block_reasons,
+                    can_post_after_inventory=bool(
+                        bid_can_post_after_inventory
+                    ),
+                    exposure_increasing=bool(q >= 0.0),
+                    side_orders=bid_orders,
+                )
+            if ask_route_due:
+                _maybe_submit_safe_add_rearm_probe(
+                    "SELL",
+                    int(t),
+                    final_price=float(nask),
+                    final_size=float(ask_sz),
+                    side_ctx=quote_context["SELL"],
+                    block_reasons=ask_block_reasons,
+                    can_post_after_inventory=bool(
+                        ask_can_post_after_inventory
+                    ),
+                    exposure_increasing=bool(q <= 0.0),
+                    side_orders=ask_orders,
+                )
 
             replacement_blocked_sides = set()
             if serial_rest_return_enabled:
@@ -32049,6 +32390,31 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
         "replace_min_interval_ms_reducing": replace_min_interval_ms_reducing,
         "replace_pending_coalesce": bool(replace_pending_coalesce),
         "replace_pending_coalesce_replayed": True,
+        **(
+            {
+                "replace_terminal_continuation": True,
+                "replace_terminal_continuation_terminal_count": (
+                    replacement_terminal_terminal_count
+                ),
+                "replace_terminal_continuation_decision_count": (
+                    replacement_terminal_decision_count
+                ),
+                "replace_terminal_continuation_bid_decision_count": (
+                    replacement_terminal_bid_decision_count
+                ),
+                "replace_terminal_continuation_ask_decision_count": (
+                    replacement_terminal_ask_decision_count
+                ),
+                "replace_terminal_continuation_decision_latency_sum_ms": (
+                    replacement_terminal_decision_latency_sum_ms
+                ),
+                "replace_terminal_continuation_decision_latency_max_ms": (
+                    replacement_terminal_decision_latency_max_ms
+                ),
+            }
+            if replace_terminal_continuation
+            else {}
+        ),
         "replace_cancel_first_exposure_increasing": bool(replace_cancel_first_exposure_increasing),
         "replace_cancel_first_exposure_increasing_replayed": True,
         "replace_throttle_count": replace_throttle_count,
@@ -34745,6 +35111,17 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         )
     replay_event_clock = str(params.get("replay_event_clock", "trade") or "trade").lower()
     replay_clock_interval_ms = int(params.get("replay_clock_interval_ms", 100) or 100)
+    replace_terminal_continuation = bool(
+        params.get("replace_terminal_continuation", False)
+    )
+    if replace_terminal_continuation and (
+        replay_event_clock != "merged"
+        or replay_clock_interval_ms != 100
+        or float(params.get("replay_main_loop_sleep_ms", 0) or 0) != 0.0
+    ):
+        raise ValueError(
+            "replace_terminal_continuation requires merged 100ms replay clock"
+        )
     exchange_book_queue_mode = str(
         params.get("exchange_book_queue_mode", "disabled") or "disabled"
     ).strip().lower()
@@ -35119,6 +35496,15 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         float(params.get("replace_min_interval_ms_reducing", cpp_params.replace_min_interval_ms) or 0.0),
     )
     cpp_params.replace_pending_coalesce = bool(params.get("replace_pending_coalesce", False))
+    if replace_terminal_continuation and not hasattr(
+        cpp_params,
+        "replace_terminal_continuation",
+    ):
+        raise RuntimeError(
+            "narrowgate_cpp is stale: rebuild for replace_terminal_continuation"
+        )
+    if hasattr(cpp_params, "replace_terminal_continuation"):
+        cpp_params.replace_terminal_continuation = replace_terminal_continuation
     cpp_params.replace_cancel_first_exposure_increasing = bool(
         params.get("replace_cancel_first_exposure_increasing", False)
     )
@@ -36756,6 +37142,31 @@ def _simulate_tick_cpp(trades_df, var_ts_ms, var_ssq, params,
         "replace_min_interval_ms_reducing": float(params.get("replace_min_interval_ms_reducing", 0.0) or 0.0),
         "replace_pending_coalesce": bool(params.get("replace_pending_coalesce", False)),
         "replace_pending_coalesce_replayed": True,
+        **(
+            {
+                "replace_terminal_continuation": True,
+                "replace_terminal_continuation_terminal_count": int(
+                    summary.replace_terminal_continuation_terminal_count
+                ),
+                "replace_terminal_continuation_decision_count": int(
+                    summary.replace_terminal_continuation_decision_count
+                ),
+                "replace_terminal_continuation_bid_decision_count": int(
+                    summary.replace_terminal_continuation_bid_decision_count
+                ),
+                "replace_terminal_continuation_ask_decision_count": int(
+                    summary.replace_terminal_continuation_ask_decision_count
+                ),
+                "replace_terminal_continuation_decision_latency_sum_ms": int(
+                    summary.replace_terminal_continuation_decision_latency_sum_ms
+                ),
+                "replace_terminal_continuation_decision_latency_max_ms": int(
+                    summary.replace_terminal_continuation_decision_latency_max_ms
+                ),
+            }
+            if replace_terminal_continuation
+            else {}
+        ),
         "replace_cancel_first_exposure_increasing": bool(
             params.get("replace_cancel_first_exposure_increasing", False)
         ),
@@ -38438,6 +38849,13 @@ def _daily_result_row(day_label: str, result: dict) -> dict:
         "replace_min_interval_ms_reducing",
         "replace_pending_coalesce",
         "replace_pending_coalesce_replayed",
+        "replace_terminal_continuation",
+        "replace_terminal_continuation_terminal_count",
+        "replace_terminal_continuation_decision_count",
+        "replace_terminal_continuation_bid_decision_count",
+        "replace_terminal_continuation_ask_decision_count",
+        "replace_terminal_continuation_decision_latency_sum_ms",
+        "replace_terminal_continuation_decision_latency_max_ms",
         "replace_cancel_first_exposure_increasing",
         "replace_cancel_first_exposure_increasing_replayed",
         "replace_throttle_count",

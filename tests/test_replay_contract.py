@@ -260,6 +260,46 @@ def test_formal_contract_is_stable_and_fresh_start(tmp_path):
     ] == list(INDIVIDUAL_TRADES_REPAIRED_DAYS)
 
 
+def test_replace_terminal_continuation_is_opt_in_and_contract_bound(tmp_path):
+    params = _contract_params(tmp_path)
+    omitted = build_replay_contract(params, root=tmp_path)
+    explicit_false = build_replay_contract(
+        {**params, "replace_terminal_continuation": False},
+        root=tmp_path,
+    )
+    enabled = build_replay_contract(
+        {**params, "replace_terminal_continuation": True},
+        root=tmp_path,
+    )
+
+    assert omitted == explicit_false
+    assert "replace_terminal_continuation" not in omitted["path_dependent_controls"]
+    assert enabled["contract_sha256"] != omitted["contract_sha256"]
+    assert enabled["path_dependent_controls"]["replace_terminal_continuation"] == {
+        "enabled": True,
+        "trigger": "replacement_cancel_authoritative_local_terminal",
+        "decision_clock": "next_merged_100ms_wake",
+        "side_scope": "terminal_side_only",
+        "quote_state": "fresh_recompute_no_cached_price_or_quantity",
+        "normal_cadence_advanced": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"replay_event_clock": "trade"},
+        {"replay_clock_interval_ms": 200},
+        {"replay_main_loop_sleep_ms": 100},
+    ],
+)
+def test_replace_terminal_continuation_rejects_wrong_clock(tmp_path, overrides):
+    params = _contract_params(tmp_path)
+    params.update(replace_terminal_continuation=True, **overrides)
+    with pytest.raises(RuntimeError, match="replacement terminal continuation"):
+        freeze_replay_contract(params, root=tmp_path)
+
+
 def test_legacy_contract_omits_unselected_split_lifecycle_identities(tmp_path):
     params = _contract_params(tmp_path)
     for name in (
