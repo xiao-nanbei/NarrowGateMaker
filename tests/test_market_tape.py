@@ -44,6 +44,54 @@ def test_usdm_market_subscription_never_falls_back_to_raw_trade():
     assert fake_ws.raw_subscriptions == []
 
 
+def test_stream_watchdog_ignores_trade_and_anchor_event_silence():
+    cfg = Config()
+    handler = WSHandler(SimpleNamespace(), cfg)
+    now = 1_000.0
+    handler._market_trade_seen = {"btcusdc": 0.0, "btcusdt": 0.0}
+    handler._market_book_seen = {"btcusdc": now, "btcusdt": 0.0}
+    handler._spot_trade_seen = {"btcusdt": 0.0}
+    handler._spot_book_seen = {"btcusdt": 0.0}
+
+    assert handler._execution_stream_silence_reasons(
+        market_symbols=["btcusdc", "btcusdt"],
+        now_ts=now,
+    ) == []
+
+
+def test_stream_watchdog_restarts_for_periodic_execution_depth_silence():
+    cfg = Config()
+    handler = WSHandler(SimpleNamespace(), cfg)
+    handler._market_book_seen = {"btcusdc": 900.0}
+
+    assert handler._execution_stream_silence_reasons(
+        market_symbols=["btcusdc", "btcusdt"],
+        now_ts=1_000.0,
+    ) == ["btcusdc@executionDepth 100s"]
+
+
+def test_execution_depth_message_refreshes_watchdog_transport_clock():
+    cfg = Config()
+    signal = SimpleNamespace(on_depth=lambda *_args, **_kwargs: None)
+    handler = WSHandler(SimpleNamespace(signal=signal), cfg)
+    handler._market_book_seen = {"btcusdc": 0.0}
+
+    handler._on_market_message(
+        None,
+        {
+            "e": "depthUpdate",
+            "s": "BTCUSDC",
+            "E": 1,
+            "u": 2,
+            "pu": 1,
+            "b": [],
+            "a": [],
+        },
+    )
+
+    assert handler._market_book_seen["btcusdc"] > 0.0
+
+
 def test_market_tape_row_separates_transport_and_feature_latency():
     row = normalize_market_tape_row(
         {

@@ -1153,14 +1153,19 @@ class WSHandler:
     def _arm_stream_silence_watchdog(
         self, market_symbols: list[str], spot_symbols: list[str], session_id: int
     ):
-        """Reconnect market streams when any required cross-market stream goes silent."""
-        market_symbols = [self._stream_key(s) for s in market_symbols if s]
-        spot_symbols = [self._stream_key(s) for s in spot_symbols if s]
-        if not market_symbols and not spot_symbols:
-            return
+        """Reconnect only when the execution-book transport becomes silent.
 
-        def _age(store: dict[str, float], symbol: str, now_ts: float) -> float:
-            return now_ts - store.get(symbol, now_ts)
+        ``aggTrade`` and ``bookTicker`` are event-driven feeds: silence can mean
+        that the market simply did not trade or the BBO did not change.  Those
+        clocks still drive feature freshness, but they cannot establish a dead
+        socket.  The execution partial-depth stream is periodic and therefore
+        remains the reconnect authority.  Auxiliary reference feeds degrade in
+        their consumers instead of restarting unrelated futures sockets.
+        """
+        market_symbols = [self._stream_key(s) for s in market_symbols if s]
+        del spot_symbols
+        if not market_symbols:
+            return
 
         def _watch():
             while self._running and session_id == self._market_session_id:
@@ -1169,38 +1174,10 @@ class WSHandler:
                     return
 
                 now_ts = time.time()
-                stale = []
-                exec_symbol = self.cfg.symbol.lower()
-
-                for symbol in market_symbols:
-                    timeout = (
-                        self._exec_stream_silence_timeout
-                        if symbol == exec_symbol
-                        else self._anchor_stream_silence_timeout
-                    )
-                    age = _age(self._market_trade_seen, symbol, now_ts)
-                    if age > timeout:
-                        stale.append(f"{symbol}@aggTrade {age:.0f}s")
-
-                for symbol in market_symbols:
-                    timeout = (
-                        self._exec_stream_silence_timeout
-                        if symbol == exec_symbol
-                        else self._anchor_stream_silence_timeout
-                    )
-                    age = _age(self._market_book_seen, symbol, now_ts)
-                    if age > timeout:
-                        stale.append(f"{symbol}@bookTicker {age:.0f}s")
-
-                if self._spot_stream_active:
-                    for symbol in spot_symbols:
-                        timeout = self._anchor_stream_silence_timeout
-                        trade_age = _age(self._spot_trade_seen, symbol, now_ts)
-                        book_age = _age(self._spot_book_seen, symbol, now_ts)
-                        if trade_age > timeout:
-                            stale.append(f"spot:{symbol}@aggTrade {trade_age:.0f}s")
-                        if book_age > timeout:
-                            stale.append(f"spot:{symbol}@bookTicker {book_age:.0f}s")
+                stale = self._execution_stream_silence_reasons(
+                    market_symbols=market_symbols,
+                    now_ts=now_ts,
+                )
 
                 if not stale:
                     continue
@@ -1213,6 +1190,23 @@ class WSHandler:
                 return
 
         threading.Thread(target=_watch, daemon=True).start()
+
+    def _execution_stream_silence_reasons(
+        self,
+        *,
+        market_symbols: list[str],
+        now_ts: float,
+    ) -> list[str]:
+        """Return reconnect-authoritative execution depth silence only."""
+
+        exec_symbol = self._stream_key(self.cfg.symbol)
+        if exec_symbol not in market_symbols:
+            return []
+        last_seen = self._market_book_seen.get(exec_symbol, float(now_ts))
+        age = max(0.0, float(now_ts) - float(last_seen))
+        if age <= self._exec_stream_silence_timeout:
+            return []
+        return [f"{exec_symbol}@executionDepth {age:.0f}s"]
 
     def _restart_market_stream_after_silence(self):
         if not self._running:
@@ -1531,6 +1525,12 @@ class WSHandler:
 
             elif event_type == "depthUpdate":
                 self._depth_count += 1
+                event_key = self._stream_key(str(data.get("s", "")))
+                if event_key:
+                    # The execution partial-depth stream is periodic and is the
+                    # only event-silence clock allowed to restart market/public
+                    # transport.  bookTicker and aggTrade remain feature clocks.
+                    self._market_book_seen[event_key] = time.time()
                 self.engine.signal.on_depth(
                     data,
                     receive_ts_ns=receive_ns,
