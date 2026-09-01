@@ -606,6 +606,7 @@ class SignalEngine:
         self._cpp_signal_features_enabled = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
         )
+        self._cpp_execution_l2_disabled_after_error = False
         self._cpp_global_flow_requested = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
         )
@@ -2705,7 +2706,66 @@ class SignalEngine:
         for name in EXECUTION_L2_FEATURE_COLS:
             f[name] = 0.0
 
+    def _compute_cpp_execution_l2_values(
+        self,
+        bucket_end_ms: int,
+    ) -> Optional[np.ndarray]:
+        if (
+            not self._cpp_signal_features_enabled
+            or self._cpp_signal is None
+            or self._cpp_execution_l2_disabled_after_error
+            or not hasattr(
+                self._cpp_signal,
+                "compute_signal_execution_l2_feature_values",
+            )
+        ):
+            return None
+        try:
+            native_names = tuple(
+                getattr(self._cpp_signal, "SIGNAL_EXECUTION_L2_FEATURE_NAMES", ())
+            )
+            expected_names = tuple(EXECUTION_L2_FEATURE_COLS)
+            if native_names != expected_names:
+                raise RuntimeError(
+                    "C++ execution L2 feature order changed: "
+                    f"expected={expected_names} actual={native_names}"
+                )
+            values = np.asarray(
+                self._cpp_signal.compute_signal_execution_l2_feature_values(
+                    self._depth_history,
+                    float(bucket_end_ms),
+                ),
+                dtype=np.float64,
+            )
+            expected_shape = (len(EXECUTION_L2_FEATURE_COLS),)
+            if values.shape != expected_shape:
+                raise RuntimeError(
+                    "C++ execution L2 feature row shape changed: "
+                    f"expected={expected_shape} actual={values.shape}"
+                )
+            if not values.flags.c_contiguous:
+                values = np.ascontiguousarray(values, dtype=np.float64)
+            return values
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning("C++ execution L2 features disabled after error: %s", exc)
+            self._cpp_execution_l2_disabled_after_error = True
+            return None
+
     def _compute_execution_l2_features(self, f: dict, bucket_end_ms: int):
+        cpp_values = self._compute_cpp_execution_l2_values(bucket_end_ms)
+        if cpp_values is not None:
+            f.update(
+                (name, float(value))
+                for name, value in zip(
+                    EXECUTION_L2_FEATURE_COLS,
+                    cpp_values,
+                    strict=True,
+                )
+            )
+            return
+
         bucket_start_ms = bucket_end_ms - 10_000
         snapshots = list(self._depth_history)
         if not snapshots:

@@ -1,8 +1,143 @@
+import numpy as np
 import pytest
+
+from strategy.signal import (
+    EXECUTION_L2_FEATURE_COLS,
+    Bar1s,
+    DepthSnapshot,
+    SignalEngine,
+)
 
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
 
-from strategy.signal import Bar1s, SignalEngine
+
+def _depth_snapshot(ts: float, index: int, *, depth: int = 10) -> DepthSnapshot:
+    mid = 60_000.0 + (index % 7) * 0.1
+    return DepthSnapshot(
+        ts=ts,
+        bids=[
+            (mid - 0.1 * level, 0.1 + level * 0.01 + (index % 5) * 0.001)
+            for level in range(1, depth + 1)
+        ],
+        asks=[
+            (mid + 0.1 * level, 0.11 + level * 0.012 + (index % 3) * 0.001)
+            for level in range(1, depth + 1)
+        ],
+    )
+
+
+def _python_execution_l2_values(
+    snapshots: list[DepthSnapshot],
+    bucket_end_ms: int,
+) -> np.ndarray:
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal_features_enabled = False
+    engine._depth_history.extend(snapshots)
+    features: dict[str, float] = {}
+    engine._compute_execution_l2_features(features, bucket_end_ms)
+    return np.asarray(
+        [features[name] for name in EXECUTION_L2_FEATURE_COLS],
+        dtype=np.float64,
+    )
+
+
+def _native_execution_l2_values(
+    snapshots: list[DepthSnapshot],
+    bucket_end_ms: int,
+) -> np.ndarray:
+    return np.asarray(
+        narrowgate_cpp.compute_signal_execution_l2_feature_values(
+            snapshots,
+            bucket_end_ms,
+        ),
+        dtype=np.float64,
+    )
+
+
+def test_cpp_execution_l2_batch_matches_python_exactly_at_102_snapshots() -> None:
+    bucket_end_ms = 1_000_000
+    bucket_start_ms = bucket_end_ms - 10_000
+    snapshots = [_depth_snapshot(bucket_start_ms - 1, -1)]
+    snapshots.extend(
+        _depth_snapshot(bucket_start_ms + index * 97, index)
+        for index in range(102)
+    )
+
+    assert tuple(narrowgate_cpp.SIGNAL_EXECUTION_L2_FEATURE_NAMES) == tuple(
+        EXECUTION_L2_FEATURE_COLS
+    )
+    expected = _python_execution_l2_values(snapshots, bucket_end_ms)
+    actual = _native_execution_l2_values(snapshots, bucket_end_ms)
+    assert actual.flags.c_contiguous
+    assert np.array_equal(actual, expected)
+
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal = narrowgate_cpp
+    engine._cpp_signal_features_enabled = True
+    engine._depth_history.extend(snapshots)
+    integrated: dict[str, float] = {}
+    engine._compute_execution_l2_features(integrated, bucket_end_ms)
+    assert np.array_equal(
+        np.asarray(
+            [integrated[name] for name in EXECUTION_L2_FEATURE_COLS],
+            dtype=np.float64,
+        ),
+        expected,
+    )
+
+
+@pytest.mark.parametrize(
+    "snapshots",
+    [
+        [],
+        [
+            DepthSnapshot(
+                ts=999_500,
+                bids=[(100.0, -1.0)],
+                asks=[(100.2, 2.0)],
+            )
+        ],
+        [
+            _depth_snapshot(989_999, 0, depth=3),
+            _depth_snapshot(999_999, 1, depth=1),
+        ],
+    ],
+    ids=("empty", "single_shallow", "sparse_with_previous"),
+)
+def test_cpp_execution_l2_batch_matches_python_empty_and_sparse_histories(
+    snapshots: list[DepthSnapshot],
+) -> None:
+    expected = _python_execution_l2_values(snapshots, 1_000_000)
+    actual = _native_execution_l2_values(snapshots, 1_000_000)
+    assert np.array_equal(actual, expected)
+
+
+def test_cpp_execution_l2_batch_preserves_cutoff_and_invalid_latest_state() -> None:
+    bucket_end_ms = 1_000_000
+    visible = [
+        _depth_snapshot(989_999, 0),
+        _depth_snapshot(990_000, 1),
+        _depth_snapshot(999_999, 2),
+    ]
+    expected = _native_execution_l2_values(visible, bucket_end_ms)
+    future = _depth_snapshot(bucket_end_ms, 100)
+    future.bids[0] = (1.0, 1_000_000.0)
+    future.asks[0] = (1_000_000.0, 1_000_000.0)
+    assert np.array_equal(
+        _native_execution_l2_values([*visible, future], bucket_end_ms),
+        expected,
+    )
+
+    invalid_latest = DepthSnapshot(ts=bucket_end_ms - 1, bids=[], asks=[])
+    with_invalid = [*visible, invalid_latest]
+    assert np.array_equal(
+        _native_execution_l2_values(with_invalid, bucket_end_ms),
+        _python_execution_l2_values(with_invalid, bucket_end_ms),
+    )
+    assert np.array_equal(
+        _native_execution_l2_values(with_invalid, bucket_end_ms),
+        np.zeros(len(EXECUTION_L2_FEATURE_COLS), dtype=np.float64),
+    )
 
 
 def test_cpp_signal_feature_overlay_matches_python_core_features():

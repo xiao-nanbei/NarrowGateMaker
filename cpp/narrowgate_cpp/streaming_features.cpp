@@ -311,6 +311,176 @@ SignalFeatureEngine::SignalFeatureEngine(std::size_t max_bars, std::size_t max_h
       return_abs_8640_(std::min<std::size_t>(max_history_, 8640)),
       vol_regime_6h_60480_(std::min<std::size_t>(max_history_, 60480)) {}
 
+namespace {
+
+struct SignalExecutionL2Summary {
+    SignalExecutionL2FeatureValues state{};
+    double total_depth = 0.0;
+    double best_bid = 0.0;
+    double best_ask = 0.0;
+};
+
+std::optional<SignalExecutionL2Summary> summarize_signal_execution_l2_snapshot(
+    const SignalExecutionL2Snapshot& snapshot
+) {
+    const std::size_t depth = std::min(snapshot.depth, kSignalExecutionL2MaxDepth);
+    if (depth == 0) {
+        return std::nullopt;
+    }
+
+    std::array<double, kSignalExecutionL2MaxDepth> bid_cumulative{};
+    std::array<double, kSignalExecutionL2MaxDepth> ask_cumulative{};
+    std::array<double, kSignalExecutionL2MaxDepth> level_quantity{};
+    double bid_total = 0.0;
+    double ask_total = 0.0;
+    for (std::size_t index = 0; index < depth; ++index) {
+        const double bid_quantity = std::max(snapshot.bid_quantity[index], 0.0);
+        const double ask_quantity = std::max(snapshot.ask_quantity[index], 0.0);
+        bid_total += bid_quantity;
+        ask_total += ask_quantity;
+        bid_cumulative[index] = bid_total;
+        ask_cumulative[index] = ask_total;
+        level_quantity[index] = bid_quantity + ask_quantity;
+    }
+
+    const double best_bid = snapshot.bid_price[0];
+    const double best_ask = snapshot.ask_price[0];
+    const double mid = 0.5 * (best_bid + best_ask);
+    if (best_bid <= 0.0 || best_ask <= best_bid || mid <= 0.0) {
+        return std::nullopt;
+    }
+
+    const auto imbalance = [&](std::size_t level) {
+        const std::size_t index = std::min(level, depth) - 1;
+        const double total = bid_cumulative[index] + ask_cumulative[index];
+        return total > 0.0
+            ? (bid_cumulative[index] - ask_cumulative[index]) / total
+            : 0.0;
+    };
+    const std::size_t near_index = std::min<std::size_t>(3, depth) - 1;
+    const double near_depth = bid_cumulative[near_index] + ask_cumulative[near_index];
+    const double total_depth = bid_cumulative[depth - 1] + ask_cumulative[depth - 1];
+    const double best_bid_quantity = bid_cumulative[0];
+    const double best_ask_quantity = ask_cumulative[0];
+    const double micro_den = best_bid_quantity + best_ask_quantity;
+    // Keep the two products materialized separately. NumPy's scalar ufuncs in
+    // the established Python implementation round each multiplication before
+    // the addition; allowing compiler contraction here changes the result by
+    // a few ULPs and violates exact feature parity.
+    volatile double weighted_bid = best_ask * best_bid_quantity;
+    volatile double weighted_ask = best_bid * best_ask_quantity;
+    const double microprice = micro_den > 0.0
+        ? (weighted_bid + weighted_ask) / micro_den
+        : mid;
+
+    const auto mean_range = [&](std::size_t begin, std::size_t end) {
+        if (begin >= end) {
+            return 0.0;
+        }
+        double total = 0.0;
+        for (std::size_t index = begin; index < end; ++index) {
+            total += level_quantity[index];
+        }
+        return total / static_cast<double>(end - begin);
+    };
+    const double front_mean = mean_range(0, std::min<std::size_t>(3, depth));
+    const double middle_mean = mean_range(3, std::min<std::size_t>(7, depth));
+    const double back_mean = mean_range(7, depth);
+    const double convexity_den = front_mean + middle_mean + back_mean;
+
+    SignalExecutionL2Summary summary;
+    summary.total_depth = total_depth;
+    summary.best_bid = best_bid;
+    summary.best_ask = best_ask;
+    summary.state[0] = (best_ask - best_bid) / mid * 10'000.0;
+    summary.state[1] = (microprice - mid) / mid * 10'000.0;
+    summary.state[2] = imbalance(1);
+    summary.state[3] = imbalance(3);
+    summary.state[4] = imbalance(5);
+    summary.state[5] = imbalance(10);
+    summary.state[6] = near_depth;
+    summary.state[7] = total_depth > 0.0 ? near_depth / total_depth : 0.0;
+    summary.state[8] = convexity_den > 0.0
+        ? (front_mean - 2.0 * middle_mean + back_mean) / convexity_den
+        : 0.0;
+    summary.state[9] = near_depth > 0.0 ? level_quantity[0] / near_depth : 0.0;
+    return summary;
+}
+
+}  // namespace
+
+SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
+    std::span<const SignalExecutionL2Snapshot> snapshots,
+    double bucket_end_ms
+) {
+    SignalExecutionL2FeatureValues values{};
+    if (snapshots.empty()) {
+        return values;
+    }
+    const double bucket_start_ms = bucket_end_ms - 10'000.0;
+
+    const SignalExecutionL2Snapshot* state_snapshot = nullptr;
+    for (auto iterator = snapshots.rbegin(); iterator != snapshots.rend(); ++iterator) {
+        if (iterator->ts_ms < bucket_end_ms) {
+            state_snapshot = &*iterator;
+            break;
+        }
+    }
+    const auto state_summary = state_snapshot == nullptr
+        ? std::nullopt
+        : summarize_signal_execution_l2_snapshot(*state_snapshot);
+    if (!state_summary.has_value()) {
+        return values;
+    }
+    std::copy_n(state_summary->state.begin(), 10, values.begin());
+
+    std::optional<SignalExecutionL2Summary> previous;
+    for (auto iterator = snapshots.rbegin(); iterator != snapshots.rend(); ++iterator) {
+        if (iterator->ts_ms < bucket_start_ms) {
+            previous = summarize_signal_execution_l2_snapshot(*iterator);
+            break;
+        }
+    }
+
+    double flip_count = 0.0;
+    double refresh_sum = 0.0;
+    double cancel_sum = 0.0;
+    std::size_t sample_count = 0;
+    for (const auto& snapshot : snapshots) {
+        if (snapshot.ts_ms < bucket_start_ms || snapshot.ts_ms >= bucket_end_ms) {
+            continue;
+        }
+        const auto summary = summarize_signal_execution_l2_snapshot(snapshot);
+        if (!summary.has_value()) {
+            continue;
+        }
+        if (previous.has_value()) {
+            if (summary->best_bid != previous->best_bid ||
+                summary->best_ask != previous->best_ask) {
+                flip_count += 1.0;
+            }
+            if (previous->total_depth > 0.0) {
+                const double delta_depth = summary->total_depth - previous->total_depth;
+                if (delta_depth > 0.0) {
+                    refresh_sum += delta_depth / previous->total_depth;
+                } else if (delta_depth < 0.0) {
+                    cancel_sum += -delta_depth / previous->total_depth;
+                }
+            }
+        }
+        previous = summary;
+        ++sample_count;
+    }
+
+    if (sample_count > 0) {
+        const double denominator = static_cast<double>(sample_count);
+        values[10] = flip_count / denominator;
+        values[11] = refresh_sum / denominator;
+        values[12] = cancel_sum / denominator;
+    }
+    return values;
+}
+
 void SignalFeatureEngine::reset() {
     bars_.clear();
     history_.clear();
