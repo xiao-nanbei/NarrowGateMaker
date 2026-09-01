@@ -3368,6 +3368,19 @@ class MakerEngine:
             return metrics
 
         end_exchange_ms = float(snapshot.depth_exchange_ts_ms)
+        native_values = self.signal._compute_cpp_l2_policy_values(
+            snapshots,
+            end_exchange_ms,
+        )
+        if native_values is not None:
+            (
+                metrics["l2_quote_flip_rate"],
+                metrics["l2_book_refresh_ratio"],
+                metrics["l2_book_cancel_ratio"],
+                metrics["l2_near_depth_total"],
+            ) = (float(value) for value in native_values)
+            return metrics
+
         start_exchange_ms = end_exchange_ms - 10_000.0
         prev_summary = None
         sample_count = 0

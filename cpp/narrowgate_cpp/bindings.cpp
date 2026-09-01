@@ -156,6 +156,14 @@ py::array_t<double> signal_execution_l2_feature_array(
     return out;
 }
 
+py::array_t<double> signal_execution_l2_policy_metric_array(
+    const SignalExecutionL2PolicyMetricValues& metrics
+) {
+    py::array_t<double> out(metrics.size());
+    std::copy(metrics.begin(), metrics.end(), out.mutable_data());
+    return out;
+}
+
 py::dict sparse_order_lifecycle_dict(
     const SparseOrderLifecycleResult& result
 ) {
@@ -4574,6 +4582,19 @@ void bind_streaming_features(py::module_& m) {
     }
     m.attr("SIGNAL_EXECUTION_L2_FEATURE_NAMES") =
         std::move(execution_l2_feature_names);
+    m.attr("SIGNAL_EXECUTION_L2_POLICY_METRIC_ABI_VERSION") =
+        "signal_execution_l2_policy_window.v1";
+    py::tuple execution_l2_policy_metric_names(
+        kSignalExecutionL2PolicyMetricNames.size()
+    );
+    for (std::size_t i = 0; i < kSignalExecutionL2PolicyMetricNames.size(); ++i) {
+        execution_l2_policy_metric_names[i] = py::str(
+            kSignalExecutionL2PolicyMetricNames[i].data(),
+            kSignalExecutionL2PolicyMetricNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES") =
+        std::move(execution_l2_policy_metric_names);
 
     py::class_<Bar1s>(m, "Bar1s")
         .def(py::init<>())
@@ -4715,6 +4736,24 @@ void bind_streaming_features(py::module_& m) {
         },
         py::arg("snapshots"),
         py::arg("bucket_end_ms")
+    );
+
+    m.def(
+        "compute_signal_execution_l2_policy_metric_values",
+        [](py::iterable snapshots, double end_exchange_ms) {
+            const auto native_snapshots = signal_execution_l2_from_python(snapshots);
+            SignalExecutionL2PolicyMetricValues values;
+            {
+                py::gil_scoped_release release;
+                values = compute_signal_execution_l2_policy_metrics(
+                    native_snapshots,
+                    end_exchange_ms
+                );
+            }
+            return signal_execution_l2_policy_metric_array(values);
+        },
+        py::arg("snapshots"),
+        py::arg("end_exchange_ms")
     );
 
 }

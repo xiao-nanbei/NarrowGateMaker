@@ -1,10 +1,17 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
+import strategy.signal as signal_module
+from live.config import Config
+from strategy.maker_engine import MakerEngine
 from strategy.signal import (
     EXECUTION_L2_FEATURE_COLS,
+    EXECUTION_L2_POLICY_METRIC_COLS,
     Bar1s,
     DepthSnapshot,
+    QuoteDepthObservation,
     SignalEngine,
 )
 
@@ -49,6 +56,59 @@ def _native_execution_l2_values(
         narrowgate_cpp.compute_signal_execution_l2_feature_values(
             snapshots,
             bucket_end_ms,
+        ),
+        dtype=np.float64,
+    )
+
+
+def _python_l2_policy_values(
+    snapshots: list[DepthSnapshot],
+    end_exchange_ms: float,
+) -> np.ndarray:
+    quote_snapshot = _policy_quote_snapshot(snapshots, end_exchange_ms)
+    signal = SignalEngine(enable_ml=False)
+    signal._cpp_signal_features_enabled = False
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.signal = signal
+    metrics = engine._current_l2_policy_metrics(60_000.0, quote_snapshot)
+    return np.asarray(
+        [metrics[name] for name in EXECUTION_L2_POLICY_METRIC_COLS],
+        dtype=np.float64,
+    )
+
+
+def _policy_quote_snapshot(
+    snapshots: list[DepthSnapshot],
+    end_exchange_ms: float,
+):
+    history = tuple(
+        QuoteDepthObservation(
+            exchange_ts_ms=int(item.ts),
+            receive_ts_ns=int(item.ts * 1_000_000),
+            bids=tuple(item.bids),
+            asks=tuple(item.asks),
+        )
+        for item in snapshots
+    )
+    latest = snapshots[-1] if snapshots else DepthSnapshot()
+    return SimpleNamespace(
+        depth_visible_age_s=0.0,
+        bids=tuple(latest.bids),
+        asks=tuple(latest.asks),
+        depth_history=history,
+        depth_exchange_ts_ms=int(end_exchange_ms),
+    )
+
+
+def _native_l2_policy_values(
+    snapshots: list[DepthSnapshot],
+    end_exchange_ms: float,
+) -> np.ndarray:
+    return np.asarray(
+        narrowgate_cpp.compute_signal_execution_l2_policy_metric_values(
+            snapshots,
+            end_exchange_ms,
         ),
         dtype=np.float64,
     )
@@ -138,6 +198,99 @@ def test_cpp_execution_l2_batch_preserves_cutoff_and_invalid_latest_state() -> N
         _native_execution_l2_values(with_invalid, bucket_end_ms),
         np.zeros(len(EXECUTION_L2_FEATURE_COLS), dtype=np.float64),
     )
+
+
+def test_cpp_l2_policy_batch_matches_python_inclusive_exchange_window() -> None:
+    end_exchange_ms = 1_000_000.0
+    snapshots = [
+        _depth_snapshot(989_999.0, 0),
+        _depth_snapshot(990_000.0, 1, depth=1),
+        DepthSnapshot(ts=995_000.0, bids=[], asks=[]),
+        _depth_snapshot(999_999.0, 2, depth=3),
+        _depth_snapshot(1_000_000.0, 3, depth=10),
+        _depth_snapshot(1_000_001.0, 4),
+    ]
+
+    assert tuple(narrowgate_cpp.SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES) == (
+        EXECUTION_L2_POLICY_METRIC_COLS
+    )
+    expected = _python_l2_policy_values(snapshots, end_exchange_ms)
+    actual = _native_l2_policy_values(snapshots, end_exchange_ms)
+    assert actual.flags.c_contiguous
+    assert np.array_equal(actual, expected)
+
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal = narrowgate_cpp
+    engine._cpp_signal_features_enabled = True
+    integrated = engine._compute_cpp_l2_policy_values(
+        snapshots,
+        end_exchange_ms,
+    )
+    assert integrated is not None
+    assert np.array_equal(integrated, expected)
+
+
+@pytest.mark.parametrize(
+    "snapshots",
+    [
+        [],
+        [DepthSnapshot(ts=1_000_000.0, bids=[], asks=[])],
+        [_depth_snapshot(989_999.0, 0)],
+        [_depth_snapshot(1_000_000.0, 1, depth=1)],
+    ],
+    ids=("empty", "invalid", "outside_window", "single_shallow_at_end"),
+)
+def test_cpp_l2_policy_batch_matches_python_empty_sparse_and_boundary(
+    snapshots: list[DepthSnapshot],
+) -> None:
+    expected = _python_l2_policy_values(snapshots, 1_000_000.0)
+    actual = _native_l2_policy_values(snapshots, 1_000_000.0)
+    assert np.array_equal(actual, expected)
+
+
+def test_cpp_l2_policy_missing_abi_falls_back_or_fails_strict(monkeypatch) -> None:
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal = object()
+    engine._cpp_signal_features_enabled = True
+    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: False)
+    assert engine._compute_cpp_l2_policy_values([], 1_000_000.0) is None
+    assert engine._cpp_l2_policy_disabled_after_error is True
+
+    strict_engine = SignalEngine(enable_ml=False)
+    strict_engine._cpp_signal = object()
+    strict_engine._cpp_signal_features_enabled = True
+    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: True)
+    with pytest.raises(
+        RuntimeError,
+        match="missing execution L2 policy metric batch ABI",
+    ):
+        strict_engine._compute_cpp_l2_policy_values([], 1_000_000.0)
+
+
+def test_maker_l2_policy_metrics_native_path_matches_python_fallback() -> None:
+    depth_snapshots = [
+        _depth_snapshot(990_000.0 + index * 100.0, index)
+        for index in range(101)
+    ]
+    quote_snapshot = _policy_quote_snapshot(depth_snapshots, 1_000_000.0)
+    signal = SignalEngine(enable_ml=False)
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.signal = signal
+
+    signal._cpp_signal_features_enabled = False
+    expected = engine._current_l2_policy_metrics(
+        60_000.0,
+        quote_snapshot,
+    )
+    signal._cpp_signal = narrowgate_cpp
+    signal._cpp_signal_features_enabled = True
+    actual = engine._current_l2_policy_metrics(
+        60_000.0,
+        quote_snapshot,
+    )
+
+    assert actual == expected
 
 
 def test_cpp_signal_feature_overlay_matches_python_core_features():
