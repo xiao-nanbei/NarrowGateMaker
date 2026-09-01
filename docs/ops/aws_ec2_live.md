@@ -209,11 +209,20 @@ after bounded health admission. When the approved control path requires SOCKS5,
 pass only the validated `--socks5-proxy HOST:PORT` option; arbitrary SSH options
 are not accepted.
 
-The prepared transaction currently admits only a running transient
+The normal prepared transaction admits a running transient
 `narrowgate.service`. It proves `active/running`, `Transient=yes`, the exact
 previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
 the previous release's `live/main.py` command line before stop. A persistent
-unit or ambiguous process fails before stop and is not modified.
+unit or ambiguous process fails before stop and is not modified. Use
+`--resume-stopped` only after the same transaction has already stopped the
+verified previous release but failed before reconciliation. That mode requires
+an inactive/absent unit, exact process quiescence, the unchanged previous
+current pointer, and absent reconciliation/activation outputs; it re-verifies
+the candidate before producing a fresh reconciliation.
+
+The private systemd `EnvironmentFile` uses standalone `NAME=value` records and
+must end with a newline before deployment grants are appended. Validate only
+key presence and syntax; never print secret values.
 
 Admission also requires `reconciliationPending=false` and a finite
 `lastTickAge` in `[0, 1s]`, derived from the existing 100 ms main-loop safety

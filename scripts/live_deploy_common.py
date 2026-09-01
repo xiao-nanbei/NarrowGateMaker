@@ -83,6 +83,24 @@ PREPARED_ACTIVATION_PHASES: Final = (
     "activation_receipt",
     "publish_current",
 )
+_QUIESCENCE_PROCESS_CHECK: Final = """import os
+
+for entry in os.scandir("/proc"):
+    if not entry.name.isdigit():
+        continue
+    try:
+        with open(f"/proc/{entry.name}/cmdline", "rb") as handle:
+            args = handle.read().split(b"\\0")
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        continue
+    if any(arg.endswith(b"/live/main.py") for arg in args):
+        raise SystemExit(1)
+    if b"__supervise" in args and any(
+        arg.endswith(b"/live/run.sh") for arg in args
+    ):
+        raise SystemExit(1)
+raise SystemExit(0)
+"""
 
 
 def canonical_sha256(value: Any) -> str:
@@ -453,10 +471,7 @@ done
 def render_quiescence_probe_shell() -> str:
     """Prove that neither the maker nor a supervisor capable of respawning it exists."""
 
-    return (
-        "test -z \"$(/usr/bin/pgrep -f -- '[l]ive/main.py' || true)\" && "
-        "test -z \"$(/usr/bin/pgrep -f -- '[l]ive/run.sh __supervise' || true)\""
-    )
+    return f"/usr/bin/python3 -c {shlex.quote(_QUIESCENCE_PROCESS_CHECK)}"
 
 
 def render_containment_shell(
@@ -949,6 +964,7 @@ def render_prepared_release_activation_shell(
     current_pointer_path: str,
     service_user: str = "ec2-user",
     health_timeout_s: int = 180,
+    resume_stopped: bool = False,
 ) -> str:
     """Render one fixed transaction over an already prepared release."""
 
@@ -974,6 +990,10 @@ def render_prepared_release_activation_shell(
         raise LiveDeployContractError("health timeout must be an integer")
     if not 10 <= health_timeout_s <= 900:
         raise LiveDeployContractError("health timeout must be between 10 and 900 seconds")
+    if not isinstance(resume_stopped, bool):
+        raise LiveDeployContractError("resume-stopped must be boolean")
+    resume = "1" if resume_stopped else "0"
+    previous_release_id = PurePosixPath(previous).name
     json_get = (
         "import json,sys;v=json.load(open(sys.argv[1]));"
         "[v:=v[k] for k in sys.argv[2].split('.')];print(v)"
@@ -1014,10 +1034,25 @@ def render_prepared_release_activation_shell(
         "assert p['release_id']==sys.argv[5];"
         "assert p['activation_receipt_sha256']==sys.argv[6]"
     )
-    script = f"""set -euo pipefail
+    previous_pointer_check = (
+        "import json,re,sys;v=json.load(open(sys.argv[1]));"
+        "assert v.get('schema_version')=='narrowgate_live_current_pointer.v2';"
+        "assert v.get('release_id')==sys.argv[2];"
+        "assert v.get('status')=='selected_activation';"
+        "assert re.fullmatch('[0-9a-f]{64}',v.get('activation_receipt_sha256',''))"
+    )
+    script = f"""set -Eeuo pipefail
 umask 077
 export PATH=/usr/bin:/bin
+phase=bootstrap
+report_error() {{
+  rc=$?
+  printf 'activation failed phase=%s line=%s rc=%s\n' "$phase" "$1" "$rc" >&2
+  return "$rc"
+}}
+trap 'report_error "$LINENO"' ERR
 rid={q(rid)} release={q(release)} previous={q(previous)} user={q(user)}
+resume_stopped={resume} previous_release_id={q(previous_release_id)}
 env_file={q(env_file)} config={q(config)} envelope={q(envelope)}
 envelope_sha={q(envelope_sha)} trusted={q(trusted)}
 reconciliation={q(reconciliation)} activation={q(activation)} current={q(current)}
@@ -1028,8 +1063,7 @@ lock="$(dirname "$current")/.narrowgate-live-activation.lock"
 cleanup_required=0
 pointer_committed=0
 quiescent() {{
-  test -z "$(pgrep -f -- '[l]ive/main.py' || true)" \
-    && test -z "$(pgrep -f -- '[l]ive/run.sh __supervise' || true)"
+  "$trusted" -c {q(_QUIESCENCE_PROCESS_CHECK)}
 }}
 cleanup() {{
   rc=$?
@@ -1124,23 +1158,38 @@ common=(
   --setenv="NARROWGATE_DEPLOYMENT_ENVELOPE_CANONICAL_SHA256=$envelope_sha"
   --setenv="NARROWGATE_STARTUP_TRUSTED_PYTHON_PATH=$trusted"
 )
+phase=candidate_verify
 sudo systemd-run --quiet --wait --collect --service-type=oneshot \
   --unit="narrowgate-verify-$rid" --property=NoNewPrivileges=true \
   --property=TimeoutStartSec=180 "${{common[@]}}" \
   "$release/live/run.sh" candidate-verify
-test "$(systemctl show narrowgate.service -p ActiveState --value)" = active
-test "$(systemctl show narrowgate.service -p SubState --value)" = running
-test "$(systemctl show narrowgate.service -p Transient --value)" = yes
-test "$(systemctl show narrowgate.service -p WorkingDirectory --value)" = "$previous"
-old_pid="$(systemctl show narrowgate.service -p MainPID --value)"
-process_matches "$old_pid" "$previous"
-sudo systemctl stop narrowgate.service
-quiescent
+phase=stop_or_resume_quiescence
+if test "$resume_stopped" = 1; then
+  resume_state="$(systemctl show narrowgate.service -p ActiveState --value 2>/dev/null || true)"
+  resume_substate="$(systemctl show narrowgate.service -p SubState --value 2>/dev/null || true)"
+  resume_pid="$(systemctl show narrowgate.service -p MainPID --value 2>/dev/null || true)"
+  case "$resume_state" in ''|inactive) ;; *) false ;; esac
+  case "$resume_substate" in ''|dead) ;; *) false ;; esac
+  case "$resume_pid" in ''|0) ;; *) false ;; esac
+  quiescent
+  canonical_input "$current"
+  "$trusted" -c {q(previous_pointer_check)} "$current" "$previous_release_id"
+else
+  test "$(systemctl show narrowgate.service -p ActiveState --value)" = active
+  test "$(systemctl show narrowgate.service -p SubState --value)" = running
+  test "$(systemctl show narrowgate.service -p Transient --value)" = yes
+  test "$(systemctl show narrowgate.service -p WorkingDirectory --value)" = "$previous"
+  old_pid="$(systemctl show narrowgate.service -p MainPID --value)"
+  process_matches "$old_pid" "$previous"
+  sudo systemctl stop narrowgate.service
+  quiescent
+fi
 install -d -m 0700 "$release/logs"
 if test -f "$previous/logs/fill_cooldown_state.json"; then
   install -m 0600 "$previous/logs/fill_cooldown_state.json" \
     "$release/logs/fill_cooldown_state.json"
 fi
+phase=fresh_reconcile
 sudo systemd-run --quiet --wait --collect --service-type=oneshot \
   --unit="narrowgate-reconcile-$rid" --property=NoNewPrivileges=true \
   --property=TimeoutStartSec=180 "${{common[@]}}" \
@@ -1169,6 +1218,7 @@ start_marker_owned=1
 trap 'exit 84' HUP INT TERM
 start_ns="$(date +%s%N)"
 cleanup_required=1
+phase=start_candidate
 sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
   --property=Restart=no --property=KillSignal=SIGTERM \
   --property=TimeoutStartSec=120 --property=TimeoutStopSec=120 \
@@ -1179,6 +1229,7 @@ sudo systemd-run --quiet --collect --service-type=simple --unit=narrowgate \
 health="$release/logs/runtime_health.json"
 runtime="$release/logs/runtime_identity.json"
 observations=0 last_generation=0 user_generation="" candidate_pid=""
+phase=bounded_health
 deadline=$((SECONDS + {health_timeout_s}))
 while test "$SECONDS" -lt "$deadline"; do
   state="$(systemctl is-active narrowgate.service 2>/dev/null || true)"
@@ -1210,6 +1261,7 @@ while test "$SECONDS" -lt "$deadline"; do
 done
 test "$observations" -ge 2
 candidate_unit_matches "$candidate_pid"
+phase=activation_receipt
 "$trusted" -I -B "$release/live/deployment_runtime.py" build-activation-receipt \
   --release-id "$rid" --deployment-envelope "$envelope" \
   --deployment-envelope-sha256 "$envelope_sha" \
@@ -1236,6 +1288,7 @@ done
 test "$fresh" = 1
 trap '' HUP INT TERM
 candidate_unit_matches "$candidate_pid"
+phase=publish_current
 "$trusted" -I -B "$release/live/deployment_runtime.py" publish-current-pointer \
   --release-id "$rid" --deployment-envelope "$envelope" \
   --deployment-envelope-sha256 "$envelope_sha" \
@@ -1286,6 +1339,7 @@ def activate_prepared_release(
         "target": target,
         "release_id": release_id,
         "phases": list(PREPARED_ACTIVATION_PHASES),
+        "resume_stopped": bool(activation.get("resume_stopped", False)),
     }
     proxy = _socks5_proxy(socks5_proxy)
     if proxy is not None:
@@ -1372,6 +1426,7 @@ def _build_parser() -> argparse.ArgumentParser:
     activation.add_argument("--connect-timeout-s", type=int, default=20)
     activation.add_argument("--command-timeout-s", type=int, default=900)
     activation.add_argument("--socks5-proxy")
+    activation.add_argument("--resume-stopped", action="store_true")
     activation.add_argument("--execute", action="store_true")
     return parser
 
@@ -1410,6 +1465,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 current_pointer_path=args.current_pointer,
                 service_user=args.service_user,
                 health_timeout_s=args.health_timeout_s,
+                resume_stopped=args.resume_stopped,
             )
         else:  # pragma: no cover - argparse owns the command set.
             raise LiveDeployContractError(f"unsupported command: {args.command}")

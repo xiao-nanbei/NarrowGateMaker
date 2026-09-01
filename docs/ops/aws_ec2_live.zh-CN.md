@@ -197,10 +197,17 @@ pointer rename 前的 health 失败会停止 candidate。命令不会盲目重�
 admission 通过后发布 current pointer。批准的控制路径需要 SOCKS5 时，只能使用经过校验的
 `--socks5-proxy HOST:PORT`，不能注入任意 SSH option。
 
-Prepared transaction 当前只接受正在运行的 transient `narrowgate.service`。Stop 前会
+正常 prepared transaction 接受正在运行的 transient `narrowgate.service`。Stop 前会
 证明 `active/running`、`Transient=yes`、精确 previous working directory、正数
 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的 `live/main.py` command
-line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。
+line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修改。只有同一事务已经停止
+经过验证的 previous release、但在 reconciliation 前失败时，才使用 `--resume-stopped`。
+该模式要求 unit inactive 或不存在、进程严格 quiescent、current pointer 仍指向 previous，且
+reconciliation/activation output 均不存在；随后重新验证 candidate 并生成 fresh
+reconciliation。
+
+私有 systemd `EnvironmentFile` 使用独立的 `NAME=value` 行；追加 deployment grant 前必须
+确保文件以换行结束。只校验变量名存在性和语法，不能打印 secret value。
 
 Admission 同时要求 `reconciliationPending=false`，且 `lastTickAge` 是 `[0, 1s]` 内有限值；
 该界限来自现有 100ms 主循环安全时钟及有界 scheduler allowance。Private user stream 必须

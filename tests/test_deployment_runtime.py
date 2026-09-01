@@ -1827,6 +1827,43 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert "load_current_pointer" not in shell[final_publish:cleanup_disarm]
     assert "start narrowgate.service" not in shell
     assert "rollback" not in shell
+    assert "pgrep -f" not in shell
+    assert '/proc/{entry.name}/cmdline' in shell
+    assert 'arg.endswith(b"/live/main.py")' in shell
+    assert "activation failed phase=%s line=%s rc=%s" in shell
+
+
+def test_prepared_activation_can_resume_only_from_proven_stopped_previous() -> None:
+    shell = source_deploy.render_prepared_release_activation_shell(
+        **_prepared_activation_args(),
+        resume_stopped=True,
+    )
+    rendered = shlex.split(shell)[-1]
+    subprocess.run(
+        ("bash", "-n", "-c", rendered),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    resume = rendered.index('if test "$resume_stopped" = 1')
+    reconcile = rendered.index('phase=fresh_reconcile', resume)
+    resume_block = rendered[resume:reconcile]
+    assert 'case "$resume_state" in \'\'|inactive)' in resume_block
+    assert 'case "$resume_substate" in \'\'|dead)' in resume_block
+    assert 'case "$resume_pid" in \'\'|0)' in resume_block
+    assert 'canonical_input "$current"' in resume_block
+    assert "narrowgate_live_current_pointer.v2" in resume_block
+    assert "selected_activation" in resume_block
+    assert "release_id" in resume_block
+    assert '"$current" "$previous_release_id"' in resume_block
+
+
+def test_quiescence_probe_matches_process_argv_not_wrapper_text() -> None:
+    probe = source_deploy.render_quiescence_probe_shell()
+    assert "pgrep -f" not in probe
+    assert "/proc/{entry.name}/cmdline" in probe
+    assert 'arg.endswith(b"/live/main.py")' in probe
+    assert 'b"__supervise" in args' in probe
 
 
 def test_prepared_activation_rejects_shell_shaped_identity_and_paths() -> None:

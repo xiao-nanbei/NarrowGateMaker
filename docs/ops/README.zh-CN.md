@@ -92,10 +92,18 @@ candidate，并且不会自动重启旧 release。`--service-user` 默认使用�
 另一个合法 service identity。只能通过本地 SOCKS5 到达的主机使用受限的
 `--socks5-proxy HOST:PORT`；命令不接受任意 SSH option。
 
-当前事务只支持由文档化 `systemd-run` contract 创建、正在运行的 transient
+正常事务接受由文档化 `systemd-run` contract 创建、正在运行的 transient
 `narrowgate.service`。停机前必须证明 `active/running`、`Transient=yes`、精确 previous
 working directory、正数 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 previous release 的
 `live/main.py` command line。Persistent unit 或不明确进程会在 stop 前失败，并保持不变。
+如果上一次事务已经停止这个精确 release、但尚未创建 reconciliation 就失败，唯一续接入口是
+`--resume-stopped`。它要求 maker/supervisor 均不存在、unit inactive 或不存在、current
+pointer 仍指向 previous release，且 reconciliation/activation output 都尚未出现；随后会重做
+candidate verification 并生成 fresh reconciliation。它不是绕过正常停机前证明的通用开关。
+
+私有 systemd `EnvironmentFile` 必须由独立的 `NAME=value` 行组成。追加 deployment grant
+之前必须确保上一行以换行结束，否则第一个 grant 会粘到前一个 secret value 后面。验证时不得
+打印该文件。
 
 Health admission 还要求 `reconciliationPending=false`，并且 `lastTickAge` 是零到一秒内的
 有限值。一秒上限来自现有 100ms 主循环安全时钟，并为有界 scheduler jitter 留出空间；

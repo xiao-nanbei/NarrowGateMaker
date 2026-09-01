@@ -105,12 +105,23 @@ validated service identity. Hosts reachable only through a local SOCKS5 proxy
 use the bounded `--socks5-proxy HOST:PORT` option; arbitrary SSH options are not
 accepted.
 
-This transaction currently supports only a running transient
-`narrowgate.service` created by the documented `systemd-run` contract. Before
-stopping it, the command proves `active/running`, `Transient=yes`, the exact
-previous working directory, positive `MainPID`, matching `/proc/<pid>/cwd`, and
-the expected previous-release `live/main.py` command line. A persistent unit or
-ambiguous process fails before stop and is left unchanged.
+The normal transaction accepts a running transient `narrowgate.service` created
+by the documented `systemd-run` contract. Before stopping it, the command proves
+`active/running`, `Transient=yes`, the exact previous working directory,
+positive `MainPID`, matching `/proc/<pid>/cwd`, and the expected
+previous-release `live/main.py` command line. A persistent unit or ambiguous
+process fails before stop and is left unchanged. If an earlier transaction
+already stopped that exact release but failed before creating reconciliation,
+`--resume-stopped` is the only continuation path. It requires no maker or
+supervisor process, an inactive/absent unit, a current pointer still naming the
+previous release, and previously absent reconciliation/activation outputs. It
+then repeats candidate verification and creates a fresh reconciliation; it is
+not a general bypass for the normal pre-stop proof.
+
+The private systemd `EnvironmentFile` must contain standalone `NAME=value`
+records. Keep a final newline before appending deployment grants; otherwise the
+first appended grant becomes part of the preceding secret value. Never print
+that file during validation.
 
 Health admission requires `reconciliationPending=false` and a finite
 `lastTickAge` between zero and one second. This bound follows the existing
