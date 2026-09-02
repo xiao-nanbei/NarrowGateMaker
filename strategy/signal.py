@@ -579,6 +579,8 @@ class SignalEngine:
         self._metrics_timer: Optional[threading.Timer] = None
         self._metrics_stop = threading.Event()  # graceful stop for timer chain
         self._metrics_started = False  # prevent duplicate timer chains
+        self._metrics_control_lock = threading.Lock()
+        self._metrics_poll_generation = 0
 
         # Full depth state — DISABLED: REST limit=1000 only covers ±0.18%, insufficient
         # Depth features removed from ML pipeline entirely
@@ -695,23 +697,56 @@ class SignalEngine:
         logger.info(f"SignalEngine init: buffer={bar_buffer_size}s, "
                      f"ml={enable_ml}, models={list(self._models.keys())}")
 
-        # Start metrics polling if REST client available
-        if self._rest:
-            self._start_metrics_polling()
+    def start_metrics_polling(self) -> None:
+        """Start delayed periodic metrics polling after startup admission.
 
-    def _start_metrics_polling(self):
-        """Start the metrics polling chain (idempotent)."""
-        if self._metrics_started:
+        The synchronous warmup sample is obtained separately through
+        :meth:`poll_metrics_once` and is frozen into the prospective initial
+        state.  This method never mutates signal state immediately, so epoch
+        publication and writer attachment have no hidden timer producer.
+        """
+
+        if self._rest is None:
             return
-        self._metrics_started = True
-        self._poll_metrics()
+        with self._metrics_control_lock:
+            if self._metrics_started:
+                return
+            self._metrics_stop.clear()
+            self._metrics_started = True
+            self._metrics_poll_generation += 1
+            self._schedule_metrics_poll_locked(self._metrics_poll_generation)
+
+    def _start_metrics_polling(self) -> None:
+        """Backward-compatible alias for the admitted periodic start."""
+
+        self.start_metrics_polling()
+
+    def _schedule_metrics_poll_locked(self, generation: int) -> None:
+        if (
+            not self._metrics_started
+            or self._metrics_stop.is_set()
+            or generation != self._metrics_poll_generation
+        ):
+            return
+        timer = threading.Timer(
+            self._metrics_poll_interval,
+            self._poll_metrics,
+            args=(generation,),
+        )
+        timer.daemon = True
+        self._metrics_timer = timer
+        timer.start()
 
     def stop(self):
         """Stop metrics polling timer."""
-        self._metrics_stop.set()
-        if self._metrics_timer:
-            self._metrics_timer.cancel()
+        with self._metrics_control_lock:
+            self._metrics_stop.set()
+            self._metrics_started = False
+            self._metrics_poll_generation += 1
+            timer = self._metrics_timer
             self._metrics_timer = None
+        if timer is not None:
+            timer.cancel()
 
     def set_model_dir(self, model_dir: Optional[Path]):
         """Update the model directory used by subsequent model loads."""
@@ -3391,11 +3426,12 @@ class SignalEngine:
 
     # ── metrics polling & features ──
 
-    def _poll_metrics(self):
-        """Poll OI and long/short ratio data via REST API every 5 min."""
+    def poll_metrics_once(self) -> bool:
+        """Fetch and install one metrics observation without scheduling."""
+
         try:
             if self._rest is None:
-                return
+                return False
             # Binance Futures REST endpoints
             oi_data = self._rest.open_interest(symbol=self._symbol)
             top_ls = self._rest.top_long_short_position_ratio(
@@ -3419,15 +3455,25 @@ class SignalEngine:
             logger.debug(f"Metrics poll: OI={metrics['oi']:.0f} "
                          f"top_ls={metrics['top_ls']:.3f} "
                          f"taker_ls={metrics['taker_ls']:.3f}")
+            return True
         except Exception as e:
             logger.warning(f"Metrics poll failed: {e}")
-        finally:
-            # Schedule next poll (unless stopped)
-            if not self._metrics_stop.is_set():
-                self._metrics_timer = threading.Timer(
-                    self._metrics_poll_interval, self._poll_metrics)
-                self._metrics_timer.daemon = True
-                self._metrics_timer.start()
+            return False
+
+    def _poll_metrics(self, generation: int) -> None:
+        """Run one admitted periodic poll and schedule its successor."""
+
+        with self._metrics_control_lock:
+            if (
+                not self._metrics_started
+                or self._metrics_stop.is_set()
+                or generation != self._metrics_poll_generation
+            ):
+                return
+            self._metrics_timer = None
+        self.poll_metrics_once()
+        with self._metrics_control_lock:
+            self._schedule_metrics_poll_locked(generation)
 
     def _compute_metrics_features(self, f: dict, target_ts_ms: float):
         """Compute metrics-derived features from polling history."""

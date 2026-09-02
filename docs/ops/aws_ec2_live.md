@@ -232,6 +232,13 @@ observations; no private fill or user event is required. Pointer rename is the
 commit point. A later parent-directory `fsync` failure is reported as an
 uncertain commit while the candidate remains running for manual verification.
 
+The process-level startup boundary is private-first: warm-up and stale-order
+cancellation, private-stream readiness, exact reconciliation under a complete
+private-callback barrier, prospective epoch publication and asynchronous writer
+attachment, callback release, public-market startup, then periodic metrics
+polling. This order prevents a market event or half-processed private callback
+from crossing the initial-state/evidence boundary.
+
 Safe activation order:
 
 1. verify the prepared candidate and deployment envelope while the old service

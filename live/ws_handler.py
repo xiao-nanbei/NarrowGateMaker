@@ -18,6 +18,7 @@ import logging
 import math
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -44,6 +45,7 @@ from market_fusion import (
 logger = logging.getLogger("ws_handler")
 
 _USER_STREAM_SHUTDOWN_JOIN_TIMEOUT_S = 5.0
+_USER_STREAM_STARTUP_READY_TIMEOUT_S = 30.0
 
 
 @dataclass(frozen=True)
@@ -87,6 +89,17 @@ class WSHandler:
         self._listen_key_client = None
         self._listen_key: Optional[str] = None
         self._listen_key_thread: Optional[threading.Thread] = None
+        self._startup_lock = threading.RLock()
+        self._public_market_phase_lock = threading.Lock()
+        self._private_user_stream_started = False
+        self._public_market_streams_started = False
+        self._public_market_streams_starting = False
+        self._public_market_startup_closed = False
+        # Serialize complete private callbacks.  Startup holds this lock while
+        # it reconciles and publishes the prospective epoch, so an event is
+        # either wholly represented by the initial state or wholly delivered
+        # to the newly attached writer; it can never straddle that boundary.
+        self._user_event_callback_lock = threading.RLock()
         self._user_stream_shutdown_join_timeout_s = (
             _USER_STREAM_SHUTDOWN_JOIN_TIMEOUT_S
         )
@@ -191,61 +204,242 @@ class WSHandler:
         ``rest_client`` is the compatibility fallback. Production supplies a
         dedicated public snapshot client and a dedicated listen-key client so
         neither can block order or reconciliation traffic.
-        """
-        from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
+        This compatibility entry point preserves the all-stream API while
+        enforcing the safe private-before-public startup order.  Startup code
+        that must freeze an epoch between those phases should call
+        :meth:`start_private_user_stream` and
+        :meth:`start_public_market_streams` explicitly.
+        """
         market_snapshot_client = market_snapshot_client or rest_client
         listen_key_client = listen_key_client or rest_client
         if market_snapshot_client is None or listen_key_client is None:
             raise ValueError("market snapshot and listen-key clients are required")
-        self._running = True
+        self.start_private_user_stream(
+            rest_client,
+            listen_key_client=listen_key_client,
+        )
+        if not self.wait_for_user_stream_ready(_USER_STREAM_STARTUP_READY_TIMEOUT_S):
+            raise RuntimeError(
+                "private user stream did not become ready before public startup"
+            )
+        private_state = self.user_event_safety_snapshot()
+        self.start_public_market_streams(
+            rest_client,
+            market_snapshot_client=market_snapshot_client,
+            expected_user_stream_generation=int(
+                private_state.get("user_stream_generation", 0) or 0
+            ),
+        )
+
+        logger.info("All WebSocket streams started")
+
+    def _bind_compatibility_rest_client(self, rest_client) -> None:
+        if rest_client is None:
+            return
+        if (
+            self._rest_client is not None
+            and self._rest_client is not rest_client
+            and (
+                self._private_user_stream_started
+                or self._public_market_streams_started
+            )
+        ):
+            raise RuntimeError("WebSocket compatibility REST client is already bound")
         self._rest_client = rest_client
-        self._market_snapshot_client = market_snapshot_client
-        self._listen_key_client = listen_key_client
-        self._start_market_tape()
-        symbol = self.cfg.symbol.lower()
-        market_symbols = self._market_symbols()
-        spot_symbols = self._spot_anchor_symbols()
 
-        # --- Futures market/public data streams ---
-        logger.info("Starting market trade WebSocket...")
-        self._ws_market = UMFuturesWebsocketClient(
-            stream_url=self._market_stream_base_url(),
-            on_message=self._on_market_message,
-            on_close=self._on_market_close,
-        )
-        logger.info("Starting public data WebSocket...")
-        self._ws_public = UMFuturesWebsocketClient(
-            stream_url=self._public_stream_base_url(),
-            on_message=self._on_market_message,
-            on_close=self._on_public_close,
-        )
-        self._market_session_id += 1
-        self._reset_stream_watchdog_state(market_symbols, spot_symbols)
-
-        self._subscribe_market_streams(symbol, market_symbols)
-        self._subscribe_public_streams(symbol, market_symbols)
-        if not self._start_deep_book_stream():
-            self._schedule_deep_book_reconnect()
-        self._start_spot_stream(spot_symbols)
-        self._start_external_venue_streams()
-        self._arm_stream_silence_watchdog(
-            market_symbols, spot_symbols, self._market_session_id
-        )
-
-        # --- User data stream ---
-        logger.info("Starting user data WebSocket...")
-        self._start_user_stream(listen_key_client)
-
-        # --- Listen key renewal thread ---
+    def _ensure_listen_key_renewal_thread(self, listen_key_client) -> None:
+        thread = self._listen_key_thread
+        if thread is not None and thread.is_alive():
+            return
         self._listen_key_thread = threading.Thread(
             target=self._listen_key_renewal_loop,
             args=(listen_key_client,),
             daemon=True,
+            name="listen-key-renewal",
         )
         self._listen_key_thread.start()
 
-        logger.info("All WebSocket streams started")
+    def start_private_user_stream(
+        self,
+        rest_client=None,
+        *,
+        listen_key_client=None,
+    ) -> None:
+        """Start only the private user stream and listen-key renewal.
+
+        No public, deep-book, spot, external-venue, or market-tape component is
+        touched.  This lets startup establish and admit the private execution
+        stream before a prospective epoch is frozen and before the first
+        market event can reach the signal graph.
+        """
+
+        listen_key_client = listen_key_client or rest_client
+        if listen_key_client is None:
+            raise ValueError("listen-key client is required")
+        with self._startup_lock:
+            self._bind_compatibility_rest_client(rest_client)
+            if self._private_user_stream_started:
+                if self._listen_key_client is not listen_key_client:
+                    raise RuntimeError("listen-key client is already bound")
+                self._ensure_listen_key_renewal_thread(listen_key_client)
+                return
+
+            self._running = True
+            self._listen_key_client = listen_key_client
+            self._private_user_stream_started = True
+            try:
+                logger.info("Starting user data WebSocket...")
+                if not self._start_user_stream(listen_key_client):
+                    raise RuntimeError("user data WebSocket failed to launch")
+                self._ensure_listen_key_renewal_thread(listen_key_client)
+            except BaseException:
+                self._private_user_stream_started = False
+                try:
+                    self._stop_user_stream()
+                except BaseException:
+                    logger.critical(
+                        "User-data WebSocket cleanup after startup failure failed",
+                        exc_info=True,
+                    )
+                if not self._public_market_streams_started:
+                    self._running = False
+                raise
+            logger.info("Private user WebSocket stream started")
+
+    def start_public_market_streams(
+        self,
+        rest_client=None,
+        *,
+        market_snapshot_client=None,
+        expected_user_stream_generation: int,
+    ) -> None:
+        """Start public market, deep-book, spot, and external data sources."""
+
+        from binance.websocket.um_futures.websocket_client import (
+            UMFuturesWebsocketClient,
+        )
+
+        market_snapshot_client = market_snapshot_client or rest_client
+        if market_snapshot_client is None:
+            raise ValueError("market snapshot client is required")
+        with self._startup_lock:
+            self._bind_compatibility_rest_client(rest_client)
+            if not self._private_user_stream_started:
+                raise RuntimeError(
+                    "private user stream must start before public market streams"
+                )
+            private_state = self.user_event_safety_snapshot()
+            current_generation = int(
+                private_state.get("user_stream_generation", 0) or 0
+            )
+            if (
+                not bool(private_state.get("user_stream_connected"))
+                or current_generation <= 0
+                or current_generation != int(expected_user_stream_generation)
+            ):
+                raise RuntimeError(
+                    "public market streams require the admitted private-stream "
+                    "generation"
+                )
+            with self._public_market_phase_lock:
+                if self._public_market_streams_started:
+                    if self._market_snapshot_client is not market_snapshot_client:
+                        raise RuntimeError("market snapshot client is already bound")
+                    return
+                if self._public_market_streams_starting:
+                    raise RuntimeError(
+                        "public market stream startup is already in progress"
+                    )
+                self._public_market_streams_starting = True
+                self._public_market_startup_closed = False
+
+            self._running = True
+            self._market_snapshot_client = market_snapshot_client
+            deep_book_started = False
+            try:
+                self._start_market_tape()
+                symbol = self.cfg.symbol.lower()
+                market_symbols = self._market_symbols()
+                spot_symbols = self._spot_anchor_symbols()
+
+                logger.info("Starting market trade WebSocket...")
+                self._ws_market = UMFuturesWebsocketClient(
+                    stream_url=self._market_stream_base_url(),
+                    on_message=self._on_market_message,
+                    on_close=self._on_market_close,
+                )
+                logger.info("Starting public data WebSocket...")
+                self._ws_public = UMFuturesWebsocketClient(
+                    stream_url=self._public_stream_base_url(),
+                    on_message=self._on_market_message,
+                    on_close=self._on_public_close,
+                )
+                self._market_session_id += 1
+                self._reset_stream_watchdog_state(market_symbols, spot_symbols)
+
+                self._subscribe_market_streams(symbol, market_symbols)
+                self._subscribe_public_streams(symbol, market_symbols)
+                deep_book_started = bool(self._start_deep_book_stream())
+                self._start_spot_stream(spot_symbols)
+                self._start_external_venue_streams()
+                self._arm_stream_silence_watchdog(
+                    market_symbols, spot_symbols, self._market_session_id
+                )
+                final_private_state = self.user_event_safety_snapshot()
+                if (
+                    not bool(final_private_state.get("user_stream_connected"))
+                    or int(
+                        final_private_state.get("user_stream_generation", 0) or 0
+                    )
+                    != int(expected_user_stream_generation)
+                ):
+                    raise RuntimeError(
+                        "private user stream changed during public market startup"
+                    )
+                # Commit STARTING -> ACTIVE under the same short lock used by
+                # close callbacks.  A close either wins first and makes startup
+                # fail, or observes ACTIVE and runs the normal reconnect path.
+                # No network stop/join operation is ever performed under this
+                # phase lock.
+                with self._public_market_phase_lock:
+                    if self._public_market_startup_closed:
+                        raise RuntimeError(
+                            "public market WebSocket closed during startup"
+                        )
+                    self._public_market_streams_starting = False
+                    self._public_market_streams_started = True
+            except BaseException:
+                with self._public_market_phase_lock:
+                    self._public_market_streams_starting = False
+                    self._public_market_streams_started = False
+                    self._public_market_startup_closed = False
+                self._market_session_id += 1
+                self._stop_external_venue_streams()
+                self._stop_market_tape()
+                self._stop_deep_book_stream()
+                for attr_name in ("_ws_market", "_ws_public"):
+                    client = getattr(self, attr_name)
+                    if client is not None:
+                        try:
+                            client.stop()
+                        except Exception:
+                            pass
+                        setattr(self, attr_name, None)
+                self._stop_spot_stream()
+                if not self._private_user_stream_started:
+                    self._running = False
+                raise
+            if not deep_book_started:
+                self._schedule_deep_book_reconnect()
+            logger.info("Public market WebSocket streams started")
+
+    @contextmanager
+    def hold_user_event_callbacks(self):
+        """Hold complete private callbacks across a startup state boundary."""
+
+        with self._user_event_callback_lock:
+            yield
 
     def _deep_book_enabled(self) -> bool:
         return bool(getattr(self.cfg.websocket, "deep_book_enabled", False))
@@ -335,7 +529,11 @@ class WSHandler:
                 pass
 
     def _schedule_deep_book_reconnect(self) -> None:
-        if not self._running or not self._deep_book_enabled():
+        if (
+            not self._running
+            or not self._public_market_streams_started
+            or not self._deep_book_enabled()
+        ):
             return
         with self._deep_book_lock:
             if self._deep_book_reconnect_requested:
@@ -344,7 +542,11 @@ class WSHandler:
 
         def _reconnect() -> None:
             try:
-                while self._running and self._deep_book_enabled():
+                while (
+                    self._running
+                    and self._public_market_streams_started
+                    and self._deep_book_enabled()
+                ):
                     time.sleep(2.0)
                     if self._start_deep_book_stream():
                         return
@@ -353,6 +555,7 @@ class WSHandler:
                     self._deep_book_reconnect_requested = False
                     reconnect_needed = bool(
                         self._running
+                        and self._public_market_streams_started
                         and self._deep_book_enabled()
                         and self._ws_deep is None
                     )
@@ -373,7 +576,7 @@ class WSHandler:
             self._ws_deep = None
         if book is not None:
             book.invalidate("diff-depth websocket closed")
-        if self._running:
+        if self._running and self._public_market_streams_started:
             logger.warning("Deep-book WebSocket closed; scheduling reconnect")
             self._schedule_deep_book_reconnect()
 
@@ -1235,7 +1438,7 @@ class WSHandler:
         return [f"{exec_symbol}@executionDepth {age:.0f}s"]
 
     def _restart_market_stream_after_silence(self):
-        if not self._running:
+        if not self._running or not self._public_market_streams_started:
             return
         if self._market_reconnect_requested:
             return
@@ -1257,17 +1460,17 @@ class WSHandler:
         finally:
             self._market_reconnect_requested = False
 
-    def _start_user_stream(self, rest_client):
+    def _start_user_stream(self, rest_client) -> bool:
         """Create listen key and start user data stream."""
 
         with self._user_stream_lifecycle_lock:
-            self._start_user_stream_locked(rest_client)
+            return self._start_user_stream_locked(rest_client)
 
-    def _start_user_stream_locked(self, rest_client):
+    def _start_user_stream_locked(self, rest_client) -> bool:
         """Start one user stream while holding the lifecycle lock."""
 
         if not self._running:
-            return
+            return False
 
         try:
             import websocket
@@ -1275,18 +1478,18 @@ class WSHandler:
             logger.error(
                 f"Failed to start user data stream: websocket-client unavailable ({exc})"
             )
-            return
+            return False
 
         try:
             self._stop_user_stream()
             if not self._running:
-                return
+                return False
 
             resp = rest_client.new_listen_key()
             self._listen_key = resp.get("listenKey", "")
             if not self._listen_key:
                 logger.error("Failed to get listen key")
-                return
+                return False
 
             url = self._private_user_stream_url(self._listen_key)
             self._user_stream_active = True
@@ -1340,8 +1543,10 @@ class WSHandler:
             self._user_thread = threading.Thread(target=run, daemon=True)
             self._user_thread.start()
             logger.info(f"User data stream started, listen_key={self._listen_key[:8]}...")
+            return True
         except Exception as e:
             logger.error(f"Failed to start user data stream: {e}")
+            return False
 
     def _latch_user_stream_quiescence_failure(
         self,
@@ -1703,10 +1908,14 @@ class WSHandler:
 
     def _on_user_message(self, ws, message, token: int):
         """Route user data messages."""
-        with self._user_event_stats_lock:
-            if token != self._user_stream_session_token or ws is not self._ws_user:
-                return
-        self._on_current_user_message(message)
+        with self._user_event_callback_lock:
+            # Revalidate after entering the serialization boundary: this
+            # callback may have waited behind startup while its session was
+            # disconnected or replaced.
+            with self._user_event_stats_lock:
+                if token != self._user_stream_session_token or ws is not self._ws_user:
+                    return
+            self._on_current_user_message(message)
 
     def _on_current_user_message(self, message) -> None:
         receive_ts_ns = time.time_ns()
@@ -1840,9 +2049,16 @@ class WSHandler:
 
     def _on_market_close(self, _):
         logger.warning("Market trade WebSocket closed")
+        with self._public_market_phase_lock:
+            if self._public_market_streams_starting:
+                self._public_market_startup_closed = True
+                return
+            reconnect = bool(
+                self._running and self._public_market_streams_started
+            )
         if self._market_reconnect_requested:
             return
-        if self._running:
+        if reconnect:
             logger.info("Reconnecting futures market/public streams in 2s...")
             if self._ws_market:
                 try:
@@ -1855,9 +2071,16 @@ class WSHandler:
 
     def _on_public_close(self, _):
         logger.warning("Public data WebSocket closed")
+        with self._public_market_phase_lock:
+            if self._public_market_streams_starting:
+                self._public_market_startup_closed = True
+                return
+            reconnect = bool(
+                self._running and self._public_market_streams_started
+            )
         if self._market_reconnect_requested:
             return
-        if self._running:
+        if reconnect:
             logger.info("Reconnecting futures market/public streams in 2s...")
             if self._ws_public:
                 try:
@@ -1921,6 +2144,8 @@ class WSHandler:
 
     def _reconnect_market(self):
         """Reconnect futures market/public data WebSockets (not user stream)."""
+        if not self._running or not self._public_market_streams_started:
+            return
         from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
         symbol = self.cfg.symbol.lower()
@@ -2054,6 +2279,12 @@ class WSHandler:
             )
             return
 
+        # A private-first startup deliberately leaves every market producer
+        # dormant until the caller freezes the prospective epoch.  Config
+        # reload cannot implicitly cross that boundary.
+        if not self._public_market_streams_started:
+            return
+
         if external_changed:
             logger.info("External venue config changed, reconnecting shadow streams...")
             self._start_external_venue_streams()
@@ -2095,7 +2326,13 @@ class WSHandler:
 
     def stop(self):
         """Stop all WebSocket connections."""
-        self._running = False
+        with self._startup_lock:
+            self._running = False
+            self._private_user_stream_started = False
+            with self._public_market_phase_lock:
+                self._public_market_streams_started = False
+                self._public_market_streams_starting = False
+                self._public_market_startup_closed = False
         shutdown_errors: list[BaseException] = []
 
         self._stop_external_venue_streams()

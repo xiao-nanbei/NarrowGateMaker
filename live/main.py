@@ -1846,7 +1846,7 @@ def start_engine_with_prospective_collection(
     dict[str, Any] | None,
     int | None,
 ]:
-    """Start warmup, bind collection, then permit the first WS event."""
+    """Bind private recovery and collection before admitting market events."""
 
     engine.start()
     startup_open_orders = _initial_exchange_open_orders(rest, symbol=cfg.symbol)
@@ -1869,15 +1869,19 @@ def start_engine_with_prospective_collection(
     # recovery.  Seeding before this point could hide a fill in the crash gap.
     engine.sync_position(required=True)
     admitted_user_stream_generation: int | None = None
+    epoch = None
+    writer = None
+    exchange_binding = None
     if not dry_run:
-        if market_snapshot_client is None and listen_key_client is None:
-            ws.start(rest)
-        else:
-            ws.start(
-                rest,
-                market_snapshot_client=market_snapshot_client,
-                listen_key_client=listen_key_client,
-            )
+        # The private stream is needed to close the accountTrades recovery
+        # interval.  Public market streams must remain stopped until the
+        # prospective epoch has captured its initial signal state and attached
+        # the lifecycle writer.  Otherwise a cross-market trade can create a
+        # partial native aggregator between startup and the epoch boundary.
+        ws.start_private_user_stream(
+            rest,
+            listen_key_client=listen_key_client,
+        )
         ready_deadline = time.monotonic() + STARTUP_USER_STREAM_READY_TIMEOUT_S
         while True:
             remaining_s = ready_deadline - time.monotonic()
@@ -1885,62 +1889,127 @@ def start_engine_with_prospective_collection(
                 raise RuntimeError(
                     "private user stream did not become ready before quote admission"
                 )
-            before = ws.user_event_safety_snapshot()
-            before_generation = int(before.get("user_stream_generation", 0) or 0)
-            if not bool(before.get("user_stream_connected")) or before_generation <= 0:
-                continue
-
-            # Close the interval between the durable checkpoint recovery and
-            # private-stream readiness through the normal exact accountTrades
-            # reconciliation path. It delivers each unseen fill through
-            # OrderManager/Inventory dedupe exactly once; running the separate
-            # cooldown gap applier here would double-apply the same fill.
-            engine.sync_position(required=True)
-            if _initial_exchange_open_orders(rest, symbol=cfg.symbol):
-                raise RuntimeError(
-                    "startup open-order ownership changed before quote admission"
+            # Serialize whole private callbacks across reconciliation, initial
+            # state capture, epoch publication, and writer attachment.  A
+            # callback waiting here has not incremented its cursor or mutated
+            # economic state; after release it is delivered to the new writer.
+            with ws.hold_user_event_callbacks():
+                before = ws.user_event_safety_snapshot()
+                before_generation = int(
+                    before.get("user_stream_generation", 0) or 0
                 )
-            after = ws.user_event_safety_snapshot()
-            if bool(after.get("user_stream_connected")) and int(
-                after.get("user_stream_generation", 0) or 0
-            ) == before_generation:
+                before_event_count = int(before.get("user_event_count", 0) or 0)
+                if (
+                    not bool(before.get("user_stream_connected"))
+                    or before_generation <= 0
+                ):
+                    continue
+
+                # Close the interval between durable checkpoint recovery and
+                # private-stream readiness through exact accountTrades
+                # reconciliation.  The normal fill dedupe applies each unseen
+                # fill once; the separate cooldown-gap applier must not run a
+                # second time here.
+                engine.sync_position(required=True)
+                if _initial_exchange_open_orders(rest, symbol=cfg.symbol):
+                    raise RuntimeError(
+                        "startup open-order ownership changed before quote admission"
+                    )
+                after = ws.user_event_safety_snapshot()
+                if (
+                    not bool(after.get("user_stream_connected"))
+                    or int(after.get("user_stream_generation", 0) or 0)
+                    != before_generation
+                    or int(after.get("user_event_count", 0) or 0)
+                    != before_event_count
+                ):
+                    logging.getLogger("main").warning(
+                        "STARTUP_USER_STREAM_CHANGED beforeGeneration=%d "
+                        "afterGeneration=%d beforeEvents=%d afterEvents=%d; "
+                        "repeating exact recovery barrier",
+                        before_generation,
+                        int(after.get("user_stream_generation", 0) or 0),
+                        before_event_count,
+                        int(after.get("user_event_count", 0) or 0),
+                    )
+                    continue
+
+                if exchange_reconciliation_required:
+                    exchange_binding = validate_startup_exchange_reconciliation_lineage(
+                        rest,
+                        engine=engine,
+                        symbol=cfg.symbol,
+                        api_key=str(cfg.api.key),
+                    )
+                # The writer is attached before the callback lock is released.
+                # Events already waiting in the WebSocket thread are therefore
+                # prospective rows, never a torn piece of the initial state.
+                epoch, writer = initialize_prospective_lifecycle_collection(
+                    cfg=cfg,
+                    engine=engine,
+                    rest=rest,
+                    config_path=config_path,
+                    native_runtime=native_runtime,
+                    safety_authority=safety_authority,
+                )
+                final_boundary_state = ws.user_event_safety_snapshot()
+                if (
+                    not bool(final_boundary_state.get("user_stream_connected"))
+                    or int(
+                        final_boundary_state.get("user_stream_generation", 0) or 0
+                    )
+                    != before_generation
+                    or int(final_boundary_state.get("user_event_count", 0) or 0)
+                    != before_event_count
+                ):
+                    raise RuntimeError(
+                        "private user stream changed while publishing startup evidence"
+                    )
                 admitted_user_stream_generation = before_generation
-                break
-            logging.getLogger("main").warning(
-                "STARTUP_USER_STREAM_GENERATION_CHANGED before=%d after=%d; "
-                "repeating exact recovery barrier",
-                before_generation,
-                int(after.get("user_stream_generation", 0) or 0),
-            )
+            break
     else:
         logging.getLogger("main").info("[DRY-RUN] Skipping WebSocket connections")
 
-    exchange_binding = None
-    if exchange_reconciliation_required:
-        exchange_binding = validate_startup_exchange_reconciliation_lineage(
-            rest,
+        if exchange_reconciliation_required:
+            exchange_binding = validate_startup_exchange_reconciliation_lineage(
+                rest,
+                engine=engine,
+                symbol=cfg.symbol,
+                api_key=str(cfg.api.key),
+            )
+        epoch, writer = initialize_prospective_lifecycle_collection(
+            cfg=cfg,
             engine=engine,
-            symbol=cfg.symbol,
-            api_key=str(cfg.api.key),
+            rest=rest,
+            config_path=config_path,
+            native_runtime=native_runtime,
+            safety_authority=safety_authority,
         )
-    # Freeze the prospective initial state only after the final checkpoint,
-    # position, order-ownership, and user-stream barriers have converged.
-    epoch, writer = initialize_prospective_lifecycle_collection(
-        cfg=cfg,
-        engine=engine,
-        rest=rest,
-        config_path=config_path,
-        native_runtime=native_runtime,
-        safety_authority=safety_authority,
-    )
     if admitted_user_stream_generation is not None:
-        final_user_state = ws.user_event_safety_snapshot()
-        if not bool(final_user_state.get("user_stream_connected")) or int(
-            final_user_state.get("user_stream_generation", 0) or 0
-        ) != admitted_user_stream_generation:
+        pre_market_user_state = ws.user_event_safety_snapshot()
+        if (
+            not bool(pre_market_user_state.get("user_stream_connected"))
+            or int(pre_market_user_state.get("user_stream_generation", 0) or 0)
+            != admitted_user_stream_generation
+        ):
             raise RuntimeError(
                 "private user stream changed while finalizing startup evidence"
             )
+        ws.start_public_market_streams(
+            rest,
+            market_snapshot_client=market_snapshot_client,
+            expected_user_stream_generation=admitted_user_stream_generation,
+        )
+        final_user_state = ws.user_event_safety_snapshot()
+        if (
+            not bool(final_user_state.get("user_stream_connected"))
+            or int(final_user_state.get("user_stream_generation", 0) or 0)
+            != admitted_user_stream_generation
+        ):
+            raise RuntimeError(
+                "private user stream changed while starting public market streams"
+            )
+        engine.signal.start_metrics_polling()
     return epoch, writer, exchange_binding, admitted_user_stream_generation
 
 
@@ -2538,7 +2607,8 @@ def main():
                 raise
 
         # Warm up and cancel startup orders before publishing the epoch.  The
-        # writer is attached before any WebSocket can deliver a live event.
+        # private stream closes the reconciliation gap under a callback
+        # barrier; the writer is attached before public market events begin.
         (
             prospective_epoch,
             _,

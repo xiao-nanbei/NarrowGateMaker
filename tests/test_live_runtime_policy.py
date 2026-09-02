@@ -6,6 +6,7 @@ import json
 import stat
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -805,16 +806,20 @@ def test_live_start_routes_snapshot_and_listen_key_clients_independently(
     listen_key_client = object()
     engine = SimpleNamespace(
         start=Mock(),
+        signal=SimpleNamespace(start_metrics_polling=Mock()),
         sync_position=Mock(),
         reconcile_fill_cooldown_checkpoint_gap=Mock(
             return_value={"mode": "cursor_current", "recovered_fill_count": 0}
         ),
     )
     ws = SimpleNamespace(
-        start=Mock(),
+        start_private_user_stream=Mock(),
+        start_public_market_streams=Mock(),
         wait_for_user_stream_ready=Mock(return_value=True),
+        hold_user_event_callbacks=Mock(side_effect=nullcontext),
         user_event_safety_snapshot=Mock(
             return_value={
+                "user_event_count": 0,
                 "user_stream_connected": True,
                 "user_stream_generation": 1,
             }
@@ -826,10 +831,23 @@ def test_live_start_routes_snapshot_and_listen_key_clients_independently(
         "_initial_exchange_open_orders",
         lambda *_args, **_kwargs: [],
     )
+    startup_order = []
+    ws.start_private_user_stream.side_effect = (
+        lambda *_args, **_kwargs: startup_order.append("private")
+    )
+    ws.start_public_market_streams.side_effect = (
+        lambda *_args, **_kwargs: startup_order.append("public")
+    )
+
+    def initialize_collection(**_kwargs):
+        assert not ws.start_public_market_streams.called
+        startup_order.append("epoch")
+        return None, None
+
     monkeypatch.setattr(
         live_main,
         "initialize_prospective_lifecycle_collection",
-        lambda **_kwargs: (None, None),
+        initialize_collection,
     )
 
     start_engine_with_prospective_collection(
@@ -849,14 +867,104 @@ def test_live_start_routes_snapshot_and_listen_key_clients_independently(
     assert engine.sync_position.call_count == 2
     engine.sync_position.assert_called_with(required=True)
     engine.reconcile_fill_cooldown_checkpoint_gap.assert_called_once_with()
-    ws.start.assert_called_once_with(
+    ws.start_private_user_stream.assert_called_once_with(
         rest,
-        market_snapshot_client=market_snapshot_client,
         listen_key_client=listen_key_client,
     )
+    ws.start_public_market_streams.assert_called_once_with(
+        rest,
+        market_snapshot_client=market_snapshot_client,
+        expected_user_stream_generation=1,
+    )
+    assert startup_order == ["private", "epoch", "public"]
     ws.wait_for_user_stream_ready.assert_called_once()
     ready_timeout = float(ws.wait_for_user_stream_ready.call_args.args[0])
     assert 0.0 < ready_timeout <= live_main.STARTUP_USER_STREAM_READY_TIMEOUT_S
+    engine.signal.start_metrics_polling.assert_called_once_with()
+
+
+def test_live_start_attaches_epoch_before_releasing_waiting_private_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import live.main as live_main
+
+    writer_attached = threading.Event()
+    callback_observations = []
+    orders = SimpleNamespace(
+        on_order_update=Mock(
+            side_effect=lambda _payload: callback_observations.append(
+                writer_attached.is_set()
+            )
+        )
+    )
+    engine = SimpleNamespace(
+        orders=orders,
+        start=Mock(),
+        signal=SimpleNamespace(start_metrics_polling=Mock()),
+        sync_position=Mock(),
+        reconcile_fill_cooldown_checkpoint_gap=Mock(
+            return_value={"mode": "cursor_current", "recovered_fill_count": 0}
+        ),
+    )
+    ws = WSHandler(engine, Config())
+    ws_app = object()
+    with ws._user_event_stats_lock:
+        ws._running = True
+        ws._user_stream_active = True
+        ws._private_user_stream_started = True
+        ws._ws_user = ws_app
+        ws._user_stream_session_token = 13
+        ws._user_stream_connected = True
+        ws._user_stream_generation = 4
+    monkeypatch.setattr(ws, "start_private_user_stream", Mock())
+    monkeypatch.setattr(ws, "wait_for_user_stream_ready", Mock(return_value=True))
+    monkeypatch.setattr(ws, "start_public_market_streams", Mock())
+    monkeypatch.setattr(
+        live_main,
+        "_initial_exchange_open_orders",
+        lambda *_args, **_kwargs: [],
+    )
+    callback_thread = None
+
+    def initialize_collection(**_kwargs):
+        nonlocal callback_thread
+        callback_thread = threading.Thread(
+            target=ws._on_user_message,
+            args=(
+                ws_app,
+                {"e": "ORDER_TRADE_UPDATE", "o": {"c": "cid-epoch"}},
+                13,
+            ),
+        )
+        callback_thread.start()
+        time.sleep(0.02)
+        assert callback_thread.is_alive()
+        orders.on_order_update.assert_not_called()
+        writer_attached.set()
+        return object(), object()
+
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        initialize_collection,
+    )
+
+    start_engine_with_prospective_collection(
+        cfg=SimpleNamespace(symbol="BTCUSDC"),
+        engine=engine,
+        ws=ws,
+        rest=object(),
+        config_path=tmp_path / "config.yaml",
+        native_runtime={},
+        safety_authority={},
+        dry_run=False,
+    )
+
+    assert callback_thread is not None
+    callback_thread.join(timeout=1.0)
+    assert callback_observations == [True]
+    ws.start_public_market_streams.assert_called_once()
 
 
 def test_live_start_fails_closed_before_quote_admission_without_user_stream(
@@ -867,14 +975,17 @@ def test_live_start_fails_closed_before_quote_admission_without_user_stream(
 
     engine = SimpleNamespace(
         start=Mock(),
+        signal=SimpleNamespace(start_metrics_polling=Mock()),
         sync_position=Mock(),
         reconcile_fill_cooldown_checkpoint_gap=Mock(
             return_value={"mode": "cursor_current", "recovered_fill_count": 0}
         ),
     )
     ws = SimpleNamespace(
-        start=Mock(),
+        start_private_user_stream=Mock(),
+        start_public_market_streams=Mock(),
         wait_for_user_stream_ready=Mock(return_value=False),
+        hold_user_event_callbacks=Mock(side_effect=nullcontext),
         user_event_safety_snapshot=Mock(),
     )
     monkeypatch.setattr(
@@ -902,6 +1013,8 @@ def test_live_start_fails_closed_before_quote_admission_without_user_stream(
 
     engine.sync_position.assert_called_once_with(required=True)
     assert engine.reconcile_fill_cooldown_checkpoint_gap.call_count == 1
+    ws.start_private_user_stream.assert_called_once()
+    ws.start_public_market_streams.assert_not_called()
 
 
 def test_live_start_repeats_exact_barrier_when_user_stream_generation_changes(
@@ -912,24 +1025,40 @@ def test_live_start_repeats_exact_barrier_when_user_stream_generation_changes(
 
     engine = SimpleNamespace(
         start=Mock(),
+        signal=SimpleNamespace(start_metrics_polling=Mock()),
         sync_position=Mock(),
         reconcile_fill_cooldown_checkpoint_gap=Mock(
             return_value={"mode": "cursor_current", "recovered_fill_count": 0}
         ),
     )
-    states = iter(
-        (
-            {"user_stream_connected": True, "user_stream_generation": 1},
-            {"user_stream_connected": False, "user_stream_generation": 1},
-            {"user_stream_connected": True, "user_stream_generation": 2},
-            {"user_stream_connected": True, "user_stream_generation": 2},
-            {"user_stream_connected": True, "user_stream_generation": 2},
-        )
-    )
+    observed_states = [
+        {
+            "user_event_count": 0,
+            "user_stream_connected": True,
+            "user_stream_generation": 1,
+        },
+        {
+            "user_event_count": 0,
+            "user_stream_connected": False,
+            "user_stream_generation": 1,
+        },
+    ]
+
+    def next_state():
+        if observed_states:
+            return observed_states.pop(0)
+        return {
+            "user_event_count": 0,
+            "user_stream_connected": True,
+            "user_stream_generation": 2,
+        }
+
     ws = SimpleNamespace(
-        start=Mock(),
+        start_private_user_stream=Mock(),
+        start_public_market_streams=Mock(),
         wait_for_user_stream_ready=Mock(return_value=True),
-        user_event_safety_snapshot=Mock(side_effect=lambda: next(states)),
+        hold_user_event_callbacks=Mock(side_effect=nullcontext),
+        user_event_safety_snapshot=Mock(side_effect=next_state),
     )
     monkeypatch.setattr(
         live_main,
@@ -960,6 +1089,13 @@ def test_live_start_repeats_exact_barrier_when_user_stream_generation_changes(
     # normal exact accountTrades reconciliation and its fill dedupe.
     engine.reconcile_fill_cooldown_checkpoint_gap.assert_called_once_with()
     assert engine.sync_position.call_count == 3
+    ws.start_private_user_stream.assert_called_once()
+    ws.start_public_market_streams.assert_called_once()
+    assert ws.start_public_market_streams.call_args.kwargs == {
+        "market_snapshot_client": None,
+        "expected_user_stream_generation": 2,
+    }
+    engine.signal.start_metrics_polling.assert_called_once_with()
 
 
 def test_maker_engine_latches_when_admitted_user_stream_generation_is_lost() -> None:

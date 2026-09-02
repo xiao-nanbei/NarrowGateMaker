@@ -215,6 +215,11 @@ Admission 同时要求 `reconciliationPending=false`，且 `lastTickAge` 是 `[0
 不要求出现 private fill 或 user-stream event。Pointer rename 是提交点；若之后 parent-directory
 `fsync` 失败，命令报告 commit uncertain，并保留 candidate 运行供人工核验。
 
+进程内部采用 private-first 启动边界：warm-up 与遗留订单撤销、private stream ready、在完整
+private callback 屏障内做精确对账、发布 prospective epoch 并挂载异步 writer、释放 callback、
+启动 public market stream，最后启动周期 metrics polling。这个顺序防止 market event 或处理到
+一半的 private callback 穿过 initial-state/evidence 边界。
+
 安全 activation 顺序：
 
 1. 在旧服务仍运行时验证 prepared candidate 与 deployment envelope；

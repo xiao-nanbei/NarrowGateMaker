@@ -112,6 +112,12 @@ connection generation；不要求 admission 期间必须发生 private fill 或 
 Pointer rename 是提交点；若随后 parent-directory `fsync` 失败，命令报告 commit uncertain，
 保留 candidate 运行供人工核验，不会停止一个可能已经发布的 release。
 
+通过 admission 的进程内部也采用固定启动顺序：engine 先完成 warmup 与遗留订单撤销，再启动并
+确认 private user stream。随后在完整 private callback 串行屏障内执行精确账户、仓位与
+open-order 对账，冻结 prospective epoch 并挂载异步 lifecycle writer；屏障中等待的 callback
+再按 FIFO 原序释放。之后才启动 public market stream，最后启动周期 metrics polling。因此
+public 行情既不能修改尚未完成的 initial checkpoint，也不能早于对应 evidence writer。
+
 Remote upload 或 task 启动前，递归计算完整 materialization closure。每个 manifest
 reference 必须在 admitted bundle 内，或作为显式 immutable resource 提供。Archive 上传
 成功不等于 closure admission。

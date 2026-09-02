@@ -11913,10 +11913,11 @@ class MakerEngine:
             logger.warning(f"Warmup prefill failed, falling back to live: {e}")
 
         # Ensure metrics are available before first requote (avoid zero-fill).
-        # _poll_metrics runs async on a timer; do one blocking fetch now
-        # (idempotent — won't start a second timer chain).
+        # This is a one-shot blocking fetch.  The periodic timer is admitted
+        # only after the prospective epoch and lifecycle writer are installed,
+        # so it cannot mutate the frozen startup state in the publication gap.
         try:
-            self.signal._start_metrics_polling()
+            self.signal.poll_metrics_once()
             if self.signal._last_metrics:
                 logger.info("Warmup: initial metrics poll OK")
             else:

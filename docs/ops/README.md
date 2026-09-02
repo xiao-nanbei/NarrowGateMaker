@@ -133,6 +133,15 @@ is the commit point; if its parent-directory `fsync` then fails, the command
 reports an uncertain commit and leaves the candidate running for manual
 verification rather than stopping a possibly published release.
 
+Inside the admitted process, stream startup is also ordered. The engine first
+warms state and cancels stale orders, then opens and proves the private user
+stream. Complete private callbacks are serialized while the exact account,
+position, and open-order reconciliation is captured into the prospective epoch
+and the asynchronous lifecycle writer is attached. Waiting callbacks are then
+released in FIFO order, public market streams are opened, and only after that
+does periodic metrics polling begin. Public market input can therefore neither
+mutate an incomplete initial checkpoint nor precede its evidence writer.
+
 Before a remote upload or task starts, recursively calculate the complete
 materialization closure. Every manifest reference must be inside the admitted
 bundle or supplied as an explicit immutable resource. A successful archive
