@@ -120,12 +120,14 @@ template <Side S>
 [[nodiscard]] bool valid_context(
     const LiveOrderPlannerContext& context
 ) noexcept {
-    return context.max_inventory_lots > 0 &&
-        context.max_position_value_quote_atoms >= 0 &&
-        context.mid_notional_quote_atoms_per_lot > 0 &&
-        context.quote_atoms_per_price_tick_lot > 0 &&
+    return std::isfinite(context.inventory) &&
+        std::isfinite(context.max_inventory) &&
+        context.max_inventory > 0.0 &&
+        !std::isnan(context.max_position_value) &&
+        context.max_position_value >= 0.0 &&
+        std::isfinite(context.mid) && context.mid > 0.0 &&
+        std::isfinite(context.lot_size) && context.lot_size > 0.0 &&
         context.min_quantity_lots > 0 &&
-        context.min_notional_quote_atoms >= 0 &&
         std::isfinite(context.requote_threshold_bps) &&
         context.requote_threshold_bps >= 0.0 &&
         context.inventory_lots != std::numeric_limits<std::int64_t>::min();
@@ -179,53 +181,49 @@ template <Side S>
         (input.flags & ~known_flags) == 0;
 }
 
+[[nodiscard]] std::int64_t floored_room_lots(
+    double room,
+    double lot_size,
+    double floor_epsilon = 0.0
+) noexcept {
+    const double scaled = std::max(0.0, room) / lot_size + floor_epsilon;
+    if (!std::isfinite(scaled) ||
+        scaled >= static_cast<double>(
+            std::numeric_limits<std::int64_t>::max()
+        )) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    return scaled <= 0.0
+        ? 0
+        : static_cast<std::int64_t>(std::floor(scaled));
+}
+
 template <Side S>
 [[nodiscard]] std::int64_t inventory_room(
     const LiveOrderPlannerContext& context
 ) noexcept {
-    const auto max_inventory = static_cast<__int128>(
-        context.max_inventory_lots
-    );
-    const auto inventory = static_cast<__int128>(context.inventory_lots);
-    const auto room = is_buy_v<S>
-        ? max_inventory - inventory
-        : max_inventory + inventory;
-    if (room <= 0) {
-        return 0;
-    }
-    if (room > std::numeric_limits<std::int64_t>::max()) {
-        return std::numeric_limits<std::int64_t>::max();
-    }
-    return static_cast<std::int64_t>(room);
+    const double room = is_buy_v<S>
+        ? context.max_inventory - context.inventory
+        : context.max_inventory - std::abs(context.inventory);
+    return floored_room_lots(room, context.lot_size);
 }
 
 template <Side S>
 [[nodiscard]] std::int64_t position_value_room(
     const LiveOrderPlannerContext& context
 ) noexcept {
-    // Match cap_exposure_qty_by_position_value's two explicit sentinels:
-    // zero disables an exposure-labelled submit, while +infinity leaves the
-    // requested quantity unchanged regardless of the current inventory sign.
-    if (context.max_position_value_quote_atoms == 0) {
+    // Match cap_exposure_qty_by_position_value's explicit sentinels and
+    // literal binary64 operation order, including its one-picotick floor
+    // tolerance.
+    if (context.max_position_value == 0.0) {
         return 0;
     }
-    if (context.max_position_value_quote_atoms ==
-        std::numeric_limits<std::int64_t>::max()) {
+    if (std::isinf(context.max_position_value)) {
         return std::numeric_limits<std::int64_t>::max();
     }
-    const std::int64_t value_limit_lots =
-        context.max_position_value_quote_atoms /
-        context.mid_notional_quote_atoms_per_lot;
-    const auto limit = static_cast<__int128>(value_limit_lots);
-    const auto inventory = static_cast<__int128>(context.inventory_lots);
-    const auto room = is_buy_v<S> ? limit - inventory : limit + inventory;
-    if (room <= 0) {
-        return 0;
-    }
-    if (room > std::numeric_limits<std::int64_t>::max()) {
-        return std::numeric_limits<std::int64_t>::max();
-    }
-    return static_cast<std::int64_t>(room);
+    const double room = context.max_position_value / context.mid +
+        (is_buy_v<S> ? -context.inventory : context.inventory);
+    return floored_room_lots(room, context.lot_size, 1e-12);
 }
 
 template <Side S>
@@ -339,8 +337,8 @@ LiveSideOrderActionPlan compute_live_side_order_action_plan(
     out.inventory_room_lots = inventory_room<S>(context);
     out.position_value_room_lots = position_value_room<S>(context);
     out.can_post_after_inventory = is_buy_v<S>
-        ? context.inventory_lots < context.max_inventory_lots
-        : context.inventory_lots > -context.max_inventory_lots;
+        ? context.inventory < context.max_inventory
+        : context.inventory > -context.max_inventory;
 
     const bool route_allowed = has_flag(
         input.flags,

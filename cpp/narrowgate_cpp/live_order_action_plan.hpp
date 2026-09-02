@@ -78,17 +78,19 @@ enum LiveOrderReplaceFlag : std::uint8_t {
     LiveOrderReplaceCancelFirstExposureIncrease = 1U << 1,
 };
 
-// One shared x86 cache line.  mid_notional_quote_atoms_per_lot is supplied
-// directly because a BBO midpoint may be a half tick; forcing that value onto
-// the order-price lattice would silently alter max_position_value semantics.
+// One shared x86 cache line.  Raw binary64 risk inputs are retained so the
+// native planner can execute B0's subtraction/division/floor operations in
+// their original order; independently rounded integer atoms change exact and
+// nextafter boundary behavior.  inventory_lots remains the checked lattice
+// identity used by the rest of the planner.
 struct alignas(64) LiveOrderPlannerContext {
+    double inventory;
+    double max_inventory;
+    double max_position_value;
+    double mid;
+    double lot_size;
     std::int64_t inventory_lots;
-    std::int64_t max_inventory_lots;
-    std::int64_t max_position_value_quote_atoms;
-    std::int64_t mid_notional_quote_atoms_per_lot;
-    std::int64_t quote_atoms_per_price_tick_lot;
     std::int64_t min_quantity_lots;
-    std::int64_t min_notional_quote_atoms;
     // Kept as the configured bps binary64 because B0 divides this value by
     // 10,000 before comparing price drift.  Prices themselves remain ticks.
     double requote_threshold_bps;

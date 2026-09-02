@@ -191,13 +191,13 @@ NativeLiveDecisionInput decision_input() {
 
 LiveOrderPlannerContext planner_context() {
     return LiveOrderPlannerContext{
+        .inventory = 0.0,
+        .max_inventory = 0.026,
+        .max_position_value = 1'200.0,
+        .mid = 63'400.0,
+        .lot_size = 0.001,
         .inventory_lots = 0,
-        .max_inventory_lots = 26,
-        .max_position_value_quote_atoms = 120'000'000'000LL,
-        .mid_notional_quote_atoms_per_lot = 6'340'000'000LL,
-        .quote_atoms_per_price_tick_lot = 10'000,
         .min_quantity_lots = 1,
-        .min_notional_quote_atoms = 500'000'000,
         .requote_threshold_bps = 0.1,
     };
 }
@@ -288,6 +288,8 @@ int main(int argc, char** argv) {
         iterations,
         [&](std::uint64_t index) {
             context.inventory_lots = static_cast<std::int64_t>(index % 17) - 8;
+            context.inventory = static_cast<double>(context.inventory_lots) *
+                context.lot_size;
             buy.target_price_ticks = 634'000 +
                 static_cast<std::int64_t>(index % 5);
             buy.existing_price_ticks = 634'000;

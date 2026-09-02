@@ -6175,7 +6175,7 @@ void bind_live_order_action_plan(py::module_& m) {
            py::sequence replace_values,
            py::sequence buy_values,
            py::sequence sell_values) {
-            if (py::len(context_values) != 8 ||
+            if (py::len(context_values) != 9 ||
                 py::len(replace_values) != 8 ||
                 py::len(buy_values) != 9 ||
                 py::len(sell_values) != 9) {
@@ -6185,21 +6185,22 @@ void bind_live_order_action_plan(py::module_& m) {
             }
 
             LiveOrderPlannerContext context{};
-            context.inventory_lots = py::cast<std::int64_t>(context_values[0]);
-            context.max_inventory_lots =
-                py::cast<std::int64_t>(context_values[1]);
-            context.max_position_value_quote_atoms =
-                py::cast<std::int64_t>(context_values[2]);
-            context.mid_notional_quote_atoms_per_lot =
-                py::cast<std::int64_t>(context_values[3]);
-            context.quote_atoms_per_price_tick_lot =
-                py::cast<std::int64_t>(context_values[4]);
-            context.min_quantity_lots =
-                py::cast<std::int64_t>(context_values[5]);
-            context.min_notional_quote_atoms =
+            if (py::cast<std::uint32_t>(context_values[0]) != 2U) {
+                throw std::invalid_argument(
+                    "live order action planner context ABI mismatch"
+                );
+            }
+            context.inventory = py::cast<double>(context_values[1]);
+            context.max_inventory = py::cast<double>(context_values[2]);
+            context.max_position_value = py::cast<double>(context_values[3]);
+            context.mid = py::cast<double>(context_values[4]);
+            context.lot_size = py::cast<double>(context_values[5]);
+            context.inventory_lots =
                 py::cast<std::int64_t>(context_values[6]);
+            context.min_quantity_lots =
+                py::cast<std::int64_t>(context_values[7]);
             context.requote_threshold_bps =
-                py::cast<double>(context_values[7]);
+                py::cast<double>(context_values[8]);
 
             LiveOrderReplaceConfig replace{};
             replace.tick_size = py::cast<double>(replace_values[0]);
@@ -6256,6 +6257,7 @@ void bind_live_order_action_plan(py::module_& m) {
     m.attr("LIVE_ORDER_ACTION_PLAN_CONTEXT_BYTES") = py::int_(
         sizeof(LiveOrderPlannerContext)
     );
+    m.attr("LIVE_ORDER_ACTION_PLAN_CONTEXT_ABI") = py::int_(2);
     m.attr("LIVE_ORDER_ACTION_PLAN_REPLACE_BYTES") = py::int_(
         sizeof(LiveOrderReplaceConfig)
     );

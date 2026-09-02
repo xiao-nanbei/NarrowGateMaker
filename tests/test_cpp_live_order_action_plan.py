@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from strategy.native_order_action import (
 )
 from strategy.order_manager import Order, OrderState, Side
 from strategy.quote_core import _exposure_increasing
+from strategy.replay_controls import cap_exposure_qty_by_position_value
 
 cpp = pytest.importorskip("narrowgate_cpp")
 
@@ -48,17 +50,22 @@ R_CONFIGURED_CANCEL_FIRST = 1 << 15
 
 
 def _context(
-    *, inventory: int = 0, value_limit_lots: int = 20
+    *,
+    inventory: int = 0,
+    value_limit_lots: int = 20,
+    max_inventory_lots: int = 26,
 ) -> tuple[int | float, ...]:
-    mid_notional_per_lot = 6_000_000_000
+    lot = 0.001
+    mid = 60_000.0
     return (
+        cpp.LIVE_ORDER_ACTION_PLAN_CONTEXT_ABI,
+        inventory * lot,
+        max_inventory_lots * lot,
+        value_limit_lots * mid * lot,
+        mid,
+        lot,
         inventory,
-        26,
-        value_limit_lots * mid_notional_per_lot,
-        mid_notional_per_lot,
-        10_000,
         1,
-        500_000_000,
         0.1,
     )
 
@@ -122,13 +129,14 @@ def _reference_side(
     values: tuple[object, ...],
 ) -> dict[str, object]:
     (
-        inventory,
+        _context_abi,
+        raw_inventory,
         max_inventory,
-        max_position_atoms,
-        mid_notional_per_lot,
-        _atoms_per_tick_lot,
+        max_position_value,
+        mid,
+        context_lot_size,
+        inventory,
         min_qty,
-        _min_notional_atoms,
         threshold_bps,
     ) = context
     (
@@ -171,10 +179,28 @@ def _reference_side(
         if buy
         else inventory <= 0 or probe > inventory
     )
-    inv_room = max(0, max_inventory - inventory if buy else max_inventory + inventory)
-    value_limit_lots = max_position_atoms // mid_notional_per_lot
-    value_room = max(0, value_limit_lots - inventory if buy else value_limit_lots + inventory)
-    can_after_inventory = inventory < max_inventory if buy else inventory > -max_inventory
+    raw_inventory_room = (
+        max_inventory - raw_inventory
+        if buy
+        else max_inventory - abs(raw_inventory)
+    )
+    inv_room = math.floor(max(0.0, raw_inventory_room) / context_lot_size)
+    if max_position_value == 0.0:
+        value_room = 0
+    elif math.isinf(max_position_value):
+        value_room = (1 << 63) - 1
+    else:
+        raw_value_room = max_position_value / mid + (
+            -raw_inventory if buy else raw_inventory
+        )
+        value_room = math.floor(
+            max(0.0, raw_value_room) / context_lot_size + 1e-12
+        )
+    can_after_inventory = (
+        raw_inventory < max_inventory
+        if buy
+        else raw_inventory > -max_inventory
+    )
     allow_post = bool(flags & ALLOW_POST)
     allow_exposure = bool(flags & ALLOW_EXPOSURE)
     can_post = can_after_inventory and allow_post and (allow_exposure or not exposure)
@@ -366,6 +392,7 @@ def test_native_order_action_plan_uses_fixed_x86_cache_line_pods() -> None:
 
 def _checked_planner(
     *,
+    max_inventory: float = 0.026,
     max_position_value: float = 3_000.0,
     min_notional: float = 5.0,
     add_min_price_change_ticks: float = 0.0,
@@ -373,7 +400,7 @@ def _checked_planner(
 ) -> CheckedNativeOrderActionPlanner:
     return CheckedNativeOrderActionPlanner(
         cpp,
-        max_inventory=0.026,
+        max_inventory=max_inventory,
         max_position_value=max_position_value,
         tick_size=0.1,
         lot_size=0.001,
@@ -514,6 +541,111 @@ def test_checked_adapter_matches_b0_caps_filters_and_cross_zero_order() -> None:
     assert crosses_flat.buy.target_quantity_lots == 2
 
 
+@pytest.mark.parametrize(
+    ("side_name", "inventory"),
+    [
+        ("BUY", math.nextafter(0.025, -math.inf)),
+        ("BUY", 0.025),
+        ("BUY", math.nextafter(0.025, math.inf)),
+        ("SELL", math.nextafter(-0.025, -math.inf)),
+        ("SELL", -0.025),
+        ("SELL", math.nextafter(-0.025, math.inf)),
+    ],
+)
+def test_checked_adapter_inventory_room_matches_literal_b0_binary64_floor(
+    side_name: str,
+    inventory: float,
+) -> None:
+    lot = 0.001
+    max_inventory = 0.026
+    raw_room = (
+        max_inventory - inventory
+        if side_name == "BUY"
+        else max_inventory - abs(inventory)
+    )
+    expected_room_lots = math.floor(max(0.0, raw_room) / lot)
+    plan = _checked_planner().compute(
+        inventory=inventory,
+        mid=60_000.0,
+        now_ts=1_000.0,
+        buy=_checked_boundary(price=60_000.0),
+        sell=_checked_boundary(price=60_000.1),
+    )
+    actual = plan.buy if side_name == "BUY" else plan.sell
+    assert actual.inventory_room_lots == expected_room_lots
+    assert actual.target_quantity_lots == min(1, expected_room_lots)
+
+
+@pytest.mark.parametrize(
+    ("side_name", "inventory"),
+    [
+        ("BUY", math.nextafter(0.026, -math.inf)),
+        ("BUY", 0.026),
+        ("BUY", math.nextafter(0.026, math.inf)),
+        ("SELL", math.nextafter(-0.026, -math.inf)),
+        ("SELL", -0.026),
+        ("SELL", math.nextafter(-0.026, math.inf)),
+    ],
+)
+def test_checked_adapter_inventory_post_gate_uses_raw_b0_comparison(
+    side_name: str,
+    inventory: float,
+) -> None:
+    plan = _checked_planner().compute(
+        inventory=inventory,
+        mid=60_000.0,
+        now_ts=1_000.0,
+        buy=_checked_boundary(price=60_000.0),
+        sell=_checked_boundary(price=60_000.1),
+    )
+    actual = plan.buy if side_name == "BUY" else plan.sell
+    expected = inventory < 0.026 if side_name == "BUY" else inventory > -0.026
+    assert actual.can_post_after_inventory is expected
+
+
+@pytest.mark.parametrize("side_name", ["BUY", "SELL"])
+@pytest.mark.parametrize(
+    "max_position_value",
+    [
+        math.nextafter(60_000_000.0, -math.inf),
+        60_000_000.0,
+        math.nextafter(60_000_000.0, math.inf),
+    ],
+)
+def test_checked_adapter_position_room_matches_actual_legacy_nextafter(
+    side_name: str,
+    max_position_value: float,
+) -> None:
+    lot = 0.001
+    mid = 60_000.0
+    inventory = 999.999 if side_name == "BUY" else -999.999
+    requested = 0.003
+    expected = cap_exposure_qty_by_position_value(
+        side=side_name,
+        current_qty=inventory,
+        mid=mid,
+        requested_qty=requested,
+        max_position_value=max_position_value,
+        lot=lot,
+    )
+    plan = _checked_planner(
+        max_inventory=2_000.0,
+        max_position_value=max_position_value,
+    ).compute(
+        inventory=inventory,
+        mid=mid,
+        now_ts=1_000.0,
+        buy=_checked_boundary(price=60_000.0, quantity=requested),
+        sell=_checked_boundary(price=60_000.1, quantity=requested),
+    )
+    actual = plan.buy if side_name == "BUY" else plan.sell
+    assert actual.target_quantity_lots == checked_lattice_units(
+        expected,
+        lot,
+        name="legacy_capped_quantity",
+    )
+
+
 def test_checked_adapter_preserves_binary64_min_notional_equality() -> None:
     # Decimal arithmetic says these are equal, while B0's binary64 product is
     # one ULP below the configured threshold. The native path must preserve
@@ -579,7 +711,6 @@ def test_native_order_action_plan_cross_zero_matches_quote_core() -> None:
 def test_native_order_action_plan_position_value_cap_matches_maker_engine() -> None:
     lot = 0.001
     mid = 60_000.0
-    mid_notional_atoms_per_lot = 6_000_000_000
     cases = (
         ("BUY", 0, 4, 120.0),
         ("BUY", 5, 4, 360.0),
@@ -589,10 +720,13 @@ def test_native_order_action_plan_position_value_cap_matches_maker_engine() -> N
         ("SELL", 2, 2, 180.0),
     )
     for side_name, inventory_lots, requested_lots, max_value in cases:
-        context = list(_context(inventory=inventory_lots))
-        context[1] = 100
-        context[2] = round(max_value * 100_000_000)
-        context[3] = mid_notional_atoms_per_lot
+        context = list(
+            _context(
+                inventory=inventory_lots,
+                value_limit_lots=round(max_value / (mid * lot)),
+                max_inventory_lots=100,
+            )
+        )
         buy = _side(desired=requested_lots, probe=requested_lots)
         sell = _side(desired=requested_lots, probe=requested_lots)
         result = cpp.compute_live_order_action_plan(
@@ -780,7 +914,6 @@ def test_native_order_action_plan_caps_before_exchange_filters() -> None:
 
 def test_position_value_zero_and_infinity_match_b0_sentinels() -> None:
     zero = list(_context(inventory=-2, value_limit_lots=0))
-    zero[2] = 0
     crossing = _side(desired=3, probe=3)
     zero_result = cpp.compute_live_order_action_plan(
         tuple(zero),
@@ -803,7 +936,7 @@ def test_position_value_zero_and_infinity_match_b0_sentinels() -> None:
 
 def test_native_order_action_plan_is_fail_closed_on_invalid_integer_contract() -> None:
     context = list(_context())
-    context[3] = 0
+    context[4] = 0
     result = cpp.compute_live_order_action_plan(
         tuple(context), _replace(), _side(), _side()
     )
@@ -828,7 +961,7 @@ def test_native_order_action_plan_matches_reference_over_frozen_lattice() -> Non
                 value_limit_lots=rng.randint(1, 35),
             )
         )
-        context[7] = rng.choice((0.0, 0.01, 0.1, 0.5))
+        context[8] = rng.choice((0.0, 0.01, 0.1, 0.5))
         context = tuple(context)
         replace = (
             0.1,

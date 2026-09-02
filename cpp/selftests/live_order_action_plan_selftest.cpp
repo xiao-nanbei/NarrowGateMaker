@@ -9,13 +9,13 @@ namespace {
 
 LiveOrderPlannerContext context(std::int64_t inventory_lots = 0) {
     return LiveOrderPlannerContext{
+        .inventory = static_cast<double>(inventory_lots) * 0.001,
+        .max_inventory = 0.026,
+        .max_position_value = 1'200.0,
+        .mid = 60'000.0,
+        .lot_size = 0.001,
         .inventory_lots = inventory_lots,
-        .max_inventory_lots = 26,
-        .max_position_value_quote_atoms = 120'000'000'000LL,
-        .mid_notional_quote_atoms_per_lot = 6'000'000'000LL,
-        .quote_atoms_per_price_tick_lot = 10'000,
         .min_quantity_lots = 1,
-        .min_notional_quote_atoms = 500'000'000,
         .requote_threshold_bps = 0.1,
     };
 }
@@ -178,7 +178,7 @@ int main() {
 
     {
         auto limited = context();
-        limited.max_position_value_quote_atoms = 3'000'000'000LL;
+        limited.max_position_value = 30.0;
         auto buy = side();
         const auto result = compute_live_order_action_plan(
             limited,
@@ -194,7 +194,7 @@ int main() {
 
     {
         auto limited = context();
-        limited.max_position_value_quote_atoms = 60'000'000'000LL;
+        limited.max_position_value = 600.0;
         auto buy = side(LivePlannerOrderState::Active);
         buy.existing_remaining_lots = 2;
         const auto result = compute_live_order_action_plan(
@@ -206,6 +206,7 @@ int main() {
         assert(result.buy.action == LiveOrderAction::Keep);
 
         limited.inventory_lots = 10;
+        limited.inventory = 0.010;
         const auto forced = compute_live_order_action_plan(
             limited,
             replace,
@@ -238,7 +239,7 @@ int main() {
 
     {
         auto invalid = context();
-        invalid.mid_notional_quote_atoms_per_lot = 0;
+        invalid.mid = 0.0;
         const auto result = compute_live_order_action_plan(
             invalid,
             replace,

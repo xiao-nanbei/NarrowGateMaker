@@ -257,8 +257,11 @@ class CheckedNativeOrderActionPlanner:
     """Process-frozen checked adapter for the native dual-side planner."""
 
     __slots__ = (
+        "_context_abi",
         "_context_tail",
         "_lot_size",
+        "_max_inventory",
+        "_max_position_value",
         "_native",
         "_replace",
         "_tick_size",
@@ -336,33 +339,34 @@ class CheckedNativeOrderActionPlanner:
         self._native = native
         self._tick_size = tick
         self._lot_size = lot
+        self._context_abi = int(native.LIVE_ORDER_ACTION_PLAN_CONTEXT_ABI)
+        if self._context_abi != 2:
+            raise NativeOrderActionBoundaryError(
+                "native order-action planner context ABI mismatch"
+            )
+        self._max_inventory = inventory_limit
+        self._max_position_value = value_limit
+        checked_lattice_units(
+            inventory_limit,
+            lot,
+            name="max_inventory",
+            allow_zero=False,
+        )
+        if not math.isinf(value_limit):
+            checked_quote_atoms(value_limit, name="max_position_value")
+        checked_quote_atoms(
+            tick * lot,
+            name="quote_value_per_price_tick_lot",
+            allow_zero=False,
+        )
+        checked_quote_atoms(minimum_notional, name="min_notional")
         self._context_tail = (
-            checked_lattice_units(
-                inventory_limit,
-                lot,
-                name="max_inventory",
-                allow_zero=False,
-            ),
-            (
-                _INT64_MAX
-                if math.isinf(value_limit)
-                else checked_quote_atoms(
-                    value_limit,
-                    name="max_position_value",
-                )
-            ),
-            checked_quote_atoms(
-                tick * lot,
-                name="quote_value_per_price_tick_lot",
-                allow_zero=False,
-            ),
             checked_lattice_units(
                 minimum_quantity,
                 lot,
                 name="min_quantity",
                 allow_zero=False,
             ),
-            checked_quote_atoms(minimum_notional, name="min_notional"),
             threshold_bps,
         )
         self._replace = (
@@ -394,20 +398,25 @@ class CheckedNativeOrderActionPlanner:
         timestamp = _finite(now_ts, name="now_ts")
         if mark <= 0.0:
             raise NativeOrderActionBoundaryError("mid must be positive")
+        inventory_lots = checked_signed_lattice_units(
+            current_inventory,
+            self._lot_size,
+            name="inventory",
+        )
+        checked_quote_atoms(
+            mark * self._lot_size,
+            name="mid_notional_per_lot",
+            allow_zero=False,
+        )
         context = (
-            checked_signed_lattice_units(
-                current_inventory,
-                self._lot_size,
-                name="inventory",
-            ),
-            self._context_tail[0],
-            self._context_tail[1],
-            checked_quote_atoms(
-                mark * self._lot_size,
-                name="mid_notional_per_lot",
-                allow_zero=False,
-            ),
-            *self._context_tail[2:],
+            self._context_abi,
+            current_inventory,
+            self._max_inventory,
+            self._max_position_value,
+            mark,
+            self._lot_size,
+            inventory_lots,
+            *self._context_tail,
         )
         buy_values = _side_tuple(
             self._native,
