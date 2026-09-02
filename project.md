@@ -56,6 +56,8 @@ BUY E3 与 SELL owner cooldown 在所有者侧证据中的权限类别是 **owne
 
 **系统性质工作**回答“同一套策略逻辑能否更稳定、更低尾延迟地执行”。它不证明 alpha，也不替代策略 gate；它优化的是 live hot path、C++ 边界、REST/order lifecycle 和 telemetry。当前系统主线是：
 
+- 当前 execution market 是 Binance USD-M Futures。Binance 官方 FIX 产品只覆盖 Spot，且 Market Data 与 Order Entry 是不同 session；Market Data session 不能报撤单。因此当前 USD-M market/private feed 与 new/cancel 继续使用 WebSocket/REST，`CPP_USDM_FIX_AVAILABLE=false` 是协议事实而不是待打开的性能开关。未来的 Binance Spot FIX adapter 也只覆盖对应 Spot source，不能统一替换 USD-M 或 Bitget/Bybit/OKX transport。
+
 - `live/run.sh` 必须加载可审计的 `live/profiles/python.env|native.env`，启动日志打印 profile、全部 native flags 和 extension 路径；strict native 缺模块/API 时 fail fast，不能重启后静默回到 Python。
 - 在 x86 live 机上做同配置、同线程限制、同 marker 口径的 Python/native soak，比较 `live_perf_telemetry.csv` 的 p50/p99/p99.9、fallback、WebSocket age、REST new/cancel tail；warmup、起点 inventory sync 和 sync-degrade 行必须排除。
 - 根据 soak 结果决定是否继续提高加仓侧 `replace_min_price_change_ticks` / `replace_min_interval_ms`，减仓侧保持更敏捷，且 TTL、pause、stale-data 和库存安全撤单不被 coalescing 阻断。
@@ -437,6 +439,8 @@ CryptoHFTData 的来源边界也已明确：它是个人/第三方维护的 Bina
 目标环境的真实 telemetry、native flags、实例指纹和 p50/p99/p99.9 分布属于私有运维证据，不随公共仓库分发。公开结论仅是：microbenchmark 不能授予部署权限；每个目标环境都应分别量测 REST new/cancel、order lifecycle、signal compute、quote math、WebSocket freshness 和端到端 requote 尾延迟。
 
 同日实现第一层 replace lifecycle 收口：`replace_pending_coalesce=true` 默认开启，只在本地同侧订单处于 `PENDING_NEW/PENDING_CANCEL` 时 coalesce 新 replace，等待交易所/order stream 状态收敛；`replace_cancel_first_exposure_increasing=false` 默认关闭，作为后续 soak arm 可让加仓侧 replace 先撤旧单、下一轮再补新单。该路径只处理 REST/order lifecycle p99，不改变 quote alpha；forced TTL、pause/stale-data、库存上限撤单、减仓侧 repair 不走 cancel-first。评估口径必须是 `live_perf_telemetry.csv` 的 action mix、REST p99/p99.9、placed/fill、双边报价完整性和库存修复影响。
+
+2026-09-02 的 successor 补齐了第一层 coalesce 在“权威终态已经可见”之后仍等待下一 cadence 的缺口。优化前 BUY/SELL terminal callback 到下一同侧决策的 p99 分别约为 `9.590s/9.537s`；新路径不在 callback 内发送旧报价，而是以 side/generation intent 唤醒唯一决策循环，重新捕获 fresh snapshot，并重新检查 inventory、cooldown、risk、ownership 与 post-only。匿名化当前窗口有 2,434 次成功 requote、1,404 次 continuation，全部完成 `arm → publish → decision` 且 drop 为 0；合并 p99 为 `52.77ms`，BUY/SELL p99 分别为 `63.84ms/47.63ms`，通过预先设定的 `p99 ≤ 250ms` 工程目标。相邻 predecessor 窗口的合并 p99 为 `99.08ms`，但两个窗口不重叠，因此进一步下降只属于观测差异，不是严格因果或经济价值结论。该 successor 也不是已删除 per-side async gateway 的复活：同侧非终态 ownership 仍最多为 1，unknown terminal 继续 fail-closed。
 
 2026-07-10 把这一条系统链路补成可复跑实现。`live/profiles/native.env` 固化 `QUOTE_CORE + SIGNAL_FEATURES + LIVE_ROUTING + STRICT` 与单线程数值库环境，`python.env` 只切换实现路径；`run.sh status/profile` 会显示持久化状态，`main.py` 启动时验证 native API 和 `.so` 来源。`scripts/analyze_live_soak.py` 用 CSV/log line marker 排除 restart warmup，并统一输出 action mix、REST/gateway 与 requote/signal/quote p50/p95/p99/p99.9、native hit、WS age、placed/fills 和安全日志计数。
 

@@ -280,6 +280,26 @@ Health admission 通过后，用 `live.deployment_runtime` 创建新 activation 
 `selected_activation` 是 lineage state，不是 health assertion。不得向 pointer 添加 leaf
 artifact inventory、host routing、账户状态或 live metric。
 
+## Activation 后延迟观测
+
+Health admission 只能证明 release 安全启动，不能证明延迟已经改善。Live hot path 有变化
+时，每次只观测一个 release 与 process epoch，并排除 restart/warm-up 行。
+
+- 对 `live_perf_telemetry.csv` 只选择 `event=requote,status=ok`；拒绝负值和非有限
+  duration，并对 requote total、quote computation 与 order update 报告样本数、p50、
+  p95、p99 和最大值。
+- Signal timing 必须按记录的 `cached`、`new_bucket`、`catch_up` path 分开，不能把不同
+  工作量混在一个分布中。
+- REST 分布只使用真正发生该 operation 的行，并报告 request count。只有 count/sum 的
+  health 聚合字段只能计算 mean，不能据此声称 p99。
+- 对 terminal-driven replacement，分别统计 `arm`、`publish`、`decision` 和 `drop`
+  marker，按 side 报告 terminal-visible-to-decision latency，并列出所有 drop reason。
+- 单独记录 systemd restart count 与非 `ok` outcome；成功路径变短不能掩盖 failure 或
+  restart churn。
+
+相邻但不重叠的市场窗口只能作为运维观测，不能当作受控因果比较。通过延迟目标也不等于
+PnL 改善、经济 no-harm 或 action authority 已经成立。
+
 ## Stop、resume 与 rollback
 
 安全停止 instance：先停 systemd，确认进程退出，创建 fresh stopped reconciliation，

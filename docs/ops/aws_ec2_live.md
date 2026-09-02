@@ -304,6 +304,30 @@ current pointer with `live.deployment_runtime`. The pointer is only a selector:
 the pointer with leaf artifact inventories, host routing, account state, or live
 metrics.
 
+## Post-activation latency observation
+
+Health admission proves that the release started safely; it does not prove a
+latency improvement. When a release changes the live hot path, observe it with
+one release and process epoch at a time and exclude restart/warm-up rows.
+
+- For `live_perf_telemetry.csv`, select `event=requote,status=ok`; reject
+  negative or non-finite durations and report sample count plus p50, p95, p99,
+  and maximum for total requote, quote computation, and order update.
+- Split signal timing by its recorded path (`cached`, `new_bucket`, or
+  `catch_up`) instead of pooling unlike work.
+- Compute REST distributions only from rows where the operation occurred and
+  report the request count. Aggregated count/sum health fields support a mean,
+  not a p99.
+- For terminal-driven replacement, count `arm`, `publish`, `decision`, and
+  `drop` markers, split terminal-visible-to-decision latency by side, and report
+  every drop reason.
+- Record the systemd restart count and non-`ok` outcomes separately; a shorter
+  successful-path distribution must not hide failures or restart churn.
+
+Adjacent, non-overlapping market windows are operational observations, not a
+controlled causal comparison. Passing a latency target also does not establish
+PnL improvement, economic no-harm, or action authority.
+
 ## Stop, resume, and rollback
 
 To stop the instance safely: stop systemd, confirm process exit, create a fresh

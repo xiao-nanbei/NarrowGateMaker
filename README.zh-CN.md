@@ -89,6 +89,13 @@ NarrowGate 的目标，是让错误的 maker 结论更难通过验证。
 
 只有 Binance USD-M `BTCUSDC` 是 execution market。所有 reference connector 均为只读；公开配置不会把 reference feed 自动转化为 quote policy。Binance Vision 与 CryptoHFTData 的语义不同：Vision 提供公开的 trade/aggregate trade/metrics；CryptoHFTData 是另行治理的 BTCUSDC execution price-level book 来源。历史 BTCUSDT bridge 使用右边界可见、freshness 有上限的官方 individual-trade 1s bar，不再依赖另一套 CryptoHFTData orderbook；live 仍使用 BTCUSDT book ticker。
 
+协议边界：Binance 官方 FIX API **只覆盖 Spot**。Market Data 与 Order Entry
+使用不同 FIX session，Market Data session 不能报单或撤单。NarrowGate 的执行合约是
+Binance USD-M Futures，因此当前行情/private feed 与报撤单仍使用 USD-M 的
+WebSocket/REST 实现。未来即使增加 Binance Spot FIX adapter，它也只覆盖对应的 Binance
+Spot source，不能覆盖 USD-M 或可选的 Bitget/Bybit/OKX feed；本仓库当前没有实现或启用
+该 adapter。参见 [Binance Spot FIX 官方文档](https://developers.binance.com/en/docs/products/spot/fix-api)。
+
 ## 5 分钟快速开始
 
 NarrowGate 要求 Python 3.11 或更高版本；可执行文件不必恰好名为 `python3.11`。先检查本机已有解释器：

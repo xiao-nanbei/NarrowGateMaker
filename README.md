@@ -89,6 +89,15 @@ Market identity is always `venue:instrument:symbol`; feeds with the same display
 
 Only Binance USD-M `BTCUSDC` is an execution market. All reference connectors are read-only, and the public configuration does not turn a reference feed into a quote policy. Binance Vision and CryptoHFTData have different semantics: Vision supplies public trades/aggregate trades/metrics, while CryptoHFTData is the separately governed BTCUSDC execution price-level book source. Historical BTCUSDT bridge construction uses official individual-trade bars with right-edge visibility and bounded freshness; it does not require a second CryptoHFTData order-book archive. Live BTCUSDT continues to use book ticker.
 
+Protocol boundary: Binance's official FIX API is a **Spot-only** product. Its
+Market Data and Order Entry services are separate FIX sessions; the Market Data
+session cannot place or cancel orders. NarrowGate's execution instrument is
+Binance USD-M Futures, so its current market/private feeds and new/cancel path
+remain the USD-M WebSocket/REST implementation. A Binance Spot FIX adapter would
+cover only the corresponding Binance Spot source, not USD-M or the optional
+Bitget/Bybit/OKX feeds, and is not implemented or enabled here. See the
+[official Binance Spot FIX documentation](https://developers.binance.com/en/docs/products/spot/fix-api).
+
 ## 5-Minute Quickstart
 
 NarrowGate requires Python 3.11 or newer; the executable does not need to be named `python3.11`. Check the interpreter already on your machine first:
