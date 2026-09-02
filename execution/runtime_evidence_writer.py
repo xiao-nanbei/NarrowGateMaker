@@ -507,9 +507,19 @@ class RuntimeEvidenceWriter:
                 with self._state_lock:
                     self._closed = True
 
+        def shutdown_invalid(health: Mapping[str, Any]) -> bool:
+            return bool(
+                health["worker_alive"]
+                or not health["valid"]
+                or int(health["queue_depth"]) != 0
+                or int(health["uncommitted_count"]) != 0
+                or int(health["last_committed_sequence"])
+                != int(health["accepted_count"])
+            )
+
         if already_closed:
             health = self.health_snapshot()
-            if health["worker_alive"] or not health["valid"]:
+            if shutdown_invalid(health):
                 raise RuntimeEvidenceWriterError(
                     "runtime evidence writer did not close cleanly: "
                     f"{health['fatal_error'] or 'queue_full'}; "
@@ -526,7 +536,7 @@ class RuntimeEvidenceWriter:
                 if not self._fatal_error:
                     self._fatal_error = "shutdown_worker_timeout"
         health = self.health_snapshot()
-        if health["worker_alive"] or not health["valid"]:
+        if shutdown_invalid(health):
             raise RuntimeEvidenceWriterError(
                 "runtime evidence writer did not close cleanly: "
                 f"{health['fatal_error'] or 'queue_full'}; "

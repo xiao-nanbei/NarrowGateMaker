@@ -529,6 +529,7 @@ class ExactOpportunityDailyWriter:
             return self._health_payload_locked()
 
     def close(self, *, timeout_s: float = 10.0) -> dict[str, Any]:
+        deadline = time.monotonic() + max(0.1, float(timeout_s))
         try:
             with self._direct_io_lock:
                 self._finalize_direct_chunk()
@@ -538,8 +539,20 @@ class ExactOpportunityDailyWriter:
             if self._closed:
                 return self._health_payload_locked()
             self._state = "closing"
-        self._queue.put(_SENTINEL)
-        self._worker.join(timeout=max(0.1, float(timeout_s)))
+        try:
+            self._queue.put(
+                _SENTINEL,
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
+        except queue.Full:
+            with self._lock:
+                self._error_count += 1
+                self._last_error = "writer_close_queue_full"
+                self._state = "error"
+                self._closed = True
+                self._write_health_locked(force=True)
+            return self.health_snapshot()
+        self._worker.join(timeout=max(0.0, deadline - time.monotonic()))
         if self._worker.is_alive():
             with self._lock:
                 self._error_count += 1
@@ -547,6 +560,20 @@ class ExactOpportunityDailyWriter:
                 self._state = "error"
                 self._closed = True
                 self._write_health_locked(force=True)
+        else:
+            with self._lock:
+                if (
+                    not self._closed
+                    or self._state != "closed"
+                    or self._rows_written != self._rows_enqueued
+                    or not self._queue.empty()
+                ):
+                    if self._error_count == 0:
+                        self._error_count = 1
+                        self._last_error = "writer_close_incomplete"
+                    self._state = "error"
+                    self._closed = True
+                    self._write_health_locked(force=True)
         return self.health_snapshot()
 
     def _health_payload_locked(self) -> dict[str, Any]:

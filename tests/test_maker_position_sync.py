@@ -847,6 +847,11 @@ def test_stop_finally_drains_reconciliation_latched_during_writer_shutdown() -> 
                 "rows_committed": 0,
                 "drop_count": 0,
                 "error_count": 0,
+                "state": "closed",
+                "worker_alive": False,
+                "queue_depth": 0,
+                "callbacks_enqueued": 0,
+                "callbacks_processed": 0,
                 "formal_collection_valid": True,
             }
 

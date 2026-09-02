@@ -237,6 +237,31 @@ def test_exact_direct_commit_failure_is_sticky(tmp_path: Path) -> None:
     assert "direct_commit:OSError" in health["last_error"]
 
 
+def test_exact_writer_close_is_bounded_when_worker_has_stopped(tmp_path: Path) -> None:
+    class _StoppedWorkerWriter(ExactOpportunityDailyWriter):
+        def _run(self) -> None:
+            return
+
+    writer = _StoppedWorkerWriter(
+        tmp_path,
+        runtime_identity=_identity(),
+        session_id="stopped-worker",
+        queue_size=1,
+    )
+    writer._worker.join(timeout=1.0)
+    assert writer.append(_row(time.time_ns())) is True
+
+    started = time.monotonic()
+    health = writer.close(timeout_s=0.05)
+
+    assert time.monotonic() - started < 0.5
+    assert health["state"] == "error"
+    assert health["closed"] is True
+    assert health["error_count"] == 1
+    assert health["last_error"] == "writer_close_queue_full"
+    assert health["formal_collection_valid"] is False
+
+
 def test_writer_error_invalidates_chunk_and_blocks_ready_admission(
     tmp_path: Path,
 ) -> None:

@@ -2023,7 +2023,7 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine.orders.cancel_all_local.assert_not_called()
 
 
-def test_normal_stop_fails_when_specialized_evidence_finalize_is_invalid() -> None:
+def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> None:
     engine = object.__new__(MakerEngine)
     engine.cfg = Config()
     engine.orders = SimpleNamespace(
@@ -2044,8 +2044,8 @@ def test_normal_stop_fails_when_specialized_evidence_finalize_is_invalid() -> No
             return_value={
                 "rows_written": 4,
                 "rows_dropped": 0,
-                "error_count": 1,
-                "formal_collection_valid": False,
+                "error_count": 0,
+                "formal_collection_valid": True,
             }
         )
     )
@@ -2056,6 +2056,100 @@ def test_normal_stop_fails_when_specialized_evidence_finalize_is_invalid() -> No
     ):
         engine.stop()
 
+    assert engine._exact_opportunity_tape_runtime is None
+
+
+def test_normal_stop_accepts_valid_bounded_remote_lifecycle_spool() -> None:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.orders = SimpleNamespace(
+        fatal_status=Mock(
+            return_value={"latched": False, "reconciliation_required": False}
+        ),
+        cancel_all_local=Mock(),
+    )
+    engine.signal = SimpleNamespace(stop=Mock())
+    engine._persist_fill_cooldown_checkpoint = Mock()
+    engine._cancel_all_orders = Mock(return_value=True)
+    engine.sync_position = Mock(return_value=True)
+    engine._running = True
+    engine._order_submit_fail_closed = False
+    engine._order_lifecycle_live_writer_v2_shutdown_timeout_s = 1.0
+    engine._order_lifecycle_live_writer_v2 = SimpleNamespace(
+        close=Mock(
+            return_value={
+                "rows_committed": 4,
+                "drop_count": 0,
+                "error_count": 0,
+                "state": "closed",
+                "worker_alive": False,
+                "queue_depth": 0,
+                "callbacks_enqueued": 4,
+                "callbacks_processed": 4,
+                "formal_collection_valid": False,
+                "remote_spool_valid": True,
+            }
+        )
+    )
+    engine._exact_opportunity_tape_runtime = None
+
+    engine.stop()
+
+    assert engine._order_lifecycle_live_writer_v2 is None
+
+
+def test_specialized_close_failure_still_closes_every_writer_and_checkpoint() -> None:
+    close_calls: list[str] = []
+
+    class _FailingLifecycleWriter:
+        def close(self, *, drain_timeout_s: float) -> dict[str, object]:
+            assert drain_timeout_s == pytest.approx(1.0)
+            close_calls.append("lifecycle")
+            raise OSError("lifecycle close failed")
+
+    class _ExactWriter:
+        def close(self) -> dict[str, object]:
+            close_calls.append("exact")
+            return {
+                "rows_written": 3,
+                "rows_enqueued": 3,
+                "rows_dropped": 0,
+                "error_count": 0,
+                "queue_depth": 0,
+                "state": "closed",
+                "closed": True,
+                "formal_collection_valid": True,
+            }
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.orders = SimpleNamespace(
+        fatal_status=Mock(
+            return_value={"latched": False, "reconciliation_required": False}
+        ),
+        cancel_all_local=Mock(),
+    )
+    engine.signal = SimpleNamespace(stop=Mock())
+    engine._persist_fill_cooldown_checkpoint = Mock()
+    engine.close_fill_cooldown_checkpoint_store = Mock(
+        side_effect=lambda: close_calls.append("checkpoint")
+    )
+    engine._cancel_all_orders = Mock(return_value=True)
+    engine.sync_position = Mock(return_value=True)
+    engine._running = True
+    engine._order_submit_fail_closed = False
+    engine._order_lifecycle_live_writer_v2_shutdown_timeout_s = 1.0
+    engine._order_lifecycle_live_writer_v2 = _FailingLifecycleWriter()
+    engine._exact_opportunity_tape_runtime = _ExactWriter()
+
+    with pytest.raises(
+        RuntimeError,
+        match="specialized evidence writer shutdown was invalid",
+    ):
+        engine.stop()
+
+    assert close_calls == ["lifecycle", "exact", "checkpoint"]
+    assert engine._order_lifecycle_live_writer_v2 is None
     assert engine._exact_opportunity_tape_runtime is None
 
 

@@ -12039,39 +12039,91 @@ class MakerEngine:
                 )
         lifecycle_runtime = getattr(self, "_order_lifecycle_live_writer_v2", None)
         if lifecycle_runtime is not None:
-            health = lifecycle_runtime.close(
-                drain_timeout_s=self._order_lifecycle_live_writer_v2_shutdown_timeout_s
-            )
-            logger.info(
-                "ORDER_LIFECYCLE_JOURNAL_V2_CLOSED rows=%d drops=%d errors=%d valid=%d",
-                int(health.get("rows_committed", 0)),
-                int(health.get("drop_count", 0)),
-                int(health.get("error_count", 0)),
-                int(bool(health.get("formal_collection_valid", False))),
-            )
-            if not bool(health.get("formal_collection_valid", False)):
-                specialized_evidence_errors.append(
-                    "order_lifecycle:"
-                    f"drops={int(health.get('drop_count', 0))}:"
-                    f"errors={int(health.get('error_count', 0))}"
+            try:
+                health = lifecycle_runtime.close(
+                    drain_timeout_s=(
+                        self._order_lifecycle_live_writer_v2_shutdown_timeout_s
+                    )
                 )
-            self._order_lifecycle_live_writer_v2 = None
+                logger.info(
+                    "ORDER_LIFECYCLE_JOURNAL_V2_CLOSED rows=%d drops=%d "
+                    "errors=%d formalValid=%d remoteSpoolValid=%d",
+                    int(health.get("rows_committed", 0)),
+                    int(health.get("drop_count", 0)),
+                    int(health.get("error_count", 0)),
+                    int(bool(health.get("formal_collection_valid", False))),
+                    int(bool(health.get("remote_spool_valid", False))),
+                )
+                lifecycle_profile_valid = bool(
+                    health.get("formal_collection_valid", False)
+                    or health.get("remote_spool_valid", False)
+                )
+                lifecycle_shutdown_valid = bool(
+                    lifecycle_profile_valid
+                    and str(health.get("state", "")) == "closed"
+                    and health.get("worker_alive") is False
+                    and int(health.get("queue_depth", -1)) == 0
+                    and int(health.get("drop_count", -1)) == 0
+                    and int(health.get("error_count", -1)) == 0
+                    and int(health.get("callbacks_enqueued", -1))
+                    == int(health.get("callbacks_processed", -2))
+                )
+                if not lifecycle_shutdown_valid:
+                    specialized_evidence_errors.append(
+                        "order_lifecycle:"
+                        f"drops={int(health.get('drop_count', 0))}:"
+                        f"errors={int(health.get('error_count', 0))}:"
+                        "formal_valid="
+                        f"{int(bool(health.get('formal_collection_valid', False)))}:"
+                        "remote_spool_valid="
+                        f"{int(bool(health.get('remote_spool_valid', False)))}"
+                    )
+            except BaseException as exc:
+                logger.critical(
+                    "Order lifecycle evidence writer close failed",
+                    exc_info=True,
+                )
+                specialized_evidence_errors.append(
+                    f"order_lifecycle_close:{type(exc).__name__}:{exc}"
+                )
+            finally:
+                self._order_lifecycle_live_writer_v2 = None
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
-            health = runtime.close()
-            logger.info(
-                "EXACT_OPPORTUNITY_TAPE_V2_2_CLOSED rows=%d drops=%d errors=%d",
-                int(health.get("rows_written", 0)),
-                int(health.get("rows_dropped", 0)),
-                int(health.get("error_count", 0)),
-            )
-            if not bool(health.get("formal_collection_valid", False)):
-                specialized_evidence_errors.append(
-                    "exact_opportunity:"
-                    f"drops={int(health.get('rows_dropped', 0))}:"
-                    f"errors={int(health.get('error_count', 0))}"
+            try:
+                health = runtime.close()
+                logger.info(
+                    "EXACT_OPPORTUNITY_TAPE_V2_2_CLOSED rows=%d drops=%d errors=%d",
+                    int(health.get("rows_written", 0)),
+                    int(health.get("rows_dropped", 0)),
+                    int(health.get("error_count", 0)),
                 )
-            self._exact_opportunity_tape_runtime = None
+                exact_shutdown_valid = bool(
+                    health.get("formal_collection_valid", False)
+                    and health.get("closed") is True
+                    and str(health.get("state", "")) == "closed"
+                    and int(health.get("queue_depth", -1)) == 0
+                    and int(health.get("rows_dropped", -1)) == 0
+                    and int(health.get("error_count", -1)) == 0
+                    and int(health.get("rows_enqueued", -1))
+                    == int(health.get("rows_written", -2))
+                )
+                if not exact_shutdown_valid:
+                    specialized_evidence_errors.append(
+                        "exact_opportunity:"
+                        f"drops={int(health.get('rows_dropped', 0))}:"
+                        f"errors={int(health.get('error_count', 0))}"
+                    )
+            except BaseException as exc:
+                logger.critical(
+                    "Exact opportunity evidence writer close failed",
+                    exc_info=True,
+                )
+                specialized_evidence_errors.append(
+                    f"exact_opportunity_close:{type(exc).__name__}:{exc}"
+                )
+            finally:
+                self._exact_opportunity_tape_runtime = None
         if not self._drain_deferred_runtime_reconciliation():
             logger.critical(
                 "MakerEngine shutdown ended with exact reconciliation pending"
