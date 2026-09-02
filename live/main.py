@@ -49,7 +49,17 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from execution.order_lifecycle_live_writer_v2 import OrderLifecycleLiveWriterV2
+from execution.runtime_evidence_writer import RuntimeEvidenceWriter
 from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
+from live import deployment_runtime as locked_runtime
+from live.binance_usdm_transport import (
+    BinanceUsdMOrderGateway,
+    BinanceUsdMRestClients,
+    BinanceUsdMWebSocketOrderConfig,
+    binance_usdm_rest_base_url,
+    create_binance_usdm_rest_clients,
+    create_binance_usdm_websocket_order_gateway,
+)
 from live.config import (
     install_reload_handler,
     load_config,
@@ -71,7 +81,6 @@ from models.replay.prospective_baseline_epoch import (
     snapshot_action_enablement,
     snapshot_data_source_identity,
 )
-from live import deployment_runtime as locked_runtime
 from strategy.maker_engine import MakerEngine, validate_live_artifact_authority
 from strategy.quote_core import QUOTE_CORE_UNIT_ABI_FIELDS
 
@@ -92,6 +101,7 @@ DRY_RUN_TIMEOUT_EXIT_CODE = 124
 EXECUTION_STATE_UNCERTAIN_EXIT_CODE = 78
 RUNTIME_HEALTH_SCHEMA = "narrowgate.live_runtime_health.v1"
 LIVE_MAIN_LOOP_FALLBACK_WAIT_S = 0.1
+STARTUP_USER_STREAM_READY_TIMEOUT_S = 30.0
 
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
@@ -126,6 +136,25 @@ class _LiveMainLoopWakeup:
         # following loop iteration; it cannot be delayed by another wait.
         self._event.clear()
         return notified
+
+
+def arm_websocket_order_ab_runtime_guard(
+    *,
+    gateway,
+    max_runtime_s: float,
+    on_expire,
+    timer_factory=threading.Timer,
+):
+    """Preconnect and arm the independent hard stop for a short WS A/B."""
+
+    runtime_s = float(max_runtime_s)
+    if not math.isfinite(runtime_s) or not 1.0 <= runtime_s <= 3_600.0:
+        raise ValueError("WebSocket order A/B max runtime must be in [1, 3600]")
+    gateway.start()
+    timer = timer_factory(runtime_s, on_expire)
+    timer.daemon = True
+    timer.start()
+    return timer
 
 
 def _positive_finite_seconds(value: str) -> float:
@@ -1315,6 +1344,7 @@ def record_startup_runtime_identity(
     safety_authority: Mapping[str, Any] | None = None,
     dry_run: bool,
     engine: MakerEngine | None = None,
+    startup_exchange_reconciliation: Mapping[str, Any] | None = None,
 ) -> tuple[Path, dict]:
     """Persist and return the identity that actually governs this process."""
     resolved_config = config_path.expanduser().resolve()
@@ -1407,6 +1437,10 @@ def record_startup_runtime_identity(
             safety_authority=safety_authority,
         )
         identity["startup_attestation"] = attestation
+    if startup_exchange_reconciliation is not None:
+        identity["startup_exchange_reconciliation"] = dict(
+            startup_exchange_reconciliation
+        )
     if has_loaded_source_identity:
         revalidate_loaded_config_source(cfg, resolved_config)
     write_runtime_identity(identity_path, identity)
@@ -1804,9 +1838,14 @@ def start_engine_with_prospective_collection(
     safety_authority: Mapping[str, Any],
     dry_run: bool,
     exchange_reconciliation_required: bool = False,
-    runtime_identity_path: Path | None = None,
-    runtime_identity: dict | None = None,
-) -> tuple[object | None, OrderLifecycleLiveWriterV2 | None]:
+    market_snapshot_client=None,
+    listen_key_client=None,
+) -> tuple[
+    object | None,
+    OrderLifecycleLiveWriterV2 | None,
+    dict[str, Any] | None,
+    int | None,
+]:
     """Start warmup, bind collection, then permit the first WS event."""
 
     engine.start()
@@ -1816,10 +1855,67 @@ def start_engine_with_prospective_collection(
     logging.getLogger("main").info(
         "STARTUP_CANCEL_AND_OPEN_ORDERS_COMPLETE open_orders=0"
     )
-    # Install the one and only startup seed after stale-order cancellation is
-    # authoritatively complete.  Seeding before this point could hide a fill in
-    # the cancellation window or create an unknown predecessor-order cursor.
+    # Recover the durable fill checkpoint only after stale-order cancellation
+    # is authoritatively complete.  No quote decision is admitted before this
+    # function returns, so a recovered cooldown cannot race a new order.
+    fill_gap_recovery = engine.reconcile_fill_cooldown_checkpoint_gap()
+    logging.getLogger("main").info(
+        "FILL_COOLDOWN_GAP_RECONCILIATION phase=post_cancel mode=%s recovered=%d",
+        fill_gap_recovery["mode"],
+        int(fill_gap_recovery["recovered_fill_count"]),
+    )
+
+    # Install the startup position seed after both cancellation and fill-gap
+    # recovery.  Seeding before this point could hide a fill in the crash gap.
     engine.sync_position(required=True)
+    admitted_user_stream_generation: int | None = None
+    if not dry_run:
+        if market_snapshot_client is None and listen_key_client is None:
+            ws.start(rest)
+        else:
+            ws.start(
+                rest,
+                market_snapshot_client=market_snapshot_client,
+                listen_key_client=listen_key_client,
+            )
+        ready_deadline = time.monotonic() + STARTUP_USER_STREAM_READY_TIMEOUT_S
+        while True:
+            remaining_s = ready_deadline - time.monotonic()
+            if remaining_s <= 0.0 or not ws.wait_for_user_stream_ready(remaining_s):
+                raise RuntimeError(
+                    "private user stream did not become ready before quote admission"
+                )
+            before = ws.user_event_safety_snapshot()
+            before_generation = int(before.get("user_stream_generation", 0) or 0)
+            if not bool(before.get("user_stream_connected")) or before_generation <= 0:
+                continue
+
+            # Close the interval between the durable checkpoint recovery and
+            # private-stream readiness through the normal exact accountTrades
+            # reconciliation path. It delivers each unseen fill through
+            # OrderManager/Inventory dedupe exactly once; running the separate
+            # cooldown gap applier here would double-apply the same fill.
+            engine.sync_position(required=True)
+            if _initial_exchange_open_orders(rest, symbol=cfg.symbol):
+                raise RuntimeError(
+                    "startup open-order ownership changed before quote admission"
+                )
+            after = ws.user_event_safety_snapshot()
+            if bool(after.get("user_stream_connected")) and int(
+                after.get("user_stream_generation", 0) or 0
+            ) == before_generation:
+                admitted_user_stream_generation = before_generation
+                break
+            logging.getLogger("main").warning(
+                "STARTUP_USER_STREAM_GENERATION_CHANGED before=%d after=%d; "
+                "repeating exact recovery barrier",
+                before_generation,
+                int(after.get("user_stream_generation", 0) or 0),
+            )
+    else:
+        logging.getLogger("main").info("[DRY-RUN] Skipping WebSocket connections")
+
+    exchange_binding = None
     if exchange_reconciliation_required:
         exchange_binding = validate_startup_exchange_reconciliation_lineage(
             rest,
@@ -1827,12 +1923,8 @@ def start_engine_with_prospective_collection(
             symbol=cfg.symbol,
             api_key=str(cfg.api.key),
         )
-        if runtime_identity_path is None or runtime_identity is None:
-            raise RuntimeError(
-                "required exchange reconciliation lacks runtime identity persistence"
-            )
-        runtime_identity["startup_exchange_reconciliation"] = exchange_binding
-        write_runtime_identity(runtime_identity_path, runtime_identity)
+    # Freeze the prospective initial state only after the final checkpoint,
+    # position, order-ownership, and user-stream barriers have converged.
     epoch, writer = initialize_prospective_lifecycle_collection(
         cfg=cfg,
         engine=engine,
@@ -1841,15 +1933,31 @@ def start_engine_with_prospective_collection(
         native_runtime=native_runtime,
         safety_authority=safety_authority,
     )
-    if not dry_run:
-        ws.start(rest)
-    else:
-        logging.getLogger("main").info("[DRY-RUN] Skipping WebSocket connections")
-    return epoch, writer
+    if admitted_user_stream_generation is not None:
+        final_user_state = ws.user_event_safety_snapshot()
+        if not bool(final_user_state.get("user_stream_connected")) or int(
+            final_user_state.get("user_stream_generation", 0) or 0
+        ) != admitted_user_stream_generation:
+            raise RuntimeError(
+                "private user stream changed while finalizing startup evidence"
+            )
+    return epoch, writer, exchange_binding, admitted_user_stream_generation
+
+
+def _bind_position_risk_v2(client):
+    """Bind the complete position snapshot endpoint to one query client."""
+
+    def get_position_risk_v2(**kwargs):
+        return client.sign_request(
+            "GET", POSITION_RISK_RECONCILIATION_ENDPOINT, kwargs
+        )
+
+    client.get_position_risk = get_position_risk_v2
+    return client
 
 
 def create_rest_client(cfg, dry_run=False):
-    """Create the Binance Futures client with complete position snapshots."""
+    """Create one compatibility/query client for one-shot owner commands."""
     if dry_run:
         raise ValueError(
             "legacy simulated REST dry-run was removed; use live/main.py --dry-run"
@@ -1870,13 +1978,42 @@ def create_rest_client(cfg, dry_run=False):
     # V3 omits symbols with neither a position nor an open order.  The
     # reconciliation contract needs V2's explicit zero-position row and
     # exchange updateTime; an empty V3 response has neither.
-    def get_position_risk_v2(**kwargs):
-        return client.sign_request(
-            "GET", POSITION_RISK_RECONCILIATION_ENDPOINT, kwargs
-        )
+    return _bind_position_risk_v2(client)
 
-    client.get_position_risk = get_position_risk_v2
-    return client
+
+def create_rest_clients(cfg) -> BinanceUsdMRestClients:
+    """Create the five isolated persistent REST roles used by live runtime."""
+
+    clients = create_binance_usdm_rest_clients(
+        key=str(cfg.api.key),
+        secret=str(cfg.api.secret),
+        base_url=binance_usdm_rest_base_url(testnet=bool(cfg.api.testnet)),
+        timeout_s=float(cfg.api.timeout_s),
+    )
+    _bind_position_risk_v2(clients.reconciliation)
+    return clients
+
+
+def create_websocket_order_ab_gateway(cfg):
+    """Create, but do not connect, the explicit short-lived WS A/B gateway."""
+
+    if str(cfg.api.order_transport) != "websocket_api_ab":
+        return None
+    settings = cfg.api.websocket_order_ab
+    config = BinanceUsdMWebSocketOrderConfig(
+        enabled=True,
+        url=str(settings.url),
+        connect_timeout_s=float(settings.connect_timeout_s),
+        request_timeout_s=float(settings.request_timeout_s),
+        recv_window_ms=int(settings.recv_window_ms),
+        latency_sample_limit=int(settings.latency_sample_limit),
+        max_runtime_s=float(settings.max_runtime_s),
+    )
+    return create_binance_usdm_websocket_order_gateway(
+        key=str(cfg.api.key),
+        secret=str(cfg.api.secret),
+        config=config,
+    )
 
 
 def resolve_logging_paths(cfg):
@@ -1914,6 +2051,7 @@ def collect_runtime_safety_health(
     *,
     engine,
     ws,
+    order_gateway=None,
     now_monotonic_s: float | None = None,
 ) -> dict[str, object]:
     """Collect only general process/stream safety facts, never research state."""
@@ -1926,6 +2064,21 @@ def collect_runtime_safety_health(
     quote = engine.runtime_safety_snapshot(now_monotonic_s=now_monotonic_s)
     user = ws.user_event_safety_snapshot(now_monotonic_s=now_monotonic_s)
     continuation = quote.get("replace_terminal_continuation", {})
+    evidence_health_reader = getattr(
+        engine,
+        "runtime_evidence_writer_health_snapshot",
+        None,
+    )
+    evidence = (
+        evidence_health_reader()
+        if callable(evidence_health_reader)
+        else {"enabled": False}
+    )
+    order_gateway_health = (
+        order_gateway.health_snapshot()
+        if order_gateway is not None
+        else {"active_transport": "unknown", "websocket_api": {"enabled": False}}
+    )
     return {
         "schemaVersion": RUNTIME_HEALTH_SCHEMA,
         "recordedAtNs": time.time_ns(),
@@ -1975,6 +2128,21 @@ def collect_runtime_safety_health(
         "replaceTerminalContinuationDecisionLatencyMaxNs": int(
             continuation.get("decision_latency_max_ns", 0)
         ),
+        "runtimeEvidenceWriterEnabled": bool(evidence.get("enabled", False)),
+        "runtimeEvidenceWriterValid": bool(evidence.get("valid", True)),
+        "runtimeEvidenceWriterQueueDepth": int(evidence.get("queue_depth", 0)),
+        "runtimeEvidenceWriterQueueHighWatermark": int(
+            evidence.get("queue_high_watermark", 0)
+        ),
+        "runtimeEvidenceWriterQueueFullCount": int(
+            evidence.get("queue_full_count", 0)
+        ),
+        "runtimeEvidenceWriterUncommittedCount": int(
+            evidence.get("uncommitted_count", 0)
+        ),
+        "runtimeEvidenceWriterErrorCount": int(evidence.get("error_count", 0)),
+        "runtimeEvidenceWriterFatalError": str(evidence.get("fatal_error", "")),
+        "orderGateway": order_gateway_health,
     }
 
 
@@ -2053,6 +2221,19 @@ def write_runtime_safety_health(cfg, payload: dict[str, object]) -> Path:
     return path
 
 
+def runtime_safety_health_payload_factory(*, engine, ws, order_gateway=None):
+    """Build one worker-side collector without reading drifting loop locals."""
+
+    def collect() -> dict[str, object]:
+        return collect_runtime_safety_health(
+            engine=engine,
+            ws=ws,
+            order_gateway=order_gateway,
+        )
+
+    return collect
+
+
 def _runtime_age_text(value: object) -> str:
     return "unknown" if value is None else f"{float(value):.1f}s"
 
@@ -2096,12 +2277,18 @@ def main():
         if not cfg.api.key or not cfg.api.secret:
             parser.error("stopped reconciliation requires API credentials")
         rest = create_rest_client(cfg)
-        result = write_stopped_exchange_reconciliation(
-            rest,
-            symbol=cfg.symbol,
-            api_key=str(cfg.api.key),
-            output_path=args.write_stopped_reconciliation,
-        )
+        try:
+            result = write_stopped_exchange_reconciliation(
+                rest,
+                symbol=cfg.symbol,
+                api_key=str(cfg.api.key),
+                output_path=args.write_stopped_reconciliation,
+            )
+        finally:
+            session = getattr(rest, "session", None)
+            close_session = getattr(session, "close", None)
+            if callable(close_session):
+                close_session()
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return 0
     resolved_config_path = config_path.expanduser().resolve()
@@ -2173,12 +2360,23 @@ def main():
         )
         sys.exit(1)
 
-    # Create the current compatibility transport.  Naming the three roles here
-    # keeps today's UMFutures behavior unchanged while allowing a native order
-    # gateway and event source to replace only their own hot paths later.
-    rest = create_rest_client(cfg)
-    order_gateway = rest
-    reconciliation_client = rest
+    # Keep latency-sensitive writes on one isolated, serial connection.  Cold
+    # reconciliation, public snapshots, metric polling and listen-key renewal
+    # each own a separate persistent session and cannot head-of-line block it.
+    rest_clients = create_rest_clients(cfg)
+    reconciliation_client = rest_clients.reconciliation
+    rest = reconciliation_client
+    websocket_order_gateway = create_websocket_order_ab_gateway(cfg)
+    order_gateway = BinanceUsdMOrderGateway(
+        rest_order_client=rest_clients.order,
+        websocket_order_gateway=websocket_order_gateway,
+    )
+    logger.info(
+        "BINANCE_USDM_TRANSPORT roles=%s order=%s websocket_order_ab=%s",
+        ",".join(rest_clients.identity()["roles"]),
+        order_gateway.active_transport,
+        "enabled" if websocket_order_gateway is not None else "disabled",
+    )
 
     # Create engine
     engine = MakerEngine(
@@ -2187,6 +2385,7 @@ def main():
         artifact_authority=safety_authority,
         order_gateway=order_gateway,
         reconciliation_client=reconciliation_client,
+        metrics_client=rest_clients.metrics,
     )
     main_loop_wakeup = _LiveMainLoopWakeup()
     engine.set_replace_terminal_continuation_wakeup(
@@ -2203,46 +2402,19 @@ def main():
         int(restored_fill_cooldown["buy_remaining_ms"]),
     )
 
-    # Bind the clean checkout, exact artifact, and restored deadline before
-    # WebSockets, exchange synchronization, or live loops can begin.
-    runtime_identity_path, runtime_identity = record_startup_runtime_identity(
-        cfg=cfg,
-        config_path=resolved_config_path,
-        native_runtime=native_runtime,
-        safety_authority=safety_authority,
-        dry_run=False,
-        engine=engine,
-    )
-    logger.info(
-        "RUNTIME_IDENTITY path=%s identity=%s",
-        runtime_identity_path,
-        json.dumps(runtime_identity, sort_keys=True),
-    )
-    if runtime_identity["q90_owner_override_effective"]:
-        logger.warning(
-            "PRIVATE_DEPLOYMENT_APPROVAL q90_action=ON authority=%s",
-            runtime_identity["q90_action_runtime_authority"],
-        )
-    if runtime_identity["f05_boolean_cooldown_owner_override_effective"]:
-        logger.warning(
-            "PRIVATE_DEPLOYMENT_APPROVAL f05_boolean_cooldown=ON authority=%s",
-            runtime_identity["f05_boolean_cooldown_runtime_authority"],
-        )
-    if runtime_identity["f05_buy_e3_owner_override_effective"]:
-        logger.warning(
-            "PRIVATE_DEPLOYMENT_APPROVAL f05_buy_e3=ON authority=%s release_root=%s",
-            runtime_identity["f05_buy_e3_runtime_authority"],
-            runtime_identity["startup_attestation"]["deployment_envelope"][
-                "canonical_sha256"
-            ],
-        )
-
     # Create WebSocket handler
     ws = WSHandler(engine, cfg)
     engine.set_event_source(ws)
+    runtime_evidence_writer = RuntimeEvidenceWriter()
+    try:
+        engine.set_runtime_evidence_writer(runtime_evidence_writer)
+    except BaseException:
+        runtime_evidence_writer.close(drain_timeout_s=1.0)
+        raise
 
     # Graceful shutdown
     shutdown_event = False
+    websocket_order_ab_timer: threading.Timer | None = None
 
     def handle_shutdown(signum, frame):
         nonlocal shutdown_event
@@ -2264,6 +2436,27 @@ def main():
     fatal_traceback = None
     cleanup_errors: list[BaseException] = []
     try:
+        if websocket_order_gateway is not None and not args.dry_run:
+            # Preconnect inside the cleanup transaction: a TLS/DNS failure
+            # must still close all five REST sessions and runtime writers.
+            def expire_websocket_order_ab() -> None:
+                nonlocal shutdown_event
+                if shutdown_event:
+                    return
+                shutdown_event = True
+                main_loop_wakeup.notify_shutdown()
+                logger.warning(
+                    "BINANCE_USDM_WEBSOCKET_ORDER_AB_MAX_RUNTIME elapsed_s=%.3f "
+                    "action=graceful_shutdown",
+                    float(cfg.api.websocket_order_ab.max_runtime_s),
+                )
+
+            websocket_order_ab_timer = arm_websocket_order_ab_runtime_guard(
+                gateway=websocket_order_gateway,
+                max_runtime_s=float(cfg.api.websocket_order_ab.max_runtime_s),
+                on_expire=expire_websocket_order_ab,
+            )
+
         # Check account
         if not args.dry_run:
             try:
@@ -2341,7 +2534,12 @@ def main():
 
         # Warm up and cancel startup orders before publishing the epoch.  The
         # writer is attached before any WebSocket can deliver a live event.
-        prospective_epoch, _ = start_engine_with_prospective_collection(
+        (
+            prospective_epoch,
+            _,
+            startup_exchange_reconciliation,
+            admitted_user_stream_generation,
+        ) = start_engine_with_prospective_collection(
             cfg=cfg,
             engine=engine,
             ws=ws,
@@ -2351,15 +2549,60 @@ def main():
             safety_authority=safety_authority,
             dry_run=bool(args.dry_run),
             exchange_reconciliation_required=True,
-            runtime_identity_path=runtime_identity_path,
-            runtime_identity=runtime_identity,
+            market_snapshot_client=rest_clients.market_snapshot,
+            listen_key_client=rest_clients.listen_key,
         )
+
+        # Only publish the governing runtime identity after startup order
+        # cancellation, checkpoint gap recovery, exact position sync, and the
+        # private user stream have all converged.  No quote is admitted before
+        # this point.
+        runtime_identity_path, runtime_identity = record_startup_runtime_identity(
+            cfg=cfg,
+            config_path=resolved_config_path,
+            native_runtime=native_runtime,
+            safety_authority=safety_authority,
+            dry_run=False,
+            engine=engine,
+            startup_exchange_reconciliation=startup_exchange_reconciliation,
+        )
+        logger.info(
+            "RUNTIME_IDENTITY path=%s identity=%s",
+            runtime_identity_path,
+            json.dumps(runtime_identity, sort_keys=True),
+        )
+        if runtime_identity["q90_owner_override_effective"]:
+            logger.warning(
+                "PRIVATE_DEPLOYMENT_APPROVAL q90_action=ON authority=%s",
+                runtime_identity["q90_action_runtime_authority"],
+            )
+        if runtime_identity["f05_boolean_cooldown_owner_override_effective"]:
+            logger.warning(
+                "PRIVATE_DEPLOYMENT_APPROVAL f05_boolean_cooldown=ON authority=%s",
+                runtime_identity["f05_boolean_cooldown_runtime_authority"],
+            )
+        if runtime_identity["f05_buy_e3_owner_override_effective"]:
+            logger.warning(
+                "PRIVATE_DEPLOYMENT_APPROVAL f05_buy_e3=ON authority=%s "
+                "release_root=%s",
+                runtime_identity["f05_buy_e3_runtime_authority"],
+                runtime_identity["startup_attestation"]["deployment_envelope"][
+                    "canonical_sha256"
+                ],
+            )
         if prospective_epoch is not None:
             logger.info(
                 "PROSPECTIVE_BASELINE_EPOCH_BOUND id=%s identity=%s manifest=%s",
                 prospective_epoch.epoch_id,
                 prospective_epoch.identity_sha256,
                 prospective_epoch.manifest_path,
+            )
+
+        if not args.dry_run and admitted_user_stream_generation is None:
+            raise RuntimeError("startup did not admit a private user-stream generation")
+        if admitted_user_stream_generation is not None:
+            engine.set_admitted_user_stream_generation(
+                admitted_user_stream_generation
             )
 
         # Main loop
@@ -2382,16 +2625,21 @@ def main():
             ws.maintain_active_order_depth_paths(now_ns=now_ns)
 
             # Engine tick (handles requote interval internally)
+            runtime_evidence_writer.raise_if_failed()
             if engine.is_running:
                 engine.tick()
             engine.raise_if_runtime_fatal()
+            runtime_evidence_writer.raise_if_failed()
 
             if now - last_safety_state >= safety_state_interval:
-                runtime_safety = collect_runtime_safety_health(
-                    engine=engine,
-                    ws=ws,
+                runtime_evidence_writer.enqueue_json_snapshot_factory(
+                    runtime_health_state_path(cfg),
+                    runtime_safety_health_payload_factory(
+                        engine=engine,
+                        ws=ws,
+                        order_gateway=order_gateway,
+                    ),
                 )
-                write_runtime_safety_health(cfg, runtime_safety)
                 last_safety_state = now
 
             # Periodic position sync
@@ -2432,310 +2680,355 @@ def main():
 
             # Health check
             if now - last_health >= health_interval:
-                snap = engine.inventory.snapshot
-                inv_exp = engine.inventory.inventory_exposure_snapshot()
-                camp = engine.inventory.campaign_snapshot()
-                buy_fill_sel = engine.buy_fill_selection_live_snapshot()
-                fill_hazard = engine.dynamic_fill_hazard_shadow_snapshot()
-                boolean_cooldown = engine.boolean_cooldown_policy_snapshot()
-                buy_e3_cooldown = engine.buy_e3_cooldown_policy_snapshot()
-                market_tape = ws.market_tape_snapshot()
-                deep_book = ws.deep_book_snapshot()
-                active_order_depth = ws.active_order_depth_snapshot()
-                external_sources = ws.external_venue_snapshot()
-                external_enabled = len(external_sources)
-                external_stale = sum(int(source.get("stale", 1)) for source in external_sources)
-                external_trade_stale = sum(
-                    int(source.get("trade_stale", 1)) for source in external_sources
-                )
-                external_errors = sum(
-                    int(source.get("error_count", 0)) for source in external_sources
-                )
-                external_record_depth = sum(
-                    int(source.get("record_queue_depth", 0)) for source in external_sources
-                )
-                external_record_hwm = max(
-                    (
-                        int(source.get("record_queue_high_watermark", 0))
-                        for source in external_sources
-                    ),
-                    default=0,
-                )
-                external_record_max_age_ms = max(
-                    (
-                        float(source.get("record_max_queue_age_ms", 0.0))
-                        for source in external_sources
-                    ),
-                    default=0.0,
-                )
-                external_record_dropped = sum(
-                    int(source.get("record_dropped", 0)) for source in external_sources
-                )
-                external_source_ids = (
-                    "|".join(str(source.get("market_id", "unknown")) for source in external_sources)
-                    or "none"
-                )
-                request_rtts = [
-                    float(source.get("request_rtt_ms", float("nan"))) for source in external_sources
-                ]
-                external_request_rtt_ms = max(
-                    (value for value in request_rtts if math.isfinite(value)),
-                    default=0.0,
-                )
-                external_book_age_ms = max(
-                    (float(source.get("book_age_ms", float("inf"))) for source in external_sources),
-                    default=float("inf"),
-                )
-                external_trade_age_ms = max(
-                    (
-                        float(source.get("trade_age_ms", float("inf")))
-                        for source in external_sources
-                    ),
-                    default=float("inf"),
-                )
-                external_book_event_age_ms = max(
-                    (
-                        float(source.get("book_event_age_ms", float("inf")))
-                        for source in external_sources
-                    ),
-                    default=float("inf"),
-                )
-                external_trade_event_age_ms = max(
-                    (
-                        float(source.get("trade_event_age_ms", float("inf")))
-                        for source in external_sources
-                    ),
-                    default=float("inf"),
-                )
-                global_ref_values, global_flow_backend_values = (
-                    collect_global_shadow_health(
+                def publish_periodic_health() -> None:
+                    gateway_health = order_gateway.health_snapshot()
+                    websocket_gateway_health = gateway_health.get("websocket_api", {})
+                    if websocket_gateway_health.get("enabled"):
+                        logger.info(
+                            "ORDER_GATEWAY_HEALTH transport=%s connected=%d "
+                            "generation=%d requests=%d successes=%d unknown=%d "
+                            "p99Ms=%s lastClientOrderId=%s",
+                            gateway_health.get("active_transport", "unknown"),
+                            int(bool(websocket_gateway_health.get("connected"))),
+                            int(websocket_gateway_health.get("connection_generation", 0)),
+                            int(websocket_gateway_health.get("counters", {}).get("requests", 0)),
+                            int(websocket_gateway_health.get("counters", {}).get("successes", 0)),
+                            int(
+                                websocket_gateway_health.get("counters", {}).get(
+                                    "timeouts", 0
+                                )
+                                + websocket_gateway_health.get("counters", {}).get(
+                                    "disconnects", 0
+                                )
+                                + websocket_gateway_health.get("counters", {}).get(
+                                    "exchange_unknown", 0
+                                )
+                                + websocket_gateway_health.get("counters", {}).get(
+                                    "protocol_errors", 0
+                                )
+                            ),
+                            websocket_gateway_health.get("latency_ms", {}).get("p99"),
+                            websocket_gateway_health.get("last_receipt", {}).get(
+                                "client_order_id", ""
+                            ),
+                        )
+                    snap = engine.inventory.snapshot
+                    inv_exp = engine.inventory.inventory_exposure_snapshot()
+                    camp = engine.inventory.campaign_snapshot()
+                    buy_fill_sel = engine.buy_fill_selection_live_snapshot()
+                    fill_hazard = engine.dynamic_fill_hazard_shadow_snapshot()
+                    boolean_cooldown = engine.boolean_cooldown_policy_snapshot()
+                    buy_e3_cooldown = engine.buy_e3_cooldown_policy_snapshot()
+                    market_tape = ws.market_tape_snapshot()
+                    deep_book = ws.deep_book_snapshot()
+                    active_order_depth = ws.active_order_depth_snapshot()
+                    external_sources = ws.external_venue_snapshot()
+                    external_enabled = len(external_sources)
+                    external_stale = sum(int(source.get("stale", 1)) for source in external_sources)
+                    external_trade_stale = sum(
+                        int(source.get("trade_stale", 1)) for source in external_sources
+                    )
+                    external_errors = sum(
+                        int(source.get("error_count", 0)) for source in external_sources
+                    )
+                    external_record_depth = sum(
+                        int(source.get("record_queue_depth", 0)) for source in external_sources
+                    )
+                    external_record_hwm = max(
+                        (
+                            int(source.get("record_queue_high_watermark", 0))
+                            for source in external_sources
+                        ),
+                        default=0,
+                    )
+                    external_record_max_age_ms = max(
+                        (
+                            float(source.get("record_max_queue_age_ms", 0.0))
+                            for source in external_sources
+                        ),
+                        default=0.0,
+                    )
+                    external_record_dropped = sum(
+                        int(source.get("record_dropped", 0)) for source in external_sources
+                    )
+                    external_source_ids = (
+                        "|".join(str(source.get("market_id", "unknown")) for source in external_sources)
+                        or "none"
+                    )
+                    request_rtts = [
+                        float(source.get("request_rtt_ms", float("nan"))) for source in external_sources
+                    ]
+                    external_request_rtt_ms = max(
+                        (value for value in request_rtts if math.isfinite(value)),
+                        default=0.0,
+                    )
+                    external_book_age_ms = max(
+                        (float(source.get("book_age_ms", float("inf"))) for source in external_sources),
+                        default=float("inf"),
+                    )
+                    external_trade_age_ms = max(
+                        (
+                            float(source.get("trade_age_ms", float("inf")))
+                            for source in external_sources
+                        ),
+                        default=float("inf"),
+                    )
+                    external_book_event_age_ms = max(
+                        (
+                            float(source.get("book_event_age_ms", float("inf")))
+                            for source in external_sources
+                        ),
+                        default=float("inf"),
+                    )
+                    external_trade_event_age_ms = max(
+                        (
+                            float(source.get("trade_event_age_ms", float("inf")))
+                            for source in external_sources
+                        ),
+                        default=float("inf"),
+                    )
+                    global_ref_values, global_flow_backend_values = (
+                        collect_global_shadow_health(
+                            engine=engine,
+                            cfg=cfg,
+                            logger=logger,
+                        )
+                    )
+                    global_flow_values = global_flow_backend_values
+                    runtime_safety = collect_runtime_safety_health(
                         engine=engine,
-                        cfg=cfg,
-                        logger=logger,
+                        ws=ws,
+                        order_gateway=order_gateway,
                     )
-                )
-                global_flow_values = global_flow_backend_values
-                runtime_safety = collect_runtime_safety_health(
-                    engine=engine,
-                    ws=ws,
-                )
-                write_runtime_safety_health(cfg, runtime_safety)
-                logger.info(
-                    f"HEALTH pos={snap.qty:+.4f} "
-                    f"quoteLoopRunning={int(runtime_safety['quoteLoopRunning'])} "
-                    f"ownershipConflictLatched={int(runtime_safety['ownershipConflictLatched'])} "
-                    f"fatalRuntimeLatched={int(runtime_safety['fatalRuntimeLatched'])} "
-                    f"reconciliationRequired={int(runtime_safety['reconciliationRequired'])} "
-                    f"fatalReason={runtime_safety['fatalReason'] or 'none'} "
-                    f"lastTickAge={_runtime_age_text(runtime_safety['lastTickAge'])} "
-                    f"lastUserEventAge={_runtime_age_text(runtime_safety['lastUserEventAge'])} "
-                    f"userStreamConnected={int(runtime_safety['userStreamConnected'])} "
-                    f"userStreamGeneration={runtime_safety['userStreamGeneration']} "
-                    f"rtcArm={runtime_safety['replaceTerminalContinuationArmCount']} "
-                    f"rtcPublish={runtime_safety['replaceTerminalContinuationPublishCount']} "
-                    f"rtcDecision={runtime_safety['replaceTerminalContinuationDecisionCount']} "
-                    f"rtcDrop={runtime_safety['replaceTerminalContinuationDropCount']} "
-                    f"rtcPending={runtime_safety['replaceTerminalContinuationPendingCount']} "
-                    f"rtcInFlight={runtime_safety['replaceTerminalContinuationInFlightCount']} "
-                    f"rtcBuy={runtime_safety['replaceTerminalContinuationBuyDecisionCount']} "
-                    f"rtcSell={runtime_safety['replaceTerminalContinuationSellDecisionCount']} "
-                    f"rtcDecisionLatencySumNs={runtime_safety['replaceTerminalContinuationDecisionLatencySumNs']} "
-                    f"rtcDecisionLatencyMaxNs={runtime_safety['replaceTerminalContinuationDecisionLatencyMaxNs']} "
-                    f"rpnl={snap.realized_pnl:.2f} "
-                    f"upnl={snap.unrealized_pnl:.2f} "
-                    f"daily={engine.inventory.daily_pnl:.2f} "
-                    f"absInvTime={inv_exp['abs_inventory_time_s']:.2f}btc_s "
-                    f"avgAbsInv={inv_exp['time_avg_abs_inventory']:.6f} "
-                    f"notionalInvTime={inv_exp['notional_inventory_time_s']:.2f}usd_s "
-                    f"pnlPerInvHr={inv_exp['daily_pnl_per_abs_inventory_hour']:.4f} "
-                    f"dayBuyAvgPx={inv_exp['daily_buy_avg_fill_price']:.1f} "
-                    f"daySellAvgPx={inv_exp['daily_sell_avg_fill_price']:.1f} "
-                    f"dayBuyQty={inv_exp['daily_buy_fill_qty']:.4f} "
-                    f"daySellQty={inv_exp['daily_sell_fill_qty']:.4f} "
-                    f"campActive={int(camp.active)} "
-                    f"campAge={camp.age_s:.1f}s "
-                    f"campMaxInv={camp.max_abs_qty:.4f} "
-                    f"campPnl={camp.total_pnl:.2f} "
-                    f"campMAE={camp.adverse_excursion:.2f} "
-                    f"campIncFills={camp.exposure_increasing_fills} "
-                    f"campRedFills={camp.reducing_fills} "
-                    f"campBuyFills={camp.buy_fills} "
-                    f"campSellFills={camp.sell_fills} "
-                    f"buyFillSelEval={buy_fill_sel['eval_count']} "
-                    f"buyFillSelHit={buy_fill_sel['hit_count']} "
-                    f"buyFillSelHitRate={buy_fill_sel['hit_rate']:.4f} "
-                    f"buyFillSelAction={buy_fill_sel['action_count']} "
-                    f"buyFillSelActionRate={buy_fill_sel['action_rate']:.4f} "
-                    f"buyFillSelLastHitAge={buy_fill_sel['last_hit_age_s']:.1f}s "
-                    f"fillHazardEnabled={fill_hazard['enabled']} "
-                    f"fillHazardRows={fill_hazard['rows']} "
-                    f"fillHazardValid={fill_hazard['valid_rows']} "
-                    f"fillHazardInvalid={fill_hazard['invalid_rows']} "
-                    f"fillHazardValidRate={fill_hazard['valid_rate']:.4f} "
-                    f"fillHazardLastAge={fill_hazard['last_age_s']:.1f}s "
-                    f"fillHazardActionAuthorized={fill_hazard['action_authorized']} "
-                    f"fillHazardActionThreshold={fill_hazard['action_threshold']:.8f} "
-                    f"fillHazardActionLastScore={fill_hazard['action_last_score']:.8f} "
-                    f"fillHazardActionHold={fill_hazard['action_hold']} "
-                    f"fillHazardActionHoldAge={fill_hazard['action_hold_age_s']:.1f}s "
-                    f"fillHazardActionCancels={fill_hazard['action_cancel_count']} "
-                    f"fillHazardActionReentries={fill_hazard['action_reentry_count']} "
-                    f"fillHazardActionKeeps={fill_hazard['action_keep_count']} "
-                    f"fillHazardActionInvalidHold={fill_hazard['action_invalid_hold_count']} "
-                    f"booleanCooldownEnabled={boolean_cooldown['enabled']} "
-                    f"booleanCooldownUpdates={boolean_cooldown['windows']['updates']} "
-                    f"booleanCooldownEval={boolean_cooldown['evaluations']} "
-                    f"booleanCooldownSupported={boolean_cooldown['supported']} "
-                    f"booleanCooldownNonbaseline={boolean_cooldown['nonbaseline']} "
-                    f"booleanCooldownFallback={boolean_cooldown['fallback']} "
-                    f"booleanCooldownLastAction={boolean_cooldown['last_action']} "
-                    f"booleanCooldownWarm={boolean_cooldown['windows']['warmup_admitted']} "
-                    f"booleanCooldownWindows={boolean_cooldown['windows']['completed_windows']} "
-                    f"booleanCooldownGaps={boolean_cooldown['windows']['gap_windows']} "
-                    f"booleanCooldownResets={boolean_cooldown['windows']['resets']} "
-                    f"booleanCooldownInvalid={boolean_cooldown['windows']['invalid_updates']} "
-                    f"buyE3CooldownEnabled={buy_e3_cooldown['enabled']} "
-                    f"buyE3CooldownUpdates={buy_e3_cooldown['windows']['updates']} "
-                    f"buyE3CooldownEval={buy_e3_cooldown['evaluations']} "
-                    f"buyE3CooldownSupported={buy_e3_cooldown['supported']} "
-                    f"buyE3CooldownNonbaseline={buy_e3_cooldown['nonbaseline']} "
-                    f"buyE3CooldownFallback={buy_e3_cooldown['fallback']} "
-                    f"buyE3CooldownLastAction={buy_e3_cooldown['last_action']} "
-                    f"buyE3CooldownDecisionP99Us={buy_e3_cooldown['decision_latency_p99_us']:.1f} "
-                    f"buyE3CooldownWarm={buy_e3_cooldown['windows']['warmup_time_admitted']} "
-                    f"buyE3CooldownWindows={buy_e3_cooldown['windows']['completed_windows']} "
-                    f"buyE3CooldownGapResets={buy_e3_cooldown['windows']['gap_resets']} "
-                    f"buyE3CooldownResets={buy_e3_cooldown['windows']['resets']} "
-                    f"buyE3CooldownInvalid={buy_e3_cooldown['windows']['invalid_updates']} "
-                    f"marketTapeEnabled={market_tape['enabled']} "
-                    f"marketTapeWritten={market_tape['written']} "
-                    f"marketTapeDropped={market_tape['dropped']} "
-                    f"marketTapeInvalid={market_tape['invalid']} "
-                    f"marketTapeQueueDepth={market_tape['queue_depth']} "
-                    f"marketTapeQueueHwm={market_tape['queue_high_watermark']} "
-                    f"marketTapeQueueAgeMs={market_tape['queue_age_ms']:.1f} "
-                    f"marketTapeMaxQueueAgeMs={market_tape['max_queue_age_ms']:.1f} "
-                    f"deepBookEnabled={deep_book['enabled']} "
-                    f"deepBookValid={deep_book['valid']} "
-                    f"deepBookStale={deep_book['stale']} "
-                    f"deepBookAgeMs={deep_book['age_ms']:.1f} "
-                    f"deepBookGeneration={deep_book['generation']} "
-                    f"deepBookLastUpdate={deep_book['last_update_id']} "
-                    f"deepBookBidLevels={deep_book['bid_levels']} "
-                    f"deepBookAskLevels={deep_book['ask_levels']} "
-                    f"deepBookGaps={deep_book['gap_count']} "
-                    f"deepBookResyncs={deep_book['resync_count']} "
-                    f"deepBookStaleRestarts={deep_book['stale_restart_count']} "
-                    f"deepBookBuffer={deep_book['buffer_events']} "
-                    f"deepBookTrades={deep_book['trade_count']} "
-                    f"activeDeepTracked={active_order_depth['tracked']} "
-                    f"activeDeepRetained={active_order_depth['retained']} "
-                    f"activeDeepValid={active_order_depth['valid']} "
-                    f"activeDeepAmbiguous={active_order_depth['ambiguous']} "
-                    f"activeDeepUncovered={active_order_depth['uncovered']} "
-                    f"activeDeepMaxAgeMs={active_order_depth['max_age_ms']:.1f} "
-                    f"externalSources={external_enabled} "
-                    f"externalSourceIds={external_source_ids} "
-                    f"externalStale={external_stale} "
-                    f"externalTradeStale={external_trade_stale} "
-                    f"externalErrors={external_errors} "
-                    f"externalRecordDepth={external_record_depth} "
-                    f"externalRecordHwm={external_record_hwm} "
-                    f"externalRecordMaxAgeMs={external_record_max_age_ms:.1f} "
-                    f"externalRecordDropped={external_record_dropped} "
-                    f"externalRequestRttMs={external_request_rtt_ms:.1f} "
-                    f"externalBookAgeMs={external_book_age_ms:.1f} "
-                    f"externalTradeAgeMs={external_trade_age_ms:.1f} "
-                    f"externalBookEventAgeMs={external_book_event_age_ms:.1f} "
-                    f"externalTradeEventAgeMs={external_trade_event_age_ms:.1f} "
-                    f"globalRefShadowEnabled={global_ref_values['enabled']} "
-                    f"globalRefStateError={global_ref_values['state_error']} "
-                    f"globalRefValid={global_ref_values['valid']} "
-                    f"globalRefConfidence={global_ref_values['confidence']:.4f} "
-                    f"globalSpotMoveBps={global_ref_values['spot']:.4f} "
-                    f"globalPerpMoveBps={global_ref_values['perp']:.4f} "
-                    f"globalPerpSpotDivBps={global_ref_values['divergence']:.4f} "
-                    f"globalResidualBps={global_ref_values['residual']:.4f} "
-                    f"globalRefFreshSpot={global_ref_values['fresh_spot']} "
-                    f"globalRefFreshPerp={global_ref_values['fresh_perp']} "
-                    f"globalRefDispersionBps={global_ref_values['dispersion']:.4f} "
-                    f"globalRefBasisSamples={global_ref_values['basis_samples']} "
-                    f"globalFlowShadowEnabled={global_flow_values['enabled']} "
-                    f"globalFlowStateError={global_flow_values['state_error']} "
-                    f"globalFlow100Valid={global_flow_values['valid']} "
-                    f"globalFlow100Pressure={global_flow_values['pressure']:.4f} "
-                    f"globalFlow100PendingBps={global_flow_values['pending']:.4f} "
-                    f"globalFlow100SpotPressure={global_flow_values['spot_pressure']:.4f} "
-                    f"globalFlow100PerpPressure={global_flow_values['perp_pressure']:.4f} "
-                    f"globalFlow100SpotAgreement={global_flow_values['spot_agreement']:.4f} "
-                    f"globalFlow100PerpAgreement={global_flow_values['perp_agreement']:.4f} "
-                    f"globalFlow100FreshSpot={global_flow_values['fresh_spot']} "
-                    f"globalFlow100FreshPerp={global_flow_values['fresh_perp']} "
-                    f"globalFlowNative={global_flow_backend_values['native']} "
-                    f"globalFlowMarkets={global_flow_backend_values['market_count']} "
-                    f"globalFlowTradeBatches={global_flow_backend_values['trade_batches']} "
-                    f"globalFlowTradeEvents={global_flow_backend_values['trade_events_seen']} "
-                    f"globalFlowTradeAccepted={global_flow_backend_values['trade_events_accepted']} "
-                    f"globalFlowBookEvents={global_flow_backend_values['book_events_seen']} "
-                    f"globalFlowBookAccepted={global_flow_backend_values['book_events_accepted']} "
-                    f"globalFlowOOO={global_flow_backend_values['out_of_order_events']} "
-                    f"globalFlowStaleTrades={global_flow_backend_values['stale_trade_events']} "
-                    f"globalFlowTradeOverflow={global_flow_backend_values['trade_overflow_events']} "
-                    f"globalFlowBookOverflow={global_flow_backend_values['book_overflow_events']} "
-                    f"globalRefReason={global_ref_values['reason']} "
-                    f"globalFlowReason={global_flow_values['reason']} "
-                    f"state={snap.state.name} "
-                    f"orders={engine.orders.active_count()} "
-                    f"requotes={engine._requote_count}"
-                )
-                lifecycle_v2_health = engine.order_lifecycle_live_writer_v2_health_snapshot()
-                if lifecycle_v2_health.get("enabled"):
+                    active_order_count = engine.orders.active_count()
+                    requote_count = engine._requote_count
+                    daily_pnl = engine.inventory.daily_pnl
                     logger.info(
-                        "ORDER_LIFECYCLE_JOURNAL_V2_HEALTH profile=%s "
-                        "remoteSpoolValid=%d formalValid=%d "
-                        "queue=%d hwm=%d drops=%d errors=%d enqueueP99Us=%.1f "
-                        "writeP99Ms=%.3f maxRssMb=%.1f lastFlushNs=%d",
-                        str(lifecycle_v2_health.get("storage_profile", "")),
-                        int(
-                            bool(
-                                lifecycle_v2_health.get(
-                                    "remote_spool_valid",
-                                    False,
-                                )
-                            )
-                        ),
-                        int(
-                            bool(
-                                lifecycle_v2_health.get(
-                                    "formal_collection_valid",
-                                    False,
-                                )
-                            )
-                        ),
-                        int(lifecycle_v2_health.get("queue_depth", 0)),
-                        int(lifecycle_v2_health.get("queue_hwm", 0)),
-                        int(lifecycle_v2_health.get("drop_count", 0)),
-                        int(lifecycle_v2_health.get("error_count", 0)),
-                        float(
-                            lifecycle_v2_health.get(
-                                "enqueue_latency_p99_us",
-                                0.0,
-                            )
-                        ),
-                        float(
-                            lifecycle_v2_health.get(
-                                "write_latency_p99_ms",
-                                0.0,
-                            )
-                        ),
-                        float(lifecycle_v2_health.get("process_max_rss_mb", 0.0)),
-                        int(
-                            lifecycle_v2_health.get(
-                                "last_worker_flush_ts_ns",
-                                0,
-                            )
-                        ),
+                        f"HEALTH pos={snap.qty:+.4f} "
+                        f"quoteLoopRunning={int(runtime_safety['quoteLoopRunning'])} "
+                        f"ownershipConflictLatched={int(runtime_safety['ownershipConflictLatched'])} "
+                        f"fatalRuntimeLatched={int(runtime_safety['fatalRuntimeLatched'])} "
+                        f"reconciliationRequired={int(runtime_safety['reconciliationRequired'])} "
+                        f"fatalReason={runtime_safety['fatalReason'] or 'none'} "
+                        f"lastTickAge={_runtime_age_text(runtime_safety['lastTickAge'])} "
+                        f"lastUserEventAge={_runtime_age_text(runtime_safety['lastUserEventAge'])} "
+                        f"userStreamConnected={int(runtime_safety['userStreamConnected'])} "
+                        f"userStreamGeneration={runtime_safety['userStreamGeneration']} "
+                        f"rtcArm={runtime_safety['replaceTerminalContinuationArmCount']} "
+                        f"rtcPublish={runtime_safety['replaceTerminalContinuationPublishCount']} "
+                        f"rtcDecision={runtime_safety['replaceTerminalContinuationDecisionCount']} "
+                        f"rtcDrop={runtime_safety['replaceTerminalContinuationDropCount']} "
+                        f"rtcPending={runtime_safety['replaceTerminalContinuationPendingCount']} "
+                        f"rtcInFlight={runtime_safety['replaceTerminalContinuationInFlightCount']} "
+                        f"rtcBuy={runtime_safety['replaceTerminalContinuationBuyDecisionCount']} "
+                        f"rtcSell={runtime_safety['replaceTerminalContinuationSellDecisionCount']} "
+                        f"rtcDecisionLatencySumNs={runtime_safety['replaceTerminalContinuationDecisionLatencySumNs']} "
+                        f"rtcDecisionLatencyMaxNs={runtime_safety['replaceTerminalContinuationDecisionLatencyMaxNs']} "
+                        f"evidenceValid={int(runtime_safety['runtimeEvidenceWriterValid'])} "
+                        f"evidenceDepth={runtime_safety['runtimeEvidenceWriterQueueDepth']} "
+                        f"evidenceHwm={runtime_safety['runtimeEvidenceWriterQueueHighWatermark']} "
+                        f"evidenceFull={runtime_safety['runtimeEvidenceWriterQueueFullCount']} "
+                        f"evidenceUncommitted={runtime_safety['runtimeEvidenceWriterUncommittedCount']} "
+                        f"evidenceErrors={runtime_safety['runtimeEvidenceWriterErrorCount']} "
+                        f"rpnl={snap.realized_pnl:.2f} "
+                        f"upnl={snap.unrealized_pnl:.2f} "
+                        f"daily={daily_pnl:.2f} "
+                        f"absInvTime={inv_exp['abs_inventory_time_s']:.2f}btc_s "
+                        f"avgAbsInv={inv_exp['time_avg_abs_inventory']:.6f} "
+                        f"notionalInvTime={inv_exp['notional_inventory_time_s']:.2f}usd_s "
+                        f"pnlPerInvHr={inv_exp['daily_pnl_per_abs_inventory_hour']:.4f} "
+                        f"dayBuyAvgPx={inv_exp['daily_buy_avg_fill_price']:.1f} "
+                        f"daySellAvgPx={inv_exp['daily_sell_avg_fill_price']:.1f} "
+                        f"dayBuyQty={inv_exp['daily_buy_fill_qty']:.4f} "
+                        f"daySellQty={inv_exp['daily_sell_fill_qty']:.4f} "
+                        f"campActive={int(camp.active)} "
+                        f"campAge={camp.age_s:.1f}s "
+                        f"campMaxInv={camp.max_abs_qty:.4f} "
+                        f"campPnl={camp.total_pnl:.2f} "
+                        f"campMAE={camp.adverse_excursion:.2f} "
+                        f"campIncFills={camp.exposure_increasing_fills} "
+                        f"campRedFills={camp.reducing_fills} "
+                        f"campBuyFills={camp.buy_fills} "
+                        f"campSellFills={camp.sell_fills} "
+                        f"buyFillSelEval={buy_fill_sel['eval_count']} "
+                        f"buyFillSelHit={buy_fill_sel['hit_count']} "
+                        f"buyFillSelHitRate={buy_fill_sel['hit_rate']:.4f} "
+                        f"buyFillSelAction={buy_fill_sel['action_count']} "
+                        f"buyFillSelActionRate={buy_fill_sel['action_rate']:.4f} "
+                        f"buyFillSelLastHitAge={buy_fill_sel['last_hit_age_s']:.1f}s "
+                        f"fillHazardEnabled={fill_hazard['enabled']} "
+                        f"fillHazardRows={fill_hazard['rows']} "
+                        f"fillHazardValid={fill_hazard['valid_rows']} "
+                        f"fillHazardInvalid={fill_hazard['invalid_rows']} "
+                        f"fillHazardValidRate={fill_hazard['valid_rate']:.4f} "
+                        f"fillHazardLastAge={fill_hazard['last_age_s']:.1f}s "
+                        f"fillHazardActionAuthorized={fill_hazard['action_authorized']} "
+                        f"fillHazardActionThreshold={fill_hazard['action_threshold']:.8f} "
+                        f"fillHazardActionLastScore={fill_hazard['action_last_score']:.8f} "
+                        f"fillHazardActionHold={fill_hazard['action_hold']} "
+                        f"fillHazardActionHoldAge={fill_hazard['action_hold_age_s']:.1f}s "
+                        f"fillHazardActionCancels={fill_hazard['action_cancel_count']} "
+                        f"fillHazardActionReentries={fill_hazard['action_reentry_count']} "
+                        f"fillHazardActionKeeps={fill_hazard['action_keep_count']} "
+                        f"fillHazardActionInvalidHold={fill_hazard['action_invalid_hold_count']} "
+                        f"booleanCooldownEnabled={boolean_cooldown['enabled']} "
+                        f"booleanCooldownUpdates={boolean_cooldown['windows']['updates']} "
+                        f"booleanCooldownEval={boolean_cooldown['evaluations']} "
+                        f"booleanCooldownSupported={boolean_cooldown['supported']} "
+                        f"booleanCooldownNonbaseline={boolean_cooldown['nonbaseline']} "
+                        f"booleanCooldownFallback={boolean_cooldown['fallback']} "
+                        f"booleanCooldownLastAction={boolean_cooldown['last_action']} "
+                        f"booleanCooldownWarm={boolean_cooldown['windows']['warmup_admitted']} "
+                        f"booleanCooldownWindows={boolean_cooldown['windows']['completed_windows']} "
+                        f"booleanCooldownGaps={boolean_cooldown['windows']['gap_windows']} "
+                        f"booleanCooldownResets={boolean_cooldown['windows']['resets']} "
+                        f"booleanCooldownInvalid={boolean_cooldown['windows']['invalid_updates']} "
+                        f"buyE3CooldownEnabled={buy_e3_cooldown['enabled']} "
+                        f"buyE3CooldownUpdates={buy_e3_cooldown['windows']['updates']} "
+                        f"buyE3CooldownEval={buy_e3_cooldown['evaluations']} "
+                        f"buyE3CooldownSupported={buy_e3_cooldown['supported']} "
+                        f"buyE3CooldownNonbaseline={buy_e3_cooldown['nonbaseline']} "
+                        f"buyE3CooldownFallback={buy_e3_cooldown['fallback']} "
+                        f"buyE3CooldownLastAction={buy_e3_cooldown['last_action']} "
+                        f"buyE3CooldownDecisionP99Us={buy_e3_cooldown['decision_latency_p99_us']:.1f} "
+                        f"buyE3CooldownWarm={buy_e3_cooldown['windows']['warmup_time_admitted']} "
+                        f"buyE3CooldownWindows={buy_e3_cooldown['windows']['completed_windows']} "
+                        f"buyE3CooldownGapResets={buy_e3_cooldown['windows']['gap_resets']} "
+                        f"buyE3CooldownResets={buy_e3_cooldown['windows']['resets']} "
+                        f"buyE3CooldownInvalid={buy_e3_cooldown['windows']['invalid_updates']} "
+                        f"marketTapeEnabled={market_tape['enabled']} "
+                        f"marketTapeWritten={market_tape['written']} "
+                        f"marketTapeDropped={market_tape['dropped']} "
+                        f"marketTapeInvalid={market_tape['invalid']} "
+                        f"marketTapeQueueDepth={market_tape['queue_depth']} "
+                        f"marketTapeQueueHwm={market_tape['queue_high_watermark']} "
+                        f"marketTapeQueueAgeMs={market_tape['queue_age_ms']:.1f} "
+                        f"marketTapeMaxQueueAgeMs={market_tape['max_queue_age_ms']:.1f} "
+                        f"deepBookEnabled={deep_book['enabled']} "
+                        f"deepBookValid={deep_book['valid']} "
+                        f"deepBookStale={deep_book['stale']} "
+                        f"deepBookAgeMs={deep_book['age_ms']:.1f} "
+                        f"deepBookGeneration={deep_book['generation']} "
+                        f"deepBookLastUpdate={deep_book['last_update_id']} "
+                        f"deepBookBidLevels={deep_book['bid_levels']} "
+                        f"deepBookAskLevels={deep_book['ask_levels']} "
+                        f"deepBookGaps={deep_book['gap_count']} "
+                        f"deepBookResyncs={deep_book['resync_count']} "
+                        f"deepBookStaleRestarts={deep_book['stale_restart_count']} "
+                        f"deepBookBuffer={deep_book['buffer_events']} "
+                        f"deepBookTrades={deep_book['trade_count']} "
+                        f"activeDeepTracked={active_order_depth['tracked']} "
+                        f"activeDeepRetained={active_order_depth['retained']} "
+                        f"activeDeepValid={active_order_depth['valid']} "
+                        f"activeDeepAmbiguous={active_order_depth['ambiguous']} "
+                        f"activeDeepUncovered={active_order_depth['uncovered']} "
+                        f"activeDeepMaxAgeMs={active_order_depth['max_age_ms']:.1f} "
+                        f"externalSources={external_enabled} "
+                        f"externalSourceIds={external_source_ids} "
+                        f"externalStale={external_stale} "
+                        f"externalTradeStale={external_trade_stale} "
+                        f"externalErrors={external_errors} "
+                        f"externalRecordDepth={external_record_depth} "
+                        f"externalRecordHwm={external_record_hwm} "
+                        f"externalRecordMaxAgeMs={external_record_max_age_ms:.1f} "
+                        f"externalRecordDropped={external_record_dropped} "
+                        f"externalRequestRttMs={external_request_rtt_ms:.1f} "
+                        f"externalBookAgeMs={external_book_age_ms:.1f} "
+                        f"externalTradeAgeMs={external_trade_age_ms:.1f} "
+                        f"externalBookEventAgeMs={external_book_event_age_ms:.1f} "
+                        f"externalTradeEventAgeMs={external_trade_event_age_ms:.1f} "
+                        f"globalRefShadowEnabled={global_ref_values['enabled']} "
+                        f"globalRefStateError={global_ref_values['state_error']} "
+                        f"globalRefValid={global_ref_values['valid']} "
+                        f"globalRefConfidence={global_ref_values['confidence']:.4f} "
+                        f"globalSpotMoveBps={global_ref_values['spot']:.4f} "
+                        f"globalPerpMoveBps={global_ref_values['perp']:.4f} "
+                        f"globalPerpSpotDivBps={global_ref_values['divergence']:.4f} "
+                        f"globalResidualBps={global_ref_values['residual']:.4f} "
+                        f"globalRefFreshSpot={global_ref_values['fresh_spot']} "
+                        f"globalRefFreshPerp={global_ref_values['fresh_perp']} "
+                        f"globalRefDispersionBps={global_ref_values['dispersion']:.4f} "
+                        f"globalRefBasisSamples={global_ref_values['basis_samples']} "
+                        f"globalFlowShadowEnabled={global_flow_values['enabled']} "
+                        f"globalFlowStateError={global_flow_values['state_error']} "
+                        f"globalFlow100Valid={global_flow_values['valid']} "
+                        f"globalFlow100Pressure={global_flow_values['pressure']:.4f} "
+                        f"globalFlow100PendingBps={global_flow_values['pending']:.4f} "
+                        f"globalFlow100SpotPressure={global_flow_values['spot_pressure']:.4f} "
+                        f"globalFlow100PerpPressure={global_flow_values['perp_pressure']:.4f} "
+                        f"globalFlow100SpotAgreement={global_flow_values['spot_agreement']:.4f} "
+                        f"globalFlow100PerpAgreement={global_flow_values['perp_agreement']:.4f} "
+                        f"globalFlow100FreshSpot={global_flow_values['fresh_spot']} "
+                        f"globalFlow100FreshPerp={global_flow_values['fresh_perp']} "
+                        f"globalFlowNative={global_flow_backend_values['native']} "
+                        f"globalFlowMarkets={global_flow_backend_values['market_count']} "
+                        f"globalFlowTradeBatches={global_flow_backend_values['trade_batches']} "
+                        f"globalFlowTradeEvents={global_flow_backend_values['trade_events_seen']} "
+                        f"globalFlowTradeAccepted={global_flow_backend_values['trade_events_accepted']} "
+                        f"globalFlowBookEvents={global_flow_backend_values['book_events_seen']} "
+                        f"globalFlowBookAccepted={global_flow_backend_values['book_events_accepted']} "
+                        f"globalFlowOOO={global_flow_backend_values['out_of_order_events']} "
+                        f"globalFlowStaleTrades={global_flow_backend_values['stale_trade_events']} "
+                        f"globalFlowTradeOverflow={global_flow_backend_values['trade_overflow_events']} "
+                        f"globalFlowBookOverflow={global_flow_backend_values['book_overflow_events']} "
+                        f"globalRefReason={global_ref_values['reason']} "
+                        f"globalFlowReason={global_flow_values['reason']} "
+                        f"state={snap.state.name} "
+                        f"orders={active_order_count} "
+                        f"requotes={requote_count}"
                     )
+                    lifecycle_v2_health = engine.order_lifecycle_live_writer_v2_health_snapshot()
+                    if lifecycle_v2_health.get("enabled"):
+                        logger.info(
+                            "ORDER_LIFECYCLE_JOURNAL_V2_HEALTH profile=%s "
+                            "remoteSpoolValid=%d formalValid=%d "
+                            "queue=%d hwm=%d drops=%d errors=%d enqueueP99Us=%.1f "
+                            "writeP99Ms=%.3f maxRssMb=%.1f lastFlushNs=%d",
+                            str(lifecycle_v2_health.get("storage_profile", "")),
+                            int(
+                                bool(
+                                    lifecycle_v2_health.get(
+                                        "remote_spool_valid",
+                                        False,
+                                    )
+                                )
+                            ),
+                            int(
+                                bool(
+                                    lifecycle_v2_health.get(
+                                        "formal_collection_valid",
+                                        False,
+                                    )
+                                )
+                            ),
+                            int(lifecycle_v2_health.get("queue_depth", 0)),
+                            int(lifecycle_v2_health.get("queue_hwm", 0)),
+                            int(lifecycle_v2_health.get("drop_count", 0)),
+                            int(lifecycle_v2_health.get("error_count", 0)),
+                            float(
+                                lifecycle_v2_health.get(
+                                    "enqueue_latency_p99_us",
+                                    0.0,
+                                )
+                            ),
+                            float(
+                                lifecycle_v2_health.get(
+                                    "write_latency_p99_ms",
+                                    0.0,
+                                )
+                            ),
+                            float(lifecycle_v2_health.get("process_max_rss_mb", 0.0)),
+                            int(
+                                lifecycle_v2_health.get(
+                                    "last_worker_flush_ts_ns",
+                                    0,
+                                )
+                            ),
+                        )
+                runtime_evidence_writer.enqueue_task(
+                    "periodic_health",
+                    publish_periodic_health,
+                )
                 last_health = now
 
             # Keep the existing 100 ms safety/maintenance cadence, but let an
@@ -2759,9 +3052,13 @@ def main():
             )
     finally:
         logger.info("Shutting down...")
+        if websocket_order_ab_timer is not None:
+            websocket_order_ab_timer.cancel()
         for component_name, stop_component in (
             ("websocket", ws.stop),
             ("engine", engine.stop),
+            ("order-gateway", order_gateway.close),
+            ("REST roles", rest_clients.close),
         ):
             try:
                 stop_component()
@@ -2774,14 +3071,48 @@ def main():
                     exc_info=True,
                 )
         try:
-            write_runtime_safety_health(
-                cfg,
-                collect_runtime_safety_health(engine=engine, ws=ws),
+            engine.close_fill_cooldown_checkpoint_store()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+            logger.critical(
+                "Fill cooldown WAL close failed: %s",
+                exc,
+                exc_info=True,
+            )
+        try:
+            runtime_evidence_writer.enqueue_json_snapshot_factory(
+                runtime_health_state_path(cfg),
+                runtime_safety_health_payload_factory(
+                    engine=engine,
+                    ws=ws,
+                    order_gateway=order_gateway,
+                ),
             )
         except BaseException as exc:
             cleanup_errors.append(exc)
             logger.critical(
                 "Final runtime health publication failed: %s",
+                exc,
+                exc_info=True,
+            )
+        try:
+            evidence_health = runtime_evidence_writer.close(
+                drain_timeout_s=10.0,
+            )
+            logger.info(
+                "RUNTIME_EVIDENCE_WRITER_CLOSED rows=%d health=%d "
+                "tasks=%d hwm=%d queueFull=%d errors=%d",
+                int(evidence_health["csv_rows_committed"]),
+                int(evidence_health["json_snapshots_committed"]),
+                int(evidence_health["tasks_committed"]),
+                int(evidence_health["queue_high_watermark"]),
+                int(evidence_health["queue_full_count"]),
+                int(evidence_health["error_count"]),
+            )
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+            logger.critical(
+                "Runtime evidence writer shutdown failed: %s",
                 exc,
                 exc_info=True,
             )

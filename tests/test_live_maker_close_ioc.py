@@ -86,6 +86,11 @@ class _AuthoritativeExchangeError(RuntimeError):
         self.code = code
 
 
+class _PreDispatchUnavailable(ConnectionError):
+    may_have_been_dispatched = False
+    requires_reconciliation = False
+
+
 class _UnknownCloseThenNotFoundRest:
     def __init__(self) -> None:
         self.calls = []
@@ -483,6 +488,32 @@ def test_emergency_close_dust_latches_without_rounding_or_submitting() -> None:
     assert safety["fatal_runtime_reason"] == (
         "DUST_POSITION_RECONCILIATION_REQUIRED"
     )
+
+
+@pytest.mark.parametrize("route", ["limit", "close", "emergency"])
+def test_explicit_pre_dispatch_submit_failure_releases_local_ownership(route: str) -> None:
+    rest = _RestClient(error=_PreDispatchUnavailable("not sent"))
+    engine = _engine(rest)
+
+    if route == "limit":
+        result = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+        side = Side.BUY
+        assert result is None
+    elif route == "close":
+        engine._place_close_order("BTCUSDC", Side.BUY, 100.4, 0.001)
+        side = Side.BUY
+    else:
+        engine.inventory = SimpleNamespace(net_position=0.001)
+        engine._emergency_close(100.0)
+        side = Side.SELL
+
+    active = (
+        engine.orders.get_bid_orders()
+        if side == Side.BUY
+        else engine.orders.get_ask_orders()
+    )
+    assert active == []
+    assert engine._side_order_reference(side) is None
 
 
 @pytest.mark.parametrize("route", ["limit", "close", "emergency"])

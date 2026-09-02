@@ -348,6 +348,7 @@ class QuoteDecisionSnapshot:
     lock_wait_ns: int
     lock_hold_ns: int
     valid: bool
+    l2_policy_metric_values: tuple[float, ...] = ()
     invalid_reason: str = ""
 
     @property
@@ -651,6 +652,24 @@ class SignalEngine:
             if self._cpp_signal_features_enabled else None
         )
         self._cpp_feature_engine_seeded = self._cpp_feature_engine is not None
+        execution_l2_cls = (
+            getattr(self._cpp_signal, "SignalExecutionL2Engine", None)
+            if self._cpp_signal_features_enabled and self._cpp_signal is not None
+            else None
+        )
+        if (
+            self._cpp_signal_features_enabled
+            and execution_l2_cls is None
+            and _cpp_signal_strict()
+        ):
+            raise RuntimeError(
+                "narrowgate_cpp missing incremental SignalExecutionL2Engine"
+            )
+        self._cpp_execution_l2_engine = (
+            execution_l2_cls(int(self._depth_history.maxlen or 300))
+            if execution_l2_cls is not None
+            else None
+        )
         self._cpp_cross_aggregators: Dict[str, object] = {}
         self._cpp_cross_current_dirty = set()
         self._cpp_cross_batch_enabled = bool(
@@ -1449,6 +1468,21 @@ class SignalEngine:
             self._depth_generation += 1
             self._last_depth = snap
             self._depth_history.append(snap)
+            if self._cpp_execution_l2_engine is not None:
+                try:
+                    self._cpp_execution_l2_engine.push_snapshot(
+                        float(snap.ts),
+                        snap.bids,
+                        snap.asks,
+                    )
+                except Exception as exc:
+                    if _cpp_signal_strict():
+                        raise
+                    logger.warning(
+                        "C++ incremental execution L2 disabled after update: %s",
+                        exc,
+                    )
+                    self._cpp_execution_l2_engine = None
             market_generation = int(self._quote_market_generation)
             depth_generation = int(self._depth_generation)
         for callback in tuple(self._on_depth_callbacks):
@@ -1521,12 +1555,66 @@ class SignalEngine:
             market_generation = int(self._quote_market_generation)
             depth_generation = int(self._depth_generation)
             book_generation = int(self._book_ticker_generation)
-            # DepthSnapshot instances are append-only. Copy their references
-            # under the lock and freeze the nested arrays after releasing it.
-            depth_history_source = tuple(
-                item
-                for item in self._depth_history
-                if int(item.receive_ts_ns) <= capture_ns
+            native_l2_policy_values: tuple[float, ...] = ()
+            if (
+                self._cpp_execution_l2_engine is not None
+                and not self._cpp_l2_policy_disabled_after_error
+                and depth_exchange_ts_ms > 0
+            ):
+                try:
+                    native_names = tuple(
+                        getattr(
+                            self._cpp_signal,
+                            "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
+                            (),
+                        )
+                    )
+                    if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
+                        raise RuntimeError(
+                            "C++ execution L2 policy metric order changed: "
+                            f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
+                            f"actual={native_names}"
+                        )
+                    native_l2_policy_values = tuple(
+                        float(value)
+                        for value in (
+                            self._cpp_execution_l2_engine
+                            .compute_policy_metric_values(
+                                float(depth_exchange_ts_ms)
+                            )
+                        )
+                    )
+                    if len(native_l2_policy_values) != len(
+                        EXECUTION_L2_POLICY_METRIC_COLS
+                    ):
+                        raise RuntimeError(
+                            "C++ execution L2 policy metric width changed: "
+                            f"expected={len(EXECUTION_L2_POLICY_METRIC_COLS)} "
+                            f"actual={len(native_l2_policy_values)}"
+                        )
+                except Exception as exc:
+                    if _cpp_signal_strict():
+                        raise
+                    logger.warning(
+                        "C++ incremental L2 policy snapshot disabled: %s",
+                        exc,
+                    )
+                    # A policy-ABI error must not discard the independent
+                    # incremental feature engine.  Preserve it for completed
+                    # feature buckets and use the immutable Python history for
+                    # quote-policy metrics until restart.
+                    self._cpp_l2_policy_disabled_after_error = True
+            # Native metrics are captured while the same state lock excludes
+            # depth updates, so the live C++ path need not deep-copy the full
+            # 300-snapshot L2 window. Keep the immutable Python fallback.
+            depth_history_source = (
+                ()
+                if native_l2_policy_values
+                else tuple(
+                    item
+                    for item in self._depth_history
+                    if int(item.receive_ts_ns) <= capture_ns
+                )
             )
             lock_hold_ns = time.perf_counter_ns() - lock_acquired_perf_ns
 
@@ -1593,6 +1681,7 @@ class SignalEngine:
             lock_wait_ns=int(lock_wait_ns),
             lock_hold_ns=int(lock_hold_ns),
             valid=not invalid_reason,
+            l2_policy_metric_values=native_l2_policy_values,
             invalid_reason=invalid_reason,
         )
 
@@ -2300,6 +2389,15 @@ class SignalEngine:
                                 "cached_no_new_bucket"
                             )
                         return self._last_prediction
+                    # The common 5--10 second requote path normally has no new
+                    # completed 10 second feature bucket.  Check the two
+                    # causal watermarks before copying the full 1 second ring.
+                    if not self._pending_completed_bucket_starts(self._bar_buffer):
+                        if trace:
+                            perf_timings["signal_compute_path"] = (
+                                "cached_no_new_bucket"
+                            )
+                        return self._last_prediction
                     feature_batches = self._process_completed_feature_buckets_locked(
                         list(self._bar_buffer)
                     )
@@ -2866,13 +2964,18 @@ class SignalEngine:
                     "C++ execution L2 feature order changed: "
                     f"expected={expected_names} actual={native_names}"
                 )
-            values = np.asarray(
-                self._cpp_signal.compute_signal_execution_l2_feature_values(
-                    self._depth_history,
-                    float(bucket_end_ms),
-                ),
-                dtype=np.float64,
-            )
+            if self._cpp_execution_l2_engine is not None:
+                raw_values = self._cpp_execution_l2_engine.compute_feature_values(
+                    float(bucket_end_ms)
+                )
+            else:
+                raw_values = (
+                    self._cpp_signal.compute_signal_execution_l2_feature_values(
+                        self._depth_history,
+                        float(bucket_end_ms),
+                    )
+                )
+            values = np.asarray(raw_values, dtype=np.float64)
             expected_shape = (len(EXECUTION_L2_FEATURE_COLS),)
             if values.shape != expected_shape:
                 raise RuntimeError(

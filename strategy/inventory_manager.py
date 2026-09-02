@@ -204,8 +204,25 @@ class InventoryManager:
 
         # trade log
         self._trade_log_path = trade_log_path
+        self._runtime_evidence_writer = None
+        self._runtime_evidence_error: BaseException | None = None
         if trade_log_path:
             self._init_trade_log(trade_log_path)
+
+    def set_runtime_evidence_writer(self, writer) -> None:
+        """Route canonical trade rows through the process-wide FIFO writer."""
+
+        if self._runtime_evidence_writer is not None:
+            raise RuntimeError("runtime evidence writer is already attached")
+        self._runtime_evidence_writer = writer
+
+    def pop_runtime_evidence_error(self) -> BaseException | None:
+        """Return a deferred trade-evidence failure after fill safety actions."""
+
+        with self._lock:
+            error = self._runtime_evidence_error
+            self._runtime_evidence_error = None
+            return error
 
     def _init_trade_log(self, path: str):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -1478,15 +1495,36 @@ class InventoryManager:
     # ── trade log ──
 
     def _log_trade(self, ts, side, trade_type, qty, price, commission):
+        row = {
+            "timestamp": f"{ts:.3f}",
+            "side": side,
+            "trade_type": trade_type,
+            "qty": f"{qty:.4f}",
+            "price": f"{price:.1f}",
+            "commission": f"{commission:.4f}",
+            "position": f"{self._qty:+.4f}",
+            "avg_entry": f"{self._avg_entry:.1f}",
+            "realized_pnl": f"{self._realized_pnl:.2f}",
+            "unrealized_pnl": f"{self._unrealized_pnl:.2f}",
+            "state": self._state.name,
+        }
+        runtime = getattr(self, "_runtime_evidence_writer", None)
+        if runtime is not None:
+            try:
+                runtime.enqueue_csv(self._trade_log_path, row)
+            except Exception as exc:
+                if self._runtime_evidence_error is None:
+                    self._runtime_evidence_error = exc
+                logger.critical(
+                    "Trade evidence admission failed; deferring fatal until "
+                    "post-fill risk actions complete: %s",
+                    exc,
+                    exc_info=True,
+                )
+            return
         try:
             with open(self._trade_log_path, "a", newline="") as f:
                 w = csv.writer(f)
-                w.writerow([
-                    f"{ts:.3f}", side, trade_type, f"{qty:.4f}",
-                    f"{price:.1f}", f"{commission:.4f}",
-                    f"{self._qty:+.4f}", f"{self._avg_entry:.1f}",
-                    f"{self._realized_pnl:.2f}",
-                    f"{self._unrealized_pnl:.2f}", self._state.name,
-                ])
+                w.writerow(list(row.values()))
         except Exception as e:
             logger.error(f"Trade log write failed: {e}")

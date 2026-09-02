@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from live.binance_usdm_transport import BinanceUsdMWebSocketOrderUnknown
 from live.config import Config
 from strategy.maker_engine import LivePerfTelemetryLogRow, MakerEngine, SidePolicyDecision
 from strategy.order_manager import (
@@ -1433,6 +1434,47 @@ def test_terminal_during_cancel_rest_publishes_once_before_late_callback() -> No
     assert engine._take_ready_replace_terminal_continuations() == {}
     telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
     assert telemetry["decision_count"] == 1
+
+
+def test_cancel_ack_unknown_keeps_pending_ownership_for_reconciliation() -> None:
+    engine = _engine()
+    engine.cfg.strategy.replace_terminal_continuation = True
+    engine.orders = OrderManager()
+    cid = engine.orders.create_order(
+        "BTCUSDC",
+        Side.BUY,
+        price=100.0,
+        quantity=0.001,
+    )
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    engine._ask_cid = None
+    engine._order_ref_lock = threading.RLock()
+    engine._record_exact_order_event = lambda *args, **kwargs: None
+    engine._record_perf_rest_latency = lambda *args, **kwargs: None
+    generation = engine._arm_replace_terminal_continuation(side=Side.BUY, cid=cid)
+
+    def cancel_order(**_kwargs) -> None:
+        raise BinanceUsdMWebSocketOrderUnknown(
+            request_id="cancel-unknown-1",
+            method="order.cancel",
+            reason="response timed out",
+        )
+
+    engine.rest = SimpleNamespace(cancel_order=cancel_order)
+
+    assert not engine._cancel_order(
+        cid,
+        replace_continuation_generation=generation,
+    )
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    assert order.state == OrderState.PENDING_CANCEL
+    assert engine._bid_cid == cid
+    assert (
+        engine._replace_terminal_continuation_intents["BUY"].client_order_id
+        == cid
+    )
 
 
 def test_read_only_side_policy_does_not_advance_side_runtime_state() -> None:

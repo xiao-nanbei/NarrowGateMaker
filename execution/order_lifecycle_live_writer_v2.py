@@ -144,6 +144,7 @@ class _LifecycleWorkItem:
     exchange_ts_ns: int | None
     orphan_adoption: bool
     left_truncation_reason: str
+    capture_latency_ns: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -554,13 +555,19 @@ class OrderLifecycleLiveWriterV2:
             left_truncation_reason=str(item.left_truncation_reason),
         )
 
-    def enqueue_order_event(
+    def freeze_order_event(
         self,
         order: Any,
         source_event_type: str,
         raw_event: Mapping[str, Any] | None = None,
-    ) -> bool:
-        """Copy and enqueue one callback without filesystem I/O or waiting."""
+    ) -> _LifecycleWorkItem | None:
+        """Freeze one callback without filesystem I/O or queue admission.
+
+        The caller may hand the returned item to another in-process FIFO before
+        calling :meth:`enqueue_frozen_order_event`.  This preserves callback-
+        time lifecycle identity even when the specialized writer admission is
+        deliberately serialized behind the central runtime evidence writer.
+        """
 
         started = time.monotonic_ns()
         raw_client_order_id: Any = "<unread>"
@@ -570,7 +577,7 @@ class OrderLifecycleLiveWriterV2:
             if self._update_duration_bound(now_monotonic_ns=started):
                 with self._enqueue_metrics_lock:
                     self._callbacks_ignored_after_bound += 1
-                return False
+                return None
             lifecycle = getattr(order, "lifecycle", None)
             if lifecycle is None:
                 raise ValueError("order lifecycle is missing")
@@ -596,7 +603,7 @@ class OrderLifecycleLiveWriterV2:
                 lifecycle=lifecycle_snapshot,
                 raw_event=raw_event,
             )
-            item = _LifecycleWorkItem(
+            return _LifecycleWorkItem(
                 lifecycle=lifecycle_snapshot,
                 client_order_id=client_order_id,
                 exchange_order_id=getattr(order, "order_id", ""),
@@ -609,26 +616,8 @@ class OrderLifecycleLiveWriterV2:
                 left_truncation_reason=str(
                     getattr(order, "left_truncation_reason", "")
                 ),
+                capture_latency_ns=max(0, time.monotonic_ns() - started),
             )
-            self._queue.put_nowait(item)
-            elapsed_ns = time.monotonic_ns() - started
-            queue_depth = self._queue.qsize()
-            enqueue_ts_ns = time.time_ns()
-            with self._enqueue_metrics_lock:
-                self._enqueue_latency_pending_ns.append(elapsed_ns)
-                self._enqueued += 1
-                self._last_enqueue_ts_ns = enqueue_ts_ns
-                self._queue_hwm = max(self._queue_hwm, queue_depth)
-            return True
-        except queue.Full:
-            elapsed_ns = time.monotonic_ns() - started
-            error_ts_ns = time.time_ns()
-            with self._enqueue_metrics_lock:
-                self._enqueue_latency_pending_ns.append(elapsed_ns)
-                self._drops += 1
-                self._producer_last_error = "bounded_queue_full"
-                self._producer_last_error_ts_ns = error_ts_ns
-            return False
         except Exception as exc:
             elapsed_ns = time.monotonic_ns() - started
             client_order_id = _diagnostic_text(raw_client_order_id)
@@ -645,7 +634,78 @@ class OrderLifecycleLiveWriterV2:
                     f"{type(exc).__name__}:{exc}"
                 )
                 self._producer_last_error_ts_ns = error_ts_ns
+            raise
+
+    def enqueue_frozen_order_event(self, item: _LifecycleWorkItem) -> bool:
+        """Admit one callback-time snapshot without reading mutable order state."""
+
+        if not isinstance(item, _LifecycleWorkItem):
+            raise TypeError("frozen lifecycle work item is required")
+        enqueue_started = time.monotonic_ns()
+        try:
+            if self._closed:
+                raise RuntimeError("live lifecycle writer is closed")
+            self._queue.put_nowait(item)
+            elapsed_ns = int(item.capture_latency_ns) + max(
+                0,
+                time.monotonic_ns() - enqueue_started,
+            )
+            queue_depth = self._queue.qsize()
+            enqueue_ts_ns = time.time_ns()
+            with self._enqueue_metrics_lock:
+                self._enqueue_latency_pending_ns.append(elapsed_ns)
+                self._enqueued += 1
+                self._last_enqueue_ts_ns = enqueue_ts_ns
+                self._queue_hwm = max(self._queue_hwm, queue_depth)
+            return True
+        except queue.Full:
+            elapsed_ns = int(item.capture_latency_ns) + max(
+                0,
+                time.monotonic_ns() - enqueue_started,
+            )
+            error_ts_ns = time.time_ns()
+            with self._enqueue_metrics_lock:
+                self._enqueue_latency_pending_ns.append(elapsed_ns)
+                self._drops += 1
+                self._producer_last_error = "bounded_queue_full"
+                self._producer_last_error_ts_ns = error_ts_ns
             return False
+        except Exception as exc:
+            elapsed_ns = int(item.capture_latency_ns) + max(
+                0,
+                time.monotonic_ns() - enqueue_started,
+            )
+            client_order_id = _diagnostic_text(item.client_order_id)
+            lifecycle_id = f"{self.baseline_epoch_id}:{client_order_id}"
+            error_ts_ns = time.time_ns()
+            with self._enqueue_metrics_lock:
+                self._enqueue_latency_pending_ns.append(elapsed_ns)
+                self._drops += 1
+                self._producer_errors += 1
+                self._producer_last_error = (
+                    "producer:"
+                    f"lifecycle_id={lifecycle_id}:"
+                    f"client_order_id={client_order_id}:"
+                    f"{type(exc).__name__}:{exc}"
+                )
+                self._producer_last_error_ts_ns = error_ts_ns
+            return False
+
+    def enqueue_order_event(
+        self,
+        order: Any,
+        source_event_type: str,
+        raw_event: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """Copy and enqueue one callback without filesystem I/O or waiting."""
+
+        try:
+            item = self.freeze_order_event(order, source_event_type, raw_event)
+        except Exception:
+            return False
+        if item is None:
+            return False
+        return self.enqueue_frozen_order_event(item)
 
     def _register_or_update(self, item: _PreparedLifecycleWorkItem) -> None:
         if item.lifecycle_id not in self._registered:

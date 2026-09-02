@@ -32,6 +32,18 @@ api:
   testnet: true
   # Every synchronous REST call inherits this finite network deadline.
   timeout_s: 5.0
+  # REST remains the production default. websocket_api_ab is restart-only,
+  # bounded to a short qualification window, and must never be enabled by a
+  # hot reload or an implicit fallback.
+  order_transport: "rest"
+  websocket_order_ab:
+    # Empty resolves to Binance's exact official endpoint for api.testnet.
+    url: ""
+    connect_timeout_s: 3.0
+    request_timeout_s: 2.0
+    recv_window_ms: 5000
+    latency_sample_limit: 4096
+    max_runtime_s: 900.0
 
 strategy:
   # AS-shaped empirical quote-controller inputs. These are safe examples, not

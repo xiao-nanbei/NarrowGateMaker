@@ -409,8 +409,9 @@ std::optional<SignalExecutionL2Summary> summarize_signal_execution_l2_snapshot(
 
 }  // namespace
 
-SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
-    std::span<const SignalExecutionL2Snapshot> snapshots,
+template <typename SnapshotView>
+SignalExecutionL2FeatureValues compute_signal_execution_l2_features_view(
+    const SnapshotView& snapshots,
     double bucket_end_ms
 ) {
     SignalExecutionL2FeatureValues values{};
@@ -420,9 +421,10 @@ SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     const double bucket_start_ms = bucket_end_ms - 10'000.0;
 
     const SignalExecutionL2Snapshot* state_snapshot = nullptr;
-    for (auto iterator = snapshots.rbegin(); iterator != snapshots.rend(); ++iterator) {
-        if (iterator->ts_ms < bucket_end_ms) {
-            state_snapshot = &*iterator;
+    for (std::size_t offset = snapshots.size(); offset > 0; --offset) {
+        const auto& snapshot = snapshots[offset - 1];
+        if (snapshot.ts_ms < bucket_end_ms) {
+            state_snapshot = &snapshot;
             break;
         }
     }
@@ -435,9 +437,10 @@ SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     std::copy_n(state_summary->state.begin(), 10, values.begin());
 
     std::optional<SignalExecutionL2Summary> previous;
-    for (auto iterator = snapshots.rbegin(); iterator != snapshots.rend(); ++iterator) {
-        if (iterator->ts_ms < bucket_start_ms) {
-            previous = summarize_signal_execution_l2_snapshot(*iterator);
+    for (std::size_t offset = snapshots.size(); offset > 0; --offset) {
+        const auto& snapshot = snapshots[offset - 1];
+        if (snapshot.ts_ms < bucket_start_ms) {
+            previous = summarize_signal_execution_l2_snapshot(snapshot);
             break;
         }
     }
@@ -446,7 +449,8 @@ SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     double refresh_sum = 0.0;
     double cancel_sum = 0.0;
     std::size_t sample_count = 0;
-    for (const auto& snapshot : snapshots) {
+    for (std::size_t index = 0; index < snapshots.size(); ++index) {
+        const auto& snapshot = snapshots[index];
         if (snapshot.ts_ms < bucket_start_ms || snapshot.ts_ms >= bucket_end_ms) {
             continue;
         }
@@ -481,9 +485,17 @@ SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     return values;
 }
 
-SignalExecutionL2PolicyMetricValues
-compute_signal_execution_l2_policy_metrics(
+SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     std::span<const SignalExecutionL2Snapshot> snapshots,
+    double bucket_end_ms
+) {
+    return compute_signal_execution_l2_features_view(snapshots, bucket_end_ms);
+}
+
+template <typename SnapshotView>
+SignalExecutionL2PolicyMetricValues
+compute_signal_execution_l2_policy_metrics_view(
+    const SnapshotView& snapshots,
     double end_exchange_ms
 ) {
     SignalExecutionL2PolicyMetricValues values{};
@@ -494,7 +506,8 @@ compute_signal_execution_l2_policy_metrics(
     double refresh_sum = 0.0;
     double cancel_sum = 0.0;
     std::size_t sample_count = 0;
-    for (const auto& snapshot : snapshots) {
+    for (std::size_t index = 0; index < snapshots.size(); ++index) {
+        const auto& snapshot = snapshots[index];
         // Match MakerEngine._current_l2_policy_metrics exactly: both ends of
         // the exchange-time window are inclusive and no pre-window snapshot
         // seeds the first in-window delta.
@@ -532,6 +545,53 @@ compute_signal_execution_l2_policy_metrics(
         values[2] = cancel_sum / denominator;
     }
     return values;
+}
+
+SignalExecutionL2PolicyMetricValues
+compute_signal_execution_l2_policy_metrics(
+    std::span<const SignalExecutionL2Snapshot> snapshots,
+    double end_exchange_ms
+) {
+    return compute_signal_execution_l2_policy_metrics_view(
+        snapshots,
+        end_exchange_ms
+    );
+}
+
+void SignalExecutionL2Engine::reset() {
+    std::lock_guard lock(mutex_);
+    snapshots_.clear();
+}
+
+void SignalExecutionL2Engine::push_snapshot(
+    const SignalExecutionL2Snapshot& snapshot
+) {
+    std::lock_guard lock(mutex_);
+    snapshots_.push_back(snapshot);
+}
+
+SignalExecutionL2FeatureValues SignalExecutionL2Engine::compute_features(
+    double bucket_end_ms
+) const {
+    std::lock_guard lock(mutex_);
+    return compute_signal_execution_l2_features_view(
+        snapshots_.view(),
+        bucket_end_ms
+    );
+}
+
+SignalExecutionL2PolicyMetricValues
+SignalExecutionL2Engine::compute_policy_metrics(double end_exchange_ms) const {
+    std::lock_guard lock(mutex_);
+    return compute_signal_execution_l2_policy_metrics_view(
+        snapshots_.view(),
+        end_exchange_ms
+    );
+}
+
+std::size_t SignalExecutionL2Engine::snapshot_count() const {
+    std::lock_guard lock(mutex_);
+    return snapshots_.size();
 }
 
 void SignalFeatureEngine::reset() {

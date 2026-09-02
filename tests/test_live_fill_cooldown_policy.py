@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from execution.runtime_evidence_writer import RuntimeEvidenceQueueFull
 import strategy.maker_engine as maker_engine_module
 from live.config import Config, _validate_config
 from strategy.maker_engine import POLICY_REASON_FILL_COOLDOWN, MakerEngine
@@ -491,6 +492,7 @@ class _FillInventory:
         self._snapshot_order_cursors = {}
         self._local_order_cursors = {}
         self._seen_trade_ids = set()
+        self._runtime_evidence_error = None
 
     @property
     def net_position(self) -> float:
@@ -527,6 +529,11 @@ class _FillInventory:
     @property
     def consecutive_losses(self) -> int:
         return 0
+
+    def pop_runtime_evidence_error(self):
+        error = self._runtime_evidence_error
+        self._runtime_evidence_error = None
+        return error
 
     def campaign_snapshot(self):
         return SimpleNamespace(age_s=500.0)
@@ -741,6 +748,82 @@ def test_real_fill_callback_preserves_total_e3_and_control_units(
     assert engine._fill_cooldown_deadline_identity["BUY"] == expected_identity
     assert engine._fill_cooldown_natural_b0_until["BUY"] == fixed_now + 255.0
     assert canceled_sides == ["BUY"]
+
+
+@pytest.mark.parametrize(
+    "failure_source",
+    ("trade_row", "outcome_row", "checkpoint_sync"),
+)
+def test_fill_evidence_failure_cancels_risk_before_becoming_fatal(
+    monkeypatch: pytest.MonkeyPatch,
+    failure_source: str,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, _evaluator_calls, canceled_sides = _fill_callback_engine()
+    failure = RuntimeEvidenceQueueFull(f"simulated {failure_source} failure")
+    if failure_source == "trade_row":
+        engine.inventory._runtime_evidence_error = failure
+    elif failure_source == "outcome_row":
+        engine._log_order_outcome = Mock(side_effect=failure)
+    else:
+        engine._persist_fill_cooldown_checkpoint = Mock(side_effect=failure)
+
+    with pytest.raises(RuntimeError, match="after risk cancellation"):
+        engine._on_fill(_fill_order(), _fill_event(qty=0.001))
+
+    assert engine.inventory.snapshot.qty == pytest.approx(0.001)
+    assert engine._fill_cooldown_until["BUY"] == fixed_now + 2_048.0
+    assert canceled_sides == ["BUY"]
+
+
+def test_fill_risk_cancel_precedes_checkpoint_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, _evaluator_calls, _canceled_sides = _fill_callback_engine()
+    observed: list[str] = []
+    engine._cancel_cooldown_side_order = lambda _side: observed.append("cancel")
+    engine._persist_fill_cooldown_checkpoint = lambda: observed.append("checkpoint")
+
+    engine._on_fill(_fill_order(), _fill_event(qty=0.001))
+
+    assert observed == ["cancel", "checkpoint"]
+
+
+def test_max_inventory_cancel_precedes_checkpoint_sync_without_cooldown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fixed_now = 1_900_000_000.0
+    monkeypatch.setattr(
+        maker_engine_module,
+        "time",
+        SimpleNamespace(time=lambda: fixed_now, time_ns=lambda: int(fixed_now * 1e9)),
+    )
+    engine, _evaluator_calls, _canceled_sides = _fill_callback_engine(
+        policy_enabled=False
+    )
+    engine.cfg.strategy.fill_cooldown = 0.0
+    engine.cfg.strategy.max_inventory = 0.001
+    engine._bid_cid = "active-bid"
+    observed: list[str] = []
+    engine._cancel_tracked_order_before_replacement = (
+        lambda side: observed.append(f"max_cancel:{side.value}") or True
+    )
+    engine._persist_fill_cooldown_checkpoint = lambda: observed.append("checkpoint")
+
+    engine._on_fill(_fill_order(), _fill_event(qty=0.001))
+
+    assert observed == ["max_cancel:BUY", "checkpoint"]
 
 
 @pytest.mark.parametrize(

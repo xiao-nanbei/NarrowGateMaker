@@ -146,6 +146,105 @@ def test_cpp_execution_l2_batch_matches_python_exactly_at_102_snapshots() -> Non
     )
 
 
+def test_cpp_execution_l2_incremental_engine_matches_batch_and_bounds_ring() -> None:
+    bucket_end_ms = 1_000_000
+    snapshots = [
+        _depth_snapshot(980_000 + index * 100, index)
+        for index in range(200)
+    ]
+    native = narrowgate_cpp.SignalExecutionL2Engine(120)
+    for snapshot in snapshots:
+        native.push_snapshot(snapshot.ts, snapshot.bids, snapshot.asks)
+
+    retained = snapshots[-120:]
+    assert native.snapshot_count() == 120
+    assert np.array_equal(
+        np.asarray(native.compute_feature_values(bucket_end_ms)),
+        _native_execution_l2_values(retained, bucket_end_ms),
+    )
+    assert np.array_equal(
+        np.asarray(native.compute_policy_metric_values(bucket_end_ms)),
+        _native_l2_policy_values(retained, bucket_end_ms),
+    )
+
+    native.reset()
+    assert native.snapshot_count() == 0
+    assert np.array_equal(
+        np.asarray(native.compute_feature_values(bucket_end_ms)),
+        np.zeros(len(EXECUTION_L2_FEATURE_COLS), dtype=np.float64),
+    )
+
+
+def test_quote_snapshot_captures_native_l2_metrics_without_copying_history() -> None:
+    end_exchange_ms = 1_000_000
+    snapshots = [
+        _depth_snapshot(end_exchange_ms - 9_900 + index * 100, index)
+        for index in range(100)
+    ]
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal = narrowgate_cpp
+    engine._cpp_signal_features_enabled = True
+    engine._cpp_execution_l2_engine = narrowgate_cpp.SignalExecutionL2Engine(300)
+    for index, snapshot in enumerate(snapshots):
+        engine.on_depth(
+            {
+                "T": snapshot.ts,
+                "b": snapshot.bids,
+                "a": snapshot.asks,
+            },
+            receive_ts_ns=int(snapshot.ts * 1_000_000) + index + 1,
+        )
+
+    quote_snapshot = engine.quote_decision_snapshot(
+        now_ns=int(end_exchange_ms * 1_000_000) + 1_000,
+    )
+
+    assert quote_snapshot.depth_history == ()
+    assert np.array_equal(
+        np.asarray(quote_snapshot.l2_policy_metric_values),
+        _native_l2_policy_values(snapshots, end_exchange_ms),
+    )
+    maker = object.__new__(MakerEngine)
+    maker.cfg = Config()
+    maker.signal = engine
+    metrics = maker._current_l2_policy_metrics(60_000.0, quote_snapshot)
+    assert np.array_equal(
+        np.asarray(
+            [metrics[name] for name in EXECUTION_L2_POLICY_METRIC_COLS]
+        ),
+        _native_l2_policy_values(snapshots, end_exchange_ms),
+    )
+
+
+def test_quote_snapshot_rejects_drifted_native_policy_order_before_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    end_exchange_ms = 1_000_000
+    engine = SignalEngine(enable_ml=False)
+    engine._cpp_signal = SimpleNamespace(
+        SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES=tuple(
+            reversed(EXECUTION_L2_POLICY_METRIC_COLS)
+        )
+    )
+    engine._cpp_signal_features_enabled = True
+    engine._cpp_execution_l2_engine = narrowgate_cpp.SignalExecutionL2Engine(300)
+    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: False)
+    snapshot = _depth_snapshot(end_exchange_ms, 0)
+    engine.on_depth(
+        {"T": snapshot.ts, "b": snapshot.bids, "a": snapshot.asks},
+        receive_ts_ns=int(snapshot.ts * 1_000_000) + 1,
+    )
+
+    quote_snapshot = engine.quote_decision_snapshot(
+        now_ns=int(end_exchange_ms * 1_000_000) + 2,
+    )
+
+    assert quote_snapshot.l2_policy_metric_values == ()
+    assert quote_snapshot.depth_history
+    assert engine._cpp_l2_policy_disabled_after_error is True
+    assert engine._cpp_execution_l2_engine is not None
+
+
 @pytest.mark.parametrize(
     "snapshots",
     [

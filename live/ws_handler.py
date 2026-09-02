@@ -15,6 +15,7 @@ WebSocket Handler — 管理所有 WebSocket 连接和事件分发。
 
 import json
 import logging
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -79,7 +80,11 @@ class WSHandler:
         self._user_restart_thread: Optional[threading.Thread] = None
         self._user_stream_lifecycle_lock = threading.RLock()
         self._user_stream_active = False
+        # ``_rest_client`` remains a compatibility alias for older fixtures.
+        # Production binds the snapshot and listen-key roles independently.
         self._rest_client = None
+        self._market_snapshot_client = None
+        self._listen_key_client = None
         self._listen_key: Optional[str] = None
         self._listen_key_thread: Optional[threading.Thread] = None
         self._user_stream_shutdown_join_timeout_s = (
@@ -123,6 +128,7 @@ class WSHandler:
         self._user_stream_connected = False
         self._user_stream_generation = 0
         self._user_stream_session_token = 0
+        self._user_stream_ready_event = threading.Event()
 
         self._market_session_id = 0
         self._market_trade_seen: dict[str, float] = {}
@@ -172,16 +178,30 @@ class WSHandler:
         )
         return f"{self._private_stream_base_url()}/ws?{query}"
 
-    def start(self, rest_client):
+    def start(
+        self,
+        rest_client=None,
+        *,
+        market_snapshot_client=None,
+        listen_key_client=None,
+    ):
         """
         Start all WebSocket connections.
 
-        rest_client: binance.um_futures.UMFutures (for listen key management)
+        ``rest_client`` is the compatibility fallback. Production supplies a
+        dedicated public snapshot client and a dedicated listen-key client so
+        neither can block order or reconciliation traffic.
         """
         from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
+        market_snapshot_client = market_snapshot_client or rest_client
+        listen_key_client = listen_key_client or rest_client
+        if market_snapshot_client is None or listen_key_client is None:
+            raise ValueError("market snapshot and listen-key clients are required")
         self._running = True
         self._rest_client = rest_client
+        self._market_snapshot_client = market_snapshot_client
+        self._listen_key_client = listen_key_client
         self._start_market_tape()
         symbol = self.cfg.symbol.lower()
         market_symbols = self._market_symbols()
@@ -215,12 +235,12 @@ class WSHandler:
 
         # --- User data stream ---
         logger.info("Starting user data WebSocket...")
-        self._start_user_stream(rest_client)
+        self._start_user_stream(listen_key_client)
 
         # --- Listen key renewal thread ---
         self._listen_key_thread = threading.Thread(
             target=self._listen_key_renewal_loop,
-            args=(rest_client,),
+            args=(listen_key_client,),
             daemon=True,
         )
         self._listen_key_thread.start()
@@ -236,7 +256,8 @@ class WSHandler:
             self._stop_deep_book_stream()
             if not self._running or not self._deep_book_enabled():
                 return True
-            if self._rest_client is None:
+            snapshot_client = self._market_snapshot_client or self._rest_client
+            if snapshot_client is None:
                 logger.error("Deep book cannot start before REST client is available")
                 return False
 
@@ -246,7 +267,7 @@ class WSHandler:
 
             ws_cfg = self.cfg.websocket
             book = BinanceUsdMDeepBook(
-                self._rest_client,
+                snapshot_client,
                 symbol=self.cfg.symbol,
                 tick_size=self.cfg.tick_size,
                 snapshot_levels=int(ws_cfg.deep_book_snapshot_levels),
@@ -1384,6 +1405,7 @@ class WSHandler:
         with self._user_event_stats_lock:
             self._user_stream_active = False
             self._user_stream_connected = False
+            self._user_stream_ready_event.clear()
             ws_user = self._ws_user
         if ws_user:
             try:
@@ -1402,6 +1424,7 @@ class WSHandler:
         with self._user_event_stats_lock:
             self._user_stream_session_token += 1
             self._user_stream_connected = False
+            self._user_stream_ready_event.clear()
             if self._ws_user is ws_user:
                 self._ws_user = None
         if thread is self._user_thread:
@@ -1422,7 +1445,8 @@ class WSHandler:
 
     def restart_user_stream(self, reason: str = ""):
         """Best-effort user-data reconnect after a position sync discrepancy."""
-        if not self._running or self._rest_client is None:
+        listen_key_client = self._listen_key_client or self._rest_client
+        if not self._running or listen_key_client is None:
             return
         if self._user_thread is threading.current_thread():
             restart_thread = self._user_restart_thread
@@ -1441,7 +1465,7 @@ class WSHandler:
         if reason:
             msg += f": {reason}"
         logger.warning(msg)
-        self._start_user_stream(self._rest_client)
+        self._start_user_stream(listen_key_client)
 
     def _listen_key_renewal_loop(self, rest_client):
         """Renew listen key periodically (every 30 min, validity = 60 min)."""
@@ -1781,6 +1805,39 @@ class WSHandler:
             "user_stream_generation": generation,
         }
 
+    def wait_for_user_stream_ready(self, timeout_s: float) -> bool:
+        """Wait until the current private-stream generation is connected.
+
+        Readiness belongs to a successfully opened, currently installed user
+        stream.  Installation, disconnect, release, restart, and stop all
+        clear the event, so a stale generation cannot satisfy a later wait.
+        """
+
+        timeout_s = float(timeout_s)
+        if not math.isfinite(timeout_s) or timeout_s < 0.0:
+            raise ValueError("user-stream readiness timeout must be finite and non-negative")
+        deadline = time.monotonic() + timeout_s
+        while True:
+            with self._user_event_stats_lock:
+                if (
+                    self._running
+                    and self._user_stream_active
+                    and self._user_stream_connected
+                    and self._ws_user is not None
+                    and self._user_stream_generation > 0
+                ):
+                    return True
+                if not self._running or not self._user_stream_active:
+                    return False
+                # An event without the matching connected state is stale or
+                # raced a disconnect.  Clear it while holding the same lock
+                # used by every lifecycle transition before waiting again.
+                self._user_stream_ready_event.clear()
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.0:
+                return False
+            self._user_stream_ready_event.wait(remaining_s)
+
     def _on_market_close(self, _):
         logger.warning("Market trade WebSocket closed")
         if self._market_reconnect_requested:
@@ -1819,6 +1876,7 @@ class WSHandler:
             token = self._user_stream_session_token
             self._ws_user = ws
             self._user_stream_connected = False
+            self._user_stream_ready_event.clear()
             return token
 
     def _on_user_open(self, ws, token: int) -> None:
@@ -1831,12 +1889,14 @@ class WSHandler:
                 return
             self._user_stream_generation += 1
             self._user_stream_connected = True
+            self._user_stream_ready_event.set()
 
     def _set_user_stream_disconnected(self, ws, token: int) -> bool:
         with self._user_event_stats_lock:
             if token != self._user_stream_session_token or ws is not self._ws_user:
                 return False
             self._user_stream_connected = False
+            self._user_stream_ready_event.clear()
             return True
 
     def _release_user_stream_app(self, ws, token: int) -> bool:
@@ -1844,6 +1904,7 @@ class WSHandler:
             if token != self._user_stream_session_token or ws is not self._ws_user:
                 return False
             self._user_stream_connected = False
+            self._user_stream_ready_event.clear()
             self._ws_user = None
             return True
 

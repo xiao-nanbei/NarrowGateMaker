@@ -1,22 +1,36 @@
 from __future__ import annotations
 
 import copy
+import csv
 import json
 import stat
 import threading
+import time
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
+from execution.runtime_evidence_writer import (
+    RuntimeEvidenceQueueFull,
+    RuntimeEvidenceWorkerFailed,
+    RuntimeEvidenceWriter,
+    RuntimeEvidenceWriterError,
+)
 from live.config import Config, _validate_config
 from live.main import (
     EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
+    arm_websocket_order_ab_runtime_guard,
     collect_runtime_safety_health,
     create_rest_client,
+    create_rest_clients,
+    create_websocket_order_ab_gateway,
     record_startup_runtime_identity,
     resolve_live_shutdown_exit,
+    runtime_safety_health_payload_factory,
+    start_engine_with_prospective_collection,
 )
 from live.runtime_policy import (
     F05_BOOLEAN_COOLDOWN_OWNER_OVERRIDE_ENV,
@@ -31,9 +45,501 @@ from live.runtime_policy import (
     write_runtime_identity,
 )
 from live.ws_handler import WSHandler
+from strategy.inventory_manager import InventoryManager, PositionState
 from strategy.maker_engine import MakerEngine
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_runtime_evidence_writer_preserves_fifo_and_drains_shutdown(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "evidence.csv"
+    health_path = tmp_path / "runtime_health.json"
+    observed_after_first_row: list[str] = []
+    writer = RuntimeEvidenceWriter(queue_capacity=8)
+
+    first = writer.enqueue_csv(csv_path, {"sequence": 1, "value": "first"})
+    task = writer.enqueue_task(
+        "observe_first_row",
+        lambda: observed_after_first_row.append(
+            csv_path.read_text(encoding="utf-8")
+        ),
+    )
+    second = writer.enqueue_csv(csv_path, {"sequence": 2, "value": "second"})
+    health = writer.enqueue_json_snapshot(
+        health_path,
+        {"schemaVersion": "test", "sequence": 2},
+    )
+    closed = writer.close(drain_timeout_s=2.0)
+
+    assert [first, task, second, health] == [1, 2, 3, 4]
+    assert observed_after_first_row == ["1,first\n"]
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        assert list(csv.reader(handle)) == [
+            ["1", "first"],
+            ["2", "second"],
+        ]
+    assert json.loads(health_path.read_text(encoding="utf-8")) == {
+        "schemaVersion": "test",
+        "sequence": 2,
+    }
+    assert closed["accepted_count"] == 4
+    assert closed["committed_count"] == 4
+    assert closed["last_committed_sequence"] == 4
+    assert closed["queue_full_count"] == 0
+    assert closed["valid"] is True
+    assert closed["worker_alive"] is False
+
+
+def test_runtime_evidence_writer_recursively_freezes_payloads_at_admission(
+    tmp_path: Path,
+) -> None:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    def block_worker() -> None:
+        worker_started.set()
+        assert release_worker.wait(timeout=2.0)
+
+    writer.enqueue_task("block", block_worker)
+    assert worker_started.wait(timeout=1.0)
+    payload = {"nested": {"value": 1}, "rows": [{"sequence": 1}]}
+    writer.enqueue_json_snapshot(tmp_path / "health.json", payload)
+    csv_payload = {
+        "sequence": 1,
+        "nested": ["frozen"],
+        "mapping": {"value": ["frozen"]},
+    }
+    writer.enqueue_csv(tmp_path / "evidence.csv", csv_payload)
+    payload["nested"]["value"] = 2
+    payload["rows"][0]["sequence"] = 2
+    csv_payload["nested"].append("mutated")
+    csv_payload["mapping"]["value"].append("mutated")
+    release_worker.set()
+    writer.close(drain_timeout_s=2.0)
+
+    assert json.loads((tmp_path / "health.json").read_text(encoding="utf-8")) == {
+        "nested": {"value": 1},
+        "rows": [{"sequence": 1}],
+    }
+    with (tmp_path / "evidence.csv").open(newline="", encoding="utf-8") as handle:
+        assert list(csv.reader(handle)) == [
+            ["1", "['frozen']", "{'value': ['frozen']}"],
+        ]
+
+
+def test_runtime_evidence_writer_queue_full_is_explicit_and_invalidates_health(
+    tmp_path: Path,
+) -> None:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    writer = RuntimeEvidenceWriter(queue_capacity=1)
+
+    def block_worker() -> None:
+        worker_started.set()
+        assert release_worker.wait(timeout=2.0)
+
+    writer.enqueue_task("block", block_worker)
+    assert worker_started.wait(timeout=1.0)
+    writer.enqueue_csv(tmp_path / "accepted.csv", {"sequence": 1})
+    started = time.perf_counter()
+    with pytest.raises(RuntimeEvidenceQueueFull, match="queue is full"):
+        writer.enqueue_csv(tmp_path / "rejected.csv", {"sequence": 2})
+    assert time.perf_counter() - started < 0.05
+
+    health = writer.health_snapshot()
+    assert health["accepting"] is False
+    assert health["accepted_count"] == 2
+    assert health["committed_count"] == 0
+    assert health["uncommitted_count"] == 2
+    assert health["queue_full_count"] == 1
+    assert health["error_count"] == 1
+    assert health["valid"] is False
+    with pytest.raises(RuntimeEvidenceQueueFull, match="collection is invalid"):
+        writer.raise_if_failed()
+    with pytest.raises(RuntimeEvidenceQueueFull, match="collection is invalid"):
+        writer.enqueue_csv(tmp_path / "after_full.csv", {"sequence": 3})
+    release_worker.set()
+    with pytest.raises(
+        RuntimeEvidenceWriterError,
+        match=r"accepted=2 committed=2 uncommitted=0",
+    ):
+        writer.close(drain_timeout_s=2.0)
+    final_health = writer.health_snapshot()
+    assert final_health["accepted_count"] == 2
+    assert final_health["committed_count"] == 2
+    assert final_health["uncommitted_count"] == 0
+
+
+def test_runtime_evidence_writer_barrier_has_committed_admission_boundary(
+    tmp_path: Path,
+) -> None:
+    observed: list[dict[str, object]] = []
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    writer.enqueue_task("observe-admission", lambda: observed.append(writer.health_snapshot()))
+    writer.enqueue_csv(tmp_path / "before-barrier.csv", {"sequence": 2})
+    barrier_health = writer.barrier(timeout_s=2.0)
+
+    assert observed[0]["accepted_count"] >= 1
+    assert observed[0]["uncommitted_count"] >= 1
+    assert int(barrier_health["last_committed_sequence"]) == 3
+    assert int(barrier_health["accepted_count"]) == 3
+    assert int(barrier_health["committed_count"]) == 3
+    assert int(barrier_health["uncommitted_count"]) == 0
+    writer.close(drain_timeout_s=2.0)
+
+
+def test_runtime_evidence_writer_orders_concurrent_producers_by_admission(
+    tmp_path: Path,
+) -> None:
+    paths = (tmp_path / "stream-a.csv", tmp_path / "stream-b.csv")
+    writer = RuntimeEvidenceWriter(queue_capacity=256)
+    admitted: dict[Path, list[tuple[int, str]]] = {path: [] for path in paths}
+    admitted_lock = threading.Lock()
+
+    def produce(prefix: str) -> None:
+        for index in range(50):
+            label = f"{prefix}-{index}"
+            path = paths[(int(prefix) + index) % len(paths)]
+            sequence = writer.enqueue_csv(path, {"label": label})
+            with admitted_lock:
+                admitted[path].append((sequence, label))
+
+    threads = [
+        threading.Thread(target=produce, args=(str(index),))
+        for index in range(4)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    closed = writer.close(drain_timeout_s=2.0)
+
+    for path in paths:
+        expected = [label for _sequence, label in sorted(admitted[path])]
+        actual = path.read_text(encoding="utf-8").splitlines()
+        assert actual == expected
+    assert closed["accepted_count"] == 200
+    assert closed["committed_count"] == 200
+    assert closed["uncommitted_count"] == 0
+
+
+def test_runtime_evidence_writer_worker_failure_reports_commit_boundary(
+    tmp_path: Path,
+) -> None:
+    writer = RuntimeEvidenceWriter(queue_capacity=8)
+    first_task_ran = threading.Event()
+    writer.enqueue_task("first", first_task_ran.set)
+    assert first_task_ran.wait(timeout=1.0)
+    deadline = time.monotonic() + 1.0
+    while writer.health_snapshot()["committed_count"] < 1:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    failure_started = threading.Event()
+    release_failure = threading.Event()
+
+    def fail() -> None:
+        failure_started.set()
+        assert release_failure.wait(timeout=2.0)
+        raise OSError("simulated writer failure")
+
+    writer.enqueue_task("fail", fail)
+    assert failure_started.wait(timeout=1.0)
+    writer.enqueue_csv(tmp_path / "uncommitted.csv", {"sequence": 3})
+    writer.enqueue_json_snapshot(tmp_path / "uncommitted.json", {"sequence": 4})
+    before_failure = writer.health_snapshot()
+    assert before_failure["accepted_count"] == 4
+    assert before_failure["committed_count"] == 1
+    assert before_failure["uncommitted_count"] == 3
+    release_failure.set()
+    deadline = time.monotonic() + 1.0
+    while not writer.health_snapshot()["fatal_error"] and time.monotonic() < deadline:
+        time.sleep(0.001)
+
+    with pytest.raises(
+        RuntimeEvidenceWorkerFailed,
+        match=r"accepted=4 committed=1 uncommitted=3",
+    ):
+        writer.raise_if_failed()
+    health = writer.health_snapshot()
+    assert health["worker_alive"] is False
+    assert health["accepted_count"] == 4
+    assert health["committed_count"] == 1
+    assert health["uncommitted_count"] == 3
+    assert health["last_committed_sequence"] == 1
+    assert health["error_count"] == 1
+    assert health["valid"] is False
+    with pytest.raises(
+        RuntimeEvidenceWriterError,
+        match=r"accepted=4 committed=1 uncommitted=3",
+    ):
+        writer.close(drain_timeout_s=1.0)
+
+
+def test_runtime_health_factory_collects_on_writer_worker(
+    tmp_path: Path,
+) -> None:
+    main_thread_id = threading.get_ident()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    collection_calls: list[tuple[int, int]] = []
+    state = {"generation": 1}
+
+    def quote_safety(**_kwargs):
+        collection_calls.append((threading.get_ident(), state["generation"]))
+        return {
+            "quote_loop_running": True,
+            "ownership_conflict_latched": False,
+            "fatal_runtime_latched": False,
+            "reconciliation_required": False,
+            "reconciliation_pending": False,
+            "fatal_runtime_reason": "",
+            "last_tick_age_s": 0.1,
+            "replace_terminal_continuation": {},
+        }
+
+    engine = SimpleNamespace(runtime_safety_snapshot=quote_safety)
+    ws = SimpleNamespace(
+        user_event_safety_snapshot=lambda **_kwargs: {
+            "last_user_event_age_s": 0.2,
+            "user_event_count": 3,
+            "user_stream_connected": True,
+            "user_stream_generation": state["generation"],
+        }
+    )
+    path = tmp_path / "runtime_health.json"
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    def block_worker() -> None:
+        worker_started.set()
+        assert release_worker.wait(timeout=2.0)
+
+    writer.enqueue_task("block", block_worker)
+    assert worker_started.wait(timeout=1.0)
+    writer.enqueue_json_snapshot_factory(
+        path,
+        runtime_safety_health_payload_factory(engine=engine, ws=ws),
+    )
+    state["generation"] = 9
+    release_worker.set()
+    closed = writer.close(drain_timeout_s=2.0)
+
+    assert len(collection_calls) == 1
+    assert collection_calls[0][1] == 9
+    assert collection_calls[0][0] != main_thread_id
+    assert json.loads(path.read_text(encoding="utf-8"))[
+        "userStreamGeneration"
+    ] == 9
+    assert closed["json_snapshots_committed"] == 1
+
+
+def test_maker_engine_ordinary_evidence_uses_single_async_writer(
+    tmp_path: Path,
+) -> None:
+    @dataclass(frozen=True)
+    class _Row:
+        sequence: int
+        value: str
+
+    path = tmp_path / "quote_decisions.csv"
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = writer
+
+    engine._append_row(str(path), _Row(sequence=1, value="first"))
+    engine._append_row(str(path), _Row(sequence=2, value="second"))
+    closed = writer.close(drain_timeout_s=2.0)
+
+    assert path.read_text(encoding="utf-8") == "1,first\n2,second\n"
+    assert closed["csv_rows_committed"] == 2
+
+
+def test_maker_engine_evidence_admission_failure_propagates() -> None:
+    @dataclass(frozen=True)
+    class _Row:
+        sequence: int
+
+    class _FullWriter:
+        @staticmethod
+        def enqueue_csv(_path, _payload) -> None:
+            raise RuntimeEvidenceQueueFull("simulated full queue")
+
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = _FullWriter()
+
+    with pytest.raises(RuntimeEvidenceQueueFull, match="simulated full queue"):
+        engine._append_row("evidence.csv", _Row(sequence=1))
+
+
+def test_exact_opportunity_rejection_fails_central_worker_off_callback() -> None:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    def block_worker() -> None:
+        worker_started.set()
+        assert release_worker.wait(timeout=2.0)
+
+    class _RejectingExactWriter:
+        def __init__(self) -> None:
+            self.payloads: list[dict[str, object]] = []
+
+        def append(self, payload) -> bool:
+            self.payloads.append(dict(payload))
+            return False
+
+    writer.enqueue_task("block", block_worker)
+    assert worker_started.wait(timeout=1.0)
+    exact = _RejectingExactWriter()
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = writer
+    engine._exact_opportunity_tape_runtime = exact
+    payload: dict[str, object] = {"sequence": 1, "nested": {"value": 1}}
+
+    engine._append_exact_opportunity_payload(payload)
+    payload["nested"]["value"] = 9
+    assert exact.payloads == []
+    release_worker.set()
+    deadline = time.monotonic() + 1.0
+    while not writer.health_snapshot()["fatal_error"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    assert exact.payloads == [{"sequence": 1, "nested": {"value": 1}}]
+    with pytest.raises(RuntimeEvidenceWorkerFailed, match="rejected a frozen payload"):
+        writer.raise_if_failed()
+    with pytest.raises(RuntimeEvidenceWriterError):
+        writer.close(drain_timeout_s=1.0)
+
+
+def test_lifecycle_queue_full_does_not_unwind_callback_before_safety() -> None:
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+    writer = RuntimeEvidenceWriter(queue_capacity=1)
+
+    def block_worker() -> None:
+        worker_started.set()
+        assert release_worker.wait(timeout=2.0)
+
+    class _LifecycleWriter:
+        enqueued = False
+
+        @staticmethod
+        def freeze_order_event(_order, source_event_type, raw_event):
+            return (str(source_event_type), copy.deepcopy(dict(raw_event)))
+
+        def enqueue_frozen_order_event(self, _event) -> bool:
+            self.enqueued = True
+            return True
+
+    writer.enqueue_task("block", block_worker)
+    assert worker_started.wait(timeout=1.0)
+    writer.enqueue_task("occupy-capacity", lambda: None)
+    lifecycle_writer = _LifecycleWriter()
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = writer
+    engine._order_lifecycle_live_writer_v2 = lifecycle_writer
+    order = SimpleNamespace(lifecycle=object())
+
+    # Admission fails immediately, but the callback stack is allowed to reach
+    # the exchange-risk cancellation that follows lifecycle observation.
+    engine._record_order_lifecycle_journal(
+        order,
+        "partial_fill",
+        {"_fill_qty": 0.001},
+    )
+    assert lifecycle_writer.enqueued is False
+    with pytest.raises(RuntimeEvidenceQueueFull):
+        writer.raise_if_failed()
+    release_worker.set()
+    with pytest.raises(RuntimeEvidenceWriterError):
+        writer.close(drain_timeout_s=1.0)
+
+
+def test_lifecycle_rejection_fails_central_worker_after_frozen_admission() -> None:
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    class _RejectingLifecycleWriter:
+        @staticmethod
+        def freeze_order_event(_order, source_event_type, raw_event):
+            return (str(source_event_type), copy.deepcopy(dict(raw_event)))
+
+        @staticmethod
+        def enqueue_frozen_order_event(_event) -> bool:
+            return False
+
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = writer
+    engine._order_lifecycle_live_writer_v2 = _RejectingLifecycleWriter()
+    order = SimpleNamespace(lifecycle=object())
+
+    engine._record_order_lifecycle_journal(order, "rest_ack", {"generation": 1})
+    deadline = time.monotonic() + 1.0
+    while not writer.health_snapshot()["fatal_error"]:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+
+    with pytest.raises(RuntimeEvidenceWorkerFailed, match="rejected a frozen callback"):
+        writer.raise_if_failed()
+    with pytest.raises(RuntimeEvidenceWriterError):
+        writer.close(drain_timeout_s=1.0)
+
+
+def test_inventory_trade_rows_share_runtime_evidence_writer(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "trades.csv"
+    inventory = InventoryManager(trade_log_path=str(path))
+    inventory._qty = 0.001
+    inventory._avg_entry = 100_000.0
+    inventory._realized_pnl = -0.25
+    inventory._unrealized_pnl = 0.10
+    inventory._state = PositionState.OPEN
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+    inventory.set_runtime_evidence_writer(writer)
+
+    inventory._log_trade(
+        1_750_000_000.125,
+        "BUY",
+        "OPEN",
+        0.001,
+        100_000.0,
+        0.0,
+    )
+    writer.close(drain_timeout_s=2.0)
+
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.reader(handle))
+    assert rows[0] == [
+        "timestamp",
+        "side",
+        "trade_type",
+        "qty",
+        "price",
+        "commission",
+        "position",
+        "avg_entry",
+        "realized_pnl",
+        "unrealized_pnl",
+        "state",
+    ]
+    assert rows[1] == [
+        "1750000000.125",
+        "BUY",
+        "OPEN",
+        "0.0010",
+        "100000.0",
+        "0.0000",
+        "+0.0010",
+        "100000.0",
+        "-0.25",
+        "0.10",
+        "OPEN",
+    ]
 
 
 def _q90_action_config() -> Config:
@@ -185,6 +691,299 @@ def test_rest_client_applies_one_finite_timeout_to_every_sync_call(
     )
 
 
+def test_live_rest_roles_bind_complete_position_query_only_to_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import live.main as live_main
+
+    captured = {}
+
+    class Client:
+        def sign_request(self, method, path, params):
+            captured["position_request"] = (method, path, params)
+            return []
+
+    clients = SimpleNamespace(
+        order=Client(),
+        reconciliation=Client(),
+        market_snapshot=Client(),
+        metrics=Client(),
+        listen_key=Client(),
+    )
+
+    def factory(**kwargs):
+        captured["factory"] = kwargs
+        return clients
+
+    monkeypatch.setattr(live_main, "create_binance_usdm_rest_clients", factory)
+    cfg = Config()
+    cfg.api.testnet = True
+    cfg.api.timeout_s = 2.5
+
+    result = create_rest_clients(cfg)
+
+    assert result is clients
+    assert captured["factory"]["base_url"] == "https://demo-fapi.binance.com"
+    assert captured["factory"]["timeout_s"] == pytest.approx(2.5)
+    assert not hasattr(clients.order, "get_position_risk")
+    assert clients.reconciliation.get_position_risk(symbol="BTCUSDC") == []
+    assert captured["position_request"] == (
+        "GET",
+        "/fapi/v2/positionRisk",
+        {"symbol": "BTCUSDC"},
+    )
+
+
+def test_websocket_order_ab_config_is_default_off_and_bounded():
+    cfg = Config()
+    _validate_config(cfg)
+    assert cfg.api.order_transport == "rest"
+    assert cfg.api.websocket_order_ab.max_runtime_s == pytest.approx(900.0)
+    assert cfg.api.websocket_order_ab.url == (
+        "wss://testnet.binancefuture.com/ws-fapi/v1"
+    )
+    assert create_websocket_order_ab_gateway(cfg) is None
+
+
+def test_websocket_order_ab_config_rejects_endpoint_environment_mismatch():
+    cfg = Config()
+    cfg.api.testnet = True
+    cfg.api.order_transport = "websocket_api_ab"
+    cfg.api.websocket_order_ab.url = "wss://ws-fapi.binance.com/ws-fapi/v1"
+
+    with pytest.raises(ValueError, match="matching api.testnet"):
+        _validate_config(cfg)
+
+
+def test_websocket_order_ab_runtime_guard_preconnects_and_arms_hard_stop():
+    class Gateway:
+        def __init__(self):
+            self.starts = 0
+
+        def start(self):
+            self.starts += 1
+
+    class FakeTimer:
+        def __init__(self, interval, callback):
+            self.interval = interval
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+            self.canceled = False
+
+        def start(self):
+            self.started = True
+
+        def cancel(self):
+            self.canceled = True
+
+    gateway = Gateway()
+    expirations = []
+    timer = arm_websocket_order_ab_runtime_guard(
+        gateway=gateway,
+        max_runtime_s=900.0,
+        on_expire=lambda: expirations.append("expired"),
+        timer_factory=FakeTimer,
+    )
+
+    assert gateway.starts == 1
+    assert timer.interval == pytest.approx(900.0)
+    assert timer.daemon is True
+    assert timer.started is True
+    timer.callback()
+    assert expirations == ["expired"]
+
+
+def test_live_start_routes_snapshot_and_listen_key_clients_independently(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import live.main as live_main
+
+    rest = object()
+    market_snapshot_client = object()
+    listen_key_client = object()
+    engine = SimpleNamespace(
+        start=Mock(),
+        sync_position=Mock(),
+        reconcile_fill_cooldown_checkpoint_gap=Mock(
+            return_value={"mode": "cursor_current", "recovered_fill_count": 0}
+        ),
+    )
+    ws = SimpleNamespace(
+        start=Mock(),
+        wait_for_user_stream_ready=Mock(return_value=True),
+        user_event_safety_snapshot=Mock(
+            return_value={
+                "user_stream_connected": True,
+                "user_stream_generation": 1,
+            }
+        ),
+    )
+    cfg = SimpleNamespace(symbol="BTCUSDC")
+    monkeypatch.setattr(
+        live_main,
+        "_initial_exchange_open_orders",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        lambda **_kwargs: (None, None),
+    )
+
+    start_engine_with_prospective_collection(
+        cfg=cfg,
+        engine=engine,
+        ws=ws,
+        rest=rest,
+        config_path=tmp_path / "config.yaml",
+        native_runtime={},
+        safety_authority={},
+        dry_run=False,
+        market_snapshot_client=market_snapshot_client,
+        listen_key_client=listen_key_client,
+    )
+
+    engine.start.assert_called_once_with()
+    assert engine.sync_position.call_count == 2
+    engine.sync_position.assert_called_with(required=True)
+    engine.reconcile_fill_cooldown_checkpoint_gap.assert_called_once_with()
+    ws.start.assert_called_once_with(
+        rest,
+        market_snapshot_client=market_snapshot_client,
+        listen_key_client=listen_key_client,
+    )
+    ws.wait_for_user_stream_ready.assert_called_once()
+    ready_timeout = float(ws.wait_for_user_stream_ready.call_args.args[0])
+    assert 0.0 < ready_timeout <= live_main.STARTUP_USER_STREAM_READY_TIMEOUT_S
+
+
+def test_live_start_fails_closed_before_quote_admission_without_user_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import live.main as live_main
+
+    engine = SimpleNamespace(
+        start=Mock(),
+        sync_position=Mock(),
+        reconcile_fill_cooldown_checkpoint_gap=Mock(
+            return_value={"mode": "cursor_current", "recovered_fill_count": 0}
+        ),
+    )
+    ws = SimpleNamespace(
+        start=Mock(),
+        wait_for_user_stream_ready=Mock(return_value=False),
+        user_event_safety_snapshot=Mock(),
+    )
+    monkeypatch.setattr(
+        live_main,
+        "_initial_exchange_open_orders",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        lambda **_kwargs: (None, None),
+    )
+
+    with pytest.raises(RuntimeError, match="user stream did not become ready"):
+        start_engine_with_prospective_collection(
+            cfg=SimpleNamespace(symbol="BTCUSDC"),
+            engine=engine,
+            ws=ws,
+            rest=object(),
+            config_path=tmp_path / "config.yaml",
+            native_runtime={},
+            safety_authority={},
+            dry_run=False,
+        )
+
+    engine.sync_position.assert_called_once_with(required=True)
+    assert engine.reconcile_fill_cooldown_checkpoint_gap.call_count == 1
+
+
+def test_live_start_repeats_exact_barrier_when_user_stream_generation_changes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import live.main as live_main
+
+    engine = SimpleNamespace(
+        start=Mock(),
+        sync_position=Mock(),
+        reconcile_fill_cooldown_checkpoint_gap=Mock(
+            return_value={"mode": "cursor_current", "recovered_fill_count": 0}
+        ),
+    )
+    states = iter(
+        (
+            {"user_stream_connected": True, "user_stream_generation": 1},
+            {"user_stream_connected": False, "user_stream_generation": 1},
+            {"user_stream_connected": True, "user_stream_generation": 2},
+            {"user_stream_connected": True, "user_stream_generation": 2},
+            {"user_stream_connected": True, "user_stream_generation": 2},
+        )
+    )
+    ws = SimpleNamespace(
+        start=Mock(),
+        wait_for_user_stream_ready=Mock(return_value=True),
+        user_event_safety_snapshot=Mock(side_effect=lambda: next(states)),
+    )
+    monkeypatch.setattr(
+        live_main,
+        "_initial_exchange_open_orders",
+        lambda *_args, **_kwargs: [],
+    )
+    monkeypatch.setattr(
+        live_main,
+        "initialize_prospective_lifecycle_collection",
+        lambda **_kwargs: (None, None),
+    )
+
+    _epoch, _writer, _exchange, generation = (
+        start_engine_with_prospective_collection(
+            cfg=SimpleNamespace(symbol="BTCUSDC"),
+            engine=engine,
+            ws=ws,
+            rest=object(),
+            config_path=tmp_path / "config.yaml",
+            native_runtime={},
+            safety_authority={},
+            dry_run=False,
+        )
+    )
+
+    assert generation == 2
+    # Durable crash-gap recovery runs once; connected-generation barriers use
+    # normal exact accountTrades reconciliation and its fill dedupe.
+    engine.reconcile_fill_cooldown_checkpoint_gap.assert_called_once_with()
+    assert engine.sync_position.call_count == 3
+
+
+def test_maker_engine_latches_when_admitted_user_stream_generation_is_lost() -> None:
+    engine = MakerEngine.__new__(MakerEngine)
+    engine._admitted_user_stream_generation = 7
+    engine._event_source = SimpleNamespace(
+        user_event_safety_snapshot=Mock(
+            return_value={
+                "user_stream_connected": False,
+                "user_stream_generation": 7,
+            }
+        )
+    )
+    engine.latch_runtime_fatal = Mock()
+
+    assert engine._enforce_private_user_stream_authority() is False
+    engine.latch_runtime_fatal.assert_called_once()
+    assert (
+        engine.latch_runtime_fatal.call_args.kwargs["reason"]
+        == "PRIVATE_USER_STREAM_AUTHORITY_LOST"
+    )
+    assert engine.latch_runtime_fatal.call_args.kwargs["reconciliation_required"] is True
+
+
 @pytest.mark.parametrize("timeout", (0.0, -1.0, float("nan"), float("inf"), True))
 def test_rest_timeout_must_be_positive_finite_and_non_boolean(timeout) -> None:
     cfg = Config()
@@ -269,7 +1068,17 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
                 "decision_latency_sum_ns": 1200,
                 "decision_latency_max_ns": 500,
             },
-        }
+        },
+        runtime_evidence_writer_health_snapshot=lambda: {
+            "enabled": True,
+            "valid": False,
+            "queue_depth": 7,
+            "queue_high_watermark": 11,
+            "queue_full_count": 1,
+            "uncommitted_count": 3,
+            "error_count": 2,
+            "fatal_error": "simulated",
+        },
     )
     ws = SimpleNamespace(
         user_event_safety_snapshot=lambda **_kwargs: {
@@ -279,16 +1088,30 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
             "user_stream_generation": 3,
         }
     )
+    order_gateway = SimpleNamespace(
+        health_snapshot=lambda: {
+            "active_transport": "websocket_api",
+            "websocket_api": {
+                "enabled": True,
+                "last_receipt": {"client_order_id": "ng-order-1"},
+            },
+        }
+    )
 
     health = collect_runtime_safety_health(
         engine=engine,
         ws=ws,
+        order_gateway=order_gateway,
         now_monotonic_s=10.0,
     )
 
     assert health["quoteLoopRunning"] is False
     assert health["ownershipConflictLatched"] is True
     assert health["lastTickAge"] == pytest.approx(3.0)
+    assert health["orderGateway"]["active_transport"] == "websocket_api"
+    assert health["orderGateway"]["websocket_api"]["last_receipt"] == {
+        "client_order_id": "ng-order-1"
+    }
     assert health["lastUserEventAge"] == pytest.approx(4.0)
     assert health["userStreamConnected"] is True
     assert health["userStreamGeneration"] == 3
@@ -305,6 +1128,14 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
     assert health["replaceTerminalContinuationSellDecisionCount"] == 2
     assert health["replaceTerminalContinuationDecisionLatencySumNs"] == 1200
     assert health["replaceTerminalContinuationDecisionLatencyMaxNs"] == 500
+    assert health["runtimeEvidenceWriterEnabled"] is True
+    assert health["runtimeEvidenceWriterValid"] is False
+    assert health["runtimeEvidenceWriterQueueDepth"] == 7
+    assert health["runtimeEvidenceWriterQueueHighWatermark"] == 11
+    assert health["runtimeEvidenceWriterQueueFullCount"] == 1
+    assert health["runtimeEvidenceWriterUncommittedCount"] == 3
+    assert health["runtimeEvidenceWriterErrorCount"] == 2
+    assert health["runtimeEvidenceWriterFatalError"] == "simulated"
 
 
 def test_normal_cleanup_with_final_reconciliation_pending_exits_78() -> None:
@@ -457,6 +1288,27 @@ def test_ws_stop_join_timeout_latches_execution_uncertainty_and_raises() -> None
     )
     assert call.kwargs["reconciliation_required"] is True
     assert call.kwargs["defer_reconciliation"] is True
+
+
+def test_user_stream_restart_uses_dedicated_listen_key_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handler = WSHandler(SimpleNamespace(), Config())
+    compatibility_client = object()
+    listen_key_client = object()
+    handler._running = True
+    handler._rest_client = compatibility_client
+    handler._listen_key_client = listen_key_client
+    started = []
+    monkeypatch.setattr(
+        handler,
+        "_start_user_stream",
+        lambda client: started.append(client),
+    )
+
+    handler.restart_user_stream("test")
+
+    assert started == [listen_key_client]
 
 
 def test_listen_key_expiry_restarts_outside_callback_without_self_join(
@@ -699,6 +1551,52 @@ def test_user_stream_session_fences_stale_callbacks_messages_and_late_install() 
     assert ws3.close.call_count == 1
     assert handler._install_user_stream_app(SimpleNamespace(close=Mock())) is None
     assert handler.user_event_safety_snapshot()["user_stream_connected"] is False
+
+
+def test_wait_for_user_stream_ready_tracks_current_connected_generation() -> None:
+    handler = WSHandler(
+        SimpleNamespace(orders=SimpleNamespace(), latch_runtime_fatal=Mock()), Config()
+    )
+    assert handler.wait_for_user_stream_ready(0.0) is False
+
+    handler._running = True
+    handler._user_stream_active = True
+    ws = SimpleNamespace(close=Mock())
+    token = handler._install_user_stream_app(ws)
+    assert token is not None
+    waiter_result: list[bool] = []
+    waiter = threading.Thread(
+        target=lambda: waiter_result.append(handler.wait_for_user_stream_ready(1.0))
+    )
+    waiter.start()
+
+    handler._on_user_open(ws, token)
+    waiter.join(timeout=1.0)
+
+    assert not waiter.is_alive()
+    assert waiter_result == [True]
+    assert handler.user_event_safety_snapshot()["user_stream_generation"] == 1
+    assert handler._user_stream_ready_event.is_set()
+
+    handler._on_user_close(ws, 1000, "closed", token)
+    assert handler._user_stream_ready_event.is_set() is False
+    assert handler.wait_for_user_stream_ready(0.01) is False
+
+    handler._on_user_open(ws, token)
+    assert handler.wait_for_user_stream_ready(0.0) is True
+    assert handler.user_event_safety_snapshot()["user_stream_generation"] == 2
+
+    assert handler._release_user_stream_app(ws, token) is True
+    assert handler._user_stream_ready_event.is_set() is False
+    assert handler.wait_for_user_stream_ready(0.0) is False
+
+
+@pytest.mark.parametrize("timeout_s", (-1.0, float("inf"), float("nan")))
+def test_wait_for_user_stream_ready_rejects_invalid_timeout(timeout_s: float) -> None:
+    handler = WSHandler(SimpleNamespace(), Config())
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        handler.wait_for_user_stream_ready(timeout_s)
 
 
 def test_user_stream_stop_drains_final_current_order_update_before_retire() -> None:

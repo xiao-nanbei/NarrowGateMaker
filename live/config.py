@@ -33,11 +33,27 @@ _restart_only_config_sha256: Optional[str] = None
 
 
 @dataclass
+class WebSocketOrderAbConfig:
+    """Restart-only bounded qualification of Binance USD-M WS order API."""
+
+    url: str = ""
+    connect_timeout_s: float = 3.0
+    request_timeout_s: float = 2.0
+    recv_window_ms: int = 5_000
+    latency_sample_limit: int = 4_096
+    max_runtime_s: float = 900.0
+
+
+@dataclass
 class ApiConfig:
     key: str = ""
     secret: str = ""
     testnet: bool = True
     timeout_s: float = 5.0
+    order_transport: str = "rest"
+    websocket_order_ab: WebSocketOrderAbConfig = field(
+        default_factory=WebSocketOrderAbConfig
+    )
 
 
 @dataclass
@@ -911,6 +927,42 @@ def _validate_config(cfg: Config) -> None:
     if not math.isfinite(api_timeout) or api_timeout <= 0.0:
         raise ValueError("api.timeout_s must be a finite number greater than zero")
     cfg.api.timeout_s = api_timeout
+
+    if type(cfg.api.testnet) is not bool:
+        raise ValueError("api.testnet must be a boolean")
+    order_transport = str(cfg.api.order_transport).strip().lower()
+    if order_transport not in {"rest", "websocket_api_ab"}:
+        raise ValueError(
+            "api.order_transport must be rest or websocket_api_ab"
+        )
+    cfg.api.order_transport = order_transport
+    from live.binance_usdm_transport import (
+        BinanceUsdMWebSocketOrderConfig,
+        binance_usdm_websocket_api_url,
+    )
+
+    websocket_order_ab = cfg.api.websocket_order_ab
+    expected_websocket_url = binance_usdm_websocket_api_url(
+        testnet=bool(cfg.api.testnet)
+    )
+    configured_websocket_url = str(websocket_order_ab.url).strip()
+    if configured_websocket_url and configured_websocket_url != expected_websocket_url:
+        raise ValueError(
+            "api.websocket_order_ab.url must be empty or the official endpoint "
+            "matching api.testnet"
+        )
+    websocket_order_ab.url = configured_websocket_url or expected_websocket_url
+    # The transport dataclass is the single validation contract for URL,
+    # timeout, receive window, sample bound, and the hard A/B lifetime.
+    BinanceUsdMWebSocketOrderConfig(
+        enabled=order_transport == "websocket_api_ab",
+        url=websocket_order_ab.url,
+        connect_timeout_s=websocket_order_ab.connect_timeout_s,
+        request_timeout_s=websocket_order_ab.request_timeout_s,
+        recv_window_ms=websocket_order_ab.recv_window_ms,
+        latency_sample_limit=websocket_order_ab.latency_sample_limit,
+        max_runtime_s=websocket_order_ab.max_runtime_s,
+    )
 
     for name in (
         "global_flow_shadow_enabled",

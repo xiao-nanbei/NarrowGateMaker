@@ -5,6 +5,7 @@
 #include <array>
 #include <deque>
 #include <map>
+#include <mutex>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -163,7 +164,8 @@ public:
     }
 
     [[nodiscard]] SegmentedSpanView<T> view() const noexcept {
-        // 返回最多两段连续 span，避免为了按时间顺序读取 ring buffer 再复制一份数组。
+        // Expose at most two contiguous spans in chronological order instead
+        // of copying the wrapped ring into a temporary array.
         const std::span<const T> storage{storage_.data(), storage_.size()};
         if (storage_.empty() || head_ == 0) {
             return SegmentedSpanView<T>{storage};
@@ -175,6 +177,26 @@ private:
     std::size_t capacity_ = 1;
     std::size_t head_ = 0;
     std::vector<T> storage_;
+};
+
+class SignalExecutionL2Engine {
+public:
+    explicit SignalExecutionL2Engine(std::size_t max_snapshots = 300)
+        : snapshots_(max_snapshots) {}
+
+    void reset();
+    void push_snapshot(const SignalExecutionL2Snapshot& snapshot);
+    [[nodiscard]] SignalExecutionL2FeatureValues compute_features(
+        double bucket_end_ms
+    ) const;
+    [[nodiscard]] SignalExecutionL2PolicyMetricValues compute_policy_metrics(
+        double end_exchange_ms
+    ) const;
+    [[nodiscard]] std::size_t snapshot_count() const;
+
+private:
+    mutable std::mutex mutex_;
+    CircularBuffer<SignalExecutionL2Snapshot> snapshots_;
 };
 
 class CountRollingMoments {

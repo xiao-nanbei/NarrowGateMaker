@@ -717,6 +717,47 @@ def test_queued_snapshot_does_not_include_later_live_transition(
     }
 
 
+def test_frozen_callback_can_cross_central_fifo_without_state_drift(
+    tmp_path: Path,
+) -> None:
+    order = _order()
+    runtime = OrderLifecycleLiveWriterV2(
+        tmp_path,
+        session_id="epoch-central-fifo",
+        baseline_epoch_id="epoch-central-fifo",
+        runtime_identity={
+            "baseline_epoch_id": "epoch-central-fifo",
+            "hash": "c" * 64,
+        },
+        queue_size=8,
+        storage_format="jsonl",
+        heartbeat_interval_s=60.0,
+    )
+
+    frozen = runtime.freeze_order_event(order, "submit")
+    assert frozen is not None
+    order.order_id = 42
+    order.lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)
+
+    assert runtime.enqueue_frozen_order_event(frozen) is True
+    _wait_for(runtime, 1)
+    final = runtime.close(drain_timeout_s=1.0)
+    assert final["formal_collection_valid"] is True
+
+    rows = [
+        json.loads(line)
+        for path in (tmp_path / "session-epoch-central-fifo" / "parts").glob(
+            "*.jsonl"
+        )
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert len(rows) == 1
+    assert rows[0]["source_callback_type"] == "submit"
+    assert rows[0]["lifecycle_event"] == "submit"
+    assert rows[0]["exchange_order_id"] is None
+
+
 def test_bounded_remote_spool_never_claims_local_admission_and_stops_cleanly(
     tmp_path: Path,
 ) -> None:
@@ -930,19 +971,24 @@ def test_local_shutdown_is_persisted_as_censor_not_exchange_terminal(
 def test_maker_v2_hook_bypasses_synchronous_csv_writer() -> None:
     order = _order()
     calls = []
+    frozen = object()
     runtime = SimpleNamespace(
-        enqueue_order_event=lambda *args: calls.append(args) or True,
+        freeze_order_event=lambda *args: calls.append(("freeze", args)) or frozen,
+        enqueue_frozen_order_event=lambda item: calls.append(("enqueue", item)) or True,
     )
     engine = MakerEngine.__new__(MakerEngine)
     engine._order_lifecycle_live_writer_v2 = runtime
+    engine._runtime_evidence_writer = None
     engine._order_lifecycle_journal_path = "/must/not/be/written.csv"
     engine._append_row = lambda *_args, **_kwargs: (_ for _ in ()).throw(
         AssertionError("synchronous CSV writer was reached")
     )
 
     engine._record_order_lifecycle_journal(order, "submit", {})
-    assert len(calls) == 1
-    assert calls[0][0] is order
+    assert calls == [
+        ("freeze", (order, "submit", {})),
+        ("enqueue", frozen),
+    ]
 
 
 def test_maker_publishes_rest_reconciled_lifecycle_transition() -> None:

@@ -111,6 +111,11 @@ from strategy.fill_cooldown import (
     normalize_consecutive_reset_policy,
     update_same_side_fill_units,
 )
+from strategy.fill_cooldown_checkpoint import (
+    FILL_COOLDOWN_WAL_MAGIC,
+    FILL_COOLDOWN_WAL_SLOT_BYTES,
+    FillCooldownCheckpointWAL,
+)
 from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
 from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
 from strategy.dynamic_fill_hazard_model import (
@@ -162,7 +167,8 @@ except Exception:  # pragma: no cover - live can run without research models on 
 logger = logging.getLogger("maker_engine")
 
 
-FILL_COOLDOWN_CHECKPOINT_SCHEMA = "narrowgate_fill_cooldown_checkpoint.v1"
+FILL_COOLDOWN_CHECKPOINT_SCHEMA_V1 = "narrowgate_fill_cooldown_checkpoint.v1"
+FILL_COOLDOWN_CHECKPOINT_SCHEMA = "narrowgate_fill_cooldown_checkpoint.v2"
 FILL_COOLDOWN_CHECKPOINT_MAX_BYTES = 64 * 1024
 FILL_COOLDOWN_CHECKPOINT_MODE = 0o600
 FILL_COOLDOWN_STATE_SCHEMA = "narrowgate_fill_cooldown_state.v2"
@@ -1285,12 +1291,14 @@ class MakerEngine:
         artifact_authority: Mapping[str, Any] | None = None,
         order_gateway=_LEGACY_TRANSPORT_DEFAULT,
         reconciliation_client=_LEGACY_TRANSPORT_DEFAULT,
+        metrics_client=_LEGACY_TRANSPORT_DEFAULT,
     ):
         """
         cfg: live.config.Config
         rest_client: compatibility default for both transport roles
         order_gateway: latency-sensitive new/cancel transport
         reconciliation_client: low-frequency account and exchange query transport
+        metrics_client: low-frequency public metric polling transport
         """
         self.cfg = cfg
         # Keep ``rest`` as a compatibility alias for older integrations and
@@ -1305,6 +1313,8 @@ class MakerEngine:
             raise ValueError(
                 "reconciliation_client cannot be None when provided explicitly"
             )
+        if metrics_client is None:
+            raise ValueError("metrics_client cannot be None when provided explicitly")
         self.order_gateway = (
             rest_client
             if order_gateway is _LEGACY_TRANSPORT_DEFAULT
@@ -1314,6 +1324,11 @@ class MakerEngine:
             rest_client
             if reconciliation_client is _LEGACY_TRANSPORT_DEFAULT
             else reconciliation_client
+        )
+        self.metrics_client = (
+            rest_client
+            if metrics_client is _LEGACY_TRANSPORT_DEFAULT
+            else metrics_client
         )
         self._base_asset, self._quote_asset = _infer_symbol_assets(cfg.symbol)
         self._settlement_asset = self._quote_asset
@@ -1328,6 +1343,7 @@ class MakerEngine:
         self._journaled_lifecycle_sequence: dict[str, int] = {}
         self._order_lifecycle_live_writer_v2 = None
         self._order_lifecycle_live_writer_v2_shutdown_timeout_s = 5.0
+        self._runtime_evidence_writer = None
 
         model_path = _resolve_model_dir(cfg)
         self._model_dir = model_path
@@ -1343,7 +1359,7 @@ class MakerEngine:
         )
         self.signal = SignalEngine(model_dir=model_path,
                                    enable_ml=cfg.ml.enabled,
-                                   rest_client=self.reconciliation_client,
+                                   rest_client=self.metrics_client,
                                    symbol=cfg.symbol,
                                    reference_symbol=getattr(multi, "reference_symbol", None),
                                    stablecoin_anchor_symbol=getattr(
@@ -1486,9 +1502,12 @@ class MakerEngine:
             checkpoint_path = Path(__file__).resolve().parents[1] / checkpoint_path
         self._fill_cooldown_checkpoint_path = checkpoint_path
         self._fill_cooldown_checkpoint_lock = threading.RLock()
+        self._fill_cooldown_checkpoint_wal: FillCooldownCheckpointWAL | None = None
         self._fill_cooldown_checkpoint_sequence = 0
         self._fill_cooldown_checkpoint_loaded = False
         self._fill_cooldown_restore_mode = "fresh_b0_no_checkpoint"
+        self._fill_cooldown_last_fill_cursor: dict[str, Any] | None = None
+        self._fill_cooldown_checkpoint_snapshot_ts_ms = 0
         self._last_cooldown_cancel_time: float = 0.0
         self._last_stale_data_block_log: float = 0.0
         self._last_quote_snapshot_block_log: float = 0.0
@@ -1674,6 +1693,49 @@ class MakerEngine:
         # Compatibility alias for old fixtures and the current WS transport.
         self._ws_handler = event_source
 
+    def set_admitted_user_stream_generation(self, generation: int) -> None:
+        """Bind normal maker submissions to one connected private-stream era."""
+
+        normalized = int(generation)
+        if normalized <= 0:
+            raise ValueError("admitted user-stream generation must be positive")
+        self._admitted_user_stream_generation = normalized
+
+    def _private_user_stream_authority_current(self) -> bool:
+        expected = int(
+            getattr(self, "_admitted_user_stream_generation", 0) or 0
+        )
+        if expected <= 0:
+            # Narrow fixtures and offline consumers do not install a live
+            # private-stream authority. Production binds it before first tick.
+            return True
+        event_source = self._active_event_source()
+        snapshotter = getattr(event_source, "user_event_safety_snapshot", None)
+        if not callable(snapshotter):
+            return False
+        snapshot = snapshotter()
+        return bool(snapshot.get("user_stream_connected")) and int(
+            snapshot.get("user_stream_generation", 0) or 0
+        ) == expected
+
+    def _enforce_private_user_stream_authority(self) -> bool:
+        """Fail closed when the admitted private callback stream changes."""
+
+        if self._private_user_stream_authority_current():
+            return True
+        error = RuntimeError(
+            "private user-stream authority disconnected or changed generation"
+        )
+        self.latch_runtime_fatal(
+            reason="PRIVATE_USER_STREAM_AUTHORITY_LOST",
+            error=error,
+            reconciliation_required=True,
+        )
+        logger.critical(
+            "PRIVATE_USER_STREAM_AUTHORITY_LOST action=stop_quote_and_reconcile"
+        )
+        return False
+
     def set_ws_handler(self, ws_handler):
         """Compatibility alias for the legacy WebSocket event source."""
 
@@ -1730,6 +1792,20 @@ class MakerEngine:
 
     def order_lifecycle_live_writer_v2_health_snapshot(self) -> dict[str, Any]:
         runtime = self._order_lifecycle_live_writer_v2
+        if runtime is None:
+            return {"enabled": False, "state": "disabled"}
+        return {"enabled": True, **runtime.health_snapshot()}
+
+    def set_runtime_evidence_writer(self, writer) -> None:
+        """Attach the single-owner writer used by ordinary live evidence."""
+
+        if getattr(self, "_runtime_evidence_writer", None) is not None:
+            raise RuntimeError("runtime evidence writer is already attached")
+        self._runtime_evidence_writer = writer
+        self.inventory.set_runtime_evidence_writer(writer)
+
+    def runtime_evidence_writer_health_snapshot(self) -> dict[str, Any]:
+        runtime = getattr(self, "_runtime_evidence_writer", None)
         if runtime is None:
             return {"enabled": False, "state": "disabled"}
         return {"enabled": True, **runtime.health_snapshot()}
@@ -2879,6 +2955,19 @@ class MakerEngine:
     def _append_row(self, path: str, row):
         if not path:
             return
+        runtime = getattr(self, "_runtime_evidence_writer", None)
+        if runtime is not None:
+            try:
+                runtime.enqueue_csv(path, asdict(row))
+            except Exception as exc:
+                logger.critical(
+                    "Runtime evidence admission failed (%s): %s",
+                    path,
+                    exc,
+                    exc_info=True,
+                )
+                raise
+            return
         try:
             payload = asdict(row)
             with self._csv_log_lock:
@@ -2893,11 +2982,41 @@ class MakerEngine:
     ) -> None:
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
+            frozen_payload = copy.deepcopy(dict(payload))
+
+            def append_exact_opportunity(
+                *,
+                exact_runtime=runtime,
+                exact_payload=frozen_payload,
+            ) -> None:
+                if not exact_runtime.append(exact_payload):
+                    raise RuntimeError(
+                        "exact-opportunity writer rejected a frozen payload"
+                    )
+
+            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
+            if evidence_runtime is not None:
+                try:
+                    evidence_runtime.enqueue_task(
+                        "exact_opportunity_append",
+                        append_exact_opportunity,
+                    )
+                except Exception as exc:
+                    # The central writer has already made this collection
+                    # invalid.  Do not raise through an OrderManager callback:
+                    # fill-risk cancellation must run before the main loop
+                    # observes the writer fatal and stops the engine.
+                    logger.critical(
+                        "Exact-opportunity evidence admission failed: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                return
             try:
-                runtime.append(payload)
+                append_exact_opportunity()
             except Exception as exc:
                 runtime.report_error(f"producer_append:{type(exc).__name__}:{exc}")
-                logger.error("Exact-opportunity v2.2 append failed: %s", exc)
+                logger.critical("Exact-opportunity v2.2 append failed: %s", exc)
             return
         path = getattr(self, "_exact_opportunity_tape_path", "")
         if not path:
@@ -2918,11 +3037,83 @@ class MakerEngine:
             return
         runtime = getattr(self, "_order_lifecycle_live_writer_v2", None)
         if runtime is not None:
-            runtime.enqueue_order_event(
-                order,
-                str(source_event_type),
-                dict(event or {}),
-            )
+            try:
+                frozen_event = runtime.freeze_order_event(
+                    order,
+                    str(source_event_type),
+                    dict(event or {}),
+                )
+            except Exception as exc:
+                logger.critical(
+                    "Order-lifecycle evidence freeze failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+                evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
+                if evidence_runtime is not None:
+                    frozen_error = RuntimeError(
+                        "order-lifecycle callback could not be frozen: "
+                        f"{type(exc).__name__}:{exc}"
+                    )
+
+                    def fail_order_lifecycle_freeze(
+                        *,
+                        error=frozen_error,
+                    ) -> None:
+                        raise error
+
+                    try:
+                        evidence_runtime.enqueue_task(
+                            "order_lifecycle_freeze_failure",
+                            fail_order_lifecycle_freeze,
+                        )
+                    except Exception:
+                        logger.critical(
+                            "Order-lifecycle freeze failure could not be "
+                            "admitted to the central evidence writer",
+                            exc_info=True,
+                        )
+                return
+            if frozen_event is None:
+                return
+
+            def append_order_lifecycle(
+                *,
+                lifecycle_runtime=runtime,
+                lifecycle_event=frozen_event,
+            ) -> None:
+                if not lifecycle_runtime.enqueue_frozen_order_event(
+                    lifecycle_event
+                ):
+                    raise RuntimeError(
+                        "order-lifecycle writer rejected a frozen callback"
+                    )
+
+            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
+            if evidence_runtime is not None:
+                try:
+                    evidence_runtime.enqueue_task(
+                        "order_lifecycle_append",
+                        append_order_lifecycle,
+                    )
+                except Exception as exc:
+                    # Never unwind a fill callback before its exchange-risk
+                    # cancellation.  The central writer is already invalid and
+                    # the main loop will fail closed on raise_if_failed().
+                    logger.critical(
+                        "Order-lifecycle evidence admission failed: %s",
+                        exc,
+                        exc_info=True,
+                    )
+                return
+            try:
+                append_order_lifecycle()
+            except Exception as exc:
+                logger.critical(
+                    "Order-lifecycle evidence append failed: %s",
+                    exc,
+                    exc_info=True,
+                )
             return
         path = getattr(self, "_order_lifecycle_journal_path", "")
         if not path:
@@ -3435,11 +3626,27 @@ class MakerEngine:
             "l2_book_cancel_ratio": 0.0,
             "l2_near_depth_total": 0.0,
         }
+        end_exchange_ms = float(snapshot.depth_exchange_ts_ms)
+        captured_native_values = tuple(
+            getattr(snapshot, "l2_policy_metric_values", ()) or ()
+        )
+        if captured_native_values:
+            if len(captured_native_values) != 4:
+                raise RuntimeError(
+                    "captured C++ L2 policy metric width changed: "
+                    f"{len(captured_native_values)}"
+                )
+            (
+                metrics["l2_quote_flip_rate"],
+                metrics["l2_book_refresh_ratio"],
+                metrics["l2_book_cancel_ratio"],
+                metrics["l2_near_depth_total"],
+            ) = (float(value) for value in captured_native_values)
+            return metrics
+
         snapshots = snapshot.depth_history
         if not snapshots:
             return metrics
-
-        end_exchange_ms = float(snapshot.depth_exchange_ts_ms)
         native_values = self.signal._compute_cpp_l2_policy_values(
             snapshots,
             end_exchange_ms,
@@ -4551,8 +4758,6 @@ class MakerEngine:
             raise ValueError("fill cooldown checkpoint is not a regular file")
         if file_stat.st_uid != os.getuid():
             raise PermissionError("fill cooldown checkpoint owner differs from runtime user")
-        if file_stat.st_nlink != 1:
-            raise PermissionError("fill cooldown checkpoint must have exactly one link")
         if stat.S_IMODE(file_stat.st_mode) != FILL_COOLDOWN_CHECKPOINT_MODE:
             raise PermissionError("fill cooldown checkpoint mode must be 0600")
         if not 0 < file_stat.st_size <= FILL_COOLDOWN_CHECKPOINT_MAX_BYTES:
@@ -4567,7 +4772,6 @@ class MakerEngine:
             file_stat.st_ino,
             file_stat.st_mode,
             file_stat.st_uid,
-            file_stat.st_nlink,
             file_stat.st_size,
             file_stat.st_mtime_ns,
             file_stat.st_ctime_ns,
@@ -4597,7 +4801,10 @@ class MakerEngine:
             raise ValueError("fill cooldown checkpoint path must be absolute")
         return path
 
-    def _read_fill_cooldown_checkpoint(self, path: Path) -> Optional[dict[str, Any]]:
+    def _read_legacy_fill_cooldown_checkpoint(
+        self,
+        path: Path,
+    ) -> Optional[dict[str, Any]]:
         self._reject_fill_cooldown_checkpoint_symlink_components(path.parent)
         flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
         try:
@@ -4648,6 +4855,13 @@ class MakerEngine:
             payload = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("fill cooldown checkpoint is not canonical JSON") from exc
+        return self._validate_fill_cooldown_checkpoint_payload(payload)
+
+    def _validate_fill_cooldown_checkpoint_payload(
+        self,
+        payload: Any,
+    ) -> dict[str, Any]:
+        schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
         expected_fields = {
             "schema_version",
             "checkpoint_sequence",
@@ -4657,9 +4871,14 @@ class MakerEngine:
             "state",
             "canonical_checkpoint_sha256",
         }
+        if schema_version == FILL_COOLDOWN_CHECKPOINT_SCHEMA:
+            expected_fields.add("last_authoritative_fill_cursor")
         if not isinstance(payload, dict) or set(payload) != expected_fields:
             raise ValueError("fill cooldown checkpoint fields drifted")
-        if payload.get("schema_version") != FILL_COOLDOWN_CHECKPOINT_SCHEMA:
+        if schema_version not in {
+            FILL_COOLDOWN_CHECKPOINT_SCHEMA_V1,
+            FILL_COOLDOWN_CHECKPOINT_SCHEMA,
+        }:
             raise ValueError("unsupported fill cooldown checkpoint schema")
         sequence = payload.get("checkpoint_sequence")
         writer_pid = payload.get("writer_pid")
@@ -4680,6 +4899,39 @@ class MakerEngine:
             raise ValueError("fill cooldown checkpoint state is not an object")
         if payload["state"].get("checkpoint_sequence") != sequence:
             raise ValueError("fill cooldown checkpoint sequence fields differ")
+        cursor = payload.get("last_authoritative_fill_cursor")
+        if cursor is not None:
+            cursor_fields = {
+                "trade_id",
+                "order_id",
+                "cumulative_filled_qty",
+                "trade_time_ms",
+                "side",
+            }
+            if not isinstance(cursor, dict) or set(cursor) != cursor_fields:
+                raise ValueError("fill cooldown checkpoint fill cursor is invalid")
+            cumulative = cursor.get("cumulative_filled_qty")
+            if (
+                not isinstance(cursor.get("trade_id"), int)
+                or isinstance(cursor.get("trade_id"), bool)
+                or int(cursor["trade_id"]) <= 0
+                or not isinstance(cursor.get("order_id"), int)
+                or isinstance(cursor.get("order_id"), bool)
+                or int(cursor["order_id"]) <= 0
+                or (
+                    cumulative is not None
+                    and (
+                        isinstance(cumulative, bool)
+                        or not math.isfinite(float(cumulative))
+                        or float(cumulative) <= 0.0
+                    )
+                )
+                or not isinstance(cursor.get("trade_time_ms"), int)
+                or isinstance(cursor.get("trade_time_ms"), bool)
+                or int(cursor["trade_time_ms"]) <= 0
+                or cursor.get("side") not in {"BUY", "SELL"}
+            ):
+                raise ValueError("fill cooldown checkpoint fill cursor values are invalid")
         historical_identity = payload.get("active_buy_e3_deadline_identity")
         if not isinstance(historical_identity, str) or not historical_identity:
             raise ValueError("fill cooldown checkpoint artifact identity is invalid")
@@ -4712,59 +4964,60 @@ class MakerEngine:
             )
         return payload
 
-    def _write_fill_cooldown_checkpoint(
+    @staticmethod
+    def _fill_cooldown_checkpoint_is_wal(path: Path) -> bool:
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(
+            os,
+            "O_NOFOLLOW",
+            0,
+        )
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            return False
+        try:
+            # Either slot can be the last intact recovery point.  In
+            # particular, an interrupted odd-sequence write may destroy the
+            # first slot's magic while the second slot remains valid.  Looking
+            # only at offset zero would misclassify that recoverable WAL as
+            # legacy JSON and bypass the two-slot decoder.
+            return any(
+                os.pread(descriptor, len(FILL_COOLDOWN_WAL_MAGIC), offset)
+                == FILL_COOLDOWN_WAL_MAGIC
+                for offset in (0, FILL_COOLDOWN_WAL_SLOT_BYTES)
+            )
+        finally:
+            os.close(descriptor)
+
+    def _fill_cooldown_wal_store(self, path: Path) -> FillCooldownCheckpointWAL:
+        store = getattr(self, "_fill_cooldown_checkpoint_wal", None)
+        if store is not None:
+            if store.path != path:
+                raise RuntimeError("fill cooldown checkpoint WAL path changed")
+            return store
+        store = FillCooldownCheckpointWAL(path)
+        self._fill_cooldown_checkpoint_wal = store
+        return store
+
+    def _migrate_legacy_fill_cooldown_checkpoint(
         self,
         path: Path,
         payload: Mapping[str, Any],
     ) -> None:
-        parent = path.parent
-        self._reject_fill_cooldown_checkpoint_symlink_components(parent)
-        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self._reject_fill_cooldown_checkpoint_symlink_components(parent)
-        parent_stat = os.lstat(parent)
-        if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != os.getuid():
-            raise PermissionError("fill cooldown checkpoint parent is not an owned directory")
-        try:
-            target_stat = os.lstat(path)
-        except FileNotFoundError:
-            target_stat = None
-        if target_stat is not None:
-            self._validate_fill_cooldown_checkpoint_file_stat(target_stat)
+        """Atomically replace one validated legacy JSON file with a two-slot WAL."""
 
-        raw = self._fill_cooldown_checkpoint_canonical_bytes(payload)
-        if len(raw) > FILL_COOLDOWN_CHECKPOINT_MAX_BYTES:
-            raise ValueError("fill cooldown checkpoint exceeds the maximum size")
+        parent = path.parent
         temporary = parent / (
-            f".{path.name}.{os.getpid()}.{threading.get_ident()}.{time.time_ns()}.tmp"
+            f".{path.name}.{os.getpid()}.{threading.get_ident()}."
+            f"{time.time_ns()}.wal.tmp"
         )
-        flags = (
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0)
-        )
-        descriptor = os.open(temporary, flags, FILL_COOLDOWN_CHECKPOINT_MODE)
+        temporary_store = FillCooldownCheckpointWAL(temporary)
         try:
-            os.fchmod(descriptor, FILL_COOLDOWN_CHECKPOINT_MODE)
-            offset = 0
-            while offset < len(raw):
-                written = os.write(descriptor, raw[offset:])
-                if written <= 0:
-                    raise OSError("fill cooldown checkpoint write made no progress")
-                offset += written
-            os.fsync(descriptor)
-            written_stat = os.fstat(descriptor)
-            self._validate_fill_cooldown_checkpoint_file_stat(written_stat)
-        except Exception:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
-            raise
-        finally:
-            os.close(descriptor)
-        try:
+            temporary_store.write(payload)
+            migrated = temporary_store.read_latest()
+            if migrated is None or migrated.payload != dict(payload):
+                raise RuntimeError("fill cooldown checkpoint WAL migration drifted")
+            temporary_store.close()
             os.replace(temporary, path)
             directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
             directory_descriptor = os.open(parent, directory_flags)
@@ -4772,13 +5025,50 @@ class MakerEngine:
                 os.fsync(directory_descriptor)
             finally:
                 os.close(directory_descriptor)
-            final_stat = os.lstat(path)
-            self._validate_fill_cooldown_checkpoint_file_stat(final_stat)
         finally:
-            try:
-                temporary.unlink()
-            except FileNotFoundError:
-                pass
+            temporary_store.close()
+            temporary.unlink(missing_ok=True)
+
+        store = self._fill_cooldown_wal_store(path)
+        migrated = store.read_latest()
+        if migrated is None or migrated.payload != dict(payload):
+            raise RuntimeError("migrated fill cooldown checkpoint could not be verified")
+
+    def _read_fill_cooldown_checkpoint(self, path: Path) -> Optional[dict[str, Any]]:
+        if not path.exists():
+            return None
+        if self._fill_cooldown_checkpoint_is_wal(path):
+            record = self._fill_cooldown_wal_store(path).read_latest()
+            if record is None:
+                return None
+            return self._validate_fill_cooldown_checkpoint_payload(record.payload)
+
+        payload = self._read_legacy_fill_cooldown_checkpoint(path)
+        if payload is None:
+            return None
+        self._migrate_legacy_fill_cooldown_checkpoint(path, payload)
+        return payload
+
+    def _write_fill_cooldown_checkpoint(
+        self,
+        path: Path,
+        payload: Mapping[str, Any],
+    ) -> None:
+        store = getattr(self, "_fill_cooldown_checkpoint_wal", None)
+        if store is None:
+            if path.exists() and not self._fill_cooldown_checkpoint_is_wal(path):
+                legacy = self._read_legacy_fill_cooldown_checkpoint(path)
+                if legacy is None:
+                    raise RuntimeError("legacy fill cooldown checkpoint disappeared")
+                self._migrate_legacy_fill_cooldown_checkpoint(path, legacy)
+            store = self._fill_cooldown_wal_store(path)
+            latest = store.read_latest()
+            next_sequence = int(payload.get("checkpoint_sequence", 0) or 0)
+            if latest is not None and next_sequence <= latest.sequence:
+                raise RuntimeError(
+                    "fill cooldown checkpoint must be restored before it is advanced"
+                )
+        store.write(payload)
 
     def _persist_fill_cooldown_checkpoint(self) -> None:
         path = self._fill_cooldown_checkpoint_file()
@@ -4817,6 +5107,9 @@ class MakerEngine:
                         )
                     ),
                 ),
+                "last_authoritative_fill_cursor": copy.deepcopy(
+                    getattr(self, "_fill_cooldown_last_fill_cursor", None)
+                ),
                 "state": state,
             }
             payload["canonical_checkpoint_sha256"] = (
@@ -4827,6 +5120,22 @@ class MakerEngine:
             except Exception:
                 self._fill_cooldown_checkpoint_sequence = previous_sequence
                 raise
+            self._fill_cooldown_checkpoint_snapshot_ts_ms = int(
+                state["snapshot_ts_ms"]
+            )
+
+    def close_fill_cooldown_checkpoint_store(self) -> None:
+        """Close the restart-only WAL descriptor after callback quiescence."""
+
+        lock = getattr(self, "_fill_cooldown_checkpoint_lock", None)
+        if lock is None:
+            return
+        with lock:
+            store = getattr(self, "_fill_cooldown_checkpoint_wal", None)
+            if store is None:
+                return
+            store.close()
+            self._fill_cooldown_checkpoint_wal = None
 
     def restore_fill_cooldown_checkpoint(
         self,
@@ -4875,6 +5184,12 @@ class MakerEngine:
             return self.fill_cooldown_state_snapshot(now_ms=now_ms)
         self._fill_cooldown_checkpoint_loaded = True
         self._fill_cooldown_checkpoint_sequence = int(payload["checkpoint_sequence"])
+        self._fill_cooldown_last_fill_cursor = copy.deepcopy(
+            payload.get("last_authoritative_fill_cursor")
+        )
+        self._fill_cooldown_checkpoint_snapshot_ts_ms = int(
+            payload["state"]["snapshot_ts_ms"]
+        )
         self.restore_fill_cooldown_state(
             payload["state"],
             now_ms=now_ms,
@@ -4883,8 +5198,180 @@ class MakerEngine:
             ),
             buy_natural_b0_deadline_ms=int(payload["buy_natural_b0_deadline_ms"]),
         )
-        self._persist_fill_cooldown_checkpoint()
+        # Do not advance snapshot_ts_ms before accountTrades gap recovery.
+        # With no durable trade cursor, that timestamp is the only lower
+        # recovery boundary; rewriting it here would erase the crash window.
         return self.fill_cooldown_state_snapshot(now_ms=now_ms)
+
+    @staticmethod
+    def _policy_max_fixed_cooldown_s(policy: Any) -> float:
+        evaluator = getattr(policy, "evaluator", policy)
+        rules = getattr(evaluator, "rules", ())
+        maximum = 0.0
+        for rule in rules:
+            action = str(rule[0]) if isinstance(rule, tuple) and rule else ""
+            if not (action.startswith("FIXED_") and action.endswith("S")):
+                continue
+            try:
+                maximum = max(maximum, float(int(action[6:-1])))
+            except ValueError:
+                continue
+        return maximum
+
+    def _fill_cooldown_checkpoint_gap_trades(self) -> list[dict[str, Any]]:
+        cursor = getattr(self, "_fill_cooldown_last_fill_cursor", None)
+        last_trade_id = int(cursor.get("trade_id", 0)) if isinstance(cursor, dict) else 0
+        snapshot_ts_ms = int(
+            getattr(self, "_fill_cooldown_checkpoint_snapshot_ts_ms", 0) or 0
+        )
+        if last_trade_id <= 0 and snapshot_ts_ms <= 0:
+            raise RuntimeError("fill cooldown checkpoint lacks a recovery cursor")
+
+        request: dict[str, Any] = {"symbol": self.cfg.symbol, "limit": 1000}
+        if last_trade_id > 0:
+            request["fromId"] = last_trade_id + 1
+        else:
+            request["startTime"] = snapshot_ts_ms
+        rows: list[dict[str, Any]] = []
+        seen_trade_ids: set[int] = set()
+        high_water_trade_id = last_trade_id
+        for _page in range(100):
+            page = self._reconciliation_transport().get_account_trades(**request)
+            if not isinstance(page, list):
+                raise RuntimeError("fill cooldown gap accountTrades was not a list")
+            if not page:
+                return rows
+            page_ids: list[int] = []
+            previous_page_trade_id: Optional[int] = None
+            for raw in page:
+                if not isinstance(raw, Mapping):
+                    raise RuntimeError("fill cooldown gap trade was not an object")
+                row = dict(raw)
+                try:
+                    trade_id = int(row.get("id"))
+                    trade_time_ms = int(row.get("time", 0))
+                except (TypeError, ValueError) as exc:
+                    raise RuntimeError(
+                        "fill cooldown gap trade identity was invalid"
+                    ) from exc
+                if (
+                    previous_page_trade_id is not None
+                    and trade_id <= previous_page_trade_id
+                ):
+                    raise RuntimeError(
+                        "fill cooldown gap trade ids were not strictly increasing"
+                    )
+                previous_page_trade_id = trade_id
+                if trade_id <= last_trade_id:
+                    continue
+                if last_trade_id <= 0 and trade_time_ms < snapshot_ts_ms:
+                    continue
+                if trade_id in seen_trade_ids or trade_id <= high_water_trade_id:
+                    raise RuntimeError(
+                        "fill cooldown gap trade id was duplicated or regressed"
+                    )
+                seen_trade_ids.add(trade_id)
+                high_water_trade_id = trade_id
+                page_ids.append(trade_id)
+                rows.append(row)
+            if len(page) < 1000:
+                return rows
+            if not page_ids:
+                raise RuntimeError("fill cooldown gap pagination made no progress")
+            request = {
+                "symbol": self.cfg.symbol,
+                "fromId": max(page_ids) + 1,
+                "limit": 1000,
+            }
+        raise RuntimeError("fill cooldown gap pagination exceeded 100 pages")
+
+    def reconcile_fill_cooldown_checkpoint_gap(self) -> dict[str, Any]:
+        """Conservatively recover exchange fills newer than the durable cursor."""
+
+        if self._fill_cooldown_checkpoint_file() is None:
+            return {"recovered_fill_count": 0, "mode": "checkpoint_disabled"}
+        rows = self._fill_cooldown_checkpoint_gap_trades()
+        if not rows:
+            # Gap recovery succeeded against the preserved durable boundary;
+            # only now may a new snapshot timestamp replace it.
+            self._persist_fill_cooldown_checkpoint()
+            return {"recovered_fill_count": 0, "mode": "cursor_current"}
+
+        policy_maximum = {
+            "BUY": self._policy_max_fixed_cooldown_s(
+                getattr(self, "_buy_e3_cooldown_policy", None)
+            ),
+            "SELL": self._policy_max_fixed_cooldown_s(
+                getattr(self, "_boolean_cooldown_policy", None)
+            ),
+        }
+        for row in sorted(rows, key=lambda item: (int(item["time"]), int(item["id"]))):
+            try:
+                trade_id = int(row["id"])
+                order_id = int(row["orderId"])
+                trade_time_ms = int(row["time"])
+                quantity = float(row["qty"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError("fill cooldown gap trade economics were invalid") from exc
+            side = self._account_trade_side(row)
+            if (
+                trade_id <= 0
+                or order_id <= 0
+                or trade_time_ms <= 0
+                or not math.isfinite(quantity)
+                or quantity <= 0.0
+            ):
+                raise RuntimeError("fill cooldown gap trade values were invalid")
+            self._consec_buy, self._consec_sell, _fill_units = (
+                update_same_side_fill_units(
+                    side=side,
+                    fill_qty=quantity,
+                    order_size=self.cfg.strategy.order_size,
+                    lot_size=self.cfg.lot_size,
+                    buy_units=self._consec_buy,
+                    sell_units=self._consec_sell,
+                )
+            )
+            units = self._consec_buy if side == "BUY" else self._consec_sell
+            baseline_s = float(self.cfg.strategy.fill_cooldown) * max(1.0, units)
+            duration_s = max(baseline_s, policy_maximum[side])
+            deadline_s = trade_time_ms / 1_000.0 + duration_s
+            self._fill_cooldown_until[side] = max(
+                float(self._fill_cooldown_until.get(side, 0.0)),
+                deadline_s,
+            )
+            opposite = "SELL" if side == "BUY" else "BUY"
+            self._fill_cooldown_until[opposite] = 0.0
+            self._fill_cooldown_deadline_identity[opposite] = "B0"
+            self._fill_cooldown_natural_b0_until[opposite] = 0.0
+            self._fill_cooldown_deadline_identity[side] = (
+                "CRASH_RECOVERY_CONSERVATIVE"
+            )
+            if side == "BUY":
+                self._fill_cooldown_natural_b0_until["BUY"] = max(
+                    float(self._fill_cooldown_natural_b0_until.get("BUY", 0.0)),
+                    trade_time_ms / 1_000.0 + baseline_s,
+                )
+            self._last_same_side_fill_epoch_ms[side] = trade_time_ms
+            self._last_fill_side = side
+            self._fill_cooldown_last_fill_cursor = {
+                "trade_id": trade_id,
+                "order_id": order_id,
+                "cumulative_filled_qty": None,
+                "trade_time_ms": trade_time_ms,
+                "side": side,
+            }
+        self._persist_fill_cooldown_checkpoint()
+        logger.critical(
+            "FILL_COOLDOWN_CRASH_GAP_RECOVERED fills=%d buyUntil=%.3f sellUntil=%.3f",
+            len(rows),
+            self._fill_cooldown_until["BUY"],
+            self._fill_cooldown_until["SELL"],
+        )
+        return {
+            "recovered_fill_count": len(rows),
+            "mode": "conservative_exchange_trade_recovery",
+        }
 
     def _expire_fill_cooldown_state(self, side: str, now_s: float) -> None:
         normalized = str(side).upper()
@@ -5756,6 +6243,8 @@ class MakerEngine:
         Checks if it's time to requote and executes if so.
         """
         self._last_tick_monotonic_s = time.monotonic()
+        if not self._enforce_private_user_stream_authority():
+            return
         now = time.time()
 
         # Markout is a wall-clock observation, not a requote-side effect.  The
@@ -9180,6 +9669,17 @@ class MakerEngine:
             raise RuntimeError("submit ACK became unknown outside PENDING_NEW")
         self._verify_side_order_ownership(side=side, cid=cid, phase="submit_ack_unknown")
 
+    @staticmethod
+    def _submit_may_have_been_dispatched(error: BaseException, request_started: bool) -> bool:
+        """Respect an explicit transport pre-dispatch proof.
+
+        Legacy REST exceptions do not expose this attribute, so they retain
+        the conservative historical UNKNOWN behavior once the call started.
+        """
+
+        marker = getattr(error, "may_have_been_dispatched", None)
+        return bool(request_started) if marker is None else bool(marker)
+
     def _side_order_reference(self, side: Side) -> Optional[str]:
         return self._bid_cid if side == Side.BUY else self._ask_cid
 
@@ -9369,6 +9869,8 @@ class MakerEngine:
                      decision_context: Optional[dict] = None,
                      record_requote_perf: bool = True) -> Optional[str]:
         """Send limit order to exchange."""
+        if not self._enforce_private_user_stream_authority():
+            return None
         if self._execution_state_uncertain():
             logger.critical(
                 "ORDER_SUBMIT_BLOCKED_RUNTIME_FATAL side=%s; exact operator "
@@ -9491,7 +9993,10 @@ class MakerEngine:
                 )
                 return cid
             error_code = self._exchange_error_code(e)
-            if not request_started or error_code == -5022:
+            may_have_been_dispatched = self._submit_may_have_been_dispatched(
+                e, request_started
+            )
+            if not may_have_been_dispatched or error_code == -5022:
                 self.orders.confirm_rejected(cid, str(e))
                 order = self.orders.get_order(cid)
                 if order is not None:
@@ -9509,14 +10014,14 @@ class MakerEngine:
             if error_code == -5022:
                 # The exchange positively rejected this pre-activation GTX order.
                 logger.debug(f"GTX rejected (would cross): {side.value} {quantity}@{price}")
-            elif request_started:
+            elif may_have_been_dispatched:
                 logger.error(
                     "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
                     f"{side.value} {quantity}@{price}: {e}"
                 )
             else:
                 logger.error(f"Order place failed: {side.value} {quantity}@{price}: {e}")
-            return cid if request_started and error_code != -5022 else None
+            return cid if may_have_been_dispatched and error_code != -5022 else None
 
     def _place_close_order(self, symbol: str, side: Side,
                           price: float, quantity: float,
@@ -9661,7 +10166,10 @@ class MakerEngine:
                 return
             error_code = self._exchange_error_code(e)
             exact_gtx_reject = error_code == -5022 and not use_ioc
-            if not request_started or exact_gtx_reject:
+            may_have_been_dispatched = self._submit_may_have_been_dispatched(
+                e, request_started
+            )
+            if not may_have_been_dispatched or exact_gtx_reject:
                 self.orders.confirm_rejected(cid, str(e))
                 order = self.orders.get_order(cid)
                 self._pop_order_context(cid)
@@ -9677,7 +10185,7 @@ class MakerEngine:
                     f"GTX close rejected ({self._close_gtx_rejects}/{MAX_GTX_REJECTS}): "
                     f"{side.value} {quantity}@{price}"
                 )
-            elif request_started:
+            elif may_have_been_dispatched:
                 if order is not None:
                     self._log_order_outcome("submit_ack_unknown_close", order)
                 if use_ioc:
@@ -10273,6 +10781,22 @@ class MakerEngine:
                 return True
             return False
         except Exception as e:
+            if bool(getattr(e, "requires_reconciliation", False)) and bool(
+                getattr(e, "may_have_been_dispatched", False)
+            ):
+                # A timed-out/disconnected write can still have reached the
+                # exchange.  Retain PENDING_CANCEL ownership and any armed
+                # replacement continuation until the private stream or the
+                # bounded individual-order reconciler proves a terminal/open
+                # state. Treating this as a cancel rejection would permit an
+                # overlapping same-side order.
+                logger.error(
+                    "CANCEL_ACK_UNKNOWN cid=%s ownership=PENDING_CANCEL "
+                    "reconciliation_required=1 error=%s",
+                    cid,
+                    e,
+                )
+                return False
             self.orders.cancel_rejected(cid, str(e))
             if replace_continuation_generation > 0:
                 self._clear_replace_terminal_continuation(
@@ -10731,7 +11255,10 @@ class MakerEngine:
                     )
                     return
                 error_code = self._exchange_error_code(e)
-                if not request_started or error_code == -5022:
+                may_have_been_dispatched = self._submit_may_have_been_dispatched(
+                    e, request_started
+                )
+                if not may_have_been_dispatched or error_code == -5022:
                     self.orders.confirm_rejected(cid, str(e))
                     self._release_side_order_ownership(side=side, cid=cid)
                     order = self.orders.get_order(cid)
@@ -10754,7 +11281,9 @@ class MakerEngine:
                         )
                 logger.error(
                     "Emergency close submit failed%s: %s",
-                    " with unknown ACK" if request_started and error_code != -5022 else "",
+                    " with unknown ACK"
+                    if may_have_been_dispatched and error_code != -5022
+                    else "",
                     e,
                 )
 
@@ -10838,7 +11367,30 @@ class MakerEngine:
         self._pop_order_context(order.client_order_id)
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
-            runtime.observe_order_terminal(order.client_order_id)
+            client_order_id = str(order.client_order_id)
+
+            def observe_exact_terminal(
+                *,
+                exact_runtime=runtime,
+                terminal_client_order_id=client_order_id,
+            ) -> None:
+                exact_runtime.observe_order_terminal(terminal_client_order_id)
+
+            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
+            if evidence_runtime is None:
+                observe_exact_terminal()
+            else:
+                try:
+                    evidence_runtime.enqueue_task(
+                        "exact_opportunity_terminal",
+                        observe_exact_terminal,
+                    )
+                except Exception as exc:
+                    logger.critical(
+                        "Exact-opportunity terminal evidence admission failed: %s",
+                        exc,
+                        exc_info=True,
+                    )
         self._on_dynamic_fill_hazard_order_terminal(
             order,
             terminal_reason=str(reason),
@@ -10913,6 +11465,37 @@ class MakerEngine:
             )
             return
         qty = applied_qty
+        try:
+            fill_trade_id = int(trade_id)
+            fill_order_id = int(order_id)
+        except (TypeError, ValueError):
+            fill_trade_id = 0
+            fill_order_id = 0
+        if fill_trade_id > 0 and fill_order_id > 0 and trade_time_ms > 0:
+            self._fill_cooldown_last_fill_cursor = {
+                "trade_id": fill_trade_id,
+                "order_id": fill_order_id,
+                "cumulative_filled_qty": (
+                    float(cumulative_filled_qty)
+                    if cumulative_filled_qty is not None
+                    else None
+                ),
+                "trade_time_ms": trade_time_ms,
+                "side": side,
+            }
+        deferred_post_fill_errors: list[BaseException] = []
+        pop_inventory_evidence_error = getattr(
+            self.inventory,
+            "pop_runtime_evidence_error",
+            None,
+        )
+        inventory_evidence_error = (
+            pop_inventory_evidence_error()
+            if callable(pop_inventory_evidence_error)
+            else None
+        )
+        if inventory_evidence_error is not None:
+            deferred_post_fill_errors.append(inventory_evidence_error)
         if commission_error is not None:
             self._commission_unit_error = str(commission_error)
             logger.critical(
@@ -10925,7 +11508,20 @@ class MakerEngine:
                 commission_error,
             )
 
-        self._log_order_outcome("filled", order, filled_qty=qty, avg_fill_price=price)
+        try:
+            self._log_order_outcome(
+                "filled",
+                order,
+                filled_qty=qty,
+                avg_fill_price=price,
+            )
+        except Exception as exc:
+            deferred_post_fill_errors.append(exc)
+            logger.critical(
+                "Fill outcome evidence admission failed; deferring fatal until "
+                "post-fill risk actions complete",
+                exc_info=True,
+            )
         new_q = float(self.inventory.snapshot.qty)
         current_consecutive_losses = int(self.inventory.consecutive_losses)
         self._loss_cooldown_max_observed_consecutive_losses = max(
@@ -11129,9 +11725,35 @@ class MakerEngine:
                 f"base={raw_fc:.1f}s effective_base={effective_fc:.1f}s "
                 f"vol_mult={vol_mult:.2f} add_mult={add_mult:.2f} cooldown={cd:.0f}s "
                 f"until={self._fill_cooldown_until[side]:.0f}")
-        self._persist_fill_cooldown_checkpoint()
-        if effective_fc > 0:
+        # The exchange-risk action must not sit behind a filesystem sync.  If
+        # the process dies after this cancel request but before the checkpoint
+        # becomes durable, startup reconciles accountTrades from the last
+        # durable fill cursor and reconstructs a conservative cooldown before
+        # any quoting is admitted.
+        cooldown_risk_cancel_issued = bool(
+            effective_fc > 0 or deferred_post_fill_errors
+        )
+        if cooldown_risk_cancel_issued:
             self._cancel_cooldown_side_order(side)
+
+        # Max-inventory protection is also an exchange-risk action and must
+        # never wait behind fdatasync.  A same-side cooldown cancel already
+        # covers the accumulating quote, so avoid issuing it twice.
+        q = self.inventory.net_position
+        max_inv = self.cfg.strategy.max_inventory
+        if not cooldown_risk_cancel_issued:
+            if q >= max_inv and self._bid_cid:
+                self._cancel_tracked_order_before_replacement(Side.BUY)
+            elif q <= -max_inv and self._ask_cid:
+                self._cancel_tracked_order_before_replacement(Side.SELL)
+        try:
+            self._persist_fill_cooldown_checkpoint()
+        except Exception as exc:
+            deferred_post_fill_errors.append(exc)
+            logger.critical(
+                "Fill cooldown checkpoint failed after the risk cancel was issued",
+                exc_info=True,
+            )
 
         # v1.2: Enqueue fill for delayed markout computation
         mo_span = int(getattr(self.cfg.strategy, "markout_ema_span_fills", 0) or 0)
@@ -11140,17 +11762,12 @@ class MakerEngine:
             fill_time = trade_time_ms / 1000.0 if trade_time_ms > 0 else time.time()
             self._mo_pending.append((fill_time, price, side))
 
-        # Immediately cancel accumulating-side order if at max inventory
-        # to prevent position growing beyond limit between requote cycles
-        q = self.inventory.net_position
-        max_inv = self.cfg.strategy.max_inventory
-        if q >= max_inv and self._bid_cid:
-            self._cancel_tracked_order_before_replacement(Side.BUY)
-        elif q <= -max_inv and self._ask_cid:
-            self._cancel_tracked_order_before_replacement(Side.SELL)
-
         if order.is_terminal:
             self._pop_order_context(order.client_order_id)
+        if deferred_post_fill_errors:
+            raise RuntimeError(
+                "post-fill evidence/checkpoint failed after risk cancellation"
+            ) from deferred_post_fill_errors[0]
 
     def _on_cancel(self, order):
         """Called when an order is canceled."""
@@ -11290,6 +11907,7 @@ class MakerEngine:
         logger.info("MakerEngine stopping...")
         checkpoint_error: Optional[Exception] = None
         shutdown_reconciliation_error: Optional[Exception] = None
+        evidence_barrier_error: Optional[BaseException] = None
         try:
             self._persist_fill_cooldown_checkpoint()
         except Exception as exc:
@@ -11320,6 +11938,21 @@ class MakerEngine:
                     error=exc,
                     reconciliation_required=True,
                 )
+        # Central FIFO tasks freeze callback state and then admit it to the
+        # specialized lifecycle/exact writers.  Commit that admission boundary
+        # before those specialized workers are closed; each close below then
+        # drains its own already-admitted work.
+        evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
+        if evidence_runtime is not None:
+            try:
+                evidence_runtime.barrier(timeout_s=10.0)
+            except BaseException as exc:
+                evidence_barrier_error = exc
+                logger.critical(
+                    "Runtime evidence barrier failed before specialized "
+                    "writer shutdown",
+                    exc_info=True,
+                )
         lifecycle_runtime = getattr(self, "_order_lifecycle_live_writer_v2", None)
         if lifecycle_runtime is not None:
             health = lifecycle_runtime.close(
@@ -11347,6 +11980,7 @@ class MakerEngine:
             logger.critical(
                 "MakerEngine shutdown ended with exact reconciliation pending"
             )
+        self.close_fill_cooldown_checkpoint_store()
         logger.info("MakerEngine stopped")
         if checkpoint_error is not None:
             raise RuntimeError("fill cooldown checkpoint flush failed") from checkpoint_error
@@ -11354,6 +11988,10 @@ class MakerEngine:
             raise RuntimeError(
                 "shutdown exact execution reconciliation failed"
             ) from shutdown_reconciliation_error
+        if evidence_barrier_error is not None:
+            raise RuntimeError(
+                "runtime evidence admission barrier failed during shutdown"
+            ) from evidence_barrier_error
 
     @property
     def is_running(self) -> bool:

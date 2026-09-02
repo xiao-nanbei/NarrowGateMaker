@@ -406,7 +406,8 @@ def test_ws_handler_deep_stream_is_independent_from_partial_depth(monkeypatch):
     partial_client = object()
     handler._ws_public = partial_client
     handler._running = True
-    handler._rest_client = rest
+    handler._rest_client = object()
+    handler._market_snapshot_client = rest
 
     assert handler._start_deep_book_stream()
     _wait_until(lambda: handler.deep_book_snapshot()["valid"] == 1)

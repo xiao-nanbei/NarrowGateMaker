@@ -5,9 +5,9 @@ from typing import Any
 import pytest
 
 from strategy.signal import (
+    SIGNAL_COMPUTE_PHASE_FIELDS,
     Bar1s,
     Prediction,
-    SIGNAL_COMPUTE_PHASE_FIELDS,
     SignalEngine,
 )
 
@@ -133,5 +133,33 @@ def test_compute_signal_without_timing_sink_keeps_clock_free_cached_fast_path(
         raise AssertionError("uninstrumented compute_signal must not read perf clock")
 
     monkeypatch.setattr("strategy.signal.time.perf_counter_ns", unexpected_clock)
+
+    assert engine.compute_signal() is cached
+
+
+def test_compute_signal_cached_bucket_returns_before_bar_ring_copy() -> None:
+    class NoIterationBarRing:
+        def __init__(self) -> None:
+            self.first = Bar1s(ts=0, close=100.0)
+            self.last = Bar1s(ts=29_000, close=100.0)
+
+        def __len__(self) -> int:
+            return 30
+
+        def __getitem__(self, index: int) -> Bar1s:
+            if index == 0:
+                return self.first
+            if index == -1:
+                return self.last
+            raise AssertionError("cached watermark check read an interior bar")
+
+        def __iter__(self):
+            raise AssertionError("cached signal path copied or iterated the bar ring")
+
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    cached = Prediction(ts=123.0, dir_10s=0.61)
+    engine._last_prediction = cached
+    engine._last_processed_bucket = 20_000
+    engine._bar_buffer = NoIterationBarRing()  # type: ignore[assignment]
 
     assert engine.compute_signal() is cached

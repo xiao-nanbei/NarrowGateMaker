@@ -112,39 +112,49 @@ py::array_t<double> signal_feature_array(const SignalFeatureVector& features) {
     return out;
 }
 
+SignalExecutionL2Snapshot signal_execution_l2_snapshot_from_python(
+    double ts_ms,
+    py::handle bids_obj,
+    py::handle asks_obj
+) {
+    SignalExecutionL2Snapshot snapshot;
+    snapshot.ts_ms = ts_ms;
+    if (!bids_obj.is_none() && !asks_obj.is_none()) {
+        const auto bids = py::reinterpret_borrow<py::sequence>(bids_obj);
+        const auto asks = py::reinterpret_borrow<py::sequence>(asks_obj);
+        snapshot.depth = std::min<std::size_t>({
+            static_cast<std::size_t>(py::len(bids)),
+            static_cast<std::size_t>(py::len(asks)),
+            kSignalExecutionL2MaxDepth,
+        });
+        for (std::size_t index = 0; index < snapshot.depth; ++index) {
+            const auto bid = py::reinterpret_borrow<py::sequence>(bids[index]);
+            const auto ask = py::reinterpret_borrow<py::sequence>(asks[index]);
+            if (py::len(bid) < 2 || py::len(ask) < 2) {
+                throw std::invalid_argument(
+                    "execution L2 price levels must contain price and quantity"
+                );
+            }
+            snapshot.bid_price[index] = py::cast<double>(bid[0]);
+            snapshot.bid_quantity[index] = py::cast<double>(bid[1]);
+            snapshot.ask_price[index] = py::cast<double>(ask[0]);
+            snapshot.ask_quantity[index] = py::cast<double>(ask[1]);
+        }
+    }
+    return snapshot;
+}
+
 std::vector<SignalExecutionL2Snapshot> signal_execution_l2_from_python(
     py::handle snapshots_obj
 ) {
     std::vector<SignalExecutionL2Snapshot> snapshots;
     for (py::handle snapshot_obj :
          py::reinterpret_borrow<py::iterable>(snapshots_obj)) {
-        SignalExecutionL2Snapshot snapshot;
-        snapshot.ts_ms = py::cast<double>(py::getattr(snapshot_obj, "ts"));
-        const py::object bids_obj = py::getattr(snapshot_obj, "bids");
-        const py::object asks_obj = py::getattr(snapshot_obj, "asks");
-        if (!bids_obj.is_none() && !asks_obj.is_none()) {
-            const auto bids = py::reinterpret_borrow<py::sequence>(bids_obj);
-            const auto asks = py::reinterpret_borrow<py::sequence>(asks_obj);
-            snapshot.depth = std::min<std::size_t>({
-                static_cast<std::size_t>(py::len(bids)),
-                static_cast<std::size_t>(py::len(asks)),
-                kSignalExecutionL2MaxDepth,
-            });
-            for (std::size_t index = 0; index < snapshot.depth; ++index) {
-                const auto bid = py::reinterpret_borrow<py::sequence>(bids[index]);
-                const auto ask = py::reinterpret_borrow<py::sequence>(asks[index]);
-                if (py::len(bid) < 2 || py::len(ask) < 2) {
-                    throw std::invalid_argument(
-                        "execution L2 price levels must contain price and quantity"
-                    );
-                }
-                snapshot.bid_price[index] = py::cast<double>(bid[0]);
-                snapshot.bid_quantity[index] = py::cast<double>(bid[1]);
-                snapshot.ask_price[index] = py::cast<double>(ask[0]);
-                snapshot.ask_quantity[index] = py::cast<double>(ask[1]);
-            }
-        }
-        snapshots.push_back(snapshot);
+        snapshots.push_back(signal_execution_l2_snapshot_from_python(
+            py::cast<double>(py::getattr(snapshot_obj, "ts")),
+            py::getattr(snapshot_obj, "bids"),
+            py::getattr(snapshot_obj, "asks")
+        ));
     }
     return snapshots;
 }
@@ -4847,6 +4857,46 @@ void bind_streaming_features(py::module_& m) {
         )
         .def("current_bar", &TradeBarAggregator::current_bar)
         .def("current_bucket_ms", &TradeBarAggregator::current_bucket_ms);
+
+    py::class_<SignalExecutionL2Engine>(m, "SignalExecutionL2Engine")
+        .def(py::init<std::size_t>(), py::arg("max_snapshots") = 300)
+        .def("reset", &SignalExecutionL2Engine::reset)
+        .def(
+            "push_snapshot",
+            [](SignalExecutionL2Engine& engine, double ts_ms,
+               py::handle bids, py::handle asks) {
+                engine.push_snapshot(signal_execution_l2_snapshot_from_python(
+                    ts_ms, bids, asks));
+            },
+            py::arg("ts_ms"),
+            py::arg("bids"),
+            py::arg("asks")
+        )
+        .def(
+            "compute_feature_values",
+            [](const SignalExecutionL2Engine& engine, double bucket_end_ms) {
+                SignalExecutionL2FeatureValues values;
+                {
+                    py::gil_scoped_release release;
+                    values = engine.compute_features(bucket_end_ms);
+                }
+                return signal_execution_l2_feature_array(values);
+            },
+            py::arg("bucket_end_ms")
+        )
+        .def(
+            "compute_policy_metric_values",
+            [](const SignalExecutionL2Engine& engine, double end_exchange_ms) {
+                SignalExecutionL2PolicyMetricValues values;
+                {
+                    py::gil_scoped_release release;
+                    values = engine.compute_policy_metrics(end_exchange_ms);
+                }
+                return signal_execution_l2_policy_metric_array(values);
+            },
+            py::arg("end_exchange_ms")
+        )
+        .def("snapshot_count", &SignalExecutionL2Engine::snapshot_count);
 
     py::class_<SignalFeatureEngine>(m, "SignalFeatureEngine")
         .def(
