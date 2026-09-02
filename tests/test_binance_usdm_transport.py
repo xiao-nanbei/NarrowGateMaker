@@ -1,3 +1,4 @@
+import csv
 import hashlib
 import hmac
 import json
@@ -7,6 +8,7 @@ import time
 import pytest
 import requests
 
+from execution.runtime_evidence_writer import RuntimeEvidenceWriter
 from live.binance_usdm_transport import (
     BinanceUsdMOrderGateway,
     BinanceUsdMRestRole,
@@ -257,6 +259,131 @@ def test_websocket_order_place_is_signed_correlated_and_compatible():
     assert health["method_counts"] == {"order.place": 1}
     assert health["last_receipt"]["client_order_id"] == "ng-1"
     gateway.close()
+
+
+def test_rest_and_websocket_requests_share_one_async_receipt_schema(tmp_path):
+    receipt_path = tmp_path / "order_gateway_receipts.csv"
+    writer = RuntimeEvidenceWriter(queue_capacity=32)
+
+    class ReceiptRestClient:
+        def new_order(self, **params):
+            return {
+                "clientOrderId": params["newClientOrderId"],
+                "status": "NEW",
+            }
+
+        def cancel_order(self, **_params):
+            return {"status": "CANCELED"}
+
+        def cancel_open_orders(self, **_params):
+            return []
+
+    rest_gateway = BinanceUsdMOrderGateway(
+        rest_order_client=ReceiptRestClient(),
+        request_id_factory=lambda: "rest-request-1",
+    )
+    rest_gateway.set_runtime_evidence_writer(writer, str(receipt_path))
+    assert rest_gateway.new_order(
+        symbol="BTCUSDC",
+        newClientOrderId="rest-cid",
+        _narrowgate_decision_ts_ns=100,
+        _narrowgate_decision_id="decision-rest",
+    )["status"] == "NEW"
+
+    connection = _FakeConnection(
+        lambda request: {
+            "id": request["id"],
+            "status": 200,
+            "result": {
+                "clientOrderId": request["params"]["newClientOrderId"],
+                "status": "NEW",
+            },
+        }
+    )
+    websocket = create_binance_usdm_websocket_order_gateway(
+        key="key",
+        secret="secret",
+        config=_enabled_config(),
+        connection_factory=_ConnectionFactory([connection]),
+        request_id_factory=lambda: "ws-request-1",
+    )
+    assert websocket is not None
+    websocket_gateway = BinanceUsdMOrderGateway(
+        rest_order_client=ReceiptRestClient(),
+        websocket_order_gateway=websocket,
+    )
+    websocket_gateway.set_runtime_evidence_writer(writer, str(receipt_path))
+    assert websocket_gateway.new_order(
+        symbol="BTCUSDC",
+        newClientOrderId="ws-cid",
+        _narrowgate_decision_ts_ns=200,
+        _narrowgate_decision_id="decision-ws",
+    )["status"] == "NEW"
+    websocket_gateway.close()
+    writer.close(drain_timeout_s=2.0)
+
+    with receipt_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["transport"] for row in rows] == [
+        "rest",
+        "binance_usdm_websocket_api",
+    ]
+    assert [row["request_id"] for row in rows] == [
+        "rest-request-1",
+        "ws-request-1",
+    ]
+    assert [row["client_order_id"] for row in rows] == ["rest-cid", "ws-cid"]
+    assert [row["decision_id"] for row in rows] == [
+        "decision-rest",
+        "decision-ws",
+    ]
+    assert [row["decision_ts_ns"] for row in rows] == ["100", "200"]
+    assert all(row["execution_status"] == "authoritative_success" for row in rows)
+    assert rows[0]["connection_generation"] == "0"
+    assert rows[0]["wire_ts_ns"] == "0"
+    assert int(rows[1]["connection_generation"]) == 1
+    assert int(rows[1]["dispatch_ts_ns"]) > 0
+    assert int(rows[1]["wire_ts_ns"]) > 0
+    assert int(rows[1]["response_ts_ns"]) > 0
+
+
+def test_websocket_unknown_request_emits_joinable_async_receipt(tmp_path):
+    receipt_path = tmp_path / "unknown_gateway_receipts.csv"
+    writer = RuntimeEvidenceWriter(queue_capacity=8)
+    connection = _FakeConnection(lambda _request: TimeoutError("response timed out"))
+    websocket = create_binance_usdm_websocket_order_gateway(
+        key="key",
+        secret="secret",
+        config=_enabled_config(request_timeout_s=0.05),
+        connection_factory=_ConnectionFactory([connection]),
+        request_id_factory=lambda: "unknown-request",
+    )
+    assert websocket is not None
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=object(),
+        websocket_order_gateway=websocket,
+    )
+    gateway.set_runtime_evidence_writer(writer, str(receipt_path))
+
+    with pytest.raises(BinanceUsdMWebSocketOrderUnknown):
+        gateway.cancel_order(
+            symbol="BTCUSDC",
+            origClientOrderId="unknown-cid",
+            _narrowgate_decision_ts_ns=300,
+            _narrowgate_decision_id="decision-unknown",
+        )
+    gateway.close()
+    writer.close(drain_timeout_s=2.0)
+
+    with receipt_path.open(newline="", encoding="utf-8") as handle:
+        row = next(csv.DictReader(handle))
+    assert row["request_id"] == "unknown-request"
+    assert row["client_order_id"] == "unknown-cid"
+    assert row["decision_id"] == "decision-unknown"
+    assert row["execution_status"] == "unknown"
+    assert row["may_have_been_dispatched"] == "1"
+    assert row["response_authoritative"] == "0"
+    assert int(row["unknown_ts_ns"]) > 0
 
 
 def test_persistent_reader_survives_idle_receive_timeouts_before_order() -> None:

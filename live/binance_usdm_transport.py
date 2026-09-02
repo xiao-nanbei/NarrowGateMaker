@@ -15,6 +15,7 @@ request is never sent again automatically.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import hmac
 import json
@@ -26,6 +27,7 @@ from collections import Counter, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -41,6 +43,9 @@ _ALLOWED_WEBSOCKET_API_URLS = frozenset(
         USD_M_WEBSOCKET_API_URL,
         USD_M_WEBSOCKET_API_TESTNET_URL,
     }
+)
+ORDER_GATEWAY_RECEIPT_SCHEMA_VERSION = (
+    "narrowgate.binance_usdm_order_gateway_receipt.v1"
 )
 
 
@@ -326,6 +331,121 @@ def _websocket_signature_value(value: Any) -> str:
     return str(value)
 
 
+def _order_gateway_receipt_payload(
+    *,
+    transport: str,
+    recorded_at_ns: int,
+    request_id: str,
+    client_order_id: str,
+    decision_id: str,
+    method: str,
+    connection_generation: int,
+    decision_ts_ns: int,
+    gateway_call_ts_ns: int,
+    dispatch_ts_ns: int,
+    wire_ts_ns: int,
+    response_ts_ns: int,
+    outcome: str,
+    status_code: int | None,
+    exchange_order_status: str,
+    error: str,
+) -> dict[str, object]:
+    """Build the shared REST/WebSocket per-request evidence schema."""
+
+    may_have_been_dispatched = int(dispatch_ts_ns > 0)
+    response_authoritative = outcome in {"successes", "authoritative_errors"}
+    execution_status = (
+        "authoritative_success"
+        if outcome == "successes"
+        else "authoritative_reject"
+        if outcome == "authoritative_errors"
+        else "not_dispatched"
+        if not may_have_been_dispatched
+        else "unknown"
+    )
+    return {
+        "schema_version": ORDER_GATEWAY_RECEIPT_SCHEMA_VERSION,
+        "recorded_at_ns": int(recorded_at_ns),
+        "transport": str(transport),
+        "request_id": str(request_id),
+        "client_order_id": str(client_order_id),
+        "decision_id": str(decision_id),
+        "method": str(method),
+        "connection_generation": int(connection_generation),
+        "decision_ts_ns": max(0, int(decision_ts_ns)),
+        "gateway_call_ts_ns": max(0, int(gateway_call_ts_ns)),
+        "dispatch_ts_ns": max(0, int(dispatch_ts_ns)),
+        "wire_ts_ns": max(0, int(wire_ts_ns)),
+        "response_ts_ns": max(0, int(response_ts_ns)),
+        "unknown_ts_ns": int(recorded_at_ns) if execution_status == "unknown" else 0,
+        "completion_ts_ns": int(recorded_at_ns),
+        "may_have_been_dispatched": may_have_been_dispatched,
+        "response_authoritative": int(response_authoritative),
+        "outcome": str(outcome),
+        "execution_status": execution_status,
+        "http_status_code": "" if status_code is None else int(status_code),
+        "exchange_order_status": str(exchange_order_status),
+        "error": str(error),
+        "gateway_call_to_dispatch_us": (
+            max(0.0, (dispatch_ts_ns - gateway_call_ts_ns) / 1_000.0)
+            if dispatch_ts_ns > 0 and gateway_call_ts_ns > 0
+            else 0.0
+        ),
+        "dispatch_to_wire_us": (
+            max(0.0, (wire_ts_ns - dispatch_ts_ns) / 1_000.0)
+            if wire_ts_ns > 0 and dispatch_ts_ns > 0
+            else 0.0
+        ),
+        "wire_to_response_us": (
+            max(0.0, (response_ts_ns - wire_ts_ns) / 1_000.0)
+            if response_ts_ns > 0 and wire_ts_ns > 0
+            else 0.0
+        ),
+        "gateway_call_to_completion_us": (
+            max(0.0, (recorded_at_ns - gateway_call_ts_ns) / 1_000.0)
+            if gateway_call_ts_ns > 0
+            else 0.0
+        ),
+    }
+
+
+def _initialize_order_gateway_receipt_log(path: str) -> None:
+    """Create or validate the one stable CSV header before live starts."""
+
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        raise ValueError(f"order gateway receipt path must not be a symlink: {target}")
+    expected = list(
+        _order_gateway_receipt_payload(
+            transport="",
+            recorded_at_ns=0,
+            request_id="",
+            client_order_id="",
+            decision_id="",
+            method="",
+            connection_generation=0,
+            decision_ts_ns=0,
+            gateway_call_ts_ns=0,
+            dispatch_ts_ns=0,
+            wire_ts_ns=0,
+            response_ts_ns=0,
+            outcome="",
+            status_code=None,
+            exchange_order_status="",
+            error="",
+        ).keys()
+    )
+    if target.exists() and target.stat().st_size > 0:
+        with target.open(newline="", encoding="utf-8") as handle:
+            actual = next(csv.reader(handle), [])
+        if actual != expected:
+            raise ValueError(f"order gateway receipt CSV schema mismatch: {target}")
+        return
+    with target.open("w", newline="", encoding="utf-8") as handle:
+        csv.writer(handle).writerow(expected)
+
+
 class BinanceUsdMWebSocketOrderGateway:
     """Synchronous, strictly correlated USD-M WebSocket API order transport."""
 
@@ -341,6 +461,7 @@ class BinanceUsdMWebSocketOrderGateway:
         connection_factory: Callable[..., Any] | None = None,
         request_id_factory: Callable[[], str] | None = None,
         wall_time_ms: Callable[[], int] | None = None,
+        wall_time_ns: Callable[[], int] | None = None,
         monotonic_ns: Callable[[], int] | None = None,
     ) -> None:
         if not config.enabled:
@@ -356,7 +477,10 @@ class BinanceUsdMWebSocketOrderGateway:
         self.config = config
         self._connection_factory = connection_factory
         self._request_id_factory = request_id_factory or (lambda: uuid.uuid4().hex)
-        self._wall_time_ms = wall_time_ms or (lambda: time.time_ns() // 1_000_000)
+        self._wall_time_ns = wall_time_ns or time.time_ns
+        self._wall_time_ms = wall_time_ms or (
+            lambda: self._wall_time_ns() // 1_000_000
+        )
         self._monotonic_ns = monotonic_ns or time.monotonic_ns
         self._io_lock = threading.Lock()
         self._response_condition = threading.Condition()
@@ -372,8 +496,34 @@ class BinanceUsdMWebSocketOrderGateway:
         self._last_error = ""
         self._pending_request_id: str | None = None
         self._pending_response: Mapping[str, Any] | None = None
+        self._pending_response_ts_ns = 0
         self._reader_failure: tuple[int, str] | None = None
         self._reader_thread: threading.Thread | None = None
+        self._runtime_evidence_writer = None
+        self._receipt_path = ""
+
+    def set_runtime_evidence_writer(self, writer: Any, receipt_path: str) -> None:
+        """Route immutable per-request rows through the process-wide FIFO.
+
+        The gateway does not own or close the writer. Queue exhaustion and
+        worker failure intentionally propagate through the order call, so a
+        request whose evidence cannot be admitted is reconciled fail-closed
+        instead of silently disappearing from the A/B latency sample.
+        """
+
+        normalized_path = str(receipt_path).strip()
+        if writer is None:
+            raise ValueError("runtime evidence writer is required")
+        if not normalized_path:
+            raise ValueError("WebSocket order receipt path is required")
+        _initialize_order_gateway_receipt_log(normalized_path)
+        with self._health_lock:
+            if self._runtime_evidence_writer is not None:
+                raise RuntimeError("WebSocket order receipt writer is already attached")
+            if int(self._counters.get("requests", 0)) > 0:
+                raise RuntimeError("receipt writer must be attached before the first request")
+            self._runtime_evidence_writer = writer
+            self._receipt_path = normalized_path
 
     def __enter__(self) -> BinanceUsdMWebSocketOrderGateway:
         self.start()
@@ -514,6 +664,7 @@ class BinanceUsdMWebSocketOrderGateway:
                     )
                 else:
                     self._pending_response = dict(response)
+                    self._pending_response_ts_ns = int(self._wall_time_ns())
                 self._response_condition.notify_all()
                 if self._reader_failure is not None:
                     try:
@@ -583,12 +734,42 @@ class BinanceUsdMWebSocketOrderGateway:
         request_id: str,
         method: str,
         started_ns: int,
+        request_call_ts_ns: int,
+        decision_ts_ns: int,
+        decision_id: str,
+        connection_generation: int,
         outcome: str,
+        dispatch_ts_ns: int = 0,
+        wire_ts_ns: int = 0,
+        response_ts_ns: int = 0,
         status_code: int | None = None,
+        exchange_order_status: str = "",
         error: str = "",
         client_order_id: str = "",
     ) -> None:
-        latency_ms = max(0.0, (self._monotonic_ns() - started_ns) / 1_000_000.0)
+        completed_ts_ns = int(self._wall_time_ns())
+        latency_ms = max(
+            0.0,
+            (self._monotonic_ns() - started_ns) / 1_000_000.0,
+        )
+        receipt = _order_gateway_receipt_payload(
+            transport=self.transport_name,
+            recorded_at_ns=completed_ts_ns,
+            request_id=request_id,
+            client_order_id=client_order_id,
+            decision_id=decision_id,
+            method=method,
+            connection_generation=connection_generation,
+            decision_ts_ns=decision_ts_ns,
+            gateway_call_ts_ns=request_call_ts_ns,
+            dispatch_ts_ns=dispatch_ts_ns,
+            wire_ts_ns=wire_ts_ns,
+            response_ts_ns=response_ts_ns,
+            outcome=outcome,
+            status_code=status_code,
+            exchange_order_status=exchange_order_status,
+            error=error,
+        )
         with self._health_lock:
             self._counters["requests"] += 1
             self._counters[outcome] += 1
@@ -601,34 +782,88 @@ class BinanceUsdMWebSocketOrderGateway:
                 "outcome": outcome,
                 "status_code": status_code,
                 "latency_ms": latency_ms,
-                "connection_generation": self._connection_generation,
+                "connection_generation": int(connection_generation),
                 "client_order_id": client_order_id,
             }
+            writer = self._runtime_evidence_writer
+            receipt_path = self._receipt_path
+        if writer is not None:
+            writer.enqueue_csv(receipt_path, receipt)
 
-    def _request(self, method: str, params: Mapping[str, Any]) -> Any:
+    def _request(
+        self,
+        method: str,
+        params: Mapping[str, Any],
+        *,
+        decision_ts_ns: int = 0,
+        decision_id: str = "",
+    ) -> Any:
         request_id = str(self._request_id_factory())
         if not request_id:
             raise ValueError("request ID factory returned an empty identity")
+        request_call_ts_ns = int(self._wall_time_ns())
+        started_ns = self._monotonic_ns()
+        client_order_id = str(
+            params.get("newClientOrderId")
+            or params.get("origClientOrderId")
+            or ""
+        )
         with self._io_lock:
-            connection = self._ensure_connection_locked()
+            try:
+                connection = self._ensure_connection_locked()
+            except Exception as exc:
+                self._record_receipt(
+                    request_id=request_id,
+                    method=method,
+                    started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=self._connection_generation,
+                    outcome=(
+                        "experiment_expired"
+                        if isinstance(exc, BinanceUsdMWebSocketExperimentExpired)
+                        else "pre_dispatch_unavailable"
+                    ),
+                    error=f"{type(exc).__name__}: {exc}",
+                    client_order_id=client_order_id,
+                )
+                raise
+            connection_generation = int(self._connection_generation)
+            try:
+                signed_params = self._signed_params(params)
+            except Exception as exc:
+                self._record_receipt(
+                    request_id=request_id,
+                    method=method,
+                    started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
+                    outcome="local_errors",
+                    error=f"{type(exc).__name__}: {exc}",
+                    client_order_id=client_order_id,
+                )
+                raise
             request = {
                 "id": request_id,
                 "method": method,
-                "params": self._signed_params(params),
+                "params": signed_params,
             }
             serialized = json.dumps(request, separators=(",", ":"), sort_keys=True)
-            started_ns = self._monotonic_ns()
-            client_order_id = str(
-                params.get("newClientOrderId")
-                or params.get("origClientOrderId")
-                or ""
-            )
+            dispatch_ts_ns = 0
+            wire_ts_ns = 0
+            response_ts_ns = 0
             try:
                 with self._response_condition:
                     self._pending_request_id = request_id
                     self._pending_response = None
+                    self._pending_response_ts_ns = 0
                     self._reader_failure = None
+                dispatch_ts_ns = int(self._wall_time_ns())
                 connection.send(serialized)
+                wire_ts_ns = int(self._wall_time_ns())
                 deadline = time.monotonic() + float(self.config.request_timeout_s)
                 with self._response_condition:
                     while self._pending_response is None and self._reader_failure is None:
@@ -640,6 +875,7 @@ class BinanceUsdMWebSocketOrderGateway:
                         _, reason = self._reader_failure
                         raise ConnectionError(reason)
                     response = self._pending_response
+                    response_ts_ns = int(self._pending_response_ts_ns)
             except Exception as exc:
                 self._close_connection_locked()
                 reason = f"{type(exc).__name__}: {exc}"
@@ -654,7 +890,14 @@ class BinanceUsdMWebSocketOrderGateway:
                     request_id=request_id,
                     method=method,
                     started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
                     outcome=outcome,
+                    dispatch_ts_ns=dispatch_ts_ns,
+                    wire_ts_ns=wire_ts_ns,
+                    response_ts_ns=response_ts_ns,
                     error=reason,
                     client_order_id=client_order_id,
                 )
@@ -668,6 +911,7 @@ class BinanceUsdMWebSocketOrderGateway:
                 with self._response_condition:
                     self._pending_request_id = None
                     self._pending_response = None
+                    self._pending_response_ts_ns = 0
                     self._reader_failure = None
 
             try:
@@ -685,7 +929,14 @@ class BinanceUsdMWebSocketOrderGateway:
                     request_id=request_id,
                     method=method,
                     started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
                     outcome="protocol_errors",
+                    dispatch_ts_ns=dispatch_ts_ns,
+                    wire_ts_ns=wire_ts_ns,
+                    response_ts_ns=response_ts_ns,
                     error=reason,
                     client_order_id=client_order_id,
                 )
@@ -713,7 +964,14 @@ class BinanceUsdMWebSocketOrderGateway:
                         request_id=request_id,
                         method=method,
                         started_ns=started_ns,
+                        request_call_ts_ns=request_call_ts_ns,
+                        decision_ts_ns=decision_ts_ns,
+                        decision_id=decision_id,
+                        connection_generation=connection_generation,
                         outcome="exchange_unknown",
+                        dispatch_ts_ns=dispatch_ts_ns,
+                        wire_ts_ns=wire_ts_ns,
+                        response_ts_ns=response_ts_ns,
                         status_code=status_code,
                         error=f"{error_code}: {error_message}",
                         client_order_id=client_order_id,
@@ -730,7 +988,14 @@ class BinanceUsdMWebSocketOrderGateway:
                     request_id=request_id,
                     method=method,
                     started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
                     outcome="authoritative_errors",
+                    dispatch_ts_ns=dispatch_ts_ns,
+                    wire_ts_ns=wire_ts_ns,
+                    response_ts_ns=response_ts_ns,
                     status_code=status_code,
                     error=f"{error_code}: {error_message}",
                     client_order_id=client_order_id,
@@ -750,7 +1015,14 @@ class BinanceUsdMWebSocketOrderGateway:
                     request_id=request_id,
                     method=method,
                     started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
                     outcome="protocol_errors",
+                    dispatch_ts_ns=dispatch_ts_ns,
+                    wire_ts_ns=wire_ts_ns,
+                    response_ts_ns=response_ts_ns,
                     status_code=status_code,
                     error=reason,
                     client_order_id=client_order_id,
@@ -769,7 +1041,14 @@ class BinanceUsdMWebSocketOrderGateway:
                     request_id=request_id,
                     method=method,
                     started_ns=started_ns,
+                    request_call_ts_ns=request_call_ts_ns,
+                    decision_ts_ns=decision_ts_ns,
+                    decision_id=decision_id,
+                    connection_generation=connection_generation,
                     outcome="protocol_errors",
+                    dispatch_ts_ns=dispatch_ts_ns,
+                    wire_ts_ns=wire_ts_ns,
+                    response_ts_ns=response_ts_ns,
                     status_code=status_code,
                     error=reason,
                     client_order_id=client_order_id,
@@ -784,17 +1063,47 @@ class BinanceUsdMWebSocketOrderGateway:
                 request_id=request_id,
                 method=method,
                 started_ns=started_ns,
+                request_call_ts_ns=request_call_ts_ns,
+                decision_ts_ns=decision_ts_ns,
+                decision_id=decision_id,
+                connection_generation=connection_generation,
                 outcome="successes",
+                dispatch_ts_ns=dispatch_ts_ns,
+                wire_ts_ns=wire_ts_ns,
+                response_ts_ns=response_ts_ns,
                 status_code=status_code,
+                exchange_order_status=str(result.get("status", "")),
                 client_order_id=client_order_id,
             )
             return result
 
-    def new_order(self, **params: Any) -> Mapping[str, Any]:
-        return self._request("order.place", params)
+    def new_order(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        **params: Any,
+    ) -> Mapping[str, Any]:
+        return self._request(
+            "order.place",
+            params,
+            decision_ts_ns=_narrowgate_decision_ts_ns,
+            decision_id=_narrowgate_decision_id,
+        )
 
-    def cancel_order(self, **params: Any) -> Mapping[str, Any]:
-        return self._request("order.cancel", params)
+    def cancel_order(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        **params: Any,
+    ) -> Mapping[str, Any]:
+        return self._request(
+            "order.cancel",
+            params,
+            decision_ts_ns=_narrowgate_decision_ts_ns,
+            decision_id=_narrowgate_decision_id,
+        )
 
     def health_snapshot(self) -> dict[str, object]:
         with self._health_lock:
@@ -850,33 +1159,192 @@ class BinanceUsdMOrderGateway:
         *,
         rest_order_client: Any,
         websocket_order_gateway: BinanceUsdMWebSocketOrderGateway | None = None,
+        request_id_factory: Callable[[], str] | None = None,
+        wall_time_ns: Callable[[], int] | None = None,
     ) -> None:
         if rest_order_client is None:
             raise ValueError("rest_order_client is required for cancel-all safety")
         self.rest_order_client = rest_order_client
         self.websocket_order_gateway = websocket_order_gateway
+        self._request_id_factory = request_id_factory or (
+            lambda: f"rest-{uuid.uuid4().hex}"
+        )
+        self._wall_time_ns = wall_time_ns or time.time_ns
+        self._runtime_evidence_writer = None
+        self._receipt_path = ""
         # One owner serializes every write, including REST cancel-all.  This
         # prevents a fill callback, the quote loop and a fatal cleanup from
         # concurrently occupying the hot connection or reordering writes.
         self._write_lock = threading.Lock()
 
+    supports_narrowgate_request_metadata = True
+
     @property
     def active_transport(self) -> str:
         return "websocket_api" if self.websocket_order_gateway is not None else "rest"
 
-    def new_order(self, **params: Any) -> Any:
-        with self._write_lock:
-            client = self.websocket_order_gateway or self.rest_order_client
-            return client.new_order(**params)
+    def set_runtime_evidence_writer(self, writer: Any, receipt_path: str) -> None:
+        normalized_path = str(receipt_path).strip()
+        if writer is None:
+            raise ValueError("runtime evidence writer is required")
+        if not normalized_path:
+            raise ValueError("order gateway receipt path is required")
+        if self._runtime_evidence_writer is not None:
+            raise RuntimeError("order gateway receipt writer is already attached")
+        _initialize_order_gateway_receipt_log(normalized_path)
+        self._runtime_evidence_writer = writer
+        self._receipt_path = normalized_path
+        websocket_gateway = self.websocket_order_gateway
+        if websocket_gateway is not None:
+            websocket_gateway.set_runtime_evidence_writer(writer, normalized_path)
 
-    def cancel_order(self, **params: Any) -> Any:
+    @staticmethod
+    def _rest_error_status_code(exc: BaseException) -> int | None:
+        raw_status = getattr(exc, "status_code", None)
+        try:
+            return int(raw_status) if raw_status is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _rest_request(
+        self,
+        *,
+        method: str,
+        operation: Callable[..., Any],
+        params: Mapping[str, Any],
+        decision_ts_ns: int,
+        decision_id: str,
+    ) -> Any:
+        request_id = str(self._request_id_factory())
+        if not request_id:
+            raise ValueError("REST request ID factory returned an empty identity")
+        client_order_id = str(
+            params.get("newClientOrderId")
+            or params.get("origClientOrderId")
+            or ""
+        )
+        gateway_call_ts_ns = int(self._wall_time_ns())
+        dispatch_ts_ns = int(self._wall_time_ns())
+        try:
+            response = operation(**dict(params))
+        except Exception as exc:
+            completed_ts_ns = int(self._wall_time_ns())
+            status_code = self._rest_error_status_code(exc)
+            response_authoritative = bool(
+                getattr(exc, "exchange_response_authoritative", False)
+            ) or bool(
+                status_code is not None
+                and 400 <= status_code < 500
+                and status_code != 408
+            )
+            outcome = (
+                "authoritative_errors"
+                if response_authoritative
+                else "transport_unknown"
+            )
+            receipt = _order_gateway_receipt_payload(
+                transport="rest",
+                recorded_at_ns=completed_ts_ns,
+                request_id=request_id,
+                client_order_id=client_order_id,
+                decision_id=decision_id,
+                method=method,
+                connection_generation=0,
+                decision_ts_ns=decision_ts_ns,
+                gateway_call_ts_ns=gateway_call_ts_ns,
+                dispatch_ts_ns=dispatch_ts_ns,
+                wire_ts_ns=0,
+                response_ts_ns=completed_ts_ns if response_authoritative else 0,
+                outcome=outcome,
+                status_code=status_code,
+                exchange_order_status="",
+                error=f"{type(exc).__name__}: {exc}",
+            )
+            writer = self._runtime_evidence_writer
+            if writer is not None:
+                writer.enqueue_csv(self._receipt_path, receipt)
+            raise
+
+        completed_ts_ns = int(self._wall_time_ns())
+        result = response if isinstance(response, Mapping) else {}
+        receipt = _order_gateway_receipt_payload(
+            transport="rest",
+            recorded_at_ns=completed_ts_ns,
+            request_id=request_id,
+            client_order_id=client_order_id,
+            decision_id=decision_id,
+            method=method,
+            connection_generation=0,
+            decision_ts_ns=decision_ts_ns,
+            gateway_call_ts_ns=gateway_call_ts_ns,
+            dispatch_ts_ns=dispatch_ts_ns,
+            wire_ts_ns=0,
+            response_ts_ns=completed_ts_ns,
+            outcome="successes",
+            status_code=None,
+            exchange_order_status=str(result.get("status", "")),
+            error="",
+        )
+        writer = self._runtime_evidence_writer
+        if writer is not None:
+            writer.enqueue_csv(self._receipt_path, receipt)
+        return response
+
+    def new_order(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        **params: Any,
+    ) -> Any:
         with self._write_lock:
-            client = self.websocket_order_gateway or self.rest_order_client
-            return client.cancel_order(**params)
+            websocket_gateway = self.websocket_order_gateway
+            if websocket_gateway is not None:
+                return websocket_gateway.new_order(
+                    _narrowgate_decision_ts_ns=_narrowgate_decision_ts_ns,
+                    _narrowgate_decision_id=_narrowgate_decision_id,
+                    **params,
+                )
+            return self._rest_request(
+                method="order.place",
+                operation=self.rest_order_client.new_order,
+                params=params,
+                decision_ts_ns=_narrowgate_decision_ts_ns,
+                decision_id=_narrowgate_decision_id,
+            )
+
+    def cancel_order(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        **params: Any,
+    ) -> Any:
+        with self._write_lock:
+            websocket_gateway = self.websocket_order_gateway
+            if websocket_gateway is not None:
+                return websocket_gateway.cancel_order(
+                    _narrowgate_decision_ts_ns=_narrowgate_decision_ts_ns,
+                    _narrowgate_decision_id=_narrowgate_decision_id,
+                    **params,
+                )
+            return self._rest_request(
+                method="order.cancel",
+                operation=self.rest_order_client.cancel_order,
+                params=params,
+                decision_ts_ns=_narrowgate_decision_ts_ns,
+                decision_id=_narrowgate_decision_id,
+            )
 
     def cancel_open_orders(self, **params: Any) -> Any:
         with self._write_lock:
-            return self.rest_order_client.cancel_open_orders(**params)
+            return self._rest_request(
+                method="order.cancel_all",
+                operation=self.rest_order_client.cancel_open_orders,
+                params=params,
+                decision_ts_ns=0,
+                decision_id="",
+            )
 
     def close(self) -> None:
         websocket_gateway = self.websocket_order_gateway
@@ -905,6 +1373,7 @@ def create_binance_usdm_websocket_order_gateway(
     connection_factory: Callable[..., Any] | None = None,
     request_id_factory: Callable[[], str] | None = None,
     wall_time_ms: Callable[[], int] | None = None,
+    wall_time_ns: Callable[[], int] | None = None,
     monotonic_ns: Callable[[], int] | None = None,
 ) -> BinanceUsdMWebSocketOrderGateway | None:
     """Build the optional gateway; omitted configuration remains safely off."""
@@ -919,5 +1388,6 @@ def create_binance_usdm_websocket_order_gateway(
         connection_factory=connection_factory,
         request_id_factory=request_id_factory,
         wall_time_ms=wall_time_ms,
+        wall_time_ns=wall_time_ns,
         monotonic_ns=monotonic_ns,
     )

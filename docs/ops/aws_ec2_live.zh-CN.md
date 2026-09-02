@@ -280,6 +280,55 @@ Health admission 通过后，用 `live.deployment_runtime` 创建新 activation 
 `selected_activation` 是 lineage state，不是 health assertion。不得向 pointer 添加 leaf
 artifact inventory、host routing、账户状态或 live metric。
 
+## Live 热路径运行合同
+
+准入后的进程把 canonical evidence 与 health publication 移出 decision thread 和
+private-event thread。一个有界 FIFO worker 独占 CSV descriptor 与 atomic JSON
+publication。Producer 在入队前冻结 payload；已接受 item 使用同一个全局 sequence，不能
+静默丢行或重排。Queue 满、worker failure 或 I/O failure 都是 health 可见的 fatal
+condition，不能伪装成成功采集。正常退出时先停止新 admission，再等待 FIFO barrier，drain
+全部已接受 item，flush 并关闭 descriptor，同时报告 accepted、committed 与 uncommitted
+计数。这是进程内顺序保证，不承诺抵御断电、kernel failure 或 storage failure。
+
+USD-M REST traffic 使用独立的 persistent single-owner session。热 order session 只承载
+new/cancel/close；reconciliation、market snapshot、metrics 与 listen-key maintenance
+分别走独立冷 session。每个 pool 均有界且禁用 HTTP 自动重试。这样冷请求的长尾不会占用
+报撤连接，结果不明确的 order write 也不会被自动重放。Write timeout 或其他 uncertain
+outcome 仍必须进入 exchange reconciliation。
+
+Fill-cooldown checkpoint 不能延后 fill 后的即时风险动作。Engine 先撤销仍会继续增加
+exposure 的订单，再把更新后的 checkpoint 写入带 sequence、checksum 的双槽 WAL。启动时
+恢复最新有效 slot，撤销 stale exchange order，reconcile checkpoint 之后的 trade gap，
+并在 position/open-order admission 完成后才恢复报价。任何顺序变更都必须覆盖每个写入
+断点的 crash test，包括 newest-slot torn write、restart gap、duplicate fill 与 stale
+order。
+
+Signal computation 分成两条路径。请求已经完成的 10 秒 bucket 时，在复制历史 bar 或 L2
+之前直接返回 cache。新 bucket 则在 native C++ ring 中增量维护 execution-book rolling
+state，只 materialize 必要 feature。Python fallback 与 native path 必须保持 feature、
+causal cutoff、prediction 和 action parity；activation 必须暴露实际启用路径，延迟报告也
+必须把 `cached`、`new_bucket` 与 `catch_up` 样本分开。
+
+## 有界 WebSocket order gateway A/B
+
+Persistent REST 仍是 production default。`websocket_api_ab` 只是针对 Binance 官方 USD-M
+WebSocket API 精确 endpoint 的 restart-only、短时 qualification transport；它不是 hot
+reload switch，也不是自动 fallback。它必须作为独立 immutable release/config envelope
+准备，同时保留一份完整可激活的 REST rollback release。
+
+Gateway 预连接、最多允许一个 in-flight request、为每次请求分配唯一 identity，并通过
+central FIFO 写入逐请求 evidence。Evidence 必须保留 transport request identity、client
+order identity、dispatch time、authoritative ACK/error time、outcome 与 connection
+generation。只要 frame 可能已经发出，timeout 或 disconnect 就属于 `UNKNOWN`：不得重试
+write，必须停止新增 authority 并 reconcile。
+
+Activation 前必须设置 hard `max_runtime_s`，并预先调度 verified REST rollback，使其留出
+足够余量在 hard bound **之前**完成。Hard timer 只是停止 candidate 的 fail-safe，不是
+rollback mechanism。Active rollback 无法完成时，应让 host 保持 stopped 并 reconcile，
+不能延长实验。REST 与 WebSocket 必须按同一 identity chain 比较 decision → wire →
+authoritative ACK → private visibility，同时报告 failure/unknown rate 与 reconnect，不能只看
+ACK p99 更低就授权 transport。
+
 ## Activation 后延迟观测
 
 Health admission 只能证明 release 安全启动，不能证明延迟已经改善。Live hot path 有变化

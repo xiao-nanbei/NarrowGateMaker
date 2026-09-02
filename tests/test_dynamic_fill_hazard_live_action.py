@@ -413,6 +413,7 @@ def test_dynamic_hazard_logs_resolve_under_project_root() -> None:
     cfg = Config()
     cfg.logging.dynamic_fill_hazard_shadow_log = "logs/hazard_shadow.csv"
     cfg.logging.dynamic_fill_hazard_action_log = "logs/hazard_action.csv"
+    cfg.logging.order_gateway_receipt_log = "logs/order_gateway_receipts.csv"
 
     resolve_logging_paths(cfg)
 
@@ -421,4 +422,7 @@ def test_dynamic_hazard_logs_resolve_under_project_root() -> None:
     )
     assert cfg.logging.dynamic_fill_hazard_action_log == str(
         ROOT / "logs/hazard_action.csv"
+    )
+    assert cfg.logging.order_gateway_receipt_log == str(
+        ROOT / "logs/order_gateway_receipts.csv"
     )

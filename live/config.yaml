@@ -390,6 +390,7 @@ logging:
   trade_log: "logs/trades.csv"
   quote_log: "logs/quote_decisions.csv"
   order_outcome_log: "logs/order_outcomes.csv"
+  order_gateway_receipt_log: "logs/order_gateway_receipts.csv"
   buy_fill_selection_shadow_log: "logs/buy_fill_selection_shadow.csv"
   dynamic_fill_hazard_shadow_log: "logs/dynamic_fill_hazard_shadow.csv"
   dynamic_fill_hazard_action_log: "logs/dynamic_fill_hazard_action.csv"

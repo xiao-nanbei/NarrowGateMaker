@@ -304,6 +304,68 @@ current pointer with `live.deployment_runtime`. The pointer is only a selector:
 the pointer with leaf artifact inventories, host routing, account state, or live
 metrics.
 
+## Live hot-path runtime contracts
+
+The admitted process keeps canonical evidence and health publication off the
+decision and private-event threads. One bounded FIFO worker owns the CSV
+descriptors and atomic JSON publications. Producers freeze each payload before
+admission; accepted items retain one global sequence and are never silently
+dropped or reordered. Queue exhaustion or worker/I/O failure is a fatal,
+health-visible condition, not a successful collection. Normal shutdown stops
+new admission, waits for the FIFO barrier, drains every accepted item, flushes
+and closes the descriptors, and reports accepted, committed, and uncommitted
+counts. This is an in-process ordering guarantee, not protection against power,
+kernel, or storage loss.
+
+USD-M REST traffic is split into persistent single-owner sessions. The hot
+order session is used only for new/cancel/close requests; reconciliation,
+market snapshots, metrics, and listen-key maintenance use independent cold
+sessions. Each pool is bounded and has automatic HTTP retries disabled. This
+prevents a slow cold request from occupying the order connection and prevents
+an ambiguous order write from being replayed automatically. A timed-out or
+otherwise uncertain write still requires exchange reconciliation.
+
+The fill-cooldown checkpoint must never delay the immediate risk response to a
+fill. The engine first issues the required cancel of continuing
+exposure-increasing orders, then commits the updated checkpoint to the
+sequence-numbered, checksummed two-slot WAL. Startup restores the newest valid
+slot, cancels stale exchange orders, reconciles any trade gap, and completes
+position/open-order admission before quoting resumes. Changes to this ordering
+require crash tests at every write boundary, including torn newest-slot,
+restart-gap, duplicate-fill, and stale-order cases.
+
+Signal computation has two distinct paths. A request for an already completed
+10-second bucket returns from the cache before copying historical bars or L2.
+A new bucket updates rolling execution-book state incrementally in the native
+C++ ring and materializes only the required features. The Python fallback and
+native path must preserve feature, causal-cutoff, prediction, and action parity;
+activation must expose which path is active, and latency reporting must keep
+`cached`, `new_bucket`, and `catch_up` samples separate.
+
+## Bounded WebSocket order-gateway A/B
+
+Persistent REST remains the production default. `websocket_api_ab` is a
+restart-only, short qualification transport for the exact official USD-M
+WebSocket API endpoint; it is not a hot-reload switch or an automatic fallback.
+Prepare it as a separate immutable release/config envelope while retaining a
+fully prepared REST rollback release.
+
+The gateway preconnects, permits at most one in-flight request, assigns a unique
+request identity, and emits per-request evidence through the central FIFO. The
+evidence must preserve transport request identity, client order identity,
+dispatch time, authoritative ACK/error time, outcome, and connection
+generation. Once a frame may have been dispatched, timeout or disconnect is
+`UNKNOWN`: do not retry the write; stop new authority and reconcile.
+
+Before activation, set a hard `max_runtime_s` and schedule the verified REST
+rollback to begin with enough margin to finish **before** that bound. The hard
+timer is only a fail-safe that stops the candidate; it is not a rollback
+mechanism. If the active rollback cannot complete, leave the host stopped and
+reconcile rather than extending the experiment. Compare REST and WebSocket on
+the same identity chain from decision to wire, authoritative ACK, and private
+visibility; report failure/unknown rates and reconnects alongside latency
+quantiles. A lower ACK p99 alone does not authorize the transport.
+
 ## Post-activation latency observation
 
 Health admission proves that the release started safely; it does not prove a

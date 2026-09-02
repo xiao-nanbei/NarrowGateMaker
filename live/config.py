@@ -358,6 +358,7 @@ class LogConfig:
     trade_log: str = "logs/trades.csv"    # relative to project root, resolved by main.py
     quote_log: str = "logs/quote_decisions.csv"
     order_outcome_log: str = "logs/order_outcomes.csv"
+    order_gateway_receipt_log: str = "logs/order_gateway_receipts.csv"
     buy_fill_selection_shadow_log: str = "logs/buy_fill_selection_shadow.csv"
     dynamic_fill_hazard_shadow_log: str = "logs/dynamic_fill_hazard_shadow.csv"
     dynamic_fill_hazard_action_log: str = "logs/dynamic_fill_hazard_action.csv"

@@ -2024,6 +2024,7 @@ def resolve_logging_paths(cfg):
         "trade_log",
         "quote_log",
         "order_outcome_log",
+        "order_gateway_receipt_log",
         "buy_fill_selection_shadow_log",
         "dynamic_fill_hazard_shadow_log",
         "dynamic_fill_hazard_action_log",
@@ -2407,6 +2408,10 @@ def main():
     engine.set_event_source(ws)
     runtime_evidence_writer = RuntimeEvidenceWriter()
     try:
+        order_gateway.set_runtime_evidence_writer(
+            runtime_evidence_writer,
+            str(cfg.logging.order_gateway_receipt_log),
+        )
         engine.set_runtime_evidence_writer(runtime_evidence_writer)
     except BaseException:
         runtime_evidence_writer.close(drain_timeout_s=1.0)

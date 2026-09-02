@@ -1764,6 +1764,39 @@ class MakerEngine:
             raise RuntimeError("order_gateway is unavailable")
         return client
 
+    @staticmethod
+    def _order_gateway_decision_metadata(
+        transport: Any,
+        *,
+        context: Optional[dict[str, Any]] = None,
+        decision_ts_ns: int = 0,
+        decision_id: str = "",
+    ) -> dict[str, object]:
+        """Return internal metadata only for the NarrowGate gateway adapter."""
+
+        if not bool(
+            getattr(transport, "supports_narrowgate_request_metadata", False)
+        ):
+            return {}
+        resolved_ts_ns = max(0, int(decision_ts_ns))
+        resolved_decision_id = str(decision_id)
+        source = context or {}
+        if resolved_ts_ns <= 0:
+            resolved_ts_ns = max(
+                0,
+                int(source.get("exact_decision_start_ts_ns", 0) or 0),
+            )
+        if resolved_ts_ns <= 0:
+            raw_decision_ts = float(source.get("decision_ts", 0.0) or 0.0)
+            if math.isfinite(raw_decision_ts) and raw_decision_ts > 0.0:
+                resolved_ts_ns = int(raw_decision_ts * 1_000_000_000)
+        if not resolved_decision_id:
+            resolved_decision_id = str(source.get("exact_decision_id", ""))
+        return {
+            "_narrowgate_decision_ts_ns": resolved_ts_ns,
+            "_narrowgate_decision_id": resolved_decision_id,
+        }
+
     def _reconciliation_transport(self):
         """Return the admitted low-frequency account/query transport."""
 
@@ -8038,6 +8071,7 @@ class MakerEngine:
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
+                trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
             )
             record_side_rest_delta(
@@ -8056,6 +8090,7 @@ class MakerEngine:
             bid_cancel_requested = self._cancel_order(
                 self._bid_cid,
                 trigger_decision_id=bid_decision_id,
+                trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
             )
             record_side_rest_delta(
@@ -8083,6 +8118,7 @@ class MakerEngine:
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
+                trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
             )
             record_side_rest_delta(
@@ -8101,6 +8137,7 @@ class MakerEngine:
             ask_cancel_requested = self._cancel_order(
                 self._ask_cid,
                 trigger_decision_id=ask_decision_id,
+                trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
             )
             record_side_rest_delta(
@@ -9918,7 +9955,14 @@ class MakerEngine:
             rest_start = time.perf_counter()
             try:
                 request_started = True
-                resp = self._order_transport().new_order(**params)
+                transport = self._order_transport()
+                resp = transport.new_order(
+                    **params,
+                    **self._order_gateway_decision_metadata(
+                        transport,
+                        context=decision_context,
+                    ),
+                )
             finally:
                 if record_requote_perf:
                     self._record_perf_rest_latency(
@@ -10071,7 +10115,14 @@ class MakerEngine:
             rest_start = time.perf_counter()
             try:
                 request_started = True
-                resp = self._order_transport().new_order(**params)
+                transport = self._order_transport()
+                resp = transport.new_order(
+                    **params,
+                    **self._order_gateway_decision_metadata(
+                        transport,
+                        context=decision_context,
+                    ),
+                )
             finally:
                 self._record_perf_rest_latency(
                     "new", (time.perf_counter() - rest_start) * 1_000_000.0
@@ -10669,6 +10720,7 @@ class MakerEngine:
         *,
         record_requote_perf: bool = True,
         trigger_decision_id: str = "",
+        trigger_decision_ts_ns: int = 0,
         replace_continuation_generation: int = 0,
     ) -> bool:
         """Cancel a single order by client order id."""
@@ -10736,9 +10788,15 @@ class MakerEngine:
         try:
             rest_start = time.perf_counter()
             try:
-                self._order_transport().cancel_order(
+                transport = self._order_transport()
+                transport.cancel_order(
                     symbol=self.cfg.symbol,
                     origClientOrderId=cid,
+                    **self._order_gateway_decision_metadata(
+                        transport,
+                        decision_ts_ns=trigger_decision_ts_ns,
+                        decision_id=trigger_decision_id,
+                    ),
                 )
             finally:
                 if record_requote_perf:
