@@ -42,12 +42,12 @@ def test_v2_2_execution_contract_is_frozen_disabled_and_runtime_stale() -> None:
     assert payload["permissions"]["action_experiment_authorized"] is False
     assert payload["permissions"]["live_deployment_authorized"] is False
 
-    # The frozen v2.2 identity must remain stale after either shared runtime
+    # The frozen v2.2 identity must remain stale after any shared runtime
     # dependency changes.  The validator reports the first mismatch in its
     # deterministic implementation-identity order.
     with pytest.raises(
         ValueError,
-        match="(?:order_lifecycle|feature_dag) SHA256 mismatch",
+        match="(?:runtime_writer|order_lifecycle|feature_dag) SHA256 mismatch",
     ):
         validate_execution_contract_v2_2(CONTRACT)
 

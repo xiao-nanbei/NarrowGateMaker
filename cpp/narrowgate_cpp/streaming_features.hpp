@@ -8,6 +8,7 @@
 #include <mutex>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace narrowgate_cpp {
@@ -120,6 +121,28 @@ public:
             : second_[index - first_.size()];
     }
     [[nodiscard]] const T& back() const noexcept { return (*this)[size() - 1]; }
+
+    [[nodiscard]] SegmentedSpanView<T> subview(
+        std::size_t offset,
+        std::size_t count
+    ) const {
+        if (offset > size() || count > size() - offset) {
+            throw std::out_of_range("SegmentedSpanView subview out of range");
+        }
+        if (count == 0) {
+            return {};
+        }
+        if (offset < first_.size()) {
+            const std::size_t first_count = std::min(count, first_.size() - offset);
+            return SegmentedSpanView<T>{
+                first_.subspan(offset, first_count),
+                second_.first(count - first_count),
+            };
+        }
+        return SegmentedSpanView<T>{
+            second_.subspan(offset - first_.size(), count)
+        };
+    }
 
 private:
     std::span<const T> first_;
@@ -461,6 +484,9 @@ public:
     [[nodiscard]] SignalFeatureVector compute_at_cutoff(
         const Bar1s& bar_10s,
         std::int64_t cutoff_exclusive_ms
+    ) const;
+    [[nodiscard]] std::pair<Bar1s, SignalFeatureVector> compute_bucket(
+        std::int64_t bucket_start_ms
     ) const;
     std::size_t bar_count() const { return bars_.size(); }
     std::size_t history_count() const { return history_.size(); }

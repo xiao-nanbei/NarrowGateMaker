@@ -23,7 +23,7 @@ import math
 import threading
 import time
 import uuid
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -45,8 +45,9 @@ _ALLOWED_WEBSOCKET_API_URLS = frozenset(
     }
 )
 ORDER_GATEWAY_RECEIPT_SCHEMA_VERSION = (
-    "narrowgate.binance_usdm_order_gateway_receipt.v1"
+    "narrowgate.binance_usdm_order_gateway_receipt.v2"
 )
+_ORDER_GATEWAY_CORRELATION_LIMIT = 16_384
 
 
 class BinanceUsdMRestRole(StrEnum):
@@ -365,6 +366,7 @@ def _order_gateway_receipt_payload(
     )
     return {
         "schema_version": ORDER_GATEWAY_RECEIPT_SCHEMA_VERSION,
+        "record_type": "gateway_completion",
         "recorded_at_ns": int(recorded_at_ns),
         "transport": str(transport),
         "request_id": str(request_id),
@@ -385,6 +387,11 @@ def _order_gateway_receipt_payload(
         "execution_status": execution_status,
         "http_status_code": "" if status_code is None else int(status_code),
         "exchange_order_status": str(exchange_order_status),
+        "private_event_type": "",
+        "private_order_status": "",
+        "private_exchange_ts_ns": 0,
+        "private_visibility_ts_ns": 0,
+        "correlation_found": 0,
         "error": str(error),
         "gateway_call_to_dispatch_us": (
             max(0.0, (dispatch_ts_ns - gateway_call_ts_ns) / 1_000.0)
@@ -407,6 +414,64 @@ def _order_gateway_receipt_payload(
             else 0.0
         ),
     }
+
+
+def _private_visibility_receipt_payload(
+    *,
+    transport: str,
+    recorded_at_ns: int,
+    request_id: str,
+    client_order_id: str,
+    decision_id: str,
+    method: str,
+    connection_generation: int,
+    private_event_type: str,
+    private_order_status: str,
+    private_exchange_ts_ns: int,
+    correlation_found: bool,
+) -> dict[str, object]:
+    """Build a joinable private-stream observation row.
+
+    This is intentionally a separate row rather than a mutation of the
+    gateway-completion row: Binance may publish ``NEW`` before the synchronous
+    REST/WebSocket response returns.  The process-wide FIFO therefore records
+    the order in which the process actually observed the two facts, while
+    ``request_id`` (or, on a miss, ``client_order_id``) permits an offline join.
+    """
+
+    payload = _order_gateway_receipt_payload(
+        transport=transport,
+        recorded_at_ns=recorded_at_ns,
+        request_id=request_id,
+        client_order_id=client_order_id,
+        decision_id=decision_id,
+        method=method,
+        connection_generation=connection_generation,
+        decision_ts_ns=0,
+        gateway_call_ts_ns=0,
+        dispatch_ts_ns=0,
+        wire_ts_ns=0,
+        response_ts_ns=0,
+        outcome="private_visibility",
+        status_code=None,
+        exchange_order_status=private_order_status,
+        error="",
+    )
+    payload.update(
+        {
+            "record_type": "private_visibility",
+            "completion_ts_ns": 0,
+            "may_have_been_dispatched": int(correlation_found),
+            "response_authoritative": 0,
+            "execution_status": "private_visibility_observed",
+            "private_event_type": private_event_type,
+            "private_order_status": private_order_status,
+            "private_exchange_ts_ns": max(0, int(private_exchange_ts_ns)),
+            "private_visibility_ts_ns": int(recorded_at_ns),
+            "correlation_found": int(correlation_found),
+        }
+    )
+    return payload
 
 
 def _initialize_order_gateway_receipt_log(path: str) -> None:
@@ -501,6 +566,21 @@ class BinanceUsdMWebSocketOrderGateway:
         self._reader_thread: threading.Thread | None = None
         self._runtime_evidence_writer = None
         self._receipt_path = ""
+        self._request_correlation_sink: Callable[..., None] | None = None
+
+    def set_request_correlation_sink(self, sink: Callable[..., None]) -> None:
+        """Bind the in-process private-stream correlation sink before use."""
+
+        if not callable(sink):
+            raise ValueError("WebSocket order request correlation sink must be callable")
+        with self._health_lock:
+            if self._request_correlation_sink is not None:
+                raise RuntimeError("WebSocket order request correlation sink is already attached")
+            if int(self._counters.get("requests", 0)) > 0:
+                raise RuntimeError(
+                    "request correlation sink must be attached before the first request"
+                )
+            self._request_correlation_sink = sink
 
     def set_runtime_evidence_writer(self, writer: Any, receipt_path: str) -> None:
         """Route immutable per-request rows through the process-wide FIFO.
@@ -856,6 +936,19 @@ class BinanceUsdMWebSocketOrderGateway:
             wire_ts_ns = 0
             response_ts_ns = 0
             try:
+                correlation_sink = self._request_correlation_sink
+                if correlation_sink is not None and client_order_id:
+                    # Register before the frame can reach the wire.  Binance is
+                    # allowed to publish the private NEW event before the
+                    # synchronous method response reaches this connection.
+                    correlation_sink(
+                        request_id=request_id,
+                        client_order_id=client_order_id,
+                        decision_id=decision_id,
+                        method=method,
+                        transport=self.transport_name,
+                        connection_generation=connection_generation,
+                    )
                 with self._response_condition:
                     self._pending_request_id = request_id
                     self._pending_response = None
@@ -1172,10 +1265,21 @@ class BinanceUsdMOrderGateway:
         self._wall_time_ns = wall_time_ns or time.time_ns
         self._runtime_evidence_writer = None
         self._receipt_path = ""
+        self._correlation_lock = threading.Lock()
+        self._request_correlations: OrderedDict[
+            tuple[str, str], dict[str, object]
+        ] = OrderedDict()
+        self._private_visibility_counts: Counter[str] = Counter()
         # One owner serializes every write, including REST cancel-all.  This
         # prevents a fill callback, the quote loop and a fatal cleanup from
         # concurrently occupying the hot connection or reordering writes.
         self._write_lock = threading.Lock()
+        if websocket_order_gateway is not None:
+            correlation_setter = getattr(
+                websocket_order_gateway, "set_request_correlation_sink", None
+            )
+            if callable(correlation_setter):
+                correlation_setter(self._register_request_correlation)
 
     supports_narrowgate_request_metadata = True
 
@@ -1197,6 +1301,121 @@ class BinanceUsdMOrderGateway:
         websocket_gateway = self.websocket_order_gateway
         if websocket_gateway is not None:
             websocket_gateway.set_runtime_evidence_writer(writer, normalized_path)
+
+    def _register_request_correlation(
+        self,
+        *,
+        request_id: str,
+        client_order_id: str,
+        decision_id: str,
+        method: str,
+        transport: str,
+        connection_generation: int,
+    ) -> None:
+        """Remember a bounded request identity before it can reach Binance."""
+
+        client_order_id = str(client_order_id)
+        method = str(method)
+        if not client_order_id or not method:
+            return
+        key = (client_order_id, method)
+        entry: dict[str, object] = {
+            "request_id": str(request_id),
+            "decision_id": str(decision_id),
+            "method": method,
+            "transport": str(transport),
+            "connection_generation": int(connection_generation),
+        }
+        with self._correlation_lock:
+            self._request_correlations.pop(key, None)
+            self._request_correlations[key] = entry
+            while len(self._request_correlations) > _ORDER_GATEWAY_CORRELATION_LIMIT:
+                self._request_correlations.popitem(last=False)
+                self._private_visibility_counts["correlation_evictions"] += 1
+
+    @staticmethod
+    def _private_visibility_method_candidates(
+        *, order_status: str, event_type: str
+    ) -> tuple[str, ...]:
+        if order_status == "NEW" or event_type == "NEW":
+            return ("order.place",)
+        if order_status in {"CANCELED", "EXPIRED"} or event_type in {
+            "CANCELED",
+            "EXPIRED",
+        }:
+            return ("order.cancel", "order.place")
+        return ("order.place", "order.cancel")
+
+    def record_private_order_visibility(
+        self,
+        event: Mapping[str, Any],
+        *,
+        receive_ts_ns: int,
+    ) -> bool:
+        """Record every private order update independently of state de-duplication.
+
+        The callback deliberately does not acquire ``_write_lock``: a private
+        event may arrive while the synchronous order request still owns that
+        lock.  Only the tiny bounded correlation map is touched before the row
+        is admitted to the process-wide evidence FIFO.
+        """
+
+        client_order_id = str(event.get("c", "") or "")
+        if not client_order_id:
+            return False
+        order_status = str(event.get("X", "") or "").strip().upper()
+        event_type = str(event.get("x", "") or "").strip().upper()
+        correlation: dict[str, object] | None = None
+        with self._correlation_lock:
+            for candidate in self._private_visibility_method_candidates(
+                order_status=order_status,
+                event_type=event_type,
+            ):
+                correlation = self._request_correlations.get(
+                    (client_order_id, candidate)
+                )
+                if correlation is not None:
+                    break
+            found = correlation is not None
+            self._private_visibility_counts["attempts"] += 1
+            self._private_visibility_counts[
+                "correlated" if found else "uncorrelated"
+            ] += 1
+        correlation = correlation or {}
+        writer = self._runtime_evidence_writer
+        if writer is None:
+            raise RuntimeError("private order visibility writer is not attached")
+        fallback_transport = (
+            str(
+                getattr(
+                    self.websocket_order_gateway,
+                    "transport_name",
+                    "binance_usdm_websocket_api",
+                )
+            )
+            if self.active_transport == "websocket_api"
+            else "rest"
+        )
+        exchange_ts_ns = max(0, int(event.get("T", 0) or 0)) * 1_000_000
+        row = _private_visibility_receipt_payload(
+            transport=str(correlation.get("transport", fallback_transport)),
+            recorded_at_ns=int(receive_ts_ns),
+            request_id=str(correlation.get("request_id", "")),
+            client_order_id=client_order_id,
+            decision_id=str(correlation.get("decision_id", "")),
+            method=str(correlation.get("method", "private.order_update")),
+            connection_generation=int(
+                correlation.get("connection_generation", 0) or 0
+            ),
+            private_event_type=event_type,
+            private_order_status=order_status,
+            private_exchange_ts_ns=exchange_ts_ns,
+            correlation_found=found,
+        )
+        writer.enqueue_csv(self._receipt_path, row)
+        with self._correlation_lock:
+            self._private_visibility_counts["admitted"] += 1
+        return found
 
     @staticmethod
     def _rest_error_status_code(exc: BaseException) -> int | None:
@@ -1225,6 +1444,14 @@ class BinanceUsdMOrderGateway:
         )
         gateway_call_ts_ns = int(self._wall_time_ns())
         dispatch_ts_ns = int(self._wall_time_ns())
+        self._register_request_correlation(
+            request_id=request_id,
+            client_order_id=client_order_id,
+            decision_id=decision_id,
+            method=method,
+            transport="rest",
+            connection_generation=0,
+        )
         try:
             response = operation(**dict(params))
         except Exception as exc:
@@ -1357,10 +1584,15 @@ class BinanceUsdMOrderGateway:
             if self.websocket_order_gateway is not None
             else {"enabled": False, "transport": "binance_usdm_websocket_api"}
         )
+        with self._correlation_lock:
+            correlation_count = len(self._request_correlations)
+            private_visibility_counts = dict(self._private_visibility_counts)
         return {
             "schema_version": "narrowgate.binance_usdm_order_gateway.v1",
             "active_transport": self.active_transport,
             "cancel_all_transport": "rest",
+            "request_correlation_count": correlation_count,
+            "private_visibility_counts": private_visibility_counts,
             "websocket_api": websocket_health,
         }
 

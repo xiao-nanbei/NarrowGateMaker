@@ -1950,7 +1950,32 @@ class WSHandler:
                 order_data = data.get("o", {})
                 order_data["_local_receive_ts_ns"] = receive_ts_ns
                 order_data["_feature_ready_ts_ns"] = time.time_ns()
+                order_gateway = getattr(self.engine, "order_gateway", None)
+                record_private_visibility = getattr(
+                    order_gateway, "record_private_order_visibility", None
+                )
+                private_evidence_error: Exception | None = None
+                if callable(record_private_visibility):
+                    # Record the raw private-stream observation before the
+                    # order ledger de-duplicates or transitions it.  NEW may
+                    # precede the synchronous REST/WebSocket response, so the
+                    # evidence row must not depend on response-first ordering.
+                    try:
+                        record_private_visibility(
+                            order_data,
+                            receive_ts_ns=receive_ts_ns,
+                        )
+                    except Exception as exc:
+                        # Evidence overload is fatal and must be surfaced, but
+                        # it must never prevent an already-observed exchange
+                        # fill/terminal event from reaching the authoritative
+                        # ledger and its immediate risk callbacks.
+                        private_evidence_error = exc
                 self.engine.orders.on_order_update(order_data)
+                if private_evidence_error is not None:
+                    raise RuntimeError(
+                        "private order visibility evidence admission failed"
+                    ) from private_evidence_error
 
             elif event_type == "ACCOUNT_UPDATE":
                 account_data = data.get("a", {})

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import signal as signal_module
 import stat
 import threading
 from pathlib import Path
@@ -19,6 +20,7 @@ from strategy.fill_cooldown_checkpoint import (
     FillCooldownCheckpointWAL,
 )
 from strategy.maker_engine import MakerEngine
+from strategy.order_manager import Side
 
 OLD_ARTIFACT = f"BUY_E3:{'a' * 64}"
 NEW_ARTIFACT = f"BUY_E3:{'b' * 64}"
@@ -90,6 +92,143 @@ def _engine_checkpoint_payload(path: Path) -> dict[str, object]:
         latest = wal.read_latest()
     assert latest is not None
     return latest.payload
+
+
+def _wait_for_sigkill(pid: int) -> None:
+    waited_pid, status = os.waitpid(pid, 0)
+    assert waited_pid == pid
+    assert os.WIFSIGNALED(status), status
+    assert os.WTERMSIG(status) == signal_module.SIGKILL
+
+
+def _target_second_fill_payload(
+    path: Path,
+    *,
+    first_fill_ms: int,
+) -> dict[str, object]:
+    """Build the exact sequence-two payload a second BUY fill would commit."""
+
+    target = _engine(path)
+    target._fill_cooldown_checkpoint_sequence = 1
+    _seed_buy_state(
+        target,
+        now_ms=first_fill_ms + 1_000,
+        duration_ms=170_000,
+        units=2.0,
+        identity="B0",
+    )
+    target._fill_cooldown_last_fill_cursor = {
+        "trade_id": 101,
+        "order_id": 11,
+        "cumulative_filled_qty": 0.001,
+        "trade_time_ms": first_fill_ms + 1_000,
+        "side": "BUY",
+    }
+    target._persist_fill_cooldown_checkpoint()
+    payload = _engine_checkpoint_payload(path)
+    target.close_fill_cooldown_checkpoint_store()
+    return payload
+
+
+def _restore_and_reconcile_second_fill(
+    checkpoint: Path,
+    *,
+    first_fill_ms: int,
+) -> tuple[MakerEngine, int, int]:
+    restarted = _engine(checkpoint)
+    restarted.restore_fill_cooldown_checkpoint(now_ms=first_fill_ms + 2_000)
+    requests: list[dict[str, object]] = []
+
+    def account_trades(**request: object) -> list[dict[str, object]]:
+        requests.append(dict(request))
+        if int(request.get("fromId", 0) or 0) > 101:
+            return []
+        return [
+            {
+                "id": 101,
+                "orderId": 11,
+                "time": first_fill_ms + 1_000,
+                "qty": str(restarted.cfg.strategy.order_size),
+                "buyer": True,
+            }
+        ]
+
+    restarted.rest = SimpleNamespace(get_account_trades=account_trades)
+    first = restarted.reconcile_fill_cooldown_checkpoint_gap()
+    units_after_first = restarted._consec_buy
+    second = restarted.reconcile_fill_cooldown_checkpoint_gap()
+
+    assert restarted._consec_buy == pytest.approx(units_after_first)
+    assert restarted._fill_cooldown_until["BUY"] >= (
+        first_fill_ms + 1_000 + 170_000
+    ) / 1_000.0
+    assert _engine_checkpoint_payload(checkpoint)[
+        "last_authoritative_fill_cursor"
+    ]["trade_id"] == 101
+    return restarted, int(first["recovered_fill_count"]), int(
+        second["recovered_fill_count"]
+    )
+
+
+class _ProcessFillInventory:
+    """Small deterministic inventory used inside the forked real callback."""
+
+    def __init__(self) -> None:
+        self.snapshot = SimpleNamespace(qty=0.0)
+        self.consecutive_losses = 0
+
+    def on_fill(
+        self,
+        side: str,
+        qty: float,
+        _price: float,
+        _commission: float,
+        _trade_time_ms: int,
+        **_identity: object,
+    ) -> float:
+        self.snapshot.qty += float(qty) if side == "BUY" else -float(qty)
+        return float(qty)
+
+    def pop_runtime_evidence_error(self) -> None:
+        return None
+
+    @property
+    def net_position(self) -> float:
+        return float(self.snapshot.qty)
+
+
+def _configure_process_fill_engine(
+    checkpoint: Path,
+    *,
+    now_ms: int,
+) -> MakerEngine:
+    engine = _engine(checkpoint)
+    engine.restore_fill_cooldown_checkpoint(now_ms=now_ms)
+    engine.cfg.strategy.order_size = 0.001
+    engine.cfg.lot_size = 0.0001
+    engine.cfg.strategy.markout_ema_span_fills = 0
+    engine.cfg.strategy.markout_spread_scale = 0.0
+    engine.cfg.strategy.max_inventory = 1.0
+    engine.inventory = _ProcessFillInventory()
+    engine._post_fill_quote_response = SimpleNamespace(
+        record_fill=lambda **_kwargs: None
+    )
+    engine._base_asset = "BTC"
+    engine._quote_asset = "USDC"
+    engine._settlement_asset = "USDC"
+    engine._commission_unit_error = None
+    engine._log_order_outcome = lambda *_args, **_kwargs: None
+    engine._loss_cooldown_max_observed_consecutive_losses = 0
+    engine._loss_cooldown_losing_round_trips = 0
+    engine._loss_cooldown_winning_or_flat_round_trips = 0
+    engine._adaptive_add_cooldown_multiplier = lambda *_args: 1.0
+    engine._boolean_cooldown_policy = None
+    engine._buy_e3_cooldown_policy = None
+    engine._mo_pending = []
+    engine._bid_cid = None
+    engine._ask_cid = None
+    engine._pop_order_context = lambda _cid: None
+    return engine
 
 
 def test_crash_restart_preserves_same_artifact_absolute_deadline(
@@ -1020,6 +1159,176 @@ def test_wal_fault_injection_boundaries_restore_a_complete_record(
     assert restored is not None
     assert restored.sequence == expected_sequence
     assert restored.payload["deadline_ms"] in {500_000, 600_000}
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX process signals")
+@pytest.mark.parametrize(
+    ("fault_stage", "expected_first_gap_recovery"),
+    (
+        ("before_pwrite", 1),
+        ("after_pwrite", 0),
+        ("before_fdatasync", 0),
+        ("after_fdatasync", 0),
+    ),
+)
+def test_process_sigkill_at_wal_boundaries_never_shortens_or_loses_fill_gap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fault_stage: str,
+    expected_first_gap_recovery: int,
+) -> None:
+    """A real process death selects either old+gap or the complete new slot."""
+
+    first_fill_ms = 1_900_900_000_000
+    _clock(monkeypatch, first_fill_ms + 1_000)
+    checkpoint = tmp_path / f"process-{fault_stage}.wal"
+    baseline = _engine(checkpoint)
+    _seed_buy_state(
+        baseline,
+        now_ms=first_fill_ms,
+        duration_ms=85_000,
+        units=1.0,
+        identity="B0",
+    )
+    baseline._fill_cooldown_last_fill_cursor = {
+        "trade_id": 100,
+        "order_id": 10,
+        "cumulative_filled_qty": 0.001,
+        "trade_time_ms": first_fill_ms,
+        "side": "BUY",
+    }
+    baseline._persist_fill_cooldown_checkpoint()
+    baseline.close_fill_cooldown_checkpoint_store()
+    target_payload = _target_second_fill_payload(
+        tmp_path / f"target-{fault_stage}.wal",
+        first_fill_ms=first_fill_ms,
+    )
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the parent verifies the process status.
+        def kill_at_boundary(stage: str) -> None:
+            if stage == fault_stage:
+                os.kill(os.getpid(), signal_module.SIGKILL)
+
+        wal = FillCooldownCheckpointWAL(
+            checkpoint,
+            fault_injector=kill_at_boundary,
+        )
+        wal.write(target_payload)
+        os._exit(73)
+
+    _wait_for_sigkill(pid)
+    restarted, first_recovered, second_recovered = (
+        _restore_and_reconcile_second_fill(
+            checkpoint,
+            first_fill_ms=first_fill_ms,
+        )
+    )
+
+    assert first_recovered == expected_first_gap_recovery
+    assert second_recovered == 0
+    assert restarted._consec_buy == pytest.approx(2.0)
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="requires POSIX process signals")
+@pytest.mark.parametrize(
+    ("crash_boundary", "expected_first_gap_recovery", "expected_marker"),
+    (
+        ("after_risk_cancel", 1, b"risk_cancel"),
+        ("before_callback_return", 0, b"risk_cancel,callback_tail"),
+    ),
+)
+def test_real_fill_callback_process_death_recovers_exactly_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_boundary: str,
+    expected_first_gap_recovery: int,
+    expected_marker: bytes,
+) -> None:
+    """Exercise the production fill ordering across actual SIGKILL restart."""
+
+    first_fill_ms = 1_900_950_000_000
+    _clock(monkeypatch, first_fill_ms + 1_000)
+    checkpoint = tmp_path / f"callback-{crash_boundary}.wal"
+    baseline = _engine(checkpoint)
+    _seed_buy_state(
+        baseline,
+        now_ms=first_fill_ms,
+        duration_ms=85_000,
+        units=1.0,
+        identity="B0",
+    )
+    baseline._fill_cooldown_last_fill_cursor = {
+        "trade_id": 100,
+        "order_id": 10,
+        "cumulative_filled_qty": 0.001,
+        "trade_time_ms": first_fill_ms,
+        "side": "BUY",
+    }
+    baseline._persist_fill_cooldown_checkpoint()
+    baseline.close_fill_cooldown_checkpoint_store()
+    read_fd, write_fd = os.pipe()
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the parent verifies durable recovery.
+        os.close(read_fd)
+        engine = _configure_process_fill_engine(
+            checkpoint,
+            now_ms=first_fill_ms + 1_000,
+        )
+
+        def risk_cancel(_side: str) -> None:
+            os.write(write_fd, b"risk_cancel")
+            if crash_boundary == "after_risk_cancel":
+                os.kill(os.getpid(), signal_module.SIGKILL)
+
+        def callback_tail(_cid: str) -> None:
+            os.write(write_fd, b",callback_tail")
+            os.kill(os.getpid(), signal_module.SIGKILL)
+
+        engine._cancel_cooldown_side_order = risk_cancel
+        engine._pop_order_context = callback_tail
+        order = SimpleNamespace(
+            side=Side.BUY,
+            price=70_000.0,
+            client_order_id="buy-process-fill",
+            order_id=11,
+            filled_qty=0.001,
+            is_terminal=(crash_boundary == "before_callback_return"),
+        )
+        event = {
+            "_fill_qty": 0.001,
+            "_fill_price": 70_000.0,
+            "_fill_commission": 0.0,
+            "_fill_commission_asset": "USDC",
+            "T": first_fill_ms + 1_000,
+            "t": 101,
+            "i": 11,
+            "z": 0.001,
+        }
+        engine._on_fill(order, event)
+        os._exit(74)
+
+    os.close(write_fd)
+    marker = b""
+    while True:
+        chunk = os.read(read_fd, 1024)
+        if not chunk:
+            break
+        marker += chunk
+    os.close(read_fd)
+    _wait_for_sigkill(pid)
+    assert marker == expected_marker
+
+    restarted, first_recovered, second_recovered = (
+        _restore_and_reconcile_second_fill(
+            checkpoint,
+            first_fill_ms=first_fill_ms,
+        )
+    )
+    assert first_recovered == expected_first_gap_recovery
+    assert second_recovered == 0
+    assert restarted._consec_buy == pytest.approx(2.0)
 
 
 def test_wal_rejects_symlink_and_non_private_files_but_allows_hardlinks(

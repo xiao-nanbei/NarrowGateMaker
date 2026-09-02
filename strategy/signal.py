@@ -2374,6 +2374,75 @@ class SignalEngine:
         return outputs
 
     @staticmethod
+    def _aggregate_from_cpp_bar(bar: object) -> dict:
+        """Convert one native 10s aggregate without materializing its 1s inputs."""
+        return {
+            "ts": int(bar.ts_ms),
+            "open": float(bar.open),
+            "high": float(bar.high),
+            "low": float(bar.low),
+            "close": float(bar.close),
+            "volume": float(bar.volume),
+            "buy_volume": float(bar.buy_volume),
+            "sell_volume": float(bar.sell_volume),
+            "trade_count": float(bar.trade_count),
+            "buy_count": float(bar.buy_count),
+            "sell_count": float(bar.sell_count),
+            "quote_qty": float(bar.quote_qty),
+            "buy_quote_qty": float(bar.buy_quote_qty),
+            "sell_quote_qty": float(bar.sell_quote_qty),
+            "max_same_side_run": float(bar.max_same_side_run),
+        }
+
+    def _native_bucket_pipeline_available(self) -> bool:
+        return bool(
+            self._cpp_signal_features_enabled
+            and self._cpp_feature_engine is not None
+            and self._cpp_feature_engine_seeded
+            and hasattr(self._cpp_feature_engine, "compute_bucket_values")
+        )
+
+    def _process_completed_feature_buckets_native_locked(self) -> list[dict]:
+        """Process buckets wholly from the persistent native 1s-bar ring.
+
+        The Python ring remains the canonical fallback and diagnostic view, but
+        the live native path must not copy or filter all 3,700 retained bars at
+        every new 10-second boundary.
+        """
+        engine = self._cpp_feature_engine
+        if engine is None or not self._native_bucket_pipeline_available():
+            raise RuntimeError("native signal bucket pipeline is unavailable")
+        if not self._cpp_signal_feature_names:
+            self._cpp_signal_feature_names = tuple(
+                getattr(self._cpp_signal, "SIGNAL_FEATURE_NAMES", ())
+            )
+
+        outputs: list[dict] = []
+        for bucket_start_ms in self._pending_completed_bucket_starts(self._bar_buffer):
+            cpp_bar, raw_values = engine.compute_bucket_values(int(bucket_start_ms))
+            values = np.asarray(raw_values, dtype=np.float64)
+            expected_shape = (len(self._cpp_signal_feature_names),)
+            if values.shape != expected_shape:
+                raise RuntimeError(
+                    "C++ signal feature row shape changed: "
+                    f"expected={expected_shape} actual={values.shape}"
+                )
+            if not values.flags.c_contiguous:
+                values = np.ascontiguousarray(values, dtype=np.float64)
+            cutoff = FeatureCutoff(int(bucket_start_ms) + 10_000)
+            features = self._features_from_cpp_values(
+                self._aggregate_from_cpp_bar(cpp_bar),
+                values,
+                cutoff,
+            )
+            history_row = self._history_snapshot(features)
+            self._feat_history.append(history_row)
+            engine.push_history(self._history_to_cpp(history_row))
+            self._last_processed_bucket = int(bucket_start_ms)
+            outputs.append(features)
+        return outputs
+
+    @staticmethod
     def _reset_signal_compute_timings(perf_timings: dict[str, Any]) -> None:
         perf_timings["signal_compute_path"] = "unknown"
         perf_timings["signal_compute_bucket_count"] = 0
@@ -2433,9 +2502,14 @@ class SignalEngine:
                                 "cached_no_new_bucket"
                             )
                         return self._last_prediction
-                    feature_batches = self._process_completed_feature_buckets_locked(
-                        list(self._bar_buffer)
-                    )
+                    if self._native_bucket_pipeline_available():
+                        feature_batches = (
+                            self._process_completed_feature_buckets_native_locked()
+                        )
+                    else:
+                        feature_batches = self._process_completed_feature_buckets_locked(
+                            list(self._bar_buffer)
+                        )
                 finally:
                     if trace:
                         perf_timings["signal_compute_snapshot_feature_us"] = (
@@ -2742,6 +2816,51 @@ class SignalEngine:
             self._cpp_signal_features_enabled = False
             return None
 
+    def _features_from_cpp_values(
+        self,
+        bar_10s: dict,
+        cpp_values: np.ndarray,
+        cutoff: FeatureCutoff,
+    ) -> dict:
+        """Assemble the full model row around an already-computed native core."""
+        target_ts_ms = int(bar_10s["ts"])
+        if target_ts_ms >= cutoff.cutoff_exclusive_ms:
+            raise RuntimeError(
+                "10s feature target must precede its exclusive causal cutoff: "
+                f"target={target_ts_ms} cutoff={cutoff.cutoff_exclusive_ms}"
+            )
+        f = {
+            "_feature_ts_ms": float(target_ts_ms),
+            "_feature_cutoff_exclusive_ms": float(cutoff.cutoff_exclusive_ms),
+            "close": float(bar_10s["close"]),
+            "volume": float(bar_10s["volume"]),
+            "buy_volume": float(bar_10s["buy_volume"]),
+            "sell_volume": float(bar_10s["sell_volume"]),
+            "trade_count": float(bar_10s["trade_count"]),
+            "buy_count": float(bar_10s["buy_count"]),
+            "sell_count": float(bar_10s["sell_count"]),
+        }
+        f.update(
+            (name, float(value))
+            for name, value in zip(
+                self._cpp_signal_feature_names,
+                cpp_values,
+                strict=True,
+            )
+        )
+        self._compute_execution_l2_features(
+            f,
+            bucket_end_ms=int(cutoff.cutoff_exclusive_ms),
+        )
+        self._compute_cross_market_features(
+            f,
+            float(bar_10s["close"]),
+            target_ts_ms,
+        )
+        self._compute_time_features(f, bar_ts_ms=target_ts_ms)
+        self._compute_metrics_features(f, target_ts_ms)
+        return f
+
     def _compute_features(
         self,
         bar_10s: dict,
@@ -2750,20 +2869,25 @@ class SignalEngine:
         cutoff: Optional[FeatureCutoff] = None,
     ) -> dict:
         """Compute all 88 base features from one causal cutoff view."""
-        f = {}
         close = bar_10s["close"]
         target_ts_ms = int(
             bar_10s.get("ts", all_bars[-1].ts if all_bars else time.time() * 1000)
         )
         cutoff = cutoff or FeatureCutoff(target_ts_ms + 1_000)
-        all_bars = cutoff.visible_bars(all_bars)
-        if not all_bars:
-            raise RuntimeError("feature cutoff excludes every completed 1s bar")
         if target_ts_ms >= cutoff.cutoff_exclusive_ms:
             raise RuntimeError(
                 "10s feature target must precede its exclusive causal cutoff: "
                 f"target={target_ts_ms} cutoff={cutoff.cutoff_exclusive_ms}"
             )
+
+        cpp_values = self._compute_cpp_feature_values(bar_10s, all_bars, cutoff)
+        if cpp_values is not None:
+            return self._features_from_cpp_values(bar_10s, cpp_values, cutoff)
+
+        all_bars = cutoff.visible_bars(all_bars)
+        if not all_bars:
+            raise RuntimeError("feature cutoff excludes every completed 1s bar")
+        f = {}
         f["_feature_ts_ms"] = float(target_ts_ms)
         f["_feature_cutoff_exclusive_ms"] = float(cutoff.cutoff_exclusive_ms)
 
@@ -2775,25 +2899,6 @@ class SignalEngine:
         f["trade_count"] = bar_10s["trade_count"]
         f["buy_count"] = bar_10s["buy_count"]
         f["sell_count"] = bar_10s["sell_count"]
-
-        cpp_values = self._compute_cpp_feature_values(bar_10s, all_bars, cutoff)
-        if cpp_values is not None:
-            f.update(
-                (name, float(value))
-                for name, value in zip(
-                    self._cpp_signal_feature_names,
-                    cpp_values,
-                    strict=True,
-                )
-            )
-            self._compute_execution_l2_features(
-                f,
-                bucket_end_ms=int(cutoff.cutoff_exclusive_ms),
-            )
-            self._compute_cross_market_features(f, close, target_ts_ms)
-            self._compute_time_features(f, bar_ts_ms=target_ts_ms)
-            self._compute_metrics_features(f, target_ts_ms)
-            return f
 
         # === A2. Tick momentum (from 1s history) ===
         causal_tail = all_bars[-320:]

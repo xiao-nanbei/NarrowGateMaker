@@ -347,6 +347,84 @@ def test_rest_and_websocket_requests_share_one_async_receipt_schema(tmp_path):
     assert int(rows[1]["response_ts_ns"]) > 0
 
 
+def test_private_new_visibility_is_recorded_before_response_and_joined_by_request_id(
+    tmp_path,
+):
+    receipt_path = tmp_path / "order_gateway_receipts.csv"
+    writer = RuntimeEvidenceWriter(queue_capacity=8)
+    gateway = None
+
+    def respond(request):
+        assert gateway is not None
+        assert gateway.record_private_order_visibility(
+            {
+                "c": request["params"]["newClientOrderId"],
+                "x": "NEW",
+                "X": "NEW",
+                "T": 1_725_000_000_111,
+            },
+            receive_ts_ns=1_725_000_000_222_000_000,
+        )
+        return {
+            "id": request["id"],
+            "status": 200,
+            "result": {
+                "clientOrderId": request["params"]["newClientOrderId"],
+                "status": "NEW",
+            },
+        }
+
+    websocket = create_binance_usdm_websocket_order_gateway(
+        key="key",
+        secret="secret",
+        config=_enabled_config(),
+        connection_factory=_ConnectionFactory([_FakeConnection(respond)]),
+        request_id_factory=lambda: "ws-private-visible-1",
+    )
+    assert websocket is not None
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=object(),
+        websocket_order_gateway=websocket,
+    )
+    gateway.set_runtime_evidence_writer(writer, str(receipt_path))
+
+    response = gateway.new_order(
+        symbol="BTCUSDC",
+        side="BUY",
+        type="LIMIT",
+        newClientOrderId="private-visible-cid",
+        _narrowgate_decision_ts_ns=1_725_000_000_000_000_000,
+        _narrowgate_decision_id="private-visible-decision",
+    )
+    assert response["status"] == "NEW"
+    gateway.close()
+    writer.close(drain_timeout_s=2.0)
+
+    with receipt_path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["record_type"] for row in rows] == [
+        "private_visibility",
+        "gateway_completion",
+    ]
+    assert {row["request_id"] for row in rows} == {"ws-private-visible-1"}
+    private_row = rows[0]
+    assert private_row["client_order_id"] == "private-visible-cid"
+    assert private_row["decision_id"] == "private-visible-decision"
+    assert private_row["method"] == "order.place"
+    assert private_row["private_event_type"] == "NEW"
+    assert private_row["private_order_status"] == "NEW"
+    assert private_row["private_exchange_ts_ns"] == "1725000000111000000"
+    assert private_row["private_visibility_ts_ns"] == "1725000000222000000"
+    assert private_row["correlation_found"] == "1"
+    assert private_row["execution_status"] == "private_visibility_observed"
+    health = gateway.health_snapshot()
+    assert health["private_visibility_counts"] == {
+        "attempts": 1,
+        "correlated": 1,
+        "admitted": 1,
+    }
+
+
 def test_websocket_unknown_request_emits_joinable_async_receipt(tmp_path):
     receipt_path = tmp_path / "unknown_gateway_receipts.csv"
     writer = RuntimeEvidenceWriter(queue_capacity=8)

@@ -556,6 +556,154 @@ def test_cpp_signal_feature_ring_buffer_wrap_matches_stateless_tail():
         assert persistent[key] == pytest.approx(stateless[key], abs=1e-12)
 
 
+def test_cpp_signal_bucket_pipeline_matches_python_aggregate_and_full_feature_row():
+    python_engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    native_engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    native_engine._cpp_signal = narrowgate_cpp
+    native_engine._cpp_signal_features_enabled = True
+    native_engine._cpp_signal_feature_names = tuple(
+        narrowgate_cpp.SIGNAL_FEATURE_NAMES
+    )
+    native_engine._cpp_feature_engine = narrowgate_cpp.SignalFeatureEngine(3700, 60480)
+    native_engine._cpp_feature_engine_seeded = True
+
+    bars: list[Bar1s] = []
+    for index in range(80):
+        price = 100.0 + index * 0.01 + (index % 5 - 2) * 0.02
+        bar = Bar1s(
+            ts=index * 1_000,
+            open=price - 0.01,
+            high=price + 0.04,
+            low=price - 0.03,
+            close=price,
+            volume=1.0 + index % 7 * 0.1,
+            buy_volume=0.55 + index % 3 * 0.02,
+            sell_volume=0.45 + index % 4 * 0.01,
+            trade_count=3 + index % 5,
+            buy_count=2 + index % 3,
+            sell_count=1 + index % 4,
+            quote_qty=price * (1.0 + index % 7 * 0.1),
+            buy_quote_qty=price * (0.55 + index % 3 * 0.02),
+            sell_quote_qty=price * (0.45 + index % 4 * 0.01),
+            max_same_side_run=1 + index % 4,
+            max_buy_run=1 + index % 3,
+            max_sell_run=1 + index % 2,
+            buy_price_high=price + 0.02,
+            buy_price_low=price - 0.01,
+            sell_price_high=price + 0.01,
+            sell_price_low=price - 0.02,
+        )
+        bars.append(bar)
+        python_engine._bar_buffer.append(bar)
+        native_engine._bar_buffer.append(bar)
+        native_engine._cpp_feature_engine.push_bar(native_engine._bar_to_cpp(bar))
+
+    expected_aggregate = python_engine._aggregate_bars(bars[-10:])
+    expected = python_engine._compute_features(expected_aggregate, bars)
+    cpp_bar, cpp_values = native_engine._cpp_feature_engine.compute_bucket_values(70_000)
+    actual_aggregate = native_engine._aggregate_from_cpp_bar(cpp_bar)
+    actual = native_engine._features_from_cpp_values(
+        actual_aggregate,
+        np.asarray(cpp_values, dtype=np.float64),
+        signal_module.FeatureCutoff(80_000),
+    )
+
+    for key, value in expected_aggregate.items():
+        assert actual_aggregate[key] == pytest.approx(value, abs=1e-12), key
+    assert actual.keys() == expected.keys()
+    for key, value in expected.items():
+        assert actual[key] == pytest.approx(value, abs=1e-10), key
+
+
+def test_native_new_bucket_does_not_iterate_or_copy_python_bar_ring():
+    class BoundaryOnlyRing:
+        def __init__(self, first: Bar1s, last: Bar1s) -> None:
+            self.first = first
+            self.last = last
+
+        def __len__(self) -> int:
+            return 30
+
+        def __getitem__(self, index: int) -> Bar1s:
+            if index == 0:
+                return self.first
+            if index == -1:
+                return self.last
+            raise AssertionError("native bucket path read an interior Python bar")
+
+        def __iter__(self):
+            raise AssertionError("native bucket path copied the Python bar ring")
+
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    engine._cpp_signal = narrowgate_cpp
+    engine._cpp_signal_features_enabled = True
+    engine._cpp_signal_feature_names = tuple(narrowgate_cpp.SIGNAL_FEATURE_NAMES)
+    engine._cpp_feature_engine = narrowgate_cpp.SignalFeatureEngine(3700, 60480)
+    engine._cpp_feature_engine_seeded = True
+    bars = [
+        Bar1s(ts=index * 1_000, open=100.0, high=100.0, low=100.0, close=100.0)
+        for index in range(30)
+    ]
+    for bar in bars:
+        engine._cpp_feature_engine.push_bar(engine._bar_to_cpp(bar))
+    engine._last_processed_bucket = 10_000
+    engine._bar_buffer = BoundaryOnlyRing(bars[0], bars[-1])  # type: ignore[assignment]
+
+    prediction = engine.compute_signal()
+
+    assert engine._last_processed_bucket == 20_000
+    assert prediction.feature_dict is not None
+    assert prediction.feature_dict["_feature_ts_ms"] == 29_000.0
+
+
+def test_native_bucket_catch_up_matches_legacy_native_processing_order():
+    def ready_engine() -> SignalEngine:
+        engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+        engine._cpp_signal = narrowgate_cpp
+        engine._cpp_signal_features_enabled = True
+        engine._cpp_signal_feature_names = tuple(narrowgate_cpp.SIGNAL_FEATURE_NAMES)
+        engine._cpp_feature_engine = narrowgate_cpp.SignalFeatureEngine(3700, 60480)
+        engine._cpp_feature_engine_seeded = True
+        for index in range(80):
+            price = 100.0 + index * 0.01
+            bar = Bar1s(
+                ts=index * 1_000,
+                open=price,
+                high=price + 0.01,
+                low=price - 0.01,
+                close=price,
+                volume=1.0,
+                buy_volume=0.6,
+                sell_volume=0.4,
+                trade_count=2,
+                buy_count=1,
+                sell_count=1,
+                quote_qty=price,
+                buy_quote_qty=0.6 * price,
+                sell_quote_qty=0.4 * price,
+                max_same_side_run=1,
+            )
+            engine._bar_buffer.append(bar)
+            engine._cpp_feature_engine.push_bar(engine._bar_to_cpp(bar))
+        engine._last_processed_bucket = 40_000
+        return engine
+
+    legacy = ready_engine()
+    native = ready_engine()
+    expected = legacy._process_completed_feature_buckets_locked(
+        list(legacy._bar_buffer)
+    )
+    actual = native._process_completed_feature_buckets_native_locked()
+
+    assert len(actual) == len(expected) == 3
+    assert native._last_processed_bucket == legacy._last_processed_bucket == 70_000
+    assert len(native._feat_history) == len(legacy._feat_history) == 3
+    for actual_row, expected_row in zip(actual, expected, strict=True):
+        assert actual_row.keys() == expected_row.keys()
+        for key, value in expected_row.items():
+            assert actual_row[key] == pytest.approx(value, abs=1e-10), key
+
+
 def test_cpp_signal_feature_incremental_vol_regime_matches_stateless_history():
     engine = narrowgate_cpp.SignalFeatureEngine(8, 10_000)
     history = []

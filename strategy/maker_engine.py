@@ -3016,18 +3016,28 @@ class MakerEngine:
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
             frozen_payload = copy.deepcopy(dict(payload))
+            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
 
             def append_exact_opportunity(
                 *,
                 exact_runtime=runtime,
                 exact_payload=frozen_payload,
             ) -> None:
-                if not exact_runtime.append(exact_payload):
+                commit = (
+                    getattr(exact_runtime, "commit_frozen", None)
+                    if evidence_runtime is not None
+                    else None
+                )
+                accepted = (
+                    commit(exact_payload)
+                    if callable(commit)
+                    else exact_runtime.append(exact_payload)
+                )
+                if not accepted:
                     raise RuntimeError(
                         "exact-opportunity writer rejected a frozen payload"
                     )
 
-            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
             if evidence_runtime is not None:
                 try:
                     evidence_runtime.enqueue_task(
@@ -3109,20 +3119,34 @@ class MakerEngine:
                 return
             if frozen_event is None:
                 return
+            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
 
             def append_order_lifecycle(
                 *,
                 lifecycle_runtime=runtime,
                 lifecycle_event=frozen_event,
             ) -> None:
-                if not lifecycle_runtime.enqueue_frozen_order_event(
-                    lifecycle_event
-                ):
+                commit = (
+                    getattr(
+                        lifecycle_runtime,
+                        "commit_frozen_order_event",
+                        None,
+                    )
+                    if evidence_runtime is not None
+                    else None
+                )
+                accepted = (
+                    commit(lifecycle_event)
+                    if callable(commit)
+                    else lifecycle_runtime.enqueue_frozen_order_event(
+                        lifecycle_event
+                    )
+                )
+                if not accepted:
                     raise RuntimeError(
                         "order-lifecycle writer rejected a frozen callback"
                     )
 
-            evidence_runtime = getattr(self, "_runtime_evidence_writer", None)
             if evidence_runtime is not None:
                 try:
                     evidence_runtime.enqueue_task(
@@ -11967,6 +11991,7 @@ class MakerEngine:
         checkpoint_error: Optional[Exception] = None
         shutdown_reconciliation_error: Optional[Exception] = None
         evidence_barrier_error: Optional[BaseException] = None
+        specialized_evidence_errors: list[str] = []
         try:
             self._persist_fill_cooldown_checkpoint()
         except Exception as exc:
@@ -12024,6 +12049,12 @@ class MakerEngine:
                 int(health.get("error_count", 0)),
                 int(bool(health.get("formal_collection_valid", False))),
             )
+            if not bool(health.get("formal_collection_valid", False)):
+                specialized_evidence_errors.append(
+                    "order_lifecycle:"
+                    f"drops={int(health.get('drop_count', 0))}:"
+                    f"errors={int(health.get('error_count', 0))}"
+                )
             self._order_lifecycle_live_writer_v2 = None
         runtime = getattr(self, "_exact_opportunity_tape_runtime", None)
         if runtime is not None:
@@ -12034,6 +12065,12 @@ class MakerEngine:
                 int(health.get("rows_dropped", 0)),
                 int(health.get("error_count", 0)),
             )
+            if not bool(health.get("formal_collection_valid", False)):
+                specialized_evidence_errors.append(
+                    "exact_opportunity:"
+                    f"drops={int(health.get('rows_dropped', 0))}:"
+                    f"errors={int(health.get('error_count', 0))}"
+                )
             self._exact_opportunity_tape_runtime = None
         if not self._drain_deferred_runtime_reconciliation():
             logger.critical(
@@ -12051,6 +12088,11 @@ class MakerEngine:
             raise RuntimeError(
                 "runtime evidence admission barrier failed during shutdown"
             ) from evidence_barrier_error
+        if specialized_evidence_errors:
+            raise RuntimeError(
+                "specialized evidence writer shutdown was invalid: "
+                + ";".join(specialized_evidence_errors)
+            )
 
     @property
     def is_running(self) -> bool:

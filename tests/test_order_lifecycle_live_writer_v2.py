@@ -991,6 +991,49 @@ def test_maker_v2_hook_bypasses_synchronous_csv_writer() -> None:
     ]
 
 
+def test_direct_frozen_commit_bypasses_secondary_queue_and_drains(tmp_path: Path) -> None:
+    order = _order()
+    runtime = OrderLifecycleLiveWriterV2(
+        tmp_path,
+        session_id="direct-fifo",
+        baseline_epoch_id="epoch-direct",
+        runtime_identity={"baseline_epoch_id": "epoch-direct", "hash": "a" * 64},
+        queue_size=1,
+        storage_format="jsonl",
+        heartbeat_interval_s=0.05,
+    )
+    frozen = runtime.freeze_order_event(order, "submit", {})
+    assert frozen is not None
+    assert runtime.commit_frozen_order_event(frozen) is True
+    assert runtime._queue.qsize() == 0
+
+    health = runtime.close(drain_timeout_s=1.0)
+    assert health["callbacks_enqueued"] == 1
+    assert health["callbacks_processed"] == 1
+    assert health["drop_count"] == 0
+    assert health["formal_collection_valid"] is True
+
+
+def test_lifecycle_submission_owner_cannot_mix_queue_and_external_fifo(
+    tmp_path: Path,
+) -> None:
+    order = _order()
+    runtime = OrderLifecycleLiveWriterV2(
+        tmp_path,
+        session_id="owner-latch",
+        baseline_epoch_id="epoch-owner",
+        runtime_identity={"baseline_epoch_id": "epoch-owner", "hash": "b" * 64},
+        storage_format="jsonl",
+    )
+    frozen = runtime.freeze_order_event(order, "submit", {})
+    assert frozen is not None
+    assert runtime.commit_frozen_order_event(frozen) is True
+    assert runtime.enqueue_frozen_order_event(frozen) is False
+    health = runtime.close()
+    assert health["error_count"] == 1
+    assert health["formal_collection_valid"] is False
+
+
 def test_maker_publishes_rest_reconciled_lifecycle_transition() -> None:
     order = _order()
     order.lifecycle.activate(2_200_000_000, exchange_ts_ns=2_000_000_000)

@@ -368,6 +368,16 @@ class ExactOpportunityDailyWriter:
         self._active_day = ""
         self._active_partial_path = ""
         self._closed = False
+        self._submission_owner = ""
+        self._direct_io_lock = threading.Lock()
+        self._direct_handle = None
+        self._direct_writer = None
+        self._direct_partial: Path | None = None
+        self._direct_day = ""
+        self._direct_rows = 0
+        self._direct_digest = hashlib.sha256()
+        self._direct_first_event_ts_ns = 0
+        self._direct_last_event_ts_ns = 0
         self._worker = threading.Thread(
             target=self._run,
             name=f"exact-opportunity-{self.session_id}",
@@ -391,6 +401,9 @@ class ExactOpportunityDailyWriter:
         with self._lock:
             if self._closed:
                 raise RuntimeError("exact-opportunity writer is closed")
+            if self._submission_owner not in {"", "internal_queue"}:
+                raise RuntimeError("exact-opportunity submission owner changed")
+            self._submission_owner = "internal_queue"
             if self._state == "quarantine":
                 self._rows_quarantined += 1
                 self._write_health_locked(force=False)
@@ -407,6 +420,89 @@ class ExactOpportunityDailyWriter:
             self._rows_enqueued += 1
             self._last_enqueue_ts_ns = time.time_ns()
         return True
+
+    def commit_frozen(self, payload: Mapping[str, Any]) -> bool:
+        """Synchronously commit an immutable row from an owning FIFO worker."""
+
+        row = asdict(ExactQuoteOpportunityTapeRow(**dict(payload)))
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("exact-opportunity writer is closed")
+            if self._submission_owner not in {"", "external_fifo"}:
+                raise RuntimeError("exact-opportunity submission owner changed")
+            self._submission_owner = "external_fifo"
+            if self._state == "quarantine":
+                self._rows_quarantined += 1
+                self._write_health_locked(force=False)
+                return False
+            self._rows_enqueued += 1
+            self._last_enqueue_ts_ns = time.time_ns()
+        # Direct commits are owned by RuntimeEvidenceWriter's sole worker.
+        # The lock also prevents accidental mixing with the legacy adapter.
+        try:
+            with self._direct_io_lock:
+                self._commit_direct_row(row)
+        except Exception as exc:
+            self.report_error(f"direct_commit:{type(exc).__name__}:{exc}")
+            raise
+        return True
+
+    def _commit_direct_row(self, row: dict[str, Any]) -> None:
+        day = _event_utc_day(row)
+        if self._direct_day and day != self._direct_day:
+            self._finalize_direct_chunk()
+        if self._direct_handle is None:
+            (
+                self._direct_handle,
+                self._direct_writer,
+                self._direct_partial,
+                self._direct_day,
+                _drop_start,
+                _error_start,
+            ) = self._open_chunk(day)
+        self._direct_writer.writerow(row)
+        self._direct_digest.update(_canonical_json(row))
+        event_ts_ns = int(row["event_ts_ns"])
+        if (
+            self._direct_first_event_ts_ns == 0
+            or event_ts_ns < self._direct_first_event_ts_ns
+        ):
+            self._direct_first_event_ts_ns = event_ts_ns
+        self._direct_last_event_ts_ns = max(
+            self._direct_last_event_ts_ns,
+            event_ts_ns,
+        )
+        self._direct_rows += 1
+        # The legacy worker flushed sparse streams on its periodic wake.  A
+        # direct commit has no second worker deadline, so make completion carry
+        # the same durable-write meaning immediately.
+        self._flush_handle(self._direct_handle)
+        with self._lock:
+            self._rows_written += 1
+            self._write_health_locked(force=False)
+
+    def _finalize_direct_chunk(self) -> None:
+        if self._direct_handle is None:
+            return
+        self._finalize_chunk(
+            handle=self._direct_handle,
+            partial_path=self._direct_partial,
+            utc_day=self._direct_day,
+            row_count=self._direct_rows,
+            row_sha256=self._direct_digest.hexdigest(),
+            first_event_ts_ns=self._direct_first_event_ts_ns,
+            last_event_ts_ns=self._direct_last_event_ts_ns,
+            drop_start=0,
+            error_start=0,
+        )
+        self._direct_handle = None
+        self._direct_writer = None
+        self._direct_partial = None
+        self._direct_day = ""
+        self._direct_rows = 0
+        self._direct_digest = hashlib.sha256()
+        self._direct_first_event_ts_ns = 0
+        self._direct_last_event_ts_ns = 0
 
     def observe_order_terminal(self, client_order_id: str) -> None:
         cid = str(client_order_id)
@@ -433,6 +529,11 @@ class ExactOpportunityDailyWriter:
             return self._health_payload_locked()
 
     def close(self, *, timeout_s: float = 10.0) -> dict[str, Any]:
+        try:
+            with self._direct_io_lock:
+                self._finalize_direct_chunk()
+        except Exception as exc:
+            self.report_error(f"direct_finalize:{type(exc).__name__}:{exc}")
         with self._lock:
             if self._closed:
                 return self._health_payload_locked()

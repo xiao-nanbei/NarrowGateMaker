@@ -4941,6 +4941,21 @@ void bind_streaming_features(py::module_& m) {
             py::arg("bar_10s"),
             py::arg("cutoff_exclusive_ms")
         )
+        .def(
+            "compute_bucket_values",
+            [](const SignalFeatureEngine& engine, std::int64_t bucket_start_ms) {
+                std::pair<Bar1s, SignalFeatureVector> result;
+                {
+                    py::gil_scoped_release release;
+                    result = engine.compute_bucket(bucket_start_ms);
+                }
+                return py::make_tuple(
+                    result.first,
+                    signal_feature_array(result.second)
+                );
+            },
+            py::arg("bucket_start_ms")
+        )
         .def("bar_count", &SignalFeatureEngine::bar_count)
         .def("history_count", &SignalFeatureEngine::history_count);
 

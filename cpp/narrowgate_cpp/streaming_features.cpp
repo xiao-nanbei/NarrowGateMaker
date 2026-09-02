@@ -995,12 +995,17 @@ SignalFeatureVector SignalFeatureEngine::compute_at_cutoff(
         throw std::invalid_argument("feature cutoff must be positive");
     }
     const auto all = bars_.view();
-    std::size_t visible_count = 0;
-    for (std::size_t i = 0; i < all.size(); ++i) {
-        if (all[i].ts_ms < cutoff_exclusive_ms) {
-            ++visible_count;
+    std::size_t low = 0;
+    std::size_t high = all.size();
+    while (low < high) {
+        const std::size_t middle = low + (high - low) / 2;
+        if (all[middle].ts_ms < cutoff_exclusive_ms) {
+            low = middle + 1;
+        } else {
+            high = middle;
         }
     }
+    const std::size_t visible_count = low;
 
     // Python's causal close/sign state is capped at 320 finalized 1s bars.
     // Retain a larger persistent ring for catch-up, then expose the same tail.
@@ -1008,24 +1013,97 @@ SignalFeatureVector SignalFeatureEngine::compute_at_cutoff(
     const std::size_t skip = visible_count > kCausalBarLookback
         ? visible_count - kCausalBarLookback
         : 0;
-    std::vector<Bar1s> visible;
-    visible.reserve(std::min(visible_count, kCausalBarLookback));
-    std::size_t seen = 0;
-    for (std::size_t i = 0; i < all.size(); ++i) {
-        if (all[i].ts_ms >= cutoff_exclusive_ms) {
-            continue;
-        }
-        if (seen++ < skip) {
-            continue;
-        }
-        visible.push_back(all[i]);
-    }
     return compute_signal_feature_vector(
-        SegmentedSpanView<Bar1s>{
-            std::span<const Bar1s>{visible.data(), visible.size()}},
+        all.subview(skip, visible_count - skip),
         history_.view(),
         bar_10s,
         &return_abs_2160_, &return_abs_8640_, &vol_regime_6h_60480_);
+}
+
+std::pair<Bar1s, SignalFeatureVector> SignalFeatureEngine::compute_bucket(
+    std::int64_t bucket_start_ms
+) const {
+    if (bucket_start_ms < 0 || bucket_start_ms % 10'000 != 0) {
+        throw std::invalid_argument("signal bucket start must be 10s-aligned");
+    }
+    const auto all = bars_.view();
+    std::size_t low = 0;
+    std::size_t high = all.size();
+    while (low < high) {
+        const std::size_t middle = low + (high - low) / 2;
+        if (all[middle].ts_ms < bucket_start_ms) {
+            low = middle + 1;
+        } else {
+            high = middle;
+        }
+    }
+    const std::size_t start = low;
+    constexpr std::size_t kBucketBars = 10;
+    if (all.size() - start < kBucketBars) {
+        throw std::runtime_error("completed signal bucket is missing 1s bars");
+    }
+
+    Bar1s aggregate = all[start];
+    aggregate.ts_ms = bucket_start_ms + 9'000;
+    aggregate.volume = 0.0;
+    aggregate.buy_volume = 0.0;
+    aggregate.sell_volume = 0.0;
+    aggregate.trade_count = 0.0;
+    aggregate.buy_count = 0.0;
+    aggregate.sell_count = 0.0;
+    aggregate.quote_qty = 0.0;
+    aggregate.buy_quote_qty = 0.0;
+    aggregate.sell_quote_qty = 0.0;
+    aggregate.max_same_side_run = 0.0;
+    aggregate.max_buy_run = 0.0;
+    aggregate.max_sell_run = 0.0;
+    aggregate.buy_price_high = 0.0;
+    aggregate.buy_price_low = 0.0;
+    aggregate.sell_price_high = 0.0;
+    aggregate.sell_price_low = 0.0;
+    for (std::size_t index = 0; index < kBucketBars; ++index) {
+        const auto& bar = all[start + index];
+        const std::int64_t expected_ts = bucket_start_ms +
+            static_cast<std::int64_t>(index) * 1'000;
+        if (bar.ts_ms != expected_ts) {
+            throw std::runtime_error(
+                "completed signal bucket lacks an exact causal 1s grid");
+        }
+        aggregate.high = std::max(aggregate.high, bar.high);
+        aggregate.low = std::min(aggregate.low, bar.low);
+        aggregate.close = bar.close;
+        aggregate.volume += bar.volume;
+        aggregate.buy_volume += bar.buy_volume;
+        aggregate.sell_volume += bar.sell_volume;
+        aggregate.trade_count += bar.trade_count;
+        aggregate.buy_count += bar.buy_count;
+        aggregate.sell_count += bar.sell_count;
+        aggregate.quote_qty += bar.quote_qty;
+        aggregate.buy_quote_qty += bar.buy_quote_qty;
+        aggregate.sell_quote_qty += bar.sell_quote_qty;
+        aggregate.max_same_side_run = std::max(
+            aggregate.max_same_side_run, bar.max_same_side_run);
+        aggregate.max_buy_run = std::max(aggregate.max_buy_run, bar.max_buy_run);
+        aggregate.max_sell_run = std::max(aggregate.max_sell_run, bar.max_sell_run);
+        aggregate.buy_price_high = std::max(
+            aggregate.buy_price_high, bar.buy_price_high);
+        if (bar.buy_price_low > 0.0) {
+            aggregate.buy_price_low = aggregate.buy_price_low > 0.0
+                ? std::min(aggregate.buy_price_low, bar.buy_price_low)
+                : bar.buy_price_low;
+        }
+        aggregate.sell_price_high = std::max(
+            aggregate.sell_price_high, bar.sell_price_high);
+        if (bar.sell_price_low > 0.0) {
+            aggregate.sell_price_low = aggregate.sell_price_low > 0.0
+                ? std::min(aggregate.sell_price_low, bar.sell_price_low)
+                : bar.sell_price_low;
+        }
+    }
+    return {
+        aggregate,
+        compute_at_cutoff(aggregate, bucket_start_ms + 10'000),
+    };
 }
 
 std::map<std::string, double> compute_signal_feature_overlay(

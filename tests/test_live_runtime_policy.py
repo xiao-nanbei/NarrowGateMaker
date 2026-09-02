@@ -490,6 +490,50 @@ def test_lifecycle_rejection_fails_central_worker_after_frozen_admission() -> No
         writer.close(drain_timeout_s=1.0)
 
 
+def test_central_writer_commits_specialized_items_directly_in_fifo_order() -> None:
+    calls: list[tuple[str, object]] = []
+    writer = RuntimeEvidenceWriter(queue_capacity=8)
+
+    class _LifecycleWriter:
+        @staticmethod
+        def freeze_order_event(_order, source_event_type, raw_event):
+            return (str(source_event_type), copy.deepcopy(dict(raw_event)))
+
+        @staticmethod
+        def enqueue_frozen_order_event(_event) -> bool:
+            raise AssertionError("secondary lifecycle queue was used")
+
+        @staticmethod
+        def commit_frozen_order_event(event) -> bool:
+            calls.append(("lifecycle", event))
+            return True
+
+    class _ExactWriter:
+        @staticmethod
+        def append(_payload) -> bool:
+            raise AssertionError("secondary exact-opportunity queue was used")
+
+        @staticmethod
+        def commit_frozen(payload) -> bool:
+            calls.append(("exact", copy.deepcopy(dict(payload))))
+            return True
+
+    engine = object.__new__(MakerEngine)
+    engine._runtime_evidence_writer = writer
+    engine._order_lifecycle_live_writer_v2 = _LifecycleWriter()
+    engine._exact_opportunity_tape_runtime = _ExactWriter()
+    order = SimpleNamespace(lifecycle=object())
+
+    engine._record_order_lifecycle_journal(order, "submit", {"sequence": 1})
+    engine._append_exact_opportunity_payload({"sequence": 2})
+    writer.close(drain_timeout_s=1.0)
+
+    assert calls == [
+        ("lifecycle", ("submit", {"sequence": 1})),
+        ("exact", {"sequence": 2}),
+    ]
+
+
 def test_inventory_trade_rows_share_runtime_evidence_writer(
     tmp_path: Path,
 ) -> None:
@@ -1634,6 +1678,109 @@ def test_verified_user_event_updates_monotonic_health_and_callback_failure_latch
     assert engine.latch_runtime_fatal.call_args.kwargs["reconciliation_required"] is True
 
 
+def test_user_order_update_records_raw_private_visibility_before_ledger_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import live.ws_handler as ws_handler_module
+
+    observed: list[tuple[str, int]] = []
+
+    def record_private(event, *, receive_ts_ns):
+        observed.append((f"evidence:{event['X']}", receive_ts_ns))
+
+    def update_order(event):
+        observed.append((f"ledger:{event['X']}", event["_local_receive_ts_ns"]))
+
+    engine = SimpleNamespace(
+        order_gateway=SimpleNamespace(record_private_order_visibility=record_private),
+        orders=SimpleNamespace(on_order_update=update_order),
+        latch_runtime_fatal=Mock(),
+    )
+    handler = WSHandler(engine, Config())
+    handler._running = True
+    handler._user_stream_active = True
+    ws = object()
+    token = handler._install_user_stream_app(ws)
+    assert token is not None
+    handler._on_user_open(ws, token)
+    monkeypatch.setattr(
+        ws_handler_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: 10.0, time_ns=lambda: 456_000_000),
+    )
+
+    handler._on_user_message(
+        ws,
+        json.dumps(
+            {
+                "e": "ORDER_TRADE_UPDATE",
+                "o": {"c": "mm_B_2", "x": "NEW", "X": "NEW", "i": 42},
+            }
+        ),
+        token,
+    )
+
+    assert observed == [
+        ("evidence:NEW", 456_000_000),
+        ("ledger:NEW", 456_000_000),
+    ]
+    engine.latch_runtime_fatal.assert_not_called()
+
+
+def test_private_visibility_failure_still_updates_ledger_before_fatal_latch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import live.ws_handler as ws_handler_module
+
+    observed: list[str] = []
+
+    def fail_evidence(_event, *, receive_ts_ns):
+        assert receive_ts_ns == 789_000_000
+        observed.append("evidence_failed")
+        raise RuntimeError("evidence queue full")
+
+    def update_order(event):
+        assert event["_local_receive_ts_ns"] == 789_000_000
+        observed.append("ledger_updated")
+
+    engine = SimpleNamespace(
+        order_gateway=SimpleNamespace(record_private_order_visibility=fail_evidence),
+        orders=SimpleNamespace(on_order_update=update_order),
+        latch_runtime_fatal=Mock(),
+    )
+    handler = WSHandler(engine, Config())
+    handler._running = True
+    handler._user_stream_active = True
+    ws = object()
+    token = handler._install_user_stream_app(ws)
+    assert token is not None
+    handler._on_user_open(ws, token)
+    monkeypatch.setattr(
+        ws_handler_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: 10.0, time_ns=lambda: 789_000_000),
+    )
+
+    handler._on_user_message(
+        ws,
+        json.dumps(
+            {
+                "e": "ORDER_TRADE_UPDATE",
+                "o": {"c": "mm_B_3", "x": "TRADE", "X": "FILLED", "i": 43},
+            }
+        ),
+        token,
+    )
+
+    assert observed == ["evidence_failed", "ledger_updated"]
+    engine.latch_runtime_fatal.assert_called_once()
+    fatal = engine.latch_runtime_fatal.call_args.kwargs
+    assert fatal["reason"] == "USER_EVENT_CALLBACK_FAILURE:ORDER_TRADE_UPDATE"
+    assert fatal["reconciliation_required"] is True
+    assert isinstance(fatal["error"], RuntimeError)
+    assert str(fatal["error"]) == "private order visibility evidence admission failed"
+
+
 def test_user_stream_session_fences_stale_callbacks_messages_and_late_install() -> None:
     orders = SimpleNamespace(on_order_update=Mock())
     handler = WSHandler(
@@ -1874,6 +2021,42 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine._cancel_all_orders.assert_called_once_with()
     engine.sync_position.assert_called_once_with(required=True)
     engine.orders.cancel_all_local.assert_not_called()
+
+
+def test_normal_stop_fails_when_specialized_evidence_finalize_is_invalid() -> None:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine.orders = SimpleNamespace(
+        fatal_status=Mock(
+            return_value={"latched": False, "reconciliation_required": False}
+        ),
+        cancel_all_local=Mock(),
+    )
+    engine.signal = SimpleNamespace(stop=Mock())
+    engine._persist_fill_cooldown_checkpoint = Mock()
+    engine._cancel_all_orders = Mock(return_value=True)
+    engine.sync_position = Mock(return_value=True)
+    engine._running = True
+    engine._order_submit_fail_closed = False
+    engine._order_lifecycle_live_writer_v2 = None
+    engine._exact_opportunity_tape_runtime = SimpleNamespace(
+        close=Mock(
+            return_value={
+                "rows_written": 4,
+                "rows_dropped": 0,
+                "error_count": 1,
+                "formal_collection_valid": False,
+            }
+        )
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="specialized evidence writer shutdown was invalid",
+    ):
+        engine.stop()
+
+    assert engine._exact_opportunity_tape_runtime is None
 
 
 def test_q90_action_state_cannot_change_via_sighup() -> None:

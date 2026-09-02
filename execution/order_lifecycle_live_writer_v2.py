@@ -376,6 +376,7 @@ class OrderLifecycleLiveWriterV2:
         self._last_worker_flush_ts_ns = 0
         self._last_health_write_ts_ns = 0
         self._closed = False
+        self._submission_owner = ""
         self._worker_alive = False
         self._worker_thread_cpu_s = 0.0
         self._heartbeat_interval_s = float(heartbeat_interval_s)
@@ -645,6 +646,10 @@ class OrderLifecycleLiveWriterV2:
         try:
             if self._closed:
                 raise RuntimeError("live lifecycle writer is closed")
+            with self._enqueue_metrics_lock:
+                if self._submission_owner not in {"", "internal_queue"}:
+                    raise RuntimeError("lifecycle writer submission owner changed")
+                self._submission_owner = "internal_queue"
             self._queue.put_nowait(item)
             elapsed_ns = int(item.capture_latency_ns) + max(
                 0,
@@ -691,6 +696,65 @@ class OrderLifecycleLiveWriterV2:
                 self._producer_last_error_ts_ns = error_ts_ns
             return False
 
+    def commit_frozen_order_event(self, item: _LifecycleWorkItem) -> bool:
+        """Commit a frozen callback on an owning external FIFO worker.
+
+        This is the single-queue counterpart of ``enqueue_frozen_order_event``.
+        The caller must serialize calls (the live runtime evidence writer does);
+        mutable order state is never reread here.
+        """
+
+        if not isinstance(item, _LifecycleWorkItem):
+            raise TypeError("frozen lifecycle work item is required")
+        started = time.perf_counter_ns()
+        prepared: _PreparedLifecycleWorkItem | None = None
+        try:
+            if self._closed:
+                raise RuntimeError("live lifecycle writer is closed")
+            with self._enqueue_metrics_lock:
+                if self._submission_owner not in {"", "external_fifo"}:
+                    raise RuntimeError("lifecycle writer submission owner changed")
+                self._submission_owner = "external_fifo"
+                self._enqueue_latency_pending_ns.append(int(item.capture_latency_ns))
+                self._enqueued += 1
+                self._last_enqueue_ts_ns = time.time_ns()
+            prepared = self._prepare_work_item(item)
+            self._register_or_update(prepared)
+            result = self._bridge.submit_callback(
+                lifecycle_id=prepared.lifecycle_id,
+                lifecycle=prepared.lifecycle,
+                callback=prepared.callback,
+            )
+            with self._metrics_lock:
+                self._processed += 1
+                self._rows_committed += int(result.row_count)
+                self._last_worker_flush_ts_ns = time.time_ns()
+            return True
+        except Exception as exc:
+            client_order_id = (
+                prepared.client_order_id
+                if prepared is not None
+                else _diagnostic_text(item.client_order_id)
+            )
+            lifecycle_id = (
+                prepared.lifecycle_id
+                if prepared is not None
+                else f"{self.baseline_epoch_id}:{client_order_id}"
+            )
+            with self._metrics_lock:
+                self._errors += 1
+                self._last_error = (
+                    "worker:"
+                    f"lifecycle_id={lifecycle_id}:"
+                    f"client_order_id={client_order_id}:"
+                    f"{type(exc).__name__}:{exc}"
+                )
+                self._last_error_ts_ns = time.time_ns()
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter_ns() - started) / 1_000_000.0
+            with self._metrics_lock:
+                self._write_latency_pending_ms.append(elapsed_ms)
     def enqueue_order_event(
         self,
         order: Any,

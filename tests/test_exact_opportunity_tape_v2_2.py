@@ -184,6 +184,59 @@ def test_writer_quarantines_hot_start_and_emits_health_and_ready_chunk(
     assert validation["operational_lifecycle_outcomes_read"] is True
 
 
+def test_direct_commit_bypasses_secondary_queue_and_finalizes_on_close(
+    tmp_path: Path,
+) -> None:
+    writer = ExactOpportunityDailyWriter(
+        tmp_path,
+        runtime_identity=_identity(),
+        session_id="direct-session",
+        queue_size=1,
+        flush_rows=1,
+    )
+    assert writer.commit_frozen(_row(time.time_ns())) is True
+    assert writer._queue.qsize() == 0
+
+    health = writer.close()
+    assert health["rows_enqueued"] == 1
+    assert health["rows_written"] == 1
+    assert health["rows_dropped"] == 0
+    assert validate_ready_chunk(_ready_manifest(tmp_path))["valid"] is True
+
+
+def test_exact_writer_submission_owner_cannot_mix_direct_and_queue(
+    tmp_path: Path,
+) -> None:
+    writer = ExactOpportunityDailyWriter(
+        tmp_path,
+        runtime_identity=_identity(),
+        session_id="owner-latch",
+    )
+    assert writer.commit_frozen(_row(time.time_ns())) is True
+    with pytest.raises(RuntimeError, match="submission owner changed"):
+        writer.append(_row(time.time_ns() + 1))
+    health = writer.close()
+    assert health["rows_written"] == 1
+
+
+def test_exact_direct_commit_failure_is_sticky(tmp_path: Path) -> None:
+    writer = ExactOpportunityDailyWriter(
+        tmp_path,
+        runtime_identity=_identity(),
+        session_id="direct-error",
+    )
+    writer._commit_direct_row = lambda _row: (_ for _ in ()).throw(
+        OSError("synthetic direct write failure")
+    )
+    with pytest.raises(OSError, match="synthetic direct write failure"):
+        writer.commit_frozen(_row(time.time_ns()))
+
+    health = writer.close()
+    assert health["error_count"] == 1
+    assert health["formal_collection_valid"] is False
+    assert "direct_commit:OSError" in health["last_error"]
+
+
 def test_writer_error_invalidates_chunk_and_blocks_ready_admission(
     tmp_path: Path,
 ) -> None:

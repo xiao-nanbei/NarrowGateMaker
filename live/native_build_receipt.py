@@ -40,6 +40,7 @@ PARITY_TESTS = (
     "tests/test_cpp_quote_core_parity.py",
     "tests/test_cpp_tick_replay_golden_parity.py",
     "tests/test_conditional_p3_cpp_overlay.py",
+    "tests/test_cpp_signal_features.py",
 )
 
 
@@ -231,6 +232,15 @@ def build_receipt(
     )
     if any(not hasattr(narrowgate_cpp, name) for name in required):
         raise NativeBuildReceiptError("native module lacks required live API")
+    required_class_members = {
+        "SignalFeatureEngine": ("compute_bucket_values",),
+    }
+    if any(
+        not hasattr(getattr(narrowgate_cpp, class_name), member)
+        for class_name, members in required_class_members.items()
+        for member in members
+    ):
+        raise NativeBuildReceiptError("native module lacks required live class API")
     quote = narrowgate_cpp.QuoteFlags()
     side = narrowgate_cpp.SideQuoteContext()
     if any(
@@ -283,6 +293,10 @@ def build_receipt(
         "abi_contract": {
             "schema_version": "narrowgate_native_runtime_abi.v1",
             "required_apis": list(required),
+            "required_class_members": {
+                class_name: list(members)
+                for class_name, members in required_class_members.items()
+            },
             "required_quote_fields": {
                 "QuoteFlags": ["delta_cap", "final_compressed", "cap_exposure_block"],
                 "SideQuoteContext": ["cap_exposure_block"],
