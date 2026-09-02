@@ -10,6 +10,38 @@ import pytest
 from live import native_build_receipt as subject
 
 
+def test_production_live_cpu_build_requires_measured_profile() -> None:
+    module = type(
+        "Module",
+        (),
+        {
+            "NATIVE_LIVE_BUILD_PROFILE": subject.PRODUCTION_LIVE_CPU_PROFILE,
+            "NATIVE_LIVE_BUILD_COMPILE_OPTIONS": " ".join(
+                subject.PRODUCTION_LIVE_COMPILE_OPTIONS
+            ),
+            "NATIVE_LIVE_BUILD_IS_PRODUCTION": True,
+            "NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS": 256,
+        },
+    )()
+
+    assert subject._production_live_cpu_build(module) == {  # noqa: SLF001
+        "profile": "ec2-cascadelake-avx2",
+        "compile_options": (
+            "-O3 -march=haswell -mtune=cascadelake "
+            "-mprefer-vector-width=256 -fno-fast-math "
+            "-ffp-contract=off -fno-lto"
+        ),
+        "production": True,
+        "preferred_vector_width_bits": 256,
+    }
+
+    module.NATIVE_LIVE_BUILD_PROFILE = "portable"
+    module.NATIVE_LIVE_BUILD_IS_PRODUCTION = False
+    module.NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS = 0
+    with pytest.raises(subject.NativeBuildReceiptError, match="Cascade Lake profile"):
+        subject._production_live_cpu_build(module)  # noqa: SLF001
+
+
 def test_native_parity_smoke_forces_no_bytecode_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

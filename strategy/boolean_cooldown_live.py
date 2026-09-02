@@ -13,6 +13,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from strategy.native_cooldown import (
+    build_hot_path,
+    native_fallback_reason,
+)
+
 BASE_WINDOW_WIDTH_NS = 100_000_000
 CONTROL_ACTION = "CONTROL_85N"
 OWNER_POLICY_IDENTITY = "causal_multichannel_window_boolean_cooldown_owner_policy_v1"
@@ -618,6 +623,7 @@ class LiveBooleanCooldownPolicy:
         evaluator: RuntimeCooldownPolicyEvaluator,
         warmup_s: float,
         max_feature_age_s: float,
+        native_runtime: bool | None = None,
     ) -> None:
         if evaluator.predicate_columns != OWNER_POLICY_SELECTED_PREDICATES:
             raise ValueError("boolean cooldown selected predicate family drifted")
@@ -625,6 +631,13 @@ class LiveBooleanCooldownPolicy:
         self.windows = ReceiveTimeMidEmaWindows(
             warmup_s=warmup_s,
             max_feature_age_s=max_feature_age_s,
+        )
+        self._native_cpp, self._native_hot_path = build_hot_path(
+            self,
+            profile="SELL",
+            warmup_s=warmup_s,
+            max_feature_age_s=max_feature_age_s,
+            requested=native_runtime,
         )
         self._lock = threading.Lock()
         self._evaluations = 0
@@ -659,7 +672,20 @@ class LiveBooleanCooldownPolicy:
         )
 
     def observe_depth(self, **kwargs: Any) -> None:
-        self.windows.observe_depth(**kwargs)
+        if self._native_hot_path is None:
+            self.windows.observe_depth(**kwargs)
+            return
+        try:
+            bid = float(kwargs["bids"][0][0])
+            ask = float(kwargs["asks"][0][0])
+        except (KeyError, IndexError, TypeError, ValueError):
+            bid = math.nan
+            ask = math.nan
+        self._native_hot_path.observe_depth(
+            int(kwargs.get("receive_ts_ns", 0)),
+            bid,
+            ask,
+        )
 
     def evaluate(
         self,
@@ -670,6 +696,52 @@ class LiveBooleanCooldownPolicy:
         decision_ts_ns: int,
         snapshot_id: str,
     ) -> LiveBooleanCooldownDecision:
+        if self._native_hot_path is not None and str(side).upper() == "SELL":
+            native = self._native_hot_path.evaluate(
+                int(decision_ts_ns),
+                float(campaign_age_s),
+                int(baseline_duration_ms),
+            )
+            reason = native_fallback_reason(self._native_cpp, native)
+            matched_rule = (
+                None if int(native.matched_rule_index) < 0 else int(native.matched_rule_index)
+            )
+            action = (
+                f"FIXED_{int(native.duration_ms) // 1_000}S"
+                if matched_rule is not None
+                else CONTROL_ACTION
+            )
+            decision = CooldownDurationDecision(
+                action_id=action,
+                duration_ms=int(native.duration_ms),
+                fallback_reason=reason,
+                matched_rule_index=matched_rule,
+                policy_sha256=self.evaluator.policy_sha256,
+                predicate_bundle_sha256=self.evaluator.predicate_bundle_sha256,
+                snapshot_id=str(snapshot_id),
+                support_valid=bool(native.support_valid),
+            )
+            feature_ready = int(native.feature_ready_ts_ns)
+            age_ms = float(native.feature_age_ms)
+            with self._lock:
+                self._evaluations += 1
+                self._supported += int(decision.support_valid)
+                self._nonbaseline += int(decision.action_id != CONTROL_ACTION)
+                self._fallback += int(decision.fallback_reason is not None)
+                self._last_action = decision.action_id
+                self._last_fallback = decision.fallback_reason or ""
+                self._last_decision_wall_s = time.time()
+            return LiveBooleanCooldownDecision(
+                action_id=decision.action_id,
+                duration_ms=decision.duration_ms,
+                fallback_reason=decision.fallback_reason,
+                matched_rule_index=decision.matched_rule_index,
+                support_valid=decision.support_valid,
+                policy_sha256=decision.policy_sha256,
+                predicate_bundle_sha256=decision.predicate_bundle_sha256,
+                feature_ready_ts_ns=feature_ready,
+                feature_age_ms=age_ms,
+            )
         values, reason, feature_ready, age_ms = self.windows.predicate_values(
             decision_ts_ns=int(decision_ts_ns),
             campaign_age_s=float(campaign_age_s),
@@ -736,7 +808,22 @@ class LiveBooleanCooldownPolicy:
                 "policy_sha256": self.evaluator.policy_sha256,
                 "predicate_bundle_sha256": self.evaluator.predicate_bundle_sha256,
             }
-        return {**policy, "windows": self.windows.audit()}
+        if self._native_hot_path is None:
+            windows = self.windows.audit()
+        else:
+            native = self._native_hot_path.audit()
+            windows = {
+                "updates": int(native.updates),
+                "completed_windows": int(native.completed_windows),
+                "gap_windows": int(native.gap_windows),
+                "resets": int(native.resets),
+                "invalid_updates": int(native.invalid_updates),
+                "out_of_order_updates": int(native.out_of_order_updates),
+                "warmup_admitted": int(native.warmup_admitted),
+                "feature_ready_ts_ns": int(native.feature_ready_ts_ns),
+                "last_error": "",
+            }
+        return {**policy, "windows": windows}
 
 
 __all__ = [

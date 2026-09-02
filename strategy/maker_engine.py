@@ -51,6 +51,12 @@ from execution.exact_opportunity_tape_runtime import (
 )
 from strategy.inventory_manager import InventoryManager, PositionState
 from strategy.model_contract import f03_direct_quote_action_contract
+from strategy.native_order_action import (
+    CheckedNativeOrderActionPlanner,
+    NativeOrderActionBoundaryError,
+    NativeOrderSideBoundary,
+    quantity_from_lots,
+)
 from strategy.order_manager import OrderManager, OrderState, Side
 from strategy.post_fill_quote_response import (
     PostFillQuoteResponse,
@@ -68,7 +74,9 @@ from strategy.quote_core import (
     compose_ber_exposure_add_only_quote,
     circuit_breaker_loss_threshold,
     circuit_breaker_triggered,
+    compute_native_quote_policy_stage_live,
     compute_quote_core_live,
+    make_native_quote_policy_stage,
     microprice_from_book,
     quote_core_config_from_live_config,
     quote_depth_from_book,
@@ -776,6 +784,21 @@ _buy_fill_selection_model = None
 _buy_fill_selection_model_path = None
 _live_routing_cpp = None
 _live_routing_cpp_failed = False
+_live_order_action_plan_cpp = None
+
+
+_NATIVE_REPLACE_CONTINUATION_METHODS = (
+    "arm",
+    "publish",
+    "clear_exact",
+    "clear_side",
+    "clear_unready",
+    "take_ready",
+    "finalize_decision",
+    "drop_in_flight",
+    "clear_all",
+    "telemetry",
+)
 
 
 def _cpp_strict() -> bool:
@@ -784,6 +807,62 @@ def _cpp_strict() -> bool:
 
 def _live_routing_cpp_enabled() -> bool:
     return os.environ.get("NARROWGATE_CPP_LIVE_ROUTING", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _live_order_action_plan_cpp_enabled() -> bool:
+    return os.environ.get(
+        "NARROWGATE_CPP_ORDER_ACTION_PLAN",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _native_replace_continuation_enabled() -> bool:
+    return os.environ.get(
+        "NARROWGATE_CPP_REPLACE_CONTINUATION",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_native_replace_continuation_state():
+    """Load the explicitly selected native continuation owner or fail closed."""
+
+    if not _native_replace_continuation_enabled():
+        return None, None
+    try:
+        import narrowgate_cpp  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(
+            "NARROWGATE_CPP_REPLACE_CONTINUATION=1 requires narrowgate_cpp"
+        ) from exc
+
+    required_module_members = (
+        "NativeReplaceContinuationState",
+        "ReplaceContinuationEventKind",
+        "Side",
+    )
+    missing = [
+        name for name in required_module_members if not hasattr(narrowgate_cpp, name)
+    ]
+    if missing:
+        raise RuntimeError(
+            "native replacement-continuation ABI is incomplete: "
+            + ", ".join(missing)
+        )
+    native_state = narrowgate_cpp.NativeReplaceContinuationState(True)
+    missing_methods = [
+        name
+        for name in _NATIVE_REPLACE_CONTINUATION_METHODS
+        if not callable(getattr(native_state, name, None))
+    ]
+    if missing_methods:
+        raise RuntimeError(
+            "native replacement-continuation ABI is incomplete: "
+            + ", ".join(missing_methods)
+        )
+    native_side = narrowgate_cpp.Side
+    if not hasattr(native_side, "Buy") or not hasattr(native_side, "Sell"):
+        raise RuntimeError("native replacement-continuation ABI has no BUY/SELL sides")
+    return narrowgate_cpp, native_state
 
 
 def _get_live_routing_cpp():
@@ -805,6 +884,55 @@ def _get_live_routing_cpp():
         if _cpp_strict():
             raise
         return None
+
+
+def _get_live_order_action_plan_cpp():
+    """Load the explicitly selected native planner or fail closed.
+
+    Unlike optional historical accelerators, this component sits immediately
+    before order lifecycle actions.  An explicit enable can therefore never
+    downgrade silently to a different Python decision path.
+    """
+
+    global _live_order_action_plan_cpp
+    if not _live_order_action_plan_cpp_enabled():
+        return None
+    if _live_order_action_plan_cpp is not None:
+        return _live_order_action_plan_cpp
+    try:
+        import narrowgate_cpp  # type: ignore
+    except Exception as exc:
+        raise RuntimeError(
+            "NARROWGATE_CPP_ORDER_ACTION_PLAN=1 requires narrowgate_cpp"
+        ) from exc
+    required = (
+        "compute_live_order_action_plan",
+        "LiveOrderAction",
+        "LivePlannerOrderState",
+        "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
+        "LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_POST",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE",
+        "LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE",
+        "LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE",
+        "LIVE_ORDER_REASON_THROTTLE_PRICE",
+        "LIVE_ORDER_REASON_THROTTLE_AGE",
+        "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
+        "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
+    )
+    missing = [name for name in required if not hasattr(narrowgate_cpp, name)]
+    if missing:
+        raise RuntimeError(
+            "native order-action planner ABI is incomplete: "
+            + ", ".join(missing)
+        )
+    if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
+        raise RuntimeError("native order-action planner capability is unavailable")
+    _live_order_action_plan_cpp = narrowgate_cpp
+    return _live_order_action_plan_cpp
 
 
 def _resolve_model_dir(cfg) -> Optional[Path]:
@@ -1337,6 +1465,14 @@ class MakerEngine:
         self._order_ref_lock = threading.RLock()
         self._order_context_lock = threading.RLock()
         self._replace_terminal_continuation_lock = threading.Lock()
+        (
+            self._replace_terminal_continuation_native_module,
+            self._replace_terminal_continuation_native_state,
+        ) = _build_native_replace_continuation_state()
+        self._native_order_action_planner = None
+        self._native_quote_policy_stage = None
+        self._native_quote_policy_stage_key = None
+        self._native_quote_policy_results: dict[str, Any] = {}
         self._reconciliation_lock = threading.Lock()
         self._runtime_fatal_lock = threading.Lock()
         self._order_lifecycle_journal_lock = threading.Lock()
@@ -4660,6 +4796,7 @@ class MakerEngine:
         *,
         mutate_state: bool = True,
         shared_inputs: Optional[dict[str, Any]] = None,
+        native_common: Any = None,
     ) -> SidePolicyDecision:
         cfg = self.cfg
         side_name = side.value
@@ -4709,17 +4846,18 @@ class MakerEngine:
         if mutate_state:
             self._expire_fill_cooldown_state(side_name, now)
         cooldown_until = self._fill_cooldown_until.get(side_name, 0.0)
+        common_input_fill_cooldown_active = bool(
+            cooldown_until > now
+            and (exposure_increasing or reducing_cooldown_enabled)
+        )
         quote_ctx = self._last_quote_context.get(side_name, {})
         if not isinstance(quote_ctx, dict):
             quote_ctx = {}
         decision.order_ttl_ms = int(max(0, int(quote_ctx.get("order_ttl_ms", 0) or 0)))
-        common = evaluate_common_side_policy(
-            CommonSidePolicyInput(
+        if native_common is None:
+            common = evaluate_common_side_policy(CommonSidePolicyInput(
                 exposure_increasing=exposure_increasing,
-                fill_cooldown_active=bool(
-                    cooldown_until > now
-                    and (exposure_increasing or reducing_cooldown_enabled)
-                ),
+                fill_cooldown_active=common_input_fill_cooldown_active,
                 inventory_ratio=inventory_ratio,
                 depth_age_s=decision.depth_age_s,
                 max_book_age_s=float(
@@ -4743,13 +4881,19 @@ class MakerEngine:
                 defense_guard=bool(quote_ctx.get("defense_guard", False)),
                 defense_spread_mult=float(quote_ctx.get("defense_spread_mult", 1.0) or 1.0),
                 defense_pause=bool(quote_ctx.get("defense_pause", False)),
-            )
-        )
+            ))
+        else:
+            common = native_common
         decision.allow_post = common.allow_post
         decision.allow_exposure_increase = common.allow_exposure_increase
         decision.spread_mult = common.spread_mult
         decision.size_mult = common.size_mult
         decision.reason_mask = common.reason_mask
+        if native_common is not None and common_input_fill_cooldown_active:
+            # Preserve the B0 evaluation clock and state-expiry side effect.
+            # The fused stage intentionally excludes this time-sensitive bit.
+            decision.allow_post = False
+            decision.reason_mask |= POLICY_REASON_FILL_COOLDOWN
 
         if mutate_state:
             self._apply_buy_fill_selection_live_arm(
@@ -4773,6 +4917,51 @@ class MakerEngine:
         decision.size_mult = max(0.0, min(1.0, decision.size_mult))
         decision.reason_text = self._policy_reason_text(decision.reason_mask)
         return decision
+
+    def _native_common_policy_input(
+        self,
+        side: Side,
+        *,
+        q: float,
+        pred: Prediction,
+        quote_snapshot: QuoteDecisionSnapshot,
+        metrics: dict[str, Any],
+    ) -> CommonSidePolicyInput:
+        """Build only the non-quote fields consumed by the fused native stage."""
+        max_inv = max(float(self.cfg.strategy.max_inventory), 1e-9)
+        exposure_increasing = (
+            (side == Side.BUY and q >= 0.0)
+            or (side == Side.SELL and q <= 0.0)
+        )
+        tox_bid, tox_ask = self._toxicity_probs(pred)
+        return CommonSidePolicyInput(
+            exposure_increasing=exposure_increasing,
+            # This decision is time-sensitive and remains at the original
+            # _build_side_policy point.  The native stateless stage must not
+            # move a cooldown-expiry boundary earlier in the decision.
+            fill_cooldown_active=False,
+            inventory_ratio=min(abs(q) / max_inv, 1.0),
+            depth_age_s=float(metrics["depth_age_s"]),
+            max_book_age_s=float(
+                getattr(self.cfg.risk, "max_exec_book_visible_age_s", 0.0)
+            ),
+            toxicity=tox_bid if side == Side.BUY else tox_ask,
+            markout_ema=self._mo_ema_bid if side == Side.BUY else self._mo_ema_ask,
+            markout_spread_scale=float(
+                getattr(self.cfg.strategy, "markout_spread_scale", 0.0) or 0.0
+            ),
+            markout_reference=self._mo_ref,
+            microprice_shift_bps=float(metrics["microprice_shift_bps"]),
+            l2_quote_flip_rate=float(metrics["l2_quote_flip_rate"]),
+            l2_book_cancel_ratio=float(metrics["l2_book_cancel_ratio"]),
+            l2_near_depth_total=float(metrics["l2_near_depth_total"]),
+            thin_depth_threshold=float(
+                getattr(self.cfg.strategy, "thin_depth_threshold", 0.0) or 0.0
+            ),
+            kappa_depth_baseline=float(
+                getattr(self.cfg.strategy, "kappa_depth_baseline", 50.0)
+            ),
+        )
 
     def _fill_cooldown_reset_policy(self) -> str:
         return normalize_consecutive_reset_policy(
@@ -6973,13 +7162,72 @@ class MakerEngine:
             or getattr(cfg.strategy, "buy_fill_selection_live_enabled", False)
         )
         quote_depth = quote_depth_from_book(depth_raw)
-        result = compute_quote_core_live(
-            quote_state,
-            quote_cfg,
-            quote_pred,
-            quote_depth,
-            require_full_context=require_full_quote_context,
-        )
+        native_stage_enabled = os.environ.get(
+            "NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._native_quote_policy_results = {}
+        if native_stage_enabled:
+            if bool(getattr(cfg.strategy, "ber_exposure_add_only", False)):
+                raise RuntimeError(
+                    "native quote-policy stage does not admit the two-pass BER quote path"
+                )
+            if bool(getattr(cfg.strategy, "local_extreme_guard_enabled", False)) or float(
+                getattr(cfg.strategy, "fragile_order_ttl_s", 0.0) or 0.0
+            ) > 0.0:
+                raise RuntimeError(
+                    "native quote-policy stage requires local-extreme/fragile TTL off"
+                )
+            stage_key = (quote_cfg_key, id(quote_cfg))
+            if (
+                getattr(self, "_native_quote_policy_stage", None) is None
+                or getattr(self, "_native_quote_policy_stage_key", None)
+                != stage_key
+            ):
+                self._native_quote_policy_stage = make_native_quote_policy_stage(
+                    quote_cfg
+                )
+                self._native_quote_policy_stage_key = stage_key
+            policy_metrics = self._current_l2_policy_metrics(mid, quote_snapshot)
+            buy_common_input = self._native_common_policy_input(
+                Side.BUY,
+                q=q,
+                pred=pred,
+                quote_snapshot=quote_snapshot,
+                metrics=policy_metrics,
+            )
+            sell_common_input = self._native_common_policy_input(
+                Side.SELL,
+                q=q,
+                pred=pred,
+                quote_snapshot=quote_snapshot,
+                metrics=policy_metrics,
+            )
+            result, native_buy_policy, native_sell_policy = (
+                compute_native_quote_policy_stage_live(
+                    self._native_quote_policy_stage,
+                    quote_state,
+                    quote_cfg,
+                    quote_pred,
+                    quote_depth,
+                    buy_common_input,
+                    sell_common_input,
+                    require_full_context=require_full_quote_context,
+                )
+            )
+            self._native_quote_policy_results = {
+                "BUY": native_buy_policy,
+                "SELL": native_sell_policy,
+                "_l2_policy_metrics": policy_metrics,
+                "_toxicity_probs": self._toxicity_probs(pred),
+            }
+        else:
+            result = compute_quote_core_live(
+                quote_state,
+                quote_cfg,
+                quote_pred,
+                quote_depth,
+                require_full_context=require_full_quote_context,
+            )
         if (
             bool(getattr(cfg.strategy, "ber_exposure_add_only", False))
             and bool(quote_state.ber_active)
@@ -7426,6 +7674,18 @@ class MakerEngine:
         # prediction.  The first side lazily populates these pure inputs; the
         # second reuses them instead of walking the full 10-second L2 history.
         shared_side_policy_inputs: dict[str, Any] = {}
+        native_common_results = getattr(
+            self, "_native_quote_policy_results", {}
+        )
+        self._native_quote_policy_results = {}
+        if "_l2_policy_metrics" in native_common_results:
+            shared_side_policy_inputs["l2_policy_metrics"] = (
+                native_common_results["_l2_policy_metrics"]
+            )
+        if "_toxicity_probs" in native_common_results:
+            shared_side_policy_inputs["toxicity_probs"] = (
+                native_common_results["_toxicity_probs"]
+            )
 
         bid_policy = self._build_side_policy(
             Side.BUY,
@@ -7435,6 +7695,7 @@ class MakerEngine:
             quote_snapshot,
             mutate_state=bid_route_allowed,
             shared_inputs=shared_side_policy_inputs,
+            native_common=native_common_results.get("BUY"),
         )
         ask_policy = self._build_side_policy(
             Side.SELL,
@@ -7444,6 +7705,7 @@ class MakerEngine:
             quote_snapshot,
             mutate_state=ask_route_allowed,
             shared_inputs=shared_side_policy_inputs,
+            native_common=native_common_results.get("SELL"),
         )
         if bid_route_allowed and ask_route_allowed:
             self._apply_flat_unilateral_ttl(q, bid_policy, ask_policy)
@@ -7705,40 +7967,59 @@ class MakerEngine:
                 lot,
             )
 
+        native_order_action_planner = getattr(
+            self,
+            "_native_order_action_planner",
+            None,
+        )
+        if (
+            native_order_action_planner is None
+            and _live_order_action_plan_cpp_enabled()
+        ):
+            raise RuntimeError(
+                "native order-action planner was not frozen after exchange filters"
+            )
+
         # Re-evaluate the fixed quote-currency fuse for orders that would
         # otherwise be kept solely because their price drift is small.  A mark
         # move or an intervening fill can make a previously valid remaining
         # quantity exceed the current notional room.  Force the normal
         # cancel/replace path now; the replacement is capped again immediately
         # before submit below.
-        for side, order, alive in (
-            (Side.BUY, bid_order, bid_alive),
-            (Side.SELL, ask_order, ask_alive),
-        ):
-            if not alive or order is None:
-                continue
-            remaining_qty = max(
-                0.0,
-                float(getattr(order, "remaining_qty", 0.0) or 0.0),
-            )
-            if not _exposure_increasing(side.value, q, remaining_qty, lot):
-                continue
-            allowed_qty = self._cap_exposure_qty_by_position_value(
-                side=side,
-                current_qty=q,
-                mid=mid,
-                requested_qty=remaining_qty,
-                max_position_value=float(cfg.risk.max_position_value),
-                lot=lot,
-            )
-            if allowed_qty + max(lot * 1e-9, 1e-12) >= remaining_qty:
-                continue
-            if side == Side.BUY:
-                bid_needs_update = True
-                bid_force_update = True
-            else:
-                ask_needs_update = True
-                ask_force_update = True
+        if native_order_action_planner is None:
+            for side, order, alive in (
+                (Side.BUY, bid_order, bid_alive),
+                (Side.SELL, ask_order, ask_alive),
+            ):
+                if not alive or order is None:
+                    continue
+                remaining_qty = max(
+                    0.0,
+                    float(getattr(order, "remaining_qty", 0.0) or 0.0),
+                )
+                if not _exposure_increasing(
+                    side.value,
+                    q,
+                    remaining_qty,
+                    lot,
+                ):
+                    continue
+                allowed_qty = self._cap_exposure_qty_by_position_value(
+                    side=side,
+                    current_qty=q,
+                    mid=mid,
+                    requested_qty=remaining_qty,
+                    max_position_value=float(cfg.risk.max_position_value),
+                    lot=lot,
+                )
+                if allowed_qty + max(lot * 1e-9, 1e-12) >= remaining_qty:
+                    continue
+                if side == Side.BUY:
+                    bid_needs_update = True
+                    bid_force_update = True
+                else:
+                    ask_needs_update = True
+                    ask_force_update = True
 
         update_orders_prepare_state_routing_end_ns = time.perf_counter_ns()
         state_policy_max_spread = float(
@@ -8002,63 +8283,196 @@ class MakerEngine:
             ask_force_update = False
 
         update_orders_prepare_end_ns = time.perf_counter_ns()
-        bid_needs_update = self._apply_replace_throttle(
-            side=Side.BUY,
-            now_ts=now_ts,
-            q=q,
-            target_price=bid_price,
-            order=bid_order,
-            needs_update=bool(bid_needs_update),
-            force_update=bool(bid_force_update),
+        native_order_action_module = (
+            native_order_action_planner.native_module
+            if native_order_action_planner is not None
+            else None
         )
-        ask_needs_update = self._apply_replace_throttle(
-            side=Side.SELL,
-            now_ts=now_ts,
-            q=q,
-            target_price=ask_price,
-            order=ask_order,
-            needs_update=bool(ask_needs_update),
-            force_update=bool(ask_force_update),
-        )
-        bid_pending_coalesce = self._apply_pending_replace_coalesce(
-            side=Side.BUY,
-            now_ts=now_ts,
-            q=q,
-            target_price=bid_price,
-            order=bid_order,
-            needs_update=bool(bid_needs_update),
-            can_post=bool(can_bid),
-        )
-        ask_pending_coalesce = self._apply_pending_replace_coalesce(
-            side=Side.SELL,
-            now_ts=now_ts,
-            q=q,
-            target_price=ask_price,
-            order=ask_order,
-            needs_update=bool(ask_needs_update),
-            can_post=bool(can_ask),
-        )
-        if bid_pending_coalesce:
-            bid_needs_update = False
-        if ask_pending_coalesce:
-            ask_needs_update = False
+        native_order_action_plan = None
+        if native_order_action_planner is not None:
+            try:
+                native_order_action_plan = native_order_action_planner.compute(
+                    inventory=float(q),
+                    mid=float(mid),
+                    now_ts=float(now_ts),
+                    buy=NativeOrderSideBoundary(
+                        target_price=float(bid_price),
+                        desired_quantity=float(bid_size_pre),
+                        exposure_probe_quantity=float(base_size),
+                        order=bid_order,
+                        needs_update=bool(bid_needs_update),
+                        force_update=bool(bid_force_update),
+                        route_allowed=bool(bid_route_allowed),
+                        allow_post=bool(bid_policy.allow_post),
+                        allow_exposure_increase=bool(
+                            bid_policy.allow_exposure_increase
+                        ),
+                    ),
+                    sell=NativeOrderSideBoundary(
+                        target_price=float(ask_price),
+                        desired_quantity=float(ask_size_pre),
+                        exposure_probe_quantity=float(base_size),
+                        order=ask_order,
+                        needs_update=bool(ask_needs_update),
+                        force_update=bool(ask_force_update),
+                        route_allowed=bool(ask_route_allowed),
+                        allow_post=bool(ask_policy.allow_post),
+                        allow_exposure_increase=bool(
+                            ask_policy.allow_exposure_increase
+                        ),
+                    ),
+                )
+            except Exception as exc:
+                if isinstance(exc, NativeOrderActionBoundaryError):
+                    detail = str(exc)
+                else:
+                    detail = f"{type(exc).__name__}: {exc}"
+                raise RuntimeError(
+                    "explicit native order-action planner failed closed: "
+                    + detail
+                ) from exc
 
-        bid_cancel_first = self._should_cancel_first_replace(
-            side=Side.BUY,
-            q=q,
-            order=bid_order,
-            needs_update=bool(bid_needs_update),
-            force_update=bool(bid_force_update),
-            can_post=bool(can_bid),
-        )
-        ask_cancel_first = self._should_cancel_first_replace(
-            side=Side.SELL,
-            q=q,
-            order=ask_order,
-            needs_update=bool(ask_needs_update),
-            force_update=bool(ask_force_update),
-            can_post=bool(can_ask),
-        )
+        if native_order_action_plan is None:
+            bid_needs_update = self._apply_replace_throttle(
+                side=Side.BUY,
+                now_ts=now_ts,
+                q=q,
+                target_price=bid_price,
+                order=bid_order,
+                needs_update=bool(bid_needs_update),
+                force_update=bool(bid_force_update),
+            )
+            ask_needs_update = self._apply_replace_throttle(
+                side=Side.SELL,
+                now_ts=now_ts,
+                q=q,
+                target_price=ask_price,
+                order=ask_order,
+                needs_update=bool(ask_needs_update),
+                force_update=bool(ask_force_update),
+            )
+            bid_pending_coalesce = self._apply_pending_replace_coalesce(
+                side=Side.BUY,
+                now_ts=now_ts,
+                q=q,
+                target_price=bid_price,
+                order=bid_order,
+                needs_update=bool(bid_needs_update),
+                can_post=bool(can_bid),
+            )
+            ask_pending_coalesce = self._apply_pending_replace_coalesce(
+                side=Side.SELL,
+                now_ts=now_ts,
+                q=q,
+                target_price=ask_price,
+                order=ask_order,
+                needs_update=bool(ask_needs_update),
+                can_post=bool(can_ask),
+            )
+            if bid_pending_coalesce:
+                bid_needs_update = False
+            if ask_pending_coalesce:
+                ask_needs_update = False
+
+            bid_cancel_first = self._should_cancel_first_replace(
+                side=Side.BUY,
+                q=q,
+                order=bid_order,
+                needs_update=bool(bid_needs_update),
+                force_update=bool(bid_force_update),
+                can_post=bool(can_bid),
+            )
+            ask_cancel_first = self._should_cancel_first_replace(
+                side=Side.SELL,
+                q=q,
+                order=ask_order,
+                needs_update=bool(ask_needs_update),
+                force_update=bool(ask_force_update),
+                can_post=bool(can_ask),
+            )
+        else:
+            native_buy_plan = native_order_action_plan.buy
+            native_ask_plan = native_order_action_plan.sell
+            bid_exposure_increasing = bool(
+                native_buy_plan.exposure_increasing
+            )
+            ask_exposure_increasing = bool(
+                native_ask_plan.exposure_increasing
+            )
+            can_bid_after_inventory = bool(
+                native_buy_plan.can_post_after_inventory
+            )
+            can_ask_after_inventory = bool(
+                native_ask_plan.can_post_after_inventory
+            )
+            can_bid = bool(native_buy_plan.can_post)
+            can_ask = bool(native_ask_plan.can_post)
+            bid_force_update = bool(native_buy_plan.force_update)
+            ask_force_update = bool(native_ask_plan.force_update)
+            throttle_reason = int(
+                native_order_action_module.LIVE_ORDER_REASON_THROTTLE_PRICE
+            ) | int(
+                native_order_action_module.LIVE_ORDER_REASON_THROTTLE_AGE
+            )
+            if int(native_buy_plan.reason_mask) & throttle_reason:
+                self._record_replace_throttle(
+                    side=Side.BUY,
+                    now_ts=now_ts,
+                    q=q,
+                    target_price=bid_price,
+                    order=bid_order,
+                )
+            if int(native_ask_plan.reason_mask) & throttle_reason:
+                self._record_replace_throttle(
+                    side=Side.SELL,
+                    now_ts=now_ts,
+                    q=q,
+                    target_price=ask_price,
+                    order=ask_order,
+                )
+            bid_pending_coalesce = (
+                native_buy_plan.action
+                == native_order_action_module.LiveOrderAction.Pending
+            )
+            ask_pending_coalesce = (
+                native_ask_plan.action
+                == native_order_action_module.LiveOrderAction.Pending
+            )
+            if bid_pending_coalesce:
+                self._record_pending_replace_coalesce(
+                    side=Side.BUY,
+                    now_ts=now_ts,
+                    q=q,
+                    target_price=bid_price,
+                    order=bid_order,
+                )
+            if ask_pending_coalesce:
+                self._record_pending_replace_coalesce(
+                    side=Side.SELL,
+                    now_ts=now_ts,
+                    q=q,
+                    target_price=ask_price,
+                    order=ask_order,
+                )
+            bid_needs_update = bool(native_buy_plan.needs_update) and not (
+                bid_pending_coalesce
+            )
+            ask_needs_update = bool(native_ask_plan.needs_update) and not (
+                ask_pending_coalesce
+            )
+            configured_cancel_reason = int(
+                native_order_action_module.LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST
+            )
+            bid_cancel_first = bool(
+                int(native_buy_plan.reason_mask) & configured_cancel_reason
+            )
+            ask_cancel_first = bool(
+                int(native_ask_plan.reason_mask) & configured_cancel_reason
+            )
+            if bid_cancel_first:
+                self._record_cancel_first_replace(side=Side.BUY)
+            if ask_cancel_first:
+                self._record_cancel_first_replace(side=Side.SELL)
 
         bid_replaced_cid = (
             str(bid_order.client_order_id)
@@ -8190,32 +8604,46 @@ class MakerEngine:
         elif bid_cancel_first:
             bid_action = "cancel_first"
         elif bid_needs_update and can_bid:
-            bid_size = bid_size_pre
-            # Cap: don't let position exceed max_inventory
-            if q > 0:
-                room = max(0.0, cfg.strategy.max_inventory - q)
-                room = math.floor(room / lot) * lot
-                if room >= lot:
-                    bid_size = min(bid_size, room)
-                else:
-                    bid_size = 0.0
-            # Cap: prevent flip when closing short position
-            elif q < -lot:
-                close_cap = math.floor(abs(q) / lot) * lot
-                if close_cap >= min_qty and close_cap * bid_price >= min_notional:
-                    bid_size = min(bid_size, close_cap)
-            if bid_exposure_increasing:
-                bid_size = self._cap_exposure_qty_by_position_value(
-                    side=Side.BUY,
-                    current_qty=q,
-                    mid=mid,
-                    requested_qty=bid_size,
-                    max_position_value=float(cfg.risk.max_position_value),
-                    lot=lot,
+            if native_order_action_plan is not None:
+                bid_size = quantity_from_lots(
+                    native_order_action_plan.buy.target_quantity_lots,
+                    lot,
+                    name="BUY.target_quantity",
+                )
+                bid_filter_valid = bool(
+                    native_order_action_plan.buy.filter_valid
+                )
+            else:
+                bid_size = bid_size_pre
+                # Cap: don't let position exceed max_inventory
+                if q > 0:
+                    room = max(0.0, cfg.strategy.max_inventory - q)
+                    room = math.floor(room / lot) * lot
+                    if room >= lot:
+                        bid_size = min(bid_size, room)
+                    else:
+                        bid_size = 0.0
+                # Cap: prevent flip when closing short position
+                elif q < -lot:
+                    close_cap = math.floor(abs(q) / lot) * lot
+                    if close_cap >= min_qty and close_cap * bid_price >= min_notional:
+                        bid_size = min(bid_size, close_cap)
+                if bid_exposure_increasing:
+                    bid_size = self._cap_exposure_qty_by_position_value(
+                        side=Side.BUY,
+                        current_qty=q,
+                        mid=mid,
+                        requested_qty=bid_size,
+                        max_position_value=float(cfg.risk.max_position_value),
+                        lot=lot,
+                    )
+                bid_filter_valid = not (
+                    bid_size < min_qty
+                    or bid_size * bid_price < min_notional
                 )
             bid_size_final = bid_size
             # Exchange filter guard after eta decay
-            if bid_size < min_qty or bid_size * bid_price < min_notional:
+            if not bid_filter_valid:
                 logger.debug(
                     f"Bid skipped: qty={bid_size:.4f}(min={min_qty}) "
                     f"notional={bid_size * bid_price:.1f}(min={min_notional})"
@@ -8262,32 +8690,46 @@ class MakerEngine:
         elif ask_cancel_first:
             ask_action = "cancel_first"
         elif ask_needs_update and can_ask:
-            ask_size = ask_size_pre
-            # Cap: don't let position exceed max_inventory
-            if q < 0:
-                room = max(0.0, cfg.strategy.max_inventory - abs(q))
-                room = math.floor(room / lot) * lot
-                if room >= lot:
-                    ask_size = min(ask_size, room)
-                else:
-                    ask_size = 0.0
-            # Cap: prevent flip when closing long position
-            elif q > lot:
-                close_cap = math.floor(q / lot) * lot
-                if close_cap >= min_qty and close_cap * ask_price >= min_notional:
-                    ask_size = min(ask_size, close_cap)
-            if ask_exposure_increasing:
-                ask_size = self._cap_exposure_qty_by_position_value(
-                    side=Side.SELL,
-                    current_qty=q,
-                    mid=mid,
-                    requested_qty=ask_size,
-                    max_position_value=float(cfg.risk.max_position_value),
-                    lot=lot,
+            if native_order_action_plan is not None:
+                ask_size = quantity_from_lots(
+                    native_order_action_plan.sell.target_quantity_lots,
+                    lot,
+                    name="SELL.target_quantity",
+                )
+                ask_filter_valid = bool(
+                    native_order_action_plan.sell.filter_valid
+                )
+            else:
+                ask_size = ask_size_pre
+                # Cap: don't let position exceed max_inventory
+                if q < 0:
+                    room = max(0.0, cfg.strategy.max_inventory - abs(q))
+                    room = math.floor(room / lot) * lot
+                    if room >= lot:
+                        ask_size = min(ask_size, room)
+                    else:
+                        ask_size = 0.0
+                # Cap: prevent flip when closing long position
+                elif q > lot:
+                    close_cap = math.floor(q / lot) * lot
+                    if close_cap >= min_qty and close_cap * ask_price >= min_notional:
+                        ask_size = min(ask_size, close_cap)
+                if ask_exposure_increasing:
+                    ask_size = self._cap_exposure_qty_by_position_value(
+                        side=Side.SELL,
+                        current_qty=q,
+                        mid=mid,
+                        requested_qty=ask_size,
+                        max_position_value=float(cfg.risk.max_position_value),
+                        lot=lot,
+                    )
+                ask_filter_valid = not (
+                    ask_size < min_qty
+                    or ask_size * ask_price < min_notional
                 )
             ask_size_final = ask_size
             # Exchange filter guard after eta decay
-            if ask_size < min_qty or ask_size * ask_price < min_notional:
+            if not ask_filter_valid:
                 logger.debug(
                     f"Ask skipped: qty={ask_size:.4f}(min={min_qty}) "
                     f"notional={ask_size * ask_price:.1f}(min={min_notional})"
@@ -8744,11 +9186,51 @@ class MakerEngine:
         if not (throttle_by_price or throttle_by_age):
             return needs_update
 
+        self._record_replace_throttle(
+            side=side,
+            now_ts=now_ts,
+            q=q,
+            target_price=target_price,
+            order=order,
+        )
+        return False
+
+    def _record_replace_throttle(
+        self,
+        *,
+        side: Side,
+        now_ts: float,
+        q: float,
+        target_price: float,
+        order,
+    ) -> None:
+        """Preserve B0 throttle counters/logs for either implementation path."""
+
         side_name = side.value
-        self._replace_throttle_counts[side_name] = self._replace_throttle_counts.get(side_name, 0) + 1
+        self._replace_throttle_counts[side_name] = (
+            self._replace_throttle_counts.get(side_name, 0) + 1
+        )
         last_log = self._last_replace_throttle_log.get(side_name, 0.0)
         if now_ts - last_log >= 60.0:
             self._last_replace_throttle_log[side_name] = now_ts
+            tick = max(
+                float(getattr(self.cfg, "tick_size", 0.0) or 0.0),
+                1e-12,
+            )
+            price_ticks, interval_ms, exposure_increasing = (
+                self._replace_throttle_params(side, q)
+            )
+            price_delta_ticks = (
+                abs(float(target_price) - float(order.price)) / tick
+            )
+            age_ms = max(
+                0.0,
+                (
+                    now_ts
+                    - float(getattr(order, "create_time", now_ts))
+                )
+                * 1000.0,
+            )
             logger.info(
                 "REPLACE_THROTTLE side=%s exposure_increasing=%s "
                 "price_delta_ticks=%.2f min_ticks=%.2f age_ms=%.0f min_interval_ms=%.0f "
@@ -8761,7 +9243,6 @@ class MakerEngine:
                 interval_ms,
                 self._replace_throttle_counts[side_name],
             )
-        return False
 
     @staticmethod
     def _order_lifecycle_pending(order) -> bool:
@@ -8785,6 +9266,68 @@ class MakerEngine:
             ),
             0,
         )
+
+    def _native_replace_terminal_continuation(self):
+        """Return the process-frozen native state owner, when explicitly selected."""
+
+        return getattr(
+            self,
+            "_replace_terminal_continuation_native_state",
+            None,
+        )
+
+    def _native_replace_terminal_continuation_side(self, side: Side):
+        module = getattr(
+            self,
+            "_replace_terminal_continuation_native_module",
+            None,
+        )
+        if module is None:
+            raise RuntimeError("native replacement-continuation module is unavailable")
+        return module.Side.Buy if side == Side.BUY else module.Side.Sell
+
+    def _native_replace_terminal_continuation_event_payload(
+        self,
+        event: Any,
+    ) -> dict[str, Any]:
+        module = getattr(
+            self,
+            "_replace_terminal_continuation_native_module",
+            None,
+        )
+        if module is None:
+            raise RuntimeError("native replacement-continuation module is unavailable")
+        kind_names = {
+            module.ReplaceContinuationEventKind.Arm: "arm",
+            module.ReplaceContinuationEventKind.Publish: "publish",
+            module.ReplaceContinuationEventKind.Decision: "decision",
+            module.ReplaceContinuationEventKind.Drop: "drop",
+        }
+        event_name = kind_names.get(event.kind)
+        if event_name is None:
+            raise RuntimeError("native replacement-continuation emitted unknown event")
+        side = Side.BUY if event.side == module.Side.Buy else Side.SELL
+        return {
+            "event": event_name,
+            "sequence": int(event.sequence),
+            "side": side.value,
+            "generation": int(event.generation),
+            "cid": str(event.client_order_id),
+            "armed_ts_ns": int(event.armed_ts_ns),
+            "terminal_visible_ts_ns": int(event.terminal_visible_ts_ns),
+            "decision_start_ts_ns": int(event.decision_start_ts_ns),
+            "decision_latency_ns": max(0, int(event.decision_latency_ns)),
+            "reason": str(event.reason),
+        }
+
+    def _log_native_replace_terminal_continuation_events(
+        self,
+        events: Any,
+    ) -> None:
+        for event in events:
+            self._log_replace_terminal_continuation_event(
+                self._native_replace_terminal_continuation_event_payload(event)
+            )
 
     def _replace_terminal_continuation_event_locked(
         self,
@@ -8862,6 +9405,34 @@ class MakerEngine:
         decision_start_ts_ns: int = 0,
         reason: str = "none",
     ) -> None:
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            if event not in {"decision", "drop"}:
+                raise ValueError(
+                    f"unsupported replacement-continuation final event: {event}"
+                )
+            try:
+                for side, intent in continuations.items():
+                    native_side = self._native_replace_terminal_continuation_side(side)
+                    if event == "decision":
+                        transition = native_state.finalize_decision(
+                            native_side,
+                            int(intent.generation),
+                            int(decision_start_ts_ns),
+                        )
+                    else:
+                        transition = native_state.drop_in_flight(
+                            native_side,
+                            int(intent.generation),
+                            str(reason),
+                        )
+                    self._log_native_replace_terminal_continuation_events(
+                        transition.events
+                    )
+            finally:
+                continuations.clear()
+            return
+
         payloads = []
         with self._replace_terminal_continuation_lock:
             in_flight = getattr(
@@ -8920,6 +9491,26 @@ class MakerEngine:
     def replace_terminal_continuation_telemetry_snapshot(self) -> dict[str, int]:
         """Return process-epoch continuation counts and exact decision latency."""
 
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            telemetry = native_state.telemetry()
+            return {
+                "arm_count": int(telemetry.arm_count),
+                "publish_count": int(telemetry.publish_count),
+                "decision_count": int(telemetry.decision_count),
+                "drop_count": int(telemetry.drop_count),
+                "buy_decision_count": int(telemetry.buy_decision_count),
+                "sell_decision_count": int(telemetry.sell_decision_count),
+                "decision_latency_sum_ns": int(
+                    telemetry.decision_latency_sum_ns
+                ),
+                "decision_latency_max_ns": int(
+                    telemetry.decision_latency_max_ns
+                ),
+                "pending_count": int(telemetry.pending_count),
+                "in_flight_count": int(telemetry.in_flight_count),
+            }
+
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         if lock is None:
             snapshot = self._empty_replace_terminal_continuation_telemetry()
@@ -8967,6 +9558,19 @@ class MakerEngine:
             getattr(self.cfg.strategy, "replace_terminal_continuation", False)
         ):
             return 0
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            transition = native_state.arm(
+                self._native_replace_terminal_continuation_side(side),
+                str(cid),
+                int(time.time_ns()),
+                True,
+            )
+            self._log_native_replace_terminal_continuation_events(
+                transition.events
+            )
+            return int(transition.generation) if transition.accepted else 0
+
         side_name = side.value
         payloads = []
         with self._replace_terminal_continuation_lock:
@@ -9018,6 +9622,19 @@ class MakerEngine:
         side_name = side.value
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            transition = native_state.clear_exact(
+                self._native_replace_terminal_continuation_side(side),
+                str(cid),
+                int(generation),
+                int(event_ts_ns),
+                str(reason),
+            )
+            self._log_native_replace_terminal_continuation_events(
+                transition.events
+            )
+            return bool(transition.accepted)
         if lock is None or intents is None:
             return False
         with lock:
@@ -9048,6 +9665,16 @@ class MakerEngine:
 
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            transition = native_state.clear_side(
+                self._native_replace_terminal_continuation_side(side),
+                str(reason),
+            )
+            self._log_native_replace_terminal_continuation_events(
+                transition.events
+            )
+            return bool(transition.accepted)
         if lock is None or intents is None:
             return False
         with lock:
@@ -9078,6 +9705,18 @@ class MakerEngine:
 
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            transition = native_state.clear_unready(
+                self._native_replace_terminal_continuation_side(side),
+                str(cid),
+                int(generation),
+                str(reason),
+            )
+            self._log_native_replace_terminal_continuation_events(
+                transition.events
+            )
+            return bool(transition.accepted)
         if lock is None or intents is None:
             return False
         with lock:
@@ -9116,6 +9755,37 @@ class MakerEngine:
         terminal_visible_ts_ns = int(
             getattr(lifecycle, "terminal_ts_ns", 0) or time.time_ns()
         )
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            transition = native_state.publish(
+                self._native_replace_terminal_continuation_side(order.side),
+                str(order.client_order_id),
+                int(generation),
+                terminal_visible_ts_ns,
+            )
+            self._log_native_replace_terminal_continuation_events(
+                transition.events
+            )
+            if not transition.accepted:
+                return False
+            published_generation = int(transition.generation)
+            wakeup = getattr(
+                self,
+                "_replace_terminal_continuation_wakeup",
+                None,
+            )
+            if wakeup is not None:
+                try:
+                    wakeup()
+                except Exception:
+                    logger.exception(
+                        "REPLACE_TERMINAL_CONTINUATION_WAKEUP_FAILED side=%s "
+                        "generation=%d",
+                        order.side.value,
+                        published_generation,
+                    )
+            return True
+
         with self._replace_terminal_continuation_lock:
             intent = self._replace_terminal_continuation_intents.get(side_name)
             if (
@@ -9165,6 +9835,29 @@ class MakerEngine:
             getattr(self.cfg.strategy, "replace_terminal_continuation", False)
         ):
             return {}
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            module = getattr(
+                self,
+                "_replace_terminal_continuation_native_module",
+                None,
+            )
+            if module is None:
+                raise RuntimeError(
+                    "native replacement-continuation module is unavailable"
+                )
+            ready = {}
+            for intent in native_state.take_ready():
+                side = Side.BUY if intent.side == module.Side.Buy else Side.SELL
+                ready[side] = _ReplaceTerminalContinuationIntent(
+                    client_order_id=str(intent.client_order_id),
+                    generation=int(intent.generation),
+                    armed_ts_ns=int(intent.armed_ts_ns),
+                    ready=True,
+                    terminal_visible_ts_ns=int(intent.terminal_visible_ts_ns),
+                )
+            return ready
+
         ready: dict[Side, _ReplaceTerminalContinuationIntent] = {}
         with self._replace_terminal_continuation_lock:
             in_flight = getattr(
@@ -9193,6 +9886,11 @@ class MakerEngine:
 
         lock = getattr(self, "_replace_terminal_continuation_lock", None)
         intents = getattr(self, "_replace_terminal_continuation_intents", None)
+        native_state = self._native_replace_terminal_continuation()
+        if native_state is not None:
+            events = native_state.clear_all(str(reason))
+            self._log_native_replace_terminal_continuation_events(events)
+            return
         if lock is None or intents is None:
             return
         payloads = []
@@ -9237,6 +9935,26 @@ class MakerEngine:
         if not self._order_lifecycle_pending(order):
             return False
 
+        self._record_pending_replace_coalesce(
+            side=side,
+            now_ts=now_ts,
+            q=q,
+            target_price=target_price,
+            order=order,
+        )
+        return True
+
+    def _record_pending_replace_coalesce(
+        self,
+        *,
+        side: Side,
+        now_ts: float,
+        q: float,
+        target_price: float,
+        order,
+    ) -> None:
+        """Preserve B0 pending-coalesce counters/logs for native decisions."""
+
         side_name = side.value
         self._replace_pending_coalesce_counts[side_name] = (
             self._replace_pending_coalesce_counts.get(side_name, 0) + 1
@@ -9259,7 +9977,6 @@ class MakerEngine:
                 price_delta_ticks,
                 self._replace_pending_coalesce_counts[side_name],
             )
-        return True
 
     def _should_cancel_first_replace(
         self,
@@ -9287,6 +10004,12 @@ class MakerEngine:
         if not exposure_increasing:
             return False
 
+        self._record_cancel_first_replace(side=side)
+        return True
+
+    def _record_cancel_first_replace(self, *, side: Side) -> None:
+        """Preserve B0 cancel-first counters/logs for native decisions."""
+
         side_name = side.value
         now_ts = time.time()
         self._replace_cancel_first_counts[side_name] = (
@@ -9300,7 +10023,6 @@ class MakerEngine:
                 side_name,
                 self._replace_cancel_first_counts[side_name],
             )
-        return True
 
     def _apply_side_policy_price(self, side: Side, mid: float, price: float, spread_mult: float) -> float:
         tick = self.cfg.tick_size
@@ -11858,6 +12580,72 @@ class MakerEngine:
 
     # ── lifecycle ──
 
+    def _freeze_native_order_action_planner(self) -> None:
+        """Bind static exchange/config inputs once before live quoting starts."""
+
+        native = _get_live_order_action_plan_cpp()
+        if native is None:
+            self._native_order_action_planner = None
+            return
+        strategy = self.cfg.strategy
+        add_ticks = max(
+            0.0,
+            float(
+                getattr(strategy, "replace_min_price_change_ticks", 0.0)
+                or 0.0
+            ),
+        )
+        reducing_ticks = max(
+            0.0,
+            float(
+                getattr(
+                    strategy,
+                    "replace_min_price_change_ticks_reducing",
+                    add_ticks,
+                )
+                or 0.0
+            ),
+        )
+        add_interval_ms = max(
+            0.0,
+            float(getattr(strategy, "replace_min_interval_ms", 0.0) or 0.0),
+        )
+        reducing_interval_ms = max(
+            0.0,
+            float(
+                getattr(
+                    strategy,
+                    "replace_min_interval_ms_reducing",
+                    add_interval_ms,
+                )
+                or 0.0
+            ),
+        )
+        self._native_order_action_planner = CheckedNativeOrderActionPlanner(
+            native,
+            max_inventory=float(strategy.max_inventory),
+            max_position_value=float(self.cfg.risk.max_position_value),
+            tick_size=float(self.cfg.tick_size),
+            lot_size=float(self.cfg.lot_size),
+            min_quantity=float(self._min_qty),
+            min_notional=float(self.cfg.min_notional),
+            requote_threshold_bps=float(strategy.requote_threshold_bps),
+            add_min_price_change_ticks=add_ticks,
+            reducing_min_price_change_ticks=reducing_ticks,
+            add_min_interval_ms=add_interval_ms,
+            reducing_min_interval_ms=reducing_interval_ms,
+            replace_pending_coalesce=bool(
+                getattr(strategy, "replace_pending_coalesce", True)
+            ),
+            replace_cancel_first_exposure_increasing=bool(
+                getattr(
+                    strategy,
+                    "replace_cancel_first_exposure_increasing",
+                    False,
+                )
+            ),
+        )
+
     def _sync_exchange_filters(self):
         """Fetch exchange filters and override config with actual values."""
         try:
@@ -11953,6 +12741,7 @@ class MakerEngine:
         self._running = True
         self._min_qty = self.cfg.lot_size  # default before exchange sync
         self._sync_exchange_filters()
+        self._freeze_native_order_action_planner()
         self._prefill_warmup()
 
         # Cancel any stale orders left from crashed/killed previous session

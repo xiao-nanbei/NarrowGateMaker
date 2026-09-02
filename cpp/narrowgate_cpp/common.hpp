@@ -15,6 +15,21 @@
 
 namespace narrowgate_cpp {
 
+// False-sharing isolation is a build-time ABI property. Apple Silicon uses
+// 128-byte data-cache lines (verified on the current M4 development host),
+// while the current Intel EC2 deployment uses 64-byte lines. Keep this value
+// explicit instead of relying on std::hardware_destructive_interference_size,
+// whose value and ABI stability vary across standard-library toolchains.
+#if defined(__APPLE__) && defined(__aarch64__)
+inline constexpr std::size_t kDestructiveInterferenceBytes = 128;
+#else
+inline constexpr std::size_t kDestructiveInterferenceBytes = 64;
+#endif
+
+static_assert(
+    (kDestructiveInterferenceBytes & (kDestructiveInterferenceBytes - 1)) == 0
+);
+
 enum class Side : std::uint8_t {
     Buy = 0,
     Sell = 1,
@@ -87,17 +102,62 @@ struct DepthSideView {
     std::span<const DepthLevel> levels;
     ArrayView<double> prices;
     ArrayView<double> quantities;
+    // Native live partial-depth input is already validated as positive,
+    // unique and price-sorted before publication. Generic replay/Python
+    // buffers leave this false and retain the defensive scan.
+    bool validated_unique_sorted = false;
+
+    // The native live book is stored canonically as exchange ticks/lots.  A
+    // direct view avoids materializing twenty price/quantity doubles for each
+    // quote decision.  Generic replay/Python callers leave these spans empty.
+    ArrayView<std::int64_t> price_ticks;
+    ArrayView<std::int64_t> quantity_lots;
+    ArrayView<double> quantity_prefix;
+    double tick_size = 0.0;
+    double lot_size = 0.0;
+    double cached_best_price = 0.0;
+
+    constexpr DepthSideView() noexcept = default;
+
+    constexpr DepthSideView(
+        std::span<const DepthLevel> level_values,
+        ArrayView<double> price_values,
+        ArrayView<double> quantity_values,
+        bool values_validated_unique_sorted = false
+    ) noexcept
+        : levels(level_values),
+          prices(price_values),
+          quantities(quantity_values),
+          validated_unique_sorted(values_validated_unique_sorted) {}
 
     [[nodiscard]] std::size_t size() const noexcept {
-        return !levels.empty() ? levels.size() : std::min(prices.size(), quantities.size());
+        if (!levels.empty()) {
+            return levels.size();
+        }
+        if (!price_ticks.empty() || !quantity_lots.empty()) {
+            return std::min(price_ticks.size(), quantity_lots.size());
+        }
+        return std::min(prices.size(), quantities.size());
     }
 
     [[nodiscard]] double price(std::size_t index) const noexcept {
-        return !levels.empty() ? levels[index].price : prices[index];
+        if (!levels.empty()) {
+            return levels[index].price;
+        }
+        if (!price_ticks.empty()) {
+            return static_cast<double>(price_ticks[index]) * tick_size;
+        }
+        return prices[index];
     }
 
     [[nodiscard]] double quantity(std::size_t index) const noexcept {
-        return !levels.empty() ? levels[index].qty : quantities[index];
+        if (!levels.empty()) {
+            return levels[index].qty;
+        }
+        if (!quantity_lots.empty()) {
+            return static_cast<double>(quantity_lots[index]) * lot_size;
+        }
+        return quantities[index];
     }
 
     [[nodiscard]] bool valid(std::size_t index) const noexcept {
@@ -105,6 +165,9 @@ struct DepthSideView {
     }
 
     [[nodiscard]] double best_price() const noexcept {
+        if (validated_unique_sorted && cached_best_price > 0.0) {
+            return cached_best_price;
+        }
         for (std::size_t i = 0; i < size(); ++i) {
             if (valid(i)) {
                 return price(i);

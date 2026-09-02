@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from live.config import Config
 from live.main import LIVE_MAIN_LOOP_FALLBACK_WAIT_S, _LiveMainLoopWakeup
 from strategy.maker_engine import MakerEngine
@@ -104,6 +106,37 @@ def test_only_successful_authoritative_terminal_publish_wakes_main_loop() -> Non
     wakeup.clear()
     assert not engine._publish_replace_terminal_continuation(order)
     assert not wakeup.is_set()
+
+
+def test_native_authoritative_terminal_publish_wakes_main_loop_exactly_once() -> None:
+    narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
+    engine = _continuation_engine()
+    engine._replace_terminal_continuation_native_module = narrowgate_cpp
+    engine._replace_terminal_continuation_native_state = (
+        narrowgate_cpp.NativeReplaceContinuationState(True)
+    )
+    wake_count = 0
+
+    def wake() -> None:
+        nonlocal wake_count
+        wake_count += 1
+
+    engine.set_replace_terminal_continuation_wakeup(wake)
+    order = _order(Side.BUY, "buy_native_replace")
+    generation = engine._arm_replace_terminal_continuation(
+        side=Side.BUY,
+        cid=order.client_order_id,
+    )
+
+    assert engine._publish_replace_terminal_continuation(
+        order,
+        generation=generation,
+    )
+    assert not engine._publish_replace_terminal_continuation(
+        order,
+        generation=generation,
+    )
+    assert wake_count == 1
 
 
 def test_non_cancel_terminal_clears_intent_without_waking_main_loop() -> None:

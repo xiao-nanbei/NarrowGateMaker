@@ -242,6 +242,89 @@ struct QuoteCoreResult {
     QuoteFlags flags;
 };
 
+// Immutable derived configuration for the native live quote hot path.
+//
+// QuoteCoreConfig remains the public Python/C++ ABI.  Generic callers keep
+// using the four-argument compute_quote_core() entry point, which validates
+// that ABI on every call.  NativeLiveRuntimeCore owns an immutable config, so
+// repeating the same P3/F03 identity checks and legacy-field projections on
+// every decision is wasted hot-path work.  QuoteHotPlan freezes those exact
+// results once without changing any floating-point expression used by the
+// quote calculation itself.
+class QuoteHotPlan final {
+public:
+    QuoteHotPlan(const QuoteHotPlan&) = default;
+    QuoteHotPlan(QuoteHotPlan&&) noexcept = default;
+    QuoteHotPlan& operator=(const QuoteHotPlan&) = delete;
+    QuoteHotPlan& operator=(QuoteHotPlan&&) = delete;
+
+    [[nodiscard]] double tick() const noexcept { return tick_; }
+    [[nodiscard]] double inventory_reference_qty() const noexcept {
+        return inventory_reference_qty_;
+    }
+    [[nodiscard]] double eta_inventory() const noexcept {
+        return eta_inventory_;
+    }
+    [[nodiscard]] double risk_per_order() const noexcept {
+        return risk_per_order_;
+    }
+    [[nodiscard]] double risk_horizon_s() const noexcept {
+        return risk_horizon_s_;
+    }
+    [[nodiscard]] double acceleration_spread_mult() const noexcept {
+        return acceleration_spread_mult_;
+    }
+    [[nodiscard]] double kappa_base() const noexcept { return kappa_base_; }
+    [[nodiscard]] int spread_cap_mode() const noexcept {
+        return spread_cap_mode_;
+    }
+    [[nodiscard]] bool historical_p3_pair_floor_active() const noexcept {
+        return historical_p3_pair_floor_active_;
+    }
+    [[nodiscard]] bool p3_side_bbo_floor_active() const noexcept {
+        return p3_side_bbo_floor_active_;
+    }
+
+private:
+    friend QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg);
+
+    QuoteHotPlan(
+        double tick,
+        double inventory_reference_qty,
+        double eta_inventory,
+        double risk_per_order,
+        double risk_horizon_s,
+        double acceleration_spread_mult,
+        double kappa_base,
+        int spread_cap_mode,
+        bool historical_p3_pair_floor_active,
+        bool p3_side_bbo_floor_active
+    ) noexcept
+        : tick_(tick),
+          inventory_reference_qty_(inventory_reference_qty),
+          eta_inventory_(eta_inventory),
+          risk_per_order_(risk_per_order),
+          risk_horizon_s_(risk_horizon_s),
+          acceleration_spread_mult_(acceleration_spread_mult),
+          kappa_base_(kappa_base),
+          spread_cap_mode_(spread_cap_mode),
+          historical_p3_pair_floor_active_(historical_p3_pair_floor_active),
+          p3_side_bbo_floor_active_(p3_side_bbo_floor_active) {}
+
+    double tick_;
+    double inventory_reference_qty_;
+    double eta_inventory_;
+    double risk_per_order_;
+    double risk_horizon_s_;
+    double acceleration_spread_mult_;
+    double kappa_base_;
+    int spread_cap_mode_;
+    bool historical_p3_pair_floor_active_;
+    bool p3_side_bbo_floor_active_;
+};
+
+static_assert(sizeof(QuoteHotPlan) <= kDestructiveInterferenceBytes);
+
 struct LiveRoutingPolicy {
     bool allow_post = true;
     bool allow_exposure_increase = true;
@@ -303,6 +386,22 @@ struct LiveRoutingResult {
     const LiveRoutingInput& input,
     const LiveRoutingPolicy& bid_policy,
     const LiveRoutingPolicy& ask_policy
+);
+
+// Validate the immutable quote configuration and freeze its derived legacy
+// projections.  Throws the same std::invalid_argument errors as the public
+// quote entry point for a valid-mid decision.
+[[nodiscard]] QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg);
+
+// Prevalidated overload for owners that guarantee cfg cannot mutate during
+// the plan lifetime (NativeLiveRuntimeCore).  Generic/public callers must use
+// the four-argument overload below.
+[[nodiscard]] QuoteCoreResult compute_quote_core(
+    const QuoteState& state,
+    const QuoteCoreConfig& cfg,
+    const QuotePrediction& pred,
+    const DepthView& depth,
+    const QuoteHotPlan& plan
 );
 
 [[nodiscard]] QuoteCoreResult compute_quote_core(

@@ -17,7 +17,14 @@
 #include "active_order_competing_risk_cif.hpp"
 #include "causal_v12_1s_features.hpp"
 #include "order_lifecycle_journal_v2_mirror.hpp"
+#include "live_order_action_plan.hpp"
+#include "live_order_state.hpp"
+#include "live_cooldown.hpp"
+#include "live_policy.hpp"
+#include "live_runtime_core.hpp"
+#include "order_gateway_core.hpp"
 #include "quote_core.hpp"
+#include "replace_continuation.hpp"
 #include "request_state_features.hpp"
 #include "risk_set_expansion.hpp"
 #include "sparse_order_lifecycle.hpp"
@@ -5808,11 +5815,1049 @@ void bind_order_lifecycle_journal_v2_mirror(py::module_& m) {
     );
 }
 
+void bind_replace_continuation(py::module_& m) {
+    py::enum_<ReplaceContinuationPhase>(m, "ReplaceContinuationPhase")
+        .value("Empty", ReplaceContinuationPhase::Empty)
+        .value("Armed", ReplaceContinuationPhase::Armed)
+        .value("Ready", ReplaceContinuationPhase::Ready)
+        .value("InFlight", ReplaceContinuationPhase::InFlight);
+
+    py::enum_<ReplaceContinuationEventKind>(
+        m,
+        "ReplaceContinuationEventKind"
+    )
+        .value("Arm", ReplaceContinuationEventKind::Arm)
+        .value("Publish", ReplaceContinuationEventKind::Publish)
+        .value("Decision", ReplaceContinuationEventKind::Decision)
+        .value("Drop", ReplaceContinuationEventKind::Drop);
+
+    py::class_<ReplaceContinuationIntent>(m, "ReplaceContinuationIntent")
+        .def_readonly("side", &ReplaceContinuationIntent::side)
+        .def_readonly(
+            "client_order_id",
+            &ReplaceContinuationIntent::client_order_id
+        )
+        .def_readonly("generation", &ReplaceContinuationIntent::generation)
+        .def_readonly("armed_ts_ns", &ReplaceContinuationIntent::armed_ts_ns)
+        .def_readonly(
+            "terminal_visible_ts_ns",
+            &ReplaceContinuationIntent::terminal_visible_ts_ns
+        );
+
+    py::class_<ReplaceContinuationEvent>(m, "ReplaceContinuationEvent")
+        .def_readonly("kind", &ReplaceContinuationEvent::kind)
+        .def_readonly("sequence", &ReplaceContinuationEvent::sequence)
+        .def_readonly("side", &ReplaceContinuationEvent::side)
+        .def_readonly("generation", &ReplaceContinuationEvent::generation)
+        .def_readonly(
+            "client_order_id",
+            &ReplaceContinuationEvent::client_order_id
+        )
+        .def_readonly("armed_ts_ns", &ReplaceContinuationEvent::armed_ts_ns)
+        .def_readonly(
+            "terminal_visible_ts_ns",
+            &ReplaceContinuationEvent::terminal_visible_ts_ns
+        )
+        .def_readonly(
+            "decision_start_ts_ns",
+            &ReplaceContinuationEvent::decision_start_ts_ns
+        )
+        .def_readonly(
+            "decision_latency_ns",
+            &ReplaceContinuationEvent::decision_latency_ns
+        )
+        .def_readonly("reason", &ReplaceContinuationEvent::reason);
+
+    py::class_<ReplaceContinuationTransition>(
+        m,
+        "ReplaceContinuationTransition"
+    )
+        .def_readonly("accepted", &ReplaceContinuationTransition::accepted)
+        .def_readonly("generation", &ReplaceContinuationTransition::generation)
+        .def_readonly("events", &ReplaceContinuationTransition::events);
+
+    py::class_<ReplaceContinuationSideSnapshot>(
+        m,
+        "ReplaceContinuationSideSnapshot"
+    )
+        .def_readonly("side", &ReplaceContinuationSideSnapshot::side)
+        .def_readonly(
+            "generation_counter",
+            &ReplaceContinuationSideSnapshot::generation_counter
+        )
+        .def_readonly(
+            "pending_phase",
+            &ReplaceContinuationSideSnapshot::pending_phase
+        )
+        .def_readonly("pending", &ReplaceContinuationSideSnapshot::pending)
+        .def_readonly("in_flight", &ReplaceContinuationSideSnapshot::in_flight);
+
+    py::class_<ReplaceContinuationTelemetry>(
+        m,
+        "ReplaceContinuationTelemetry"
+    )
+        .def_readonly("arm_count", &ReplaceContinuationTelemetry::arm_count)
+        .def_readonly(
+            "publish_count",
+            &ReplaceContinuationTelemetry::publish_count
+        )
+        .def_readonly(
+            "decision_count",
+            &ReplaceContinuationTelemetry::decision_count
+        )
+        .def_readonly("drop_count", &ReplaceContinuationTelemetry::drop_count)
+        .def_readonly(
+            "buy_decision_count",
+            &ReplaceContinuationTelemetry::buy_decision_count
+        )
+        .def_readonly(
+            "sell_decision_count",
+            &ReplaceContinuationTelemetry::sell_decision_count
+        )
+        .def_readonly(
+            "decision_latency_sum_ns",
+            &ReplaceContinuationTelemetry::decision_latency_sum_ns
+        )
+        .def_readonly(
+            "decision_latency_max_ns",
+            &ReplaceContinuationTelemetry::decision_latency_max_ns
+        )
+        .def_readonly(
+            "pending_count",
+            &ReplaceContinuationTelemetry::pending_count
+        )
+        .def_readonly(
+            "in_flight_count",
+            &ReplaceContinuationTelemetry::in_flight_count
+        )
+        .def_readonly(
+            "event_sequence",
+            &ReplaceContinuationTelemetry::event_sequence
+        );
+
+    py::class_<NativeReplaceContinuationState>(
+        m,
+        "NativeReplaceContinuationState"
+    )
+        .def(py::init<bool>(), py::arg("enabled") = true)
+        .def_property_readonly(
+            "enabled",
+            &NativeReplaceContinuationState::enabled
+        )
+        .def(
+            "arm",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               const std::string& client_order_id,
+               std::int64_t armed_ts_ns,
+               bool can_post) {
+                py::gil_scoped_release release;
+                return self.arm(side, client_order_id, armed_ts_ns, can_post);
+            },
+            py::arg("side"),
+            py::arg("client_order_id"),
+            py::arg("armed_ts_ns"),
+            py::arg("can_post") = true
+        )
+        .def(
+            "publish",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               const std::string& client_order_id,
+               std::uint64_t generation,
+               std::int64_t terminal_visible_ts_ns) {
+                py::gil_scoped_release release;
+                return self.publish(
+                    side,
+                    client_order_id,
+                    generation,
+                    terminal_visible_ts_ns
+                );
+            },
+            py::arg("side"),
+            py::arg("client_order_id"),
+            py::arg("generation"),
+            py::arg("terminal_visible_ts_ns")
+        )
+        .def(
+            "clear_exact",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               const std::string& client_order_id,
+               std::uint64_t generation,
+               std::int64_t event_ts_ns,
+               const std::string& reason) {
+                py::gil_scoped_release release;
+                return self.clear_exact(
+                    side,
+                    client_order_id,
+                    generation,
+                    event_ts_ns,
+                    reason
+                );
+            },
+            py::arg("side"),
+            py::arg("client_order_id"),
+            py::arg("generation") = 0,
+            py::arg("event_ts_ns") = 0,
+            py::arg("reason") = "cleared"
+        )
+        .def(
+            "clear_side",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               const std::string& reason) {
+                py::gil_scoped_release release;
+                return self.clear_side(side, reason);
+            },
+            py::arg("side"),
+            py::arg("reason") = "side_superseded"
+        )
+        .def(
+            "clear_unready",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               const std::string& client_order_id,
+               std::uint64_t generation,
+               const std::string& reason) {
+                py::gil_scoped_release release;
+                return self.clear_unready(
+                    side,
+                    client_order_id,
+                    generation,
+                    reason
+                );
+            },
+            py::arg("side"),
+            py::arg("client_order_id"),
+            py::arg("generation"),
+            py::arg("reason") = "terminal_before_callback"
+        )
+        .def(
+            "take_ready",
+            [](NativeReplaceContinuationState& self) {
+                py::gil_scoped_release release;
+                return self.take_ready();
+            }
+        )
+        .def(
+            "finalize_decision",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               std::uint64_t generation,
+               std::int64_t decision_start_ts_ns) {
+                py::gil_scoped_release release;
+                return self.finalize_decision(
+                    side,
+                    generation,
+                    decision_start_ts_ns
+                );
+            },
+            py::arg("side"),
+            py::arg("generation"),
+            py::arg("decision_start_ts_ns")
+        )
+        .def(
+            "drop_in_flight",
+            [](NativeReplaceContinuationState& self,
+               Side side,
+               std::uint64_t generation,
+               const std::string& reason) {
+                py::gil_scoped_release release;
+                return self.drop_in_flight(side, generation, reason);
+            },
+            py::arg("side"),
+            py::arg("generation"),
+            py::arg("reason")
+        )
+        .def(
+            "clear_all",
+            [](NativeReplaceContinuationState& self, const std::string& reason) {
+                py::gil_scoped_release release;
+                return self.clear_all(reason);
+            },
+            py::arg("reason") = "clear_all"
+        )
+        .def(
+            "side_snapshot",
+            &NativeReplaceContinuationState::side_snapshot,
+            py::arg("side")
+        )
+        .def("telemetry", &NativeReplaceContinuationState::telemetry)
+        .def_property_readonly_static(
+            "cache_line_bytes",
+            [](py::object) {
+                return NativeReplaceContinuationState::cache_line_bytes();
+            }
+        )
+        .def_property_readonly_static(
+            "max_client_order_id_bytes",
+            [](py::object) {
+                return NativeReplaceContinuationState::max_client_order_id_bytes();
+            }
+        );
+}
+
+void bind_live_order_action_plan(py::module_& m) {
+    py::enum_<LivePlannerOrderState>(m, "LivePlannerOrderState")
+        .value("Empty", LivePlannerOrderState::Empty)
+        .value("PendingNew", LivePlannerOrderState::PendingNew)
+        .value("Active", LivePlannerOrderState::Active)
+        .value("PendingCancel", LivePlannerOrderState::PendingCancel)
+        .value("Terminal", LivePlannerOrderState::Terminal);
+
+    py::enum_<LiveOrderAction>(m, "LiveOrderAction")
+        .value("None", LiveOrderAction::None)
+        .value("Keep", LiveOrderAction::Keep)
+        .value("Place", LiveOrderAction::Place)
+        .value("CancelFirst", LiveOrderAction::CancelFirst)
+        .value("Pending", LiveOrderAction::Pending)
+        .value("Pause", LiveOrderAction::Pause)
+        .value("SkipFilter", LiveOrderAction::SkipFilter)
+        .value("RouteDisabled", LiveOrderAction::RouteDisabled)
+        .value("Invalid", LiveOrderAction::Invalid);
+
+    py::class_<LiveSideOrderActionPlan>(m, "LiveSideOrderActionPlan")
+        .def_readonly(
+            "target_price_ticks",
+            &LiveSideOrderActionPlan::target_price_ticks
+        )
+        .def_readonly(
+            "target_quantity_lots",
+            &LiveSideOrderActionPlan::target_quantity_lots
+        )
+        .def_readonly(
+            "inventory_room_lots",
+            &LiveSideOrderActionPlan::inventory_room_lots
+        )
+        .def_readonly(
+            "position_value_room_lots",
+            &LiveSideOrderActionPlan::position_value_room_lots
+        )
+        .def_readonly(
+            "existing_remaining_lots",
+            &LiveSideOrderActionPlan::existing_remaining_lots
+        )
+        .def_readonly("reason_mask", &LiveSideOrderActionPlan::reason_mask)
+        .def_readonly("action", &LiveSideOrderActionPlan::action)
+        .def_property_readonly(
+            "action_name",
+            [](const LiveSideOrderActionPlan& self) {
+                return live_order_action_name(self.action);
+            }
+        )
+        .def_readonly(
+            "exposure_increasing",
+            &LiveSideOrderActionPlan::exposure_increasing
+        )
+        .def_readonly(
+            "can_post_after_inventory",
+            &LiveSideOrderActionPlan::can_post_after_inventory
+        )
+        .def_readonly("can_post", &LiveSideOrderActionPlan::can_post)
+        .def_readonly("needs_update", &LiveSideOrderActionPlan::needs_update)
+        .def_readonly("force_update", &LiveSideOrderActionPlan::force_update)
+        .def_readonly("order_active", &LiveSideOrderActionPlan::order_active)
+        .def_readonly("order_pending", &LiveSideOrderActionPlan::order_pending)
+        .def_readonly("filter_valid", &LiveSideOrderActionPlan::filter_valid)
+        .def_readonly(
+            "cancel_existing",
+            &LiveSideOrderActionPlan::cancel_existing
+        );
+
+    py::class_<LiveDualOrderActionPlan>(m, "LiveDualOrderActionPlan")
+        .def_readonly("buy", &LiveDualOrderActionPlan::buy)
+        .def_readonly("sell", &LiveDualOrderActionPlan::sell);
+
+    m.def(
+        "compute_live_order_action_plan",
+        [](py::sequence context_values,
+           py::sequence replace_values,
+           py::sequence buy_values,
+           py::sequence sell_values) {
+            if (py::len(context_values) != 8 ||
+                py::len(replace_values) != 8 ||
+                py::len(buy_values) != 9 ||
+                py::len(sell_values) != 9) {
+                throw std::invalid_argument(
+                    "live order action planner compact input length mismatch"
+                );
+            }
+
+            LiveOrderPlannerContext context{};
+            context.inventory_lots = py::cast<std::int64_t>(context_values[0]);
+            context.max_inventory_lots =
+                py::cast<std::int64_t>(context_values[1]);
+            context.max_position_value_quote_atoms =
+                py::cast<std::int64_t>(context_values[2]);
+            context.mid_notional_quote_atoms_per_lot =
+                py::cast<std::int64_t>(context_values[3]);
+            context.quote_atoms_per_price_tick_lot =
+                py::cast<std::int64_t>(context_values[4]);
+            context.min_quantity_lots =
+                py::cast<std::int64_t>(context_values[5]);
+            context.min_notional_quote_atoms =
+                py::cast<std::int64_t>(context_values[6]);
+            context.requote_threshold_bps =
+                py::cast<double>(context_values[7]);
+
+            LiveOrderReplaceConfig replace{};
+            replace.tick_size = py::cast<double>(replace_values[0]);
+            replace.lot_size = py::cast<double>(replace_values[1]);
+            replace.min_notional = py::cast<double>(replace_values[2]);
+            replace.add_min_price_change_ticks =
+                py::cast<double>(replace_values[3]);
+            replace.reducing_min_price_change_ticks =
+                py::cast<double>(replace_values[4]);
+            replace.add_min_interval_ms =
+                py::cast<double>(replace_values[5]);
+            replace.reducing_min_interval_ms =
+                py::cast<double>(replace_values[6]);
+            replace.flags = py::cast<std::uint8_t>(replace_values[7]);
+
+            const auto read_side = [](const py::sequence& values) {
+                LiveSideOrderActionInput input{};
+                input.target_price_ticks =
+                    py::cast<std::int64_t>(values[0]);
+                input.desired_quantity_lots =
+                    py::cast<std::int64_t>(values[1]);
+                input.exposure_probe_quantity_lots =
+                    py::cast<std::int64_t>(values[2]);
+                input.existing_remaining_lots =
+                    py::cast<std::int64_t>(values[4]);
+                input.order_state = py::cast<LivePlannerOrderState>(values[7]);
+                input.flags = py::cast<std::uint8_t>(values[8]);
+                input.order_age_ms = py::cast<double>(values[5]);
+                if ((input.flags & LiveOrderSideInputUseProvidedNeedsUpdate) != 0) {
+                    input.target_price = py::cast<double>(values[3]);
+                    input.provided_price_delta_ticks =
+                        py::cast<double>(values[6]);
+                } else {
+                    input.existing_price_ticks =
+                        py::cast<std::int64_t>(values[3]);
+                    input.order_ttl_ms = py::cast<double>(values[6]);
+                }
+                return input;
+            };
+
+            return compute_live_order_action_plan(
+                context,
+                replace,
+                read_side(buy_values),
+                read_side(sell_values)
+            );
+        },
+        py::arg("context_values"),
+        py::arg("replace_values"),
+        py::arg("buy_values"),
+        py::arg("sell_values")
+    );
+
+    m.attr("LIVE_ORDER_ACTION_PLAN_CONTEXT_BYTES") = py::int_(
+        sizeof(LiveOrderPlannerContext)
+    );
+    m.attr("LIVE_ORDER_ACTION_PLAN_REPLACE_BYTES") = py::int_(
+        sizeof(LiveOrderReplaceConfig)
+    );
+    m.attr("LIVE_ORDER_ACTION_PLAN_SIDE_INPUT_BYTES") = py::int_(
+        sizeof(LiveSideOrderActionInput)
+    );
+    m.attr("LIVE_ORDER_ACTION_PLAN_SIDE_RESULT_BYTES") = py::int_(
+        sizeof(LiveSideOrderActionPlan)
+    );
+    m.attr("LIVE_ORDER_ACTION_PLAN_DUAL_RESULT_BYTES") = py::int_(
+        sizeof(LiveDualOrderActionPlan)
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderSideInputRouteAllowed)
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_ALLOW_POST") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderSideInputAllowPost)
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderSideInputAllowExposureIncrease)
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderSideInputForceUpdate)
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE") = py::int_(
+        static_cast<std::uint8_t>(
+            LiveOrderSideInputUseProvidedNeedsUpdate
+        )
+    );
+    m.attr("LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderSideInputProvidedNeedsUpdate)
+    );
+    m.attr("LIVE_ORDER_REASON_THROTTLE_PRICE") = py::int_(
+        static_cast<std::uint32_t>(LiveOrderPlanReasonThrottlePrice)
+    );
+    m.attr("LIVE_ORDER_REASON_THROTTLE_AGE") = py::int_(
+        static_cast<std::uint32_t>(LiveOrderPlanReasonThrottleAge)
+    );
+    m.attr("LIVE_ORDER_REASON_PENDING_LIFECYCLE") = py::int_(
+        static_cast<std::uint32_t>(LiveOrderPlanReasonPendingLifecycle)
+    );
+    m.attr("LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST") = py::int_(
+        static_cast<std::uint32_t>(
+            LiveOrderPlanReasonConfiguredCancelFirst
+        )
+    );
+    m.attr("LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE") = py::int_(
+        static_cast<std::uint8_t>(LiveOrderReplacePendingCoalesce)
+    );
+    m.attr("LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE") = py::int_(
+        static_cast<std::uint8_t>(
+            LiveOrderReplaceCancelFirstExposureIncrease
+        )
+    );
+    m.attr("NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE") = py::bool_(true);
+}
+
+void bind_live_runtime_core(py::module_& m) {
+    py::enum_<MarketStateUpdateStatus>(m, "MarketStateUpdateStatus")
+        .value("Applied", MarketStateUpdateStatus::Applied)
+        .value("InvalidDepthSize", MarketStateUpdateStatus::InvalidDepthSize)
+        .value("InvalidLevel", MarketStateUpdateStatus::InvalidLevel)
+        .value("InvalidPriceOrder", MarketStateUpdateStatus::InvalidPriceOrder)
+        .value("InvalidClock", MarketStateUpdateStatus::InvalidClock)
+        .value("ClockRegressed", MarketStateUpdateStatus::ClockRegressed)
+        .value("GenerationRegressed", MarketStateUpdateStatus::GenerationRegressed)
+        .value("CrossedBook", MarketStateUpdateStatus::CrossedBook)
+        .value("WriterBusy", MarketStateUpdateStatus::WriterBusy);
+
+    py::enum_<NativeLiveDecisionStatus>(m, "NativeLiveDecisionStatus")
+        .value("Applied", NativeLiveDecisionStatus::Applied)
+        .value("Busy", NativeLiveDecisionStatus::Busy)
+        .value("NoBook", NativeLiveDecisionStatus::NoBook)
+        .value("InvalidInput", NativeLiveDecisionStatus::InvalidInput)
+        .value(
+            "DecisionClockRegressed",
+            NativeLiveDecisionStatus::DecisionClockRegressed
+        )
+        .value("StaleBook", NativeLiveDecisionStatus::StaleBook)
+        .value(
+            "MarketIdentityMismatch",
+            NativeLiveDecisionStatus::MarketIdentityMismatch
+        )
+        .value("FeedFault", NativeLiveDecisionStatus::FeedFault)
+        .value("InvalidOutput", NativeLiveDecisionStatus::InvalidOutput);
+
+    py::class_<MarketClockIdentity>(m, "MarketClockIdentity")
+        .def(py::init<>())
+        .def_readwrite("source_ts_ns", &MarketClockIdentity::source_ts_ns)
+        .def_readwrite("exchange_ts_ns", &MarketClockIdentity::exchange_ts_ns)
+        .def_readwrite("receive_ts_ns", &MarketClockIdentity::receive_ts_ns)
+        .def_readwrite("visible_ts_ns", &MarketClockIdentity::visible_ts_ns)
+        .def_readwrite("generation", &MarketClockIdentity::generation);
+
+    py::class_<Depth20SideUpdate>(m, "Depth20SideUpdate")
+        .def(py::init<>())
+        .def_readwrite("price_ticks", &Depth20SideUpdate::price_ticks)
+        .def_readwrite("quantity_lots", &Depth20SideUpdate::quantity_lots)
+        .def_readwrite("clock", &Depth20SideUpdate::clock)
+        .def_readwrite("size", &Depth20SideUpdate::size);
+
+    py::class_<CommonSidePolicyInputPod>(m, "CommonSidePolicyInputPod")
+        .def(py::init<>())
+#define BIND_COMMON_POLICY_INPUT(field) \
+        .def_readwrite(#field, &CommonSidePolicyInputPod::field)
+        BIND_COMMON_POLICY_INPUT(exposure_increasing)
+        BIND_COMMON_POLICY_INPUT(fill_cooldown_active)
+        BIND_COMMON_POLICY_INPUT(side_adverse)
+        BIND_COMMON_POLICY_INPUT(side_adverse_pause)
+        BIND_COMMON_POLICY_INPUT(local_extreme_guard)
+        BIND_COMMON_POLICY_INPUT(local_extreme_pause)
+        BIND_COMMON_POLICY_INPUT(defense_guard)
+        BIND_COMMON_POLICY_INPUT(defense_pause)
+        BIND_COMMON_POLICY_INPUT(inventory_ratio)
+        BIND_COMMON_POLICY_INPUT(depth_age_s)
+        BIND_COMMON_POLICY_INPUT(max_book_age_s)
+        BIND_COMMON_POLICY_INPUT(toxicity)
+        BIND_COMMON_POLICY_INPUT(markout_ema)
+        BIND_COMMON_POLICY_INPUT(markout_spread_scale)
+        BIND_COMMON_POLICY_INPUT(markout_reference)
+        BIND_COMMON_POLICY_INPUT(microprice_shift_bps)
+        BIND_COMMON_POLICY_INPUT(l2_quote_flip_rate)
+        BIND_COMMON_POLICY_INPUT(l2_book_cancel_ratio)
+        BIND_COMMON_POLICY_INPUT(l2_near_depth_total)
+        BIND_COMMON_POLICY_INPUT(thin_depth_threshold)
+        BIND_COMMON_POLICY_INPUT(kappa_depth_baseline)
+        BIND_COMMON_POLICY_INPUT(local_extreme_spread_mult)
+        BIND_COMMON_POLICY_INPUT(defense_spread_mult);
+#undef BIND_COMMON_POLICY_INPUT
+
+    py::class_<CommonSidePolicyResultPod>(m, "CommonSidePolicyResultPod")
+        .def_readonly("allow_post", &CommonSidePolicyResultPod::allow_post)
+        .def_readonly(
+            "allow_exposure_increase",
+            &CommonSidePolicyResultPod::allow_exposure_increase
+        )
+        .def_readonly("spread_mult", &CommonSidePolicyResultPod::spread_mult)
+        .def_readonly("size_mult", &CommonSidePolicyResultPod::size_mult)
+        .def_readonly("reason_mask", &CommonSidePolicyResultPod::reason_mask);
+
+    py::class_<NativeQuotePolicyStageResult>(m, "NativeQuotePolicyStageResult")
+        .def_readonly("quote", &NativeQuotePolicyStageResult::quote)
+        .def_readonly("buy_policy", &NativeQuotePolicyStageResult::buy_policy)
+        .def_readonly("sell_policy", &NativeQuotePolicyStageResult::sell_policy);
+
+    py::class_<NativeQuotePolicyStage>(m, "NativeQuotePolicyStage")
+        .def(py::init<QuoteCoreConfig>(), py::arg("config"))
+        .def(
+            "compute",
+            [](const NativeQuotePolicyStage& self,
+               py::sequence state_values,
+               py::sequence pred_values,
+               py::handle bids,
+               py::handle asks,
+               py::sequence buy_policy_values,
+               py::sequence sell_policy_values) {
+                if (py::len(state_values) != 16 || py::len(pred_values) != 5 ||
+                    py::len(buy_policy_values) != 23 ||
+                    py::len(sell_policy_values) != 23) {
+                    throw std::invalid_argument(
+                        "native quote-policy stage input length mismatch"
+                    );
+                }
+                QuoteState state;
+#define READ_STAGE_STATE(index, field) \
+                state.field = py::cast<decltype(state.field)>(state_values[index])
+                READ_STAGE_STATE(0, mid);
+                READ_STAGE_STATE(1, inventory);
+                READ_STAGE_STATE(2, sigma_sq);
+                READ_STAGE_STATE(3, trade_intensity);
+                READ_STAGE_STATE(4, best_bid);
+                READ_STAGE_STATE(5, best_ask);
+                READ_STAGE_STATE(6, ber_active);
+                READ_STAGE_STATE(7, mo_ema_all);
+                READ_STAGE_STATE(8, mo_ema_bid);
+                READ_STAGE_STATE(9, mo_ema_ask);
+                READ_STAGE_STATE(10, bid_adverse_markout_pause_latch);
+                READ_STAGE_STATE(11, ask_adverse_markout_pause_latch);
+                READ_STAGE_STATE(12, mo_ref);
+                READ_STAGE_STATE(13, position_open);
+                READ_STAGE_STATE(14, hold_time_s);
+                READ_STAGE_STATE(15, unrealized_pnl);
+#undef READ_STAGE_STATE
+                QuotePrediction prediction;
+                prediction.dir_10s = py::cast<double>(pred_values[0]);
+                prediction.vol_10s = py::cast<double>(pred_values[1]);
+                prediction.ret_10s = py::cast<double>(pred_values[2]);
+                prediction.tox_bid = py::cast<double>(pred_values[3]);
+                prediction.tox_ask = py::cast<double>(pred_values[4]);
+                const auto read_policy = [](const py::sequence& values) {
+                    CommonSidePolicyInputPod policy;
+#define READ_STAGE_POLICY(index, field) \
+                    policy.field = py::cast<decltype(policy.field)>(values[index])
+                    READ_STAGE_POLICY(0, exposure_increasing);
+                    READ_STAGE_POLICY(1, fill_cooldown_active);
+                    READ_STAGE_POLICY(2, side_adverse);
+                    READ_STAGE_POLICY(3, side_adverse_pause);
+                    READ_STAGE_POLICY(4, local_extreme_guard);
+                    READ_STAGE_POLICY(5, local_extreme_pause);
+                    READ_STAGE_POLICY(6, defense_guard);
+                    READ_STAGE_POLICY(7, defense_pause);
+                    READ_STAGE_POLICY(8, inventory_ratio);
+                    READ_STAGE_POLICY(9, depth_age_s);
+                    READ_STAGE_POLICY(10, max_book_age_s);
+                    READ_STAGE_POLICY(11, toxicity);
+                    READ_STAGE_POLICY(12, markout_ema);
+                    READ_STAGE_POLICY(13, markout_spread_scale);
+                    READ_STAGE_POLICY(14, markout_reference);
+                    READ_STAGE_POLICY(15, microprice_shift_bps);
+                    READ_STAGE_POLICY(16, l2_quote_flip_rate);
+                    READ_STAGE_POLICY(17, l2_book_cancel_ratio);
+                    READ_STAGE_POLICY(18, l2_near_depth_total);
+                    READ_STAGE_POLICY(19, thin_depth_threshold);
+                    READ_STAGE_POLICY(20, kappa_depth_baseline);
+                    READ_STAGE_POLICY(21, local_extreme_spread_mult);
+                    READ_STAGE_POLICY(22, defense_spread_mult);
+#undef READ_STAGE_POLICY
+                    return policy;
+                };
+                const DepthSnapshot depth = depth_from_python_levels(bids, asks);
+                const CommonSidePolicyInputPod buy_policy = read_policy(
+                    buy_policy_values
+                );
+                const CommonSidePolicyInputPod sell_policy = read_policy(
+                    sell_policy_values
+                );
+                py::gil_scoped_release release;
+                return self.compute(
+                    state,
+                    prediction,
+                    depth.view(),
+                    buy_policy,
+                    sell_policy
+                );
+            },
+            py::arg("state_values"),
+            py::arg("pred_values"),
+            py::arg("bids"),
+            py::arg("asks"),
+            py::arg("buy_policy"),
+            py::arg("sell_policy")
+        );
+
+    py::class_<LiveRoutingResult>(m, "LiveRoutingResult")
+        .def_readonly("bid_price", &LiveRoutingResult::bid_price)
+        .def_readonly("ask_price", &LiveRoutingResult::ask_price)
+        .def_readonly("bid_size", &LiveRoutingResult::bid_size)
+        .def_readonly("ask_size", &LiveRoutingResult::ask_size)
+        .def_readonly(
+            "post_policy_cap_hit",
+            &LiveRoutingResult::post_policy_cap_hit
+        )
+        .def_readonly(
+            "can_bid_after_inventory",
+            &LiveRoutingResult::can_bid_after_inventory
+        )
+        .def_readonly(
+            "can_ask_after_inventory",
+            &LiveRoutingResult::can_ask_after_inventory
+        )
+        .def_readonly("can_bid", &LiveRoutingResult::can_bid)
+        .def_readonly("can_ask", &LiveRoutingResult::can_ask)
+        .def_readonly("bid_needs_update", &LiveRoutingResult::bid_needs_update)
+        .def_readonly("ask_needs_update", &LiveRoutingResult::ask_needs_update);
+
+    py::class_<NativeLiveDecisionInput>(m, "NativeLiveDecisionInput")
+        .def(py::init<>())
+#define BIND_LIVE_DECISION_INPUT(field) \
+        .def_readwrite(#field, &NativeLiveDecisionInput::field)
+        BIND_LIVE_DECISION_INPUT(quote_state)
+        BIND_LIVE_DECISION_INPUT(prediction)
+        BIND_LIVE_DECISION_INPUT(buy_policy)
+        BIND_LIVE_DECISION_INPUT(sell_policy)
+        BIND_LIVE_DECISION_INPUT(decision_ts_ns)
+        BIND_LIVE_DECISION_INPUT(max_book_age_ns)
+        BIND_LIVE_DECISION_INPUT(expected_market_publication_sequence)
+        BIND_LIVE_DECISION_INPUT(expected_bid_generation)
+        BIND_LIVE_DECISION_INPUT(expected_ask_generation)
+        BIND_LIVE_DECISION_INPUT(min_qty)
+        BIND_LIVE_DECISION_INPUT(min_notional)
+        BIND_LIVE_DECISION_INPUT(size_eta)
+        BIND_LIVE_DECISION_INPUT(requote_threshold_bps)
+        BIND_LIVE_DECISION_INPUT(routing_max_spread)
+        BIND_LIVE_DECISION_INPUT(bid_active_price)
+        BIND_LIVE_DECISION_INPUT(bid_age_ms)
+        BIND_LIVE_DECISION_INPUT(ask_active_price)
+        BIND_LIVE_DECISION_INPUT(ask_age_ms)
+        BIND_LIVE_DECISION_INPUT(bid_order_ttl_ms)
+        BIND_LIVE_DECISION_INPUT(ask_order_ttl_ms)
+        BIND_LIVE_DECISION_INPUT(symmetric_size)
+        BIND_LIVE_DECISION_INPUT(bid_active)
+        BIND_LIVE_DECISION_INPUT(ask_active);
+#undef BIND_LIVE_DECISION_INPUT
+
+    py::class_<NativeLiveDecisionResult>(m, "NativeLiveDecisionResult")
+        .def_readonly("status", &NativeLiveDecisionResult::status)
+        .def_readonly("quote", &NativeLiveDecisionResult::quote)
+        .def_readonly("buy_policy", &NativeLiveDecisionResult::buy_policy)
+        .def_readonly("sell_policy", &NativeLiveDecisionResult::sell_policy)
+        .def_readonly("routing", &NativeLiveDecisionResult::routing)
+        .def_readonly(
+            "market_publication_sequence",
+            &NativeLiveDecisionResult::market_publication_sequence
+        )
+        .def_readonly(
+            "decision_sequence",
+            &NativeLiveDecisionResult::decision_sequence
+        )
+        .def_readonly("book_age_ns", &NativeLiveDecisionResult::book_age_ns);
+
+    py::class_<NativeLiveRuntimeCore>(m, "NativeLiveRuntimeCore")
+        .def(py::init<QuoteCoreConfig>(), py::arg("config"))
+        .def(
+            "publish_book",
+            [](NativeLiveRuntimeCore& self,
+               const Depth20SideUpdate& bids,
+               const Depth20SideUpdate& asks) {
+                const Depth20SideUpdate bids_copy = bids;
+                const Depth20SideUpdate asks_copy = asks;
+                py::gil_scoped_release release;
+                return self.publish_book(bids_copy, asks_copy);
+            },
+            py::arg("bids"),
+            py::arg("asks")
+        )
+        .def(
+            "decide",
+            [](NativeLiveRuntimeCore& self,
+               const NativeLiveDecisionInput& input) {
+                const NativeLiveDecisionInput input_copy = input;
+                py::gil_scoped_release release;
+                return self.decide(input_copy);
+            },
+            py::arg("input")
+        )
+        .def_property_readonly("decision_count", &NativeLiveRuntimeCore::decision_count)
+        .def_property_readonly(
+            "market_publication_sequence",
+            &NativeLiveRuntimeCore::market_publication_sequence
+        )
+        .def_property_readonly(
+            "feed_fault_epoch",
+            &NativeLiveRuntimeCore::feed_fault_epoch
+        )
+        .def_property_readonly(
+            "feed_resync_epoch",
+            &NativeLiveRuntimeCore::feed_resync_epoch
+        )
+        .def_property_readonly(
+            "feed_fault_latched",
+            &NativeLiveRuntimeCore::feed_fault_latched
+        )
+        .def_property_readonly_static(
+            "cache_line_bytes",
+            [](py::object) { return NativeLiveRuntimeCore::cache_line_bytes(); }
+        )
+        .def_property_readonly_static(
+            "core_size_bytes",
+            [](py::object) { return NativeLiveRuntimeCore::core_size_bytes(); }
+        )
+        .def_property_readonly_static(
+            "core_alignment_bytes",
+            [](py::object) { return NativeLiveRuntimeCore::core_alignment_bytes(); }
+        );
+
+    m.attr("NATIVE_LIVE_RUNTIME_CORE_AVAILABLE") = py::bool_(true);
+    m.attr("NATIVE_QUOTE_POLICY_STAGE_AVAILABLE") = py::bool_(true);
+    m.attr("NATIVE_LIVE_RUNTIME_WIRE_ADAPTER_AVAILABLE") = py::bool_(false);
+}
+
+void bind_live_cooldown(py::module_& m) {
+    py::enum_<LiveCooldownProfile>(m, "LiveCooldownProfile")
+        .value("SELL_SELECTED", LiveCooldownProfile::SellSelected)
+        .value("BUY_E3", LiveCooldownProfile::BuyE3);
+    py::enum_<LiveCooldownObserveStatus>(m, "LiveCooldownObserveStatus")
+        .value("PENDING_ONLY", LiveCooldownObserveStatus::PendingOnly)
+        .value("APPLIED", LiveCooldownObserveStatus::Applied)
+        .value(
+            "OUT_OF_ORDER_IGNORED",
+            LiveCooldownObserveStatus::OutOfOrderIgnored
+        )
+        .value("GAP_RESET", LiveCooldownObserveStatus::GapReset)
+        .value("INVALID_CALLBACK", LiveCooldownObserveStatus::InvalidCallback);
+    py::enum_<LiveCooldownDecisionStatus>(m, "LiveCooldownDecisionStatus")
+        .value("RULE_MATCHED", LiveCooldownDecisionStatus::RuleMatched)
+        .value("NO_RULE_MATCHED", LiveCooldownDecisionStatus::NoRuleMatched)
+        .value(
+            "NO_COMPLETED_WINDOW",
+            LiveCooldownDecisionStatus::NoCompletedWindow
+        )
+        .value("WARMUP_INCOMPLETE", LiveCooldownDecisionStatus::WarmupIncomplete)
+        .value("FEATURE_STATE_STALE", LiveCooldownDecisionStatus::FeatureStateStale)
+        .value(
+            "LATEST_WINDOW_UNOBSERVED",
+            LiveCooldownDecisionStatus::LatestWindowUnobserved
+        )
+        .value(
+            "SELECTED_PREDICATE_UNOBSERVED",
+            LiveCooldownDecisionStatus::SelectedPredicateUnobserved
+        )
+        .value("RULE_UNOBSERVED", LiveCooldownDecisionStatus::RuleUnobserved);
+
+    py::class_<LiveCooldownDecisionPod>(m, "LiveCooldownDecisionPod")
+        .def_readonly("duration_ms", &LiveCooldownDecisionPod::duration_ms)
+        .def_readonly(
+            "matched_rule_index",
+            &LiveCooldownDecisionPod::matched_rule_index
+        )
+        .def_readonly("detail_index", &LiveCooldownDecisionPod::detail_index)
+        .def_readonly(
+            "feature_ready_ts_ns",
+            &LiveCooldownDecisionPod::feature_ready_ts_ns
+        )
+        .def_readonly("feature_age_ms", &LiveCooldownDecisionPod::feature_age_ms)
+        .def_readonly("support_valid", &LiveCooldownDecisionPod::support_valid)
+        .def_readonly("status", &LiveCooldownDecisionPod::status)
+        .def_property_readonly(
+            "predicate_values",
+            [](const LiveCooldownDecisionPod& self) {
+                py::tuple output(self.predicate_count);
+                for (std::size_t index = 0; index < self.predicate_count; ++index) {
+                    output[index] = py::int_(self.predicate_values[index]);
+                }
+                return output;
+            }
+        );
+
+    py::class_<LiveCooldownAuditPod>(m, "LiveCooldownAuditPod")
+#define BIND_LIVE_COOLDOWN_AUDIT(field) \
+        .def_readonly(#field, &LiveCooldownAuditPod::field)
+        BIND_LIVE_COOLDOWN_AUDIT(updates)
+        BIND_LIVE_COOLDOWN_AUDIT(completed_windows)
+        BIND_LIVE_COOLDOWN_AUDIT(gap_windows)
+        BIND_LIVE_COOLDOWN_AUDIT(resets)
+        BIND_LIVE_COOLDOWN_AUDIT(invalid_updates)
+        BIND_LIVE_COOLDOWN_AUDIT(out_of_order_updates)
+        BIND_LIVE_COOLDOWN_AUDIT(gap_resets)
+        BIND_LIVE_COOLDOWN_AUDIT(warmup_admitted)
+        BIND_LIVE_COOLDOWN_AUDIT(feature_ready_ts_ns)
+        BIND_LIVE_COOLDOWN_AUDIT(warmup_start_right_ts_ns)
+        BIND_LIVE_COOLDOWN_AUDIT(last_window_right_ts_ns);
+#undef BIND_LIVE_COOLDOWN_AUDIT
+
+    py::class_<LiveCooldownFeatureSnapshotPod>(
+        m,
+        "LiveCooldownFeatureSnapshotPod"
+    )
+        .def_readonly(
+            "current_window_observed",
+            &LiveCooldownFeatureSnapshotPod::current_window_observed
+        )
+        .def_readonly(
+            "ema_initialized",
+            &LiveCooldownFeatureSnapshotPod::ema_initialized
+        )
+        .def_readonly(
+            "last_observed_ts_ns",
+            &LiveCooldownFeatureSnapshotPod::last_observed_ts_ns
+        )
+        .def_property_readonly("ema", [](const LiveCooldownFeatureSnapshotPod& self) {
+            return std::vector<double>(self.ema.begin(), self.ema.begin() + self.ema_count);
+        })
+        .def_property_readonly(
+            "velocity",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<double>(
+                    self.velocity.begin(), self.velocity.begin() + self.ema_count
+                );
+            }
+        )
+        .def_property_readonly(
+            "acceleration",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<double>(
+                    self.acceleration.begin(),
+                    self.acceleration.begin() + self.ema_count
+                );
+            }
+        )
+        .def_property_readonly(
+            "effective_sign",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<std::int8_t>(
+                    self.effective_sign.begin(),
+                    self.effective_sign.begin() + self.pair_count
+                );
+            }
+        )
+        .def_property_readonly(
+            "last_cross_direction",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<std::int8_t>(
+                    self.last_cross_direction.begin(),
+                    self.last_cross_direction.begin() + self.pair_count
+                );
+            }
+        )
+        .def_property_readonly(
+            "arrangement_start_ts_ns",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<std::int64_t>(
+                    self.arrangement_start_ts_ns.begin(),
+                    self.arrangement_start_ts_ns.begin() + self.pair_count
+                );
+            }
+        )
+        .def_property_readonly(
+            "last_cross_ts_ns",
+            [](const LiveCooldownFeatureSnapshotPod& self) {
+                return std::vector<std::int64_t>(
+                    self.last_cross_ts_ns.begin(),
+                    self.last_cross_ts_ns.begin() + self.pair_count
+                );
+            }
+        );
+
+    py::class_<NativeLiveCooldownHotPath>(m, "NativeLiveCooldownHotPath")
+        .def(
+            py::init<
+                LiveCooldownProfile,
+                const F05BooleanPolicy&,
+                double,
+                double>(),
+            py::arg("profile"),
+            py::arg("policy"),
+            py::arg("warmup_s"),
+            py::arg("max_feature_age_s")
+        )
+        .def(
+            "observe_depth",
+            [](NativeLiveCooldownHotPath& self,
+               std::int64_t receive_ts_ns,
+               double best_bid,
+               double best_ask) {
+                py::gil_scoped_release release;
+                return self.observe_depth(receive_ts_ns, best_bid, best_ask);
+            },
+            py::arg("receive_ts_ns"),
+            py::arg("best_bid"),
+            py::arg("best_ask")
+        )
+        .def(
+            "evaluate",
+            [](NativeLiveCooldownHotPath& self,
+               std::int64_t decision_ts_ns,
+               double campaign_age_s,
+               std::int64_t baseline_duration_ms) {
+                py::gil_scoped_release release;
+                return self.evaluate(
+                    decision_ts_ns,
+                    campaign_age_s,
+                    baseline_duration_ms
+                );
+            },
+            py::arg("decision_ts_ns"),
+            py::arg("campaign_age_s"),
+            py::arg("baseline_duration_ms")
+        )
+        .def("reset", &NativeLiveCooldownHotPath::reset)
+        .def("audit", &NativeLiveCooldownHotPath::audit)
+        .def("feature_snapshot", &NativeLiveCooldownHotPath::feature_snapshot)
+        .def_property_readonly("profile", &NativeLiveCooldownHotPath::profile)
+        .def_property_readonly(
+            "core_size_bytes",
+            &NativeLiveCooldownHotPath::core_size_bytes
+        )
+        .def_property_readonly_static(
+            "cache_line_bytes",
+            [](py::object) { return NativeLiveCooldownHotPath::cache_line_bytes(); }
+        );
+
+    m.attr("NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE") = py::bool_(true);
+}
+
 }  // namespace
 }  // namespace narrowgate_cpp
 
+#ifndef NARROWGATE_LIVE_CPU_PROFILE_NAME
+#define NARROWGATE_LIVE_CPU_PROFILE_NAME "unknown"
+#endif
+
+#ifndef NARROWGATE_LIVE_CPU_COMPILE_OPTIONS
+#define NARROWGATE_LIVE_CPU_COMPILE_OPTIONS "unknown"
+#endif
+
+#ifndef NARROWGATE_LIVE_BUILD_IS_PRODUCTION
+#define NARROWGATE_LIVE_BUILD_IS_PRODUCTION 0
+#endif
+
+#ifndef NARROWGATE_LIVE_VECTOR_WIDTH_BITS
+#define NARROWGATE_LIVE_VECTOR_WIDTH_BITS 0
+#endif
+
 PYBIND11_MODULE(narrowgate_cpp, m) {
     m.doc() = "C++ acceleration hooks for NarrowGate.";
+    m.attr("NATIVE_LIVE_BUILD_PROFILE") = py::str(NARROWGATE_LIVE_CPU_PROFILE_NAME);
+    m.attr("NATIVE_LIVE_BUILD_COMPILE_OPTIONS") =
+        py::str(NARROWGATE_LIVE_CPU_COMPILE_OPTIONS);
+    m.attr("NATIVE_LIVE_BUILD_IS_PRODUCTION") =
+        py::bool_(NARROWGATE_LIVE_BUILD_IS_PRODUCTION != 0);
+    m.attr("NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS") =
+        py::int_(NARROWGATE_LIVE_VECTOR_WIDTH_BITS);
     narrowgate_cpp::bind_common(m);
     narrowgate_cpp::bind_transport_contract(m);
     narrowgate_cpp::bind_dynamic_fill_hazard(m);
@@ -5826,4 +6871,10 @@ PYBIND11_MODULE(narrowgate_cpp, m) {
     narrowgate_cpp::bind_sparse_order_lifecycle(m);
     narrowgate_cpp::bind_active_order_competing_risk_cif(m);
     narrowgate_cpp::bind_order_lifecycle_journal_v2_mirror(m);
+    narrowgate_cpp::bind_live_order_state(m);
+    narrowgate_cpp::bind_live_order_action_plan(m);
+    narrowgate_cpp::bind_replace_continuation(m);
+    narrowgate_cpp::bind_order_gateway_core(m);
+    narrowgate_cpp::bind_live_runtime_core(m);
+    narrowgate_cpp::bind_live_cooldown(m);
 }

@@ -26,29 +26,32 @@ import os
 import pstats
 import sys
 import time
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
-from typing import Callable, Optional
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _bootstrap_cpp_module_path() -> Optional[Path]:
+def _bootstrap_cpp_module_path() -> Path | None:
     """Make local benchmark builds importable without requiring PYTHONPATH."""
     repo_token = ROOT.name.lower()
     candidates: list[Path] = []
     env_build = os.environ.get("NARROWGATE_CPP_BUILD_DIR")
     if env_build:
         candidates.append(Path(env_build).expanduser())
-    candidates.extend([
-        ROOT / "cpp" / "build",
-        ROOT / "build" / "cpp",
-        ROOT / "build",
-        Path("/tmp") / f"{repo_token.lower()}_cpp_build",
-        Path("/tmp") / f"{repo_token.replace('_', '-').lower()}_cpp_build",
-        Path("/tmp") / "narrowgate_cpp_build",
-    ])
+    candidates.extend(
+        [
+            ROOT / "cpp" / "build",
+            ROOT / "build" / "cpp",
+            ROOT / "build",
+            Path("/tmp") / f"{repo_token.lower()}_cpp_build",
+            Path("/tmp") / f"{repo_token.replace('_', '-').lower()}_cpp_build",
+            Path("/tmp") / "narrowgate_cpp_build",
+        ]
+    )
     for candidate in candidates:
         if not candidate.exists():
             continue
@@ -66,8 +69,9 @@ from live.config import load_config  # noqa: E402
 from strategy.inventory_manager import InventoryManager  # noqa: E402
 from strategy.maker_engine import MakerEngine, Side, _resolve_model_dir  # noqa: E402
 from strategy.signal import (  # noqa: E402
-    Prediction,
     SIGNAL_COMPUTE_PHASE_FIELDS,
+    Prediction,
+    QuoteDecisionSnapshot,
     SignalEngine,
 )
 
@@ -129,9 +133,7 @@ def _signal_span_rows(
             continue
         total_us = sum(values)
         span_label = (
-            "total_us"
-            if name == "signal_compute_us"
-            else name.removeprefix("signal_compute_")
+            "total_us" if name == "signal_compute_us" else name.removeprefix("signal_compute_")
         )
         rows.append(
             {
@@ -170,13 +172,10 @@ def _compute_signal_with_wall_timing(
     try:
         return signal.compute_signal(perf_timings=timings)
     finally:
-        timings["signal_compute_us"] = (
-            time.perf_counter_ns() - start_ns
-        ) / 1_000.0
+        timings["signal_compute_us"] = (time.perf_counter_ns() - start_ns) / 1_000.0
         timings["signal_compute_residual_us"] = max(
             0.0,
-            float(timings["signal_compute_us"])
-            - float(timings["signal_compute_accounted_us"]),
+            float(timings["signal_compute_us"]) - float(timings["signal_compute_accounted_us"]),
         )
 
 
@@ -225,7 +224,9 @@ def _feed_second(signal: SignalEngine, ts_ms: int, idx: int, trades_per_second: 
     mid = 65000.0 + math.sin(idx / 23.0) * 12.0 + idx * 0.01
     signal.on_depth(_depth_event(ts_ms, mid))
     for trade_idx in range(trades_per_second):
-        signal.on_agg_trade(_trade_event(ts_ms + trade_idx, mid, idx * trades_per_second + trade_idx))
+        signal.on_agg_trade(
+            _trade_event(ts_ms + trade_idx, mid, idx * trades_per_second + trade_idx)
+        )
 
 
 def _seed_signal(signal: SignalEngine, seconds: int, trades_per_second: int) -> int:
@@ -296,6 +297,30 @@ def _make_engine_shell(cfg, signal: SignalEngine) -> MakerEngine:
     return engine
 
 
+def _fresh_benchmark_snapshot(signal: SignalEngine) -> QuoteDecisionSnapshot:
+    """Normalize only transport clocks for a synthetic CPU benchmark.
+
+    The ingestion benchmark advances exchange timestamps faster than wall
+    time. Feeding that synthetic clock into the live stale/source-lag guard
+    would benchmark an invalid snapshot instead of quote computation.
+    """
+
+    snapshot = signal.quote_decision_snapshot()
+    now_ns = time.time_ns()
+    exchange_ms = now_ns // 1_000_000 - 1
+    receive_ns = now_ns - 500_000
+    return replace(
+        snapshot,
+        capture_ts_ns=now_ns,
+        depth_exchange_ts_ms=exchange_ms,
+        depth_receive_ts_ns=receive_ns,
+        book_ticker_exchange_ts_ms=exchange_ms,
+        book_ticker_receive_ts_ns=receive_ns,
+        valid=True,
+        invalid_reason="",
+    )
+
+
 @contextlib.contextmanager
 def _quote_core_engine(engine: str, strict_cpp: bool):
     old_quote = os.environ.get("NARROWGATE_CPP_QUOTE_CORE")
@@ -361,27 +386,55 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
             tox_ask_10s=0.54,
         )
 
-    mid = signal.mid_price or 65000.0
     q = float(args.inventory)
     if not args.signal_only:
+        quote_snapshot = _fresh_benchmark_snapshot(signal)
         with _quote_core_engine(args.engine, args.strict_cpp):
-            engine._compute_quotes(mid, q, pred)
-            engine._build_side_policy(Side.BUY, mid, q, pred)
-            engine._build_side_policy(Side.SELL, mid, q, pred)
+            engine._compute_quotes(quote_snapshot, q, pred)
+            engine._build_side_policy(
+                Side.BUY,
+                quote_snapshot.mid,
+                q,
+                pred,
+                quote_snapshot,
+            )
+            engine._build_side_policy(
+                Side.SELL,
+                quote_snapshot.mid,
+                q,
+                pred,
+                quote_snapshot,
+            )
 
     gc.disable()
     rows: list[dict[str, float]] = []
 
+    # Ingestion can advance much farther than the bounded feature history when
+    # N is large. Keep that microbenchmark on an independent engine so it
+    # cannot invalidate the exact 1-second grid used by later signal timings.
+    ingest_signal, ingest_next_ts = _make_signal(
+        cfg,
+        enable_ml=False,
+        trades_per_second=args.trades_per_second,
+    )
+
     def ingest_trade_depth(idx: int) -> float:
-        nonlocal next_ts
-        _feed_second(signal, next_ts, idx, args.trades_per_second)
-        next_ts += 1000
-        return signal.mid_price
+        nonlocal ingest_next_ts
+        _feed_second(
+            ingest_signal,
+            ingest_next_ts,
+            idx,
+            args.trades_per_second,
+        )
+        ingest_next_ts += 1000
+        return ingest_signal.mid_price
 
     rows.append(_time_samples("ingest 1s ws events", args.n, ingest_trade_depth))
 
     signal.compute_signal()
-    rows.append(_time_samples("signal cached", args.n, lambda _idx: signal.compute_signal().vol_10s))
+    rows.append(
+        _time_samples("signal cached", args.n, lambda _idx: signal.compute_signal().vol_10s)
+    )
 
     cached_spans: dict[str, list[float]] = {}
 
@@ -393,9 +446,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
         _record_signal_spans(timings, cached_spans)
         return value
 
-    rows.append(
-        _time_samples("signal cached + telemetry", args.n, signal_cached_telemetry)
-    )
+    rows.append(_time_samples("signal cached + telemetry", args.n, signal_cached_telemetry))
     rows.extend(_signal_span_rows("cached span", cached_spans))
 
     def signal_10s(idx: int) -> float:
@@ -455,21 +506,61 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
     rows.extend(_signal_span_rows("catch-up span", catch_up_spans))
 
     if not args.signal_only:
+        quote_snapshot = _fresh_benchmark_snapshot(signal)
         with _quote_core_engine(args.engine, args.strict_cpp):
-            rows.append(_time_samples("live _compute_quotes", args.n, lambda idx: sum(engine._compute_quotes(mid + math.sin(idx / 29.0), q, pred))))
+            rows.append(
+                _time_samples(
+                    "live _compute_quotes",
+                    args.n,
+                    lambda _idx: sum(engine._compute_quotes(quote_snapshot, q, pred)),
+                )
+            )
 
-            def policy_pair(idx: int) -> float:
-                policy_bid = engine._build_side_policy(Side.BUY, mid + math.sin(idx / 31.0), q, pred)
-                policy_ask = engine._build_side_policy(Side.SELL, mid + math.sin(idx / 31.0), q, pred)
-                return policy_bid.spread_mult + policy_ask.spread_mult + policy_bid.size_mult + policy_ask.size_mult
+            def policy_pair(_idx: int) -> float:
+                policy_bid = engine._build_side_policy(
+                    Side.BUY,
+                    quote_snapshot.mid,
+                    q,
+                    pred,
+                    quote_snapshot,
+                )
+                policy_ask = engine._build_side_policy(
+                    Side.SELL,
+                    quote_snapshot.mid,
+                    q,
+                    pred,
+                    quote_snapshot,
+                )
+                return (
+                    policy_bid.spread_mult
+                    + policy_ask.spread_mult
+                    + policy_bid.size_mult
+                    + policy_ask.size_mult
+                )
 
             rows.append(_time_samples("side policy pair", args.n, policy_pair))
 
-            def quote_policy(idx: int) -> float:
-                quote_mid = mid + math.sin(idx / 37.0)
-                bid, ask, spread = engine._compute_quotes(quote_mid, q, pred)
-                policy_bid = engine._build_side_policy(Side.BUY, quote_mid, q, pred)
-                policy_ask = engine._build_side_policy(Side.SELL, quote_mid, q, pred)
+            def quote_policy(_idx: int) -> float:
+                quote_mid = quote_snapshot.mid
+                bid, ask, spread = engine._compute_quotes(
+                    quote_snapshot,
+                    q,
+                    pred,
+                )
+                policy_bid = engine._build_side_policy(
+                    Side.BUY,
+                    quote_mid,
+                    q,
+                    pred,
+                    quote_snapshot,
+                )
+                policy_ask = engine._build_side_policy(
+                    Side.SELL,
+                    quote_mid,
+                    q,
+                    pred,
+                    quote_snapshot,
+                )
                 return bid + ask + spread + policy_bid.spread_mult + policy_ask.spread_mult
 
             rows.append(_time_samples("quote + policy", args.n, quote_policy))
@@ -483,14 +574,37 @@ def main() -> None:
     parser.add_argument("--n", type=int, default=5000, help="iterations for hot live-path methods")
     parser.add_argument("--signal-n", type=int, default=500, help="10s signal feature iterations")
     parser.add_argument("--catch-up-n", type=int, default=50, help="30s catch-up signal iterations")
-    parser.add_argument("--trades-per-second", type=int, default=4, help="synthetic aggTrade events per second")
+    parser.add_argument(
+        "--trades-per-second", type=int, default=4, help="synthetic aggTrade events per second"
+    )
     parser.add_argument("--inventory", type=float, default=0.0)
-    parser.add_argument("--engine", choices=("python", "cpp"), default="python", help="quote core engine used inside live _compute_quotes")
-    parser.add_argument("--strict-cpp", action="store_true", help="raise instead of fallback when --engine cpp cannot load narrowgate_cpp")
-    parser.add_argument("--ml", action="store_true", help="load and run saved LightGBM models during SignalEngine prediction")
-    parser.add_argument("--model-dir", default="", help="explicit validated 13-head model bundle for --ml")
-    parser.add_argument("--signal-only", action="store_true", help="run only signal ingestion, cadence, and telemetry benchmarks")
-    parser.add_argument("--cprofile", action="store_true", help="print cProfile top cumulative functions")
+    parser.add_argument(
+        "--engine",
+        choices=("python", "cpp"),
+        default="python",
+        help="quote core engine used inside live _compute_quotes",
+    )
+    parser.add_argument(
+        "--strict-cpp",
+        action="store_true",
+        help="raise instead of fallback when --engine cpp cannot load narrowgate_cpp",
+    )
+    parser.add_argument(
+        "--ml",
+        action="store_true",
+        help="load and run saved LightGBM models during SignalEngine prediction",
+    )
+    parser.add_argument(
+        "--model-dir", default="", help="explicit validated 13-head model bundle for --ml"
+    )
+    parser.add_argument(
+        "--signal-only",
+        action="store_true",
+        help="run only signal ingestion, cadence, and telemetry benchmarks",
+    )
+    parser.add_argument(
+        "--cprofile", action="store_true", help="print cProfile top cumulative functions"
+    )
     parser.add_argument("--profile-lines", type=int, default=30)
     args = parser.parse_args()
 
@@ -498,14 +612,21 @@ def main() -> None:
     print(f"python={sys.version.split()[0]} executable={sys.executable}")
     if _CPP_BOOTSTRAP_DIR is not None:
         print(f"cpp_bootstrap_dir={_CPP_BOOTSTRAP_DIR}")
-    print(f"quote_core_engine={args.engine} strict_cpp={args.strict_cpp} cpp_status={_cpp_status()}")
-    print(f"ml={args.ml} n={args.n} signal_n={args.signal_n} trades_per_second={args.trades_per_second}")
+    print(
+        f"quote_core_engine={args.engine} strict_cpp={args.strict_cpp} cpp_status={_cpp_status()}"
+    )
+    print(
+        f"ml={args.ml} n={args.n} signal_n={args.signal_n} "
+        f"trades_per_second={args.trades_per_second}"
+    )
 
     if args.cprofile:
         profiler = cProfile.Profile()
         rows = profiler.runcall(run, args)
         stream = io.StringIO()
-        pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats("cumtime").print_stats(args.profile_lines)
+        pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats("cumtime").print_stats(
+            args.profile_lines
+        )
         _print_table(rows)
         print("\n[cProfile cumulative]")
         print(stream.getvalue().rstrip())

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from itertools import product
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 import pytest
@@ -474,3 +476,227 @@ def test_sparse_receive_time_windows_match_offline_projector() -> None:
     assert audit["gap_windows"] > 0
     assert audit["gap_resets"] == 0
     assert audit["resets"] == 0
+
+
+def test_native_live_buy_e3_hot_path_is_exact_on_windows_predicates_and_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NARROWGATE_CPP_COOLDOWN", raising=False)
+    python_runtime, paths = _artifact(tmp_path)
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = subject.LiveBuyE3CooldownPolicy.from_files(
+        **_runtime_reload_kwargs(paths)
+    )
+    assert native_runtime._native_hot_path is not None  # noqa: SLF001
+    assert native_runtime._native_hot_path.core_size_bytes < 8_192  # noqa: SLF001
+
+    width = subject.BASE_WINDOW_WIDTH_NS
+    for index in range(20_510):
+        mid = 60_000.0 + 0.2 * math.sin(index / 37.0)
+        event = {
+            "receive_ts_ns": index * width + 1,
+            "bids": ((mid - 0.05, 1.0),),
+            "asks": ((mid + 0.05, 1.0),),
+            "market_generation": index + 1,
+            "depth_generation": index + 1,
+        }
+        python_runtime.observe_depth(**event)
+        native_runtime.observe_depth(**event)
+
+    decision_ts_ns = 20_510 * width
+    feature_row, reason, ready, age_ms = python_runtime.windows.feature_row(
+        decision_ts_ns=decision_ts_ns
+    )
+    assert reason is None
+    assert feature_row is not None
+    expected_predicates = {
+        name: subject._definition_value(definition, feature_row)  # noqa: SLF001
+        for name, definition in python_runtime.definitions.items()
+    }
+    if subject.DIRECT_CAMPAIGN_AGE in python_runtime.direct_predicates:
+        expected_predicates[subject.DIRECT_CAMPAIGN_AGE] = 1
+    native_pod = native_runtime._native_hot_path.evaluate(  # noqa: SLF001
+        decision_ts_ns,
+        200.0,
+        170_000,
+    )
+    assert tuple(native_pod.predicate_values) == tuple(
+        expected_predicates[name]
+        for name in python_runtime.evaluator.predicate_columns
+    )
+    assert native_pod.feature_ready_ts_ns == ready
+    assert native_pod.feature_age_ms == age_ms
+
+    python_state = python_runtime.windows._state  # noqa: SLF001
+    native_state = native_runtime._native_hot_path.feature_snapshot()  # noqa: SLF001
+    assert tuple(value.hex() for value in native_state.ema) == tuple(
+        value.hex() for value in python_state.ema
+    )
+    assert tuple(value.hex() for value in native_state.velocity) == tuple(
+        value.hex() for value in python_state.velocity
+    )
+    assert tuple(value.hex() for value in native_state.acceleration) == tuple(
+        value.hex() for value in python_state.acceleration
+    )
+    assert tuple(native_state.effective_sign) == tuple(
+        python_state.pairs[pair].effective_sign for pair in subject.EMA_PAIRS_S
+    )
+    assert tuple(native_state.last_cross_ts_ns) == tuple(
+        python_state.pairs[pair].last_cross_ts_ns or 0
+        for pair in subject.EMA_PAIRS_S
+    )
+
+    expected = python_runtime.evaluate(
+        side="BUY",
+        baseline_duration_ms=170_000,
+        campaign_age_s=200.0,
+        decision_ts_ns=decision_ts_ns,
+        snapshot_id="native-golden",
+    )
+    observed = native_runtime.evaluate(
+        side="BUY",
+        baseline_duration_ms=170_000,
+        campaign_age_s=200.0,
+        decision_ts_ns=decision_ts_ns,
+        snapshot_id="native-golden",
+    )
+    assert observed == expected
+
+
+def test_native_live_buy_e3_hot_path_matches_gap_out_of_order_and_stale_fallback(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NARROWGATE_CPP_COOLDOWN", raising=False)
+    python_runtime, paths = _artifact(tmp_path)
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = subject.LiveBuyE3CooldownPolicy.from_files(
+        **_runtime_reload_kwargs(paths)
+    )
+    event = {
+        "bids": ((99.0, 1.0),),
+        "asks": ((101.0, 1.0),),
+        "market_generation": 1,
+        "depth_generation": 1,
+    }
+    for receive_ts_ns in (100_000_001, 400_000_001, 300_000_001, 1_600_000_001):
+        python_runtime.observe_depth(receive_ts_ns=receive_ts_ns, **event)
+        native_runtime.observe_depth(receive_ts_ns=receive_ts_ns, **event)
+
+    python_audit = python_runtime.windows.audit()
+    native_audit = native_runtime.audit()["windows"]
+    for field in (
+        "updates",
+        "completed_windows",
+        "gap_windows",
+        "resets",
+        "invalid_updates",
+        "out_of_order_updates",
+        "gap_resets",
+        "warmup_time_admitted",
+        "feature_ready_ts_ns",
+    ):
+        assert native_audit[field] == python_audit[field]
+
+    expected = python_runtime.evaluate(
+        side="BUY",
+        baseline_duration_ms=85_000,
+        campaign_age_s=1.0,
+        decision_ts_ns=1_700_000_001,
+        snapshot_id="after-gap-reset",
+    )
+    observed = native_runtime.evaluate(
+        side="BUY",
+        baseline_duration_ms=85_000,
+        campaign_age_s=1.0,
+        decision_ts_ns=1_700_000_001,
+        snapshot_id="after-gap-reset",
+    )
+    assert observed == expected
+
+
+def test_native_live_buy_e3_materializes_every_supported_predicate_metric_exactly() -> None:
+    pair = subject.EMA_PAIRS_S[0]
+    prefix = subject._pair_key(*pair)  # noqa: SLF001
+    preserved_metrics = (
+        "positive_ordering",
+        "last_cross_positive",
+        "expanding",
+        "converging",
+    )
+    numeric_metrics = (
+        "abs_distance",
+        "cross_age_s",
+        "arrangement_persistence_s",
+        "signed_distance",
+        "signed_distance_velocity",
+        "signed_distance_acceleration",
+    )
+    definitions = {}
+    for metric in preserved_metrics:
+        name = f"predicate::native_metric::{metric}"
+        definitions[name] = {
+            "kind": "preserved_tri",
+            "source_field": f"tri::{prefix}::{metric}",
+        }
+    for metric in numeric_metrics:
+        name = f"predicate::native_metric::{metric}"
+        definitions[name] = {
+            "kind": "quantile_ge",
+            "source_field": f"value::{prefix}::{metric}",
+            "threshold": 0.0,
+        }
+    columns = tuple(sorted((*definitions, subject.DIRECT_CAMPAIGN_AGE)))
+    evaluator = subject._CompiledBuyE3Evaluator(  # noqa: SLF001
+        rules=(("FIXED_79S", ((tuple((name, False) for name in columns)),)),),
+        predicate_columns=columns,
+        policy_sha256="1" * 64,
+        predicate_bundle_sha256="2" * 64,
+        artifact_sha256="3" * 64,
+    )
+    policy = SimpleNamespace(
+        evaluator=evaluator,
+        definitions=definitions,
+        direct_predicates=frozenset({subject.DIRECT_CAMPAIGN_AGE}),
+        ema_half_lives_s=subject.EMA_HALF_LIVES_S,
+        ema_pairs_s=subject.EMA_PAIRS_S,
+    )
+    _cpp, native = subject.build_hot_path(
+        policy,
+        profile="BUY",
+        warmup_s=2_048.0,
+        max_feature_age_s=1.0,
+        requested=True,
+    )
+    assert native is not None
+    python_state = subject._FullMidEmaState()  # noqa: SLF001
+    width = subject.BASE_WINDOW_WIDTH_NS
+    for index in range(20_490):
+        right = (index + 1) * width
+        mid = 100.0 + 0.2 * math.sin(index / 11.0)
+        python_state.update(ts_ns=right, value=mid)
+        native.observe_depth(index * width + 1, mid - 0.05, mid + 0.05)
+    # Advance once to finalize the last Python-equivalent pending bucket.
+    final_mid = 100.0 + 0.2 * math.sin(20_490 / 11.0)
+    native.observe_depth(20_490 * width + 1, final_mid - 0.05, final_mid + 0.05)
+    decision_ts_ns = 20_491 * width
+    feature_row = python_state.feature_row(decision_ts_ns=decision_ts_ns)
+    expected = {
+        name: subject._definition_value(definition, feature_row)  # noqa: SLF001
+        for name, definition in definitions.items()
+    }
+    expected[subject.DIRECT_CAMPAIGN_AGE] = 1
+    observed = native.evaluate(decision_ts_ns, 200.0, 85_000)
+    assert tuple(observed.predicate_values) == tuple(
+        expected[name] for name in columns
+    )
+    expected_decision = evaluator.evaluate(
+        predicate_values=expected,
+        baseline_duration_ms=85_000,
+    )
+    assert observed.duration_ms == expected_decision[1]
+    assert (
+        None if observed.matched_rule_index < 0 else observed.matched_rule_index
+    ) == expected_decision[2]
+    assert observed.support_valid is expected_decision[4]

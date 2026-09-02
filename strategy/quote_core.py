@@ -2689,8 +2689,14 @@ def _compute_quote_core_cpp(
     cfg: QuoteCoreConfig,
     pred: QuotePrediction | Any,
     depth: DepthSnapshot | None,
+    *,
+    _native_result: Any | None = None,
+    _native_pred_values: tuple[float, float, float, float, float] | None = None,
 ) -> QuoteCoreResult:
-    result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
+    if _native_result is None or _native_pred_values is None:
+        result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
+    else:
+        result, pred_values = _native_result, _native_pred_values
     pred_dir, pred_vol, pred_ret, pred_tox_bid, pred_tox_ask = pred_values
     tick = max(float(cfg.tick_size), 1e-12)
     quote_horizon_s = max(float(cfg.quote_horizon_s), 1e-6)
@@ -2944,6 +2950,9 @@ def _compute_quote_core_cpp_compact(
     cfg: QuoteCoreConfig,
     pred: QuotePrediction | Any,
     depth: DepthSnapshot | None,
+    *,
+    _native_result: Any | None = None,
+    _native_pred_values: tuple[float, float, float, float, float] | None = None,
 ) -> QuoteCoreResult:
     """Build only the context consumed by the per-tick maker policy.
 
@@ -2952,7 +2961,10 @@ def _compute_quote_core_cpp_compact(
     hundred Python dict entries when the live loop only needs guard flags,
     quote distances, and a small diagnostics set.
     """
-    result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
+    if _native_result is None or _native_pred_values is None:
+        result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
+    else:
+        result, pred_values = _native_result, _native_pred_values
     pred_dir, _pred_vol, _pred_ret, _pred_tox_bid, _pred_tox_ask = pred_values
     tick = max(float(cfg.tick_size), 1e-12)
     quote_horizon_s = max(float(cfg.quote_horizon_s), 1e-6)
@@ -3088,6 +3100,75 @@ def _compute_quote_core_cpp_compact(
         },
         diagnostics=diagnostics,
     )
+
+
+_CPP_COMMON_POLICY_FIELDS = (
+    "exposure_increasing", "fill_cooldown_active", "side_adverse",
+    "side_adverse_pause", "local_extreme_guard", "local_extreme_pause",
+    "defense_guard", "defense_pause", "inventory_ratio", "depth_age_s",
+    "max_book_age_s", "toxicity", "markout_ema", "markout_spread_scale",
+    "markout_reference", "microprice_shift_bps", "l2_quote_flip_rate",
+    "l2_book_cancel_ratio", "l2_near_depth_total", "thin_depth_threshold",
+    "kappa_depth_baseline", "local_extreme_spread_mult",
+    "defense_spread_mult",
+)
+
+
+def make_native_quote_policy_stage(cfg: QuoteCoreConfig) -> Any:
+    """Freeze the explicitly selected native quote/common-policy stage."""
+    cpp = _load_cpp_quote_core()
+    if cpp is None or not bool(
+        getattr(cpp, "NATIVE_QUOTE_POLICY_STAGE_AVAILABLE", False)
+    ):
+        raise RuntimeError("native quote-policy stage is unavailable")
+    return cpp.NativeQuotePolicyStage(_cached_cpp_config(cpp, cfg))
+
+
+def compute_native_quote_policy_stage_live(
+    stage: Any,
+    state: QuoteState,
+    cfg: QuoteCoreConfig,
+    pred: QuotePrediction | Any,
+    depth: DepthSnapshot | None,
+    buy_policy: Any,
+    sell_policy: Any,
+    *,
+    require_full_context: bool = False,
+) -> tuple[QuoteCoreResult, Any, Any]:
+    """Cross the native boundary once; never compute a Python reference."""
+    cpp = _load_cpp_quote_core()
+    if cpp is None:
+        raise RuntimeError("narrowgate_cpp is not available")
+    pred_values = tuple(
+        _float(_get(pred, name, 0.5 if "tox" in name or name == "dir_10s" else 0.0))
+        for name in _CPP_PRED_FIELDS
+    )
+
+    def policy_values(source: Any) -> tuple[Any, ...]:
+        return tuple(getattr(source, name) for name in _CPP_COMMON_POLICY_FIELDS)
+
+    native = stage.compute(
+        tuple(getattr(state, name) for name in _CPP_STATE_FIELDS),
+        pred_values,
+        depth.bids if depth is not None else (),
+        depth.asks if depth is not None else (),
+        policy_values(buy_policy),
+        policy_values(sell_policy),
+    )
+    converter = (
+        _compute_quote_core_cpp
+        if require_full_context
+        else _compute_quote_core_cpp_compact
+    )
+    quote = converter(
+        state,
+        cfg,
+        pred,
+        depth,
+        _native_result=native.quote,
+        _native_pred_values=pred_values,
+    )
+    return quote, native.buy_policy, native.sell_policy
 
 
 def compute_quote_core_batch_depth_cpp(

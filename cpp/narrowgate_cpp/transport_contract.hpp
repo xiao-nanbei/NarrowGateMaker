@@ -87,6 +87,9 @@ struct CanonicalEventHeader {
     std::string session_id;
     std::string correlation_id;
     std::uint64_t generation = 0;
+    // Exchange event time is a venue clock. Receive and feature-ready times
+    // share the live host's monotonic clock and may be ordered with each
+    // other; neither may be numerically ordered against exchange event time.
     std::uint64_t exchange_event_time_ns = 0;
     std::uint64_t local_receive_time_ns = 0;
     std::uint64_t feature_ready_time_ns = 0;
@@ -111,10 +114,17 @@ struct CanonicalOrderIntent {
     bool reduce_only = false;
     bool post_only = false;
     std::uint64_t recv_window_ms = 0;
+    // Local monotonic deadline used only by the host-side gateway scheduler.
     std::uint64_t deadline_time_ns = 0;
     std::uint64_t expected_ownership_generation = 0;
 
     [[nodiscard]] const char* validation_error() const noexcept {
+        if (abi_version != kTransportContractAbiVersion) {
+            return "unsupported transport ABI version";
+        }
+        if (product != TransportProduct::UsdMFutures) {
+            return "transport product must be USD-M Futures";
+        }
         if (request_id.empty()) {
             return "request_id is required";
         }
@@ -124,8 +134,8 @@ struct CanonicalOrderIntent {
         if (symbol.empty()) {
             return "symbol is required";
         }
-        if (side == CanonicalSide::Unspecified) {
-            return "side is required";
+        if (side != CanonicalSide::Buy && side != CanonicalSide::Sell) {
+            return "side must be BUY or SELL";
         }
         if (!std::isfinite(quantity) || quantity <= 0.0) {
             return "quantity must be finite and positive";
@@ -173,6 +183,12 @@ struct CanonicalCancelIntent {
     std::uint64_t expected_ownership_generation = 0;
 
     [[nodiscard]] const char* validation_error() const noexcept {
+        if (abi_version != kTransportContractAbiVersion) {
+            return "unsupported transport ABI version";
+        }
+        if (product != TransportProduct::UsdMFutures) {
+            return "transport product must be USD-M Futures";
+        }
         if (request_id.empty()) {
             return "request_id is required";
         }
@@ -200,6 +216,12 @@ struct CanonicalCancelAllIntent {
     std::uint64_t expected_ownership_generation = 0;
 
     [[nodiscard]] const char* validation_error() const noexcept {
+        if (abi_version != kTransportContractAbiVersion) {
+            return "unsupported transport ABI version";
+        }
+        if (product != TransportProduct::UsdMFutures) {
+            return "transport product must be USD-M Futures";
+        }
         if (request_id.empty()) {
             return "request_id is required";
         }
@@ -221,6 +243,11 @@ struct TransportReceipt {
     TransportPhase phase = TransportPhase::Unspecified;
     TransportUnknownState unknown_state = TransportUnknownState::None;
     std::uint64_t generation = 0;
+    // `local_time_ns` is from the live host's monotonic clock.
+    // `exchange_time_ns` is an external venue clock.  Each domain may be
+    // checked for progress against an earlier value from that same domain,
+    // but the two numeric values must never be ordered or subtracted without
+    // an explicitly measured clock-offset model.
     std::uint64_t local_time_ns = 0;
     std::uint64_t exchange_time_ns = 0;
     std::string reason;
@@ -250,8 +277,8 @@ struct TransportReceipt {
         case TransportBackendKind::CppUsdmRest:
             return "C++ USD-M REST backend is not implemented";
         case TransportBackendKind::CppUsdmFix:
-            return "Binance USD-M Futures FIX is unavailable: official Futures FIX "
-                   "documentation and account entitlement are required";
+            return "Binance USD-M Futures FIX is unavailable: Binance FIX is "
+                   "Spot-only and no official USD-M Futures FIX endpoint exists";
         case TransportBackendKind::Unspecified:
             return "transport backend is unspecified";
         case TransportBackendKind::PythonUsdmLegacy:

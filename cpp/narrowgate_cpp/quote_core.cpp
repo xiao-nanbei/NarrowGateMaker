@@ -66,6 +66,9 @@ bool unique_valid_level(const DepthSideView& levels, std::size_t index) {
 }
 
 std::size_t unique_valid_size(const DepthSideView& levels) {
+    if (levels.validated_unique_sorted) {
+        return levels.size();
+    }
     std::size_t count = 0;
     for (std::size_t i = 0; i < levels.size(); ++i) {
         count += unique_valid_level(levels, i) ? 1U : 0U;
@@ -75,6 +78,29 @@ std::size_t unique_valid_size(const DepthSideView& levels) {
 
 double depth_qty_sum(const DepthSideView& levels, int n) {
     double out = 0.0;
+    if (levels.validated_unique_sorted) {
+        const std::size_t end = std::min(
+            levels.size(),
+            static_cast<std::size_t>(std::max(n, 0))
+        );
+        // Native live builds this prefix once in strict forward order using
+        // exactly `sum += double(lots) * lot_size`.  Reading the requested
+        // prefix therefore has the same binary64 value as every former
+        // independent scan.  A partial prefix deliberately falls through to
+        // the original forward loop, keeping this view safe for other native
+        // callers without turning the cache into an unchecked contract.
+        const std::size_t prefixed = std::min(
+            end,
+            levels.quantity_prefix.size()
+        );
+        if (prefixed > 0) {
+            out = levels.quantity_prefix[prefixed - 1];
+        }
+        for (std::size_t i = prefixed; i < end; ++i) {
+            out += levels.quantity(i);
+        }
+        return out;
+    }
     int included = 0;
     for (std::size_t i = 0; i < levels.size() && included < n; ++i) {
         if (!unique_valid_level(levels, i)) {
@@ -87,10 +113,14 @@ double depth_qty_sum(const DepthSideView& levels, int n) {
 }
 
 template <int DefaultLevels>
-double near_depth_total(const DepthView& depth, int requested_levels) {
+double near_depth_total(
+    const DepthView& depth,
+    int requested_levels,
+    bool has_book
+) {
     // near_depth_total 的口径要和 Python trace/live 侧保持一致；它会影响 thin_depth、
     // defense/adverse bucket 和 quote-EV 证据分桶，不只是一个展示字段。
-    if (!depth.has_book()) {
+    if (!has_book) {
         return 0.0;
     }
     const int levels = requested_levels > 0
@@ -100,8 +130,12 @@ double near_depth_total(const DepthView& depth, int requested_levels) {
     return depth_qty_sum(depth.bids, n) + depth_qty_sum(depth.asks, n);
 }
 
-double depth_imbalance(const DepthView& depth, int requested_levels) {
-    if (!depth.has_book()) {
+double depth_imbalance(
+    const DepthView& depth,
+    int requested_levels,
+    bool has_book
+) {
+    if (!has_book) {
         return 0.0;
     }
     const int n = bounded_levels(requested_levels, unique_valid_size(depth.bids), unique_valid_size(depth.asks));
@@ -110,8 +144,13 @@ double depth_imbalance(const DepthView& depth, int requested_levels) {
     return safe_div(bid_qty - ask_qty, bid_qty + ask_qty);
 }
 
-double microprice(const DepthView& depth, int requested_levels, double fallback_mid) {
-    if (!depth.has_book()) {
+double microprice(
+    const DepthView& depth,
+    int requested_levels,
+    double fallback_mid,
+    bool has_book
+) {
+    if (!has_book) {
         return fallback_mid;
     }
     const int n = bounded_levels(requested_levels, unique_valid_size(depth.bids), unique_valid_size(depth.asks));
@@ -134,9 +173,10 @@ double estimate_depth_kappa(
     double kappa_base,
     double depth_baseline,
     int requested_levels,
-    double min_ratio
+    double min_ratio,
+    bool has_book
 ) {
-    if (!depth.has_book() || depth_baseline <= 0.0) {
+    if (!has_book || depth_baseline <= 0.0) {
         return kappa_base;
     }
     const int n = bounded_levels(requested_levels, unique_valid_size(depth.bids), unique_valid_size(depth.asks));
@@ -151,14 +191,23 @@ double estimate_depth_kappa(
     return std::max(kappa_base * ratio, 1e-12);
 }
 
-double depth_tox_mult(double mid, const DepthView& depth, const QuoteCoreConfig& cfg) {
-    if (!cfg.depth_tox_enabled || !depth.has_book()) {
+double depth_tox_mult(
+    double mid,
+    const DepthView& depth,
+    const QuoteCoreConfig& cfg,
+    bool has_book
+) {
+    if (!cfg.depth_tox_enabled || !has_book) {
         return 1.0;
     }
-    const double imb = depth_imbalance(depth, cfg.depth_tox_levels);
+    const double imb = depth_imbalance(
+        depth,
+        cfg.depth_tox_levels,
+        has_book
+    );
     double micro_shift_bps = 0.0;
     if (mid > 0.0) {
-        const double fair = microprice(depth, 3, mid);
+        const double fair = microprice(depth, 3, mid, has_book);
         micro_shift_bps = (fair - mid) / mid * 10000.0;
     }
     if (std::abs(imb) >= std::abs(cfg.depth_tox_imbalance_threshold) ||
@@ -589,20 +638,8 @@ LiveRoutingResult compute_live_routing_decision(
     return out;
 }
 
-QuoteCoreResult compute_quote_core(
-    const QuoteState& state,
-    const QuoteCoreConfig& cfg,
-    const QuotePrediction& pred,
-    const DepthView& depth
-) {
-    QuoteCoreResult out;
+QuoteHotPlan make_quote_hot_plan(const QuoteCoreConfig& cfg) {
     const double tick = std::max(std::abs(cfg.tick_size), 1e-12);
-    const double mid = state.mid;
-    if (mid <= 0.0 || !std::isfinite(mid)) {
-        return out;
-    }
-
-    const double q = state.inventory;
     const double legacy_gamma = cfg.gamma;
     const double q_ref = cfg.inventory_reference_qty;
     if (!std::isfinite(legacy_gamma) || legacy_gamma <= 0.0) {
@@ -610,10 +647,14 @@ QuoteCoreResult compute_quote_core(
     }
     const double legacy_effective = std::max(legacy_gamma, 1e-12);
     if (!std::isfinite(q_ref) || q_ref <= 0.0) {
-        throw std::invalid_argument("inventory_reference_qty must be positive and finite");
+        throw std::invalid_argument(
+            "inventory_reference_qty must be positive and finite"
+        );
     }
     if (std::isfinite(cfg.eta_inventory) && cfg.eta_inventory <= 0.0) {
-        throw std::invalid_argument("eta_inventory must be positive and finite");
+        throw std::invalid_argument(
+            "eta_inventory must be positive and finite"
+        );
     }
     if (std::isfinite(cfg.a_spread) && cfg.a_spread <= 0.0) {
         throw std::invalid_argument("a_spread must be positive and finite");
@@ -627,7 +668,8 @@ QuoteCoreResult compute_quote_core(
     const double risk_per_order = std::isfinite(cfg.risk_per_order)
         ? cfg.risk_per_order
         : legacy_spread_coefficient;
-    const double execution_intensity_slope = std::isfinite(cfg.execution_intensity_slope)
+    const double execution_intensity_slope =
+        std::isfinite(cfg.execution_intensity_slope)
         ? cfg.execution_intensity_slope
         : cfg.kappa;
     const double risk_horizon_s = std::isfinite(cfg.risk_horizon_s)
@@ -638,23 +680,34 @@ QuoteCoreResult compute_quote_core(
         ? cfg.trade_intensity_acceleration_spread_mult
         : cfg.ber_spread_mult;
     if (!std::isfinite(eta_inventory) || eta_inventory <= 0.0) {
-        throw std::invalid_argument("eta_inventory must be positive and finite");
+        throw std::invalid_argument(
+            "eta_inventory must be positive and finite"
+        );
     }
     if (!std::isfinite(risk_per_order) || risk_per_order <= 0.0) {
-        throw std::invalid_argument("risk_per_order must be positive and finite");
+        throw std::invalid_argument(
+            "risk_per_order must be positive and finite"
+        );
     }
-    if (!std::isfinite(execution_intensity_slope) || execution_intensity_slope <= 0.0) {
-        throw std::invalid_argument("execution_intensity_slope must be positive and finite");
+    if (!std::isfinite(execution_intensity_slope) ||
+        execution_intensity_slope <= 0.0) {
+        throw std::invalid_argument(
+            "execution_intensity_slope must be positive and finite"
+        );
     }
     if (!std::isfinite(risk_horizon_s) || risk_horizon_s <= 0.0) {
-        throw std::invalid_argument("risk_horizon_s must be positive and finite");
+        throw std::invalid_argument(
+            "risk_horizon_s must be positive and finite"
+        );
     }
-    if (!std::isfinite(acceleration_spread_mult) || acceleration_spread_mult <= 0.0) {
+    if (!std::isfinite(acceleration_spread_mult) ||
+        acceleration_spread_mult <= 0.0) {
         throw std::invalid_argument(
             "trade_intensity_acceleration_spread_mult must be positive and finite"
         );
     }
-    if (cfg.historical_p3_scalar_adapter_enabled && cfg.p3_side_bbo_floor_enabled) {
+    if (cfg.historical_p3_scalar_adapter_enabled &&
+        cfg.p3_side_bbo_floor_enabled) {
         throw std::invalid_argument(
             "historical P3 scalar projection and side-BBO floor are mutually exclusive"
         );
@@ -665,13 +718,55 @@ QuoteCoreResult compute_quote_core(
             !cfg.f03_ret_action_compatible ||
             !std::isfinite(cfg.f03_ret_action_horizon_s) ||
             cfg.f03_ret_action_horizon_s <= 0.0 ||
-            std::abs(cfg.f03_ret_action_horizon_s - cfg.quote_horizon_s) > 1e-12
+            std::abs(
+                cfg.f03_ret_action_horizon_s - cfg.quote_horizon_s
+            ) > 1e-12
         ) {
             throw std::invalid_argument(
                 "F03 ret action horizon is not compatible with the quote consumer"
             );
         }
     }
+
+    const double kappa_base =
+        cfg.historical_p3_scalar_adapter_enabled && cfg.p3_kappa_eff > 0.0
+        ? cfg.p3_kappa_eff
+        : execution_intensity_slope;
+    return QuoteHotPlan{
+        tick,
+        q_ref,
+        eta_inventory,
+        risk_per_order,
+        risk_horizon_s,
+        acceleration_spread_mult,
+        kappa_base,
+        clamp(cfg.spread_cap_mode, 0, 2),
+        cfg.regime_enabled && cfg.historical_p3_scalar_adapter_enabled &&
+            cfg.p3_delta_star > 0.0,
+        cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0,
+    };
+}
+
+QuoteCoreResult compute_quote_core(
+    const QuoteState& state,
+    const QuoteCoreConfig& cfg,
+    const QuotePrediction& pred,
+    const DepthView& depth,
+    const QuoteHotPlan& plan
+) {
+    QuoteCoreResult out;
+    const double tick = plan.tick();
+    const double mid = state.mid;
+    if (mid <= 0.0 || !std::isfinite(mid)) {
+        return out;
+    }
+
+    const double q = state.inventory;
+    const double q_ref = plan.inventory_reference_qty();
+    const double eta_inventory = plan.eta_inventory();
+    const double risk_per_order = plan.risk_per_order();
+    const double risk_horizon_s = plan.risk_horizon_s();
+    const double acceleration_spread_mult = plan.acceleration_spread_mult();
     const double inventory_units = q / q_ref;
     out.sigma_sq_raw = std::max(state.sigma_sq, 0.0);
     double sigma_sq = std::max(state.sigma_sq, 1e-6);
@@ -682,23 +777,22 @@ QuoteCoreResult compute_quote_core(
     out.sigma_sq_blended = sigma_sq;
     const double sigma_sq_horizon = sigma_sq * risk_horizon_s;
 
-    const double kappa_base =
-        cfg.historical_p3_scalar_adapter_enabled && cfg.p3_kappa_eff > 0.0
-        ? cfg.p3_kappa_eff
-        : execution_intensity_slope;
+    const double kappa_base = plan.kappa_base();
     double kappa_used = std::max(kappa_base, 1e-12);
     const double kappa_before_depth = kappa_used;
+    const bool depth_has_book = depth.has_book();
     double fair = mid;
-    if (depth.has_book() && cfg.use_depth_microprice) {
-        fair = microprice(depth, cfg.microprice_levels, mid);
+    if (depth_has_book && cfg.use_depth_microprice) {
+        fair = microprice(depth, cfg.microprice_levels, mid, depth_has_book);
     }
-    if (depth.has_book() && cfg.use_depth_kappa) {
+    if (depth_has_book && cfg.use_depth_kappa) {
         kappa_used = estimate_depth_kappa(
             depth,
             kappa_used,
             cfg.kappa_depth_baseline,
             cfg.kappa_levels,
-            cfg.depth_kappa_ratio
+            cfg.depth_kappa_ratio,
+            depth_has_book
         );
     }
     out.kappa_before_depth = kappa_before_depth;
@@ -755,20 +849,29 @@ QuoteCoreResult compute_quote_core(
         const double mo_adj = 1.0 - cfg.markout_spread_scale * std::tanh(mo_ratio);
         delta *= clamp(mo_adj, 0.5, 2.0);
     }
-    const double depth_tox = depth_tox_mult(mid, depth, cfg);
+    const double depth_tox = depth_tox_mult(
+        mid,
+        depth,
+        cfg,
+        depth_has_book
+    );
     delta *= depth_tox;
-    if (
-        cfg.regime_enabled &&
-        cfg.historical_p3_scalar_adapter_enabled &&
-        cfg.p3_delta_star > 0.0
-    ) {
+    if (plan.historical_p3_pair_floor_active()) {
         delta = std::max(delta, 2.0 * cfg.p3_delta_star);
     }
     const double min_spread = 2.0 * std::abs(cfg.maker_fee) * mid + tick;
     delta = std::max(delta, min_spread);
 
-    const double near_depth = near_depth_total<10>(depth, cfg.trace_book_imb_levels);
-    const double trace_book_imb = depth_imbalance(depth, cfg.trace_book_imb_levels);
+    const double near_depth = near_depth_total<10>(
+        depth,
+        cfg.trace_book_imb_levels,
+        depth_has_book
+    );
+    const double trace_book_imb = depth_imbalance(
+        depth,
+        cfg.trace_book_imb_levels,
+        depth_has_book
+    );
     out.delta_raw = delta_raw;
     out.delta_after_regime = delta_after_regime;
     out.delta_pre_cap = delta;
@@ -791,7 +894,7 @@ QuoteCoreResult compute_quote_core(
     }
 
     out.cap_bps = cap_bps;
-    const int cap_mode = clamp(cfg.spread_cap_mode, 0, 2);
+    const int cap_mode = plan.spread_cap_mode();
     bool cap_exposure_block = false;
     if (cap_bps > 0.0) {
         out.max_spread = mid * cap_bps / 10000.0;
@@ -876,8 +979,12 @@ QuoteCoreResult compute_quote_core(
         asym -= inv_sign * std::min(urgency, 1.0) * cfg.exit_urgency_strength;
     }
     const double micro_shift_bps = mid > 0.0 ? (fair - mid) / mid * 10000.0 : 0.0;
-    if (depth.has_book() && cfg.book_imb_strength > 0.0) {
-        asym += depth_imbalance(depth, cfg.book_imb_levels) * cfg.book_imb_strength;
+    if (depth_has_book && cfg.book_imb_strength > 0.0) {
+        asym += depth_imbalance(
+            depth,
+            cfg.book_imb_levels,
+            depth_has_book
+        ) * cfg.book_imb_strength;
     }
     if (cfg.markout_spread_scale > 0.0 && (state.mo_ema_bid != 0.0 || state.mo_ema_ask != 0.0)) {
         const double mo_diff = state.mo_ema_bid - state.mo_ema_ask;
@@ -1015,7 +1122,7 @@ QuoteCoreResult compute_quote_core(
         }
     }
 
-    if (cfg.p3_side_bbo_floor_enabled && cfg.p3_delta_star > 0.0) {
+    if (plan.p3_side_bbo_floor_active()) {
         if (state.best_bid <= 0.0 || state.best_ask <= 0.0) {
             throw std::invalid_argument(
                 "P3 side-BBO floor requires a valid decision-time BBO"
@@ -1077,6 +1184,21 @@ QuoteCoreResult compute_quote_core(
     out.final_cap_excess = cap_excess;
 
     return out;
+}
+
+QuoteCoreResult compute_quote_core(
+    const QuoteState& state,
+    const QuoteCoreConfig& cfg,
+    const QuotePrediction& pred,
+    const DepthView& depth
+) {
+    // Preserve the historical public behavior: an invalid mid returns an
+    // empty result before config validation is attempted.
+    if (state.mid <= 0.0 || !std::isfinite(state.mid)) {
+        return QuoteCoreResult{};
+    }
+    const QuoteHotPlan plan = make_quote_hot_plan(cfg);
+    return compute_quote_core(state, cfg, pred, depth, plan);
 }
 
 }  // namespace narrowgate_cpp

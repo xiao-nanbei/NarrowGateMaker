@@ -1282,6 +1282,188 @@ def test_cpp_selected_mid_stream_matches_python_feature_state() -> None:
     assert cpp_decision.feature_age_ms == pytest.approx(feature_age)
 
 
+def test_native_live_sell_hot_path_exact_windows_predicates_and_dnf(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NARROWGATE_CPP_COOLDOWN", raising=False)
+    python_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    assert native_runtime._native_hot_path is not None  # noqa: SLF001
+
+    mids = (100.0, 101.0, 99.0, 102.0, 98.0, 103.0, 97.0)
+    for index, mid in enumerate(mids, start=1):
+        event = {
+            "receive_ts_ns": index * 100_000_000 + 1,
+            "bids": ((mid - 0.1, 1.0),),
+            "asks": ((mid + 0.1, 1.0),),
+            "market_generation": index,
+            "depth_generation": index,
+        }
+        python_runtime.observe_depth(**event)
+        native_runtime.observe_depth(**event)
+
+    decision_ts_ns = 800_000_000
+    values, reason, ready, age_ms = python_runtime.windows.predicate_values(
+        decision_ts_ns=decision_ts_ns,
+        campaign_age_s=100.0,
+        baseline_duration_ms=85_000,
+    )
+    assert reason is None
+    assert values is not None
+    native_pod = native_runtime._native_hot_path.evaluate(  # noqa: SLF001
+        decision_ts_ns,
+        100.0,
+        85_000,
+    )
+    assert tuple(native_pod.predicate_values) == tuple(
+        values[name] for name in PREDICATE_COLUMNS
+    )
+    assert native_pod.feature_ready_ts_ns == ready
+    assert native_pod.feature_age_ms == age_ms
+    python_state = python_runtime.windows._state  # noqa: SLF001
+    native_state = native_runtime._native_hot_path.feature_snapshot()  # noqa: SLF001
+    assert tuple(value.hex() for value in native_state.ema) == tuple(
+        python_state.ema[half_life].hex() for half_life in (4.0, 16.0, 256.0)
+    )
+
+    for campaign_age_s in (1.0, 100.0):
+        expected = python_runtime.evaluate(
+            side="SELL",
+            baseline_duration_ms=85_000,
+            campaign_age_s=campaign_age_s,
+            decision_ts_ns=decision_ts_ns,
+            snapshot_id=f"sell-{campaign_age_s}",
+        )
+        observed = native_runtime.evaluate(
+            side="SELL",
+            baseline_duration_ms=85_000,
+            campaign_age_s=campaign_age_s,
+            decision_ts_ns=decision_ts_ns,
+            snapshot_id=f"sell-{campaign_age_s}",
+        )
+        assert observed == expected
+
+
+def test_native_live_sell_hot_path_exact_unobserved_warmup_and_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NARROWGATE_CPP_COOLDOWN", raising=False)
+    python_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+
+    def decisions(decision_ts_ns: int):
+        arguments = {
+            "side": "SELL",
+            "baseline_duration_ms": 85_000,
+            "campaign_age_s": 1.0,
+            "decision_ts_ns": decision_ts_ns,
+            "snapshot_id": str(decision_ts_ns),
+        }
+        return (
+            python_runtime.evaluate(**arguments),
+            native_runtime.evaluate(**arguments),
+        )
+
+    assert decisions(1)[0] == decisions(1)[1]
+    for index, mid in enumerate((100.0, 101.0, 99.0, 102.0), start=1):
+        event = {
+            "receive_ts_ns": index * 100_000_000 + 1,
+            "bids": ((mid - 0.1, 1.0),),
+            "asks": ((mid + 0.1, 1.0),),
+            "market_generation": index,
+            "depth_generation": index,
+        }
+        python_runtime.observe_depth(**event)
+        native_runtime.observe_depth(**event)
+    assert decisions(450_000_000)[0] == decisions(450_000_000)[1]
+    assert decisions(1_000_000_002)[0] == decisions(1_000_000_002)[1]
+
+
+def test_native_live_sell_hot_path_exact_gap_reset_out_of_order_and_invalid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("NARROWGATE_CPP_COOLDOWN", raising=False)
+    python_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_python_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+
+    def observe(receive_ts_ns: int) -> None:
+        event = {
+            "receive_ts_ns": receive_ts_ns,
+            "bids": ((99.0, 1.0),),
+            "asks": ((101.0, 1.0),),
+            "market_generation": 1,
+            "depth_generation": 1,
+        }
+        python_runtime.observe_depth(**event)
+        native_runtime.observe_depth(**event)
+
+    observe(100_000_001)
+    observe(300_000_001)  # One explicit unobserved 100 ms window.
+    observe(200_000_001)  # Receive-time regression is ignored.
+    observe(1_100_000_001)  # A 700 ms hole exceeds freshness and resets.
+    invalid = {
+        "receive_ts_ns": 1_200_000_001,
+        "bids": (),
+        "asks": ((101.0, 1.0),),
+        "market_generation": 1,
+        "depth_generation": 1,
+    }
+    python_runtime.observe_depth(**invalid)
+    native_runtime.observe_depth(**invalid)
+
+    expected_audit = python_runtime.windows.audit()
+    observed_audit = native_runtime.audit()["windows"]
+    for field in (
+        "updates",
+        "completed_windows",
+        "gap_windows",
+        "resets",
+        "invalid_updates",
+        "out_of_order_updates",
+        "warmup_admitted",
+        "feature_ready_ts_ns",
+    ):
+        assert observed_audit[field] == expected_audit[field]
+    assert native_runtime._native_hot_path.audit().gap_resets == 1  # noqa: SLF001
+    assert expected_audit["last_error"] == "ValueError:depth_callback_invalid"
+
+    arguments = {
+        "side": "SELL",
+        "baseline_duration_ms": 85_000,
+        "campaign_age_s": 1.0,
+        "decision_ts_ns": 1_200_000_002,
+        "snapshot_id": "sell-gap-reset",
+    }
+    assert native_runtime.evaluate(**arguments) == python_runtime.evaluate(**arguments)
+
+
 def test_cpp_fail_closed_warmup_stale_unobserved_and_qualification() -> None:
     unqualified = cpp.F05RepeatedBooleanCooldownRuntime(_cpp_config(qualified=False))
     _warm(unqualified)

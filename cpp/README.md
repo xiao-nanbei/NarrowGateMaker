@@ -153,6 +153,60 @@ PYTHONPATH=/tmp/narrowgate_btcusdc_cpp_build:. \
 .venv/bin/python -m pip install -e ./cpp
 ```
 
+上述命令生成可移植开发构建。EC2 live release 必须显式选择已实测的
+Cascade Lake/256-bit profile；不能把默认 portable wheel 当成生产制品：
+
+```bash
+.venv/bin/python -m pip wheel ./cpp \
+  --config-settings=cmake.define.NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2
+.venv/bin/python -c \
+  'import narrowgate_cpp as n; print(n.NATIVE_LIVE_BUILD_PROFILE, n.NATIVE_LIVE_BUILD_COMPILE_OPTIONS, n.NATIVE_LIVE_BUILD_IS_PRODUCTION)'
+```
+
+该 profile 只针对 EC2 Linux x86_64 生产环境，整个 native
+extension（不只是 quote core）固定使用
+`-O3 -march=haswell -mtune=cascadelake -mprefer-vector-width=256
+-fno-fast-math -ffp-contract=off -fno-lto`。构建器固定为 EC2 当前的 GNU C++
+11.5.0，并要求单配置 Release 构建。它不启用 fast-math 或 AVX-512；Mac arm64 仅使用 portable
+构建做语义检查，Azure x86 只用于开发、编译和相对性能基准。
+不会为 Mac 或 Azure 降低 EC2 的 ISA/缓存调优。正式 native build
+receipt 会拒绝 portable wheel。
+
+这里选择 `-march=haswell` 不是为了兼容旧机器：在生产机 Xeon Platinum
+8259CL 上，同一工作负载的 AVX2/256-bit 构建实测快于允许 AVX-512 的
+Cascade Lake 构建。`-mtune=cascadelake` 仍按生产微架构调度。CMake 还会
+显式关闭 pybind11 默认注入的 LTO，因为同机基准中的 LTO 构建也慢于该非 LTO
+profile。只有新的同机基准证明另一组 ISA、向量宽度或 LTO 选择更快时才更换
+该 profile。
+
+可在 EC2 生产型号上运行无网络 native 热路径基准。它分别测量订单 action
+planner、融合报价决策、gateway 空轮询、SPSC 入队/出队和完整本地 gateway
+lifecycle；输出 `ns/op`、x86 TSC `cycles/op`、吞吐和防止循环消除的 checksum：
+
+```bash
+cmake -S cpp -B /tmp/ng-native-bench \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DNARROWGATE_BUILD_NATIVE_BENCHMARKS=ON \
+  -DNARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2 \
+  -DPython_EXECUTABLE="$PWD/.venv/bin/python" \
+  -Dpybind11_DIR="$($PWD/.venv/bin/python -m pybind11 --cmakedir)"
+cmake --build /tmp/ng-native-bench \
+  --target narrowgate_live_native_hot_path_bench -j2
+/tmp/ng-native-bench/narrowgate_live_native_hot_path_bench 5000000
+
+# 只在 maker 停止的维护窗口采集 PMU；该 EC2 的两个 vCPU 共享一个物理核。
+perf stat -r 7 \
+  -e cycles,instructions,cache-references,cache-misses,branches,branch-misses \
+  /tmp/ng-native-bench/narrowgate_live_native_hot_path_bench 5000000
+```
+
+`gateway_enqueue_begin_complete` 的一个 op 是一次 enqueue、一次 begin/dequeue
+以及一次本地 confirmed-not-dispatched 完成，用于安全复位 active slot；它不
+包含 TLS、HTTP、交易所 ACK 或网络时间。Mac 的 portable 构建只用于编译和
+运行 smoke，不能替代 EC2 同机性能结果。程序内的 `tsc_cycles_per_op` 是
+x86 TSC reference cycles；CPU core cycles、cache miss 和 branch miss 必须以
+同一台 EC2 上的 `perf stat` 为准，不能拿 Azure 或 Mac 数字替代。
+
 注意：两个 repo 目前都会生成同名 Python module `narrowgate_cpp`。如果同一个 venv 同时安装 BTCUSDC/BTCUSDT 两个 extension，会互相覆盖。建议每个 repo 用独立 venv，或者后续把 module 名改成带 symbol 的名字。
 
 ## `cpp/CMakeLists.txt`
@@ -162,7 +216,9 @@ PYTHONPATH=/tmp/narrowgate_btcusdc_cpp_build:. \
 - 编译标准，建议 C++17 起步。
 - `pybind11_add_module(narrowgate_cpp ...)` 的源文件列表。
 - 后续如果引入 OpenMP、absl、fmt、Eigen、nanobind、LightGBM C API，要在这里显式链接。
-- release flags 不要手写太激进，先用默认 wheel/release 构建；基准稳定后再加 `-march=native` 这类本机优化。
+- 开发 wheel 使用默认 portable profile；EC2 release 只使用上面冻结并在同型号
+  生产 CPU 上实测过的 `ec2-cascadelake-avx2` profile。不要用 portable、Azure
+  的 `-march=native` 或 Mac 构建替代 EC2 release artifact。
 
 ## `common.hpp`
 

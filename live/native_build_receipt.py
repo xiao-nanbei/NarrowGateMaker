@@ -41,11 +41,55 @@ PARITY_TESTS = (
     "tests/test_cpp_tick_replay_golden_parity.py",
     "tests/test_conditional_p3_cpp_overlay.py",
     "tests/test_cpp_signal_features.py",
+    "tests/test_f05_repeated_boolean_cooldown_cpp_abi.py",
+    "tests/test_cpp_replace_continuation.py",
+    "tests/test_cpp_live_order_action_plan.py",
+)
+PRODUCTION_LIVE_CPU_PROFILE = "ec2-cascadelake-avx2"
+PRODUCTION_LIVE_COMPILE_OPTIONS = (
+    "-O3",
+    "-march=haswell",
+    "-mtune=cascadelake",
+    "-mprefer-vector-width=256",
+    "-fno-fast-math",
+    "-ffp-contract=off",
+    "-fno-lto",
 )
 
 
 class NativeBuildReceiptError(RuntimeError):
     pass
+
+
+def _production_live_cpu_build(module: Any) -> dict[str, Any]:
+    """Read the compiled hot-path profile; a portable wheel is not releasable."""
+
+    try:
+        preferred_vector_width_bits = int(
+            getattr(module, "NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS", 0)
+        )
+    except (TypeError, ValueError) as exc:
+        raise NativeBuildReceiptError("native live CPU build metadata is invalid") from exc
+    observed = {
+        "profile": str(getattr(module, "NATIVE_LIVE_BUILD_PROFILE", "")),
+        "compile_options": str(
+            getattr(module, "NATIVE_LIVE_BUILD_COMPILE_OPTIONS", "")
+        ),
+        "production": bool(
+            getattr(module, "NATIVE_LIVE_BUILD_IS_PRODUCTION", False)
+        ),
+        "preferred_vector_width_bits": preferred_vector_width_bits,
+    }
+    if observed != {
+        "profile": PRODUCTION_LIVE_CPU_PROFILE,
+        "compile_options": " ".join(PRODUCTION_LIVE_COMPILE_OPTIONS),
+        "production": True,
+        "preferred_vector_width_bits": 256,
+    }:
+        raise NativeBuildReceiptError(
+            "native release wheel was not built with the measured EC2 Cascade Lake profile"
+        )
+    return observed
 
 
 def _sha(payload: bytes) -> str:
@@ -229,11 +273,69 @@ def build_receipt(
         "SignalFeatureEngine",
         "SIGNAL_FEATURE_NAMES",
         "TradeBarAggregator",
+        "F05BooleanClause",
+        "F05BooleanLiteral",
+        "F05BooleanPolicy",
+        "F05BooleanRule",
+        "F05PredicateDefinition",
+        "F05PredicateMetric",
+        "F05PredicatePair",
+        "LiveCooldownDecisionStatus",
+        "LiveCooldownProfile",
+        "NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE",
+        "NativeLiveCooldownHotPath",
+        "NativeReplaceContinuationState",
+        "ReplaceContinuationEventKind",
+        "Side",
+        "compute_live_order_action_plan",
+        "LiveOrderAction",
+        "LivePlannerOrderState",
+        "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
+        "LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_POST",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE",
+        "LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE",
+        "LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE",
+        "LIVE_ORDER_REASON_THROTTLE_PRICE",
+        "LIVE_ORDER_REASON_THROTTLE_AGE",
+        "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
+        "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
     )
     if any(not hasattr(narrowgate_cpp, name) for name in required):
         raise NativeBuildReceiptError("native module lacks required live API")
+    if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
+        raise NativeBuildReceiptError(
+            "native module order-action planner capability is unavailable"
+        )
+    if not bool(narrowgate_cpp.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE):
+        raise NativeBuildReceiptError(
+            "native module cooldown hot-path capability is unavailable"
+        )
+    live_cpu_build = _production_live_cpu_build(narrowgate_cpp)
     required_class_members = {
         "SignalFeatureEngine": ("compute_bucket_values",),
+        "NativeLiveCooldownHotPath": (
+            "observe_depth",
+            "evaluate",
+            "reset",
+            "audit",
+            "feature_snapshot",
+        ),
+        "NativeReplaceContinuationState": (
+            "arm",
+            "publish",
+            "clear_exact",
+            "clear_side",
+            "clear_unready",
+            "take_ready",
+            "finalize_decision",
+            "drop_in_flight",
+            "clear_all",
+            "telemetry",
+        ),
     }
     if any(
         not hasattr(getattr(narrowgate_cpp, class_name), member)
@@ -290,6 +392,7 @@ def build_receipt(
         "installed_distribution_lock": installed_distribution_lock,
         "wheel": _file(wheel),
         "module": _file(module),
+        "live_cpu_build": live_cpu_build,
         "abi_contract": {
             "schema_version": "narrowgate_native_runtime_abi.v1",
             "required_apis": list(required),

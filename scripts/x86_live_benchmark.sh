@@ -54,6 +54,9 @@ print("machine", platform.machine(), platform.platform())
 try:
     import narrowgate_cpp
     print("narrowgate_cpp", narrowgate_cpp.__file__)
+    print("live_build_profile", narrowgate_cpp.NATIVE_LIVE_BUILD_PROFILE)
+    print("live_build_options", narrowgate_cpp.NATIVE_LIVE_BUILD_COMPILE_OPTIONS)
+    print("live_build_production", narrowgate_cpp.NATIVE_LIVE_BUILD_IS_PRODUCTION)
 except Exception as exc:
     raise SystemExit(f"narrowgate_cpp unavailable: {exc!r}")
 PY
@@ -76,7 +79,7 @@ bench_live_path "candidate: quote core + signal features" --engine cpp --strict-
 
 echo
 echo "== live routing compact ABI =="
-run_cmd "$PYTHON" bench/bench_live_routing_bridge.py --api compact --n "${ROUTING_N:-100000}"
+run_cmd "$PYTHON" bench/bench_live_routing_bridge.py --n "${ROUTING_N:-100000}"
 
 if [[ "$RUN_PERF" == "1" ]]; then
   echo

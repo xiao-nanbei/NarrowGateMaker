@@ -1,5 +1,6 @@
 import threading
 import time
+import copy
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -8,7 +9,7 @@ import pytest
 from live.config import Config
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
-from strategy.order_manager import OrderState
+from strategy.order_manager import OrderState, Side
 from strategy.signal import DepthSnapshot, Prediction, SignalEngine
 
 
@@ -362,6 +363,96 @@ def test_compute_quotes_does_not_read_mutable_signal_depth(monkeypatch) -> None:
     assert spread == ask - bid
     assert engine._last_quote_diagnostics["quote_snapshot_depth_generation"] == 1
     assert engine._last_quote_diagnostics["quote_snapshot_depth_bid"] == 99.0
+
+
+def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch) -> None:
+    signal = SignalEngine(enable_ml=False)
+    base_ms = 1_800_000_000_000
+    receive_ns = base_ms * 1_000_000 + 1_000_000
+    signal.on_book_ticker(
+        _book_event(base_ms, 99.9, 100.1, 1),
+        receive_ts_ns=receive_ns,
+        sequence_number=1,
+    )
+    signal.on_depth(
+        _depth_event(base_ms, 99.0, 4.0, 101.0, 2.0),
+        receive_ts_ns=receive_ns + 1,
+    )
+    snapshot = signal.quote_decision_snapshot(now_ns=receive_ns + 2_000_000)
+    cfg = Config()
+    cfg.ml.enabled = False
+    cfg.strategy.use_bar_pricing = False
+    engine = object.__new__(MakerEngine)
+    engine.cfg = cfg
+    engine._model_dir = ""
+    engine.signal = signal
+    engine.inventory = SimpleNamespace(
+        snapshot=SimpleNamespace(
+            open_time=0.0,
+            state=PositionState.FLAT,
+            unrealized_pnl=0.0,
+        )
+    )
+    engine._ber_active = False
+    engine._mo_ema_all = engine._mo_ema_bid = engine._mo_ema_ask = 0.0
+    engine._mo_ref = 50.0
+    engine._requote_count = 1
+    engine._last_quote_context = {}
+    engine._last_quote_diagnostics = {}
+    engine._native_quote_policy_stage = None
+    engine._native_quote_policy_stage_key = None
+    engine._native_quote_policy_results = {}
+    engine._fill_cooldown_until = {"BUY": 0.0, "SELL": 0.0}
+    engine._markout_pause_latch_active = lambda side, now: False
+    engine._apply_live_local_extreme_guard_context = lambda mid: None
+    engine._log_depth_execution_shadow = lambda **kwargs: None
+    engine._expire_fill_cooldown_state = lambda side, now: None
+    monkeypatch.setattr("strategy.maker_engine._get_fill_model", lambda _: None)
+    monkeypatch.setattr("strategy.maker_engine.time.time", lambda: 1_800_000_001.0)
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0")
+
+    baseline = engine._compute_quotes(snapshot, 0.0, Prediction(), pricing_mid=100.0)
+    baseline_context = copy.deepcopy(engine._last_quote_context)
+    baseline_diagnostics = copy.deepcopy(engine._last_quote_diagnostics)
+    baseline_buy_policy = engine._build_side_policy(
+        Side.BUY, 100.0, 0.0, Prediction(), snapshot, mutate_state=False
+    )
+    baseline_sell_policy = engine._build_side_policy(
+        Side.SELL, 100.0, 0.0, Prediction(), snapshot, mutate_state=False
+    )
+
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "1")
+    staged = engine._compute_quotes(snapshot, 0.0, Prediction(), pricing_mid=100.0)
+
+    assert staged == baseline
+    assert engine._last_quote_context == baseline_context
+    assert engine._last_quote_diagnostics == baseline_diagnostics
+    assert set(engine._native_quote_policy_results) == {
+        "BUY",
+        "SELL",
+        "_l2_policy_metrics",
+        "_toxicity_probs",
+    }
+    assert engine._build_side_policy(
+        Side.BUY,
+        100.0,
+        0.0,
+        Prediction(),
+        snapshot,
+        mutate_state=False,
+        native_common=engine._native_quote_policy_results["BUY"],
+    ) == baseline_buy_policy
+    assert engine._build_side_policy(
+        Side.SELL,
+        100.0,
+        0.0,
+        Prediction(),
+        snapshot,
+        mutate_state=False,
+        native_common=engine._native_quote_policy_results["SELL"],
+    ) == baseline_sell_policy
 
 
 def test_snapshot_separates_visible_age_from_source_lag() -> None:

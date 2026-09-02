@@ -13,6 +13,7 @@ import strategy.maker_engine as maker_engine_module
 from live.config import Config, _validate_config
 from strategy.maker_engine import POLICY_REASON_FILL_COOLDOWN, MakerEngine
 from strategy.order_manager import OrderManager, Side
+from strategy.policy_guards import CommonSidePolicyResult
 from strategy.signal import Prediction
 
 
@@ -291,6 +292,36 @@ def test_fill_cooldown_blocks_both_sides_when_flat() -> None:
     assert flat_buy.reason_mask & POLICY_REASON_FILL_COOLDOWN
     assert not flat_sell.allow_post
     assert flat_sell.reason_mask & POLICY_REASON_FILL_COOLDOWN
+
+
+def test_native_common_policy_keeps_cooldown_expiry_at_b0_policy_clock(
+    monkeypatch,
+) -> None:
+    engine = _engine_with_active_fill_cooldowns()
+    engine._fill_cooldown_until["BUY"] = 100.0
+    mutations = []
+
+    def expire(side: str, now: float) -> None:
+        mutations.append((side, now))
+        if now >= engine._fill_cooldown_until[side]:
+            engine._fill_cooldown_until[side] = 0.0
+
+    engine._expire_fill_cooldown_state = expire
+    engine._apply_buy_fill_selection_live_arm = lambda **kwargs: None
+    monkeypatch.setattr(maker_engine_module.time, "time", lambda: 100.001)
+    native_stateless = CommonSidePolicyResult()
+
+    result = engine._build_side_policy(
+        Side.BUY,
+        mid=100.0,
+        q=0.0,
+        pred=Prediction(),
+        native_common=native_stateless,
+    )
+
+    assert mutations == [("BUY", 100.001)]
+    assert result.allow_post
+    assert not (result.reason_mask & POLICY_REASON_FILL_COOLDOWN)
 
 
 def test_reducing_fill_cooldown_can_pace_reducing_side_when_enabled() -> None:

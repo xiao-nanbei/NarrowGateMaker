@@ -88,12 +88,52 @@ POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
 
 CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_QUOTE_CORE",
+    "NARROWGATE_CPP_QUOTE_POLICY_STAGE",
     "NARROWGATE_CPP_SIGNAL_FEATURES",
     "NARROWGATE_CPP_GLOBAL_FLOW",
     "NARROWGATE_CPP_LIVE_ROUTING",
+    "NARROWGATE_CPP_REPLACE_CONTINUATION",
+    "NARROWGATE_CPP_COOLDOWN",
+    "NARROWGATE_CPP_ORDER_ACTION_PLAN",
     "NARROWGATE_CPP_STRICT",
 )
+OPTIONAL_CPP_RUNTIME_FLAGS = frozenset({"NARROWGATE_CPP_QUOTE_POLICY_STAGE"})
 CPP_MODULE_TOKEN_ENV = "NARROWGATE_CPP_EXPECT_MODULE_TOKEN"
+NATIVE_COOLDOWN_REQUIRED_APIS = frozenset(
+    {
+        "F05BooleanClause",
+        "F05BooleanLiteral",
+        "F05BooleanPolicy",
+        "F05BooleanRule",
+        "F05PredicateDefinition",
+        "F05PredicateMetric",
+        "F05PredicatePair",
+        "LiveCooldownDecisionStatus",
+        "LiveCooldownProfile",
+        "NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE",
+        "NativeLiveCooldownHotPath",
+    }
+)
+NATIVE_ORDER_ACTION_REQUIRED_APIS = frozenset(
+    {
+        "compute_live_order_action_plan",
+        "LiveOrderAction",
+        "LivePlannerOrderState",
+        "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
+        "LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_POST",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE",
+        "LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE",
+        "LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE",
+        "LIVE_ORDER_REASON_THROTTLE_PRICE",
+        "LIVE_ORDER_REASON_THROTTLE_AGE",
+        "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
+        "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
+    }
+)
 
 FORMAL_DRY_RUN_SCHEMA = "narrowgate.live_dry_run.v1"
 DEFAULT_DRY_RUN_TIMEOUT_S = 30.0
@@ -352,6 +392,10 @@ KEY_LOADED_RUNTIME_MODULES = {
     "live_runtime_policy": ("live.runtime_policy", "live/runtime_policy.py"),
     "live_ws_handler": ("live.ws_handler", "live/ws_handler.py"),
     "maker_engine": ("strategy.maker_engine", "strategy/maker_engine.py"),
+    "native_order_action": (
+        "strategy.native_order_action",
+        "strategy/native_order_action.py",
+    ),
     "signal_engine": ("strategy.signal", "strategy/signal.py"),
     "global_flow": ("strategy.global_flow", "strategy/global_flow.py"),
     "global_reference": (
@@ -951,13 +995,49 @@ def audit_native_runtime(
     }
     profile = os.environ.get("NARROWGATE_LIVE_PROFILE_NAME", "unmanaged")
     module_path = "disabled"
+    native_build = {"available": False}
     required = set()
     if enabled["NARROWGATE_CPP_QUOTE_CORE"]:
         required.add("compute_quote_core_live")
+    if enabled["NARROWGATE_CPP_QUOTE_POLICY_STAGE"]:
+        if cfg is not None and not enabled["NARROWGATE_CPP_QUOTE_CORE"]:
+            raise RuntimeError(
+                "native quote-policy stage requires native quote core"
+            )
+        strategy_cfg = getattr(cfg, "strategy", None) if cfg is not None else None
+        if strategy_cfg is not None and (
+            bool(getattr(strategy_cfg, "ber_exposure_add_only", False))
+            or bool(getattr(strategy_cfg, "local_extreme_guard_enabled", False))
+            or float(getattr(strategy_cfg, "fragile_order_ttl_s", 0.0) or 0.0)
+            > 0.0
+        ):
+            raise RuntimeError(
+                "native quote-policy stage does not admit two-pass BER or "
+                "local-extreme/fragile-TTL policies"
+            )
+        required.update(
+            {
+                "NativeQuotePolicyStage",
+                "NativeQuotePolicyStageResult",
+                "NATIVE_QUOTE_POLICY_STAGE_AVAILABLE",
+            }
+        )
     if enabled["NARROWGATE_CPP_LIVE_ROUTING"]:
         required.add("compute_live_routing_decision")
     if enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]:
         required.update({"SignalFeatureEngine", "SIGNAL_FEATURE_NAMES"})
+    if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
+        required.update(
+            {
+                "NativeReplaceContinuationState",
+                "ReplaceContinuationEventKind",
+                "Side",
+            }
+        )
+    if enabled["NARROWGATE_CPP_COOLDOWN"]:
+        required.update(NATIVE_COOLDOWN_REQUIRED_APIS)
+    if enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]:
+        required.update(NATIVE_ORDER_ACTION_REQUIRED_APIS)
     global_flow_effective = bool(
         enabled["NARROWGATE_CPP_GLOBAL_FLOW"]
         and cfg is not None
@@ -1006,24 +1086,108 @@ def audit_native_runtime(
                 aggregator = module.TradeBarAggregator(False)
                 if not hasattr(aggregator, "update_batch"):
                     raise RuntimeError("narrowgate_cpp ABI missing TradeBarAggregator.update_batch")
+            if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
+                continuation = module.NativeReplaceContinuationState(True)
+                continuation_methods = (
+                    "arm",
+                    "publish",
+                    "clear_exact",
+                    "clear_side",
+                    "clear_unready",
+                    "take_ready",
+                    "finalize_decision",
+                    "drop_in_flight",
+                    "clear_all",
+                    "telemetry",
+                )
+                missing_methods = [
+                    name
+                    for name in continuation_methods
+                    if not callable(getattr(continuation, name, None))
+                ]
+                if missing_methods:
+                    raise RuntimeError(
+                        "narrowgate_cpp continuation ABI missing methods: "
+                        + ", ".join(missing_methods)
+                    )
+            if enabled["NARROWGATE_CPP_COOLDOWN"] and not bool(
+                module.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE
+            ):
+                raise RuntimeError(
+                    "narrowgate_cpp cooldown hot-path capability is unavailable"
+                )
+            if enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"] and not bool(
+                module.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE
+            ):
+                raise RuntimeError(
+                    "narrowgate_cpp order-action planner capability is unavailable"
+                )
+            if enabled["NARROWGATE_CPP_QUOTE_POLICY_STAGE"] and not bool(
+                module.NATIVE_QUOTE_POLICY_STAGE_AVAILABLE
+            ):
+                raise RuntimeError(
+                    "narrowgate_cpp quote-policy stage capability is unavailable"
+                )
+            native_build = {
+                "available": all(
+                    hasattr(module, name)
+                    for name in (
+                        "NATIVE_LIVE_BUILD_PROFILE",
+                        "NATIVE_LIVE_BUILD_COMPILE_OPTIONS",
+                        "NATIVE_LIVE_BUILD_IS_PRODUCTION",
+                        "NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS",
+                    )
+                ),
+                "profile": str(
+                    getattr(module, "NATIVE_LIVE_BUILD_PROFILE", "unknown")
+                ),
+                "compile_options": str(
+                    getattr(
+                        module,
+                        "NATIVE_LIVE_BUILD_COMPILE_OPTIONS",
+                        "unknown",
+                    )
+                ),
+                "production": bool(
+                    getattr(module, "NATIVE_LIVE_BUILD_IS_PRODUCTION", False)
+                ),
+                "preferred_vector_width_bits": int(
+                    getattr(module, "NATIVE_LIVE_BUILD_VECTOR_WIDTH_BITS", 0)
+                ),
+            }
         except Exception as exc:
             if enabled["NARROWGATE_CPP_STRICT"]:
                 raise RuntimeError(
                     f"strict native profile {profile!r} failed preflight: {exc}"
+                ) from exc
+            if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
+                raise RuntimeError(
+                    "explicit native replacement-continuation failed preflight: "
+                    f"{exc}"
+                ) from exc
+            if enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]:
+                raise RuntimeError(
+                    "explicit native order-action planner failed preflight: "
+                    f"{exc}"
                 ) from exc
             logger.warning("Native runtime requested but unavailable: %s", exc)
             module_path = f"unavailable:{exc}"
 
     logger.info(
         "NATIVE_PROFILE name=%s quote_core=%d signal_features=%d "
-        "global_flow_requested=%d global_flow_effective=%d "
-        "live_routing=%d strict=%d module=%s",
+        "quote_policy_stage=%d global_flow_requested=%d global_flow_effective=%d "
+        "live_routing=%d replace_continuation=%d cooldown=%d "
+        "order_action_plan=%d strict=%d module=%s",
         profile,
         int(enabled["NARROWGATE_CPP_QUOTE_CORE"]),
         int(enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]),
+        int(enabled["NARROWGATE_CPP_QUOTE_POLICY_STAGE"]),
         int(enabled["NARROWGATE_CPP_GLOBAL_FLOW"]),
         int(global_flow_effective),
         int(enabled["NARROWGATE_CPP_LIVE_ROUTING"]),
+        int(enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]),
+        int(enabled["NARROWGATE_CPP_COOLDOWN"]),
+        int(enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]),
         int(enabled["NARROWGATE_CPP_STRICT"]),
         module_path,
     )
@@ -1039,7 +1203,11 @@ def audit_native_runtime(
         candidate = Path(module_path).expanduser()
         if (
             profile != "native"
-            or any(not enabled[name] for name in CPP_RUNTIME_FLAGS)
+            or any(
+                not enabled[name]
+                for name in CPP_RUNTIME_FLAGS
+                if name not in OPTIONAL_CPP_RUNTIME_FLAGS
+            )
             or global_flow_effective is not False
             or module_path == "disabled"
             or module_path.startswith("unavailable:")
@@ -1138,9 +1306,10 @@ def audit_native_runtime(
             "NARROWGATE_CPP_GLOBAL_FLOW"
         ],
         "NARROWGATE_CPP_GLOBAL_FLOW_EFFECTIVE": global_flow_effective,
+        "native_build": native_build,
+        "abi_contract": abi_contract,
     }
     if safety_authority is not None:
-        runtime_identity["abi_contract"] = abi_contract
         runtime_identity["locked_runtime"] = {
             "validated": True,
             "release_root_sha256": safety_authority["canonical_sha256"],

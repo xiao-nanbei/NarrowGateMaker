@@ -8,7 +8,13 @@ import pytest
 
 from live.binance_usdm_transport import BinanceUsdMWebSocketOrderUnknown
 from live.config import Config
-from strategy.maker_engine import LivePerfTelemetryLogRow, MakerEngine, SidePolicyDecision
+from strategy import maker_engine as maker_engine_module
+from strategy.maker_engine import (
+    LivePerfTelemetryLogRow,
+    MakerEngine,
+    SidePolicyDecision,
+    _ReplaceTerminalContinuationIntent,
+)
 from strategy.order_manager import (
     Order,
     OrderManager,
@@ -41,6 +47,16 @@ def _engine() -> MakerEngine:
     engine._replace_terminal_continuation_intents = {}
     engine._replace_terminal_continuation_in_flight = {}
     engine._replace_terminal_continuation_event_sequence = 0
+    return engine
+
+
+def _native_continuation_engine() -> MakerEngine:
+    narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
+    engine = _engine()
+    engine._replace_terminal_continuation_native_module = narrowgate_cpp
+    engine._replace_terminal_continuation_native_state = (
+        narrowgate_cpp.NativeReplaceContinuationState(True)
+    )
     return engine
 
 
@@ -154,6 +170,158 @@ def _run_timed_update_orders(
         perf_timings=timings,
     )
     return timings
+
+
+def _run_order_action_planner_arm(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    native: bool,
+    scenario: str,
+) -> dict[str, object]:
+    """Run one isolated BUY action through the real _update_orders wiring."""
+
+    narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
+    fixed_now = 1_750_000_000.0
+    monkeypatch.setattr(maker_engine_module.time, "time", lambda: fixed_now)
+    monkeypatch.setattr(
+        maker_engine_module,
+        "_get_live_routing_cpp",
+        lambda: None,
+    )
+    engine = _routable_update_orders_engine()
+    engine._native_order_action_planner = None
+    engine.cfg.strategy.order_size = 0.001
+    engine.cfg.strategy.requote_threshold_bps = 0.0
+    engine.cfg.risk.max_position_value = 3_000.0
+    engine.cfg.min_notional = 5.0
+    q = 0.0
+    bid_price = 99_000.0
+
+    if scenario == "pending":
+        cid = engine.orders.create_order(
+            "BTCUSDC",
+            Side.BUY,
+            price=98_000.0,
+            quantity=0.001,
+        )
+        engine.orders.confirm_new(cid, 501)
+        engine.orders.mark_pending_cancel(cid)
+        engine._bid_cid = cid
+    elif scenario in {"throttle", "cancel_first"}:
+        existing_price = 98_999.9 if scenario == "throttle" else 98_000.0
+        cid = engine.orders.create_order(
+            "BTCUSDC",
+            Side.BUY,
+            price=existing_price,
+            quantity=0.001,
+        )
+        engine.orders.confirm_new(cid, 502)
+        engine.orders.get_order(cid).create_time = fixed_now - 1.0
+        engine._bid_cid = cid
+        if scenario == "throttle":
+            engine.cfg.strategy.replace_min_price_change_ticks = 2.0
+            engine.cfg.strategy.replace_min_price_change_ticks_reducing = 2.0
+        else:
+            engine.cfg.strategy.replace_cancel_first_exposure_increasing = True
+            q = 0.005
+    elif scenario == "position_cap":
+        engine.cfg.strategy.order_size = 0.002
+        engine.cfg.risk.max_position_value = 100.0
+    elif scenario == "min_notional":
+        engine.cfg.min_notional = 100.0
+    elif scenario == "cross_zero":
+        q = -0.001
+        engine._build_side_policy = (
+            lambda side, *args, **kwargs: SidePolicyDecision(
+                side=side.value,
+                size_mult=3.0 if side == Side.BUY else 1.0,
+            )
+        )
+    else:  # pragma: no cover - test helper misuse
+        raise AssertionError(f"unknown scenario: {scenario}")
+
+    events: list[tuple[object, ...]] = []
+
+    def place_order(
+        _symbol: str,
+        side: Side,
+        price: float,
+        quantity: float,
+        **_kwargs,
+    ) -> str:
+        events.append(("place", side.value, price, quantity))
+        return f"placed-{side.value}"
+
+    def cancel_order(_cid: str, **_kwargs) -> bool:
+        events.append(("cancel",))
+        # Keep this harness independent of exchange terminal-state mutation.
+        return False
+
+    engine._place_order = place_order
+    engine._cancel_order = cancel_order
+    monkeypatch.setenv(
+        "NARROWGATE_CPP_ORDER_ACTION_PLAN",
+        "1" if native else "0",
+    )
+    monkeypatch.setattr(
+        maker_engine_module,
+        "_live_order_action_plan_cpp",
+        narrowgate_cpp if native else None,
+    )
+    if native:
+        engine._freeze_native_order_action_planner()
+
+    result = engine._update_orders(
+        mid=100_000.0,
+        bid_price=bid_price,
+        ask_price=101_000.0,
+        q=q,
+        pred=SimpleNamespace(),
+        quote_snapshot=SimpleNamespace(),
+        post_only_guard=SimpleNamespace(
+            best_bid=bid_price,
+            best_ask=101_000.0,
+            source="test",
+        ),
+        route_sides=frozenset({Side.BUY}),
+    )
+    return {
+        "action": engine._last_bid_action,
+        "events": events,
+        "result": result,
+        "throttle_count": engine._replace_throttle_counts["BUY"],
+        "pending_count": engine._replace_pending_coalesce_counts["BUY"],
+        "cancel_first_count": engine._replace_cancel_first_counts["BUY"],
+    }
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "pending",
+        "throttle",
+        "cancel_first",
+        "position_cap",
+        "min_notional",
+        "cross_zero",
+    ),
+)
+def test_update_orders_native_action_plan_preserves_b0_actions_and_telemetry(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    python_result = _run_order_action_planner_arm(
+        monkeypatch,
+        native=False,
+        scenario=scenario,
+    )
+    native_result = _run_order_action_planner_arm(
+        monkeypatch,
+        native=True,
+        scenario=scenario,
+    )
+
+    assert native_result == python_result
 
 
 def test_side_policy_reuses_immutable_l2_summary_without_changing_decisions() -> None:
@@ -786,6 +954,130 @@ def test_two_ready_sides_are_consumed_in_one_main_loop_batch() -> None:
         "in_flight_count": 0,
     }
     assert engine._take_ready_replace_terminal_continuations() == {}
+
+
+def test_native_replace_terminal_continuation_matches_python_event_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run_trace(engine: MakerEngine) -> tuple[list[dict], dict[str, int]]:
+        engine.cfg.strategy.replace_terminal_continuation = True
+        observed: list[dict] = []
+        engine._log_replace_terminal_continuation_event = (
+            lambda payload: observed.append(dict(payload))
+        )
+        timestamps = iter((1_000, 1_100, 1_200))
+        monkeypatch.setattr(
+            "strategy.maker_engine.time.time_ns",
+            lambda: next(timestamps),
+        )
+
+        stale_generation = engine._arm_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="stale-buy",
+        )
+        buy_generation = engine._arm_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="current-buy",
+        )
+        sell_generation = engine._arm_replace_terminal_continuation(
+            side=Side.SELL,
+            cid="current-sell",
+        )
+        assert (stale_generation, buy_generation, sell_generation) == (1, 2, 1)
+
+        buy = _order(Side.BUY, price=100.0, age_ms=2_000.0)
+        buy.client_order_id = "current-buy"
+        buy.lifecycle = SimpleNamespace(terminal_ts_ns=2_000)
+        sell = _order(Side.SELL, price=101.0, age_ms=2_000.0)
+        sell.client_order_id = "current-sell"
+        sell.lifecycle = SimpleNamespace(terminal_ts_ns=2_200)
+        assert engine._publish_replace_terminal_continuation(
+            buy,
+            generation=buy_generation,
+        )
+        assert engine._publish_replace_terminal_continuation(
+            sell,
+            generation=sell_generation,
+        )
+
+        ready = engine._take_ready_replace_terminal_continuations()
+        assert ready == {
+            Side.BUY: _ReplaceTerminalContinuationIntent(
+                client_order_id="current-buy",
+                generation=2,
+                armed_ts_ns=1_100,
+                ready=True,
+                terminal_visible_ts_ns=2_000,
+            ),
+            Side.SELL: _ReplaceTerminalContinuationIntent(
+                client_order_id="current-sell",
+                generation=1,
+                armed_ts_ns=1_200,
+                ready=True,
+                terminal_visible_ts_ns=2_200,
+            ),
+        }
+        engine._record_replace_terminal_continuation_decisions(
+            ready,
+            decision_start_ts_ns=3_000,
+        )
+        assert ready == {}
+        return observed, engine.replace_terminal_continuation_telemetry_snapshot()
+
+    python_events, python_telemetry = run_trace(_engine())
+    native_events, native_telemetry = run_trace(_native_continuation_engine())
+
+    assert native_events == python_events
+    assert native_telemetry == python_telemetry
+
+
+def test_native_replace_terminal_continuation_matches_python_clear_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def run_trace(engine: MakerEngine) -> tuple[list[dict], dict[str, int]]:
+        engine.cfg.strategy.replace_terminal_continuation = True
+        observed: list[dict] = []
+        engine._log_replace_terminal_continuation_event = (
+            lambda payload: observed.append(dict(payload))
+        )
+        timestamps = iter((10_000, 20_000, 30_000))
+        monkeypatch.setattr(
+            "strategy.maker_engine.time.time_ns",
+            lambda: next(timestamps),
+        )
+
+        generation = engine._arm_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="buy-unready",
+        )
+        assert not engine._clear_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="buy-unready",
+            generation=generation,
+            event_ts_ns=9_999,
+        )
+        assert engine._clear_unready_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="buy-unready",
+            generation=generation,
+        )
+
+        engine._arm_replace_terminal_continuation(
+            side=Side.BUY,
+            cid="buy-clear-all",
+        )
+        engine._arm_replace_terminal_continuation(
+            side=Side.SELL,
+            cid="sell-clear-all",
+        )
+        engine._clear_all_replace_terminal_continuations(reason="test_shutdown")
+        return observed, engine.replace_terminal_continuation_telemetry_snapshot()
+
+    python_events, python_telemetry = run_trace(_engine())
+    native_events, native_telemetry = run_trace(_native_continuation_engine())
+
+    assert native_events == python_events
+    assert native_telemetry == python_telemetry
 
 
 def test_cancel_reject_clears_only_matching_replace_intent() -> None:
