@@ -562,6 +562,30 @@ def test_source_publish_targets_are_separate_from_deploy_preflight() -> None:
     assert makefile.count("scripts/live_deploy_common.py source-release") == 2
 
 
+def test_native_live_wheel_build_is_bounded_and_separate_from_deploy() -> None:
+    root = Path(__file__).resolve().parents[1]
+    makefile = (root / "Makefile").read_text(encoding="utf-8")
+
+    assert "NATIVE_BUILD_PARALLEL_LEVEL ?= 1" in makefile
+    assert "NATIVE_BUILD_MIN_AVAILABLE_MIB ?= 2048" in makefile
+    assert "native-live-build-preflight:" in makefile
+    assert "native-live-wheel: native-live-build-preflight" in makefile
+    assert "MemAvailable:" in makefile
+    assert "narrowgate.service narrowgate-maker.service" in makefile
+    assert "CMAKE_BUILD_PARALLEL_LEVEL=\"$(NATIVE_BUILD_PARALLEL_LEVEL)\"" in makefile
+    assert "NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2" in makefile
+
+    publish_source = makefile.split("publish-source:", 1)[1].split(
+        "publish-source-dry:", 1
+    )[0]
+    publish_source_dry = makefile.split("publish-source-dry:", 1)[1].split(
+        "# ── Cleanup", 1
+    )[0]
+    for recipe in (publish_source, publish_source_dry):
+        assert "native-live-wheel" not in recipe
+        assert "pip wheel" not in recipe
+
+
 def test_ci_pytest_failure_remains_a_job_failure_with_summary() -> None:
     root = Path(__file__).resolve().parents[1]
     workflow = yaml.safe_load(

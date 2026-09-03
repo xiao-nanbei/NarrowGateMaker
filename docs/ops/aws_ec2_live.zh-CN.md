@@ -2,7 +2,7 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
@@ -31,6 +31,15 @@ placeholder。
 
 使用支持 systemd 和 CPython 3.12 的 64-bit Linux 镜像。Linux wheel 应由受控 Linux
 builder 或 CI 构建，activation 时不能临时从网络解析依赖。
+
+当 `narrowgate.service`、旧 `narrowgate-maker.service` 或任一 maker 进程正在运行时，
+禁止在 EC2 主机编译 native extension。Canonical `make native-live-wheel` 入口会执行该
+检查，默认只使用一个编译 job，并在 `MemAvailable` 低于 2,048 MiB 时拒绝启动。因此
+2 GiB live 主机不属于合格 build host。优先使用至少 16 GiB RAM、精确
+GNU C++ 11.5.0 的受控 Linux x86_64 Azure builder，在那里产出
+`ec2-cascadelake-avx2` wheel，再把 immutable wheel 传入 release wheelhouse；不得使用
+Azure 主机的 `-march=native`。EC2 安装后仍必须通过 native build receipt、import 与
+Python/C++ parity；target-host 性能仍只能在 EC2 上测量。
 
 主机要求：
 
@@ -79,6 +88,16 @@ export NARROWGATE_RELEASE_DIR="/opt/narrowgate/releases/<release-id>"
 make publish-source-dry
 make publish-source
 ```
+
+Native 输入发生变化时，先在受控 builder 上产出 immutable native wheel，再 stage runtime
+closure：
+
+```bash
+make native-live-wheel
+```
+
+该 target 默认写入 `dist/native`。它有意与 `publish-source`、deployment preflight、
+installation 和 activation 分离；这些 live-host 操作均不得编译源码。
 
 `publish-source` 只传输源码。它不得传输 credential、private config、model、policy
 artifact、runtime receipt 或 process-control authority，也不得启动或重启 live。

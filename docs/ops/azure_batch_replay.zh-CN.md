@@ -2,7 +2,7 @@
 
 <p><a href="azure_batch_replay.md">English</a> | <a href="azure_batch_replay.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 本文定义离线 NarrowGate replay 的可复用私有 Azure Batch executor，不包含 subscription、
 account、region、resource ID、storage locator、private path、策略参数、dataset identity
@@ -55,6 +55,24 @@ copy-on-write 实测证明其他配置安全，否则每个 node 使用一个 ta
 
 Batch 自己的 node-shared 与 task-working directory 必须和 compatibility mount 分离。
 Closure 缺失属于 bootstrap failure，不能因此允许 formal task 联网下载依赖。
+
+## 受控 native wheel builder
+
+一个独立、有边界的 build task 可以复用至少 16 GiB RAM 的 Linux x86_64 node，产出 EC2
+native artifact。它是 build task，不是 replay day，也不能与 replay task 共用一个并发
+slot。Materialize 精确 source commit、CPython 3.12 build environment 与 GNU C++ 11.5.0
+toolchain，然后运行：
+
+```bash
+make native-live-wheel
+```
+
+该入口默认把 `CMAKE_BUILD_PARALLEL_LEVEL` 设为 `1`，检查 available memory，并固定
+`NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`。释放 node 前，将生成的
+`dist/native/*.whl` 作为 immutable build output 上传。不能改用 `-march=native`、portable
+wheel 或不同 compiler 产出的 wheel。目标 EC2 release 仍必须通过 native build receipt
+与 Python/C++ parity smoke 验证 installed wheel；Azure 不能替代 target-host performance
+qualification。
 
 ## 从零扩容一个研究批次
 

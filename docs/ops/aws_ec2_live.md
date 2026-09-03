@@ -2,7 +2,7 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
@@ -33,6 +33,17 @@ tracked example. Commands below use logical placeholders only.
 Use a supported 64-bit Linux image with systemd and CPython 3.12. Build Linux
 wheels on a controlled Linux builder or CI runner, not by downloading arbitrary
 dependencies during activation.
+
+Never compile the native extension on the EC2 host while `narrowgate.service`,
+a legacy `narrowgate-maker.service`, or any maker process is running. The
+canonical `make native-live-wheel` entry point enforces that boundary, defaults
+to one compile job, and refuses to start below 2,048 MiB `MemAvailable`. A 2 GiB
+live host is therefore not an admitted build host. Prefer a controlled
+Linux x86_64 Azure builder with at least 16 GiB RAM and exact GNU C++ 11.5.0;
+build the `ec2-cascadelake-avx2` wheel there, then transfer the immutable wheel
+into the release wheelhouse. Do not use the Azure host's `-march=native`.
+Installation on EC2 must still pass the native build receipt, import, and
+Python/C++ parity checks; target-host performance measurements remain EC2-only.
 
 Host requirements:
 
@@ -81,6 +92,17 @@ export NARROWGATE_RELEASE_DIR="/opt/narrowgate/releases/<release-id>"
 make publish-source-dry
 make publish-source
 ```
+
+When native inputs changed, produce the immutable native wheel on the controlled
+builder before staging the runtime closure:
+
+```bash
+make native-live-wheel
+```
+
+The target writes to `dist/native` by default. It is intentionally independent
+of `publish-source`, deployment preflight, installation, and activation; none of
+those live-host operations may compile source.
 
 `publish-source` transports source only. It must not transfer credentials,
 private config, models, policy artifacts, runtime receipts, or process-control

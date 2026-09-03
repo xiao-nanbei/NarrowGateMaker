@@ -2,7 +2,7 @@
 
 <p><a href="azure_batch_replay.md">English</a> | <a href="azure_batch_replay.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 This runbook defines a reusable private Azure Batch executor for offline
 NarrowGate replay. It contains no subscription, account, region, resource ID,
@@ -63,6 +63,26 @@ One-time pool bootstrap must:
 Keep Batch's own node-shared and task-working directories distinct from any
 compatibility mount. A missing closure is a bootstrap failure, not permission to
 download dependencies from the network inside a formal task.
+
+## Controlled native wheel builder
+
+A separate, bounded build task may reuse a Linux x86_64 node with at least
+16 GiB RAM to produce the EC2 native artifact. It is a build task, not a replay
+day, and must not run concurrently in a replay task slot. Materialize the exact
+source commit, CPython 3.12 build environment, and GNU C++ 11.5.0 toolchain, then
+run:
+
+```bash
+make native-live-wheel
+```
+
+The entry point defaults `CMAKE_BUILD_PARALLEL_LEVEL` to `1`, checks available
+memory, and fixes `NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`. Upload the
+resulting `dist/native/*.whl` as an immutable build output before releasing the
+node. Do not substitute `-march=native`, a portable wheel, or a wheel from a
+different compiler. The target EC2 release must still verify the installed
+wheel with its native build receipt and Python/C++ parity smoke; Azure does not
+replace target-host performance qualification.
 
 ## Scale from zero for a research batch
 

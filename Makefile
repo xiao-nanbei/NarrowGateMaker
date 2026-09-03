@@ -7,6 +7,10 @@ EC2     ?= $(NARROWGATE_DEPLOY_TARGET)
 EC2_DIR ?= $(NARROWGATE_RELEASE_DIR)
 RELEASE_TAG ?= $(NARROWGATE_RELEASE_TAG)
 LIVE_CONFIG ?= $(if $(NARROWGATE_LIVE_CONFIG),$(NARROWGATE_LIVE_CONFIG),live/config.yaml)
+NATIVE_WHEEL_DIR ?= dist/native
+NATIVE_BUILD_PARALLEL_LEVEL ?= 1
+NATIVE_BUILD_MIN_AVAILABLE_MIB ?= 2048
+NATIVE_BUILD_MEMINFO ?= /proc/meminfo
 SYMBOL  := BTCUSDC
 DAYS    := 5
 START   ?= 2026-01-01
@@ -66,6 +70,51 @@ backtest-as:
 backtest-tick:
 	$(PYTHON) models/experiment_runner.py backtest-tick --symbol $(SYMBOL)
 
+# ── Native live wheel ─────────────────────────────────────────────
+# This is a build-host operation. It is deliberately not a dependency of source
+# publication, deployment preflight, installation, or activation.
+native-live-build-preflight:
+	@test "$$(uname -s)" = "Linux" || (echo "The EC2 native wheel requires a Linux x86_64 builder." >&2; exit 2)
+	@case "$$(uname -m)" in x86_64|amd64) ;; *) echo "The EC2 native wheel requires an x86_64 builder." >&2; exit 2 ;; esac
+	@case "$(NATIVE_BUILD_PARALLEL_LEVEL)" in ''|*[!0-9]*|0) echo "NATIVE_BUILD_PARALLEL_LEVEL must be a positive integer." >&2; exit 2 ;; esac
+	@case "$(NATIVE_BUILD_MIN_AVAILABLE_MIB)" in ''|*[!0-9]*|0) echo "NATIVE_BUILD_MIN_AVAILABLE_MIB must be a positive integer." >&2; exit 2 ;; esac
+	@if command -v systemctl >/dev/null 2>&1; then \
+		for unit in narrowgate.service narrowgate-maker.service; do \
+			if systemctl is-active --quiet "$$unit" 2>/dev/null; then \
+				echo "Refusing native compilation while $$unit is active; use a stopped maintenance window or a controlled builder." >&2; \
+				exit 2; \
+			fi; \
+		done; \
+	fi
+	@if command -v pgrep >/dev/null 2>&1 && pgrep -f '[/][l]ive/main[.]py|[[:space:]]-m[[:space:]]+[l]ive[.]main' >/dev/null; then \
+		echo "Refusing native compilation while a live maker process is running." >&2; \
+		exit 2; \
+	fi
+	@test -r "$(NATIVE_BUILD_MEMINFO)" || (echo "Cannot read Linux memory information from $(NATIVE_BUILD_MEMINFO)." >&2; exit 2)
+	@total_kib="$$(awk '$$1 == "MemTotal:" {print $$2; exit}' "$(NATIVE_BUILD_MEMINFO)")"; \
+	available_kib="$$(awk '$$1 == "MemAvailable:" {print $$2; exit}' "$(NATIVE_BUILD_MEMINFO)")"; \
+	required_kib=$$(( $(NATIVE_BUILD_MIN_AVAILABLE_MIB) * 1024 )); \
+	if [ -z "$$total_kib" ] || [ -z "$$available_kib" ]; then \
+		echo "MemTotal or MemAvailable is missing from $(NATIVE_BUILD_MEMINFO)." >&2; \
+		exit 2; \
+	fi; \
+	if [ "$$available_kib" -lt "$$required_kib" ]; then \
+		echo "Native build needs at least $(NATIVE_BUILD_MIN_AVAILABLE_MIB) MiB available; found $$((available_kib / 1024)) MiB. Use the 16 GiB Azure builder." >&2; \
+		exit 2; \
+	fi; \
+	if [ "$$total_kib" -le $$((3 * 1024 * 1024)) ] && [ "$(NATIVE_BUILD_PARALLEL_LEVEL)" -ne 1 ]; then \
+		echo "Hosts with at most 3 GiB RAM must use NATIVE_BUILD_PARALLEL_LEVEL=1." >&2; \
+		exit 2; \
+	fi
+
+native-live-wheel: native-live-build-preflight
+	@mkdir -p "$(NATIVE_WHEEL_DIR)"
+	CMAKE_BUILD_PARALLEL_LEVEL="$(NATIVE_BUILD_PARALLEL_LEVEL)" \
+		$(PYTHON) -m pip wheel --no-deps \
+		--wheel-dir "$(NATIVE_WHEEL_DIR)" \
+		--config-settings=cmake.define.NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2 \
+		./cpp
+
 # ── Live Trading ────────────────────────────────────────────
 run:
 	bash live/run.sh start
@@ -123,5 +172,6 @@ clean-logs:
 	preprocess preprocess-bars preprocess-metrics features \
 	train train-tune platform-describe \
 	backtest backtest-sweep backtest-as backtest-tick \
+	native-live-build-preflight native-live-wheel \
 	run stop restart status logs reload \
 	deploy-preflight publish-source publish-source-dry clean clean-logs

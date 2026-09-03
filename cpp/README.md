@@ -158,9 +158,17 @@ PYTHONPATH=/tmp/narrowgate_btcusdc_cpp_build:. \
 Cascade Lake/256-bit profile；不能把默认 portable wheel 当成生产制品：
 
 ```bash
-.venv/bin/python -m pip wheel ./cpp \
-  --config-settings=cmake.define.NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2
-.venv/bin/python -c \
+make native-live-wheel
+```
+
+该入口默认使用 `CMAKE_BUILD_PARALLEL_LEVEL=1`，在 Linux x86_64 builder 上检查
+`MemAvailable`，并拒绝在 live maker 进程运行时编译。2 GiB EC2 不属于合格 build host；
+正式构建使用至少 16 GiB RAM 的受控 Azure Linux x86_64 builder。
+将生成的精确 wheel 安装到 release environment 后，再用该 environment 的 interpreter
+检查 embedded build profile；不能从 builder 的旧 editable install 读取身份：
+
+```bash
+<release-python> -c \
   'import narrowgate_cpp as n; print(n.NATIVE_LIVE_BUILD_PROFILE, n.NATIVE_LIVE_BUILD_COMPILE_OPTIONS, n.NATIVE_LIVE_BUILD_IS_PRODUCTION)'
 ```
 
@@ -169,8 +177,9 @@ extension（不只是 quote core）固定使用
 `-O3 -march=haswell -mtune=cascadelake -mprefer-vector-width=256
 -fno-fast-math -ffp-contract=off -fno-lto`。构建器固定为 EC2 当前的 GNU C++
 11.5.0，并要求单配置 Release 构建。它不启用 fast-math 或 AVX-512；Mac arm64 仅使用 portable
-构建做语义检查，Azure x86 只用于开发、编译和相对性能基准。
-不会为 Mac 或 Azure 降低 EC2 的 ISA/缓存调优。正式 native build
+构建做语义检查。满足精确 compiler、Python ABI 与 profile 合同的 Azure x86 builder 可以
+产出 EC2 wheel，但不得使用 builder 自身的 `-march=native`。不会为 Mac 或 Azure 降低 EC2
+的 ISA/缓存调优；最终同机性能资格仍在 EC2 上完成。正式 native build
 receipt 会拒绝 portable wheel。
 
 这里选择 `-march=haswell` 不是为了兼容旧机器：在生产机 Xeon Platinum
@@ -218,8 +227,8 @@ x86 TSC reference cycles；CPU core cycles、cache miss 和 branch miss 必须�
 - `pybind11_add_module(narrowgate_cpp ...)` 的源文件列表。
 - 后续如果引入 OpenMP、absl、fmt、Eigen、nanobind、LightGBM C API，要在这里显式链接。
 - 开发 wheel 使用默认 portable profile；EC2 release 只使用上面冻结并在同型号
-  生产 CPU 上实测过的 `ec2-cascadelake-avx2` profile。不要用 portable、Azure
-  的 `-march=native` 或 Mac 构建替代 EC2 release artifact。
+  生产 CPU 上实测过的 `ec2-cascadelake-avx2` profile。受控 Azure x86 builder 可以显式
+  产出该 target profile；不要用 portable、Azure 的 `-march=native` 或 Mac 构建替代。
 
 ## `common.hpp`
 
