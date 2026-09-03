@@ -1,3 +1,4 @@
+import datetime as dt
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,7 +13,7 @@ from strategy.boolean_cooldown_live import (
     LiveBooleanCooldownPolicy,
     RuntimeCooldownPolicyEvaluator,
 )
-from strategy.maker_engine import MakerEngine
+from strategy.maker_engine import MakerEngine, _prospective_state_fingerprint
 from strategy.model_contract import REQUIRED_MODEL_HEADS
 from strategy.quote_core import (
     QuoteCoreConfig,
@@ -26,6 +27,7 @@ from strategy.signal import (
     EXECUTION_L2_POLICY_METRIC_COLS,
     PERP_MARKET,
     REF_PERP_FEATURE_NAMES,
+    SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION,
     SIGNAL_REF_PERP_CPP_ABI_VERSION,
     Bar1s,
     DepthSnapshot,
@@ -77,15 +79,79 @@ def test_native_build_surface_matches_exposed_runtime() -> None:
     assert tuple(narrowgate_cpp.SIGNAL_REF_PERP_FEATURE_NAMES) == (
         REF_PERP_FEATURE_NAMES
     )
+    assert (
+        narrowgate_cpp.SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION
+        == SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION
+    )
+    assert tuple(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES) == tuple(
+        _model_feature_names(V12_MODEL_BUNDLE)
+    )
+    assert len(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES) == 173
+    assert narrowgate_cpp.SignalModelFeatureRow173.feature_count == 173
+    assert hasattr(
+        narrowgate_cpp.NativeLightgbmBundle,
+        "predict_signal_row_173",
+    )
+
+
+def test_native_model_row_fixed_input_groups_land_on_named_columns() -> None:
+    engine = narrowgate_cpp.SignalFeatureEngine(32, 64)
+    for index in range(10):
+        bar = narrowgate_cpp.Bar1s()
+        bar.ts_ms = index * 1_000
+        bar.open = 100.0 + index
+        bar.high = 101.0 + index
+        bar.low = 99.0 + index
+        bar.close = 100.5 + index
+        bar.volume = 1.0 + index
+        bar.buy_volume = 0.6 + index
+        bar.sell_volume = 0.4
+        bar.trade_count = index + 1
+        bar.buy_count = index
+        bar.sell_count = 1
+        engine.push_bar(bar)
+
+    prepared = engine.prepare_bucket(0)
+    groups = (
+        (
+            tuple(narrowgate_cpp.SIGNAL_EXECUTION_L2_FEATURE_NAMES),
+            np.arange(1_001.0, 1_014.0, dtype=np.float64),
+        ),
+        (
+            tuple(narrowgate_cpp.SIGNAL_METRIC_FEATURE_NAMES),
+            np.arange(2_001.0, 2_014.0, dtype=np.float64),
+        ),
+        (
+            tuple(narrowgate_cpp.SIGNAL_REF_PERP_FEATURE_NAMES),
+            np.arange(3_001.0, 3_012.0, dtype=np.float64),
+        ),
+        (
+            tuple(narrowgate_cpp.SIGNAL_TIME_FEATURE_NAMES),
+            np.arange(4_001.0, 4_050.0, dtype=np.float64),
+        ),
+    )
+    row = engine.assemble_model_row_173(
+        prepared,
+        groups[0][1],
+        groups[1][1],
+        groups[2][1],
+        groups[3][1],
+    )
+    names = tuple(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES)
+    values = np.asarray(row.values, dtype=np.float64)
+
+    for group_names, sentinels in groups:
+        for name, sentinel in zip(group_names, sentinels, strict=True):
+            assert values[names.index(name)] == sentinel
 
 
 def _active_lightgbm_library() -> str:
     return str(Path(lgb.basic._LIB._name).resolve(strict=True))  # noqa: SLF001
 
 
-def _model_feature_names() -> list[str]:
+def _model_feature_names(bundle: Path = MODEL_BUNDLE) -> list[str]:
     metadata = json.loads(
-        (MODEL_BUNDLE / "dir_10s_meta.json").read_text(encoding="utf-8")
+        (bundle / "dir_10s_meta.json").read_text(encoding="utf-8")
     )
     return [str(name) for name in metadata["feature_cols"]]
 
@@ -864,6 +930,7 @@ def test_cpp_ref_perp_matches_python_for_all_fields_and_basis_history():
 
 def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     reference = SignalEngine(
         model_dir=V12_MODEL_BUNDLE,
@@ -875,12 +942,42 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
     )
     reference._cpp_ref_perp_engine = None
     assert native._cpp_ref_perp_engine is not None
+    assert native._cpp_model_row_173_enabled is True
     assert len(native._shared_model_feature_schema()) == 173
+
+    # Cross the 2026 US spring-forward boundary so the fused row proves it
+    # preserves the authoritative timezone/DST calendar semantics rather than
+    # substituting a native fixed-offset approximation.
+    base_ms = int(
+        dt.datetime(
+            2026,
+            3,
+            8,
+            6,
+            59,
+            20,
+            tzinfo=dt.UTC,
+        ).timestamp()
+        * 1_000
+    )
+    metric_history = [
+        {
+            "ts_ms": base_ms - (12 - index) * 300_000,
+            "oi": 100_000.0 + index * 100.0,
+            "top_ls": 1.0 + index * 0.01,
+            "crowd_ls": 0.9 + index * 0.005,
+            "taker_ls": 1.1 - index * 0.004,
+        }
+        for index in range(12)
+    ]
+    for engine in (reference, native):
+        engine._metrics_history.extend(metric_history)
+        engine._last_metrics = metric_history[-1]
 
     reference_prediction = None
     native_prediction = None
     for index in range(80):
-        event_ms = index * 1_000 + 100
+        event_ms = base_ms + index * 1_000 + 100
         execution_price = 60_000.0 + index * 0.03 + (index % 4) * 0.01
         reference_price = 60_002.0 + index * 0.031 + (index % 5) * 0.012
         execution_trade = {
@@ -899,7 +996,7 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
         }
         ticker = {
             "s": "BTCUSDT",
-            "E": index * 1_000 + 500,
+            "E": base_ms + index * 1_000 + 500,
             "b": str(reference_price - 0.05),
             "a": str(reference_price + 0.05),
         }
@@ -916,7 +1013,7 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
             engine.on_book_ticker(
                 ticker,
                 market_type=PERP_MARKET,
-                receive_ts_ns=(index * 1_000 + 511) * 1_000_000,
+                receive_ts_ns=(base_ms + index * 1_000 + 511) * 1_000_000,
             )
         reference_prediction = reference.compute_signal()
         native_prediction = native.compute_signal()
@@ -931,6 +1028,36 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
         [native_prediction.feature_dict[name] for name in feature_names]
     )
     assert native_row == pytest.approx(reference_row, rel=0.0, abs=1e-10)
+    assert not isinstance(native_prediction.feature_dict, dict)
+    assert set(native_prediction.feature_dict) == set(
+        reference_prediction.feature_dict
+    )
+    for name, value in reference_prediction.feature_dict.items():
+        assert native_prediction.feature_dict[name] == pytest.approx(
+            value,
+            rel=0.0,
+            abs=1e-10,
+        ), name
+    assert native_prediction.feature_dict["cal_us_hour"] == 3.0
+    assert native_prediction.feature_dict["cal_us_is_sunday"] == 1.0
+    assert native_prediction.feature_dict["oi_log"] > 0.0
+    assert native_prediction.feature_dict["toptrader_ls_ratio"] > 1.0
+    assert "cv_exec_spot_typo" not in native_prediction.feature_dict
+    with pytest.raises(KeyError):
+        _ = native_prediction.feature_dict["cv_exec_spot_typo"]
+    assert native_prediction.features == pytest.approx(
+        reference_prediction.features,
+        rel=0.0,
+        abs=1e-10,
+    )
+    normalized_prediction, _ = (
+        _prospective_state_fingerprint(
+            native_prediction,
+            path="signal.last_prediction",
+            unsupported=[],
+        )
+    )
+    assert normalized_prediction["feature_dict"]["cal_us_hour"] == 3.0
     for name in REQUIRED_MODEL_HEADS:
         assert getattr(native_prediction, name) == getattr(
             reference_prediction, name
@@ -985,6 +1112,153 @@ def test_cpp_ref_perp_activation_follows_startup_model_schema(monkeypatch):
 
     assert one_feature._cpp_ref_perp_engine is None
     assert source_aware._cpp_ref_perp_engine is not None
+
+
+def test_native_model_row_catch_up_matches_stepwise_inference(monkeypatch):
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    stepwise = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=7,
+    )
+    catch_up = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=7,
+    )
+    assert stepwise._cpp_model_row_173_enabled is True
+    assert catch_up._cpp_model_row_173_enabled is True
+
+    seen_transactions: list[bool] = []
+    original_predict = catch_up._predict
+
+    def track_transaction(features):
+        seen_transactions.append(
+            isinstance(features, signal_module._NativeFeatureTransaction)
+        )
+        return original_predict(features)
+
+    monkeypatch.setattr(catch_up, "_predict", track_transaction)
+    base_ms = int(
+        dt.datetime(2026, 3, 8, 6, 59, tzinfo=dt.UTC).timestamp() * 1_000
+    )
+    stepwise_prediction = None
+    for index in range(101):
+        event_ms = base_ms + index * 1_000 + 100
+        execution_price = 60_000.0 + index * 0.02 + (index % 3) * 0.01
+        reference_price = 60_002.0 + index * 0.021 + (index % 4) * 0.01
+        execution_trade = {
+            "s": "BTCUSDC",
+            "T": event_ms,
+            "p": str(execution_price),
+            "q": str(0.01 + (index % 3) * 0.002),
+            "m": bool(index % 2),
+        }
+        reference_trade = {
+            "s": "BTCUSDT",
+            "T": event_ms,
+            "p": str(reference_price),
+            "q": str(0.05 + (index % 4) * 0.003),
+            "m": bool((index + 1) % 2),
+        }
+        ticker = {
+            "s": "BTCUSDT",
+            "E": event_ms + 400,
+            "b": str(reference_price - 0.05),
+            "a": str(reference_price + 0.05),
+        }
+        for engine in (stepwise, catch_up):
+            engine.on_agg_trade(
+                execution_trade,
+                receive_ts_ns=(event_ms + 7) * 1_000_000,
+            )
+            engine.on_cross_agg_trade(
+                reference_trade,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(event_ms + 9) * 1_000_000,
+            )
+            engine.on_book_ticker(
+                ticker,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(event_ms + 411) * 1_000_000,
+            )
+        stepwise_prediction = stepwise.compute_signal()
+
+    catch_up_prediction = catch_up.compute_signal()
+    assert len(seen_transactions) > 1
+    assert all(seen_transactions)
+    assert stepwise._last_processed_bucket == catch_up._last_processed_bucket
+    assert tuple(stepwise._pred_ret_ema) == tuple(catch_up._pred_ret_ema)
+    assert stepwise_prediction is not None
+    feature_names = stepwise._shared_model_feature_schema()
+    assert [catch_up_prediction.feature_dict[name] for name in feature_names] == (
+        pytest.approx(
+            [stepwise_prediction.feature_dict[name] for name in feature_names],
+            rel=0.0,
+            abs=1e-10,
+        )
+    )
+    assert catch_up_prediction.features == pytest.approx(
+        stepwise_prediction.features,
+        rel=0.0,
+        abs=1e-10,
+    )
+    for name in REQUIRED_MODEL_HEADS:
+        assert getattr(catch_up_prediction, name) == getattr(
+            stepwise_prediction,
+            name,
+        )
+
+
+def test_native_model_row_keeps_current_mapping_after_nonstrict_commit_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    engine = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=0,
+    )
+    base_ms = int(
+        dt.datetime(2026, 3, 8, 6, 59, tzinfo=dt.UTC).timestamp() * 1_000
+    )
+    for index in range(31):
+        event_ms = base_ms + index * 1_000 + 100
+        engine.on_agg_trade(
+            {
+                "s": "BTCUSDC",
+                "T": event_ms,
+                "p": str(60_000.0 + index * 0.01),
+                "q": "0.01",
+                "m": bool(index % 2),
+            },
+            receive_ts_ns=(event_ms + 7) * 1_000_000,
+        )
+
+    native_ref = engine._cpp_ref_perp_engine
+    assert native_ref is not None
+
+    class CommitFailure:
+        def prepare(self, *args):
+            return native_ref.prepare(*args)
+
+        @staticmethod
+        def commit(_prepared):
+            raise RuntimeError("synthetic commit failure")
+
+    engine._cpp_ref_perp_engine = CommitFailure()
+    transaction = engine._prepare_native_model_row_173(base_ms)
+
+    assert isinstance(transaction, signal_module._NativeFeatureTransaction)
+    assert transaction.mapping["close"] > 0.0
+    assert transaction.mapping["price_change_5s"] == pytest.approx(
+        transaction.row.value_at(
+            transaction.names.index("price_change_5s")
+        )
+    )
+    assert engine._cpp_model_row_173_enabled is False
+    assert engine._cpp_ref_perp_engine is None
 
 
 def test_cpp_ref_perp_keeps_spot_computation_for_declared_diagnostics():
@@ -1367,6 +1641,35 @@ def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
     assert engine._models is old_models
     assert engine._native_model_bundle is old_native_bundle
     assert engine._model_dir == MODEL_BUNDLE
+
+
+def test_native_173_row_rejection_is_atomic_during_strict_reload(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    engine = SignalEngine(model_dir=V12_MODEL_BUNDLE, ret_demean_halflife=0)
+    old_models = engine._models
+    old_feature_cols = engine._model_feature_cols
+    old_feature_schema = engine._model_feature_schema
+    old_metadata = engine._model_metadata
+    old_native_bundle = engine._native_model_bundle
+    old_row_state = engine._cpp_model_row_173_state
+
+    with pytest.raises(
+        RuntimeError,
+        match="native 173-row order differs from model bundle schema",
+    ):
+        engine.reload_models(MODEL_BUNDLE)
+
+    assert engine._models is old_models
+    assert engine._model_feature_cols is old_feature_cols
+    assert engine._model_feature_schema is old_feature_schema
+    assert engine._model_metadata is old_metadata
+    assert engine._native_model_bundle is old_native_bundle
+    assert engine._cpp_model_row_173_state is old_row_state
+    assert engine._model_dir == V12_MODEL_BUNDLE
 
 
 def test_native_lightgbm_failed_nonstrict_initialization_uses_python_bundle(

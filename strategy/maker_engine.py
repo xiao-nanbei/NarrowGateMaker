@@ -25,7 +25,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, is_dataclass, replace
+from dataclasses import asdict, dataclass, fields, is_dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, NoReturn, Optional, Tuple
@@ -230,8 +230,14 @@ def _prospective_state_plain(
     if isinstance(value, Path):
         return str(value)
     if is_dataclass(value):
+        # dataclasses.asdict() deep-copies non-dataclass leaves. Native feature
+        # rows are immutable pybind holders and intentionally non-pickleable,
+        # so recurse field-by-field and materialize only their Mapping view.
         return _prospective_state_plain(
-            asdict(value),
+            {
+                item.name: getattr(value, item.name)
+                for item in fields(value)
+            },
             path=path,
             unsupported=unsupported,
         )

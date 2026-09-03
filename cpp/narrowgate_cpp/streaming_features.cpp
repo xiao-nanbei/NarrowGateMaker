@@ -629,6 +629,77 @@ std::map<std::string, double> SignalFeatureVector::to_map() const {
     return out;
 }
 
+double SignalModelFeatureRow::value_at(std::size_t index) const {
+    if (index >= values_.size()) {
+        throw std::out_of_range("signal model feature row index out of range");
+    }
+    return values_[index];
+}
+
+std::array<double, 88> SignalModelFeatureRow::legacy_base_values() const noexcept {
+    // FEATURE_NAMES_BASE compatibility projection.  Its legacy calendar names
+    // point at the corresponding canonical cal_* slots in the 173-row ABI.
+    static constexpr std::array<std::size_t, 88> kProjection = {
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+        17, 18, 19, 20, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+        78, 97, 79, 80, 81, 82, 98, 83, 84, 85, 99, 86, 87, 88, 100,
+        89, 90, 91, 92, 93, 101, 94, 95, 96, 102, 103, 104, 105, 106,
+        107, 108, 109, 110, 111, 112, 127, 128, 131, 134, 136, 138,
+        139, 129, 130, 167, 168, 169, 170, 171, 172, 157, 158, 159,
+        163, 164,
+    };
+    std::array<double, kProjection.size()> out{};
+    for (std::size_t index = 0; index < kProjection.size(); ++index) {
+        out[index] = values_[kProjection[index]];
+    }
+    return out;
+}
+
+SignalModelFeatureRow assemble_signal_model_feature_row(
+    const SignalFeatureBucketPrepared& bucket,
+    const SignalExecutionL2FeatureValues& execution_l2,
+    const SignalMetricFeatureValues& metrics,
+    const SignalRefPerpFeatureValues& ref_perp,
+    const SignalTimeFeatureValues& time
+) {
+    // kSignalFeatureNames is intentionally grouped for native computation,
+    // while the model bundle retains its frozen training order.  This
+    // compile-time scatter table is the only translation between them.
+    static constexpr std::array<std::size_t, kSignalFeatureCount>
+        kCoreToModel = {
+            102, 103, 106, 107, 18, 17, 104, 15, 14, 13,
+            93, 96, 94, 101, 95, 92, 108, 109, 46, 47,
+            45, 48, 38, 39, 37, 40, 34, 35, 33, 36,
+            22, 23, 21, 24, 50, 51, 49, 52, 42, 43,
+            41, 44, 26, 27, 25, 28, 30, 31, 29, 32,
+            12, 11, 10, 8, 9, 20, 16, 7, 19, 88,
+            86, 99, 87, 111, 110, 112, 81, 79, 97, 80,
+            82, 85, 83, 98, 84, 105, 91, 89, 100, 90,
+        };
+    static_assert(kCoreToModel.size() == kSignalFeatureCount);
+
+    SignalModelFeatureRow row;
+    auto& values = row.values_;
+    values[0] = bucket.aggregate.close;
+    values[1] = bucket.aggregate.volume;
+    values[2] = bucket.aggregate.buy_volume;
+    values[3] = bucket.aggregate.sell_volume;
+    values[4] = bucket.aggregate.trade_count;
+    values[5] = bucket.aggregate.buy_count;
+    values[6] = bucket.aggregate.sell_count;
+
+    const auto& core = bucket.core.values();
+    for (std::size_t index = 0; index < core.size(); ++index) {
+        values[kCoreToModel[index]] = core[index];
+    }
+    std::copy(
+        execution_l2.begin(), execution_l2.end(), values.begin() + 53);
+    std::copy(metrics.begin(), metrics.end(), values.begin() + 66);
+    std::copy(ref_perp.begin(), ref_perp.end(), values.begin() + 113);
+    std::copy(time.begin(), time.end(), values.begin() + 124);
+    return row;
+}
+
 SignalFeatureEngine::SignalFeatureEngine(std::size_t max_bars, std::size_t max_history)
     : max_bars_(std::max<std::size_t>(1, max_bars)),
       max_history_(std::max<std::size_t>(1, max_history)),
@@ -1430,6 +1501,16 @@ std::pair<Bar1s, SignalFeatureVector> SignalFeatureEngine::compute_bucket(
     return {
         aggregate,
         compute_at_cutoff(aggregate, bucket_start_ms + 10'000),
+    };
+}
+
+SignalFeatureBucketPrepared SignalFeatureEngine::prepare_bucket(
+    std::int64_t bucket_start_ms
+) const {
+    auto [aggregate, core] = compute_bucket(bucket_start_ms);
+    return SignalFeatureBucketPrepared{
+        .aggregate = aggregate,
+        .core = core,
     };
 }
 

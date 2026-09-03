@@ -90,6 +90,12 @@ NATIVE_LIVE_ABI_CONTRACT = {
         "SignalRefPerpFeatureEngine",
         "SIGNAL_REF_PERP_FEATURE_ABI_VERSION",
         "SIGNAL_REF_PERP_FEATURE_NAMES",
+        "SignalFeatureBucketPrepared",
+        "SignalModelFeatureRow173",
+        "SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION",
+        "SIGNAL_MODEL_FEATURE_NAMES",
+        "SIGNAL_METRIC_FEATURE_NAMES",
+        "SIGNAL_TIME_FEATURE_NAMES",
         "NativeLightgbmBundle",
         "LIGHTGBM_BUNDLE_HEAD_NAMES",
         "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
@@ -126,7 +132,11 @@ NATIVE_LIVE_ABI_CONTRACT = {
         "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
     ),
     "required_class_members": {
-        "SignalFeatureEngine": ("compute_bucket_values",),
+        "SignalFeatureEngine": (
+            "compute_bucket_values",
+            "prepare_bucket",
+            "assemble_model_row_173",
+        ),
         "SignalRefPerpFeatureEngine": (
             "reset",
             "update_trade_batch",
@@ -136,6 +146,7 @@ NATIVE_LIVE_ABI_CONTRACT = {
         ),
         "NativeLightgbmBundle": (
             "predict",
+            "predict_signal_row_173",
             "feature_count",
             "head_count",
             "library_path",

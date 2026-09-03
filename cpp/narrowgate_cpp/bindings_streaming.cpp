@@ -122,6 +122,39 @@ py::array_t<double> signal_ref_perp_feature_array(
     return out;
 }
 
+py::array_t<double> signal_model_feature_array(
+    const SignalModelFeatureRow& row
+) {
+    py::array_t<double> out(kSignalModelFeatureNames.size());
+    const auto& values = row.values();
+    std::copy(values.begin(), values.end(), out.mutable_data());
+    return out;
+}
+
+py::array_t<double> signal_legacy_base_feature_array(
+    const SignalModelFeatureRow& row
+) {
+    const auto values = row.legacy_base_values();
+    py::array_t<double> out(values.size());
+    std::copy(values.begin(), values.end(), out.mutable_data());
+    return out;
+}
+
+template <std::size_t Size>
+std::array<double, Size> fixed_signal_values(
+    const CArray<double>& values,
+    const char* name
+) {
+    if (values.ndim() != 1 || static_cast<std::size_t>(values.size()) != Size) {
+        throw std::invalid_argument(
+            std::string(name) + " must be a one-dimensional fixed-width row"
+        );
+    }
+    std::array<double, Size> out{};
+    std::copy_n(values.data(), Size, out.begin());
+    return out;
+}
+
 SignalExecutionL2Snapshot signal_execution_l2_snapshot_from_python(
     double ts_ms,
     py::handle bids_obj,
@@ -931,6 +964,31 @@ void bind_streaming_features(py::module_& m) {
             },
             py::arg("row")
         )
+        .def(
+            "predict_signal_row_173",
+            [](const LightgbmBundleInference& bundle,
+               const SignalModelFeatureRow& row) {
+                if (bundle.feature_count() != kSignalModelFeatureNames.size()) {
+                    throw std::invalid_argument(
+                        "LightGBM bundle is not the canonical 173-feature bundle"
+                    );
+                }
+                py::array_t<double> output(kLightgbmBundleHeadNames.size());
+                double* output_data = output.mutable_data();
+                {
+                    py::gil_scoped_release release;
+                    bundle.predict(
+                        row.values(),
+                        std::span<double>(
+                            output_data,
+                            kLightgbmBundleHeadNames.size()
+                        )
+                    );
+                }
+                return output;
+            },
+            py::arg("row")
+        )
         .def_property_readonly(
             "feature_count",
             &LightgbmBundleInference::feature_count
@@ -952,6 +1010,32 @@ void bind_streaming_features(py::module_& m) {
         feature_names[i] = py::str(kSignalFeatureNames[i].data(), kSignalFeatureNames[i].size());
     }
     m.attr("SIGNAL_FEATURE_NAMES") = std::move(feature_names);
+    m.attr("SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION") =
+        "signal_model_feature_row_173.v1";
+    py::tuple model_feature_names(kSignalModelFeatureNames.size());
+    for (std::size_t i = 0; i < kSignalModelFeatureNames.size(); ++i) {
+        model_feature_names[i] = py::str(
+            kSignalModelFeatureNames[i].data(),
+            kSignalModelFeatureNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_MODEL_FEATURE_NAMES") = std::move(model_feature_names);
+    py::tuple metric_feature_names(kSignalMetricFeatureNames.size());
+    for (std::size_t i = 0; i < kSignalMetricFeatureNames.size(); ++i) {
+        metric_feature_names[i] = py::str(
+            kSignalMetricFeatureNames[i].data(),
+            kSignalMetricFeatureNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_METRIC_FEATURE_NAMES") = std::move(metric_feature_names);
+    py::tuple time_feature_names(kSignalTimeFeatureNames.size());
+    for (std::size_t i = 0; i < kSignalTimeFeatureNames.size(); ++i) {
+        time_feature_names[i] = py::str(
+            kSignalTimeFeatureNames[i].data(),
+            kSignalTimeFeatureNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_TIME_FEATURE_NAMES") = std::move(time_feature_names);
     m.attr("SIGNAL_EXECUTION_L2_FEATURE_ABI_VERSION") =
         "signal_execution_l2_window.v1";
     py::tuple execution_l2_feature_names(kSignalExecutionL2FeatureNames.size());
@@ -1024,6 +1108,27 @@ void bind_streaming_features(py::module_& m) {
         .def_readwrite("price_velocity", &FeatureHistoryRow::price_velocity)
         .def_readwrite("return_abs", &FeatureHistoryRow::return_abs)
         .def_readwrite("vol_regime_6h", &FeatureHistoryRow::vol_regime_6h);
+
+    py::class_<SignalFeatureBucketPrepared>(m, "SignalFeatureBucketPrepared")
+        .def_readonly("aggregate", &SignalFeatureBucketPrepared::aggregate)
+        .def_property_readonly(
+            "core_values",
+            [](const SignalFeatureBucketPrepared& prepared) {
+                return signal_feature_array(prepared.core);
+            }
+        );
+
+    py::class_<SignalModelFeatureRow>(m, "SignalModelFeatureRow173")
+        .def_property_readonly("values", &signal_model_feature_array)
+        .def_property_readonly(
+            "legacy_base_values",
+            &signal_legacy_base_feature_array
+        )
+        .def("value_at", &SignalModelFeatureRow::value_at, py::arg("index"))
+        .def_property_readonly_static(
+            "feature_count",
+            [](py::object) { return kSignalModelFeatureNames.size(); }
+        );
 
     py::class_<TradeBarAggregator>(m, "TradeBarAggregator")
         .def(py::init<bool>(), py::arg("track_runs") = true)
@@ -1218,6 +1323,51 @@ void bind_streaming_features(py::module_& m) {
                 );
             },
             py::arg("bucket_start_ms")
+        )
+        .def(
+            "prepare_bucket",
+            [](const SignalFeatureEngine& engine,
+               std::int64_t bucket_start_ms) {
+                SignalFeatureBucketPrepared prepared;
+                {
+                    py::gil_scoped_release release;
+                    prepared = engine.prepare_bucket(bucket_start_ms);
+                }
+                return prepared;
+            },
+            py::arg("bucket_start_ms")
+        )
+        .def(
+            "assemble_model_row_173",
+            [](
+                const SignalFeatureEngine&,
+                const SignalFeatureBucketPrepared& bucket,
+                CArray<double> execution_l2,
+                CArray<double> metrics,
+                CArray<double> ref_perp,
+                CArray<double> time
+            ) {
+                return assemble_signal_model_feature_row(
+                    bucket,
+                    fixed_signal_values<kSignalExecutionL2FeatureNames.size()>(
+                        execution_l2, "execution_l2"
+                    ),
+                    fixed_signal_values<kSignalMetricFeatureNames.size()>(
+                        metrics, "metrics"
+                    ),
+                    fixed_signal_values<kSignalRefPerpFeatureNames.size()>(
+                        ref_perp, "ref_perp"
+                    ),
+                    fixed_signal_values<kSignalTimeFeatureNames.size()>(
+                        time, "time"
+                    )
+                );
+            },
+            py::arg("bucket"),
+            py::arg("execution_l2"),
+            py::arg("metrics"),
+            py::arg("ref_perp"),
+            py::arg("time")
         )
         .def("bar_count", &SignalFeatureEngine::bar_count)
         .def("history_count", &SignalFeatureEngine::history_count);

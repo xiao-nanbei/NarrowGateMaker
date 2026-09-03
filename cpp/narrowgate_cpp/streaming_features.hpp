@@ -108,6 +108,116 @@ inline constexpr std::array<std::string_view, 11> kSignalRefPerpFeatureNames = {
 using SignalRefPerpFeatureValues =
     std::array<double, kSignalRefPerpFeatureNames.size()>;
 
+// Canonical live model row.  This order is the frozen 173-column schema used
+// by the source-aware causal-v12 bundle.  Keeping the order in the native ABI
+// lets the hot path hand one aligned row directly to LightGBM; Python mappings
+// remain a diagnostic view rather than the model input representation.
+inline constexpr std::array<std::string_view, 173> kSignalModelFeatureNames = {
+    "close", "volume", "buy_volume", "sell_volume", "trade_count",
+    "buy_count", "sell_count", "tick_streak", "tick_mom_3s",
+    "tick_mom_5s", "tick_mom_10s", "tick_ewm_3s", "tick_ewm_10s",
+    "micro_ret_std", "micro_ret_skew", "micro_ret_kurt",
+    "tick_reversal_freq", "flow_velocity", "flow_acceleration",
+    "tick_streak_max", "tick_mom_range", "taker_quote_imbalance_5s",
+    "taker_quote_imbalance_10s", "taker_quote_imbalance_30s",
+    "taker_quote_imbalance_60s", "taker_signed_quote_sum_5s",
+    "taker_signed_quote_sum_10s", "taker_signed_quote_sum_30s",
+    "taker_signed_quote_sum_60s", "taker_trade_count_sum_5s",
+    "taker_trade_count_sum_10s", "taker_trade_count_sum_30s",
+    "taker_trade_count_sum_60s", "taker_max_same_side_run_5s",
+    "taker_max_same_side_run_10s", "taker_max_same_side_run_30s",
+    "taker_max_same_side_run_60s", "taker_buy_sweep_score_5s",
+    "taker_buy_sweep_score_10s", "taker_buy_sweep_score_30s",
+    "taker_buy_sweep_score_60s", "taker_sell_sweep_score_5s",
+    "taker_sell_sweep_score_10s", "taker_sell_sweep_score_30s",
+    "taker_sell_sweep_score_60s", "taker_buy_iceberg_pressure_sum_5s",
+    "taker_buy_iceberg_pressure_sum_10s",
+    "taker_buy_iceberg_pressure_sum_30s",
+    "taker_buy_iceberg_pressure_sum_60s",
+    "taker_sell_iceberg_pressure_sum_5s",
+    "taker_sell_iceberg_pressure_sum_10s",
+    "taker_sell_iceberg_pressure_sum_30s",
+    "taker_sell_iceberg_pressure_sum_60s", "l2_spread_bps",
+    "l2_microprice_offset_bps", "l2_imbalance_l1", "l2_imbalance_l3",
+    "l2_imbalance_l5", "l2_imbalance_l10", "l2_near_depth_total",
+    "l2_depth_slope", "l2_depth_convexity", "l2_queue_concentration",
+    "l2_quote_flip_rate", "l2_book_refresh_ratio", "l2_book_cancel_ratio",
+    "oi_log", "oi_pct_change", "oi_zscore_1h", "oi_zscore_6h",
+    "oi_momentum", "toptrader_ls_ratio", "crowd_ls_ratio",
+    "taker_ls_ratio", "toptrader_ls_zscore", "crowd_ls_zscore",
+    "taker_ls_zscore", "taker_ls_momentum", "oi_price_divergence",
+    "volatility_30s", "volatility_60s", "volatility_300s",
+    "volume_imbalance", "volume_imbalance_30s", "volume_imbalance_60s",
+    "volume_imbalance_300s", "trade_intensity_30s",
+    "trade_intensity_60s", "trade_intensity_300s", "vpin_30s",
+    "vpin_60s", "vpin_300s", "price_velocity", "price_acceleration",
+    "price_change_30s", "price_change_60s", "price_change_300s",
+    "volatility_5s", "volume_imbalance_5s", "trade_intensity_5s",
+    "vpin_5s", "price_change_5s", "avg_trade_size",
+    "avg_trade_size_60s", "large_trade_ratio", "volume_zscore",
+    "bar_spread", "bar_spread_bps", "return_1", "return_abs",
+    "vol_regime_6h", "vol_regime_24h", "vol_regime_zscore",
+    "cv_ref_perp_basis_bps", "cv_ref_perp_ret_10s",
+    "cv_ref_perp_ret_30s", "cv_ref_perp_ret_60s",
+    "cv_ref_perp_volatility_60s", "cv_ref_perp_volume_imbalance",
+    "cv_ref_perp_trade_intensity_60s", "cv_ref_perp_vpin_60s",
+    "cv_ref_perp_basis_residual_bps", "cv_ref_perp_age_s",
+    "cv_ref_perp_available", "cal_utc_hour", "cal_utc_weekday",
+    "cal_utc_is_weekend", "cal_hour_sin", "cal_hour_cos", "cal_dow_sin",
+    "cal_dow_cos", "cal_session_asia", "cal_session_tokyo",
+    "cal_session_singapore_hk", "cal_session_europe",
+    "cal_session_london", "cal_session_america",
+    "cal_session_us_extended", "cal_session_asia_europe_overlap",
+    "cal_session_europe_america_overlap",
+    "cal_session_tokyo_singapore_overlap", "cal_session_london_us_overlap",
+    "cal_session_active_count", "cal_cn_hour", "cal_cn_weekday",
+    "cal_cn_is_weekend", "cal_cn_is_holiday",
+    "cal_cn_is_adjusted_workday", "cal_cn_is_workday",
+    "cal_cn_is_holiday_eve", "cal_cn_is_post_holiday", "cal_us_hour",
+    "cal_us_weekday", "cal_us_is_weekend", "cal_us_is_sunday",
+    "cal_us_is_sunday_evening", "cal_us_is_federal_holiday",
+    "cal_us_is_nyse_trading_day", "cal_us_is_regular_hours",
+    "cal_us_is_premarket", "cal_us_is_afterhours", "cal_us_is_holiday_eve",
+    "cal_us_is_post_holiday", "cal_minutes_to_us_open",
+    "cal_minutes_to_us_close", "cal_is_weekday_us_rth",
+    "cal_is_weekend_core", "minutes_to_funding", "funding_phase",
+    "funding_sin", "funding_cos", "dist_to_hour", "near_candle_close",
+};
+
+inline constexpr std::array<std::string_view, 13> kSignalMetricFeatureNames = {
+    "oi_log", "oi_pct_change", "oi_zscore_1h", "oi_zscore_6h",
+    "oi_momentum", "toptrader_ls_ratio", "crowd_ls_ratio",
+    "taker_ls_ratio", "toptrader_ls_zscore", "crowd_ls_zscore",
+    "taker_ls_zscore", "taker_ls_momentum", "oi_price_divergence",
+};
+
+inline constexpr std::array<std::string_view, 49> kSignalTimeFeatureNames = {
+    "cal_utc_hour", "cal_utc_weekday", "cal_utc_is_weekend",
+    "cal_hour_sin", "cal_hour_cos", "cal_dow_sin", "cal_dow_cos",
+    "cal_session_asia", "cal_session_tokyo", "cal_session_singapore_hk",
+    "cal_session_europe", "cal_session_london", "cal_session_america",
+    "cal_session_us_extended", "cal_session_asia_europe_overlap",
+    "cal_session_europe_america_overlap",
+    "cal_session_tokyo_singapore_overlap", "cal_session_london_us_overlap",
+    "cal_session_active_count", "cal_cn_hour", "cal_cn_weekday",
+    "cal_cn_is_weekend", "cal_cn_is_holiday",
+    "cal_cn_is_adjusted_workday", "cal_cn_is_workday",
+    "cal_cn_is_holiday_eve", "cal_cn_is_post_holiday", "cal_us_hour",
+    "cal_us_weekday", "cal_us_is_weekend", "cal_us_is_sunday",
+    "cal_us_is_sunday_evening", "cal_us_is_federal_holiday",
+    "cal_us_is_nyse_trading_day", "cal_us_is_regular_hours",
+    "cal_us_is_premarket", "cal_us_is_afterhours", "cal_us_is_holiday_eve",
+    "cal_us_is_post_holiday", "cal_minutes_to_us_open",
+    "cal_minutes_to_us_close", "cal_is_weekday_us_rth",
+    "cal_is_weekend_core", "minutes_to_funding", "funding_phase",
+    "funding_sin", "funding_cos", "dist_to_hour", "near_candle_close",
+};
+
+using SignalMetricFeatureValues =
+    std::array<double, kSignalMetricFeatureNames.size()>;
+using SignalTimeFeatureValues =
+    std::array<double, kSignalTimeFeatureNames.size()>;
+
 struct SignalRefPerpPrepared {
     SignalRefPerpFeatureValues values{};
     std::int64_t target_bucket = 0;
@@ -484,6 +594,39 @@ private:
     std::array<double, kSignalFeatureCount> values_{};
 };
 
+struct SignalFeatureBucketPrepared {
+    Bar1s aggregate{};
+    SignalFeatureVector core{};
+};
+
+class alignas(64) SignalModelFeatureRow {
+public:
+    [[nodiscard]] const std::array<double, kSignalModelFeatureNames.size()>&
+    values() const noexcept {
+        return values_;
+    }
+    [[nodiscard]] double value_at(std::size_t index) const;
+    [[nodiscard]] std::array<double, 88> legacy_base_values() const noexcept;
+
+private:
+    friend SignalModelFeatureRow assemble_signal_model_feature_row(
+        const SignalFeatureBucketPrepared&,
+        const SignalExecutionL2FeatureValues&,
+        const SignalMetricFeatureValues&,
+        const SignalRefPerpFeatureValues&,
+        const SignalTimeFeatureValues&
+    );
+    std::array<double, kSignalModelFeatureNames.size()> values_{};
+};
+
+[[nodiscard]] SignalModelFeatureRow assemble_signal_model_feature_row(
+    const SignalFeatureBucketPrepared& bucket,
+    const SignalExecutionL2FeatureValues& execution_l2,
+    const SignalMetricFeatureValues& metrics,
+    const SignalRefPerpFeatureValues& ref_perp,
+    const SignalTimeFeatureValues& time
+);
+
 class TradeBarAggregator {
 public:
     explicit TradeBarAggregator(bool track_runs = true);
@@ -580,6 +723,9 @@ public:
         std::int64_t cutoff_exclusive_ms
     ) const;
     [[nodiscard]] std::pair<Bar1s, SignalFeatureVector> compute_bucket(
+        std::int64_t bucket_start_ms
+    ) const;
+    [[nodiscard]] SignalFeatureBucketPrepared prepare_bucket(
         std::int64_t bucket_start_ms
     ) const;
     std::size_t bar_count() const { return bars_.size(); }

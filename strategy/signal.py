@@ -16,9 +16,10 @@ import json
 import logging
 import math
 import os
-import time
 import threading
+import time
 from collections import deque
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import Lock
@@ -26,7 +27,11 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from calendar_features import calendar_scalar_features, is_relative_millisecond_clock
+from calendar_features import (
+    calendar_feature_names,
+    calendar_scalar_features,
+    is_relative_millisecond_clock,
+)
 from features.feature_dag import TEN_SECOND_CAUSAL_GRAPH
 from market_fusion import (
     BINANCE_VENUE,
@@ -40,12 +45,12 @@ from market_fusion import (
     normalize_symbol,
     normalize_venue,
 )
-from strategy.global_reference import ReferenceObservation, build_global_reference_state
-from strategy.global_flow import GlobalFlowEngine
 from strategy.cross_venue_fair_price import (
     CrossVenueFairPriceEstimator,
     FairPriceSource,
 )
+from strategy.global_flow import GlobalFlowEngine
+from strategy.global_reference import ReferenceObservation, build_global_reference_state
 from strategy.model_contract import (
     REQUIRED_MODEL_HEADS,
     absolute_price_variance_unit_contract,
@@ -57,6 +62,7 @@ logger = logging.getLogger("signal")
 TEN_SECOND_FEATURE_DAG_SHA256 = TEN_SECOND_CAUSAL_GRAPH.sha256()
 SIGNAL_FEATURE_CPP_ABI_VERSION = "signal_feature_cutoff.v1"
 SIGNAL_REF_PERP_CPP_ABI_VERSION = "signal_ref_perp_incremental.v1"
+SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION = "signal_model_feature_row_173.v1"
 
 # Live signal telemetry records coarse, stable ownership boundaries rather
 # than timing individual features.  The snapshot/feature span is lock-held;
@@ -109,6 +115,22 @@ def _load_cpp_signal_module():
                     "NativeLightgbmBundle",
                     "LIGHTGBM_BUNDLE_HEAD_NAMES",
                     "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+                )
+                if not hasattr(narrowgate_cpp, name)
+            )
+        if (
+            _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
+            and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
+        ):
+            missing.extend(
+                name
+                for name in (
+                    "SignalFeatureBucketPrepared",
+                    "SignalModelFeatureRow173",
+                    "SIGNAL_MODEL_FEATURE_NAMES",
+                    "SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION",
+                    "SIGNAL_METRIC_FEATURE_NAMES",
+                    "SIGNAL_TIME_FEATURE_NAMES",
                 )
                 if not hasattr(narrowgate_cpp, name)
             )
@@ -188,6 +210,63 @@ CROSS_FEATURE_SUFFIXES = [
 REF_PERP_FEATURE_NAMES = tuple(
     f"cv_ref_perp_{suffix}" for suffix in CROSS_FEATURE_SUFFIXES
 )
+METRIC_FEATURE_NAMES = (
+    "oi_log",
+    "oi_pct_change",
+    "oi_zscore_1h",
+    "oi_zscore_6h",
+    "oi_momentum",
+    "toptrader_ls_ratio",
+    "crowd_ls_ratio",
+    "taker_ls_ratio",
+    "toptrader_ls_zscore",
+    "crowd_ls_zscore",
+    "taker_ls_zscore",
+    "taker_ls_momentum",
+    "oi_price_divergence",
+)
+TIME_FEATURE_NAMES = (
+    *calendar_feature_names(prefix="cal_"),
+    "minutes_to_funding",
+    "funding_phase",
+    "funding_sin",
+    "funding_cos",
+    "dist_to_hour",
+    "near_candle_close",
+)
+
+# The legacy aliases are not part of the 173-column model row, but remain
+# readable from Prediction.feature_dict for diagnostic/backward-compatible
+# consumers without forcing the hot path to allocate a full Python dict.
+_NATIVE_ROW_LEGACY_ALIASES = {
+    "hour_sin": "cal_hour_sin",
+    "hour_cos": "cal_hour_cos",
+    "dow_sin": "cal_dow_sin",
+    "dow_cos": "cal_dow_cos",
+    "session_asia": "cal_session_asia",
+    "session_tokyo": "cal_session_tokyo",
+    "session_singapore_hk": "cal_session_singapore_hk",
+    "session_europe": "cal_session_europe",
+    "session_london": "cal_session_london",
+    "session_america": "cal_session_america",
+    "session_us_extended": "cal_session_us_extended",
+    "session_asia_europe_overlap": "cal_session_asia_europe_overlap",
+    "session_europe_america_overlap": "cal_session_europe_america_overlap",
+    "session_tokyo_singapore_overlap": "cal_session_tokyo_singapore_overlap",
+    "session_london_us_overlap": "cal_session_london_us_overlap",
+    "session_active_count": "cal_session_active_count",
+    "is_us_trading_day": "cal_us_is_nyse_trading_day",
+    "is_us_regular_hours": "cal_us_is_regular_hours",
+    "is_us_premarket": "cal_us_is_premarket",
+    "minutes_to_us_open": "cal_minutes_to_us_open",
+    "minutes_to_us_close": "cal_minutes_to_us_close",
+}
+_NATIVE_ROW_PLACEHOLDER_NAMES = tuple(
+    f"{prefix}_{suffix}"
+    for prefix in ("cv_exec_spot", "cv_ref_spot")
+    for suffix in CROSS_FEATURE_SUFFIXES
+)
+_NATIVE_ROW_PLACEHOLDER_NAME_SET = frozenset(_NATIVE_ROW_PLACEHOLDER_NAMES)
 CROSS_SOURCE_MAX_AGE_S = 30.0
 CROSS_BASIS_WINDOW_10S = 360
 CROSS_BASIS_MIN_PERIODS = 30
@@ -492,7 +571,101 @@ class Prediction:
     tox_bid_10s: float = 0.5
     tox_ask_10s: float = 0.5
     features: Optional[np.ndarray] = None
-    feature_dict: Optional[Dict[str, float]] = None
+    feature_dict: Optional[Mapping[str, float]] = None
+
+
+class _NativeFeatureMapping(Mapping[str, float]):
+    """Lazy Python view of an aligned native model row.
+
+    Normal native inference only indexes the underlying C++ row. Iteration or
+    ``dict(...)`` is reserved for diagnostics and optional downstream feature
+    consumers, so the 173 model columns are not boxed into Python objects on
+    every ten-second bucket.
+    """
+
+    __slots__ = (
+        "_cutoff_exclusive_ms",
+        "_feature_ts_ms",
+        "_index",
+        "_keys",
+        "_row",
+    )
+
+    def __init__(
+        self,
+        row: object,
+        index: Mapping[str, int],
+        keys: tuple[str, ...],
+        *,
+        feature_ts_ms: int,
+        cutoff_exclusive_ms: int,
+    ) -> None:
+        self._row = row
+        self._index = index
+        self._feature_ts_ms = int(feature_ts_ms)
+        self._cutoff_exclusive_ms = int(cutoff_exclusive_ms)
+        self._keys = keys
+
+    def __getitem__(self, key: str) -> float:
+        if key == "_feature_ts_ms":
+            return float(self._feature_ts_ms)
+        if key == "_feature_cutoff_exclusive_ms":
+            return float(self._cutoff_exclusive_ms)
+        index = self._index.get(key)
+        if index is not None:
+            return float(self._row.value_at(index))
+        alias = _NATIVE_ROW_LEGACY_ALIASES.get(key)
+        if alias is not None:
+            return float(self._row.value_at(self._index[alias]))
+        if key in _NATIVE_ROW_PLACEHOLDER_NAME_SET:
+            return (
+                CROSS_SOURCE_MAX_AGE_S + 10.0
+                if key.endswith("_age_s")
+                else 0.0
+            )
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._keys)
+
+    def __len__(self) -> int:
+        return len(self._keys)
+
+
+class _NativeFeatureTransaction:
+    """One prepared fixed-order row plus its lazy diagnostic mapping."""
+
+    __slots__ = ("mapping", "names", "row")
+
+    def __init__(
+        self,
+        row: object,
+        names: tuple[str, ...],
+        index: Mapping[str, int],
+        keys: tuple[str, ...],
+        *,
+        feature_ts_ms: int,
+        cutoff_exclusive_ms: int,
+    ) -> None:
+        self.row = row
+        self.names = names
+        self.mapping = _NativeFeatureMapping(
+            row,
+            index,
+            keys,
+            feature_ts_ms=feature_ts_ms,
+            cutoff_exclusive_ms=cutoff_exclusive_ms,
+        )
+
+
+@dataclass(frozen=True)
+class _NativeModelRow173State:
+    """Atomically published admission state for the fixed native model row."""
+
+    names: tuple[str, ...] = ()
+    index: Mapping[str, int] = field(default_factory=dict)
+    mapping_keys: tuple[str, ...] = ()
+    enabled: bool = False
 
 
 class SignalEngine:
@@ -633,6 +806,7 @@ class SignalEngine:
         ) else None
         self._models: Dict[str, object] = {}
         self._model_feature_cols: Dict[str, List[str]] = {}
+        self._model_feature_schema: tuple[str, ...] = ()
         self._model_metadata: Dict[str, dict] = {}
         if enable_ml:
             self._load_models()
@@ -664,6 +838,14 @@ class SignalEngine:
         self._cpp_signal_features_enabled = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
         )
+        self._cpp_model_row_173_state = _NativeModelRow173State(
+            names=(
+                tuple(getattr(self._cpp_signal, "SIGNAL_MODEL_FEATURE_NAMES", ()))
+                if self._cpp_signal is not None
+                else ()
+            )
+        )
+        self._refresh_native_model_row_173()
         self._cpp_execution_l2_disabled_after_error = False
         self._cpp_l2_policy_disabled_after_error = False
         self._cpp_global_flow_requested = bool(
@@ -894,23 +1076,18 @@ class SignalEngine:
                 name,
                 model.num_feature(),
             )
+        loaded_feature_schema = self._shared_model_feature_schema(
+            loaded_feature_cols
+        )
 
         native_bundle = None
         native_initialization_failed = False
         if native_inference_requested:
             try:
-                schemas = {
-                    tuple(loaded_feature_cols[name])
-                    for name in REQUIRED_MODEL_HEADS
-                }
-                if len(schemas) != 1:
-                    raise RuntimeError(
-                        "native LightGBM bundle requires one shared feature schema"
-                    )
                 native_bundle = self._build_native_model_bundle(
                     lgb,
                     model_dir=candidate_model_dir,
-                    feature_count=len(next(iter(schemas))),
+                    feature_count=len(loaded_feature_schema),
                 )
             except Exception as exc:
                 if _cpp_signal_strict():
@@ -924,26 +1101,147 @@ class SignalEngine:
                 )
                 native_initialization_failed = True
 
-        # Python model reload remains atomic.  The optional native candidate
-        # follows the explicit strict/fallback policy above and is published
-        # only after all 13 heads have initialized successfully.
+        row_state = None
+        if hasattr(self, "_cpp_model_row_173_state"):
+            # A strict schema/ABI rejection must happen before the new model
+            # generation becomes visible.  Otherwise a failed reload would
+            # leave the rejected bundle published behind the old row state.
+            row_state = self._candidate_native_model_row_173_state(
+                native_bundle,
+                loaded_feature_schema,
+            )
+
+        # Python models, the optional native bundle, and the corresponding
+        # fixed-row admission state are published as one model generation.
         with self._model_runtime_lock:
             self._model_dir = candidate_model_dir
             self._models = loaded_models
             self._model_feature_cols = loaded_feature_cols
+            self._model_feature_schema = loaded_feature_schema
             self._model_metadata = metadata
             self._native_inference_requested = native_inference_requested
             self._native_model_bundle = native_bundle
             self._native_inference_disabled_after_error = (
                 native_initialization_failed
             )
+            if row_state is not None:
+                self._cpp_model_row_173_state = row_state
         if native_bundle is not None:
             logger.info(
                 "Native LightGBM inference active: heads=%d features=%d library=%s",
                 len(REQUIRED_MODEL_HEADS),
-                len(next(iter(loaded_feature_cols.values()))),
+                len(loaded_feature_schema),
                 native_bundle.library_path,
             )
+
+    @property
+    def _cpp_model_feature_names(self) -> tuple[str, ...]:
+        return self._cpp_model_row_173_state.names
+
+    @property
+    def _cpp_model_feature_index(self) -> Mapping[str, int]:
+        return self._cpp_model_row_173_state.index
+
+    @property
+    def _cpp_model_mapping_keys(self) -> tuple[str, ...]:
+        return self._cpp_model_row_173_state.mapping_keys
+
+    @property
+    def _cpp_model_row_173_enabled(self) -> bool:
+        return self._cpp_model_row_173_state.enabled
+
+    def _disabled_native_model_row_173_state(self) -> _NativeModelRow173State:
+        return _NativeModelRow173State(
+            names=(
+                tuple(getattr(self._cpp_signal, "SIGNAL_MODEL_FEATURE_NAMES", ()))
+                if self._cpp_signal is not None
+                else ()
+            )
+        )
+
+    def _disable_native_model_row_173(self) -> None:
+        self._cpp_model_row_173_state = (
+            self._disabled_native_model_row_173_state()
+        )
+
+    def _candidate_native_model_row_173_state(
+        self,
+        native_bundle: object | None,
+        model_schema: tuple[str, ...],
+    ) -> _NativeModelRow173State:
+        """Validate and construct a row state without mutating live runtime."""
+
+        disabled = self._disabled_native_model_row_173_state()
+        if not (
+            getattr(self, "_cpp_signal_features_enabled", False)
+            and native_bundle is not None
+            and self._cpp_signal is not None
+        ):
+            return disabled
+        native_names = disabled.names
+        native_row_abi = str(
+            getattr(
+                self._cpp_signal,
+                "SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION",
+                "",
+            )
+        )
+        native_metric_names = tuple(
+            getattr(self._cpp_signal, "SIGNAL_METRIC_FEATURE_NAMES", ())
+        )
+        native_time_names = tuple(
+            getattr(self._cpp_signal, "SIGNAL_TIME_FEATURE_NAMES", ())
+        )
+        row_error = ""
+        if native_row_abi != SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION:
+            row_error = (
+                "native model-row ABI changed: "
+                f"expected={SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION!r} "
+                f"actual={native_row_abi!r}"
+            )
+        elif native_names != model_schema:
+            row_error = "native 173-row order differs from model bundle schema"
+        elif native_metric_names != METRIC_FEATURE_NAMES:
+            row_error = "native metric feature order changed"
+        elif native_time_names != TIME_FEATURE_NAMES:
+            row_error = "native time feature order changed"
+        if row_error:
+            if _cpp_signal_strict():
+                raise RuntimeError(row_error)
+            logger.warning("C++ fixed model row disabled: %s", row_error)
+            return disabled
+        index = {name: position for position, name in enumerate(native_names)}
+        return _NativeModelRow173State(
+            names=native_names,
+            index=index,
+            mapping_keys=(
+                "_feature_ts_ms",
+                "_feature_cutoff_exclusive_ms",
+                *native_names,
+                *_NATIVE_ROW_LEGACY_ALIASES,
+                *_NATIVE_ROW_PLACEHOLDER_NAMES,
+            ),
+            enabled=True,
+        )
+
+    def _refresh_native_model_row_173(self) -> None:
+        """Admit the fused row only for the exact frozen 173-column schema."""
+
+        while True:
+            with self._model_runtime_lock:
+                native_bundle = self._native_model_bundle
+                model_feature_schema = self._model_feature_schema
+            state = self._candidate_native_model_row_173_state(
+                native_bundle,
+                model_feature_schema,
+            )
+            with self._model_runtime_lock:
+                if (
+                    native_bundle is self._native_model_bundle
+                    and model_feature_schema is self._model_feature_schema
+                ):
+                    self._cpp_model_row_173_state = state
+                    return
 
     def _build_native_model_bundle(
         self,
@@ -993,7 +1291,7 @@ class SignalEngine:
         )
 
     @staticmethod
-    def _history_snapshot(features: dict) -> dict:
+    def _history_snapshot(features: Mapping[str, float]) -> dict:
         return {key: features.get(key, 0.0) for key in HISTORY_FEATURE_KEYS}
 
     # ── warmup prefill ──
@@ -2641,7 +2939,167 @@ class SignalEngine:
             and hasattr(self._cpp_feature_engine, "compute_bucket_values")
         )
 
-    def _process_completed_feature_buckets_native_locked(self) -> list[dict]:
+    def _native_model_row_173_available(
+        self,
+        row_state: _NativeModelRow173State | None = None,
+    ) -> bool:
+        """Return whether the exact production row can stay native end to end."""
+
+        state = row_state or self._cpp_model_row_173_state
+        return bool(
+            self._native_bucket_pipeline_available()
+            and state.enabled
+            and self._native_model_bundle is not None
+            and self._cpp_ref_perp_engine is not None
+            and not self._preserve_full_cross_market_features
+            and not self._model_requires_full_cross_market_features
+            and not self._live_feature_dump_path
+            and hasattr(self._cpp_feature_engine, "prepare_bucket")
+            and hasattr(self._cpp_feature_engine, "assemble_model_row_173")
+        )
+
+    def _time_feature_values(self, target_ts_ms: int) -> np.ndarray:
+        values: dict[str, float] = {}
+        self._compute_time_features(values, bar_ts_ms=target_ts_ms)
+        return np.ascontiguousarray(
+            [values[name] for name in TIME_FEATURE_NAMES],
+            dtype=np.float64,
+        )
+
+    def _metric_feature_values(
+        self,
+        target_ts_ms: int,
+        close: float,
+    ) -> np.ndarray:
+        values: dict[str, float] = {"close": float(close)}
+        self._compute_metrics_features(values, target_ts_ms)
+        return np.ascontiguousarray(
+            [values.get(name, 0.0) for name in METRIC_FEATURE_NAMES],
+            dtype=np.float64,
+        )
+
+    def _prepare_native_ref_perp_values(
+        self,
+        target_ts_ms: int,
+        close: float,
+    ) -> tuple[object, np.ndarray] | None:
+        engine = self._cpp_ref_perp_engine
+        if engine is None:
+            return None
+        try:
+            prepared = engine.prepare(int(target_ts_ms), float(close))
+            values = np.asarray(prepared.values, dtype=np.float64)
+            expected_shape = (len(REF_PERP_FEATURE_NAMES),)
+            if values.shape != expected_shape:
+                raise RuntimeError(
+                    "C++ ref-perp feature row shape changed: "
+                    f"expected={expected_shape} actual={values.shape}"
+                )
+            return prepared, np.ascontiguousarray(values, dtype=np.float64)
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning("C++ fused ref-perp preparation disabled: %s", exc)
+            self._cpp_ref_perp_engine = None
+            self._cpp_ref_perp_disabled_after_error = True
+            self._disable_native_model_row_173()
+            return None
+
+    def _commit_native_ref_perp_values(
+        self,
+        prepared: object,
+        values: np.ndarray,
+        target_ts_ms: int,
+    ) -> None:
+        engine = self._cpp_ref_perp_engine
+        if engine is None:
+            return
+        try:
+            engine.commit(prepared)
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning("C++ fused ref-perp commit disabled: %s", exc)
+            self._cpp_ref_perp_engine = None
+            self._cpp_ref_perp_disabled_after_error = True
+            self._disable_native_model_row_173()
+            return
+        available_index = REF_PERP_FEATURE_NAMES.index("cv_ref_perp_available")
+        basis_index = REF_PERP_FEATURE_NAMES.index("cv_ref_perp_basis_bps")
+        if values[available_index] > 0.0:
+            basis = float(values[basis_index])
+            if np.isfinite(basis):
+                self._record_cross_basis_observation(
+                    "cv_ref_perp",
+                    target_ts_ms,
+                    basis,
+                )
+
+    def _prepare_native_model_row_173(
+        self,
+        bucket_start_ms: int,
+    ) -> _NativeFeatureTransaction | None:
+        # Use one immutable row-state generation throughout the transaction.
+        # A non-strict native commit failure may disable the next bucket, but
+        # it must not erase the names/index of the already assembled row.
+        row_state = self._cpp_model_row_173_state
+        if not self._native_model_row_173_available(row_state):
+            return None
+        engine = self._cpp_feature_engine
+        if engine is None:
+            return None
+        try:
+            prepared_bucket = engine.prepare_bucket(int(bucket_start_ms))
+            aggregate = prepared_bucket.aggregate
+            target_ts_ms = int(aggregate.ts_ms)
+            cutoff_exclusive_ms = int(bucket_start_ms) + 10_000
+            execution_l2 = self._compute_cpp_execution_l2_values(
+                cutoff_exclusive_ms
+            )
+            if execution_l2 is None:
+                return None
+            ref_prepared_values = self._prepare_native_ref_perp_values(
+                target_ts_ms,
+                float(aggregate.close),
+            )
+            if ref_prepared_values is None:
+                return None
+            ref_prepared, ref_values = ref_prepared_values
+            metric_values = self._metric_feature_values(
+                target_ts_ms,
+                float(aggregate.close),
+            )
+            time_values = self._time_feature_values(target_ts_ms)
+            row = engine.assemble_model_row_173(
+                prepared_bucket,
+                execution_l2,
+                metric_values,
+                ref_values,
+                time_values,
+            )
+            self._commit_native_ref_perp_values(
+                ref_prepared,
+                ref_values,
+                target_ts_ms,
+            )
+            return _NativeFeatureTransaction(
+                row,
+                row_state.names,
+                row_state.index,
+                row_state.mapping_keys,
+                feature_ts_ms=target_ts_ms,
+                cutoff_exclusive_ms=cutoff_exclusive_ms,
+            )
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning("C++ fixed 173-feature row disabled: %s", exc)
+            self._disable_native_model_row_173()
+            return None
+
+    def _process_completed_feature_buckets_native_locked(
+        self,
+    ) -> list[dict | _NativeFeatureTransaction]:
         """Process buckets wholly from the persistent native 1s-bar ring.
 
         The Python ring remains the canonical fallback and diagnostic view, but
@@ -2656,25 +3114,35 @@ class SignalEngine:
                 getattr(self._cpp_signal, "SIGNAL_FEATURE_NAMES", ())
             )
 
-        outputs: list[dict] = []
+        outputs: list[dict | _NativeFeatureTransaction] = []
         for bucket_start_ms in self._pending_completed_bucket_starts(self._bar_buffer):
-            cpp_bar, raw_values = engine.compute_bucket_values(int(bucket_start_ms))
-            values = np.asarray(raw_values, dtype=np.float64)
-            expected_shape = (len(self._cpp_signal_feature_names),)
-            if values.shape != expected_shape:
-                raise RuntimeError(
-                    "C++ signal feature row shape changed: "
-                    f"expected={expected_shape} actual={values.shape}"
-                )
-            if not values.flags.c_contiguous:
-                values = np.ascontiguousarray(values, dtype=np.float64)
-            cutoff = FeatureCutoff(int(bucket_start_ms) + 10_000)
-            features = self._features_from_cpp_values(
-                self._aggregate_from_cpp_bar(cpp_bar),
-                values,
-                cutoff,
+            transaction = self._prepare_native_model_row_173(
+                int(bucket_start_ms)
             )
-            history_row = self._history_snapshot(features)
+            if transaction is not None:
+                features: dict | _NativeFeatureTransaction = transaction
+                history_row = self._history_snapshot(transaction.mapping)
+            else:
+                cpp_bar, raw_values = engine.compute_bucket_values(
+                    int(bucket_start_ms)
+                )
+                values = np.asarray(raw_values, dtype=np.float64)
+                expected_shape = (len(self._cpp_signal_feature_names),)
+                if values.shape != expected_shape:
+                    raise RuntimeError(
+                        "C++ signal feature row shape changed: "
+                        f"expected={expected_shape} actual={values.shape}"
+                    )
+                if not values.flags.c_contiguous:
+                    values = np.ascontiguousarray(values, dtype=np.float64)
+                cutoff = FeatureCutoff(int(bucket_start_ms) + 10_000)
+                feature_mapping = self._features_from_cpp_values(
+                    self._aggregate_from_cpp_bar(cpp_bar),
+                    values,
+                    cutoff,
+                )
+                features = feature_mapping
+                history_row = self._history_snapshot(feature_mapping)
             self._feat_history.append(history_row)
             engine.push_history(self._history_to_cpp(history_row))
             self._last_processed_bucket = int(bucket_start_ms)
@@ -4012,7 +4480,11 @@ class SignalEngine:
 
     # ── ML inference ──
 
-    def _append_live_feature_dump(self, features: dict, pred: Prediction) -> None:
+    def _append_live_feature_dump(
+        self,
+        features: Mapping[str, float],
+        pred: Prediction,
+    ) -> None:
         """Write an optional JSONL row for live/offline feature parity audits.
 
         This is intentionally env-gated so normal live execution does no feature
@@ -4068,6 +4540,8 @@ class SignalEngine:
 
         if feature_cols is None:
             with self._model_runtime_lock:
+                if self._model_feature_schema:
+                    return self._model_feature_schema
                 feature_cols = self._model_feature_cols
         schemas = {
             tuple(feature_cols.get(name, FEATURE_NAMES_BASE))
@@ -4079,19 +4553,31 @@ class SignalEngine:
             )
         return next(iter(schemas))
 
-    def _predict(self, features: dict) -> Prediction:
+    def _predict(
+        self,
+        features: Mapping[str, float] | _NativeFeatureTransaction,
+    ) -> Prediction:
         """Run each model head against its saved causal feature schema."""
         pred = Prediction(ts=time.time())
+        native_transaction = (
+            features if isinstance(features, _NativeFeatureTransaction) else None
+        )
+        feature_mapping = (
+            native_transaction.mapping
+            if native_transaction is not None
+            else features
+        )
 
         if not self._enable_ml:
             # ML-OFF is explicitly neutral.  Never feed dimensionless realized
             # log-return volatility into the absolute-price-variance field.
-            pred.features = self._features_to_array(features)
-            pred.feature_dict = dict(features)
+            pred.features = self._features_to_array(feature_mapping)
+            pred.feature_dict = dict(feature_mapping)
             return pred
         with self._model_runtime_lock:
             models = self._models
             model_feature_cols = self._model_feature_cols
+            model_feature_names = self._model_feature_schema
             native_bundle = self._native_model_bundle
         if set(models) != set(REQUIRED_MODEL_HEADS):
             raise RuntimeError("ML is enabled without a complete 13-head bundle")
@@ -4099,27 +4585,53 @@ class SignalEngine:
         # Model-bundle validation requires one shared feature schema across all
         # 13 heads.  Build that row once; the old implementation rebuilt the
         # same Python list/NumPy matrix independently for every head.
-        model_feature_names = self._shared_model_feature_schema(model_feature_cols)
-        X_model = self._feature_array(
-            features,
-            list(model_feature_names),
-            strict=True,
-        )
+        if not model_feature_names:
+            # Compatibility for direct test/diagnostic injection. Production
+            # model loads freeze this once at admission rather than rebuilding
+            # and hashing 13 identical 173-column tuples every ten seconds.
+            model_feature_names = self._shared_model_feature_schema(
+                model_feature_cols
+            )
+        if native_transaction is not None:
+            if native_transaction.names != model_feature_names:
+                raise RuntimeError(
+                    "native feature transaction differs from active model schema"
+                )
+            X_model = None
+        else:
+            X_model = self._feature_array(
+                feature_mapping,
+                list(model_feature_names),
+                strict=True,
+            )
 
         # FEATURE_NAMES_BASE remains the legacy diagnostic vector.  Reuse the
         # model row when it has the same schema; otherwise materialize this
         # diagnostic row once without changing the authoritative model input.
-        X_base = (
-            X_model
-            if model_feature_names == tuple(FEATURE_NAMES_BASE)
-            else self._feature_array(features, FEATURE_NAMES_BASE)
-        )
+        if native_transaction is not None:
+            X_base = np.asarray(
+                native_transaction.row.legacy_base_values,
+                dtype=np.float64,
+            ).reshape(1, -1)
+        elif (
+            X_model is not None
+            and model_feature_names == tuple(FEATURE_NAMES_BASE)
+        ):
+            X_base = X_model
+        else:
+            X_base = self._feature_array(feature_mapping, FEATURE_NAMES_BASE)
 
         native_values = None
         if native_bundle is not None:
             try:
+                if native_transaction is not None:
+                    native_result = native_bundle.predict_signal_row_173(
+                        native_transaction.row
+                    )
+                else:
+                    native_result = native_bundle.predict(X_model)
                 native_output = np.asarray(
-                    native_bundle.predict(X_model),
+                    native_result,
                     dtype=np.float64,
                 )
                 if native_output.shape != (len(REQUIRED_MODEL_HEADS),):
@@ -4150,6 +4662,11 @@ class SignalEngine:
             ):
                 setattr(pred, name, max(value, 0.0) if name.startswith("vol_") else value)
         else:
+            if X_model is None:
+                X_model = np.asarray(
+                    native_transaction.row.values,
+                    dtype=np.float64,
+                ).reshape(1, -1)
             for h in [10, 30, 60]:
                 name = f"ret_{h}s"
                 try:
@@ -4199,7 +4716,11 @@ class SignalEngine:
         pred.tox_ask_10s = float(np.clip(pred.tox_ask_10s, 0.0, 1.0))
 
         pred.features = X_base[0] if X_base.ndim == 2 else X_base
-        pred.feature_dict = dict(features)
+        pred.feature_dict = (
+            feature_mapping
+            if native_transaction is not None
+            else dict(feature_mapping)
+        )
 
         # ── pred_ret demeaning: subtract running EMA to remove momentum bias ──
         if self._ret_demean_halflife > 0:
@@ -4220,16 +4741,16 @@ class SignalEngine:
                     f"hl={self._ret_demean_halflife}"
                 )
 
-        self._append_live_feature_dump(pred.feature_dict or features, pred)
+        self._append_live_feature_dump(pred.feature_dict or feature_mapping, pred)
         return pred
 
-    def _features_to_array(self, features: dict) -> np.ndarray:
+    def _features_to_array(self, features: Mapping[str, float]) -> np.ndarray:
         """Convert the canonical 88-feature base dictionary to model order."""
         return self._feature_array(features, FEATURE_NAMES)[0]
 
     @staticmethod
     def _feature_array(
-        features: dict,
+        features: Mapping[str, float],
         feature_names: List[str],
         *,
         strict: bool = False,
