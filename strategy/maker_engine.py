@@ -182,6 +182,13 @@ FILL_COOLDOWN_CHECKPOINT_SCHEMA = "narrowgate_fill_cooldown_checkpoint.v2"
 FILL_COOLDOWN_CHECKPOINT_MAX_BYTES = 64 * 1024
 FILL_COOLDOWN_CHECKPOINT_MODE = 0o600
 FILL_COOLDOWN_STATE_SCHEMA = "narrowgate_fill_cooldown_state.v2"
+_POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S = (
+    0.05,
+    0.10,
+    0.20,
+    0.40,
+    0.40,
+)
 FILL_COOLDOWN_RESTORE_MODES = frozenset(
     {
         "fresh_b0_no_checkpoint",
@@ -13963,7 +13970,10 @@ class MakerEngine:
         existing_barrier = False
         try:
             with self._reconciliation_lock:
-                for barrier_attempt in range(1, 4):
+                identity_lag_attempts = (
+                    len(_POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S) + 1
+                )
+                for barrier_attempt in range(1, identity_lag_attempts + 1):
                     stage = "fetch_stable_snapshot"
                     (
                         qty,
@@ -14004,18 +14014,28 @@ class MakerEngine:
                             "exchange snapshot omitted the identity cursor for a "
                             "locally applied fill at or before its update time"
                         ) in str(exc)
-                        if not identity_cursor_lag or barrier_attempt >= 3:
+                        if (
+                            not identity_cursor_lag
+                            or barrier_attempt >= identity_lag_attempts
+                        ):
                             raise
+                        retry_delay_s = (
+                            _POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S[
+                                barrier_attempt - 1
+                            ]
+                        )
                         logger.warning(
                             "POSITION_RECONCILIATION_IDENTITY_LAG_RETRY "
-                            "attempt=%d snapshot_update_time_ms=%d",
+                            "attempt=%d delay_s=%.2f snapshot_update_time_ms=%d",
                             barrier_attempt,
+                            retry_delay_s,
                             snapshot_update_time_ms,
                         )
                         # positionRisk may become visible before accountTrades.
-                        # Retry the identity proof; never widen the exchange-time
-                        # interval or synthesize a quantity adjustment.
-                        time.sleep(0.05 * (2 ** (barrier_attempt - 1)))
+                        # Keep polling the same exact proof through the observed
+                        # one-second cross-endpoint visibility lag.  Never widen
+                        # the exchange-time interval or synthesize an adjustment.
+                        time.sleep(retry_delay_s)
                         continue
                     break
                 trade_identity_map = getattr(

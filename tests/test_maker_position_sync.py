@@ -212,15 +212,19 @@ def test_sync_retries_transient_position_before_account_trade_visibility(
         False,
     )
     engine = _engine_with_payload(first_payload)
+    retry_delays = (
+        maker_engine_module._POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S
+    )
+    identity_lag = RuntimeError(
+        "exchange snapshot omitted the identity cursor for a locally "
+        "applied fill at or before its update time"
+    )
     engine._stable_exchange_reconciliation_payload.side_effect = (
-        first_payload,
+        *(first_payload for _ in retry_delays),
         second_payload,
     )
     engine.inventory.sync_from_exchange.side_effect = (
-        RuntimeError(
-            "exchange snapshot omitted the identity cursor for a locally "
-            "applied fill at or before its update time"
-        ),
+        *(RuntimeError(str(identity_lag)) for _ in retry_delays),
         {"ok": True},
     )
     engine.latch_runtime_fatal = Mock()
@@ -229,11 +233,73 @@ def test_sync_retries_transient_position_before_account_trade_visibility(
 
     assert MakerEngine.sync_position(engine, required=True) is True
 
-    assert engine._stable_exchange_reconciliation_payload.call_count == 2
-    assert engine.inventory.sync_from_exchange.call_count == 2
-    assert sleeps == [pytest.approx(0.05)]
+    expected_attempts = len(retry_delays) + 1
+    assert (
+        engine._stable_exchange_reconciliation_payload.call_count
+        == expected_attempts
+    )
+    assert engine.inventory.sync_from_exchange.call_count == expected_attempts
+    assert sleeps == pytest.approx(retry_delays)
+    assert sum(sleeps) > 1.0
     assert engine.latch_runtime_fatal.call_count == 0
     assert set(engine._reconciliation_trade_identity_by_id) == {"92"}
+
+
+def test_sync_fails_closed_after_bounded_identity_visibility_lag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = (0.002, 70_000.0, 2_000, {}, (), (), {}, False)
+    engine = _engine_with_payload(payload)
+    retry_delays = (
+        maker_engine_module._POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S
+    )
+    attempts = len(retry_delays) + 1
+    engine.inventory.sync_from_exchange.side_effect = tuple(
+        RuntimeError(
+            "exchange snapshot omitted the identity cursor for a locally "
+            "applied fill at or before its update time"
+        )
+        for _ in range(attempts)
+    )
+    engine.latch_runtime_fatal = Mock()
+    sleeps: list[float] = []
+    monkeypatch.setattr(maker_engine_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="required position sync failed"):
+        MakerEngine.sync_position(engine, required=True)
+
+    assert engine._stable_exchange_reconciliation_payload.call_count == attempts
+    assert engine.inventory.sync_from_exchange.call_count == attempts
+    assert sleeps == pytest.approx(retry_delays)
+    engine.latch_runtime_fatal.assert_called_once()
+    assert engine.latch_runtime_fatal.call_args.kwargs["reason"] == (
+        "EXACT_EXECUTION_RECONCILIATION_FAILED"
+    )
+    assert (
+        engine.latch_runtime_fatal.call_args.kwargs["reconciliation_required"]
+        is True
+    )
+
+
+def test_sync_does_not_retry_a_non_identity_barrier_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = (0.002, 70_000.0, 2_000, {}, (), (), {}, False)
+    engine = _engine_with_payload(payload)
+    engine.inventory.sync_from_exchange.side_effect = RuntimeError(
+        "exchange order cumulative cursor regressed"
+    )
+    engine.latch_runtime_fatal = Mock()
+    sleeps: list[float] = []
+    monkeypatch.setattr(maker_engine_module.time, "sleep", sleeps.append)
+
+    with pytest.raises(RuntimeError, match="required position sync failed"):
+        MakerEngine.sync_position(engine, required=True)
+
+    engine._stable_exchange_reconciliation_payload.assert_called_once_with()
+    engine.inventory.sync_from_exchange.assert_called_once()
+    assert sleeps == []
+    engine.latch_runtime_fatal.assert_called_once()
 
 
 def _stable_fetch_engine(response: object) -> MakerEngine:
