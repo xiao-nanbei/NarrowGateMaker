@@ -8,6 +8,7 @@ import pytest
 
 from live import main
 from strategy import maker_engine
+from strategy.model_contract import REQUIRED_MODEL_HEADS
 
 
 def test_successor_cpp_module_token_is_derived_and_conflict_fails_closed(
@@ -90,6 +91,63 @@ def test_persisted_profiles_select_native_cooldown_explicitly() -> None:
         "cpp_quote_policy_stage=${NARROWGATE_CPP_QUOTE_POLICY_STAGE:-0}"
         in run_sh
     )
+    assert 'export NARROWGATE_CPP_LIGHTGBM_INFERENCE="1"' in native
+    assert 'export NARROWGATE_CPP_LIGHTGBM_INFERENCE="0"' in python
+    assert (
+        "NARROWGATE_CPP_LIGHTGBM_INFERENCE="
+        "${NARROWGATE_CPP_LIGHTGBM_INFERENCE:-0}"
+        in run_sh
+    )
+    assert (
+        "cpp_lightgbm_inference=${NARROWGATE_CPP_LIGHTGBM_INFERENCE:-0}"
+        in run_sh
+    )
+
+
+def test_native_lightgbm_inference_is_bound_independently(monkeypatch) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIGHTGBM_INFERENCE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    fake_module = SimpleNamespace(
+        __file__="native-lightgbm.so",
+        NativeLightgbmBundle=object,
+        LIGHTGBM_BUNDLE_HEAD_NAMES=REQUIRED_MODEL_HEADS,
+        NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE=True,
+    )
+    monkeypatch.setattr(main.importlib, "import_module", lambda name: fake_module)
+
+    result = main.audit_native_runtime(logging.getLogger("profile-test"))
+
+    assert result["NARROWGATE_CPP_LIGHTGBM_INFERENCE"] is True
+    assert set(result["abi_contract"]["required_apis"]) == {
+        "LIGHTGBM_BUNDLE_HEAD_NAMES",
+        "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+        "NativeLightgbmBundle",
+    }
+
+
+def test_native_lightgbm_live_inference_requires_strict_mode(monkeypatch) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIGHTGBM_INFERENCE", "1")
+
+    with pytest.raises(RuntimeError, match="requires strict native mode"):
+        main.audit_native_runtime(logging.getLogger("profile-test"))
+
+
+def test_native_lightgbm_inference_rejects_head_order_drift(monkeypatch) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIGHTGBM_INFERENCE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    fake_module = SimpleNamespace(
+        __file__="native-lightgbm.so",
+        NativeLightgbmBundle=object,
+        LIGHTGBM_BUNDLE_HEAD_NAMES=tuple(reversed(REQUIRED_MODEL_HEADS)),
+        NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE=True,
+    )
+    monkeypatch.setattr(main.importlib, "import_module", lambda name: fake_module)
+
+    with pytest.raises(RuntimeError, match="head order differs"):
+        main.audit_native_runtime(logging.getLogger("profile-test"))
 
 
 def test_native_quote_policy_stage_is_bound_into_runtime_identity(monkeypatch) -> None:

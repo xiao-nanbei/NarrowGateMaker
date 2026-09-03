@@ -78,6 +78,7 @@ string(JOIN " " NARROWGATE_LIVE_COMPILE_OPTIONS_TEXT ${NARROWGATE_LIVE_COMPILE_O
 
 set(NARROWGATE_LIVE_CORE_SOURCES
     narrowgate_cpp/live_cooldown.cpp
+    narrowgate_cpp/lightgbm_bundle.cpp
     narrowgate_cpp/live_order_action_plan.cpp
     narrowgate_cpp/live_order_state.cpp
     narrowgate_cpp/live_policy.cpp
@@ -133,6 +134,10 @@ pybind11_add_module(narrowgate_cpp
     narrowgate_cpp/tick_replay.cpp
     narrowgate_cpp/streaming_features.cpp
 )
+
+if(CMAKE_DL_LIBS)
+    target_link_libraries(narrowgate_cpp PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 if(NARROWGATE_LIVE_BUILD_IS_PRODUCTION)
     # Keep the target property explicit as well as the directory variable

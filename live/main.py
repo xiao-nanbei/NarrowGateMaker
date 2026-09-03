@@ -94,6 +94,7 @@ CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_QUOTE_CORE",
     "NARROWGATE_CPP_QUOTE_POLICY_STAGE",
     "NARROWGATE_CPP_SIGNAL_FEATURES",
+    "NARROWGATE_CPP_LIGHTGBM_INFERENCE",
     "NARROWGATE_CPP_GLOBAL_FLOW",
     "NARROWGATE_CPP_LIVE_ROUTING",
     "NARROWGATE_CPP_REPLACE_CONTINUATION",
@@ -106,6 +107,7 @@ OPTIONAL_CPP_RUNTIME_FLAGS = frozenset(
     {
         "NARROWGATE_CPP_QUOTE_POLICY_STAGE",
         "NARROWGATE_CPP_FINAL_ORDER_PLAN",
+        "NARROWGATE_CPP_LIGHTGBM_INFERENCE",
     }
 )
 CPP_MODULE_TOKEN_ENV = "NARROWGATE_CPP_EXPECT_MODULE_TOKEN"
@@ -1047,6 +1049,18 @@ def audit_native_runtime(
         required.add("compute_live_routing_decision")
     if enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]:
         required.update({"SignalFeatureEngine", "SIGNAL_FEATURE_NAMES"})
+    if enabled["NARROWGATE_CPP_LIGHTGBM_INFERENCE"]:
+        if not enabled["NARROWGATE_CPP_STRICT"]:
+            raise RuntimeError(
+                "native LightGBM live inference requires strict native mode"
+            )
+        required.update(
+            {
+                "LIGHTGBM_BUNDLE_HEAD_NAMES",
+                "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+                "NativeLightgbmBundle",
+            }
+        )
     if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
         required.update(
             {
@@ -1110,6 +1124,22 @@ def audit_native_runtime(
                 aggregator = module.TradeBarAggregator(False)
                 if not hasattr(aggregator, "update_batch"):
                     raise RuntimeError("narrowgate_cpp ABI missing TradeBarAggregator.update_batch")
+            if enabled["NARROWGATE_CPP_LIGHTGBM_INFERENCE"] and not bool(
+                module.NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE
+            ):
+                raise RuntimeError(
+                    "narrowgate_cpp LightGBM bundle inference is unavailable"
+                )
+            if enabled["NARROWGATE_CPP_LIGHTGBM_INFERENCE"]:
+                from strategy.model_contract import REQUIRED_MODEL_HEADS
+
+                if tuple(module.LIGHTGBM_BUNDLE_HEAD_NAMES) != tuple(
+                    REQUIRED_MODEL_HEADS
+                ):
+                    raise RuntimeError(
+                        "narrowgate_cpp LightGBM bundle head order differs "
+                        "from the Python model contract"
+                    )
             if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
                 continuation = module.NativeReplaceContinuationState(True)
                 continuation_methods = (
@@ -1210,12 +1240,14 @@ def audit_native_runtime(
 
     logger.info(
         "NATIVE_PROFILE name=%s quote_core=%d signal_features=%d "
+        "lightgbm_inference=%d "
         "quote_policy_stage=%d global_flow_requested=%d global_flow_effective=%d "
         "live_routing=%d replace_continuation=%d cooldown=%d "
         "order_action_plan=%d final_order_plan=%d strict=%d module=%s",
         profile,
         int(enabled["NARROWGATE_CPP_QUOTE_CORE"]),
         int(enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]),
+        int(enabled["NARROWGATE_CPP_LIGHTGBM_INFERENCE"]),
         int(enabled["NARROWGATE_CPP_QUOTE_POLICY_STAGE"]),
         int(enabled["NARROWGATE_CPP_GLOBAL_FLOW"]),
         int(global_flow_effective),

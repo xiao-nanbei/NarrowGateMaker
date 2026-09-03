@@ -32,6 +32,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from live import deployment_runtime as locked_runtime  # noqa: E402
+from strategy.model_contract import REQUIRED_MODEL_HEADS  # noqa: E402
 
 SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v2"
 STATUS = "exact_tag_native_build_dependency_lock_and_parity_passed"
@@ -59,6 +60,19 @@ PRODUCTION_LIVE_COMPILE_OPTIONS = (
 
 class NativeBuildReceiptError(RuntimeError):
     pass
+
+
+def _validate_lightgbm_bundle_abi(module: Any) -> None:
+    """Require the one fixed 13-head order used by Python and native inference."""
+
+    if not bool(module.NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE):
+        raise NativeBuildReceiptError(
+            "native module LightGBM bundle inference is unavailable"
+        )
+    if tuple(module.LIGHTGBM_BUNDLE_HEAD_NAMES) != tuple(REQUIRED_MODEL_HEADS):
+        raise NativeBuildReceiptError(
+            "native module LightGBM bundle head order differs from the model contract"
+        )
 
 
 def _production_live_cpu_build(module: Any) -> dict[str, Any]:
@@ -272,6 +286,9 @@ def build_receipt(
         "compute_live_routing_decision",
         "SignalFeatureEngine",
         "SIGNAL_FEATURE_NAMES",
+        "NativeLightgbmBundle",
+        "LIGHTGBM_BUNDLE_HEAD_NAMES",
+        "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
         "TradeBarAggregator",
         "F05BooleanClause",
         "F05BooleanLiteral",
@@ -306,6 +323,7 @@ def build_receipt(
     )
     if any(not hasattr(narrowgate_cpp, name) for name in required):
         raise NativeBuildReceiptError("native module lacks required live API")
+    _validate_lightgbm_bundle_abi(narrowgate_cpp)
     if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
         raise NativeBuildReceiptError(
             "native module order-action planner capability is unavailable"
@@ -317,6 +335,13 @@ def build_receipt(
     live_cpu_build = _production_live_cpu_build(narrowgate_cpp)
     required_class_members = {
         "SignalFeatureEngine": ("compute_bucket_values",),
+        "NativeLightgbmBundle": (
+            "predict",
+            "feature_count",
+            "head_count",
+            "library_path",
+            "num_threads",
+        ),
         "NativeLiveCooldownHotPath": (
             "observe_depth",
             "evaluate",

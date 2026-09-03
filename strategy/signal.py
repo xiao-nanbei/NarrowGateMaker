@@ -73,6 +73,7 @@ MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "saved"
 
 _CPP_SIGNAL_MODULE = None
 _CPP_SIGNAL_IMPORT_FAILED = False
+CPP_LIGHTGBM_INFERENCE_FLAG = "NARROWGATE_CPP_LIGHTGBM_INFERENCE"
 
 
 def _cpp_signal_strict() -> bool:
@@ -96,6 +97,16 @@ def _load_cpp_signal_module():
             "SignalFeatureEngine", "compute_signal_feature_overlay",
         )
         missing = [name for name in required if not hasattr(narrowgate_cpp, name)]
+        if _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG):
+            missing.extend(
+                name
+                for name in (
+                    "NativeLightgbmBundle",
+                    "LIGHTGBM_BUNDLE_HEAD_NAMES",
+                    "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+                )
+                if not hasattr(narrowgate_cpp, name)
+            )
         if missing:
             raise RuntimeError(f"narrowgate_cpp missing signal symbols: {missing}")
         if _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES"):
@@ -502,7 +513,12 @@ class SignalEngine:
                  ret_demean_halflife: int = 360,
                  bad_trade_log_every: int = 100):
         self._lock = Lock()
-        self._model_dir = model_dir or MODEL_DIR
+        # Model/schema/native-bundle publication is independent from the
+        # market-state lock.  Prediction snapshots this holder briefly, then
+        # runs outside the lock so a complete hot reload is published as one
+        # generation without blocking websocket writers during inference.
+        self._model_runtime_lock = Lock()
+        self._model_dir = Path(model_dir).expanduser() if model_dir else MODEL_DIR
         self._enable_ml = enable_ml
         self._rest = rest_client  # for metrics polling
         self._symbol = normalize_symbol(symbol, "BTCUSDC")
@@ -591,6 +607,16 @@ class SignalEngine:
         # self._depth_started = False
 
         # models
+        self._native_inference_requested = bool(
+            enable_ml and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
+        )
+        self._native_inference_disabled_after_error = False
+        self._native_model_bundle = None
+        self._cpp_signal = _load_cpp_signal_module() if (
+            _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
+            or _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
+            or self._native_inference_requested
+        ) else None
         self._models: Dict[str, object] = {}
         self._model_feature_cols: Dict[str, List[str]] = {}
         self._model_metadata: Dict[str, dict] = {}
@@ -618,10 +644,6 @@ class SignalEngine:
         self._ret_demean_halflife = ret_demean_halflife
         self._pred_ret_ema = [0.0, 0.0, 0.0]  # 10s, 30s, 60s
 
-        self._cpp_signal = _load_cpp_signal_module() if (
-            _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
-            or _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
-        ) else None
         self._cpp_signal_feature_names = tuple(
             getattr(self._cpp_signal, "SIGNAL_FEATURE_NAMES", ())
         ) if self._cpp_signal is not None else ()
@@ -750,19 +772,29 @@ class SignalEngine:
 
     def set_model_dir(self, model_dir: Optional[Path]):
         """Update the model directory used by subsequent model loads."""
-        self._model_dir = Path(model_dir).expanduser() if model_dir else MODEL_DIR
+        candidate = Path(model_dir).expanduser() if model_dir else MODEL_DIR
+        with self._model_runtime_lock:
+            self._model_dir = candidate
 
     def reload_models(self, model_dir: Optional[Path] = None):
         """Reload ML models, optionally switching to a new model directory."""
-        if model_dir is not None:
-            self.set_model_dir(model_dir)
-        self._load_models()
+        self._load_models(model_dir=model_dir)
 
-    def _load_models(self):
+    def _load_models(self, *, model_dir: Optional[Path] = None):
         """Load saved LightGBM models and their explicit feature schemas."""
+        with self._model_runtime_lock:
+            current_model_dir = self._model_dir
+        candidate_model_dir = (
+            Path(model_dir).expanduser() if model_dir is not None else current_model_dir
+        )
+        native_inference_requested = bool(
+            self._enable_ml and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
+        )
+        if native_inference_requested and self._cpp_signal is None:
+            self._cpp_signal = _load_cpp_signal_module()
         try:
             metadata = validate_model_bundle(
-                self._model_dir,
+                candidate_model_dir,
                 expected_symbol=self._symbol,
             )
         except Exception as exc:
@@ -777,7 +809,7 @@ class SignalEngine:
         loaded_models: Dict[str, object] = {}
         loaded_feature_cols: Dict[str, List[str]] = {}
         for name in REQUIRED_MODEL_HEADS:
-            path = self._model_dir / f"{name}.txt"
+            path = candidate_model_dir / f"{name}.txt"
             try:
                 model = lgb.Booster(model_file=str(path))
             except Exception as exc:
@@ -796,11 +828,102 @@ class SignalEngine:
                 model.num_feature(),
             )
 
-        # Hot reload is atomic: a failed replacement leaves the old bundle in
-        # memory, while startup has no old bundle and therefore fails closed.
-        self._models = loaded_models
-        self._model_feature_cols = loaded_feature_cols
-        self._model_metadata = metadata
+        native_bundle = None
+        native_initialization_failed = False
+        if native_inference_requested:
+            try:
+                schemas = {
+                    tuple(loaded_feature_cols[name])
+                    for name in REQUIRED_MODEL_HEADS
+                }
+                if len(schemas) != 1:
+                    raise RuntimeError(
+                        "native LightGBM bundle requires one shared feature schema"
+                    )
+                native_bundle = self._build_native_model_bundle(
+                    lgb,
+                    model_dir=candidate_model_dir,
+                    feature_count=len(next(iter(schemas))),
+                )
+            except Exception as exc:
+                if _cpp_signal_strict():
+                    raise RuntimeError(
+                        "strict native LightGBM bundle initialization failed: "
+                        f"{exc}"
+                    ) from exc
+                logger.warning(
+                    "Native LightGBM bundle unavailable; using Python Boosters: %s",
+                    exc,
+                )
+                native_initialization_failed = True
+
+        # Python model reload remains atomic.  The optional native candidate
+        # follows the explicit strict/fallback policy above and is published
+        # only after all 13 heads have initialized successfully.
+        with self._model_runtime_lock:
+            self._model_dir = candidate_model_dir
+            self._models = loaded_models
+            self._model_feature_cols = loaded_feature_cols
+            self._model_metadata = metadata
+            self._native_inference_requested = native_inference_requested
+            self._native_model_bundle = native_bundle
+            self._native_inference_disabled_after_error = (
+                native_initialization_failed
+            )
+        if native_bundle is not None:
+            logger.info(
+                "Native LightGBM inference active: heads=%d features=%d library=%s",
+                len(REQUIRED_MODEL_HEADS),
+                len(next(iter(loaded_feature_cols.values()))),
+                native_bundle.library_path,
+            )
+
+    def _build_native_model_bundle(
+        self,
+        lgb_module,
+        *,
+        model_dir: Path,
+        feature_count: int,
+    ):
+        """Construct a complete native bundle from the already-admitted files."""
+
+        if self._cpp_signal is None:
+            raise RuntimeError("narrowgate_cpp is unavailable")
+        if not bool(
+            getattr(
+                self._cpp_signal,
+                "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+                False,
+            )
+        ):
+            raise RuntimeError("native LightGBM bundle capability is unavailable")
+        native_head_names = tuple(
+            getattr(self._cpp_signal, "LIGHTGBM_BUNDLE_HEAD_NAMES", ())
+        )
+        if native_head_names != tuple(REQUIRED_MODEL_HEADS):
+            raise RuntimeError(
+                "native LightGBM head order differs from the Python model contract"
+            )
+        bundle_class = getattr(self._cpp_signal, "NativeLightgbmBundle", None)
+        if bundle_class is None:
+            raise RuntimeError("narrowgate_cpp lacks NativeLightgbmBundle")
+
+        basic_module = getattr(lgb_module, "basic", None)
+        active_library = getattr(getattr(basic_module, "_LIB", None), "_name", None)
+        if not active_library:
+            raise RuntimeError("active Python LightGBM library path is unavailable")
+        library_path = Path(str(active_library)).expanduser().resolve(strict=True)
+        if not library_path.is_file():
+            raise RuntimeError("active Python LightGBM library is not a file")
+        model_paths = [
+            str((model_dir / f"{name}.txt").resolve(strict=True))
+            for name in REQUIRED_MODEL_HEADS
+        ]
+        return bundle_class(
+            str(library_path),
+            model_paths,
+            feature_count,
+        )
 
     @staticmethod
     def _history_snapshot(features: dict) -> dict:
@@ -3708,11 +3831,17 @@ class SignalEngine:
         except Exception as exc:
             logger.warning("Live feature dump write failed: %s", exc)
 
-    def _shared_model_feature_schema(self) -> tuple[str, ...]:
+    def _shared_model_feature_schema(
+        self,
+        feature_cols: Optional[Dict[str, List[str]]] = None,
+    ) -> tuple[str, ...]:
         """Return the one feature schema shared by the complete model bundle."""
 
+        if feature_cols is None:
+            with self._model_runtime_lock:
+                feature_cols = self._model_feature_cols
         schemas = {
-            tuple(self._model_feature_cols.get(name, FEATURE_NAMES_BASE))
+            tuple(feature_cols.get(name, FEATURE_NAMES_BASE))
             for name in REQUIRED_MODEL_HEADS
         }
         if len(schemas) != 1:
@@ -3731,13 +3860,17 @@ class SignalEngine:
             pred.features = self._features_to_array(features)
             pred.feature_dict = dict(features)
             return pred
-        if set(self._models) != set(REQUIRED_MODEL_HEADS):
+        with self._model_runtime_lock:
+            models = self._models
+            model_feature_cols = self._model_feature_cols
+            native_bundle = self._native_model_bundle
+        if set(models) != set(REQUIRED_MODEL_HEADS):
             raise RuntimeError("ML is enabled without a complete 13-head bundle")
 
         # Model-bundle validation requires one shared feature schema across all
         # 13 heads.  Build that row once; the old implementation rebuilt the
         # same Python list/NumPy matrix independently for every head.
-        model_feature_names = self._shared_model_feature_schema()
+        model_feature_names = self._shared_model_feature_schema(model_feature_cols)
         X_model = self._feature_array(
             features,
             list(model_feature_names),
@@ -3753,11 +3886,45 @@ class SignalEngine:
             else self._feature_array(features, FEATURE_NAMES_BASE)
         )
 
-        for h in [10, 30, 60]:
-            name = f"ret_{h}s"
-            if name in self._models:
+        native_values = None
+        if native_bundle is not None:
+            try:
+                native_output = np.asarray(
+                    native_bundle.predict(X_model),
+                    dtype=np.float64,
+                )
+                if native_output.shape != (len(REQUIRED_MODEL_HEADS),):
+                    raise RuntimeError(
+                        "native LightGBM bundle returned an invalid output shape"
+                    )
+                native_values = tuple(float(value) for value in native_output)
+            except Exception as exc:
+                if _cpp_signal_strict():
+                    raise RuntimeError(
+                        f"strict native LightGBM prediction failed: {exc}"
+                    ) from exc
+                with self._model_runtime_lock:
+                    if self._native_model_bundle is native_bundle:
+                        self._native_model_bundle = None
+                        self._native_inference_disabled_after_error = True
+                logger.warning(
+                    "Native LightGBM inference failed; disabling it and using "
+                    "Python Boosters: %s",
+                    exc,
+                )
+
+        if native_values is not None:
+            for name, value in zip(
+                REQUIRED_MODEL_HEADS,
+                native_values,
+                strict=True,
+            ):
+                setattr(pred, name, max(value, 0.0) if name.startswith("vol_") else value)
+        else:
+            for h in [10, 30, 60]:
+                name = f"ret_{h}s"
                 try:
-                    val = float(self._models[name].predict(X_model)[0])
+                    val = float(models[name].predict(X_model)[0])
                     if h == 10:
                         pred.ret_10s = val
                     elif h == 30:
@@ -3767,34 +3934,35 @@ class SignalEngine:
                 except Exception as exc:
                     raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
-        # Run dir/vol models
-        for name, model in self._models.items():
-            if name.startswith("ret_"):
-                continue  # already processed in stage 1
-            try:
-                val = model.predict(X_model)[0]
-                if name == "dir_10s":
-                    pred.dir_10s = float(val)
-                elif name == "dir_30s":
-                    pred.dir_30s = float(val)
-                elif name == "dir_60s":
-                    pred.dir_60s = float(val)
-                elif name == "vol_10s":
-                    pred.vol_10s = max(float(val), 0.0)
-                elif name == "vol_30s":
-                    pred.vol_30s = max(float(val), 0.0)
-                elif name == "vol_60s":
-                    pred.vol_60s = max(float(val), 0.0)
-                elif name == "tox_bid_5s":
-                    pred.tox_bid_5s = float(val)
-                elif name == "tox_ask_5s":
-                    pred.tox_ask_5s = float(val)
-                elif name == "tox_bid_10s":
-                    pred.tox_bid_10s = float(val)
-                elif name == "tox_ask_10s":
-                    pred.tox_ask_10s = float(val)
-            except Exception as exc:
-                raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
+            # Run dir/vol/tox models after return heads, preserving the B0
+            # Python evaluation order for the fallback implementation.
+            for name, model in models.items():
+                if name.startswith("ret_"):
+                    continue  # already processed in stage 1
+                try:
+                    val = model.predict(X_model)[0]
+                    if name == "dir_10s":
+                        pred.dir_10s = float(val)
+                    elif name == "dir_30s":
+                        pred.dir_30s = float(val)
+                    elif name == "dir_60s":
+                        pred.dir_60s = float(val)
+                    elif name == "vol_10s":
+                        pred.vol_10s = max(float(val), 0.0)
+                    elif name == "vol_30s":
+                        pred.vol_30s = max(float(val), 0.0)
+                    elif name == "vol_60s":
+                        pred.vol_60s = max(float(val), 0.0)
+                    elif name == "tox_bid_5s":
+                        pred.tox_bid_5s = float(val)
+                    elif name == "tox_ask_5s":
+                        pred.tox_ask_5s = float(val)
+                    elif name == "tox_bid_10s":
+                        pred.tox_bid_10s = float(val)
+                    elif name == "tox_ask_10s":
+                        pred.tox_ask_10s = float(val)
+                except Exception as exc:
+                    raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
         pred.tox_bid_5s = float(np.clip(pred.tox_bid_5s, 0.0, 1.0))
         pred.tox_ask_5s = float(np.clip(pred.tox_ask_5s, 0.0, 1.0))

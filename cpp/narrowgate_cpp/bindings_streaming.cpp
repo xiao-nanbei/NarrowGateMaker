@@ -20,6 +20,7 @@
 #include "live_order_action_plan.hpp"
 #include "live_order_state.hpp"
 #include "live_cooldown.hpp"
+#include "lightgbm_bundle.hpp"
 #include "live_policy.hpp"
 #include "live_runtime_core.hpp"
 #include "order_gateway_core.hpp"
@@ -873,6 +874,66 @@ void bind_global_flow(py::module_& m) {
 
 void bind_streaming_features(py::module_& m) {
     m.attr("SIGNAL_FEATURE_ABI_VERSION") = "signal_feature_cutoff.v1";
+    m.attr("NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE") = true;
+    py::tuple lightgbm_head_names(kLightgbmBundleHeadNames.size());
+    for (std::size_t i = 0; i < kLightgbmBundleHeadNames.size(); ++i) {
+        const auto name = kLightgbmBundleHeadNames[i];
+        lightgbm_head_names[i] = py::str(name.data(), name.size());
+    }
+    m.attr("LIGHTGBM_BUNDLE_HEAD_NAMES") = std::move(lightgbm_head_names);
+    py::class_<LightgbmBundleInference>(m, "NativeLightgbmBundle")
+        .def(
+            py::init<std::string, const std::vector<std::string>&, std::size_t>(),
+            py::arg("library_path"),
+            py::arg("model_paths"),
+            py::arg("feature_count")
+        )
+        .def(
+            "predict",
+            [](const LightgbmBundleInference& bundle, CArray<double> row) {
+                if (
+                    row.ndim() != 1 &&
+                    !(row.ndim() == 2 && row.shape(0) == 1)
+                ) {
+                    throw std::invalid_argument(
+                        "LightGBM input must be one C-contiguous row"
+                    );
+                }
+                py::array_t<double> output(kLightgbmBundleHeadNames.size());
+                double* output_data = output.mutable_data();
+                {
+                    py::gil_scoped_release release;
+                    bundle.predict(
+                        std::span<const double>(
+                            row.data(),
+                            static_cast<std::size_t>(row.size())
+                        ),
+                        std::span<double>(
+                            output_data,
+                            kLightgbmBundleHeadNames.size()
+                        )
+                    );
+                }
+                return output;
+            },
+            py::arg("row")
+        )
+        .def_property_readonly(
+            "feature_count",
+            &LightgbmBundleInference::feature_count
+        )
+        .def_property_readonly(
+            "library_path",
+            &LightgbmBundleInference::library_path
+        )
+        .def_property_readonly_static(
+            "head_count",
+            [](py::object) { return kLightgbmBundleHeadNames.size(); }
+        )
+        .def_property_readonly_static(
+            "num_threads",
+            [](py::object) { return 1; }
+        );
     py::tuple feature_names(kSignalFeatureCount);
     for (std::size_t i = 0; i < kSignalFeatureCount; ++i) {
         feature_names[i] = py::str(kSignalFeatureNames[i].data(), kSignalFeatureNames[i].size());

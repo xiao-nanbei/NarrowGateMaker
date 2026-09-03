@@ -3,11 +3,30 @@ from __future__ import annotations
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from live import native_build_receipt as subject
+from strategy.model_contract import REQUIRED_MODEL_HEADS
+
+
+def test_lightgbm_bundle_abi_requires_capability_and_exact_head_order() -> None:
+    valid = SimpleNamespace(
+        NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE=True,
+        LIGHTGBM_BUNDLE_HEAD_NAMES=REQUIRED_MODEL_HEADS,
+    )
+    subject._validate_lightgbm_bundle_abi(valid)  # noqa: SLF001
+
+    valid.LIGHTGBM_BUNDLE_HEAD_NAMES = tuple(reversed(REQUIRED_MODEL_HEADS))
+    with pytest.raises(subject.NativeBuildReceiptError, match="head order differs"):
+        subject._validate_lightgbm_bundle_abi(valid)  # noqa: SLF001
+
+    valid.LIGHTGBM_BUNDLE_HEAD_NAMES = REQUIRED_MODEL_HEADS
+    valid.NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE = False
+    with pytest.raises(subject.NativeBuildReceiptError, match="unavailable"):
+        subject._validate_lightgbm_bundle_abi(valid)  # noqa: SLF001
 
 
 def test_production_live_cpu_build_requires_measured_profile() -> None:

@@ -1,12 +1,17 @@
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
+import lightgbm as lgb
 import numpy as np
 import pytest
 
 import strategy.signal as signal_module
 from live.config import Config
 from strategy.maker_engine import MakerEngine
+from strategy.model_contract import REQUIRED_MODEL_HEADS
 from strategy.signal import (
+    CPP_LIGHTGBM_INFERENCE_FLAG,
     EXECUTION_L2_FEATURE_COLS,
     EXECUTION_L2_POLICY_METRIC_COLS,
     Bar1s,
@@ -16,6 +21,23 @@ from strategy.signal import (
 )
 
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
+
+MODEL_BUNDLE = (
+    Path(__file__).resolve().parents[1]
+    / "examples"
+    / "public_dry_run_model_bundle"
+)
+
+
+def _active_lightgbm_library() -> str:
+    return str(Path(lgb.basic._LIB._name).resolve(strict=True))  # noqa: SLF001
+
+
+def _model_feature_names() -> list[str]:
+    metadata = json.loads(
+        (MODEL_BUNDLE / "dir_10s_meta.json").read_text(encoding="utf-8")
+    )
+    return [str(name) for name in metadata["feature_cols"]]
 
 
 def _depth_snapshot(ts: float, index: int, *, depth: int = 10) -> DepthSnapshot:
@@ -724,3 +746,228 @@ def test_cpp_signal_feature_incremental_vol_regime_matches_stateless_history():
 
     for key in ("vol_regime_6h", "vol_regime_24h", "vol_regime_zscore"):
         assert persistent[key] == pytest.approx(stateless[key], abs=1e-10), key
+
+
+def test_native_lightgbm_bundle_matches_python_boosters_bit_for_bit() -> None:
+    feature_names = _model_feature_names()
+    model_paths = [MODEL_BUNDLE / f"{name}.txt" for name in REQUIRED_MODEL_HEADS]
+    python_models = [lgb.Booster(model_file=str(path)) for path in model_paths]
+    native_bundle = narrowgate_cpp.NativeLightgbmBundle(
+        _active_lightgbm_library(),
+        [str(path.resolve(strict=True)) for path in model_paths],
+        len(feature_names),
+    )
+    assert tuple(narrowgate_cpp.LIGHTGBM_BUNDLE_HEAD_NAMES) == tuple(
+        REQUIRED_MODEL_HEADS
+    )
+    assert native_bundle.feature_count == len(feature_names)
+    assert native_bundle.head_count == len(REQUIRED_MODEL_HEADS)
+    assert native_bundle.num_threads == 1
+
+    rng = np.random.default_rng(0x4E474D)
+    rows = rng.normal(size=(32, len(feature_names))).astype(np.float64)
+    rows[0, ::31] = np.nan
+    rows[1, ::17] = np.nextafter(rows[1, ::17], np.inf)
+    rows[2, ::19] = np.nextafter(rows[2, ::19], -np.inf)
+    for row in rows:
+        matrix = np.ascontiguousarray(row.reshape(1, -1))
+        expected = np.asarray(
+            [float(model.predict(matrix)[0]) for model in python_models],
+            dtype=np.float64,
+        )
+        actual = np.asarray(native_bundle.predict(matrix), dtype=np.float64)
+        assert np.array_equal(actual.view(np.uint64), expected.view(np.uint64))
+
+
+def test_native_lightgbm_partial_bundle_construction_fails_safely() -> None:
+    feature_names = _model_feature_names()
+    model_paths = [
+        str((MODEL_BUNDLE / f"{name}.txt").resolve(strict=True))
+        for name in REQUIRED_MODEL_HEADS
+    ]
+    model_paths[-1] = str(MODEL_BUNDLE / "missing-head.txt")
+
+    with pytest.raises(RuntimeError):
+        narrowgate_cpp.NativeLightgbmBundle(
+            _active_lightgbm_library(),
+            model_paths,
+            len(feature_names),
+        )
+
+
+def test_native_lightgbm_inference_is_default_off_and_loads_on_ml_enable(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv(CPP_LIGHTGBM_INFERENCE_FLAG, raising=False)
+    engine = SignalEngine(
+        model_dir=MODEL_BUNDLE,
+        enable_ml=False,
+        ret_demean_halflife=0,
+    )
+
+    assert engine._native_inference_requested is False
+    assert engine._native_model_bundle is None
+
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    engine._enable_ml = True
+    engine.reload_models()
+
+    assert engine._native_inference_requested is True
+    assert engine._native_model_bundle is not None
+
+
+def test_native_lightgbm_preserves_final_prediction_and_demean_state(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setattr(signal_module.time, "time", lambda: 1_725_000_000.0)
+    engine = SignalEngine(
+        model_dir=MODEL_BUNDLE,
+        ret_demean_halflife=7,
+    )
+    native_bundle = engine._native_model_bundle
+    assert native_bundle is not None
+    feature_names = engine._shared_model_feature_schema()
+
+    rows = []
+    for row_index in range(4):
+        rows.append(
+            {
+                name: float((feature_index + 1) * (row_index + 1)) / 10_000.0
+                for feature_index, name in enumerate(feature_names)
+            }
+        )
+    rows[0][feature_names[0]] = float("nan")
+    native_predictions = [engine._predict(row) for row in rows]
+    native_ema = tuple(engine._pred_ret_ema)
+
+    engine._native_model_bundle = None
+    engine._pred_ret_ema = [0.0, 0.0, 0.0]
+    engine._demean_log_cnt = 0
+    python_predictions = [engine._predict(row) for row in rows]
+    python_ema = tuple(engine._pred_ret_ema)
+
+    compared_fields = tuple(REQUIRED_MODEL_HEADS)
+    for native_prediction, python_prediction in zip(
+        native_predictions,
+        python_predictions,
+        strict=True,
+    ):
+        assert native_prediction.ts == python_prediction.ts == 1_725_000_000.0
+        for field_name in compared_fields:
+            native_bits = np.float64(getattr(native_prediction, field_name)).view(
+                np.uint64
+            )
+            python_bits = np.float64(getattr(python_prediction, field_name)).view(
+                np.uint64
+            )
+            assert native_bits == python_bits, field_name
+        assert np.array_equal(
+            native_prediction.features.view(np.uint64),
+            python_prediction.features.view(np.uint64),
+        )
+        assert native_prediction.feature_dict is not None
+        assert python_prediction.feature_dict is not None
+        native_feature_bits = np.asarray(
+            [native_prediction.feature_dict[name] for name in feature_names],
+            dtype=np.float64,
+        ).view(np.uint64)
+        python_feature_bits = np.asarray(
+            [python_prediction.feature_dict[name] for name in feature_names],
+            dtype=np.float64,
+        ).view(np.uint64)
+        assert np.array_equal(native_feature_bits, python_feature_bits)
+    assert np.array_equal(
+        np.asarray(native_ema, dtype=np.float64).view(np.uint64),
+        np.asarray(python_ema, dtype=np.float64).view(np.uint64),
+    )
+
+
+def test_native_lightgbm_runtime_failure_is_strict_or_one_way_fallback(
+    monkeypatch,
+) -> None:
+    class BrokenNativeBundle:
+        def predict(self, _row):
+            raise RuntimeError("synthetic native failure")
+
+    engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    engine._enable_ml = True
+    engine._models = {
+        name: SimpleNamespace(
+            predict=lambda _row, value=index / 100.0: np.asarray([value])
+        )
+        for index, name in enumerate(REQUIRED_MODEL_HEADS)
+    }
+    engine._model_feature_cols = {
+        name: ["feature"] for name in REQUIRED_MODEL_HEADS
+    }
+
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    engine._native_model_bundle = BrokenNativeBundle()
+    prediction = engine._predict({"feature": 1.0})
+    assert prediction.dir_10s == 0.0
+    assert prediction.ret_10s == 0.06
+    assert engine._native_model_bundle is None
+    assert engine._native_inference_disabled_after_error is True
+
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    engine._native_model_bundle = BrokenNativeBundle()
+    with pytest.raises(RuntimeError, match="strict native LightGBM prediction"):
+        engine._predict({"feature": 1.0})
+
+
+def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    engine = SignalEngine(model_dir=MODEL_BUNDLE, ret_demean_halflife=0)
+    old_models = engine._models
+    old_native_bundle = engine._native_model_bundle
+
+    with pytest.raises(RuntimeError, match="runtime bundle is invalid"):
+        engine.reload_models(MODEL_BUNDLE / "missing-bundle")
+    assert engine._models is old_models
+    assert engine._native_model_bundle is old_native_bundle
+    assert engine._model_dir == MODEL_BUNDLE
+
+    def reject_candidate(_lgb_module, *, model_dir, feature_count):
+        assert model_dir == MODEL_BUNDLE
+        raise RuntimeError(f"rejected width {feature_count}")
+
+    monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
+    with pytest.raises(RuntimeError, match="initialization failed"):
+        engine.reload_models()
+
+    assert engine._models is old_models
+    assert engine._native_model_bundle is old_native_bundle
+    assert engine._model_dir == MODEL_BUNDLE
+
+
+def test_native_lightgbm_failed_nonstrict_initialization_uses_python_bundle(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    engine = SignalEngine(
+        model_dir=MODEL_BUNDLE,
+        enable_ml=False,
+        ret_demean_halflife=0,
+    )
+    engine._enable_ml = True
+
+    def reject_candidate(_lgb_module, *, model_dir, feature_count):
+        assert model_dir == MODEL_BUNDLE
+        raise RuntimeError(f"rejected width {feature_count}")
+
+    monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
+    engine.reload_models()
+
+    assert set(engine._models) == set(REQUIRED_MODEL_HEADS)
+    assert engine._native_inference_requested is True
+    assert engine._native_model_bundle is None
+    assert engine._native_inference_disabled_after_error is True
+    prediction = engine._predict({"close": 1.0})
+    assert isinstance(prediction, signal_module.Prediction)
