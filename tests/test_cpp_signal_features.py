@@ -14,7 +14,16 @@ from strategy.boolean_cooldown_live import (
     RuntimeCooldownPolicyEvaluator,
 )
 from strategy.maker_engine import MakerEngine, _prospective_state_fingerprint
-from strategy.model_contract import REQUIRED_MODEL_HEADS
+from strategy.model_contract import (
+    REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+    REQUIRED_FEATURE_DAG_ID,
+    REQUIRED_FEATURE_DAG_SHA256,
+    REQUIRED_FEATURE_SEMANTICS_VERSION,
+    REQUIRED_LABEL_SEMANTICS_VERSION,
+    REQUIRED_LABEL_WINDOW_SEMANTICS,
+    REQUIRED_MODEL_HEADS,
+    absolute_price_variance_unit_contract,
+)
 from strategy.quote_core import (
     QuoteCoreConfig,
     QuotePrediction,
@@ -46,14 +55,74 @@ MODEL_BUNDLE = (
     / "examples"
     / "public_dry_run_model_bundle"
 )
-V12_MODEL_BUNDLE = (
-    Path(__file__).resolve().parents[1]
-    / "models"
-    / "saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
-)
+@pytest.fixture(scope="session")
+def synthetic_model_bundle_173(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Build a public, non-authoritative canonical-width bundle for parity tests."""
+
+    root = tmp_path_factory.mktemp("synthetic-model-bundle-173")
+    feature_names = [str(name) for name in narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES]
+    sample_count = 24
+    row_axis = np.arange(sample_count, dtype=np.float64).reshape(-1, 1)
+    feature_axis = np.arange(len(feature_names), dtype=np.float64).reshape(1, -1)
+    matrix = np.sin(row_axis * 0.17 + feature_axis * 0.013)
+    labels = np.cos(np.arange(sample_count, dtype=np.float64) * 0.23)
+    dataset = lgb.Dataset(
+        matrix,
+        label=labels,
+        feature_name=feature_names,
+        free_raw_data=False,
+    )
+    booster = lgb.train(
+        {
+            "objective": "regression",
+            "verbosity": -1,
+            "num_threads": 1,
+            "deterministic": True,
+            "force_col_wise": True,
+            "min_data_in_leaf": 1,
+            "min_data_in_bin": 1,
+            "feature_pre_filter": False,
+            "seed": 0x4E47,
+        },
+        dataset,
+        num_boost_round=2,
+    )
+
+    metadata = {
+        "calendar_timestamp_semantics": REQUIRED_CALENDAR_TIMESTAMP_SEMANTICS,
+        "feature_cols": feature_names,
+        "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
+        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+        "feature_manifest_sha256": "0" * 64,
+        "feature_semantics_version": REQUIRED_FEATURE_SEMANTICS_VERSION,
+        "feature_variant": "pytest_synthetic_canonical_173",
+        "label_semantics_version": REQUIRED_LABEL_SEMANTICS_VERSION,
+        "label_window_semantics": REQUIRED_LABEL_WINDOW_SEMANTICS,
+        "promotion_authority": "public_dry_run_only",
+        "source_profile": "synthetic_fixture",
+        "symbol": "BTCUSDC",
+        "training_experiment_id": "pytest_synthetic_model_bundle_173_v1",
+        "volatility_unit_contract": absolute_price_variance_unit_contract(
+            "BTCUSDC"
+        ),
+    }
+    for name in REQUIRED_MODEL_HEADS:
+        booster.save_model(str(root / f"{name}.txt"))
+        head_metadata = dict(metadata)
+        if name.startswith("vol_"):
+            head_metadata["label_semantics"] = (
+                "fixed_forward_h_absolute_price_variance"
+            )
+        (root / f"{name}_meta.json").write_text(
+            json.dumps(head_metadata, sort_keys=True),
+            encoding="utf-8",
+        )
+    return root
 
 
-def test_native_build_surface_matches_exposed_runtime() -> None:
+def test_native_build_surface_matches_exposed_runtime(
+    synthetic_model_bundle_173: Path,
+) -> None:
     is_full = narrowgate_cpp.NATIVE_BUILD_FLAVOR == "full"
     assert narrowgate_cpp.NATIVE_TICK_REPLAY_AVAILABLE is is_full
     assert narrowgate_cpp.NATIVE_RESEARCH_RUNTIME_AVAILABLE is is_full
@@ -84,7 +153,7 @@ def test_native_build_surface_matches_exposed_runtime() -> None:
         == SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION
     )
     assert tuple(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES) == tuple(
-        _model_feature_names(V12_MODEL_BUNDLE)
+        _model_feature_names(synthetic_model_bundle_173)
     )
     assert len(narrowgate_cpp.SIGNAL_MODEL_FEATURE_NAMES) == 173
     assert narrowgate_cpp.SignalModelFeatureRow173.feature_count == 173
@@ -928,16 +997,19 @@ def test_cpp_ref_perp_matches_python_for_all_fields_and_basis_history():
     )
 
 
-def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
+def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(
+    monkeypatch,
+    synthetic_model_bundle_173: Path,
+):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     reference = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     native = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     reference._cpp_ref_perp_engine = None
@@ -1099,14 +1171,17 @@ def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
     assert quote(native_prediction) == quote(reference_prediction)
 
 
-def test_cpp_ref_perp_activation_follows_startup_model_schema(monkeypatch):
+def test_cpp_ref_perp_activation_follows_startup_model_schema(
+    monkeypatch,
+    synthetic_model_bundle_173: Path,
+):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     one_feature = SignalEngine(
         model_dir=MODEL_BUNDLE,
         ret_demean_halflife=0,
     )
     source_aware = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
 
@@ -1114,16 +1189,19 @@ def test_cpp_ref_perp_activation_follows_startup_model_schema(monkeypatch):
     assert source_aware._cpp_ref_perp_engine is not None
 
 
-def test_native_model_row_catch_up_matches_stepwise_inference(monkeypatch):
+def test_native_model_row_catch_up_matches_stepwise_inference(
+    monkeypatch,
+    synthetic_model_bundle_173: Path,
+):
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
     stepwise = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=7,
     )
     catch_up = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=7,
     )
     assert stepwise._cpp_model_row_173_enabled is True
@@ -1212,12 +1290,13 @@ def test_native_model_row_catch_up_matches_stepwise_inference(monkeypatch):
 
 def test_native_model_row_keeps_current_mapping_after_nonstrict_commit_failure(
     monkeypatch,
+    synthetic_model_bundle_173: Path,
 ) -> None:
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
     engine = SignalEngine(
-        model_dir=V12_MODEL_BUNDLE,
+        model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=0,
     )
     base_ms = int(
@@ -1645,11 +1724,15 @@ def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
 
 def test_native_173_row_rejection_is_atomic_during_strict_reload(
     monkeypatch,
+    synthetic_model_bundle_173: Path,
 ) -> None:
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    engine = SignalEngine(model_dir=V12_MODEL_BUNDLE, ret_demean_halflife=0)
+    engine = SignalEngine(
+        model_dir=synthetic_model_bundle_173,
+        ret_demean_halflife=0,
+    )
     old_models = engine._models
     old_feature_cols = engine._model_feature_cols
     old_feature_schema = engine._model_feature_schema
@@ -1669,7 +1752,7 @@ def test_native_173_row_rejection_is_atomic_during_strict_reload(
     assert engine._model_metadata is old_metadata
     assert engine._native_model_bundle is old_native_bundle
     assert engine._cpp_model_row_173_state is old_row_state
-    assert engine._model_dir == V12_MODEL_BUNDLE
+    assert engine._model_dir == synthetic_model_bundle_173
 
 
 def test_native_lightgbm_failed_nonstrict_initialization_uses_python_bundle(
