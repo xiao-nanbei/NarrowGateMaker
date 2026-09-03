@@ -63,6 +63,7 @@ from strategy.post_fill_quote_response import (
     PostFillQuoteResponseConfig,
 )
 from strategy.quote_core import (
+    DeferredNativeQuoteCoreResult,
     QuotePrediction,
     QuoteState,
     SPREAD_CAP_COMPRESS,
@@ -76,6 +77,7 @@ from strategy.quote_core import (
     circuit_breaker_triggered,
     compute_native_quote_policy_stage_live,
     compute_quote_core_live,
+    compute_quote_core_live_deferred,
     make_native_quote_policy_stage,
     microprice_from_book,
     quote_core_config_from_live_config,
@@ -1401,6 +1403,18 @@ def _load_buy_e3_cooldown_live_policy(
 _LEGACY_TRANSPORT_DEFAULT = object()
 
 
+@dataclass(slots=True)
+class _DeferredLiveQuotePublication:
+    quote: DeferredNativeQuoteCoreResult
+    quote_ts_ms: int
+    snapshot: QuoteDecisionSnapshot
+    guard: QuotePostOnlyGuard
+    buy_final_side_floor_changed: bool | None = None
+    buy_active_order_floor_unsafe: bool | None = None
+    sell_final_side_floor_changed: bool | None = None
+    sell_active_order_floor_unsafe: bool | None = None
+
+
 class MakerEngine:
     """
     Event-driven market making engine.
@@ -1553,6 +1567,7 @@ class MakerEngine:
         self._event_source = None
         self._ws_handler = None
         self._order_policy_context: Dict[str, dict] = {}
+        self._last_native_quote_publication: _DeferredLiveQuotePublication | None = None
         self._last_quote_context: Dict[str, dict[str, Any]] = {}
         self._last_quote_diagnostics: Dict[str, Any] = {}
         self._last_quote_decision_snapshot: Optional[QuoteDecisionSnapshot] = None
@@ -1821,6 +1836,170 @@ class MakerEngine:
             f"live_perf_telemetry_log={self._live_perf_telemetry_log_path}, "
             f"quote_snapshot_integrity_log={self._quote_snapshot_integrity_log_path}"
         )
+
+    @property
+    def _last_quote_context(self) -> Dict[str, dict[str, Any]]:
+        self._materialize_last_native_quote_maps()
+        context = getattr(self, "_last_quote_context_cache", None)
+        if context is None:
+            context = {}
+            self._last_quote_context_cache = context
+        return context
+
+    @_last_quote_context.setter
+    def _last_quote_context(self, value: Dict[str, dict[str, Any]]) -> None:
+        if getattr(self, "_last_native_quote_publication", None) is not None:
+            self._materialize_last_native_quote_maps()
+        self._last_native_quote_publication = None
+        self._last_quote_context_cache = value
+
+    @property
+    def _last_quote_diagnostics(self) -> Dict[str, Any]:
+        self._materialize_last_native_quote_maps()
+        diagnostics = getattr(self, "_last_quote_diagnostics_cache", None)
+        if diagnostics is None:
+            diagnostics = {}
+            self._last_quote_diagnostics_cache = diagnostics
+        return diagnostics
+
+    @_last_quote_diagnostics.setter
+    def _last_quote_diagnostics(self, value: Dict[str, Any]) -> None:
+        if getattr(self, "_last_native_quote_publication", None) is not None:
+            self._materialize_last_native_quote_maps()
+        self._last_native_quote_publication = None
+        self._last_quote_diagnostics_cache = value
+
+    def _publish_deferred_native_quote(
+        self,
+        quote: DeferredNativeQuoteCoreResult,
+        *,
+        quote_ts_ms: int,
+        snapshot: QuoteDecisionSnapshot,
+        guard: QuotePostOnlyGuard,
+    ) -> None:
+        publication = _DeferredLiveQuotePublication(
+            quote=quote,
+            quote_ts_ms=quote_ts_ms,
+            snapshot=snapshot,
+            guard=guard,
+        )
+        self._last_quote_context_cache = None
+        self._last_quote_diagnostics_cache = None
+        self._last_native_quote_publication = publication
+
+    def _materialize_last_native_quote_maps(self) -> None:
+        publication = getattr(self, "_last_native_quote_publication", None)
+        if publication is None:
+            return
+        if (
+            getattr(self, "_last_quote_context_cache", None) is not None
+            and getattr(self, "_last_quote_diagnostics_cache", None) is not None
+        ):
+            return
+
+        materialized = publication.quote.materialize()
+        context = materialized.quote_context
+        snapshot = publication.snapshot
+        for side_context in context.values():
+            if isinstance(side_context, dict):
+                side_context.setdefault("quote_ts_ms", publication.quote_ts_ms)
+                side_context.setdefault(
+                    "quote_snapshot_market_generation", snapshot.market_generation
+                )
+                side_context.setdefault(
+                    "quote_snapshot_depth_generation", snapshot.depth_generation
+                )
+                side_context.setdefault(
+                    "quote_snapshot_book_ticker_generation",
+                    snapshot.book_ticker_generation,
+                )
+                side_context.setdefault(
+                    "quote_snapshot_depth_exchange_ts_ms",
+                    snapshot.depth_exchange_ts_ms,
+                )
+                side_context.setdefault(
+                    "quote_snapshot_depth_receive_ts_ns",
+                    snapshot.depth_receive_ts_ns,
+                )
+
+        overrides = (
+            ("BUY", "p3_final_side_floor_changed", publication.buy_final_side_floor_changed),
+            ("BUY", "p3_active_order_floor_unsafe", publication.buy_active_order_floor_unsafe),
+            ("SELL", "p3_final_side_floor_changed", publication.sell_final_side_floor_changed),
+            ("SELL", "p3_active_order_floor_unsafe", publication.sell_active_order_floor_unsafe),
+        )
+        for side, key, value in overrides:
+            if value is not None:
+                context[side][key] = value
+
+        guard = publication.guard
+        diagnostics = dict(materialized.diagnostics)
+        diagnostics.update(
+            {
+                "quote_snapshot_market_generation": snapshot.market_generation,
+                "quote_snapshot_depth_generation": snapshot.depth_generation,
+                "quote_snapshot_book_ticker_generation": snapshot.book_ticker_generation,
+                "quote_snapshot_depth_bid": snapshot.best_bid,
+                "quote_snapshot_depth_ask": snapshot.best_ask,
+                "quote_snapshot_book_ticker_bid": snapshot.book_ticker_bid,
+                "quote_snapshot_book_ticker_ask": snapshot.book_ticker_ask,
+                "quote_snapshot_depth_exchange_ts_ms": snapshot.depth_exchange_ts_ms,
+                "quote_snapshot_depth_receive_ts_ns": snapshot.depth_receive_ts_ns,
+                "quote_snapshot_book_ticker_exchange_ts_ms": snapshot.book_ticker_exchange_ts_ms,
+                "quote_snapshot_book_ticker_receive_ts_ns": snapshot.book_ticker_receive_ts_ns,
+                "quote_snapshot_capture_ts_ns": snapshot.capture_ts_ns,
+                "quote_snapshot_depth_visible_age_s": snapshot.depth_visible_age_s,
+                "quote_snapshot_depth_source_lag_s": snapshot.depth_source_lag_s,
+                "quote_snapshot_book_ticker_visible_age_s": snapshot.book_ticker_visible_age_s,
+                "quote_snapshot_book_ticker_source_lag_s": snapshot.book_ticker_source_lag_s,
+                "quote_snapshot_guard_source": guard.source,
+                "quote_snapshot_guard_fallback_reason": guard.fallback_reason,
+                "quote_snapshot_lock_wait_us": snapshot.lock_wait_ns / 1_000.0,
+                "quote_snapshot_lock_hold_us": snapshot.lock_hold_ns / 1_000.0,
+            }
+        )
+        # Publish the pair only after every allocating transformation succeeds.
+        self._last_quote_context_cache = context
+        self._last_quote_diagnostics_cache = diagnostics
+
+    def _last_quote_side_value(self, side: str, key: str, default: Any = None) -> Any:
+        context = getattr(self, "_last_quote_context_cache", None)
+        if context is not None:
+            return context.get(side, {}).get(key, default)
+        publication = getattr(self, "_last_native_quote_publication", None)
+        if publication is not None:
+            return publication.quote.side_value(side, key, default)
+        return default
+
+    def _last_quote_diagnostic_value(self, key: str, default: Any = None) -> Any:
+        diagnostics = getattr(self, "_last_quote_diagnostics_cache", None)
+        if diagnostics is not None:
+            return diagnostics.get(key, default)
+        publication = getattr(self, "_last_native_quote_publication", None)
+        if publication is not None:
+            return publication.quote.diagnostic_value(key, default)
+        return default
+
+    def _set_last_quote_side_value(self, side: str, key: str, value: Any) -> None:
+        context = getattr(self, "_last_quote_context_cache", None)
+        if context is not None:
+            context[side][key] = value
+            return
+        publication = getattr(self, "_last_native_quote_publication", None)
+        if publication is not None:
+            if side == "BUY" and key == "p3_final_side_floor_changed":
+                publication.buy_final_side_floor_changed = value
+                return
+            if side == "BUY" and key == "p3_active_order_floor_unsafe":
+                publication.buy_active_order_floor_unsafe = value
+                return
+            if side == "SELL" and key == "p3_final_side_floor_changed":
+                publication.sell_final_side_floor_changed = value
+                return
+            if side == "SELL" and key == "p3_active_order_floor_unsafe":
+                publication.sell_active_order_floor_unsafe = value
+                return
+        self._last_quote_context[side][key] = value
 
     def set_event_source(self, event_source):
         """Register the admitted market/private event source transport."""
@@ -4850,10 +5029,16 @@ class MakerEngine:
             cooldown_until > now
             and (exposure_increasing or reducing_cooldown_enabled)
         )
-        quote_ctx = self._last_quote_context.get(side_name, {})
-        if not isinstance(quote_ctx, dict):
-            quote_ctx = {}
-        decision.order_ttl_ms = int(max(0, int(quote_ctx.get("order_ttl_ms", 0) or 0)))
+        cached_quote_context = getattr(self, "_last_quote_context_cache", None)
+        quote_ctx = (
+            cached_quote_context.get(side_name, {})
+            if cached_quote_context is not None
+            else {}
+        )
+        quote_value = self._last_quote_side_value
+        decision.order_ttl_ms = int(
+            max(0, int(quote_value(side_name, "order_ttl_ms", 0) or 0))
+        )
         if native_common is None:
             common = evaluate_common_side_policy(CommonSidePolicyInput(
                 exposure_increasing=exposure_increasing,
@@ -4873,14 +5058,32 @@ class MakerEngine:
                 l2_near_depth_total=decision.l2_near_depth_total,
                 thin_depth_threshold=float(getattr(cfg.strategy, "thin_depth_threshold", 0.0) or 0.0),
                 kappa_depth_baseline=float(getattr(cfg.strategy, "kappa_depth_baseline", 50.0)),
-                side_adverse=bool(quote_ctx.get("side_adverse", False) or quote_ctx.get("bid_adverse", False)),
-                side_adverse_pause=bool(quote_ctx.get("side_adverse_pause", False)),
-                local_extreme_guard=bool(quote_ctx.get("local_extreme_guard", False)),
-                local_extreme_spread_mult=float(quote_ctx.get("local_extreme_spread_mult", 1.0) or 1.0),
-                local_extreme_pause=bool(quote_ctx.get("local_extreme_pause", False)),
-                defense_guard=bool(quote_ctx.get("defense_guard", False)),
-                defense_spread_mult=float(quote_ctx.get("defense_spread_mult", 1.0) or 1.0),
-                defense_pause=bool(quote_ctx.get("defense_pause", False)),
+                side_adverse=bool(
+                    quote_value(side_name, "side_adverse", False)
+                    or quote_value(side_name, "bid_adverse", False)
+                ),
+                side_adverse_pause=bool(
+                    quote_value(side_name, "side_adverse_pause", False)
+                ),
+                local_extreme_guard=bool(
+                    quote_value(side_name, "local_extreme_guard", False)
+                ),
+                local_extreme_spread_mult=float(
+                    quote_value(side_name, "local_extreme_spread_mult", 1.0)
+                    or 1.0
+                ),
+                local_extreme_pause=bool(
+                    quote_value(side_name, "local_extreme_pause", False)
+                ),
+                defense_guard=bool(
+                    quote_value(side_name, "defense_guard", False)
+                ),
+                defense_spread_mult=float(
+                    quote_value(side_name, "defense_spread_mult", 1.0) or 1.0
+                ),
+                defense_pause=bool(
+                    quote_value(side_name, "defense_pause", False)
+                ),
             ))
         else:
             common = native_common
@@ -7221,7 +7424,13 @@ class MakerEngine:
                 "_toxicity_probs": self._toxicity_probs(pred),
             }
         else:
-            result = compute_quote_core_live(
+            quote_compute = (
+                compute_quote_core_live
+                if bool(getattr(cfg.strategy, "ber_exposure_add_only", False))
+                and bool(quote_state.ber_active)
+                else compute_quote_core_live_deferred
+            )
+            result = quote_compute(
                 quote_state,
                 quote_cfg,
                 quote_pred,
@@ -7248,61 +7457,72 @@ class MakerEngine:
             )
         bid_price = result.bid_price
         ask_price = result.ask_price
-        self._last_quote_context = result.quote_context
         quote_ts_ms = int(now * 1000.0)
-        for _side_ctx in self._last_quote_context.values():
-            if isinstance(_side_ctx, dict):
-                _side_ctx.setdefault("quote_ts_ms", quote_ts_ms)
-                _side_ctx.setdefault(
-                    "quote_snapshot_market_generation",
-                    quote_snapshot.market_generation,
-                )
-                _side_ctx.setdefault(
-                    "quote_snapshot_depth_generation",
-                    quote_snapshot.depth_generation,
-                )
-                _side_ctx.setdefault(
-                    "quote_snapshot_book_ticker_generation",
-                    quote_snapshot.book_ticker_generation,
-                )
-                _side_ctx.setdefault(
-                    "quote_snapshot_depth_exchange_ts_ms",
-                    quote_snapshot.depth_exchange_ts_ms,
-                )
-                _side_ctx.setdefault(
-                    "quote_snapshot_depth_receive_ts_ns",
-                    quote_snapshot.depth_receive_ts_ns,
-                )
-        diag = result.diagnostics
-        self._last_quote_diagnostics = dict(diag)
-        self._last_quote_diagnostics.update(
-            {
-                "quote_snapshot_market_generation": quote_snapshot.market_generation,
-                "quote_snapshot_depth_generation": quote_snapshot.depth_generation,
-                "quote_snapshot_book_ticker_generation": quote_snapshot.book_ticker_generation,
-                "quote_snapshot_depth_bid": quote_snapshot.best_bid,
-                "quote_snapshot_depth_ask": quote_snapshot.best_ask,
-                "quote_snapshot_book_ticker_bid": quote_snapshot.book_ticker_bid,
-                "quote_snapshot_book_ticker_ask": quote_snapshot.book_ticker_ask,
-                "quote_snapshot_depth_exchange_ts_ms": quote_snapshot.depth_exchange_ts_ms,
-                "quote_snapshot_depth_receive_ts_ns": quote_snapshot.depth_receive_ts_ns,
-                "quote_snapshot_book_ticker_exchange_ts_ms": quote_snapshot.book_ticker_exchange_ts_ms,
-                "quote_snapshot_book_ticker_receive_ts_ns": quote_snapshot.book_ticker_receive_ts_ns,
-                "quote_snapshot_capture_ts_ns": quote_snapshot.capture_ts_ns,
-                "quote_snapshot_depth_visible_age_s": quote_snapshot.depth_visible_age_s,
-                "quote_snapshot_depth_source_lag_s": quote_snapshot.depth_source_lag_s,
-                "quote_snapshot_book_ticker_visible_age_s": quote_snapshot.book_ticker_visible_age_s,
-                "quote_snapshot_book_ticker_source_lag_s": quote_snapshot.book_ticker_source_lag_s,
-                "quote_snapshot_guard_source": guard.source,
-                "quote_snapshot_guard_fallback_reason": guard.fallback_reason,
-                "quote_snapshot_lock_wait_us": quote_snapshot.lock_wait_ns / 1_000.0,
-                "quote_snapshot_lock_hold_us": quote_snapshot.lock_hold_ns / 1_000.0,
-            }
-        )
+        if isinstance(result, DeferredNativeQuoteCoreResult):
+            self._publish_deferred_native_quote(
+                result,
+                quote_ts_ms=quote_ts_ms,
+                snapshot=quote_snapshot,
+                guard=guard,
+            )
+        else:
+            quote_context = result.quote_context
+            for side_context in quote_context.values():
+                if isinstance(side_context, dict):
+                    side_context.setdefault("quote_ts_ms", quote_ts_ms)
+                    side_context.setdefault(
+                        "quote_snapshot_market_generation",
+                        quote_snapshot.market_generation,
+                    )
+                    side_context.setdefault(
+                        "quote_snapshot_depth_generation",
+                        quote_snapshot.depth_generation,
+                    )
+                    side_context.setdefault(
+                        "quote_snapshot_book_ticker_generation",
+                        quote_snapshot.book_ticker_generation,
+                    )
+                    side_context.setdefault(
+                        "quote_snapshot_depth_exchange_ts_ms",
+                        quote_snapshot.depth_exchange_ts_ms,
+                    )
+                    side_context.setdefault(
+                        "quote_snapshot_depth_receive_ts_ns",
+                        quote_snapshot.depth_receive_ts_ns,
+                    )
+            quote_diagnostics = dict(result.diagnostics)
+            quote_diagnostics.update(
+                {
+                    "quote_snapshot_market_generation": quote_snapshot.market_generation,
+                    "quote_snapshot_depth_generation": quote_snapshot.depth_generation,
+                    "quote_snapshot_book_ticker_generation": quote_snapshot.book_ticker_generation,
+                    "quote_snapshot_depth_bid": quote_snapshot.best_bid,
+                    "quote_snapshot_depth_ask": quote_snapshot.best_ask,
+                    "quote_snapshot_book_ticker_bid": quote_snapshot.book_ticker_bid,
+                    "quote_snapshot_book_ticker_ask": quote_snapshot.book_ticker_ask,
+                    "quote_snapshot_depth_exchange_ts_ms": quote_snapshot.depth_exchange_ts_ms,
+                    "quote_snapshot_depth_receive_ts_ns": quote_snapshot.depth_receive_ts_ns,
+                    "quote_snapshot_book_ticker_exchange_ts_ms": quote_snapshot.book_ticker_exchange_ts_ms,
+                    "quote_snapshot_book_ticker_receive_ts_ns": quote_snapshot.book_ticker_receive_ts_ns,
+                    "quote_snapshot_capture_ts_ns": quote_snapshot.capture_ts_ns,
+                    "quote_snapshot_depth_visible_age_s": quote_snapshot.depth_visible_age_s,
+                    "quote_snapshot_depth_source_lag_s": quote_snapshot.depth_source_lag_s,
+                    "quote_snapshot_book_ticker_visible_age_s": quote_snapshot.book_ticker_visible_age_s,
+                    "quote_snapshot_book_ticker_source_lag_s": quote_snapshot.book_ticker_source_lag_s,
+                    "quote_snapshot_guard_source": guard.source,
+                    "quote_snapshot_guard_fallback_reason": guard.fallback_reason,
+                    "quote_snapshot_lock_wait_us": quote_snapshot.lock_wait_ns / 1_000.0,
+                    "quote_snapshot_lock_hold_us": quote_snapshot.lock_hold_ns / 1_000.0,
+                }
+            )
+            self._last_native_quote_publication = None
+            self._last_quote_context_cache = quote_context
+            self._last_quote_diagnostics_cache = quote_diagnostics
         self._apply_live_local_extreme_guard_context(mid)
 
         # ── Final quote diagnostic (every 6 requotes ≈ 1 min) ──
         if self._requote_count % 6 == 0:
+            diag = self._last_quote_diagnostics
             _max_spread = f"{diag.get('max_spread', 0.0):.2f}" if diag.get("max_spread", 0.0) > 0 else "off"
             bid_dist = mid - bid_price
             ask_dist = ask_price - mid
@@ -7360,10 +7580,14 @@ class MakerEngine:
 
         self._log_depth_execution_shadow(
             mid=mid, depth=depth_raw, pred=pred,
-            kappa_base=diag.get("kappa_before_depth", cfg.strategy.kappa),
-            kappa_used=diag.get("kappa_used", cfg.strategy.kappa),
+            kappa_base=self._last_quote_diagnostic_value(
+                "kappa_before_depth", cfg.strategy.kappa
+            ),
+            kappa_used=self._last_quote_diagnostic_value(
+                "kappa_used", cfg.strategy.kappa
+            ),
             bid_price=bid_price, ask_price=ask_price,
-            asym=diag.get("asym", 0.0),
+            asym=self._last_quote_diagnostic_value("asym", 0.0),
         )
 
         return bid_price, ask_price, ask_price - bid_price
@@ -7750,8 +7974,12 @@ class MakerEngine:
             getattr(cfg.strategy, "spread_cap_mode", "pause_exposure")
         )
         if cap_mode == SPREAD_CAP_PAUSE_EXPOSURE:
-            bid_cap_block = bool(self._last_quote_context.get("BUY", {}).get("cap_exposure_block", False))
-            ask_cap_block = bool(self._last_quote_context.get("SELL", {}).get("cap_exposure_block", False))
+            bid_cap_block = bool(
+                self._last_quote_side_value("BUY", "cap_exposure_block", False)
+            )
+            ask_cap_block = bool(
+                self._last_quote_side_value("SELL", "cap_exposure_block", False)
+            )
             # Policy multipliers can create a second cap hit after quote-core.
             # In pause mode that hit blocks only the side that would add risk.
             if post_policy_cap_hit:
@@ -7857,7 +8085,9 @@ class MakerEngine:
         cpp_routing_used = False
         if cpp_route is not None:
             try:
-                max_spread = float(self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0)
+                max_spread = float(
+                    self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
+                )
                 if max_spread <= 0.0:
                     cap_bps = float(getattr(cfg.strategy, "max_spread_bps", 0.0) or 0.0)
                     max_spread = mid * cap_bps / 10000.0 if cap_bps > 0.0 and mid > 0.0 else 0.0
@@ -8023,7 +8253,7 @@ class MakerEngine:
 
         update_orders_prepare_state_routing_end_ns = time.perf_counter_ns()
         state_policy_max_spread = float(
-            self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
+            self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
         )
         if state_policy_max_spread <= 0.0:
             cap_bps = float(
@@ -8124,18 +8354,26 @@ class MakerEngine:
             ask_needs_update = True
             ask_force_update = True
         if bid_route_allowed:
-            self._last_quote_context["BUY"]["p3_final_side_floor_changed"] = bool(
-                p3_final_bid_changed
+            self._set_last_quote_side_value(
+                "BUY",
+                "p3_final_side_floor_changed",
+                bool(p3_final_bid_changed),
             )
-            self._last_quote_context["BUY"]["p3_active_order_floor_unsafe"] = bool(
-                bid_p3_floor_unsafe
+            self._set_last_quote_side_value(
+                "BUY",
+                "p3_active_order_floor_unsafe",
+                bool(bid_p3_floor_unsafe),
             )
         if ask_route_allowed:
-            self._last_quote_context["SELL"]["p3_final_side_floor_changed"] = bool(
-                p3_final_ask_changed
+            self._set_last_quote_side_value(
+                "SELL",
+                "p3_final_side_floor_changed",
+                bool(p3_final_ask_changed),
             )
-            self._last_quote_context["SELL"]["p3_active_order_floor_unsafe"] = bool(
-                ask_p3_floor_unsafe
+            self._set_last_quote_side_value(
+                "SELL",
+                "p3_active_order_floor_unsafe",
+                bool(ask_p3_floor_unsafe),
             )
 
         update_orders_prepare_safeguards_end_ns = time.perf_counter_ns()
@@ -10080,7 +10318,7 @@ class MakerEngine:
                 baseline_ask=float(ask_price),
                 tick_size=float(cfg.tick_size),
                 max_pair_spread=float(
-                    self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0
+                    self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
                 ),
                 best_bid=float(best_bid),
                 best_ask=float(best_ask),
@@ -10125,7 +10363,9 @@ class MakerEngine:
         best_bid: float,
         best_ask: float,
     ) -> tuple[float, float, bool]:
-        max_spread = float(self._last_quote_diagnostics.get("max_spread", 0.0) or 0.0)
+        max_spread = float(
+            self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
+        )
         if max_spread <= 0.0:
             cap_bps = float(getattr(self.cfg.strategy, "max_spread_bps", 0.0) or 0.0)
             if cap_bps > 0.0 and mid > 0.0:
@@ -10218,10 +10458,13 @@ class MakerEngine:
         """Return final floor-safe prices and unsafe active-order flags."""
 
         enabled = bool(
-            self._last_quote_diagnostics.get("p3_side_bbo_floor_enabled", False)
+            self._last_quote_diagnostic_value(
+                "p3_side_bbo_floor_enabled", False
+            )
         )
         delta_star = float(
-            self._last_quote_diagnostics.get("p3_touch_delta_star", 0.0) or 0.0
+            self._last_quote_diagnostic_value("p3_touch_delta_star", 0.0)
+            or 0.0
         )
         active = bool(enabled and math.isfinite(delta_star) and delta_star > 0.0)
         bid, ask, buy_floor, sell_floor, bid_changed, ask_changed = (

@@ -351,6 +351,9 @@ def test_compute_quotes_does_not_read_mutable_signal_depth(monkeypatch) -> None:
     engine._apply_live_local_extreme_guard_context = lambda mid: None
     engine._log_depth_execution_shadow = lambda **kwargs: None
     monkeypatch.setattr("strategy.maker_engine._get_fill_model", lambda _: None)
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_POLICY_STAGE", "0")
 
     bid, ask, spread = engine._compute_quotes(
         snapshot,
@@ -361,8 +364,76 @@ def test_compute_quotes_does_not_read_mutable_signal_depth(monkeypatch) -> None:
 
     assert bid < ask
     assert spread == ask - bid
-    assert engine._last_quote_diagnostics["quote_snapshot_depth_generation"] == 1
-    assert engine._last_quote_diagnostics["quote_snapshot_depth_bid"] == 99.0
+    publication = engine._last_native_quote_publication
+    assert publication is not None
+    assert not publication.quote.is_materialized
+    for side in ("BUY", "SELL"):
+        for key in (
+            "order_ttl_ms",
+            "side_adverse",
+            "bid_adverse",
+            "ask_adverse",
+            "side_adverse_pause",
+            "local_extreme_guard",
+            "local_extreme_spread_mult",
+            "local_extreme_pause",
+            "defense_guard",
+            "defense_spread_mult",
+            "defense_pause",
+            "cap_exposure_block",
+        ):
+            engine._last_quote_side_value(side, key)
+    for key in (
+        "max_spread",
+        "kappa_before_depth",
+        "kappa_used",
+        "asym",
+        "p3_side_bbo_floor_enabled",
+        "p3_touch_delta_star",
+    ):
+        engine._last_quote_diagnostic_value(key)
+    engine._set_last_quote_side_value(
+        "BUY", "p3_final_side_floor_changed", True
+    )
+    assert not publication.quote.is_materialized
+
+    materialized_context = engine._last_quote_context
+    assert materialized_context["BUY"]["p3_final_side_floor_changed"] is True
+    assert materialized_context["BUY"]["quote_snapshot_depth_generation"] == 1
+    assert engine._last_quote_context is materialized_context
+    materialized_context["BUY"]["mutable_probe"] = {"value": 7}
+    assert engine._last_quote_context["BUY"]["mutable_probe"]["value"] == 7
+    assert publication.quote.is_materialized
+    materialized_diagnostics = engine._last_quote_diagnostics
+    assert materialized_diagnostics["quote_snapshot_depth_generation"] == 1
+    assert materialized_diagnostics["quote_snapshot_depth_bid"] == 99.0
+    assert engine._last_quote_diagnostics is materialized_diagnostics
+
+
+def test_deferred_quote_materialization_failure_keeps_publication_retryable() -> None:
+    class FailingQuote:
+        calls = 0
+
+        def materialize(self):
+            self.calls += 1
+            raise MemoryError("deterministic materialization failure")
+
+    engine = object.__new__(MakerEngine)
+    quote = FailingQuote()
+    publication = SimpleNamespace(quote=quote)
+    engine._last_native_quote_publication = publication
+    engine._last_quote_context_cache = None
+    engine._last_quote_diagnostics_cache = None
+
+    with pytest.raises(MemoryError, match="deterministic materialization failure"):
+        _ = engine._last_quote_context
+
+    assert engine._last_native_quote_publication is publication
+    assert engine._last_quote_context_cache is None
+    assert engine._last_quote_diagnostics_cache is None
+    with pytest.raises(MemoryError, match="deterministic materialization failure"):
+        _ = engine._last_quote_diagnostics
+    assert quote.calls == 2
 
 
 def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch) -> None:
@@ -427,7 +498,11 @@ def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch
     staged = engine._compute_quotes(snapshot, 0.0, Prediction(), pricing_mid=100.0)
 
     assert staged == baseline
+    publication = engine._last_native_quote_publication
+    assert publication is not None
+    assert not publication.quote.is_materialized
     assert engine._last_quote_context == baseline_context
+    assert publication.quote.is_materialized
     assert engine._last_quote_diagnostics == baseline_diagnostics
     assert set(engine._native_quote_policy_results) == {
         "BUY",

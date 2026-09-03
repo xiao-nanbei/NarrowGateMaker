@@ -547,12 +547,25 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
                     q,
                     pred,
                 )
+                native_common = engine._native_quote_policy_results
+                engine._native_quote_policy_results = {}
+                shared_inputs: dict[str, object] = {}
+                if "_l2_policy_metrics" in native_common:
+                    shared_inputs["l2_policy_metrics"] = native_common[
+                        "_l2_policy_metrics"
+                    ]
+                if "_toxicity_probs" in native_common:
+                    shared_inputs["toxicity_probs"] = native_common[
+                        "_toxicity_probs"
+                    ]
                 policy_bid = engine._build_side_policy(
                     Side.BUY,
                     quote_mid,
                     q,
                     pred,
                     quote_snapshot,
+                    shared_inputs=shared_inputs,
+                    native_common=native_common.get("BUY"),
                 )
                 policy_ask = engine._build_side_policy(
                     Side.SELL,
@@ -560,6 +573,8 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
                     q,
                     pred,
                     quote_snapshot,
+                    shared_inputs=shared_inputs,
+                    native_common=native_common.get("SELL"),
                 )
                 return bid + ask + spread + policy_bid.spread_mult + policy_ask.spread_mult
 

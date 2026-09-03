@@ -530,6 +530,129 @@ class QuoteCoreResult:
     diagnostics: dict[str, Any] = field(default_factory=dict)
 
 
+class DeferredNativeQuoteCoreResult:
+    """Own one native quote result until a legacy mapping is requested.
+
+    MakerEngine only needs a small subset of the native POD on each decision.
+    Keeping that POD alive avoids eagerly recreating the much larger Python
+    ``quote_context`` and ``diagnostics`` mappings.  ``materialize`` deliberately
+    delegates to the existing compact converter so the public/evidence shape
+    has one implementation and remains behavior-identical.
+    """
+
+    __slots__ = (
+        "_buy_context",
+        "_cfg",
+        "_materialized",
+        "_native_result",
+        "_pred_values",
+        "_sell_context",
+        "_state",
+    )
+
+    def __init__(
+        self,
+        *,
+        native_result: Any,
+        state: QuoteState,
+        cfg: QuoteCoreConfig,
+        pred_values: tuple[float, float, float, float, float],
+    ) -> None:
+        self._native_result = native_result
+        # Cache the pybind child views once.  The owning result remains alive
+        # for their complete lifetime.
+        self._buy_context = native_result.buy
+        self._sell_context = native_result.sell
+        self._state = state
+        self._cfg = cfg
+        self._pred_values = pred_values
+        self._materialized: QuoteCoreResult | None = None
+
+    @property
+    def bid_price(self) -> float:
+        return float(self._native_result.bid_price)
+
+    @property
+    def ask_price(self) -> float:
+        return float(self._native_result.ask_price)
+
+    @property
+    def spread(self) -> float:
+        return float(self._native_result.spread)
+
+    @property
+    def max_spread(self) -> float:
+        return float(self._native_result.max_spread)
+
+    @property
+    def config(self) -> QuoteCoreConfig:
+        return self._cfg
+
+    @property
+    def is_materialized(self) -> bool:
+        return self._materialized is not None
+
+    def side_context(self, side: str) -> Any:
+        if side == "BUY":
+            return self._buy_context
+        if side == "SELL":
+            return self._sell_context
+        raise ValueError(f"unsupported quote side: {side!r}")
+
+    def side_value(self, side: str, key: str, default: Any = None) -> Any:
+        """Read a compact live-policy field without creating a mapping."""
+
+        context = self.side_context(side)
+        if key == "bid_adverse":
+            return bool(context.side_adverse) if side == "BUY" else False
+        if key == "ask_adverse":
+            return bool(context.side_adverse) if side == "SELL" else False
+        if key == "order_ttl_ms":
+            return 0
+        if key == "local_extreme_guard" or key == "local_extreme_pause":
+            return False
+        if key == "local_extreme_spread_mult":
+            return 1.0
+        if key == "side_adverse":
+            return bool(context.side_adverse)
+        if key == "side_adverse_pause":
+            return bool(context.side_adverse_pause)
+        if key == "defense_guard":
+            return bool(context.defense_guard)
+        if key == "defense_pause":
+            return bool(context.defense_pause)
+        if key == "defense_spread_mult":
+            return float(context.defense_spread_mult)
+        if key == "cap_exposure_block":
+            return bool(context.cap_exposure_block)
+        return self.materialize().quote_context.get(side, {}).get(key, default)
+
+    def diagnostic_value(self, key: str, default: Any = None) -> Any:
+        """Read diagnostics used on every decision directly from native POD."""
+
+        if key in {"max_spread", "kappa_before_depth", "kappa_used", "asym"}:
+            return getattr(self._native_result, key)
+        if key == "p3_side_bbo_floor_enabled":
+            return self._cfg.p3_side_bbo_floor_enabled
+        if key == "p3_touch_delta_star":
+            return self._cfg.p3_delta_star
+        return self.materialize().diagnostics.get(key, default)
+
+    def materialize(self) -> QuoteCoreResult:
+        materialized = self._materialized
+        if materialized is None:
+            materialized = _compute_quote_core_cpp_compact(
+                self._state,
+                self._cfg,
+                self._pred_values,
+                None,
+                _native_result=self._native_result,
+                _native_pred_values=self._pred_values,
+            )
+            self._materialized = materialized
+        return materialized
+
+
 def ber_inventory_role_for_target(
     side: str,
     inventory: float,
@@ -2392,6 +2515,7 @@ _CPP_QUOTE_CORE_IMPORT_FAILED = False
 _CPP_CFG_CACHE_KEY = None
 _CPP_CFG_CACHE_REF = None
 _CPP_CFG_CACHE_VALUE = None
+_DEFERRED_NATIVE_QUOTE_RESULT_TYPES: set[type] = set()
 
 
 def _cpp_strict_enabled() -> bool:
@@ -2571,6 +2695,89 @@ _CPP_STATE_FIELDS = (
 )
 
 _CPP_PRED_FIELDS = ("dir_10s", "vol_10s", "ret_10s", "tox_bid", "tox_ask")
+
+_DEFERRED_NATIVE_RESULT_FLOAT_FIELDS = (
+    "ask_price",
+    "asym",
+    "bid_price",
+    "delta_after_cap",
+    "delta_after_regime",
+    "delta_pre_cap",
+    "delta_raw",
+    "fair",
+    "half_d",
+    "kappa_before_depth",
+    "kappa_used",
+    "max_spread",
+    "near_depth_total",
+    "raw_half_spread",
+    "raw_mid_shift",
+    "raw_reservation_shift",
+    "reservation_price",
+    "sigma_sq_blended",
+    "sigma_sq_raw",
+    "spread",
+)
+_DEFERRED_NATIVE_SIDE_FLOAT_FIELDS = (
+    "defense_spread_mult",
+    "final_price",
+    "final_quote_delta_to_bbo",
+    "pre_guard_price",
+    "spread_mult",
+)
+_DEFERRED_NATIVE_SIDE_BOOL_FIELDS = (
+    "cap_exposure_block",
+    "defense_emergency",
+    "defense_guard",
+    "defense_pause",
+    "defense_reducing",
+    "mid_guard",
+    "post_only",
+    "side_adverse",
+    "side_adverse_pause",
+)
+_DEFERRED_NATIVE_FLAGS_BOOL_FIELDS = (
+    "ask_adverse",
+    "bid_adverse",
+    "cap_exposure_block",
+    "cap_hit",
+    "defense_guard",
+    "delta_cap",
+    "final_compressed",
+    "mid_guard",
+    "post_only",
+)
+
+
+def _validate_deferred_native_quote_result_once(result: Any) -> None:
+    """Prove the complete compact-result ABI before deferred routing begins.
+
+    A loaded extension type is immutable for the process lifetime.  Touching
+    every field consumed by the compact converter once preserves the old
+    fail-before-routing ABI boundary without rebuilding Python dictionaries on
+    every quote.
+    """
+
+    result_type = type(result)
+    if result_type in _DEFERRED_NATIVE_QUOTE_RESULT_TYPES:
+        return
+    try:
+        for name in _DEFERRED_NATIVE_RESULT_FLOAT_FIELDS:
+            float(getattr(result, name))
+        for side_name in ("buy", "sell"):
+            side = getattr(result, side_name)
+            for name in _DEFERRED_NATIVE_SIDE_FLOAT_FIELDS:
+                float(getattr(side, name))
+            for name in _DEFERRED_NATIVE_SIDE_BOOL_FIELDS:
+                bool(getattr(side, name))
+        flags = result.flags
+        for name in _DEFERRED_NATIVE_FLAGS_BOOL_FIELDS:
+            bool(getattr(flags, name))
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise RuntimeError(
+            "narrowgate_cpp deferred quote result ABI is incomplete"
+        ) from exc
+    _DEFERRED_NATIVE_QUOTE_RESULT_TYPES.add(result_type)
 
 
 def _to_cpp_depth(cpp: Any, depth: DepthSnapshot | None) -> Any:
@@ -3134,7 +3341,7 @@ def compute_native_quote_policy_stage_live(
     sell_policy: Any,
     *,
     require_full_context: bool = False,
-) -> tuple[QuoteCoreResult, Any, Any]:
+) -> tuple[DeferredNativeQuoteCoreResult | QuoteCoreResult, Any, Any]:
     """Cross the native boundary once; never compute a Python reference."""
     cpp = _load_cpp_quote_core()
     if cpp is None:
@@ -3155,19 +3362,28 @@ def compute_native_quote_policy_stage_live(
         policy_values(buy_policy),
         policy_values(sell_policy),
     )
-    converter = (
-        _compute_quote_core_cpp
-        if require_full_context
-        else _compute_quote_core_cpp_compact
-    )
-    quote = converter(
-        state,
-        cfg,
-        pred,
-        depth,
-        _native_result=native.quote,
-        _native_pred_values=pred_values,
-    )
+    if _cpp_strict_enabled() and not require_full_context:
+        _validate_deferred_native_quote_result_once(native.quote)
+        quote = DeferredNativeQuoteCoreResult(
+            native_result=native.quote,
+            state=state,
+            cfg=cfg,
+            pred_values=pred_values,
+        )
+    else:
+        converter = (
+            _compute_quote_core_cpp
+            if require_full_context
+            else _compute_quote_core_cpp_compact
+        )
+        quote = converter(
+            state,
+            cfg,
+            pred,
+            depth,
+            _native_result=native.quote,
+            _native_pred_values=pred_values,
+        )
     return quote, native.buy_policy, native.sell_policy
 
 
@@ -3319,3 +3535,44 @@ def compute_quote_core_live(
             if _cpp_strict_enabled():
                 raise
     return compute_quote_core(state, cfg, pred, depth)
+
+
+def compute_quote_core_live_deferred(
+    state: QuoteState,
+    cfg: QuoteCoreConfig,
+    pred: QuotePrediction | Any,
+    depth: DepthSnapshot | None = None,
+    *,
+    require_full_context: bool = False,
+) -> DeferredNativeQuoteCoreResult | QuoteCoreResult:
+    """Live-only native call that defers legacy Python mapping construction.
+
+    Public callers continue to use :func:`compute_quote_core_live`, which keeps
+    returning an eagerly materialized ``QuoteCoreResult``.  The deferred form
+    is useful only to a live owner that can consume the native POD directly and
+    retain it until evidence or logging requests the legacy mappings.
+    """
+
+    # Deferred conversion moves compact-ABI validation to the first mapping
+    # consumer.  Use it only for the fail-fast native profile; non-strict mode
+    # retains the eager wrapper's synchronous Python-fallback boundary.
+    if (
+        _cpp_quote_core_enabled(cfg)
+        and _cpp_strict_enabled()
+        and not require_full_context
+    ):
+        result, pred_values = _call_cpp_quote_core(state, cfg, pred, depth)
+        _validate_deferred_native_quote_result_once(result)
+        return DeferredNativeQuoteCoreResult(
+            native_result=result,
+            state=state,
+            cfg=cfg,
+            pred_values=pred_values,
+        )
+    return compute_quote_core_live(
+        state,
+        cfg,
+        pred,
+        depth,
+        require_full_context=require_full_context,
+    )

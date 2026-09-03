@@ -1,6 +1,7 @@
 import platform
 import struct
 import sys
+from dataclasses import fields, is_dataclass
 
 import numpy as np
 import pytest
@@ -9,6 +10,30 @@ from strategy import quote_core as qc
 from strategy.policy_guards import CommonSidePolicyInput, evaluate_common_side_policy
 
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
+
+
+def _assert_recursive_exact(actual, expected):
+    assert type(actual) is type(expected)
+    if isinstance(expected, float):
+        assert struct.pack(">d", actual) == struct.pack(">d", expected)
+        return
+    if is_dataclass(expected):
+        for item in fields(expected):
+            _assert_recursive_exact(
+                getattr(actual, item.name), getattr(expected, item.name)
+            )
+        return
+    if isinstance(expected, dict):
+        assert list(actual) == list(expected)
+        for key in expected:
+            _assert_recursive_exact(actual[key], expected[key])
+        return
+    if isinstance(expected, (list, tuple)):
+        assert len(actual) == len(expected)
+        for actual_item, expected_item in zip(actual, expected, strict=True):
+            _assert_recursive_exact(actual_item, expected_item)
+        return
+    assert actual == expected
 
 
 def test_cpp_live_build_profile_is_queryable_and_consistent():
@@ -1218,6 +1243,114 @@ def test_cpp_live_compact_context_preserves_policy_fields(monkeypatch):
     assert requested_full.quote_context["BUY"]["raw_asym_shift"] == pytest.approx(
         full.quote_context["BUY"]["raw_asym_shift"]
     )
+
+
+def test_deferred_live_quote_pod_reads_do_not_materialize(monkeypatch):
+    state = _state(1, inventory=0.006, mo_ema_bid=-6.0, mo_ema_ask=-4.0)
+    cfg = _cfg(
+        use_depth_microprice=True,
+        use_depth_kappa=True,
+        adverse_guard_enabled=True,
+        adverse_markout_threshold=5.0,
+        adverse_pause=True,
+        defense_guard_enabled=True,
+        defense_markout_threshold=2.0,
+    )
+    pred = _pred(1)
+    depth = _depth()
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+
+    deferred = qc.compute_quote_core_live_deferred(state, cfg, pred, depth)
+    eager = qc.compute_quote_core_live(state, cfg, pred, depth)
+
+    assert isinstance(deferred, qc.DeferredNativeQuoteCoreResult)
+    assert not deferred.is_materialized
+    _assert_recursive_exact(deferred.bid_price, eager.bid_price)
+    _assert_recursive_exact(deferred.ask_price, eager.ask_price)
+    _assert_recursive_exact(deferred.spread, eager.spread)
+    for side in ("BUY", "SELL"):
+        for key in (
+            "order_ttl_ms",
+            "side_adverse",
+            "bid_adverse",
+            "ask_adverse",
+            "side_adverse_pause",
+            "local_extreme_guard",
+            "local_extreme_spread_mult",
+            "local_extreme_pause",
+            "defense_guard",
+            "defense_spread_mult",
+            "defense_pause",
+            "cap_exposure_block",
+        ):
+            _assert_recursive_exact(
+                deferred.side_value(side, key), eager.quote_context[side][key]
+            )
+    for key in (
+        "max_spread",
+        "kappa_before_depth",
+        "kappa_used",
+        "asym",
+        "p3_side_bbo_floor_enabled",
+        "p3_touch_delta_star",
+    ):
+        _assert_recursive_exact(
+            deferred.diagnostic_value(key), eager.diagnostics[key]
+        )
+    assert not deferred.is_materialized
+
+    materialized = deferred.materialize()
+    _assert_recursive_exact(materialized, eager)
+    assert deferred.materialize() is materialized
+
+
+def test_deferred_live_quote_preserves_eager_public_and_full_context_apis(
+    monkeypatch,
+):
+    state = _state(2)
+    cfg = _cfg(use_depth_microprice=True, use_depth_kappa=True)
+    pred = _pred(2)
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+
+    public_result = qc.compute_quote_core_live(state, cfg, pred, _depth())
+    full_result = qc.compute_quote_core_live_deferred(
+        state,
+        cfg,
+        pred,
+        _depth(),
+        require_full_context=True,
+    )
+
+    assert type(public_result) is qc.QuoteCoreResult
+    assert type(full_result) is qc.QuoteCoreResult
+    assert "raw_asym_shift" in full_result.quote_context["BUY"]
+
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    non_strict_result = qc.compute_quote_core_live_deferred(
+        state, cfg, pred, _depth()
+    )
+    assert type(non_strict_result) is qc.QuoteCoreResult
+
+
+def test_deferred_live_quote_rejects_incomplete_native_abi_before_return(
+    monkeypatch,
+):
+    class IncompleteNativeResult:
+        pass
+
+    incomplete = IncompleteNativeResult()
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setattr(
+        qc,
+        "_call_cpp_quote_core",
+        lambda *_args, **_kwargs: (incomplete, (0.5, 0.0, 0.0, 0.5, 0.5)),
+    )
+
+    with pytest.raises(RuntimeError, match="deferred quote result ABI is incomplete"):
+        qc.compute_quote_core_live_deferred(_state(3), _cfg(), _pred(3), _depth())
 
 
 def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
