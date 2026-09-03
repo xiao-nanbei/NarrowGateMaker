@@ -1048,6 +1048,74 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
     )
 
 
+def test_offline_install_streams_wheels_without_whole_file_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    lock, lock_path, _wheels, wheelhouse = _wheelhouse(tmp_path)
+    payload = b"bounded-wheel-payload" * 256
+    root = _wheel(
+        tmp_path,
+        name="narrowgate",
+        version="0.1.2.dev0",
+        requires=("frozen-dep==1.2.3",),
+        extra_members={"narrowgate_fixture/payload.bin": payload},
+    )
+    native = _wheel(
+        tmp_path,
+        name="narrowgate-btcusdc-cpp",
+        version="0.1.2.dev0",
+        extra_members={"narrowgate_cpp_fixture/payload.bin": payload},
+    )
+    root_binding = subject.inspect_wheel(root)
+    native_binding = subject.inspect_wheel(native)
+    manifest = json.loads((wheelhouse / subject.WHEELHOUSE_MANIFEST).read_text())
+
+    original_read = subject._read_regular_file  # noqa: SLF001
+
+    def reject_whole_wheel_read(
+        path: Path,
+        *,
+        private_authority: bool = False,
+    ) -> bytes:
+        if Path(path).suffix == ".whl":
+            raise AssertionError("install must not read a whole wheel into memory")
+        return original_read(path, private_authority=private_authority)
+
+    def reject_bytes_inspector(
+        path: Path,
+        *,
+        expected_sha256: str | None = None,
+    ) -> tuple[dict[str, Any], bytes]:
+        del path, expected_sha256
+        raise AssertionError("install must inspect wheels through the bounded path reader")
+
+    monkeypatch.setattr(subject, "_WHEEL_IO_CHUNK_BYTES", 64)
+    monkeypatch.setattr(subject, "_read_regular_file", reject_whole_wheel_read)
+    monkeypatch.setattr(subject, "_inspect_wheel_bytes", reject_bytes_inspector)
+    receipt_path = tmp_path / "runtime.install.json"
+    result = subject.install_locked_runtime(
+        builder_python=BUILDER_PYTHON,
+        venv_dir=tmp_path / "locked-venv",
+        lock_path=lock_path,
+        expected_lock_sha256=lock[subject.LOCK_CANONICAL_FIELD],
+        wheelhouse_dir=wheelhouse,
+        expected_wheelhouse_sha256=manifest[subject.WHEELHOUSE_CANONICAL_FIELD],
+        root_wheel_path=root,
+        root_wheel_sha256=root_binding["sha256"],
+        native_wheel_path=native,
+        native_wheel_sha256=native_binding["sha256"],
+        receipt_path=receipt_path,
+        generated_utc="2026-08-25T01:00:00Z",
+    )
+
+    assert result["receipt"]["explicit_wheels"] == {
+        "root": root_binding,
+        "native": native_binding,
+    }
+    assert receipt_path.is_file()
+
+
 def test_offline_install_uses_base_creator_and_keeps_builder_for_pip(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

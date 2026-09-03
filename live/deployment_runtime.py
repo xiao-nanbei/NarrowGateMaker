@@ -1200,12 +1200,117 @@ def _is_top_level_dist_info_authority(name: str, authority: str) -> bool:
     return len(parts) == 2 and parts[0].endswith(".dist-info") and parts[1] == authority
 
 
-def _inspect_wheel_bytes(
-    path: Path, *, expected_sha256: str | None = None
-) -> tuple[dict[str, Any], bytes]:
+_WHEEL_IO_CHUNK_BYTES = 1024 * 1024
+
+
+def _wheel_source(path: Path) -> Path:
     source = _absolute(path)
     if source.suffix != ".whl" or Path(source.name).name != source.name:
         raise LockedRuntimeError(f"wheel filename is invalid: {source.name}")
+    return source
+
+
+def _stream_digest(handle: Any) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    handle.seek(0)
+    while chunk := handle.read(_WHEEL_IO_CHUNK_BYTES):
+        digest.update(chunk)
+        size += len(chunk)
+    handle.seek(0)
+    return digest.hexdigest(), size
+
+
+def _stream_zip_member_digest(
+    archive: zipfile.ZipFile,
+    member_name: str,
+) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with archive.open(member_name) as member:
+        while chunk := member.read(_WHEEL_IO_CHUNK_BYTES):
+            digest.update(chunk)
+            size += len(chunk)
+    encoded = base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
+    return encoded, size
+
+
+def _inspect_wheel_archive(
+    archive: zipfile.ZipFile,
+    *,
+    source: Path,
+    digest: str,
+    size_bytes: int,
+) -> dict[str, Any]:
+    infos = archive.infolist()
+    names = [info.filename for info in infos]
+    if len(names) != len(set(names)):
+        raise LockedRuntimeError(f"wheel has duplicate members: {source.name}")
+    for name in names:
+        _safe_wheel_member(name.rstrip("/"))
+    metadata_names = [
+        name for name in names if _is_top_level_dist_info_authority(name, "METADATA")
+    ]
+    wheel_names = [
+        name for name in names if _is_top_level_dist_info_authority(name, "WHEEL")
+    ]
+    record_names = [
+        name for name in names if _is_top_level_dist_info_authority(name, "RECORD")
+    ]
+    if len(metadata_names) != 1 or len(wheel_names) != 1 or len(record_names) != 1:
+        raise LockedRuntimeError(f"wheel authority members are ambiguous: {source.name}")
+    dist_info = metadata_names[0].removesuffix("/METADATA")
+    if wheel_names[0] != f"{dist_info}/WHEEL" or record_names[0] != f"{dist_info}/RECORD":
+        raise LockedRuntimeError(f"wheel dist-info directories disagree: {source.name}")
+    with archive.open(metadata_names[0]) as metadata_handle:
+        metadata = BytesParser(policy=compat32).parse(metadata_handle)
+    name = normalize_distribution_name(str(metadata.get("Name") or ""))
+    version = _validate_version(metadata.get("Version") or "", name)
+    by_name: dict[str, tuple[str, str]] = {}
+    try:
+        with archive.open(record_names[0]) as record_handle:
+            with io.TextIOWrapper(record_handle, encoding="utf-8", newline="") as text:
+                for row in csv.reader(text):
+                    if len(row) != 3 or not row[0] or row[0] in by_name:
+                        raise LockedRuntimeError(
+                            f"invalid or duplicate wheel RECORD row: {source.name}"
+                        )
+                    _safe_wheel_member(row[0])
+                    by_name[row[0]] = (row[1], row[2])
+    except (UnicodeDecodeError, csv.Error) as exc:
+        raise LockedRuntimeError(f"invalid wheel RECORD: {source.name}: {exc}") from exc
+    archive_files = {info.filename for info in infos if not info.is_dir()}
+    if set(by_name) != archive_files:
+        raise LockedRuntimeError(f"wheel RECORD member set mismatch: {source.name}")
+    for member_name in sorted(archive_files):
+        encoded, size_text = by_name[member_name]
+        if member_name == record_names[0]:
+            if encoded or size_text:
+                raise LockedRuntimeError(f"wheel RECORD must be self-unhashed: {source.name}")
+            continue
+        algorithm, separator, value = encoded.partition("=")
+        if separator != "=" or algorithm != "sha256" or not value:
+            raise LockedRuntimeError(
+                f"wheel member lacks SHA256: {source.name}:{member_name}"
+            )
+        member_digest, member_size = _stream_zip_member_digest(archive, member_name)
+        if member_digest != value or size_text != str(member_size):
+            raise LockedRuntimeError(
+                f"wheel RECORD digest/size mismatch: {source.name}:{member_name}"
+            )
+    return {
+        "name": name,
+        "version": version,
+        "filename": source.name,
+        "sha256": digest,
+        "size_bytes": size_bytes,
+    }
+
+
+def _inspect_wheel_bytes(
+    path: Path, *, expected_sha256: str | None = None
+) -> tuple[dict[str, Any], bytes]:
+    source = _wheel_source(path)
     raw = _read_regular_file(source)
     digest = _sha256(raw)
     if expected_sha256 is not None and digest != _require_sha256(
@@ -1214,76 +1319,160 @@ def _inspect_wheel_bytes(
         raise LockedRuntimeError(f"wheel SHA256 mismatch: {source.name}")
     try:
         with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-            infos = archive.infolist()
-            names = [info.filename for info in infos]
-            if len(names) != len(set(names)):
-                raise LockedRuntimeError(f"wheel has duplicate members: {source.name}")
-            for name in names:
-                _safe_wheel_member(name.rstrip("/"))
-            metadata_names = [
-                name for name in names if _is_top_level_dist_info_authority(name, "METADATA")
-            ]
-            wheel_names = [
-                name for name in names if _is_top_level_dist_info_authority(name, "WHEEL")
-            ]
-            record_names = [
-                name for name in names if _is_top_level_dist_info_authority(name, "RECORD")
-            ]
-            if len(metadata_names) != 1 or len(wheel_names) != 1 or len(record_names) != 1:
-                raise LockedRuntimeError(f"wheel authority members are ambiguous: {source.name}")
-            dist_info = metadata_names[0].removesuffix("/METADATA")
-            if wheel_names[0] != f"{dist_info}/WHEEL" or record_names[0] != f"{dist_info}/RECORD":
-                raise LockedRuntimeError(f"wheel dist-info directories disagree: {source.name}")
-            metadata = BytesParser(policy=compat32).parsebytes(archive.read(metadata_names[0]))
-            name = normalize_distribution_name(str(metadata.get("Name") or ""))
-            version = _validate_version(metadata.get("Version") or "", name)
-            try:
-                record_rows = list(
-                    csv.reader(io.StringIO(archive.read(record_names[0]).decode("utf-8")))
-                )
-            except (UnicodeDecodeError, csv.Error) as exc:
-                raise LockedRuntimeError(f"invalid wheel RECORD: {source.name}: {exc}") from exc
-            by_name: dict[str, tuple[str, str]] = {}
-            for row in record_rows:
-                if len(row) != 3 or not row[0] or row[0] in by_name:
-                    raise LockedRuntimeError(
-                        f"invalid or duplicate wheel RECORD row: {source.name}"
-                    )
-                _safe_wheel_member(row[0])
-                by_name[row[0]] = (row[1], row[2])
-            archive_files = {info.filename for info in infos if not info.is_dir()}
-            if set(by_name) != archive_files:
-                raise LockedRuntimeError(f"wheel RECORD member set mismatch: {source.name}")
-            for member_name in sorted(archive_files):
-                encoded, size_text = by_name[member_name]
-                member_raw = archive.read(member_name)
-                if member_name == record_names[0]:
-                    if encoded or size_text:
-                        raise LockedRuntimeError(
-                            f"wheel RECORD must be self-unhashed: {source.name}"
-                        )
-                    continue
-                algorithm, separator, value = encoded.partition("=")
-                if separator != "=" or algorithm != "sha256" or not value:
-                    raise LockedRuntimeError(
-                        f"wheel member lacks SHA256: {source.name}:{member_name}"
-                    )
-                if _urlsafe_digest(member_raw) != value or size_text != str(len(member_raw)):
-                    raise LockedRuntimeError(
-                        f"wheel RECORD digest/size mismatch: {source.name}:{member_name}"
-                    )
+            artifact = _inspect_wheel_archive(
+                archive,
+                source=source,
+                digest=digest,
+                size_bytes=len(raw),
+            )
     except zipfile.BadZipFile as exc:
         raise LockedRuntimeError(f"invalid wheel ZIP: {source.name}") from exc
-    return (
-        {
-            "name": name,
-            "version": version,
-            "filename": source.name,
-            "sha256": digest,
-            "size_bytes": len(raw),
-        },
-        raw,
-    )
+    return artifact, raw
+
+
+def _inspect_wheel_path(
+    path: Path,
+    *,
+    expected_sha256: str | None = None,
+    private_authority: bool = False,
+) -> dict[str, Any]:
+    source = _wheel_source(path)
+    _assert_no_symlink_components(source)
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(source, flags)
+    except OSError as exc:
+        raise LockedRuntimeError(f"cannot open regular file {source}: {exc}") from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise LockedRuntimeError(f"not a regular file: {source}")
+        if private_authority and stat.S_IMODE(before.st_mode) != 0o600:
+            raise LockedRuntimeError(f"authority must be mode 0600: {source}")
+        with os.fdopen(fd, "rb", closefd=False) as handle:
+            digest, size_bytes = _stream_digest(handle)
+            if expected_sha256 is not None and digest != _require_sha256(
+                expected_sha256,
+                f"expected wheel {source.name}",
+            ):
+                raise LockedRuntimeError(f"wheel SHA256 mismatch: {source.name}")
+            try:
+                with zipfile.ZipFile(handle) as archive:
+                    artifact = _inspect_wheel_archive(
+                        archive,
+                        source=source,
+                        digest=digest,
+                        size_bytes=size_bytes,
+                    )
+            except zipfile.BadZipFile as exc:
+                raise LockedRuntimeError(f"invalid wheel ZIP: {source.name}") from exc
+        after = os.fstat(fd)
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable or size_bytes != after.st_size:
+            raise LockedRuntimeError(f"file changed while it was being read: {source}")
+        return artifact
+    finally:
+        os.close(fd)
+
+
+def _copy_wheel_create_only_private(
+    source_path: Path,
+    target_path: Path,
+    *,
+    expected_sha256: str,
+    expected_size_bytes: int,
+) -> None:
+    source = _wheel_source(source_path)
+    target = _absolute(target_path)
+    parent = target.parent
+    _assert_no_symlink_components(source)
+    _assert_no_symlink_components(parent)
+    if not parent.is_dir():
+        raise LockedRuntimeError(f"output parent is not a directory: {parent}")
+    expected_digest = _require_sha256(expected_sha256, f"expected wheel {source.name}")
+    if isinstance(expected_size_bytes, bool) or not isinstance(expected_size_bytes, int):
+        raise LockedRuntimeError(f"invalid expected wheel size: {source.name}")
+
+    source_flags = os.O_RDONLY
+    target_flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        source_flags |= os.O_NOFOLLOW
+        target_flags |= os.O_NOFOLLOW
+    try:
+        source_fd = os.open(source, source_flags)
+    except OSError as exc:
+        raise LockedRuntimeError(f"cannot open regular file {source}: {exc}") from exc
+    target_fd = -1
+    complete = False
+    try:
+        before = os.fstat(source_fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise LockedRuntimeError(f"not a regular file: {source}")
+        try:
+            target_fd = os.open(target, target_flags, 0o600)
+        except FileExistsError as exc:
+            raise LockedRuntimeError(f"create-only conflict: {target}") from exc
+
+        digest = hashlib.sha256()
+        size_bytes = 0
+        while chunk := os.read(source_fd, _WHEEL_IO_CHUNK_BYTES):
+            digest.update(chunk)
+            size_bytes += len(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(target_fd, view)
+                if written <= 0:
+                    raise LockedRuntimeError(f"short write: {target}")
+                view = view[written:]
+        after = os.fstat(source_fd)
+        stable = (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) == (
+            after.st_dev,
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        )
+        if not stable or size_bytes != after.st_size:
+            raise LockedRuntimeError(f"file changed while it was being read: {source}")
+        if size_bytes != expected_size_bytes or digest.hexdigest() != expected_digest:
+            raise LockedRuntimeError(f"private install wheel copy drifted: {source.name}")
+
+        os.fsync(target_fd)
+        os.fchmod(target_fd, 0o600)
+        target_info = os.fstat(target_fd)
+        if (
+            not stat.S_ISREG(target_info.st_mode)
+            or stat.S_IMODE(target_info.st_mode) != 0o600
+            or target_info.st_nlink != 1
+            or target_info.st_size != expected_size_bytes
+        ):
+            raise LockedRuntimeError(f"private output mode/link/size drifted: {target}")
+        complete = True
+    finally:
+        if target_fd >= 0:
+            os.close(target_fd)
+        os.close(source_fd)
+        if not complete:
+            try:
+                target.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def inspect_wheel(path: Path, *, expected_sha256: str | None = None) -> dict[str, Any]:
@@ -1536,7 +1725,7 @@ def _validate_wheelhouse_directory(
     lock: dict[str, Any],
     wheelhouse_dir: Path,
     expected_manifest_sha256: str,
-) -> tuple[dict[str, Any], list[tuple[dict[str, Any], bytes]]]:
+) -> tuple[dict[str, Any], list[tuple[dict[str, Any], Path]]]:
     root = _validate_private_directory(wheelhouse_dir, "wheelhouse")
     manifest_raw = _read_regular_file(root / WHEELHOUSE_MANIFEST, private_authority=True)
     manifest = _validate_wheelhouse_payload(
@@ -1551,7 +1740,7 @@ def _validate_wheelhouse_directory(
     if manifest.get("interpreter") != lock["interpreter"]:
         raise LockedRuntimeError("wheelhouse interpreter authority drifted")
     lock_versions = {row["name"]: row["version"] for row in lock["distributions"]}
-    artifacts: list[tuple[dict[str, Any], bytes]] = []
+    artifacts: list[tuple[dict[str, Any], Path]] = []
     expected_files = {WHEELHOUSE_MANIFEST}
     expected_directories = {".", "wheels"}
     for row in manifest["wheels"]:
@@ -1559,15 +1748,18 @@ def _validate_wheelhouse_directory(
         expected_files.add(relative.as_posix())
         expected_directories.add(relative.parent.as_posix())
         path = root / relative
-        raw = _read_regular_file(path, private_authority=True)
-        artifact, inspected_raw = _inspect_wheel_bytes(path, expected_sha256=row["sha256"])
-        if raw != inspected_raw or artifact != {key: row[key] for key in artifact}:
+        artifact = _inspect_wheel_path(
+            path,
+            expected_sha256=row["sha256"],
+            private_authority=True,
+        )
+        if artifact != {key: row[key] for key in artifact}:
             raise LockedRuntimeError(f"wheelhouse artifact binding drifted: {row['name']}")
         if row["name"] not in lock_versions or row["version"] != lock_versions[row["name"]]:
             raise LockedRuntimeError(f"wheelhouse version is outside lock: {row['name']}")
-        if row["size_bytes"] != len(raw) or row["filename"] != path.name:
+        if row["size_bytes"] != artifact["size_bytes"] or row["filename"] != path.name:
             raise LockedRuntimeError(f"wheelhouse filename/size drifted: {row['name']}")
-        artifacts.append((artifact, raw))
+        artifacts.append((artifact, path))
     if {row["name"] for row in manifest["wheels"]} != set(lock_versions):
         raise LockedRuntimeError("wheelhouse distribution set differs from lock")
     actual_files: set[str] = set()
@@ -1640,9 +1832,17 @@ def _validate_explicit_wheels(
     root_wheel_sha256: str,
     native_wheel_path: Path,
     native_wheel_sha256: str,
-) -> tuple[tuple[dict[str, Any], bytes], tuple[dict[str, Any], bytes]]:
-    root = _inspect_wheel_bytes(root_wheel_path, expected_sha256=root_wheel_sha256)
-    native = _inspect_wheel_bytes(native_wheel_path, expected_sha256=native_wheel_sha256)
+) -> tuple[tuple[dict[str, Any], Path], tuple[dict[str, Any], Path]]:
+    root_path = _wheel_source(root_wheel_path)
+    native_path = _wheel_source(native_wheel_path)
+    root = (
+        _inspect_wheel_path(root_path, expected_sha256=root_wheel_sha256),
+        root_path,
+    )
+    native = (
+        _inspect_wheel_path(native_path, expected_sha256=native_wheel_sha256),
+        native_path,
+    )
     if root[0]["name"] != ROOT_DISTRIBUTION_NAME:
         raise LockedRuntimeError("root wheel distribution must be narrowgate")
     if native[0]["name"] not in NATIVE_DISTRIBUTION_NAMES:
@@ -1775,18 +1975,18 @@ def install_locked_runtime(
         exact_paths: list[Path] = []
         seen_filenames: set[str] = set()
         all_artifacts = [*dependency_artifacts, root_artifact, native_artifact]
-        for artifact, raw in all_artifacts:
+        for artifact, source_path in all_artifacts:
             filename = artifact["filename"]
             if filename in seen_filenames:
                 raise LockedRuntimeError(f"wheel filename collision: {filename}")
             seen_filenames.add(filename)
             exact_path = install_stage / filename
-            _write_create_only_private(exact_path, raw)
-            if (
-                _sha256(_read_regular_file(exact_path, private_authority=True))
-                != artifact["sha256"]
-            ):
-                raise LockedRuntimeError(f"private install wheel copy drifted: {filename}")
+            _copy_wheel_create_only_private(
+                source_path,
+                exact_path,
+                expected_sha256=artifact["sha256"],
+                expected_size_bytes=artifact["size_bytes"],
+            )
             exact_paths.append(exact_path)
         env = _safe_environment()
         env.update(
