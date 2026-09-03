@@ -87,6 +87,9 @@ NATIVE_LIVE_ABI_CONTRACT = {
         "compute_live_routing_decision",
         "SignalFeatureEngine",
         "SIGNAL_FEATURE_NAMES",
+        "SignalRefPerpFeatureEngine",
+        "SIGNAL_REF_PERP_FEATURE_ABI_VERSION",
+        "SIGNAL_REF_PERP_FEATURE_NAMES",
         "NativeLightgbmBundle",
         "LIGHTGBM_BUNDLE_HEAD_NAMES",
         "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
@@ -124,6 +127,13 @@ NATIVE_LIVE_ABI_CONTRACT = {
     ),
     "required_class_members": {
         "SignalFeatureEngine": ("compute_bucket_values",),
+        "SignalRefPerpFeatureEngine": (
+            "reset",
+            "update_trade_batch",
+            "update_book_ticker",
+            "prepare",
+            "commit",
+        ),
         "NativeLightgbmBundle": (
             "predict",
             "feature_count",

@@ -114,6 +114,14 @@ py::array_t<double> signal_feature_array(const SignalFeatureVector& features) {
     return out;
 }
 
+py::array_t<double> signal_ref_perp_feature_array(
+    const SignalRefPerpFeatureValues& values
+) {
+    py::array_t<double> out(values.size());
+    std::copy(values.begin(), values.end(), out.mutable_data());
+    return out;
+}
+
 SignalExecutionL2Snapshot signal_execution_l2_snapshot_from_python(
     double ts_ms,
     py::handle bids_obj,
@@ -968,6 +976,17 @@ void bind_streaming_features(py::module_& m) {
     }
     m.attr("SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES") =
         std::move(execution_l2_policy_metric_names);
+    m.attr("SIGNAL_REF_PERP_FEATURE_ABI_VERSION") =
+        "signal_ref_perp_incremental.v1";
+    py::tuple ref_perp_feature_names(kSignalRefPerpFeatureNames.size());
+    for (std::size_t i = 0; i < kSignalRefPerpFeatureNames.size(); ++i) {
+        ref_perp_feature_names[i] = py::str(
+            kSignalRefPerpFeatureNames[i].data(),
+            kSignalRefPerpFeatureNames[i].size()
+        );
+    }
+    m.attr("SIGNAL_REF_PERP_FEATURE_NAMES") =
+        std::move(ref_perp_feature_names);
 
     py::class_<Bar1s>(m, "Bar1s")
         .def(py::init<>())
@@ -1038,6 +1057,69 @@ void bind_streaming_features(py::module_& m) {
         )
         .def("current_bar", &TradeBarAggregator::current_bar)
         .def("current_bucket_ms", &TradeBarAggregator::current_bucket_ms);
+
+    py::class_<SignalRefPerpPrepared>(m, "SignalRefPerpPrepared")
+        .def_property_readonly(
+            "values",
+            [](const SignalRefPerpPrepared& prepared) {
+                return signal_ref_perp_feature_array(prepared.values);
+            }
+        )
+        .def_readonly("target_bucket", &SignalRefPerpPrepared::target_bucket)
+        .def_readonly("basis_bps", &SignalRefPerpPrepared::basis_bps)
+        .def_readonly("revision", &SignalRefPerpPrepared::revision)
+        .def_readonly("basis_available", &SignalRefPerpPrepared::basis_available);
+
+    py::class_<SignalRefPerpFeatureEngine>(m, "SignalRefPerpFeatureEngine")
+        .def(
+            py::init<std::size_t, std::size_t, std::size_t, std::size_t, double>(),
+            py::arg("max_bars") = 3700,
+            py::arg("max_book_tickers") = 3600,
+            py::arg("max_basis") = 360,
+            py::arg("basis_min_periods") = 30,
+            py::arg("source_max_age_ms") = 30000.0
+        )
+        .def("reset", &SignalRefPerpFeatureEngine::reset)
+        .def(
+            "update_trade_batch",
+            [](
+                SignalRefPerpFeatureEngine& engine,
+                CArray<std::int64_t> ts_ms,
+                CArray<double> prices,
+                CArray<double> quantities,
+                CArray<std::uint8_t> is_buyer_maker
+            ) {
+                py::gil_scoped_release release;
+                engine.update_trade_batch(
+                    view_from_array(ts_ms),
+                    view_from_array(prices),
+                    view_from_array(quantities),
+                    view_from_array(is_buyer_maker)
+                );
+            },
+            py::arg("ts_ms"),
+            py::arg("prices"),
+            py::arg("quantities"),
+            py::arg("is_buyer_maker")
+        )
+        .def(
+            "update_book_ticker",
+            &SignalRefPerpFeatureEngine::update_book_ticker,
+            py::arg("event_ts_ms"),
+            py::arg("receive_ts_ms"),
+            py::arg("bid"),
+            py::arg("ask")
+        )
+        .def(
+            "prepare",
+            &SignalRefPerpFeatureEngine::prepare,
+            py::arg("target_ts_ms"),
+            py::arg("target_close")
+        )
+        .def("commit", &SignalRefPerpFeatureEngine::commit)
+        .def("bar_count", &SignalRefPerpFeatureEngine::bar_count)
+        .def("book_ticker_count", &SignalRefPerpFeatureEngine::book_ticker_count)
+        .def("basis_count", &SignalRefPerpFeatureEngine::basis_count);
 
     py::class_<SignalExecutionL2Engine>(m, "SignalExecutionL2Engine")
         .def(py::init<std::size_t>(), py::arg("max_snapshots") = 300)

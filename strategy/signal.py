@@ -56,6 +56,7 @@ logger = logging.getLogger("signal")
 
 TEN_SECOND_FEATURE_DAG_SHA256 = TEN_SECOND_CAUSAL_GRAPH.sha256()
 SIGNAL_FEATURE_CPP_ABI_VERSION = "signal_feature_cutoff.v1"
+SIGNAL_REF_PERP_CPP_ABI_VERSION = "signal_ref_perp_incremental.v1"
 
 # Live signal telemetry records coarse, stable ownership boundaries rather
 # than timing individual features.  The snapshot/feature span is lock-held;
@@ -74,6 +75,10 @@ MODEL_DIR = Path(__file__).resolve().parent.parent / "models" / "saved"
 _CPP_SIGNAL_MODULE = None
 _CPP_SIGNAL_IMPORT_FAILED = False
 CPP_LIGHTGBM_INFERENCE_FLAG = "NARROWGATE_CPP_LIGHTGBM_INFERENCE"
+
+
+class _StrictNativeRefPerpError(RuntimeError):
+    pass
 
 
 def _cpp_signal_strict() -> bool:
@@ -180,6 +185,9 @@ CROSS_FEATURE_SUFFIXES = [
     "volatility_60s", "volume_imbalance", "trade_intensity_60s", "vpin_60s",
     "basis_residual_bps", "age_s", "available",
 ]
+REF_PERP_FEATURE_NAMES = tuple(
+    f"cv_ref_perp_{suffix}" for suffix in CROSS_FEATURE_SUFFIXES
+)
 CROSS_SOURCE_MAX_AGE_S = 30.0
 CROSS_BASIS_WINDOW_10S = 360
 CROSS_BASIS_MIN_PERIODS = 30
@@ -510,6 +518,7 @@ class SignalEngine:
                  stablecoin_anchor_symbol: Optional[str] = "USDCUSDT",
                  global_flow_shadow_enabled: bool = False,
                  global_reference_shadow_enabled: bool = False,
+                 preserve_full_cross_market_features: bool = False,
                  ret_demean_halflife: int = 360,
                  bad_trade_log_every: int = 100):
         self._lock = Lock()
@@ -530,8 +539,13 @@ class SignalEngine:
             raise TypeError("global_flow_shadow_enabled must be a boolean")
         if type(global_reference_shadow_enabled) is not bool:
             raise TypeError("global_reference_shadow_enabled must be a boolean")
+        if type(preserve_full_cross_market_features) is not bool:
+            raise TypeError("preserve_full_cross_market_features must be a boolean")
         self._global_flow_shadow_enabled = global_flow_shadow_enabled
         self._global_reference_shadow_enabled = global_reference_shadow_enabled
+        self._preserve_full_cross_market_features = (
+            preserve_full_cross_market_features
+        )
 
         # 1s bar ring buffer (last N seconds)
         self._bar_buffer: deque = deque(maxlen=bar_buffer_size)
@@ -694,6 +708,59 @@ class SignalEngine:
             if execution_l2_cls is not None
             else None
         )
+        self._cpp_ref_perp_disabled_after_error = False
+        self._cpp_ref_perp_engine = None
+        self._model_requires_full_cross_market_features = False
+        if self._cpp_signal_features_enabled and self._enable_ml:
+            model_schema = self._shared_model_feature_schema()
+            self._model_requires_full_cross_market_features = any(
+                name.startswith(("cv_exec_spot_", "cv_ref_spot_"))
+                for name in model_schema
+            )
+            if set(model_schema).intersection(REF_PERP_FEATURE_NAMES):
+                native_names = tuple(
+                    getattr(self._cpp_signal, "SIGNAL_REF_PERP_FEATURE_NAMES", ())
+                )
+                native_abi = str(
+                    getattr(
+                        self._cpp_signal,
+                        "SIGNAL_REF_PERP_FEATURE_ABI_VERSION",
+                        "",
+                    )
+                )
+                if (
+                    native_abi != SIGNAL_REF_PERP_CPP_ABI_VERSION
+                    or native_names != REF_PERP_FEATURE_NAMES
+                ):
+                    message = (
+                        "C++ ref-perp feature ABI changed: "
+                        f"expected_abi={SIGNAL_REF_PERP_CPP_ABI_VERSION!r} "
+                        f"actual_abi={native_abi!r} "
+                        f"expected_names={REF_PERP_FEATURE_NAMES} "
+                        f"actual_names={native_names}"
+                    )
+                    if _cpp_signal_strict():
+                        raise RuntimeError(message)
+                    logger.warning("C++ ref-perp features disabled: %s", message)
+                    self._cpp_ref_perp_disabled_after_error = True
+                else:
+                    ref_perp_cls = getattr(
+                        self._cpp_signal, "SignalRefPerpFeatureEngine", None
+                    )
+                    if ref_perp_cls is None:
+                        if _cpp_signal_strict():
+                            raise RuntimeError(
+                                "narrowgate_cpp missing SignalRefPerpFeatureEngine"
+                            )
+                        self._cpp_ref_perp_disabled_after_error = True
+                    else:
+                        self._cpp_ref_perp_engine = ref_perp_cls(
+                            3700,
+                            3600,
+                            CROSS_BASIS_WINDOW_10S,
+                            CROSS_BASIS_MIN_PERIODS,
+                            CROSS_SOURCE_MAX_AGE_S * 1000.0,
+                        )
         self._cpp_cross_aggregators: Dict[str, object] = {}
         self._cpp_cross_current_dirty = set()
         self._cpp_cross_batch_enabled = bool(
@@ -1506,6 +1573,29 @@ class SignalEngine:
                     is_buyer_maker=maker_values,
                 )
 
+            ref_perp_key = self._market_key(
+                PERP_MARKET,
+                self._reference_symbol,
+                venue=BINANCE_VENUE,
+            )
+            if self._cpp_ref_perp_engine is not None and key == ref_perp_key:
+                try:
+                    self._cpp_ref_perp_engine.update_trade_batch(
+                        ts_values,
+                        price_values,
+                        qty_values,
+                        maker_values,
+                    )
+                except Exception as exc:
+                    if _cpp_signal_strict():
+                        raise
+                    logger.warning(
+                        "C++ ref-perp trade state disabled after error: %s",
+                        exc,
+                    )
+                    self._cpp_ref_perp_engine = None
+                    self._cpp_ref_perp_disabled_after_error = True
+
             if self._cpp_cross_batch_enabled and self._cpp_signal is not None:
                 try:
                     agg = self._cpp_cross_aggregators.get(key)
@@ -2147,6 +2237,30 @@ class SignalEngine:
                     self._record_book_ticker(
                         key, bid, ask, event_time, receive_time_ms=receive_time_ms
                     )
+                    ref_perp_key = self._market_key(
+                        PERP_MARKET,
+                        self._reference_symbol,
+                        venue=BINANCE_VENUE,
+                    )
+                    if self._cpp_ref_perp_engine is not None and key == ref_perp_key:
+                        try:
+                            self._cpp_ref_perp_engine.update_book_ticker(
+                                event_time,
+                                receive_time_ms,
+                                bid,
+                                ask,
+                            )
+                        except Exception as exc:
+                            if _cpp_signal_strict():
+                                raise _StrictNativeRefPerpError(
+                                    "strict native ref-perp book update failed"
+                                ) from exc
+                            logger.warning(
+                                "C++ ref-perp book state disabled after error: %s",
+                                exc,
+                            )
+                            self._cpp_ref_perp_engine = None
+                            self._cpp_ref_perp_disabled_after_error = True
                     self._update_market_book_state_locked(
                         key,
                         venue=normalized_venue,
@@ -2193,6 +2307,8 @@ class SignalEngine:
                         self._record_book_ticker(
                             symbol, bid, ask, event_time, receive_time_ms=receive_time_ms
                         )
+        except _StrictNativeRefPerpError:
+            raise
         except Exception as exc:
             logger.debug(f"Bad bookTicker event: {exc}")
 
@@ -2808,6 +2924,26 @@ class SignalEngine:
         prior = [value for _, value in history]
         if len(prior) >= CROSS_BASIS_MIN_PERIODS:
             f[f"{prefix}_basis_residual_bps"] = basis - float(np.median(prior))
+        self._record_cross_basis_observation(
+            prefix,
+            target_ts_ms,
+            basis,
+            history=history,
+        )
+
+    def _record_cross_basis_observation(
+        self,
+        prefix: str,
+        target_ts_ms: float,
+        basis: float,
+        *,
+        history: Optional[deque] = None,
+    ) -> None:
+        if history is None:
+            history = self._cross_basis_history.setdefault(
+                prefix,
+                deque(maxlen=CROSS_BASIS_WINDOW_10S),
+            )
         bucket = int(float(target_ts_ms) // 10_000)
         if history and history[-1][0] == bucket:
             history[-1] = (bucket, basis)
@@ -2820,27 +2956,105 @@ class SignalEngine:
                 f[f"{prefix}_{suffix}"] = 0.0
             f[f"{prefix}_age_s"] = CROSS_SOURCE_MAX_AGE_S + 10.0
 
-        self._fill_cross_market_book_features(
-            f, "cv_ref_perp", PERP_MARKET, self._reference_symbol, close, target_ts_ms
-        )
-        self._fill_cross_market_trade_features(
-            f, "cv_ref_perp", PERP_MARKET, self._reference_symbol, target_ts_ms, close
-        )
-        self._fill_cross_market_book_features(
-            f, "cv_exec_spot", SPOT_MARKET, self._symbol, close, target_ts_ms
-        )
-        self._fill_cross_market_trade_features(
-            f, "cv_exec_spot", SPOT_MARKET, self._symbol, target_ts_ms, close
-        )
-        if self._reference_symbol != self._symbol:
+        native_prepared = None
+        if self._cpp_ref_perp_engine is not None:
+            try:
+                native_prepared = self._cpp_ref_perp_engine.prepare(
+                    int(target_ts_ms),
+                    float(close),
+                )
+                native_values = np.asarray(
+                    native_prepared.values,
+                    dtype=np.float64,
+                )
+                if native_values.shape != (len(REF_PERP_FEATURE_NAMES),):
+                    raise RuntimeError(
+                        "C++ ref-perp feature row shape changed: "
+                        f"expected={(len(REF_PERP_FEATURE_NAMES),)} "
+                        f"actual={native_values.shape}"
+                    )
+                f.update(
+                    (name, float(value))
+                    for name, value in zip(
+                        REF_PERP_FEATURE_NAMES,
+                        native_values,
+                        strict=True,
+                    )
+                )
+            except Exception as exc:
+                if _cpp_signal_strict():
+                    raise
+                logger.warning(
+                    "C++ ref-perp features disabled after error: %s",
+                    exc,
+                )
+                self._cpp_ref_perp_engine = None
+                self._cpp_ref_perp_disabled_after_error = True
+                native_prepared = None
+
+        if native_prepared is None:
             self._fill_cross_market_book_features(
-                f, "cv_ref_spot", SPOT_MARKET, self._reference_symbol, close, target_ts_ms
+                f, "cv_ref_perp", PERP_MARKET, self._reference_symbol, close, target_ts_ms
             )
             self._fill_cross_market_trade_features(
-                f, "cv_ref_spot", SPOT_MARKET, self._reference_symbol, target_ts_ms, close
+                f, "cv_ref_perp", PERP_MARKET, self._reference_symbol, target_ts_ms, close
             )
-        for prefix in ["cv_ref_perp", "cv_exec_spot", "cv_ref_spot"]:
-            self._update_cross_basis_residual(f, prefix, target_ts_ms)
+
+        full_diagnostics = bool(
+            self._preserve_full_cross_market_features
+            or self._model_requires_full_cross_market_features
+            or self._live_feature_dump_path
+            or native_prepared is None
+        )
+        if full_diagnostics:
+            self._fill_cross_market_book_features(
+                f, "cv_exec_spot", SPOT_MARKET, self._symbol, close, target_ts_ms
+            )
+            self._fill_cross_market_trade_features(
+                f, "cv_exec_spot", SPOT_MARKET, self._symbol, target_ts_ms, close
+            )
+            if self._reference_symbol != self._symbol:
+                self._fill_cross_market_book_features(
+                    f, "cv_ref_spot", SPOT_MARKET, self._reference_symbol, close, target_ts_ms
+                )
+                self._fill_cross_market_trade_features(
+                    f, "cv_ref_spot", SPOT_MARKET, self._reference_symbol, target_ts_ms, close
+                )
+
+        if native_prepared is None:
+            self._update_cross_basis_residual(f, "cv_ref_perp", target_ts_ms)
+        if full_diagnostics:
+            for prefix in ["cv_exec_spot", "cv_ref_spot"]:
+                self._update_cross_basis_residual(f, prefix, target_ts_ms)
+        return native_prepared
+
+    def _commit_native_ref_perp_features(
+        self,
+        prepared,
+        f: dict,
+        target_ts_ms: float,
+    ) -> None:
+        if prepared is None:
+            return
+        try:
+            self._cpp_ref_perp_engine.commit(prepared)
+        except Exception as exc:
+            if _cpp_signal_strict():
+                raise
+            logger.warning(
+                "C++ ref-perp commit disabled after error: %s",
+                exc,
+            )
+            self._cpp_ref_perp_engine = None
+            self._cpp_ref_perp_disabled_after_error = True
+        if f.get("cv_ref_perp_available", 0.0) > 0.0:
+            basis = float(f.get("cv_ref_perp_basis_bps", 0.0))
+            if np.isfinite(basis):
+                self._record_cross_basis_observation(
+                    "cv_ref_perp",
+                    target_ts_ms,
+                    basis,
+                )
 
     def _compute_cpp_feature_overlay(
         self,
@@ -2975,13 +3189,18 @@ class SignalEngine:
             f,
             bucket_end_ms=int(cutoff.cutoff_exclusive_ms),
         )
-        self._compute_cross_market_features(
+        ref_perp_prepared = self._compute_cross_market_features(
             f,
             float(bar_10s["close"]),
             target_ts_ms,
         )
         self._compute_time_features(f, bar_ts_ms=target_ts_ms)
         self._compute_metrics_features(f, target_ts_ms)
+        self._commit_native_ref_perp_features(
+            ref_perp_prepared,
+            f,
+            target_ts_ms,
+        )
         return f
 
     def _compute_features(
@@ -3130,7 +3349,11 @@ class SignalEngine:
         self._compute_micro_features(f, bar_10s, all_bars)
 
         # === A4b. Cross-market features (reference perp + optional spot placeholders) ===
-        self._compute_cross_market_features(f, close, target_ts_ms)
+        ref_perp_prepared = self._compute_cross_market_features(
+            f,
+            close,
+            target_ts_ms,
+        )
 
         # === A5. Time features ===
         # Use the latest bar's timestamp to match offline behavior
@@ -3138,6 +3361,12 @@ class SignalEngine:
 
         # === A6. Metrics features ===
         self._compute_metrics_features(f, target_ts_ms)
+
+        self._commit_native_ref_perp_features(
+            ref_perp_prepared,
+            f,
+            target_ts_ms,
+        )
 
         return f
 

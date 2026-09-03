@@ -293,6 +293,333 @@ std::optional<Bar1s> TradeBarAggregator::current_bar() const {
     return current_;
 }
 
+SignalRefPerpFeatureEngine::SignalRefPerpFeatureEngine(
+    std::size_t max_bars,
+    std::size_t max_book_tickers,
+    std::size_t max_basis,
+    std::size_t basis_min_periods,
+    double source_max_age_ms
+)
+    : bars_(max_bars),
+      book_tickers_(max_book_tickers),
+      basis_history_(max_basis),
+      basis_min_periods_(basis_min_periods),
+      source_max_age_ms_(source_max_age_ms) {
+    if (!std::isfinite(source_max_age_ms_) || source_max_age_ms_ < 0.0) {
+        throw std::invalid_argument("source_max_age_ms must be finite and non-negative");
+    }
+    basis_scratch_.reserve(basis_history_.capacity());
+}
+
+void SignalRefPerpFeatureEngine::reset() {
+    std::lock_guard lock(mutex_);
+    trade_aggregator_.reset();
+    bars_.clear();
+    book_tickers_.clear();
+    basis_history_.clear();
+    basis_scratch_.clear();
+    ++revision_;
+}
+
+void SignalRefPerpFeatureEngine::update_trade_batch(
+    ArrayView<std::int64_t> ts_ms,
+    ArrayView<double> prices,
+    ArrayView<double> quantities,
+    ArrayView<std::uint8_t> is_buyer_maker
+) {
+    std::lock_guard lock(mutex_);
+    const auto completed = trade_aggregator_.update_batch(
+        ts_ms, prices, quantities, is_buyer_maker
+    );
+    for (const auto& bar : completed) {
+        bars_.push_back(bar);
+    }
+    if (!ts_ms.empty()) {
+        ++revision_;
+    }
+}
+
+void SignalRefPerpFeatureEngine::update_book_ticker(
+    double event_ts_ms,
+    double receive_ts_ms,
+    double bid,
+    double ask
+) {
+    if (!(bid > 0.0) || !(ask > 0.0)) {
+        return;
+    }
+    std::lock_guard lock(mutex_);
+    const auto bucket = static_cast<std::int64_t>(
+        std::floor(event_ts_ms / 1000.0)
+    ) * 1000;
+    const SignalRefPerpBookTicker snapshot{
+        bucket, bid, ask, event_ts_ms, receive_ts_ms
+    };
+    if (!book_tickers_.empty() && book_tickers_.back().bucket_ts_ms == bucket) {
+        book_tickers_.mutable_back() = snapshot;
+    } else {
+        book_tickers_.push_back(snapshot);
+    }
+    ++revision_;
+}
+
+std::optional<SignalRefPerpBookTicker>
+SignalRefPerpFeatureEngine::book_ticker_at(double target_ts_ms) const {
+    const auto view = book_tickers_.view();
+    for (std::size_t offset = 0; offset < view.size(); ++offset) {
+        const auto& snapshot = view[view.size() - 1 - offset];
+        if (static_cast<double>(snapshot.bucket_ts_ms) > target_ts_ms) {
+            continue;
+        }
+        if (snapshot.receive_ts_ms > target_ts_ms) {
+            continue;
+        }
+        if (
+            target_ts_ms - snapshot.event_ts_ms > source_max_age_ms_ ||
+            target_ts_ms - snapshot.receive_ts_ms > source_max_age_ms_
+        ) {
+            continue;
+        }
+        if (snapshot.bid > 0.0 && snapshot.ask > snapshot.bid) {
+            return snapshot;
+        }
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+SignalRefPerpPrepared SignalRefPerpFeatureEngine::prepare(
+    std::int64_t target_ts_ms,
+    double target_close
+) const {
+    std::lock_guard lock(mutex_);
+    SignalRefPerpPrepared prepared;
+    prepared.target_bucket = target_ts_ms / 10000;
+    prepared.revision = revision_;
+    prepared.owner_token = reinterpret_cast<std::uintptr_t>(this);
+    prepared.values.fill(0.0);
+    prepared.values[9] = source_max_age_ms_ / 1000.0 + 10.0;
+
+    const auto current_ticker = book_ticker_at(static_cast<double>(target_ts_ms));
+    if (current_ticker.has_value() && target_close > 0.0) {
+        const double bid = current_ticker->bid;
+        const double ask = current_ticker->ask;
+        if (bid > 0.0 && ask > bid) {
+            const double mid = 0.5 * (bid + ask);
+            prepared.values[9] = std::max(
+                0.0,
+                (static_cast<double>(target_ts_ms) - current_ticker->event_ts_ms) /
+                    1000.0
+            );
+            prepared.values[10] = 1.0;
+            prepared.values[0] = (mid - target_close) / target_close * 10000.0;
+            const auto fill_return = [&](std::int64_t lookback_ms, std::size_t index) {
+                const auto previous = book_ticker_at(
+                    static_cast<double>(target_ts_ms - lookback_ms)
+                );
+                if (previous.has_value()) {
+                    const double previous_mid = 0.5 * (previous->bid + previous->ask);
+                    prepared.values[index] = safe_log_return(mid, previous_mid);
+                }
+            };
+            fill_return(10000, 1);
+            fill_return(30000, 2);
+            fill_return(60000, 3);
+
+            std::array<double, 7> mids{};
+            std::size_t mid_count = 0;
+            for (int step = 6; step >= 0; --step) {
+                const auto snapshot = book_ticker_at(
+                    static_cast<double>(target_ts_ms) -
+                    static_cast<double>(step) * 10000.0
+                );
+                if (snapshot.has_value()) {
+                    mids[mid_count++] = 0.5 * (snapshot->bid + snapshot->ask);
+                }
+            }
+            if (mid_count >= 3) {
+                std::array<double, 6> returns{};
+                const std::size_t return_count = mid_count - 1;
+                for (std::size_t index = 0; index < return_count; ++index) {
+                    returns[index] = safe_log_return(mids[index + 1], mids[index]);
+                }
+                if (return_count >= 2) {
+                    prepared.values[4] = indexed_stddev(
+                        return_count,
+                        [&](std::size_t index) { return returns[index]; },
+                        true
+                    );
+                }
+            }
+        }
+    }
+
+    const auto bars = bars_.view();
+    const auto current_bar = trade_aggregator_.current_bar();
+    double buy_10s = 0.0;
+    double sell_10s = 0.0;
+    double latest_trade_ts = -std::numeric_limits<double>::infinity();
+    double latest_trade_close = 0.0;
+    const std::int64_t start_10s = target_ts_ms - 10000 + 1;
+    std::size_t first_10s = bars.size();
+    while (first_10s > 0 && bars[first_10s - 1].ts_ms >= start_10s) {
+        --first_10s;
+    }
+    const auto consume_10s = [&](const Bar1s& bar) {
+        if (bar.ts_ms < start_10s || bar.ts_ms > target_ts_ms) {
+            return;
+        }
+        buy_10s += bar.buy_volume;
+        sell_10s += bar.sell_volume;
+        if (static_cast<double>(bar.ts_ms) >= latest_trade_ts) {
+            latest_trade_ts = static_cast<double>(bar.ts_ms);
+            latest_trade_close = bar.close;
+        }
+    };
+    for (std::size_t index = first_10s; index < bars.size(); ++index) {
+        consume_10s(bars[index]);
+    }
+    if (current_bar.has_value()) {
+        consume_10s(*current_bar);
+    }
+    if (std::isfinite(latest_trade_ts)) {
+        const double age_s = std::max(
+            0.0,
+            (static_cast<double>(target_ts_ms) - latest_trade_ts) / 1000.0
+        );
+        if (age_s <= source_max_age_ms_ / 1000.0 && prepared.values[10] <= 0.0) {
+            prepared.values[9] = age_s;
+            prepared.values[10] = 1.0;
+            if (latest_trade_close > 0.0 && target_close > 0.0) {
+                prepared.values[0] =
+                    (latest_trade_close - target_close) / target_close * 10000.0;
+            }
+        }
+        const double total_10s = buy_10s + sell_10s;
+        if (total_10s > 0.0) {
+            prepared.values[5] = (buy_10s - sell_10s) / total_10s;
+        }
+    }
+
+    std::array<double, 7> bucket_trade_counts{};
+    std::size_t bucket_count = 0;
+    std::int64_t last_bucket = std::numeric_limits<std::int64_t>::min();
+    double total_volume = 0.0;
+    double abs_imbalance = 0.0;
+    double bucket_buy = 0.0;
+    double bucket_sell = 0.0;
+    double bucket_trades = 0.0;
+    const auto flush_bucket = [&]() {
+        if (last_bucket == std::numeric_limits<std::int64_t>::min()) {
+            return;
+        }
+        if (bucket_count < bucket_trade_counts.size()) {
+            bucket_trade_counts[bucket_count++] = bucket_trades;
+        }
+        total_volume += bucket_buy + bucket_sell;
+        abs_imbalance += std::abs(bucket_buy - bucket_sell);
+    };
+
+    // The retained source ring is chronological. Iterate its bounded 60-second
+    // tail in chronological order so floating-point reduction matches Python.
+    const std::int64_t start_60s = target_ts_ms - 60000 + 1;
+    std::size_t first = bars.size();
+    while (first > 0 && bars[first - 1].ts_ms >= start_60s) {
+        --first;
+    }
+    const auto consume_flow = [&](const Bar1s& bar) {
+        if (bar.ts_ms < start_60s || bar.ts_ms > target_ts_ms) {
+            return;
+        }
+        const std::int64_t bucket = bar.ts_ms / 10000;
+        if (bucket != last_bucket) {
+            flush_bucket();
+            last_bucket = bucket;
+            bucket_buy = 0.0;
+            bucket_sell = 0.0;
+            bucket_trades = 0.0;
+        }
+        bucket_buy += bar.buy_volume;
+        bucket_sell += bar.sell_volume;
+        bucket_trades += bar.trade_count;
+    };
+    for (std::size_t index = first; index < bars.size(); ++index) {
+        consume_flow(bars[index]);
+    }
+    if (current_bar.has_value()) {
+        consume_flow(*current_bar);
+    }
+    flush_bucket();
+    if (bucket_count > 0) {
+        prepared.values[6] = indexed_mean(
+            bucket_count,
+            [&](std::size_t index) { return bucket_trade_counts[index]; }
+        );
+        if (total_volume > 0.0) {
+            prepared.values[7] = abs_imbalance / total_volume;
+        }
+    }
+
+    if (prepared.values[10] > 0.0 && std::isfinite(prepared.values[0])) {
+        prepared.basis_available = true;
+        prepared.basis_bps = prepared.values[0];
+        if (basis_history_.size() >= basis_min_periods_) {
+            basis_scratch_.clear();
+            for (std::size_t index = 0; index < basis_history_.size(); ++index) {
+                basis_scratch_.push_back(basis_history_[index].basis_bps);
+            }
+            std::sort(basis_scratch_.begin(), basis_scratch_.end());
+            const std::size_t middle = basis_scratch_.size() / 2;
+            const double median = basis_scratch_.size() % 2 == 0
+                ? 0.5 * (basis_scratch_[middle - 1] + basis_scratch_[middle])
+                : basis_scratch_[middle];
+            prepared.values[8] = prepared.basis_bps - median;
+        }
+    }
+    return prepared;
+}
+
+void SignalRefPerpFeatureEngine::commit(
+    const SignalRefPerpPrepared& prepared
+) {
+    std::lock_guard lock(mutex_);
+    if (
+        prepared.owner_token != reinterpret_cast<std::uintptr_t>(this) ||
+        prepared.revision != revision_
+    ) {
+        throw std::runtime_error("ref-perp prepared state is stale");
+    }
+    if (prepared.basis_available) {
+        const SignalRefPerpBasisObservation observation{
+            prepared.target_bucket, prepared.basis_bps
+        };
+        if (
+            !basis_history_.empty() &&
+            basis_history_.back().bucket == prepared.target_bucket
+        ) {
+            basis_history_.mutable_back() = observation;
+        } else {
+            basis_history_.push_back(observation);
+        }
+    }
+    ++revision_;
+}
+
+std::size_t SignalRefPerpFeatureEngine::bar_count() const {
+    std::lock_guard lock(mutex_);
+    return bars_.size() + (trade_aggregator_.current_bar().has_value() ? 1 : 0);
+}
+
+std::size_t SignalRefPerpFeatureEngine::book_ticker_count() const {
+    std::lock_guard lock(mutex_);
+    return book_tickers_.size();
+}
+
+std::size_t SignalRefPerpFeatureEngine::basis_count() const {
+    std::lock_guard lock(mutex_);
+    return basis_history_.size();
+}
+
 std::map<std::string, double> SignalFeatureVector::to_map() const {
     // 冷路径：给 Python dict/日志/测试用。live scalar hot path 不应每 tick 调这个函数。
     std::map<std::string, double> out;

@@ -91,6 +91,32 @@ inline constexpr std::array<std::string_view, 4>
 using SignalExecutionL2PolicyMetricValues =
     std::array<double, kSignalExecutionL2PolicyMetricNames.size()>;
 
+inline constexpr std::array<std::string_view, 11> kSignalRefPerpFeatureNames = {
+    "cv_ref_perp_basis_bps",
+    "cv_ref_perp_ret_10s",
+    "cv_ref_perp_ret_30s",
+    "cv_ref_perp_ret_60s",
+    "cv_ref_perp_volatility_60s",
+    "cv_ref_perp_volume_imbalance",
+    "cv_ref_perp_trade_intensity_60s",
+    "cv_ref_perp_vpin_60s",
+    "cv_ref_perp_basis_residual_bps",
+    "cv_ref_perp_age_s",
+    "cv_ref_perp_available",
+};
+
+using SignalRefPerpFeatureValues =
+    std::array<double, kSignalRefPerpFeatureNames.size()>;
+
+struct SignalRefPerpPrepared {
+    SignalRefPerpFeatureValues values{};
+    std::int64_t target_bucket = 0;
+    double basis_bps = 0.0;
+    std::uint64_t revision = 0;
+    std::uintptr_t owner_token = 0;
+    bool basis_available = false;
+};
+
 [[nodiscard]] SignalExecutionL2FeatureValues compute_signal_execution_l2_features(
     std::span<const SignalExecutionL2Snapshot> snapshots,
     double bucket_end_ms
@@ -186,6 +212,13 @@ public:
         return (*this)[storage_.size() - 1];
     }
 
+    T& mutable_back() {
+        if (storage_.empty()) {
+            throw std::out_of_range("CircularBuffer is empty");
+        }
+        return storage_[(head_ + storage_.size() - 1) % storage_.size()];
+    }
+
     [[nodiscard]] SegmentedSpanView<T> view() const noexcept {
         // Expose at most two contiguous spans in chronological order instead
         // of copying the wrapped ring into a temporary array.
@@ -200,6 +233,19 @@ private:
     std::size_t capacity_ = 1;
     std::size_t head_ = 0;
     std::vector<T> storage_;
+};
+
+struct SignalRefPerpBookTicker {
+    std::int64_t bucket_ts_ms = 0;
+    double bid = 0.0;
+    double ask = 0.0;
+    double event_ts_ms = 0.0;
+    double receive_ts_ms = 0.0;
+};
+
+struct SignalRefPerpBasisObservation {
+    std::int64_t bucket = 0;
+    double basis_bps = 0.0;
 };
 
 class SignalExecutionL2Engine {
@@ -471,6 +517,54 @@ private:
     std::int64_t current_bucket_ms_ = 0;
     int last_trade_side_ = 0;
     int last_trade_run_len_ = 0;
+};
+
+class SignalRefPerpFeatureEngine {
+public:
+    SignalRefPerpFeatureEngine(
+        std::size_t max_bars = 3700,
+        std::size_t max_book_tickers = 3600,
+        std::size_t max_basis = 360,
+        std::size_t basis_min_periods = 30,
+        double source_max_age_ms = 30000.0
+    );
+
+    void reset();
+    void update_trade_batch(
+        ArrayView<std::int64_t> ts_ms,
+        ArrayView<double> prices,
+        ArrayView<double> quantities,
+        ArrayView<std::uint8_t> is_buyer_maker
+    );
+    void update_book_ticker(
+        double event_ts_ms,
+        double receive_ts_ms,
+        double bid,
+        double ask
+    );
+    [[nodiscard]] SignalRefPerpPrepared prepare(
+        std::int64_t target_ts_ms,
+        double target_close
+    ) const;
+    void commit(const SignalRefPerpPrepared& prepared);
+    [[nodiscard]] std::size_t bar_count() const;
+    [[nodiscard]] std::size_t book_ticker_count() const;
+    [[nodiscard]] std::size_t basis_count() const;
+
+private:
+    [[nodiscard]] std::optional<SignalRefPerpBookTicker> book_ticker_at(
+        double target_ts_ms
+    ) const;
+
+    mutable std::mutex mutex_;
+    TradeBarAggregator trade_aggregator_{false};
+    CircularBuffer<Bar1s> bars_;
+    CircularBuffer<SignalRefPerpBookTicker> book_tickers_;
+    CircularBuffer<SignalRefPerpBasisObservation> basis_history_;
+    mutable std::vector<double> basis_scratch_;
+    std::size_t basis_min_periods_ = 30;
+    double source_max_age_ms_ = 30000.0;
+    std::uint64_t revision_ = 0;
 };
 
 class SignalFeatureEngine {

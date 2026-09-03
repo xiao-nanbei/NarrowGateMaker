@@ -1557,6 +1557,18 @@ class MakerEngine:
                                    global_reference_shadow_enabled=bool(
                                        getattr(multi, "global_reference_shadow_enabled", False)
                                    ),
+                                   preserve_full_cross_market_features=bool(
+                                       getattr(
+                                           cfg.strategy,
+                                           "buy_fill_selection_shadow_enabled",
+                                           False,
+                                       )
+                                       or getattr(
+                                           cfg.strategy,
+                                           "buy_fill_selection_live_enabled",
+                                           False,
+                                       )
+                                   ),
                                    ret_demean_halflife=cfg.ml.ret_demean_halflife,
                                    bad_trade_log_every=cfg.logging.bad_trade_log_every)
         self._boolean_cooldown_policy = _load_boolean_cooldown_live_policy(

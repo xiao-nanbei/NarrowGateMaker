@@ -14,10 +14,19 @@ from strategy.boolean_cooldown_live import (
 )
 from strategy.maker_engine import MakerEngine
 from strategy.model_contract import REQUIRED_MODEL_HEADS
+from strategy.quote_core import (
+    QuoteCoreConfig,
+    QuotePrediction,
+    QuoteState,
+    compute_quote_core,
+)
 from strategy.signal import (
     CPP_LIGHTGBM_INFERENCE_FLAG,
     EXECUTION_L2_FEATURE_COLS,
     EXECUTION_L2_POLICY_METRIC_COLS,
+    PERP_MARKET,
+    REF_PERP_FEATURE_NAMES,
+    SIGNAL_REF_PERP_CPP_ABI_VERSION,
     Bar1s,
     DepthSnapshot,
     QuoteDepthObservation,
@@ -35,6 +44,11 @@ MODEL_BUNDLE = (
     / "examples"
     / "public_dry_run_model_bundle"
 )
+V12_MODEL_BUNDLE = (
+    Path(__file__).resolve().parents[1]
+    / "models"
+    / "saved_btcusdc_causal_v12_expanded_source_aware_semantics_v6_20260802_live_canary"
+)
 
 
 def test_native_build_surface_matches_exposed_runtime() -> None:
@@ -50,11 +64,19 @@ def test_native_build_surface_matches_exposed_runtime() -> None:
         assert hasattr(narrowgate_cpp, name) is is_full
     for name in (
         "SignalFeatureEngine",
+        "SignalRefPerpFeatureEngine",
         "FeatureHistoryRow",
         "F05BooleanPolicy",
         "NativeLiveCooldownHotPath",
     ):
         assert hasattr(narrowgate_cpp, name)
+    assert (
+        narrowgate_cpp.SIGNAL_REF_PERP_FEATURE_ABI_VERSION
+        == SIGNAL_REF_PERP_CPP_ABI_VERSION
+    )
+    assert tuple(narrowgate_cpp.SIGNAL_REF_PERP_FEATURE_NAMES) == (
+        REF_PERP_FEATURE_NAMES
+    )
 
 
 def _active_lightgbm_library() -> str:
@@ -729,6 +751,313 @@ def test_cpp_signal_bucket_pipeline_matches_python_aggregate_and_full_feature_ro
     assert actual.keys() == expected.keys()
     for key, value in expected.items():
         assert actual[key] == pytest.approx(value, abs=1e-10), key
+
+
+def test_cpp_ref_perp_prepare_is_non_mutating_and_rejects_stale_token():
+    engine = narrowgate_cpp.SignalRefPerpFeatureEngine()
+    engine.update_book_ticker(1_000.0, 1_005.0, 99.9, 100.1)
+
+    first = engine.prepare(1_005, 100.0)
+    second = engine.prepare(1_005, 100.0)
+
+    assert engine.basis_count() == 0
+    assert np.array_equal(first.values, second.values)
+    with pytest.raises(RuntimeError, match="prepared state is stale"):
+        narrowgate_cpp.SignalRefPerpFeatureEngine().commit(first)
+    engine.commit(first)
+    assert engine.basis_count() == 1
+    with pytest.raises(RuntimeError, match="prepared state is stale"):
+        engine.commit(second)
+
+
+def test_cpp_ref_perp_dual_clock_freshness_matches_python_boundaries():
+    def prepared_at(*, event_ms: float, receive_ms: float, target_ms: int):
+        engine = narrowgate_cpp.SignalRefPerpFeatureEngine()
+        engine.update_book_ticker(event_ms, receive_ms, 99.9, 100.1)
+        return np.asarray(engine.prepare(target_ms, 100.0).values)
+
+    receive_not_visible = prepared_at(
+        event_ms=1_000.0,
+        receive_ms=1_501.0,
+        target_ms=1_500,
+    )
+    exact_boundary = prepared_at(
+        event_ms=1_000.0,
+        receive_ms=1_000.0,
+        target_ms=31_000,
+    )
+    just_stale = prepared_at(
+        event_ms=1_000.0,
+        receive_ms=1_000.0,
+        target_ms=31_001,
+    )
+
+    assert receive_not_visible[-1] == 0.0
+    assert exact_boundary[-1] == 1.0
+    assert exact_boundary[-2] == 30.0
+    assert just_stale[-1] == 0.0
+
+
+def test_cpp_ref_perp_matches_python_for_all_fields_and_basis_history():
+    python_engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    native_engine = SignalEngine(enable_ml=False, ret_demean_halflife=0)
+    native_engine._cpp_ref_perp_engine = (
+        narrowgate_cpp.SignalRefPerpFeatureEngine()
+    )
+
+    # Exceed both native retained rings so parity also covers wrapped storage.
+    for index in range(3_805):
+        event_ms = index * 1_000 + 100
+        price = 100.0 + index * 0.01 + (index % 5) * 0.002
+        quantity = 0.1 + (index % 7) * 0.01
+        trade = {
+            "s": "BTCUSDT",
+            "T": event_ms,
+            "p": str(price),
+            "q": str(quantity),
+            "m": bool(index % 2),
+        }
+        ticker = {
+            "s": "BTCUSDT",
+            "E": index * 1_000 + 500,
+            "b": str(price - 0.05),
+            "a": str(price + 0.05),
+        }
+        for engine in (python_engine, native_engine):
+            engine.on_cross_agg_trade(
+                trade,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(event_ms + 7) * 1_000_000,
+            )
+            engine.on_book_ticker(
+                ticker,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(index * 1_000 + 509) * 1_000_000,
+            )
+
+    for target_ms in range(3_489_000, 3_800_000, 10_000):
+        python_features: dict[str, float] = {}
+        native_features: dict[str, float] = {}
+        assert python_engine._compute_cross_market_features(
+            python_features, 100.0, target_ms
+        ) is None
+        prepared = native_engine._compute_cross_market_features(
+            native_features, 100.0, target_ms
+        )
+        native_engine._commit_native_ref_perp_features(
+            prepared,
+            native_features,
+            target_ms,
+        )
+        expected = np.asarray(
+            [python_features[name] for name in REF_PERP_FEATURE_NAMES]
+        )
+        actual = np.asarray(
+            [native_features[name] for name in REF_PERP_FEATURE_NAMES]
+        )
+        assert actual == pytest.approx(expected, rel=0.0, abs=1e-14)
+
+    assert native_engine._cpp_ref_perp_engine.basis_count() == len(
+        python_engine._cross_basis_history["cv_ref_perp"]
+    )
+
+
+def test_cpp_ref_perp_preserves_model_prediction_and_quote_action(monkeypatch):
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    reference = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=0,
+    )
+    native = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=0,
+    )
+    reference._cpp_ref_perp_engine = None
+    assert native._cpp_ref_perp_engine is not None
+    assert len(native._shared_model_feature_schema()) == 173
+
+    reference_prediction = None
+    native_prediction = None
+    for index in range(80):
+        event_ms = index * 1_000 + 100
+        execution_price = 60_000.0 + index * 0.03 + (index % 4) * 0.01
+        reference_price = 60_002.0 + index * 0.031 + (index % 5) * 0.012
+        execution_trade = {
+            "s": "BTCUSDC",
+            "T": event_ms,
+            "p": str(execution_price),
+            "q": str(0.01 + (index % 3) * 0.002),
+            "m": bool(index % 2),
+        }
+        reference_trade = {
+            "s": "BTCUSDT",
+            "T": event_ms,
+            "p": str(reference_price),
+            "q": str(0.05 + (index % 4) * 0.003),
+            "m": bool((index + 1) % 2),
+        }
+        ticker = {
+            "s": "BTCUSDT",
+            "E": index * 1_000 + 500,
+            "b": str(reference_price - 0.05),
+            "a": str(reference_price + 0.05),
+        }
+        for engine in (reference, native):
+            engine.on_agg_trade(
+                execution_trade,
+                receive_ts_ns=(event_ms + 7) * 1_000_000,
+            )
+            engine.on_cross_agg_trade(
+                reference_trade,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(event_ms + 9) * 1_000_000,
+            )
+            engine.on_book_ticker(
+                ticker,
+                market_type=PERP_MARKET,
+                receive_ts_ns=(index * 1_000 + 511) * 1_000_000,
+            )
+        reference_prediction = reference.compute_signal()
+        native_prediction = native.compute_signal()
+
+    assert reference_prediction is not None
+    assert native_prediction is not None
+    feature_names = native._shared_model_feature_schema()
+    reference_row = np.asarray(
+        [reference_prediction.feature_dict[name] for name in feature_names]
+    )
+    native_row = np.asarray(
+        [native_prediction.feature_dict[name] for name in feature_names]
+    )
+    assert native_row == pytest.approx(reference_row, rel=0.0, abs=1e-10)
+    for name in REQUIRED_MODEL_HEADS:
+        assert getattr(native_prediction, name) == getattr(
+            reference_prediction, name
+        )
+    state = QuoteState(
+        mid=60_002.0,
+        inventory=0.001,
+        sigma_sq=4.0,
+        best_bid=60_001.9,
+        best_ask=60_002.1,
+    )
+    config = QuoteCoreConfig(
+        gamma=0.046,
+        kappa=0.01,
+        tick_size=0.1,
+        lot_size=0.001,
+        maker_fee=0.0,
+        order_size=0.001,
+        max_inventory=0.026,
+        ml_enabled=True,
+        vol_blend=0.5,
+        dir_threshold=0.05,
+        skew_strength=0.1,
+    )
+
+    def quote(prediction):
+        return compute_quote_core(
+            state,
+            config,
+            QuotePrediction(
+                dir_10s=prediction.dir_10s,
+                vol_10s=prediction.vol_10s,
+                ret_10s=prediction.ret_10s,
+                tox_bid=prediction.tox_bid_10s,
+                tox_ask=prediction.tox_ask_10s,
+            ),
+        )
+
+    assert quote(native_prediction) == quote(reference_prediction)
+
+
+def test_cpp_ref_perp_activation_follows_startup_model_schema(monkeypatch):
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    one_feature = SignalEngine(
+        model_dir=MODEL_BUNDLE,
+        ret_demean_halflife=0,
+    )
+    source_aware = SignalEngine(
+        model_dir=V12_MODEL_BUNDLE,
+        ret_demean_halflife=0,
+    )
+
+    assert one_feature._cpp_ref_perp_engine is None
+    assert source_aware._cpp_ref_perp_engine is not None
+
+
+def test_cpp_ref_perp_keeps_spot_computation_for_declared_diagnostics():
+    engine = SignalEngine(
+        enable_ml=False,
+        preserve_full_cross_market_features=True,
+        ret_demean_halflife=0,
+    )
+    engine._cpp_ref_perp_engine = narrowgate_cpp.SignalRefPerpFeatureEngine()
+    event_ms = 10_100
+    engine.on_cross_agg_trade(
+        {
+            "s": "BTCUSDT",
+            "T": event_ms,
+            "p": "100.0",
+            "q": "0.1",
+            "m": False,
+        },
+        market_type=PERP_MARKET,
+        receive_ts_ns=10_105_000_000,
+    )
+    engine.on_cross_agg_trade(
+        {
+            "s": "BTCUSDC",
+            "T": event_ms,
+            "p": "99.9",
+            "q": "0.2",
+            "m": True,
+        },
+        market_type=signal_module.SPOT_MARKET,
+        receive_ts_ns=10_106_000_000,
+    )
+
+    features: dict[str, float] = {}
+    prepared = engine._compute_cross_market_features(features, 100.0, 19_000)
+    engine._commit_native_ref_perp_features(prepared, features, 19_000)
+
+    assert features["cv_ref_perp_available"] == 1.0
+    assert features["cv_exec_spot_available"] == 1.0
+
+
+def test_cpp_ref_perp_keeps_spot_computation_for_model_consumers(monkeypatch):
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    schema = [*REF_PERP_FEATURE_NAMES, "cv_exec_spot_available"]
+
+    def load_models(engine):
+        engine._models = {name: object() for name in REQUIRED_MODEL_HEADS}
+        engine._model_feature_cols = {
+            name: list(schema) for name in REQUIRED_MODEL_HEADS
+        }
+
+    monkeypatch.setattr(SignalEngine, "_load_models", load_models)
+    engine = SignalEngine(enable_ml=True, ret_demean_halflife=0)
+    assert engine._cpp_ref_perp_engine is not None
+    assert engine._model_requires_full_cross_market_features is True
+
+    event_ms = 10_100
+    engine.on_cross_agg_trade(
+        {"s": "BTCUSDT", "T": event_ms, "p": "100.0", "q": "0.1", "m": False},
+        market_type=PERP_MARKET,
+        receive_ts_ns=10_105_000_000,
+    )
+    engine.on_cross_agg_trade(
+        {"s": "BTCUSDC", "T": event_ms, "p": "99.9", "q": "0.2", "m": True},
+        market_type=signal_module.SPOT_MARKET,
+        receive_ts_ns=10_106_000_000,
+    )
+
+    features: dict[str, float] = {}
+    prepared = engine._compute_cross_market_features(features, 100.0, 19_000)
+    engine._commit_native_ref_perp_features(prepared, features, 19_000)
+
+    assert features["cv_exec_spot_available"] == 1.0
 
 
 def test_native_new_bucket_does_not_iterate_or_copy_python_bar_ring():
