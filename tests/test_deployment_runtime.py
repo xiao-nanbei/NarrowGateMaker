@@ -310,7 +310,7 @@ def _deployment_envelope_fixture(
         "execution": {
             "execution_commit": commit,
             "execution_tree": tree,
-            # Existing v2 receipts may retain this redundant commit proof.
+            # The validator ignores this redundant commit proof.
             "tag_peeled_commit": commit,
         },
         "soabi": install["interpreter"]["soabi"],
@@ -343,6 +343,30 @@ def _deployment_envelope_fixture(
             "path": str(module.resolve()),
             "sha256": hashlib.sha256(module.read_bytes()).hexdigest(),
             "size_bytes": module.stat().st_size,
+        },
+        "build_surface": {
+            "flavor": "live",
+            "tick_replay_available": False,
+            "research_runtime_available": False,
+        },
+        "live_cpu_build": {
+            "profile": subject.NATIVE_LIVE_CPU_PROFILE,
+            "compile_options": subject.NATIVE_LIVE_COMPILE_OPTIONS,
+            "production": True,
+            "preferred_vector_width_bits": 256,
+        },
+        "abi_contract": subject.native_live_abi_contract_payload(),
+        "parity_qualification": {
+            "tests": list(subject.NATIVE_LIVE_PARITY_TESTS),
+            "collected": len(subject.NATIVE_LIVE_PARITY_TESTS),
+            "passed": len(subject.NATIVE_LIVE_PARITY_TESTS),
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "deselected": 0,
+            "validated": True,
         },
     }
     native_receipt[subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
@@ -1387,6 +1411,69 @@ def test_build_deployment_envelope_b0_omits_buy_e3_extension(
     assert not hasattr(runtime_policy, "DEPLOYMENT_ENVELOPE_FILE_SHA256_ENV")
     authority = runtime_policy.deployment_envelope_runtime_authority(environ=environment)
     assert authority["execution_commit"] == envelope["source"]["commit"]
+
+
+def test_native_build_bundle_rejects_non_live_or_skipped_qualification(
+    tmp_path: Path,
+) -> None:
+    _bundle, repository, native_receipt, _model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
+    commit = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ("git", "rev-parse", "HEAD^{tree}"),
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    original = json.loads(native_receipt.read_text(encoding="utf-8"))
+    missing_member_contract = subject.native_live_abi_contract_payload()
+    missing_member_contract["required_class_members"][
+        "NativeReplaceContinuationState"
+    ].remove("telemetry")
+
+    for index, (field, value, message) in enumerate((
+        (
+            "schema_version",
+            "narrowgate_linux_x86_64_native_build_receipt.v2",
+            "schema drifted",
+        ),
+        ("build_surface", {**original["build_surface"], "flavor": "full"}, "surface"),
+        (
+            "abi_contract",
+            missing_member_contract,
+            "ABI qualification drifted",
+        ),
+        (
+            "parity_qualification",
+            {
+                **original["parity_qualification"],
+                "passed": 0,
+                "skipped": 1,
+            },
+            "did not pass exactly",
+        ),
+    )):
+        changed = {**original, field: value}
+        changed[subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
+            changed,
+            subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD,
+        )
+        changed_path = native_receipt.with_name(f"native-build-invalid-{index}.json")
+        subject._write_json_authority(changed_path, changed)  # noqa: SLF001
+        with pytest.raises(subject.LockedRuntimeError, match=message):
+            subject._validate_native_build_bundle(  # noqa: SLF001
+                changed_path,
+                execution_commit=commit,
+                execution_tree=tree,
+            )
 
 
 def test_startup_derives_runtime_leaves_from_one_envelope_root(

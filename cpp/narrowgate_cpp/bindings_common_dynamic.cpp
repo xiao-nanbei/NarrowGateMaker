@@ -1,3 +1,5 @@
+#define NARROWGATE_BINDING_COMMON_DYNAMIC 1
+
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -13,25 +15,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
 #include "dynamic_fill_hazard.hpp"
-#include "active_order_competing_risk_cif.hpp"
-#include "causal_v12_1s_features.hpp"
-#include "order_lifecycle_journal_v2_mirror.hpp"
-#include "live_order_action_plan.hpp"
-#include "live_order_state.hpp"
-#include "live_cooldown.hpp"
-#include "live_policy.hpp"
-#include "live_runtime_core.hpp"
-#include "order_gateway_core.hpp"
+#endif
 #include "quote_core.hpp"
-#include "replace_continuation.hpp"
-#include "request_state_features.hpp"
-#include "risk_set_expansion.hpp"
-#include "sparse_order_lifecycle.hpp"
-#include "global_flow.hpp"
-#include "streaming_features.hpp"
-#include "tick_replay.hpp"
-#include "transport_contract.hpp"
 #include "binding_registry.hpp"
 
 namespace py = pybind11;
@@ -40,6 +27,8 @@ namespace narrowgate_cpp {
 namespace {
 
 
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME || \
+    defined(NARROWGATE_BINDING_TICK_REPLAY)
 template <typename T>
 using CArray = py::array_t<T, py::array::c_style | py::array::forcecast>;
 
@@ -80,7 +69,10 @@ py::array_t<T> vector_matrix(
     std::copy(values.begin(), values.end(), output.mutable_data());
     return output;
 }
+#endif
 
+#if defined(NARROWGATE_BINDING_TRANSPORT_QUOTE) || \
+    defined(NARROWGATE_BINDING_LIVE_RUNTIME)
 DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj) {
     DepthSnapshot depth;
     auto append = [](py::handle rows_obj, std::vector<DepthLevel>& out) {
@@ -103,7 +95,9 @@ DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj)
     append(asks_obj, depth.asks);
     return depth;
 }
+#endif
 
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict signal_feature_dict(const SignalFeatureVector& features) {
     py::dict out;
     const auto& values = features.values();
@@ -184,6 +178,9 @@ py::array_t<double> signal_execution_l2_policy_metric_array(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_RESEARCH)
 py::dict sparse_order_lifecycle_dict(
     const SparseOrderLifecycleResult& result
 ) {
@@ -258,6 +255,9 @@ py::dict sparse_order_lifecycle_dict(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict global_flow_window_dict(const GlobalFlowMarketWindow& row) {
     py::dict out;
     out["market_id"] = row.market_id;
@@ -302,6 +302,9 @@ py::dict global_flow_stats_dict(const GlobalFlowStats& stats) {
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_TICK_REPLAY)
 void set_trade_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& trade_ts_ms,
@@ -442,6 +445,9 @@ void set_per_trade_policy_arrays(
     input.sell_queue_deplete_mult_by_trade = view_from_array(sell_queue_deplete_mult_by_trade);
 }
 
+#endif
+
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
 template <typename T>
 T required_dict_value(const py::dict& payload, const char* key) {
     const py::str name(key);
@@ -751,7 +757,7 @@ py::dict dynamic_fill_hazard_counters_dict(
     out["prospective_invalid_count"] = value.prospective_invalid_count;
     return out;
 }
-
+#endif
 
 }  // namespace
 
@@ -788,14 +794,6 @@ void bind_common(py::module_& m) {
         py::arg("order_price"),
         py::arg("tick_size")
     );
-
-    py::class_<TickReplayParams::FillSelectionFoldModel>(m, "FillSelectionFoldModel")
-        .def(py::init<>())
-        .def_readwrite("base_logit", &TickReplayParams::FillSelectionFoldModel::base_logit)
-        .def_readwrite("contribution_scale", &TickReplayParams::FillSelectionFoldModel::contribution_scale)
-        .def_readwrite("numeric_cuts", &TickReplayParams::FillSelectionFoldModel::numeric_cuts)
-        .def_readwrite("contributions", &TickReplayParams::FillSelectionFoldModel::contributions)
-        .def_readwrite("categorical_features", &TickReplayParams::FillSelectionFoldModel::categorical_features);
 
     py::class_<DepthLevel>(m, "DepthLevel")
         .def(py::init<>())
@@ -837,6 +835,7 @@ void bind_common(py::module_& m) {
         .def_readwrite("hold_time_s", &QuoteState::hold_time_s)
         .def_readwrite("unrealized_pnl", &QuoteState::unrealized_pnl);
 
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
     m.def(
         "integrate_variance_time_episode",
         [](
@@ -977,8 +976,10 @@ void bind_common(py::module_& m) {
         py::arg("max_feature_age_ms"),
         py::arg("censor_ts_ms") = -1
     );
+#endif
 }
 
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
 void bind_dynamic_fill_hazard(py::module_& m) {
     m.attr("DYNAMIC_FILL_HAZARD_ABI_VERSION") =
         "dynamic_fill_hazard_native_book_q90.v4";
@@ -1303,6 +1304,7 @@ void bind_dynamic_fill_hazard(py::module_& m) {
             py::arg("client_order_id")
         );
 }
+#endif
 
 
 }  // namespace narrowgate_cpp

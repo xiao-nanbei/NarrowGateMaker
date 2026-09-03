@@ -38,10 +38,20 @@ Never compile the native extension on the EC2 host while `narrowgate.service`,
 a legacy `narrowgate-maker.service`, or any maker process is running. The
 canonical `make native-live-wheel` entry point enforces that boundary, defaults
 to one compile job, and refuses to start below 2,048 MiB `MemAvailable`. A 2 GiB
-live host is therefore not an admitted build host. Prefer a controlled
-Linux x86_64 Azure builder with at least 16 GiB RAM and exact GNU C++ 11.5.0;
-build the `ec2-cascadelake-avx2` wheel there, then transfer the immutable wheel
-into the release wheelhouse. Do not use the Azure host's `-march=native`.
+live host is therefore not an admitted build host. Prefer a controlled Linux
+x86_64 Azure builder with at least 16 GiB RAM and exact GNU C++ 11.5.0, but run
+it inside an Amazon Linux 2023 or manylinux_2_34-compatible glibc 2.34 rootfs
+with CPython 3.12. Generic Ubuntu 24.04/glibc 2.39 output is not an EC2 release
+artifact. Build the live-only `ec2-cascadelake-avx2` wheel there, then transfer
+the immutable wheel into the release wheelhouse. Do not use the Azure host's
+`-march=native`.
+Before network access is disabled, populate the dedicated builder environment
+from a controlled local wheelhouse with the build requirements declared by
+`cpp/pyproject.toml` and their transitive dependencies. The production target
+uses `--no-build-isolation --check-build-dependencies` with `PIP_NO_INDEX=1`;
+a missing build dependency is a bootstrap failure, not permission to resolve it
+from the network. Build-tool versions remain measured builder inputs until the
+Amazon Linux 2023 qualification freezes them.
 Installation on EC2 must still pass the native build receipt, import, and
 Python/C++ parity checks; target-host performance measurements remain EC2-only.
 
@@ -100,9 +110,14 @@ builder before staging the runtime closure:
 make native-live-wheel
 ```
 
-The target writes to `dist/native` by default. It is intentionally independent
-of `publish-source`, deployment preflight, installation, and activation; none of
-those live-host operations may compile source.
+The target writes to `dist/native/live/<full-git-commit>/` by default, so a
+live-only artifact cannot collide with a full developer wheel or a wheel from a
+different commit. It excludes tick replay, the F03 batch runtime, F06/F07, and
+the dynamic-hazard research runtime. The default developer CMake build remains
+the full extension. It performs no package-index access and consumes the
+already prepared build environment. The production target is intentionally
+independent of `publish-source`, deployment preflight, installation, and
+activation; none of those live-host operations may compile source.
 
 `publish-source` transports source only. It must not transfer credentials,
 private config, models, policy artifacts, runtime receipts, or process-control

@@ -36,9 +36,16 @@ builder 或 CI 构建，activation 时不能临时从网络解析依赖。
 禁止在 EC2 主机编译 native extension。Canonical `make native-live-wheel` 入口会执行该
 检查，默认只使用一个编译 job，并在 `MemAvailable` 低于 2,048 MiB 时拒绝启动。因此
 2 GiB live 主机不属于合格 build host。优先使用至少 16 GiB RAM、精确
-GNU C++ 11.5.0 的受控 Linux x86_64 Azure builder，在那里产出
+GNU C++ 11.5.0 的受控 Linux x86_64 Azure builder，但构建必须发生在 Amazon Linux 2023
+或 manylinux_2_34-compatible 的 glibc 2.34 rootfs，并使用 CPython 3.12。通用 Ubuntu
+24.04/glibc 2.39 产物不是 EC2 release artifact。在兼容 rootfs 中产出 live-only
 `ec2-cascadelake-avx2` wheel，再把 immutable wheel 传入 release wheelhouse；不得使用
-Azure 主机的 `-march=native`。EC2 安装后仍必须通过 native build receipt、import 与
+Azure 主机的 `-march=native`。关闭网络前，先从受控本地 wheelhouse 将
+`cpp/pyproject.toml` 声明的 build requirements 及其传递依赖安装进专用 builder
+environment。Production target 在 `PIP_NO_INDEX=1` 下使用
+`--no-build-isolation --check-build-dependencies`；缺少 build dependency 属于 bootstrap
+失败，不能因此联网解析。在 Amazon Linux 2023 qualification 冻结它们之前，build-tool
+版本仍只是实测 builder input。EC2 安装后仍必须通过 native build receipt、import 与
 Python/C++ parity；target-host 性能仍只能在 EC2 上测量。
 
 主机要求：
@@ -96,7 +103,11 @@ closure：
 make native-live-wheel
 ```
 
-该 target 默认写入 `dist/native`。它有意与 `publish-source`、deployment preflight、
+该 target 默认写入 `dist/native/live/<full-git-commit>/`，因此 live-only artifact
+不会与完整 developer wheel 或其他 commit 的 wheel 冲突。它排除 tick replay、F03
+batch、F06/F07 与 dynamic-hazard research runtime；默认 developer CMake build 仍是完整
+extension。该 target 不访问 package index，只消费已经准备好的 build environment。它有意与
+`publish-source`、deployment preflight、
 installation 和 activation 分离；这些 live-host 操作均不得编译源码。
 
 `publish-source` 只传输源码。它不得传输 credential、private config、model、policy

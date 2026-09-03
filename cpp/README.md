@@ -161,9 +161,18 @@ Cascade Lake/256-bit profile；不能把默认 portable wheel 当成生产制品
 make native-live-wheel
 ```
 
-该入口默认使用 `CMAKE_BUILD_PARALLEL_LEVEL=1`，在 Linux x86_64 builder 上检查
-`MemAvailable`，并拒绝在 live maker 进程运行时编译。2 GiB EC2 不属于合格 build host；
-正式构建使用至少 16 GiB RAM 的受控 Azure Linux x86_64 builder。
+该 target 默认将 live-only wheel 写入
+`dist/native/live/<full-git-commit>/`，不会与完整 developer wheel 或其他 commit 的
+wheel 共用输出目录。
+
+该入口只构建 live 所需 ABI，不编译 tick replay、F03 batch、F06/F07 或 dynamic-hazard
+research runtime；直接使用 CMake
+或 `pip install -e ./cpp` 时仍默认构建完整 research/replay extension。入口默认使用
+`CMAKE_BUILD_PARALLEL_LEVEL=1`，在 Linux x86_64 builder 上检查 `MemAvailable`，并拒绝
+在 live maker 进程运行时编译。2 GiB EC2 不属于合格 build host。正式构建必须位于
+Amazon Linux 2023 或 manylinux_2_34-compatible 的 glibc 2.34 rootfs，使用 CPython 3.12、
+GNU C++ 11.5.0 和至少 16 GiB RAM。Azure 的通用 Ubuntu 24.04/glibc 2.39 主机不能直接
+产出 EC2 wheel；只能在该主机上的上述兼容 container/rootfs 中构建。
 将生成的精确 wheel 安装到 release environment 后，再用该 environment 的 interpreter
 检查 embedded build profile；不能从 builder 的旧 editable install 读取身份：
 
@@ -177,7 +186,8 @@ extension（不只是 quote core）固定使用
 `-O3 -march=haswell -mtune=cascadelake -mprefer-vector-width=256
 -fno-fast-math -ffp-contract=off -fno-lto`。构建器固定为 EC2 当前的 GNU C++
 11.5.0，并要求单配置 Release 构建。它不启用 fast-math 或 AVX-512；Mac arm64 仅使用 portable
-构建做语义检查。满足精确 compiler、Python ABI 与 profile 合同的 Azure x86 builder 可以
+构建做语义检查。满足精确 compiler、Python ABI、glibc 与 profile 合同的 Azure x86
+builder/rootfs 可以
 产出 EC2 wheel，但不得使用 builder 自身的 `-march=native`。不会为 Mac 或 Azure 降低 EC2
 的 ISA/缓存调优；最终同机性能资格仍在 EC2 上完成。正式 native build
 receipt 会拒绝 portable wheel。

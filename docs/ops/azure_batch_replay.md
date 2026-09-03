@@ -68,18 +68,27 @@ download dependencies from the network inside a formal task.
 
 A separate, bounded build task may reuse a Linux x86_64 node with at least
 16 GiB RAM to produce the EC2 native artifact. It is a build task, not a replay
-day, and must not run concurrently in a replay task slot. Materialize the exact
-source commit, CPython 3.12 build environment, and GNU C++ 11.5.0 toolchain, then
-run:
+day, and must not run concurrently in a replay task slot. The task must enter an
+Amazon Linux 2023 or manylinux_2_34-compatible glibc 2.34 container/rootfs;
+generic Ubuntu 24.04/glibc 2.39 output cannot be deployed to EC2. Materialize
+the exact source commit, CPython 3.12 build environment, and GNU C++ 11.5.0
+toolchain. Before disabling task network access, populate that dedicated build
+environment from a controlled local wheelhouse with the requirements declared
+by `cpp/pyproject.toml` and their transitive dependencies. Then run:
 
 ```bash
 make native-live-wheel
 ```
 
 The entry point defaults `CMAKE_BUILD_PARALLEL_LEVEL` to `1`, checks available
-memory, and fixes `NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`. Upload the
-resulting `dist/native/*.whl` as an immutable build output before releasing the
-node. Do not substitute `-march=native`, a portable wheel, or a wheel from a
+memory, selects the live-only surface, and fixes
+`NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`. It uses
+`--no-build-isolation --check-build-dependencies` with `PIP_NO_INDEX=1`, so a
+missing build dependency fails locally instead of reaching a package index.
+Build-tool versions remain measured builder inputs until the Amazon Linux 2023
+qualification freezes them. Upload the resulting
+`dist/native/live/<full-git-commit>/*.whl` as an immutable build output before
+releasing the node. Do not substitute `-march=native`, a portable wheel, or a wheel from a
 different compiler. The target EC2 release must still verify the installed
 wheel with its native build receipt and Python/C++ parity smoke; Azure does not
 replace target-host performance qualification.

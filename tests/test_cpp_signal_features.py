@@ -8,6 +8,10 @@ import pytest
 
 import strategy.signal as signal_module
 from live.config import Config
+from strategy.boolean_cooldown_live import (
+    LiveBooleanCooldownPolicy,
+    RuntimeCooldownPolicyEvaluator,
+)
 from strategy.maker_engine import MakerEngine
 from strategy.model_contract import REQUIRED_MODEL_HEADS
 from strategy.signal import (
@@ -22,11 +26,35 @@ from strategy.signal import (
 
 narrowgate_cpp = pytest.importorskip("narrowgate_cpp")
 
+_SELL_LONG_CROSS = "predicate::ema_pair_h16s_h256s:cross_age_le_fast"
+_SELL_SHORT_CROSS = "predicate::ema_pair_h4s_h16s:cross_age_le_slow"
+_SELL_CAMPAIGN_AGE = "predicate::m0::campaign_age_gt_control_duration"
+
 MODEL_BUNDLE = (
     Path(__file__).resolve().parents[1]
     / "examples"
     / "public_dry_run_model_bundle"
 )
+
+
+def test_native_build_surface_matches_exposed_runtime() -> None:
+    is_full = narrowgate_cpp.NATIVE_BUILD_FLAVOR == "full"
+    assert narrowgate_cpp.NATIVE_TICK_REPLAY_AVAILABLE is is_full
+    assert narrowgate_cpp.NATIVE_RESEARCH_RUNTIME_AVAILABLE is is_full
+    for name in (
+        "TickReplayParams",
+        "F03CausalV12OneSecondBatchEngine",
+        "DynamicFillHazardRuntime",
+        "integrate_variance_time_episode",
+    ):
+        assert hasattr(narrowgate_cpp, name) is is_full
+    for name in (
+        "SignalFeatureEngine",
+        "FeatureHistoryRow",
+        "F05BooleanPolicy",
+        "NativeLiveCooldownHotPath",
+    ):
+        assert hasattr(narrowgate_cpp, name)
 
 
 def _active_lightgbm_library() -> str:
@@ -134,6 +162,72 @@ def _native_l2_policy_values(
         ),
         dtype=np.float64,
     )
+
+
+def _sell_cooldown_evaluator() -> RuntimeCooldownPolicyEvaluator:
+    return RuntimeCooldownPolicyEvaluator(
+        rules=(
+            (
+                "FIXED_1748S",
+                (
+                    ((_SELL_SHORT_CROSS, False), (_SELL_CAMPAIGN_AGE, False)),
+                    ((_SELL_SHORT_CROSS, True), (_SELL_CAMPAIGN_AGE, False)),
+                ),
+            ),
+            (
+                "FIXED_166S",
+                (((_SELL_LONG_CROSS, False), (_SELL_CAMPAIGN_AGE, True)),),
+            ),
+            (
+                "FIXED_211S",
+                (((_SELL_LONG_CROSS, True), (_SELL_CAMPAIGN_AGE, True)),),
+            ),
+        ),
+        policy_sha256="1" * 64,
+        predicate_bundle_sha256="2" * 64,
+    )
+
+
+def test_live_build_f05_sell_cooldown_matches_python_windows_and_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "0")
+    python_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_sell_cooldown_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    monkeypatch.setenv("NARROWGATE_CPP_COOLDOWN", "1")
+    native_runtime = LiveBooleanCooldownPolicy(
+        evaluator=_sell_cooldown_evaluator(),
+        warmup_s=0.2,
+        max_feature_age_s=0.5,
+    )
+    assert native_runtime._native_hot_path is not None  # noqa: SLF001
+
+    for index, mid in enumerate(
+        (100.0, 101.0, 99.0, 102.0, 98.0, 103.0, 97.0),
+        start=1,
+    ):
+        event = {
+            "receive_ts_ns": index * 100_000_000 + 1,
+            "bids": ((mid - 0.1, 1.0),),
+            "asks": ((mid + 0.1, 1.0),),
+            "market_generation": index,
+            "depth_generation": index,
+        }
+        python_runtime.observe_depth(**event)
+        native_runtime.observe_depth(**event)
+
+    for campaign_age_s in (1.0, 100.0):
+        arguments = {
+            "side": "SELL",
+            "baseline_duration_ms": 85_000,
+            "campaign_age_s": campaign_age_s,
+            "decision_ts_ns": 800_000_000,
+            "snapshot_id": f"sell-{campaign_age_s}",
+        }
+        assert native_runtime.evaluate(**arguments) == python_runtime.evaluate(**arguments)
 
 
 def test_cpp_execution_l2_batch_matches_python_exactly_at_102_snapshots() -> None:

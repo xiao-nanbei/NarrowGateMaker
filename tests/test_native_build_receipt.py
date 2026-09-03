@@ -61,6 +61,23 @@ def test_production_live_cpu_build_requires_measured_profile() -> None:
         subject._production_live_cpu_build(module)  # noqa: SLF001
 
 
+def test_production_build_surface_excludes_replay_and_research() -> None:
+    module = SimpleNamespace(
+        NATIVE_BUILD_FLAVOR="live",
+        NATIVE_TICK_REPLAY_AVAILABLE=False,
+        NATIVE_RESEARCH_RUNTIME_AVAILABLE=False,
+    )
+    assert subject._production_build_surface(module) == {  # noqa: SLF001
+        "flavor": "live",
+        "tick_replay_available": False,
+        "research_runtime_available": False,
+    }
+
+    module.NATIVE_TICK_REPLAY_AVAILABLE = True
+    with pytest.raises(subject.NativeBuildReceiptError, match="live-only"):
+        subject._production_build_surface(module)  # noqa: SLF001
+
+
 def test_native_parity_smoke_forces_no_bytecode_flag(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -72,11 +89,26 @@ def test_native_parity_smoke_forces_no_bytecode_flag(
     def fake_run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
         observed["argv"] = argv
         observed["kwargs"] = kwargs
+        report = {
+            "collected": 7,
+            "passed": 7,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "xpassed": 0,
+            "deselected": 0,
+            "exitstatus": 0,
+        }
+        Path(kwargs["env"][subject._QUALIFICATION_REPORT_ENV]).write_text(  # noqa: SLF001
+            subject.json.dumps(report),
+            encoding="utf-8",
+        )
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subject.subprocess, "run", fake_run)
 
-    subject._run_native_parity_smoke(  # noqa: SLF001
+    result = subject._run_native_parity_smoke(  # noqa: SLF001
         tmp_path,
         expected_module_token=expected_token,
     )
@@ -87,12 +119,56 @@ def test_native_parity_smoke_forces_no_bytecode_flag(
         "-m",
         "pytest",
         "-q",
-        *subject.PARITY_TESTS,
+        "-o",
+        "xfail_strict=true",
+        "-p",
+        "live.native_build_receipt",
+        *subject.LIVE_PARITY_TESTS,
     )
+    assert result == {
+        "collected": 7,
+        "passed": 7,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0,
+        "deselected": 0,
+    }
     assert observed["kwargs"]["cwd"] == tmp_path
     assert observed["kwargs"]["env"]["PYTHONDONTWRITEBYTECODE"] == "1"
     assert observed["kwargs"]["env"]["PYTHONNOUSERSITE"] == "1"
     assert observed["kwargs"]["env"]["NARROWGATE_CPP_EXPECT_MODULE_TOKEN"] == expected_token
+
+
+def test_native_parity_smoke_rejects_skipped_tests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(argv: tuple[str, ...], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        report = {
+            "collected": 2,
+            "passed": 1,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 1,
+            "xfailed": 0,
+            "xpassed": 0,
+            "deselected": 0,
+            "exitstatus": 0,
+        }
+        Path(kwargs["env"][subject._QUALIFICATION_REPORT_ENV]).write_text(  # noqa: SLF001
+            subject.json.dumps(report),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(subject.subprocess, "run", fake_run)
+    with pytest.raises(subject.NativeBuildReceiptError, match="every collected test"):
+        subject._run_native_parity_smoke(  # noqa: SLF001
+            tmp_path,
+            expected_module_token=f"{tmp_path.resolve()}{subject.os.sep}",
+        )
 
 
 def test_locked_venv_module_token_requires_exact_commit_directory(

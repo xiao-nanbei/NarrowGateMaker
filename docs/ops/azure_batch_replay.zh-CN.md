@@ -60,16 +60,23 @@ Closure 缺失属于 bootstrap failure，不能因此允许 formal task 联网�
 
 一个独立、有边界的 build task 可以复用至少 16 GiB RAM 的 Linux x86_64 node，产出 EC2
 native artifact。它是 build task，不是 replay day，也不能与 replay task 共用一个并发
-slot。Materialize 精确 source commit、CPython 3.12 build environment 与 GNU C++ 11.5.0
-toolchain，然后运行：
+slot。构建必须进入 Amazon Linux 2023 或 manylinux_2_34-compatible 的 glibc 2.34
+container/rootfs；通用 Ubuntu 24.04/glibc 2.39 产物不能部署到 EC2。Materialize 精确
+source commit、CPython 3.12 build environment 与 GNU C++ 11.5.0 toolchain。关闭 task
+网络前，先从受控本地 wheelhouse 将 `cpp/pyproject.toml` 声明的 requirements 及其传递
+依赖安装进该专用 build environment，然后运行：
 
 ```bash
 make native-live-wheel
 ```
 
-该入口默认把 `CMAKE_BUILD_PARALLEL_LEVEL` 设为 `1`，检查 available memory，并固定
-`NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`。释放 node 前，将生成的
-`dist/native/*.whl` 作为 immutable build output 上传。不能改用 `-march=native`、portable
+该入口默认把 `CMAKE_BUILD_PARALLEL_LEVEL` 设为 `1`，检查 available memory，选择
+live-only surface，并固定 `NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2`。它在
+`PIP_NO_INDEX=1` 下使用 `--no-build-isolation --check-build-dependencies`，因此缺少 build
+dependency 时会在本地失败，不会访问 package index。在 Amazon Linux 2023 qualification
+冻结它们之前，build-tool 版本仍只是实测 builder input。释放 node 前，将生成的
+`dist/native/live/<full-git-commit>/*.whl` 作为 immutable build output 上传。不能改用
+`-march=native`、portable
 wheel 或不同 compiler 产出的 wheel。目标 EC2 release 仍必须通过 native build receipt
 与 Python/C++ parity smoke 验证 installed wheel；Azure 不能替代 target-host performance
 qualification。

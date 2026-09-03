@@ -22,6 +22,24 @@ option(
     "Build standalone live-runtime selftest and benchmark binaries"
     OFF
 )
+set(
+    NARROWGATE_BUILD_FLAVOR
+    "full"
+    CACHE STRING
+    "Native extension surface: full or live"
+)
+set_property(CACHE NARROWGATE_BUILD_FLAVOR PROPERTY STRINGS full live)
+if(NOT NARROWGATE_BUILD_FLAVOR STREQUAL "full" AND
+   NOT NARROWGATE_BUILD_FLAVOR STREQUAL "live")
+    message(FATAL_ERROR "Unknown NARROWGATE_BUILD_FLAVOR=${NARROWGATE_BUILD_FLAVOR}")
+endif()
+
+set(NARROWGATE_BUILD_HAS_TICK_REPLAY 0)
+set(NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME 0)
+if(NARROWGATE_BUILD_FLAVOR STREQUAL "full")
+    set(NARROWGATE_BUILD_HAS_TICK_REPLAY 1)
+    set(NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME 1)
+endif()
 
 set(NARROWGATE_LIVE_BUILD_IS_PRODUCTION 0)
 set(NARROWGATE_LIVE_VECTOR_WIDTH_BITS 0)
@@ -37,6 +55,20 @@ if(NARROWGATE_LIVE_CPU_PROFILE STREQUAL "ec2-cascadelake-avx2")
     if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR
        NOT CMAKE_CXX_COMPILER_VERSION VERSION_EQUAL "11.5.0")
         message(FATAL_ERROR "EC2 Cascade Lake profile requires GNU C++ 11.5.0")
+    endif()
+    execute_process(
+        COMMAND getconf GNU_LIBC_VERSION
+        RESULT_VARIABLE NARROWGATE_GLIBC_RESULT
+        OUTPUT_VARIABLE NARROWGATE_GLIBC_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT NARROWGATE_GLIBC_RESULT EQUAL 0 OR
+       NOT NARROWGATE_GLIBC_VERSION STREQUAL "glibc 2.34")
+        message(FATAL_ERROR
+            "EC2 Cascade Lake profile requires an Amazon Linux 2023 or "
+            "manylinux_2_34-compatible glibc 2.34 build root"
+        )
     endif()
     string(TOUPPER "${CMAKE_BUILD_TYPE}" NARROWGATE_BUILD_TYPE_UPPER)
     if(CMAKE_CONFIGURATION_TYPES OR
@@ -91,6 +123,25 @@ set(NARROWGATE_LIVE_CORE_SOURCES
 
 find_package(Python COMPONENTS Interpreter REQUIRED)
 
+if(NARROWGATE_LIVE_BUILD_IS_PRODUCTION AND
+   (NOT Python_VERSION_MAJOR EQUAL 3 OR NOT Python_VERSION_MINOR EQUAL 12))
+    message(FATAL_ERROR "EC2 Cascade Lake profile requires CPython 3.12")
+endif()
+if(NARROWGATE_LIVE_BUILD_IS_PRODUCTION)
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -c
+                "import platform; print(platform.python_implementation())"
+        RESULT_VARIABLE NARROWGATE_PYTHON_IMPLEMENTATION_RESULT
+        OUTPUT_VARIABLE NARROWGATE_PYTHON_IMPLEMENTATION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT NARROWGATE_PYTHON_IMPLEMENTATION_RESULT EQUAL 0 OR
+       NOT NARROWGATE_PYTHON_IMPLEMENTATION STREQUAL "CPython")
+        message(FATAL_ERROR "EC2 Cascade Lake profile requires CPython 3.12")
+    endif()
+endif()
+
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -c "import sysconfig; print(sysconfig.get_path('include') or '')"
     OUTPUT_VARIABLE NARROWGATE_PYTHON_INCLUDE
@@ -113,26 +164,42 @@ find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 CONFIG REQUIRED)
 
-pybind11_add_module(narrowgate_cpp
+set(NARROWGATE_BINDING_SOURCES
     narrowgate_cpp/bindings_module.cpp
     narrowgate_cpp/bindings_common_dynamic.cpp
     narrowgate_cpp/bindings_transport_quote.cpp
-    narrowgate_cpp/bindings_tick_replay.cpp
     narrowgate_cpp/bindings_streaming.cpp
-    narrowgate_cpp/bindings_research.cpp
     narrowgate_cpp/bindings_replace_action.cpp
     narrowgate_cpp/bindings_live_runtime.cpp
-    narrowgate_cpp/dynamic_fill_hazard.cpp
+    narrowgate_cpp/bindings_f05_policy.cpp
+)
+
+set(NARROWGATE_RUNTIME_SOURCES
     narrowgate_cpp/global_flow.cpp
     ${NARROWGATE_LIVE_CORE_SOURCES}
-    ../research/families/f06_placement_fill_cif/cpp/request_state_features.cpp
-    ../research/families/f06_placement_fill_cif/cpp/risk_set_expansion.cpp
-    ../research/families/f06_placement_fill_cif/cpp/sparse_order_lifecycle.cpp
-    ../research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.cpp
-    ../research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp
-    ../research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp
-    narrowgate_cpp/tick_replay.cpp
     narrowgate_cpp/streaming_features.cpp
+)
+
+if(NARROWGATE_BUILD_FLAVOR STREQUAL "full")
+    list(APPEND NARROWGATE_BINDING_SOURCES
+        narrowgate_cpp/bindings_tick_replay.cpp
+        narrowgate_cpp/bindings_research.cpp
+    )
+    list(APPEND NARROWGATE_RUNTIME_SOURCES
+        narrowgate_cpp/dynamic_fill_hazard.cpp
+        narrowgate_cpp/tick_replay.cpp
+        ../research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp
+        ../research/families/f06_placement_fill_cif/cpp/request_state_features.cpp
+        ../research/families/f06_placement_fill_cif/cpp/risk_set_expansion.cpp
+        ../research/families/f06_placement_fill_cif/cpp/sparse_order_lifecycle.cpp
+        ../research/families/f07_active_order_continuation/cpp/active_order_competing_risk_cif.cpp
+        ../research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp
+    )
+endif()
+
+pybind11_add_module(narrowgate_cpp
+    ${NARROWGATE_BINDING_SOURCES}
+    ${NARROWGATE_RUNTIME_SOURCES}
 )
 
 if(CMAKE_DL_LIBS)
@@ -156,6 +223,9 @@ target_compile_definitions(
         NARROWGATE_LIVE_CPU_COMPILE_OPTIONS="${NARROWGATE_LIVE_COMPILE_OPTIONS_TEXT}"
         NARROWGATE_LIVE_BUILD_IS_PRODUCTION=${NARROWGATE_LIVE_BUILD_IS_PRODUCTION}
         NARROWGATE_LIVE_VECTOR_WIDTH_BITS=${NARROWGATE_LIVE_VECTOR_WIDTH_BITS}
+        NARROWGATE_NATIVE_BUILD_FLAVOR_NAME="${NARROWGATE_BUILD_FLAVOR}"
+        NARROWGATE_BUILD_HAS_TICK_REPLAY=${NARROWGATE_BUILD_HAS_TICK_REPLAY}
+        NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME=${NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME}
 )
 
 if(NARROWGATE_LIVE_COMPILE_OPTIONS)
@@ -179,10 +249,16 @@ target_compile_features(narrowgate_cpp PRIVATE cxx_std_20)
 target_include_directories(narrowgate_cpp
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/narrowgate_cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f03_causal_13_head/cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f06_placement_fill_cif/cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f07_active_order_continuation/cpp
 )
+
+if(NARROWGATE_BUILD_FLAVOR STREQUAL "full")
+    target_include_directories(narrowgate_cpp
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f03_causal_13_head/cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f06_placement_fill_cif/cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/../research/families/f07_active_order_continuation/cpp
+    )
+endif()
 
 install(TARGETS narrowgate_cpp
     LIBRARY DESTINATION .

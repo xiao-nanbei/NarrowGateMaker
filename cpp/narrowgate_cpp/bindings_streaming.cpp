@@ -1,3 +1,5 @@
+#define NARROWGATE_BINDING_STREAMING 1
+
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -13,26 +15,12 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-#include "dynamic_fill_hazard.hpp"
-#include "active_order_competing_risk_cif.hpp"
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
 #include "causal_v12_1s_features.hpp"
-#include "order_lifecycle_journal_v2_mirror.hpp"
-#include "live_order_action_plan.hpp"
-#include "live_order_state.hpp"
-#include "live_cooldown.hpp"
+#endif
 #include "lightgbm_bundle.hpp"
-#include "live_policy.hpp"
-#include "live_runtime_core.hpp"
-#include "order_gateway_core.hpp"
-#include "quote_core.hpp"
-#include "replace_continuation.hpp"
-#include "request_state_features.hpp"
-#include "risk_set_expansion.hpp"
-#include "sparse_order_lifecycle.hpp"
 #include "global_flow.hpp"
 #include "streaming_features.hpp"
-#include "tick_replay.hpp"
-#include "transport_contract.hpp"
 #include "binding_registry.hpp"
 
 namespace py = pybind11;
@@ -82,6 +70,8 @@ py::array_t<T> vector_matrix(
     return output;
 }
 
+#if defined(NARROWGATE_BINDING_TRANSPORT_QUOTE) || \
+    defined(NARROWGATE_BINDING_LIVE_RUNTIME)
 DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj) {
     DepthSnapshot depth;
     auto append = [](py::handle rows_obj, std::vector<DepthLevel>& out) {
@@ -104,7 +94,9 @@ DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj)
     append(asks_obj, depth.asks);
     return depth;
 }
+#endif
 
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict signal_feature_dict(const SignalFeatureVector& features) {
     py::dict out;
     const auto& values = features.values();
@@ -185,6 +177,9 @@ py::array_t<double> signal_execution_l2_policy_metric_array(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_RESEARCH)
 py::dict sparse_order_lifecycle_dict(
     const SparseOrderLifecycleResult& result
 ) {
@@ -259,6 +254,9 @@ py::dict sparse_order_lifecycle_dict(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict global_flow_window_dict(const GlobalFlowMarketWindow& row) {
     py::dict out;
     out["market_id"] = row.market_id;
@@ -303,6 +301,9 @@ py::dict global_flow_stats_dict(const GlobalFlowStats& stats) {
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_TICK_REPLAY)
 void set_trade_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& trade_ts_ms,
@@ -443,6 +444,10 @@ void set_per_trade_policy_arrays(
     input.sell_queue_deplete_mult_by_trade = view_from_array(sell_queue_deplete_mult_by_trade);
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_COMMON_DYNAMIC) || \
+    defined(NARROWGATE_BINDING_TICK_REPLAY)
 template <typename T>
 T required_dict_value(const py::dict& payload, const char* key) {
     const py::str name(key);
@@ -752,7 +757,7 @@ py::dict dynamic_fill_hazard_counters_dict(
     out["prospective_invalid_count"] = value.prospective_invalid_count;
     return out;
 }
-
+#endif
 
 }  // namespace
 
@@ -1181,6 +1186,7 @@ void bind_streaming_features(py::module_& m) {
 
 }
 
+#if NARROWGATE_BUILD_HAS_RESEARCH_RUNTIME
 void bind_f03_causal_v12_one_second_features(py::module_& m) {
     m.attr("F03_CAUSAL_V12_1S_FEATURE_ABI_VERSION") =
         std::string(f03::kCausalV12OneSecondFeatureAbiVersion);
@@ -1464,6 +1470,7 @@ void bind_f03_causal_v12_one_second_features(py::module_& m) {
         py::arg("reference_bars") = std::vector<f03::OneSecondBar>{}
     );
 }
+#endif
 
 
 }  // namespace narrowgate_cpp

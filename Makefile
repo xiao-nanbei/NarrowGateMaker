@@ -7,7 +7,8 @@ EC2     ?= $(NARROWGATE_DEPLOY_TARGET)
 EC2_DIR ?= $(NARROWGATE_RELEASE_DIR)
 RELEASE_TAG ?= $(NARROWGATE_RELEASE_TAG)
 LIVE_CONFIG ?= $(if $(NARROWGATE_LIVE_CONFIG),$(NARROWGATE_LIVE_CONFIG),live/config.yaml)
-NATIVE_WHEEL_DIR ?= dist/native
+NATIVE_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null)
+NATIVE_WHEEL_DIR ?= dist/native/live/$(NATIVE_BUILD_COMMIT)
 NATIVE_BUILD_PARALLEL_LEVEL ?= 1
 NATIVE_BUILD_MIN_AVAILABLE_MIB ?= 2048
 NATIVE_BUILD_MEMINFO ?= /proc/meminfo
@@ -76,6 +77,8 @@ backtest-tick:
 native-live-build-preflight:
 	@test "$$(uname -s)" = "Linux" || (echo "The EC2 native wheel requires a Linux x86_64 builder." >&2; exit 2)
 	@case "$$(uname -m)" in x86_64|amd64) ;; *) echo "The EC2 native wheel requires an x86_64 builder." >&2; exit 2 ;; esac
+	@test "$$(getconf GNU_LIBC_VERSION 2>/dev/null)" = "glibc 2.34" || (echo "The EC2 native wheel requires an Amazon Linux 2023 or manylinux_2_34-compatible build root." >&2; exit 2)
+	@$(PYTHON) -c 'import platform, sys; raise SystemExit(0 if platform.python_implementation() == "CPython" and sys.version_info[:2] == (3, 12) else 1)' || (echo "The EC2 native wheel requires CPython 3.12." >&2; exit 2)
 	@case "$(NATIVE_BUILD_PARALLEL_LEVEL)" in ''|*[!0-9]*|0) echo "NATIVE_BUILD_PARALLEL_LEVEL must be a positive integer." >&2; exit 2 ;; esac
 	@case "$(NATIVE_BUILD_MIN_AVAILABLE_MIB)" in ''|*[!0-9]*|0) echo "NATIVE_BUILD_MIN_AVAILABLE_MIB must be a positive integer." >&2; exit 2 ;; esac
 	@if command -v systemctl >/dev/null 2>&1; then \
@@ -109,10 +112,15 @@ native-live-build-preflight:
 
 native-live-wheel: native-live-build-preflight
 	@mkdir -p "$(NATIVE_WHEEL_DIR)"
-	CMAKE_BUILD_PARALLEL_LEVEL="$(NATIVE_BUILD_PARALLEL_LEVEL)" \
+	PIP_NO_INDEX=1 \
+		PIP_DISABLE_PIP_VERSION_CHECK=1 \
+		CMAKE_BUILD_PARALLEL_LEVEL="$(NATIVE_BUILD_PARALLEL_LEVEL)" \
 		$(PYTHON) -m pip wheel --no-deps \
+		--no-build-isolation \
+		--check-build-dependencies \
 		--wheel-dir "$(NATIVE_WHEEL_DIR)" \
 		--config-settings=cmake.define.NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2 \
+		--config-settings=cmake.define.NARROWGATE_BUILD_FLAVOR=live \
 		./cpp
 
 # ── Live Trading ────────────────────────────────────────────

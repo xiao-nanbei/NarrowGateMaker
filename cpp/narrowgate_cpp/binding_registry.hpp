@@ -8,6 +8,7 @@ void bind_common(pybind11::module_& m);
 void bind_transport_contract(pybind11::module_& m);
 void bind_dynamic_fill_hazard(pybind11::module_& m);
 void bind_quote_core(pybind11::module_& m);
+void bind_f05_policy_types(pybind11::module_& m);
 void bind_tick_replay(pybind11::module_& m);
 void bind_global_flow(pybind11::module_& m);
 void bind_streaming_features(pybind11::module_& m);

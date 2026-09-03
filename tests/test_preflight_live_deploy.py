@@ -568,12 +568,24 @@ def test_native_live_wheel_build_is_bounded_and_separate_from_deploy() -> None:
 
     assert "NATIVE_BUILD_PARALLEL_LEVEL ?= 1" in makefile
     assert "NATIVE_BUILD_MIN_AVAILABLE_MIB ?= 2048" in makefile
+    assert (
+        "NATIVE_BUILD_COMMIT ?= $(shell git rev-parse --verify HEAD 2>/dev/null)"
+        in makefile
+    )
+    assert "NATIVE_WHEEL_DIR ?= dist/native/live/$(NATIVE_BUILD_COMMIT)" in makefile
     assert "native-live-build-preflight:" in makefile
     assert "native-live-wheel: native-live-build-preflight" in makefile
     assert "MemAvailable:" in makefile
     assert "narrowgate.service narrowgate-maker.service" in makefile
     assert "CMAKE_BUILD_PARALLEL_LEVEL=\"$(NATIVE_BUILD_PARALLEL_LEVEL)\"" in makefile
+    assert "PIP_NO_INDEX=1" in makefile
+    assert "PIP_DISABLE_PIP_VERSION_CHECK=1" in makefile
+    assert "--no-build-isolation" in makefile
+    assert "--check-build-dependencies" in makefile
     assert "NARROWGATE_LIVE_CPU_PROFILE=ec2-cascadelake-avx2" in makefile
+    assert "NARROWGATE_BUILD_FLAVOR=live" in makefile
+    assert 'getconf GNU_LIBC_VERSION' in makefile
+    assert 'sys.version_info[:2] == (3, 12)' in makefile
 
     publish_source = makefile.split("publish-source:", 1)[1].split(
         "publish-source-dry:", 1

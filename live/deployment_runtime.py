@@ -63,9 +63,100 @@ STOPPED_RECONCILIATION_CANONICAL_FIELD = "canonical_exchange_reconciliation_sha2
 STOPPED_RECONCILIATION_STATUS = "signed_open_orders_zero_exact_position_stable"
 LIVE_RUNTIME_IDENTITY_SCHEMA = "narrowgate_live_runtime_identity.v1"
 STARTUP_ATTESTATION_SCHEMA = "narrowgate_startup_attestation.v1"
-NATIVE_BUILD_RECEIPT_SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v2"
+NATIVE_BUILD_RECEIPT_SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v3"
 NATIVE_BUILD_RECEIPT_CANONICAL_FIELD = "canonical_native_build_sha256"
 NATIVE_BUILD_RECEIPT_STATUS = "exact_tag_native_build_dependency_lock_and_parity_passed"
+NATIVE_BUILD_FLAVOR = "live"
+NATIVE_LIVE_PARITY_TESTS = (
+    "tests/test_cpp_quote_core_parity.py",
+    "tests/test_cpp_signal_features.py",
+    "tests/test_cpp_global_flow.py",
+    "tests/test_cpp_live_order_state.py",
+    "tests/test_cpp_replace_continuation.py",
+    "tests/test_cpp_live_order_action_plan.py",
+)
+NATIVE_LIVE_CPU_PROFILE = "ec2-cascadelake-avx2"
+NATIVE_LIVE_COMPILE_OPTIONS = (
+    "-O3 -march=haswell -mtune=cascadelake -mprefer-vector-width=256 "
+    "-fno-fast-math -ffp-contract=off -fno-lto"
+)
+NATIVE_LIVE_ABI_CONTRACT = {
+    "schema_version": "narrowgate_native_runtime_abi.v1",
+    "required_apis": (
+        "compute_quote_core_live",
+        "compute_live_routing_decision",
+        "SignalFeatureEngine",
+        "SIGNAL_FEATURE_NAMES",
+        "NativeLightgbmBundle",
+        "LIGHTGBM_BUNDLE_HEAD_NAMES",
+        "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+        "TradeBarAggregator",
+        "F05BooleanClause",
+        "F05BooleanLiteral",
+        "F05BooleanPolicy",
+        "F05BooleanRule",
+        "F05PredicateDefinition",
+        "F05PredicateMetric",
+        "F05PredicatePair",
+        "LiveCooldownDecisionStatus",
+        "LiveCooldownProfile",
+        "NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE",
+        "NativeLiveCooldownHotPath",
+        "NativeReplaceContinuationState",
+        "ReplaceContinuationEventKind",
+        "Side",
+        "compute_live_order_action_plan",
+        "LiveOrderAction",
+        "LivePlannerOrderState",
+        "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
+        "LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_POST",
+        "LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE",
+        "LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE",
+        "LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE",
+        "LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE",
+        "LIVE_ORDER_REASON_THROTTLE_PRICE",
+        "LIVE_ORDER_REASON_THROTTLE_AGE",
+        "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
+        "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
+    ),
+    "required_class_members": {
+        "SignalFeatureEngine": ("compute_bucket_values",),
+        "NativeLightgbmBundle": (
+            "predict",
+            "feature_count",
+            "head_count",
+            "library_path",
+            "num_threads",
+        ),
+        "NativeLiveCooldownHotPath": (
+            "observe_depth",
+            "evaluate",
+            "reset",
+            "audit",
+            "feature_snapshot",
+        ),
+        "NativeReplaceContinuationState": (
+            "arm",
+            "publish",
+            "clear_exact",
+            "clear_side",
+            "clear_unready",
+            "take_ready",
+            "finalize_decision",
+            "drop_in_flight",
+            "clear_all",
+            "telemetry",
+        ),
+    },
+    "required_quote_fields": {
+        "QuoteFlags": ("delta_cap", "final_compressed", "cap_exposure_block"),
+        "SideQuoteContext": ("cap_exposure_block",),
+    },
+    "validated": True,
+}
 WHEELHOUSE_MANIFEST = "wheelhouse.manifest.json"
 REQUIRED_PYTHON = (3, 12)
 DEFAULT_EXCLUDED_DISTRIBUTIONS = (
@@ -84,6 +175,28 @@ NATIVE_DISTRIBUTION_NAMES = frozenset(
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _RELEASE_ID_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$")
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?$")
+
+
+def native_live_abi_contract_payload() -> dict[str, Any]:
+    """Return the one JSON-shaped ABI contract shared by producer and consumer."""
+
+    return {
+        "schema_version": NATIVE_LIVE_ABI_CONTRACT["schema_version"],
+        "required_apis": list(NATIVE_LIVE_ABI_CONTRACT["required_apis"]),
+        "required_class_members": {
+            name: list(members)
+            for name, members in NATIVE_LIVE_ABI_CONTRACT[
+                "required_class_members"
+            ].items()
+        },
+        "required_quote_fields": {
+            name: list(fields)
+            for name, fields in NATIVE_LIVE_ABI_CONTRACT[
+                "required_quote_fields"
+            ].items()
+        },
+        "validated": True,
+    }
 
 
 class LockedRuntimeError(RuntimeError):
@@ -2152,6 +2265,53 @@ def _validate_native_build_bundle(
         raise LockedRuntimeError("native build receipt status drifted")
     if "native_sources" in native:
         raise LockedRuntimeError("native build receipt repeats Git-tracked source hashes")
+    build_surface = _require_mapping(native.get("build_surface"), "native build surface")
+    if build_surface != {
+        "flavor": NATIVE_BUILD_FLAVOR,
+        "tick_replay_available": False,
+        "research_runtime_available": False,
+    }:
+        raise LockedRuntimeError("native production build surface drifted")
+    live_cpu_build = _require_mapping(native.get("live_cpu_build"), "native live CPU build")
+    if live_cpu_build != {
+        "profile": NATIVE_LIVE_CPU_PROFILE,
+        "compile_options": NATIVE_LIVE_COMPILE_OPTIONS,
+        "production": True,
+        "preferred_vector_width_bits": 256,
+    }:
+        raise LockedRuntimeError("native production CPU build drifted")
+    abi_contract = _require_mapping(native.get("abi_contract"), "native ABI contract")
+    if abi_contract != native_live_abi_contract_payload():
+        raise LockedRuntimeError("native live ABI qualification drifted")
+    parity = _require_mapping(
+        native.get("parity_qualification"),
+        "native live parity qualification",
+    )
+    parity_count_fields = {
+        "collected",
+        "passed",
+        "failed",
+        "errors",
+        "skipped",
+        "xfailed",
+        "xpassed",
+        "deselected",
+    }
+    if set(parity) != {"tests", "validated", *parity_count_fields}:
+        raise LockedRuntimeError("native live parity qualification fields drifted")
+    tests = parity.get("tests")
+    if (
+        parity.get("validated") is not True
+        or tests != list(NATIVE_LIVE_PARITY_TESTS)
+        or any(
+            isinstance(parity.get(name), bool) or not isinstance(parity.get(name), int)
+            for name in parity_count_fields
+        )
+        or parity["collected"] <= 0
+        or parity["passed"] != parity["collected"]
+        or any(parity[name] != 0 for name in parity_count_fields - {"collected", "passed"})
+    ):
+        raise LockedRuntimeError("native live parity qualification did not pass exactly")
     execution = _require_mapping(native.get("execution"), "native execution")
     if (
         execution.get("execution_commit") != execution_commit

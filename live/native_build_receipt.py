@@ -17,6 +17,7 @@ import stat
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import zipfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,18 +35,12 @@ if str(REPO_ROOT) not in sys.path:
 from live import deployment_runtime as locked_runtime  # noqa: E402
 from strategy.model_contract import REQUIRED_MODEL_HEADS  # noqa: E402
 
-SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v2"
+SCHEMA = "narrowgate_linux_x86_64_native_build_receipt.v3"
 STATUS = "exact_tag_native_build_dependency_lock_and_parity_passed"
 CANONICAL_FIELD = "canonical_native_build_sha256"
-PARITY_TESTS = (
-    "tests/test_cpp_quote_core_parity.py",
-    "tests/test_cpp_tick_replay_golden_parity.py",
-    "tests/test_conditional_p3_cpp_overlay.py",
-    "tests/test_cpp_signal_features.py",
-    "tests/test_f05_repeated_boolean_cooldown_cpp_abi.py",
-    "tests/test_cpp_replace_continuation.py",
-    "tests/test_cpp_live_order_action_plan.py",
-)
+LIVE_PARITY_TESTS = locked_runtime.NATIVE_LIVE_PARITY_TESTS
+PRODUCTION_BUILD_FLAVOR = "live"
+_QUALIFICATION_REPORT_ENV = "NARROWGATE_NATIVE_QUALIFICATION_REPORT"
 PRODUCTION_LIVE_CPU_PROFILE = "ec2-cascadelake-avx2"
 PRODUCTION_LIVE_COMPILE_OPTIONS = (
     "-O3",
@@ -60,6 +55,33 @@ PRODUCTION_LIVE_COMPILE_OPTIONS = (
 
 class NativeBuildReceiptError(RuntimeError):
     pass
+
+
+def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
+    """Emit machine-readable qualification counts for the receipt subprocess."""
+
+    report_path = os.environ.get(_QUALIFICATION_REPORT_ENV, "")
+    if not report_path:
+        return
+    reporter = session.config.pluginmanager.get_plugin("terminalreporter")
+    stats = getattr(reporter, "stats", {}) if reporter is not None else {}
+    def count(name: str) -> int:
+        return len(stats.get(name, ()))
+    payload = {
+        "collected": int(session.testscollected),
+        "passed": count("passed"),
+        "failed": count("failed"),
+        "errors": count("error"),
+        "skipped": count("skipped"),
+        "xfailed": count("xfailed"),
+        "xpassed": count("xpassed"),
+        "deselected": count("deselected"),
+        "exitstatus": int(exitstatus),
+    }
+    Path(report_path).write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _validate_lightgbm_bundle_abi(module: Any) -> None:
@@ -106,6 +128,30 @@ def _production_live_cpu_build(module: Any) -> dict[str, Any]:
     return observed
 
 
+def _production_build_surface(module: Any) -> dict[str, Any]:
+    """Require a production module that contains live APIs, not replay research."""
+
+    observed = {
+        "flavor": str(getattr(module, "NATIVE_BUILD_FLAVOR", "")),
+        "tick_replay_available": bool(
+            getattr(module, "NATIVE_TICK_REPLAY_AVAILABLE", True)
+        ),
+        "research_runtime_available": bool(
+            getattr(module, "NATIVE_RESEARCH_RUNTIME_AVAILABLE", True)
+        ),
+    }
+    expected = {
+        "flavor": PRODUCTION_BUILD_FLAVOR,
+        "tick_replay_available": False,
+        "research_runtime_available": False,
+    }
+    if observed != expected:
+        raise NativeBuildReceiptError(
+            "native release wheel was not built with the live-only production surface"
+        )
+    return observed
+
+
 def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -143,7 +189,7 @@ def _run_native_parity_smoke(
     root: Path,
     *,
     expected_module_token: str,
-) -> None:
+) -> dict[str, int]:
     if (
         not expected_module_token
         or "\x00" in expected_module_token
@@ -152,24 +198,77 @@ def _run_native_parity_smoke(
     ):
         raise NativeBuildReceiptError("native parity module token is invalid")
     parity_environment = dict(os.environ)
-    parity_environment.update(
-        {
-            "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONNOUSERSITE": "1",
-            "NARROWGATE_CPP_EXPECT_MODULE_TOKEN": expected_module_token,
-        }
+    with tempfile.TemporaryDirectory(prefix="narrowgate-native-qualification-") as temp:
+        report_path = Path(temp) / "pytest-qualification.json"
+        parity_environment.update(
+            {
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONNOUSERSITE": "1",
+                "NARROWGATE_CPP_EXPECT_MODULE_TOKEN": expected_module_token,
+                _QUALIFICATION_REPORT_ENV: str(report_path),
+            }
+        )
+        completed = subprocess.run(
+            (
+                sys.executable,
+                "-B",
+                "-m",
+                "pytest",
+                "-q",
+                "-o",
+                "xfail_strict=true",
+                "-p",
+                "live.native_build_receipt",
+                *LIVE_PARITY_TESTS,
+            ),
+            cwd=root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300.0,
+            env=parity_environment,
+        )
+        try:
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise NativeBuildReceiptError(
+                "native parity qualification report is missing or invalid"
+            ) from exc
+    expected_fields = {
+        "collected",
+        "passed",
+        "failed",
+        "errors",
+        "skipped",
+        "xfailed",
+        "xpassed",
+        "deselected",
+        "exitstatus",
+    }
+    if set(report) != expected_fields or any(
+        isinstance(report[name], bool) or not isinstance(report[name], int)
+        for name in expected_fields
+    ):
+        raise NativeBuildReceiptError("native parity qualification counts are invalid")
+    disallowed = (
+        report["failed"]
+        + report["errors"]
+        + report["skipped"]
+        + report["xfailed"]
+        + report["xpassed"]
+        + report["deselected"]
     )
-    completed = subprocess.run(
-        (sys.executable, "-B", "-m", "pytest", "-q", *PARITY_TESTS),
-        cwd=root,
-        check=False,
-        capture_output=True,
-        text=True,
-        timeout=300.0,
-        env=parity_environment,
-    )
-    if completed.returncode != 0:
-        raise NativeBuildReceiptError("native parity smoke failed")
+    if (
+        completed.returncode != 0
+        or report["exitstatus"] != 0
+        or report["collected"] <= 0
+        or report["passed"] != report["collected"]
+        or disallowed != 0
+    ):
+        raise NativeBuildReceiptError(
+            "native live parity qualification did not pass every collected test"
+        )
+    return {name: int(report[name]) for name in expected_fields if name != "exitstatus"}
 
 
 def _locked_runtime_authority(
@@ -281,46 +380,7 @@ def build_receipt(
             module.read_bytes()
         ):
             raise NativeBuildReceiptError("installed native module does not match the frozen wheel")
-    required = (
-        "compute_quote_core_live",
-        "compute_live_routing_decision",
-        "SignalFeatureEngine",
-        "SIGNAL_FEATURE_NAMES",
-        "NativeLightgbmBundle",
-        "LIGHTGBM_BUNDLE_HEAD_NAMES",
-        "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
-        "TradeBarAggregator",
-        "F05BooleanClause",
-        "F05BooleanLiteral",
-        "F05BooleanPolicy",
-        "F05BooleanRule",
-        "F05PredicateDefinition",
-        "F05PredicateMetric",
-        "F05PredicatePair",
-        "LiveCooldownDecisionStatus",
-        "LiveCooldownProfile",
-        "NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE",
-        "NativeLiveCooldownHotPath",
-        "NativeReplaceContinuationState",
-        "ReplaceContinuationEventKind",
-        "Side",
-        "compute_live_order_action_plan",
-        "LiveOrderAction",
-        "LivePlannerOrderState",
-        "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
-        "LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED",
-        "LIVE_ORDER_SIDE_FLAG_ALLOW_POST",
-        "LIVE_ORDER_SIDE_FLAG_ALLOW_EXPOSURE",
-        "LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE",
-        "LIVE_ORDER_SIDE_FLAG_USE_PROVIDED_NEEDS_UPDATE",
-        "LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE",
-        "LIVE_ORDER_REPLACE_FLAG_PENDING_COALESCE",
-        "LIVE_ORDER_REPLACE_FLAG_CANCEL_FIRST_EXPOSURE",
-        "LIVE_ORDER_REASON_THROTTLE_PRICE",
-        "LIVE_ORDER_REASON_THROTTLE_AGE",
-        "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
-        "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
-    )
+    required = locked_runtime.NATIVE_LIVE_ABI_CONTRACT["required_apis"]
     if any(not hasattr(narrowgate_cpp, name) for name in required):
         raise NativeBuildReceiptError("native module lacks required live API")
     _validate_lightgbm_bundle_abi(narrowgate_cpp)
@@ -332,49 +392,30 @@ def build_receipt(
         raise NativeBuildReceiptError(
             "native module cooldown hot-path capability is unavailable"
         )
+    build_surface = _production_build_surface(narrowgate_cpp)
     live_cpu_build = _production_live_cpu_build(narrowgate_cpp)
-    required_class_members = {
-        "SignalFeatureEngine": ("compute_bucket_values",),
-        "NativeLightgbmBundle": (
-            "predict",
-            "feature_count",
-            "head_count",
-            "library_path",
-            "num_threads",
-        ),
-        "NativeLiveCooldownHotPath": (
-            "observe_depth",
-            "evaluate",
-            "reset",
-            "audit",
-            "feature_snapshot",
-        ),
-        "NativeReplaceContinuationState": (
-            "arm",
-            "publish",
-            "clear_exact",
-            "clear_side",
-            "clear_unready",
-            "take_ready",
-            "finalize_decision",
-            "drop_in_flight",
-            "clear_all",
-            "telemetry",
-        ),
-    }
+    required_class_members = locked_runtime.NATIVE_LIVE_ABI_CONTRACT[
+        "required_class_members"
+    ]
     if any(
         not hasattr(getattr(narrowgate_cpp, class_name), member)
         for class_name, members in required_class_members.items()
         for member in members
     ):
         raise NativeBuildReceiptError("native module lacks required live class API")
-    quote = narrowgate_cpp.QuoteFlags()
-    side = narrowgate_cpp.SideQuoteContext()
+    quote_instances = {
+        "QuoteFlags": narrowgate_cpp.QuoteFlags(),
+        "SideQuoteContext": narrowgate_cpp.SideQuoteContext(),
+    }
     if any(
-        not hasattr(quote, name) for name in ("delta_cap", "final_compressed", "cap_exposure_block")
-    ) or not hasattr(side, "cap_exposure_block"):
+        not hasattr(quote_instances[class_name], field)
+        for class_name, fields in locked_runtime.NATIVE_LIVE_ABI_CONTRACT[
+            "required_quote_fields"
+        ].items()
+        for field in fields
+    ):
         raise NativeBuildReceiptError("native module lacks successor quote ABI fields")
-    _run_native_parity_smoke(
+    parity_qualification = _run_native_parity_smoke(
         root,
         expected_module_token=expected_module_token,
     )
@@ -417,22 +458,14 @@ def build_receipt(
         "installed_distribution_lock": installed_distribution_lock,
         "wheel": _file(wheel),
         "module": _file(module),
+        "build_surface": build_surface,
         "live_cpu_build": live_cpu_build,
-        "abi_contract": {
-            "schema_version": "narrowgate_native_runtime_abi.v1",
-            "required_apis": list(required),
-            "required_class_members": {
-                class_name: list(members)
-                for class_name, members in required_class_members.items()
-            },
-            "required_quote_fields": {
-                "QuoteFlags": ["delta_cap", "final_compressed", "cap_exposure_block"],
-                "SideQuoteContext": ["cap_exposure_block"],
-            },
+        "abi_contract": locked_runtime.native_live_abi_contract_payload(),
+        "parity_qualification": {
+            "tests": list(LIVE_PARITY_TESTS),
+            **parity_qualification,
             "validated": True,
         },
-        "parity_tests": list(PARITY_TESTS),
-        "parity_smoke_passed": True,
     }
     payload[CANONICAL_FIELD] = _canonical(payload)
     return payload

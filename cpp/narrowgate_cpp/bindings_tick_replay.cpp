@@ -1,3 +1,5 @@
+#define NARROWGATE_BINDING_TICK_REPLAY 1
+
 #include <cstdint>
 #include <algorithm>
 #include <array>
@@ -81,6 +83,8 @@ py::array_t<T> vector_matrix(
     return output;
 }
 
+#if defined(NARROWGATE_BINDING_TRANSPORT_QUOTE) || \
+    defined(NARROWGATE_BINDING_LIVE_RUNTIME)
 DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj) {
     DepthSnapshot depth;
     auto append = [](py::handle rows_obj, std::vector<DepthLevel>& out) {
@@ -103,7 +107,9 @@ DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj)
     append(asks_obj, depth.asks);
     return depth;
 }
+#endif
 
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict signal_feature_dict(const SignalFeatureVector& features) {
     py::dict out;
     const auto& values = features.values();
@@ -184,6 +190,9 @@ py::array_t<double> signal_execution_l2_policy_metric_array(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_RESEARCH)
 py::dict sparse_order_lifecycle_dict(
     const SparseOrderLifecycleResult& result
 ) {
@@ -258,6 +267,9 @@ py::dict sparse_order_lifecycle_dict(
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_STREAMING)
 py::dict global_flow_window_dict(const GlobalFlowMarketWindow& row) {
     py::dict out;
     out["market_id"] = row.market_id;
@@ -302,6 +314,9 @@ py::dict global_flow_stats_dict(const GlobalFlowStats& stats) {
     return out;
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_TICK_REPLAY)
 void set_trade_arrays(
     TickReplayInput& input,
     const CArray<std::int64_t>& trade_ts_ms,
@@ -442,6 +457,10 @@ void set_per_trade_policy_arrays(
     input.sell_queue_deplete_mult_by_trade = view_from_array(sell_queue_deplete_mult_by_trade);
 }
 
+#endif
+
+#if defined(NARROWGATE_BINDING_COMMON_DYNAMIC) || \
+    defined(NARROWGATE_BINDING_TICK_REPLAY)
 template <typename T>
 T required_dict_value(const py::dict& payload, const char* key) {
     const py::str name(key);
@@ -751,7 +770,7 @@ py::dict dynamic_fill_hazard_counters_dict(
     out["prospective_invalid_count"] = value.prospective_invalid_count;
     return out;
 }
-
+#endif
 
 }  // namespace
 
@@ -767,67 +786,6 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
         .value("OPENER", F05CooldownFillRole::Opener)
         .value("ADD", F05CooldownFillRole::Add)
         .value("REDUCING", F05CooldownFillRole::Reducing);
-    py::enum_<F05PredicateMetric>(m, "F05PredicateMetric")
-        .value("CAMPAIGN_AGE_GT_CONTROL", F05PredicateMetric::CampaignAgeGtControl)
-        .value("POSITIVE_ORDERING", F05PredicateMetric::PositiveOrdering)
-        .value("LAST_CROSS_POSITIVE", F05PredicateMetric::LastCrossPositive)
-        .value("EXPANDING", F05PredicateMetric::Expanding)
-        .value("CONVERGING", F05PredicateMetric::Converging)
-        .value("ABS_DISTANCE", F05PredicateMetric::AbsDistance)
-        .value("CROSS_AGE_S", F05PredicateMetric::CrossAgeS)
-        .value(
-            "ARRANGEMENT_PERSISTENCE_S",
-            F05PredicateMetric::ArrangementPersistenceS)
-        .value("SIGNED_DISTANCE", F05PredicateMetric::SignedDistance)
-        .value(
-            "SIGNED_DISTANCE_VELOCITY",
-            F05PredicateMetric::SignedDistanceVelocity)
-        .value(
-            "SIGNED_DISTANCE_ACCELERATION",
-            F05PredicateMetric::SignedDistanceAcceleration);
-
-    py::class_<F05BooleanLiteral>(m, "F05BooleanLiteral")
-        .def(py::init<>())
-        .def_readwrite("predicate_index", &F05BooleanLiteral::predicate_index)
-        .def_readwrite("negated", &F05BooleanLiteral::negated);
-    py::class_<F05BooleanClause>(m, "F05BooleanClause")
-        .def(py::init<>())
-        .def_readwrite("literals", &F05BooleanClause::literals);
-    py::class_<F05BooleanRule>(m, "F05BooleanRule")
-        .def(py::init<>())
-        .def_readwrite("action_id", &F05BooleanRule::action_id)
-        .def_readwrite("duration_ms", &F05BooleanRule::duration_ms)
-        .def_readwrite("clauses", &F05BooleanRule::clauses);
-    py::class_<F05PredicatePair>(m, "F05PredicatePair")
-        .def(py::init<>())
-        .def_readwrite("fast_ema_index", &F05PredicatePair::fast_ema_index)
-        .def_readwrite("slow_ema_index", &F05PredicatePair::slow_ema_index);
-    py::class_<F05PredicateDefinition>(m, "F05PredicateDefinition")
-        .def(py::init<>())
-        .def_readwrite(
-            "predicate_index", &F05PredicateDefinition::predicate_index)
-        .def_readwrite("metric", &F05PredicateDefinition::metric)
-        .def_readwrite("pair_index", &F05PredicateDefinition::pair_index)
-        .def_readwrite(
-            "threshold_enabled", &F05PredicateDefinition::threshold_enabled)
-        .def_readwrite("threshold", &F05PredicateDefinition::threshold);
-    py::class_<F05BooleanPolicy>(m, "F05BooleanPolicy")
-        .def(py::init<>())
-        .def_readwrite("policy_sha256", &F05BooleanPolicy::policy_sha256)
-        .def_readwrite(
-            "predicate_bundle_sha256",
-            &F05BooleanPolicy::predicate_bundle_sha256)
-        .def_readwrite(
-            "predicate_columns",
-            &F05BooleanPolicy::predicate_columns)
-        .def_readwrite("rules", &F05BooleanPolicy::rules)
-        .def_readwrite(
-            "ema_half_lives_s", &F05BooleanPolicy::ema_half_lives_s)
-        .def_readwrite(
-            "predicate_pairs", &F05BooleanPolicy::predicate_pairs)
-        .def_readwrite(
-            "predicate_definitions", &F05BooleanPolicy::predicate_definitions)
-        .def_readwrite("default_action", &F05BooleanPolicy::default_action);
     py::class_<F05RepeatedBooleanCooldownConfig>(
         m,
         "F05RepeatedBooleanCooldownConfig")
@@ -1188,6 +1146,24 @@ void bind_f05_repeated_boolean_cooldown(py::module_& m) {
 
 void bind_tick_replay(py::module_& m) {
     bind_f05_repeated_boolean_cooldown(m);
+    py::class_<TickReplayParams::FillSelectionFoldModel>(
+        m,
+        "FillSelectionFoldModel")
+        .def(py::init<>())
+        .def_readwrite(
+            "base_logit", &TickReplayParams::FillSelectionFoldModel::base_logit)
+        .def_readwrite(
+            "contribution_scale",
+            &TickReplayParams::FillSelectionFoldModel::contribution_scale)
+        .def_readwrite(
+            "numeric_cuts",
+            &TickReplayParams::FillSelectionFoldModel::numeric_cuts)
+        .def_readwrite(
+            "contributions",
+            &TickReplayParams::FillSelectionFoldModel::contributions)
+        .def_readwrite(
+            "categorical_features",
+            &TickReplayParams::FillSelectionFoldModel::categorical_features);
     py::class_<TickReplayParams>(m, "TickReplayParams")
         .def(py::init<>())
         .def_readwrite("quote", &TickReplayParams::quote)
