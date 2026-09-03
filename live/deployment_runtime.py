@@ -390,6 +390,40 @@ def _versioned_base_executable_candidate() -> Path:
     )
 
 
+def _current_venv_creator_snapshot() -> dict[str, Any]:
+    """Return the base interpreter which may safely create a nested venv.
+
+    CPython's :mod:`venv` copies ``sys._base_executable``, not
+    ``sys.executable``.  Some copied Amazon Linux virtual environments report
+    the unversioned ``/usr/bin/python3`` there even though the running binary
+    is Python 3.12 and ``/usr/bin/python3`` is Python 3.9.  Select the
+    declared base when it is byte-identical to the running builder.  Only the
+    known-bad declaration case falls back to the versioned base interpreter,
+    which must also be byte-identical.  The caller separately probes the
+    selected interpreter's complete identity before executing it.
+    """
+
+    executable_raw, _ = _resolved_executable_bytes(Path(sys.executable))
+    declared_path = Path(getattr(sys, "_base_executable", sys.executable))
+    try:
+        candidate_raw, candidate = _resolved_executable_bytes(declared_path)
+    except LockedRuntimeError:
+        candidate_raw = b""
+    if candidate_raw != executable_raw:
+        candidate_raw, candidate = _resolved_executable_bytes(
+            _versioned_base_executable_candidate()
+        )
+    if candidate_raw != executable_raw:
+        raise LockedRuntimeError(
+            "no base venv creator is byte-identical to the runtime builder"
+        )
+    return {
+        "path": str(candidate),
+        "sha256": _sha256(candidate_raw),
+        "size_bytes": len(candidate_raw),
+    }
+
+
 def _bound_base_executable_bytes(executable_raw: bytes) -> bytes:
     declared_path = Path(getattr(sys, "_base_executable", sys.executable))
     declared_raw, _ = _resolved_executable_bytes(declared_path)
@@ -784,6 +818,35 @@ def _run_python_json(python: Path, private_command: str) -> dict[str, Any]:
 
 def probe_interpreter(python: Path) -> dict[str, Any]:
     return _run_python_json(python, "_probe-interpreter")
+
+
+def _venv_creator_for_builder(builder_python: Path, builder: dict[str, Any]) -> Path:
+    _validate_interpreter_shape(builder, "runtime builder")
+    builder_raw, builder_resolved = _resolved_executable_bytes(builder_python)
+    if (
+        builder.get("executable_sha256") != _sha256(builder_raw)
+        or builder.get("executable_size_bytes") != len(builder_raw)
+    ):
+        raise LockedRuntimeError("runtime builder bytes changed after probe")
+    if builder["is_virtual_environment"] is False:
+        return builder_resolved
+
+    binding = _run_python_json(builder_python, "_probe-venv-creator")
+    if set(binding) != {"path", "sha256", "size_bytes"}:
+        raise LockedRuntimeError("venv creator fields drifted")
+    raw_path = binding.get("path")
+    if not isinstance(raw_path, str) or not raw_path or not Path(raw_path).is_absolute():
+        raise LockedRuntimeError("venv creator path is not absolute")
+    raw, resolved = _resolved_executable_bytes(Path(raw_path))
+    if raw_path != str(resolved):
+        raise LockedRuntimeError("venv creator path is not canonical")
+    if binding.get("sha256") != _sha256(raw) or binding.get("size_bytes") != len(raw):
+        raise LockedRuntimeError("venv creator bytes changed after selection")
+    creator = probe_interpreter(resolved)
+    _assert_interpreter_equal(creator, builder, "venv creator")
+    if creator["is_virtual_environment"] is not False:
+        raise LockedRuntimeError("venv creator must be a base interpreter")
+    return resolved
 
 
 def _validate_interpreter_shape(value: Any, label: str) -> dict[str, Any]:
@@ -1530,6 +1593,7 @@ def install_locked_runtime(
     lock, _ = load_lock(lock_path, expected_canonical_sha256=expected_lock_sha256)
     builder = probe_interpreter(builder_python)
     _assert_interpreter_equal(builder, lock["interpreter"], "runtime builder")
+    venv_creator = _venv_creator_for_builder(builder_python, builder)
     manifest, dependency_artifacts = _validate_wheelhouse_directory(
         lock=lock,
         wheelhouse_dir=wheelhouse_dir,
@@ -1560,7 +1624,7 @@ def install_locked_runtime(
     try:
         _run_checked(
             (
-                str(_absolute(builder_python)),
+                str(venv_creator),
                 "-I",
                 "-B",
                 "-m",
@@ -2925,6 +2989,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # Registered as real commands as well as fast-path-dispatched in __main__.
     # This keeps programmatic main([...]) and subprocess probes equivalent.
     subparsers.add_parser("_probe-interpreter", help=argparse.SUPPRESS)
+    subparsers.add_parser("_probe-venv-creator", help=argparse.SUPPRESS)
     subparsers.add_parser("_snapshot-seed", help=argparse.SUPPRESS)
     subparsers.add_parser("_snapshot-installed", help=argparse.SUPPRESS)
 
@@ -3034,6 +3099,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "_probe-interpreter":
             print(
                 json.dumps(_current_interpreter_snapshot(), sort_keys=True, separators=(",", ":"))
+            )
+            return 0
+        if args.command == "_probe-venv-creator":
+            print(
+                json.dumps(
+                    _current_venv_creator_snapshot(),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
             )
             return 0
         if args.command == "_snapshot-seed":
@@ -3216,12 +3290,15 @@ def main(argv: Sequence[str] | None = None) -> int:
 if __name__ == "__main__":
     if len(sys.argv) == 2 and sys.argv[1] in {
         "_probe-interpreter",
+        "_probe-venv-creator",
         "_snapshot-seed",
         "_snapshot-installed",
     }:
         private = sys.argv[1]
         if private == "_probe-interpreter":
             value = _current_interpreter_snapshot()
+        elif private == "_probe-venv-creator":
+            value = _current_venv_creator_snapshot()
         elif private == "_snapshot-seed":
             value = _seed_snapshot_current()
         else:

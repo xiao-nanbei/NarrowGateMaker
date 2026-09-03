@@ -90,9 +90,11 @@ def _explicit_builder_virtual_environment(
     original = BUILDER_PYTHON
     root = tmp_path_factory.mktemp("locked-runtime-builder")
     venv = root / "venv"
+    original_snapshot = subject.probe_interpreter(original)
+    creator = subject._venv_creator_for_builder(original, original_snapshot)  # noqa: SLF001
     subprocess.run(
         (
-            str(original),
+            str(creator),
             "-I",
             "-B",
             "-m",
@@ -515,6 +517,79 @@ def test_interpreter_snapshot_safely_corrects_wrong_unversioned_base_for_copied_
     )
 
 
+def test_venv_creator_ignores_wrong_unversioned_base_for_copied_venv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_raw = b"exact Python 3.12 executable bytes"
+    _executable, declared_base, versioned_base = _mock_copied_venv_interpreters(
+        tmp_path,
+        monkeypatch,
+        executable_raw=executable_raw,
+        declared_base_raw=b"Amazon Linux unversioned Python 3.9 bytes",
+        versioned_base_raw=executable_raw,
+    )
+
+    creator = subject._current_venv_creator_snapshot()  # noqa: SLF001
+
+    assert creator == {
+        "path": str(versioned_base.resolve()),
+        "sha256": hashlib.sha256(executable_raw).hexdigest(),
+        "size_bytes": len(executable_raw),
+    }
+    assert creator["path"] != str(declared_base)
+
+
+@pytest.mark.parametrize("candidate_state", ["missing", "different-bytes"])
+def test_venv_creator_fails_closed_without_exact_versioned_base(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    candidate_state: str,
+) -> None:
+    executable_raw = b"exact Python 3.12 executable bytes"
+    _executable, _declared_base, versioned_base = _mock_copied_venv_interpreters(
+        tmp_path,
+        monkeypatch,
+        executable_raw=executable_raw,
+        declared_base_raw=b"Amazon Linux unversioned Python 3.9 bytes",
+        versioned_base_raw=(
+            executable_raw if candidate_state == "missing" else b"different Python bytes"
+        ),
+    )
+    if candidate_state == "missing":
+        versioned_base.unlink()
+
+    with pytest.raises(
+        subject.LockedRuntimeError,
+        match=(
+            "interpreter does not resolve"
+            if candidate_state == "missing"
+            else "no base venv creator is byte-identical"
+        ),
+    ):
+        subject._current_venv_creator_snapshot()  # noqa: SLF001
+
+
+def test_venv_creator_uses_matching_declared_base_without_versioned_alias(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable_raw = b"exact Python 3.12 executable bytes"
+    _executable, declared_base, versioned_base = _mock_copied_venv_interpreters(
+        tmp_path,
+        monkeypatch,
+        executable_raw=executable_raw,
+        declared_base_raw=executable_raw,
+        versioned_base_raw=b"unused versioned alias",
+    )
+    versioned_base.unlink()
+
+    creator = subject._current_venv_creator_snapshot()  # noqa: SLF001
+
+    assert creator["path"] == str(declared_base.resolve())
+    assert creator["sha256"] == hashlib.sha256(executable_raw).hexdigest()
+
+
 def test_interpreter_snapshot_refuses_mismatched_versioned_base_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -533,6 +608,60 @@ def test_interpreter_snapshot_refuses_mismatched_versioned_base_candidate(
     assert snapshot["base_executable_sha256"] == hashlib.sha256(declared_raw).hexdigest()
     assert snapshot["base_executable_size_bytes"] == len(declared_raw)
     assert snapshot["base_executable_sha256"] != snapshot["executable_sha256"]
+
+
+def test_venv_creator_is_reprobed_before_use(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = subject.probe_interpreter(BUILDER_PYTHON)
+    creator_path = tmp_path / "python3.12"
+    creator_raw = b"selected creator bytes"
+    creator_path.write_bytes(creator_raw)
+    binding = {
+        "path": str(creator_path),
+        "sha256": hashlib.sha256(creator_raw).hexdigest(),
+        "size_bytes": len(creator_raw),
+    }
+    drifted_creator = dict(builder)
+    drifted_creator["version"] = "3.12.0"
+    monkeypatch.setattr(subject, "_run_python_json", lambda *_args: binding)
+    monkeypatch.setattr(subject, "probe_interpreter", lambda _path: drifted_creator)
+
+    with pytest.raises(
+        subject.LockedRuntimeError,
+        match=r"venv creator interpreter drift: \['version'\]",
+    ):
+        subject._venv_creator_for_builder(  # noqa: SLF001
+            BUILDER_PYTHON,
+            builder,
+        )
+
+
+def test_base_builder_is_used_directly_without_creator_alias_probe(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder_path = tmp_path / "python3.12"
+    builder_raw = b"verified base builder bytes"
+    builder_path.write_bytes(builder_raw)
+    builder = subject.probe_interpreter(BUILDER_PYTHON)
+    builder.update(
+        {
+            "executable_sha256": hashlib.sha256(builder_raw).hexdigest(),
+            "executable_size_bytes": len(builder_raw),
+            "base_executable_sha256": hashlib.sha256(builder_raw).hexdigest(),
+            "base_executable_size_bytes": len(builder_raw),
+            "is_virtual_environment": False,
+        }
+    )
+
+    def unexpected_probe(*_args: object) -> dict[str, object]:
+        raise AssertionError("base builder must not require a venv creator alias probe")
+
+    monkeypatch.setattr(subject, "_run_python_json", unexpected_probe)
+
+    assert subject._venv_creator_for_builder(builder_path, builder) == builder_path.resolve()  # noqa: SLF001
 
 
 class _SeedDistribution:
@@ -893,6 +1022,37 @@ def test_offline_install_receipt_binds_versions_records_and_interpreter(tmp_path
         )
         == receipt
     )
+
+
+def test_offline_install_uses_base_creator_and_keeps_builder_for_pip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    builder = subject.probe_interpreter(BUILDER_PYTHON)
+    expected_creator = subject._venv_creator_for_builder(  # noqa: SLF001
+        BUILDER_PYTHON,
+        builder,
+    )
+    calls: list[tuple[str, tuple[str, ...]]] = []
+    original = subject._run_checked  # noqa: SLF001
+
+    def recording_run_checked(
+        command: tuple[str, ...] | list[str],
+        *,
+        timeout: float,
+        env: dict[str, str],
+        label: str,
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((label, tuple(command)))
+        return original(command, timeout=timeout, env=env, label=label)
+
+    monkeypatch.setattr(subject, "_run_checked", recording_run_checked)
+    _install(tmp_path)
+
+    by_label = {label: command for label, command in calls}
+    assert by_label["fresh venv creation"][0] == str(expected_creator)
+    assert by_label["offline exact-wheel install"][0] == str(BUILDER_PYTHON.absolute())
+    assert by_label["pip check"][0] == str(BUILDER_PYTHON.absolute())
 
 
 def test_installed_version_drift_is_detected_even_if_record_is_resigned(tmp_path: Path) -> None:
