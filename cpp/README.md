@@ -2,7 +2,7 @@
 
 Date: 2026-06-16
 
-Last materially modified: 2026-07-27
+Last materially modified: 2026-09-03
 
 Status: Maintained architecture guide. Benchmark numbers and migration snapshots remain historical unless a dated current parity artifact explicitly supersedes them.
 
@@ -10,7 +10,7 @@ Status: Maintained architecture guide. Benchmark numbers and migration snapshots
 
 ## 当前权威边界
 
-- 正式 Python→C++ tick replay 只允许 `simulate_tick_arrays_ext_policy_v3`；`bindings.cpp` 中较低层的 `simulate_tick_arrays` 只属于 binding/benchmark/test surface，不能作为正式回测入口。
+- 正式 Python→C++ tick replay 只允许 `simulate_tick_arrays_ext_policy_v3`；`bindings_tick_replay.cpp` 中较低层的 `simulate_tick_arrays` 只属于 binding/benchmark/test surface，不能作为正式回测入口。
 - direct quote-EV action executor 已从正式 replay ABI 删除。Quote-EV 模型、训练和 shadow evidence 仍保留在 Python/离线研究层。
 - 正式策略证据仍由 `models/backtest_tick.py` 负责数据、身份、因果时钟和 fail-fast 校验；C++ 负责同一契约下的热循环。Python/C++ 必须共享输入、artifact、事件顺序和随机路径，不能各自产生一套研究口径。
 - 本文 2026-06-16 的 benchmark/golden 数值是迁移历史，不是当前 baseline、live parity 或 promotion authority。
@@ -132,7 +132,8 @@ PYTHONPATH=/tmp/narrowgate_btcusdc_cpp_build:. \
 | `cpp/narrowgate_cpp/quote_core.hpp/.cpp` | AS/GLFT quote core 纯计算 | `strategy/quote_core.py` |
 | `cpp/narrowgate_cpp/tick_replay.hpp/.cpp` | tick replay 热循环、队列、成交、summary | `models/backtest_tick.py::simulate_tick` 的核心循环 |
 | `cpp/narrowgate_cpp/streaming_features.hpp/.cpp` | rolling/streaming 特征状态更新 | `features/feature_engineer.py` 的 rolling 数值部分；`data_quality.py` 的 gap/horizon 规则 |
-| `cpp/narrowgate_cpp/bindings.cpp` | pybind11 Python API | C++ API 到 Python 的薄封装 |
+| `cpp/narrowgate_cpp/bindings_module.cpp` | 唯一 pybind11 模块入口和注册顺序 | C++ API 到 Python 的薄封装 |
+| `cpp/narrowgate_cpp/bindings_*.cpp` | 按功能拆分的 pybind11 注册单元 | 原单一 binding 编译单元 |
 | `tests/test_cpp_quote_core_parity.py` | quote core Python/C++ parity | `strategy/quote_core.py` 对照 |
 | `tests/test_cpp_tick_replay_parity.py` | tick replay Python/C++ parity | `models/backtest_tick.py::simulate_tick` 对照 |
 | `bench/bench_quote_core.py` | quote core 微基准 | Python quote core vs C++ quote core |
@@ -558,9 +559,11 @@ class SignalFeatureEngine; // completed bars + history -> fixed feature vector
 - `add_labels` 可以先保留 Python，除非后续 C++ 已经拥有连续段和 horizon mask parity。
 - train/val/test/daily_latest 切分继续留 Python。
 
-## `bindings.cpp`
+## `bindings_module.cpp` 与 `bindings_*.cpp`
 
-这里写 pybind11 封装。它应该薄，不要在 binding 里堆业务逻辑。
+这里写 pybind11 封装。`bindings_module.cpp` 只保留唯一模块入口和冻结的
+注册顺序，其他 `bindings_*.cpp` 按功能注册。它们应该薄，不要在 binding
+里堆业务逻辑。
 
 建议暴露三类 API：
 

@@ -7,7 +7,8 @@
 namespace narrowgate_cpp {
 
 // QuoteCoreConfig 是 Python/C++ quote parity 的核心 ABI。
-// 新增/删除字段时必须同步 bindings.cpp、strategy/quote_core.py 的字段列表和 parity tests。
+// 新增/删除字段时必须同步 bindings_transport_quote.cpp、strategy/quote_core.py
+// 的字段列表和 parity tests。
 struct QuoteCoreConfig {
     // Legacy compatibility input. NaN split fields inherit this value exactly.
     double gamma = 0.01;

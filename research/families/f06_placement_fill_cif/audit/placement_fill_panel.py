@@ -119,7 +119,7 @@ FROZEN_IMPLEMENTATION_PATHS = {
     "risk_set_expansion.hpp": FAMILY_ROOT / "cpp" / "risk_set_expansion.hpp",
     "sparse_order_lifecycle.cpp": FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.cpp",
     "sparse_order_lifecycle.hpp": FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.hpp",
-    "bindings.cpp": ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp",
+    "bindings.cpp": ROOT / "cpp" / "narrowgate_cpp" / "bindings_research.cpp",
     "cpp/CMakeLists.txt": ROOT / "cpp" / "CMakeLists.txt",
 }
 FROZEN_NATIVE_MODULE_KEY = "narrowgate_cpp.cpython-312-darwin.so"
@@ -629,7 +629,9 @@ def _build_day(
             "sparse_order_lifecycle_hpp": _file_identity(
                 ROOT / "cpp" / "narrowgate_cpp" / "sparse_order_lifecycle.hpp"
             ),
-            "bindings_cpp": _file_identity(ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp"),
+            "bindings_cpp": _file_identity(
+                ROOT / "cpp" / "narrowgate_cpp" / "bindings_research.cpp"
+            ),
             "cmake": _file_identity(ROOT / "cpp" / "CMakeLists.txt"),
             "content_addressed_cache": _file_identity(
                 ROOT / "models" / "audit" / "content_addressed_cache.py"
@@ -827,7 +829,7 @@ def _preflight_manifest(
             "active_order_queue_tape": ROOT / "data" / "build_active_order_queue_tape.py",
             "sparse_order_lifecycle_cpp": (FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.cpp"),
             "sparse_order_lifecycle_hpp": (FAMILY_ROOT / "cpp" / "sparse_order_lifecycle.hpp"),
-            "bindings_cpp": ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp",
+            "bindings_cpp": ROOT / "cpp" / "narrowgate_cpp" / "bindings_research.cpp",
             "cmake": ROOT / "cpp" / "CMakeLists.txt",
             "content_addressed_cache": ROOT / "models" / "audit" / "content_addressed_cache.py",
         }.items()

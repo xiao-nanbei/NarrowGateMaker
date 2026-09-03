@@ -1210,7 +1210,7 @@ def freeze_spec() -> None:
         ROOT / "models/backtest_tick.py",
         ROOT / "cpp/narrowgate_cpp/tick_replay.hpp",
         ROOT / "cpp/narrowgate_cpp/tick_replay.cpp",
-        ROOT / "cpp/narrowgate_cpp/bindings.cpp",
+        ROOT / "cpp/narrowgate_cpp/bindings_tick_replay.cpp",
         ROOT / "tests/test_conditional_p3_reach_gate_cpp.py",
         ROOT / "models/audit/action_bound_full_path_promotion.py",
         ROOT / "research/shared/experiment_governance/docs/"

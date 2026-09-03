@@ -235,7 +235,7 @@ def test_binding_artifact_is_mechanics_only_and_hash_bound(tmp_path: Path) -> No
             root
             / "research/families/f07_active_order_continuation/cpp/"
             "order_lifecycle_journal_v2_mirror.cpp",
-            root / "cpp/narrowgate_cpp/bindings.cpp",
+            root / "cpp/narrowgate_cpp/bindings_research.cpp",
         ),
     )
     assert artifact["schema_version"] == CPP_EVENT_STREAM_BINDING_SCHEMA_VERSION

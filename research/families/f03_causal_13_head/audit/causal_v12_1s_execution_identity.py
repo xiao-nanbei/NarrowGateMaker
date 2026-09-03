@@ -32,7 +32,7 @@ F03_CPP_SOURCE = (
     REPO_ROOT / "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.cpp"
 )
 F03_CPP_HEADER = F03_CPP_SOURCE.with_suffix(".hpp")
-FULL_BINDINGS_SOURCE = REPO_ROOT / "cpp/narrowgate_cpp/bindings.cpp"
+BINDINGS_MODULE_SOURCE = REPO_ROOT / "cpp/narrowgate_cpp/bindings_module.cpp"
 
 SOURCE_PERMISSION_CONTRACT = {
     "feature_prediction_training_authority": True,
@@ -229,7 +229,9 @@ def current_native_build_receipt_payload(cpp: Any | None = None) -> dict[str, An
         "f03_component_semantics": component,
         "full_build_provenance": provenance,
         "full_bindings_source_role": "provenance_not_f03_cache_semantics",
-        "full_bindings_source": file_identity(FULL_BINDINGS_SOURCE, relative_to_repo=True),
+        "full_bindings_source": file_identity(
+            BINDINGS_MODULE_SOURCE, relative_to_repo=True
+        ),
         "training_authorized": False,
         "economic_outcomes_read": False,
     }
@@ -298,9 +300,11 @@ def validate_native_build_receipt(
         if provenance != current_provenance:
             raise ExecutionIdentityError("native build inputs drifted from receipt")
         if payload.get("full_bindings_source") != file_identity(
-            FULL_BINDINGS_SOURCE, relative_to_repo=True
+            BINDINGS_MODULE_SOURCE, relative_to_repo=True
         ):
-            raise ExecutionIdentityError("bindings.cpp provenance drifted from build receipt")
+            raise ExecutionIdentityError(
+                "bindings module provenance drifted from build receipt"
+            )
     return payload
 
 
@@ -468,7 +472,7 @@ def validate_pipeline_execution_receipt(
 def component_projection_from_legacy_panel_code(code: Mapping[str, Any]) -> dict[str, Any]:
     """Project old code identity onto payload-producing F03 semantic components.
 
-    The wrapper materializer and monolithic bindings source remain provenance.
+    The wrapper materializer and registered binding source set remain provenance.
     Their hashes are intentionally excluded because successor admission proves
     the stored payload against the current component with complete-day parity.
     """

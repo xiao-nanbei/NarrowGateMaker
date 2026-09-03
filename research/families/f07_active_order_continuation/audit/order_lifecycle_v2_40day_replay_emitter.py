@@ -195,7 +195,7 @@ _CODE_PATHS = (
     "strategy/quote_core.py",
     "strategy/replay_controls.py",
     "strategy/signal.py",
-    "cpp/narrowgate_cpp/bindings.cpp",
+    "cpp/narrowgate_cpp/bindings_research.cpp",
     "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.cpp",
     "research/families/f07_active_order_continuation/cpp/order_lifecycle_journal_v2_mirror.hpp",
     "research/families/f07_active_order_continuation/audit/"

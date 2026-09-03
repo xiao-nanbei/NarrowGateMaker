@@ -351,7 +351,7 @@ def _implementation_paths() -> tuple[Path, ...]:
         ROOT / "models/backtest_tick.py",
         ROOT / "cpp/narrowgate_cpp/tick_replay.hpp",
         ROOT / "cpp/narrowgate_cpp/tick_replay.cpp",
-        ROOT / "cpp/narrowgate_cpp/bindings.cpp",
+        ROOT / "cpp/narrowgate_cpp/bindings_tick_replay.cpp",
         ROOT / "tests/test_buy_soft_widen_release_action_value.py",
     )
 

@@ -1204,7 +1204,9 @@ def build_successor_amendment(
                 ROOT / "research/families/f07_active_order_continuation/cpp/"
                 "active_order_competing_risk_cif.hpp"
             ),
-            "cpp_pybind_source": artifact_identity(ROOT / "cpp/narrowgate_cpp/bindings.cpp"),
+            "cpp_pybind_source": artifact_identity(
+                ROOT / "cpp/narrowgate_cpp/bindings_research.cpp"
+            ),
             "cpp_build_contract": artifact_identity(ROOT / "cpp/CMakeLists.txt"),
         },
         "compiled_cpp_module": dict(

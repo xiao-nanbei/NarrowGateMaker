@@ -529,7 +529,9 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("frozen v1 helper hash mismatch")
     implementation_paths = {
         "fill_cooldown_contract_sha256": ROOT / "strategy" / "fill_cooldown.py",
-        "cpp_bindings_sha256": ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp",
+        "cpp_bindings_sha256": (
+            ROOT / "cpp" / "narrowgate_cpp" / "bindings_common_dynamic.cpp"
+        ),
         "cpp_tick_replay_sha256": ROOT / "cpp" / "narrowgate_cpp" / "tick_replay.cpp",
         "cpp_tick_replay_header_sha256": ROOT / "cpp" / "narrowgate_cpp" / "tick_replay.hpp",
     }

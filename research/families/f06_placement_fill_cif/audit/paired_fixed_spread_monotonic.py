@@ -747,7 +747,7 @@ def build_manifest(
         ROOT / "models" / "audit" / "fixed_spread_support.py",
         ROOT / "models" / "backtest_tick.py",
         ROOT / "cpp" / "narrowgate_cpp" / "tick_replay.cpp",
-        ROOT / "cpp" / "narrowgate_cpp" / "bindings.cpp",
+        ROOT / "cpp" / "narrowgate_cpp" / "bindings_tick_replay.cpp",
         ROOT / "cpp" / "narrowgate_cpp" / "tick_replay.hpp",
     )
     implementation = {

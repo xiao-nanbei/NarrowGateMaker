@@ -623,7 +623,7 @@ def _implementation_identity(
     cpp_header = (
         repository_root / "research/families/f03_causal_13_head/cpp/causal_v12_1s_features.hpp"
     )
-    bindings = repository_root / "cpp/narrowgate_cpp/bindings.cpp"
+    bindings = repository_root / "cpp/narrowgate_cpp/bindings_streaming.cpp"
     extension = Path(cpp.__file__).resolve()
     identity = {
         "runner_path": str(Path(__file__).resolve()),

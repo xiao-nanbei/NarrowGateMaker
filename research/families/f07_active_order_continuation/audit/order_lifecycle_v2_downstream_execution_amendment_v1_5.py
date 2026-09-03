@@ -112,7 +112,7 @@ _IMPLEMENTATION_PATHS = {
         "research/families/f07_active_order_continuation/cpp/"
         "active_order_competing_risk_cif.hpp"
     ),
-    "cpp_pybind_source": "cpp/narrowgate_cpp/bindings.cpp",
+    "cpp_pybind_source": "cpp/narrowgate_cpp/bindings_research.cpp",
     "cpp_build_contract": "cpp/CMakeLists.txt",
 }
 _PANEL_KEYS = {

@@ -272,7 +272,10 @@ def _dependency_bindings() -> list[dict[str, str]]:
         ("python_full_path_replay", Path(bt.__file__)),
         ("cpp_duration_replay_source", ROOT / "cpp/narrowgate_cpp/tick_replay.cpp"),
         ("cpp_duration_replay_header", ROOT / "cpp/narrowgate_cpp/tick_replay.hpp"),
-        ("cpp_duration_pybind_source", ROOT / "cpp/narrowgate_cpp/bindings.cpp"),
+        (
+            "cpp_duration_pybind_source",
+            ROOT / "cpp/narrowgate_cpp/bindings_tick_replay.cpp",
+        ),
         ("loaded_cpp_extension", cpp_extension),
         ("boolean_ema_contract", Path(ema_contract.__file__)),
         ("v1_1_read_only_window_helper", Path(v1_1_helper.__file__)),
@@ -448,7 +451,7 @@ def _control_noop_admission_status(output: Path) -> dict[str, Any]:
         and cpp_runtime.get("tick_replay_hpp_sha256")
         == _sha256_file(ROOT / "cpp/narrowgate_cpp/tick_replay.hpp")
         and cpp_runtime.get("bindings_cpp_sha256")
-        == _sha256_file(ROOT / "cpp/narrowgate_cpp/bindings.cpp")
+        == _sha256_file(ROOT / "cpp/narrowgate_cpp/bindings_tick_replay.cpp")
     )
     return {
         "admitted": admitted,
