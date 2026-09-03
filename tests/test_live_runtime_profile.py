@@ -70,7 +70,7 @@ def test_persisted_profiles_select_native_cooldown_explicitly() -> None:
         "cpp_order_action_plan=${NARROWGATE_CPP_ORDER_ACTION_PLAN:-0}"
         in run_sh
     )
-    assert 'export NARROWGATE_CPP_QUOTE_POLICY_STAGE="0"' in native
+    assert 'export NARROWGATE_CPP_QUOTE_POLICY_STAGE="1"' in native
     assert 'export NARROWGATE_CPP_QUOTE_POLICY_STAGE="0"' in python
     assert (
         "NARROWGATE_CPP_QUOTE_POLICY_STAGE=${NARROWGATE_CPP_QUOTE_POLICY_STAGE:-0}"
