@@ -83,6 +83,12 @@ py::array_t<T> vector_matrix(
 
 DepthSnapshot depth_from_python_levels(py::handle bids_obj, py::handle asks_obj) {
     DepthSnapshot depth;
+    // The live execution feed is top-20.  Reserve its normal shape once per
+    // side without using the Python length as a limit: diagnostic/replay
+    // callers with deeper books must still be consumed in full.
+    constexpr std::size_t kLiveDepthLevels = 20;
+    depth.bids.reserve(kLiveDepthLevels);
+    depth.asks.reserve(kLiveDepthLevels);
     auto append = [](py::handle rows_obj, std::vector<DepthLevel>& out) {
         if (rows_obj.is_none()) {
             return;

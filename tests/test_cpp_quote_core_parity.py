@@ -2618,6 +2618,88 @@ def test_native_quote_policy_stage_matches_separate_quote_and_policy_bits():
         )
 
 
+def test_native_quote_policy_stage_reserve_does_not_truncate_deeper_books():
+    cfg = _cfg(
+        ml_enabled=False,
+        use_bar_pricing=False,
+        book_imb_strength=0.75,
+        book_imb_levels=25,
+    )
+    cpp_cfg = qc._copy_attrs(
+        cfg, narrowgate_cpp.QuoteCoreConfig(), qc._CPP_CFG_FIELDS
+    )
+    state = _state(mid=100.0, best_bid=99.9, best_ask=100.1)
+    prediction = qc.QuotePrediction()
+    bid_prices = tuple(99.9 - 0.1 * index for index in range(25))
+    ask_prices = tuple(100.1 + 0.1 * index for index in range(25))
+    bid_quantities = (1.0,) * 20 + (100.0,) * 5
+    ask_quantities = (1.0,) * 25
+    cpp_state = qc._copy_attrs(
+        state, narrowgate_cpp.QuoteState(), qc._CPP_STATE_FIELDS
+    )
+    cpp_prediction = qc._copy_attrs(
+        prediction, narrowgate_cpp.QuotePrediction(), qc._CPP_PRED_FIELDS
+    )
+    expected = narrowgate_cpp.compute_quote_core(
+        cpp_state,
+        cpp_cfg,
+        cpp_prediction,
+        _cpp_depth_snapshot(
+            bid_prices,
+            bid_quantities,
+            ask_prices,
+            ask_quantities,
+        ),
+    )
+    truncated = narrowgate_cpp.compute_quote_core(
+        cpp_state,
+        cpp_cfg,
+        cpp_prediction,
+        _cpp_depth_snapshot(
+            bid_prices[:20],
+            bid_quantities[:20],
+            ask_prices[:20],
+            ask_quantities[:20],
+        ),
+    )
+    assert _native_value_bits(expected) != _native_value_bits(truncated)
+    buy_policy = narrowgate_cpp.CommonSidePolicyInputPod()
+    sell_policy = narrowgate_cpp.CommonSidePolicyInputPod()
+
+    actual = narrowgate_cpp.NativeQuotePolicyStage(cpp_cfg).compute(
+        tuple(getattr(state, name) for name in qc._CPP_STATE_FIELDS),
+        tuple(getattr(prediction, name) for name in qc._CPP_PRED_FIELDS),
+        tuple(zip(bid_prices, bid_quantities, strict=True)),
+        tuple(zip(ask_prices, ask_quantities, strict=True)),
+        tuple(getattr(buy_policy, name) for name in qc._CPP_COMMON_POLICY_FIELDS),
+        tuple(getattr(sell_policy, name) for name in qc._CPP_COMMON_POLICY_FIELDS),
+    )
+
+    assert _native_value_bits(actual.quote) == _native_value_bits(expected)
+
+
+def test_native_quote_policy_stage_validates_lengths_before_depth_iteration():
+    cfg = qc._copy_attrs(
+        _cfg(ml_enabled=False),
+        narrowgate_cpp.QuoteCoreConfig(),
+        qc._CPP_CFG_FIELDS,
+    )
+
+    class ExplodingDepth:
+        def __iter__(self):
+            raise AssertionError("depth must not be consumed before length validation")
+
+    with pytest.raises(ValueError, match="input length mismatch"):
+        narrowgate_cpp.NativeQuotePolicyStage(cfg).compute(
+            (),
+            (),
+            ExplodingDepth(),
+            ExplodingDepth(),
+            (),
+            (),
+        )
+
+
 def test_fused_native_live_runtime_fails_closed_on_stale_or_regressed_clock():
     cpp_cfg = qc._copy_attrs(
         _cfg(ml_enabled=False, use_bar_pricing=False),
