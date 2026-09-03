@@ -384,7 +384,7 @@ class CheckedNativeOrderActionPlanner:
     def native_module(self) -> Any:
         return self._native
 
-    def compute(
+    def _checked_inputs(
         self,
         *,
         inventory: float,
@@ -392,7 +392,7 @@ class CheckedNativeOrderActionPlanner:
         now_ts: float,
         buy: NativeOrderSideBoundary,
         sell: NativeOrderSideBoundary,
-    ) -> Any:
+    ) -> tuple[tuple[object, ...], tuple[object, ...], tuple[object, ...]]:
         current_inventory = _finite(inventory, name="inventory")
         mark = _finite(mid, name="mid")
         timestamp = _finite(now_ts, name="now_ts")
@@ -432,6 +432,24 @@ class CheckedNativeOrderActionPlanner:
             lot_size=self._lot_size,
             now_ts=timestamp,
         )
+        return context, buy_values, sell_values
+
+    def compute(
+        self,
+        *,
+        inventory: float,
+        mid: float,
+        now_ts: float,
+        buy: NativeOrderSideBoundary,
+        sell: NativeOrderSideBoundary,
+    ) -> Any:
+        context, buy_values, sell_values = self._checked_inputs(
+            inventory=inventory,
+            mid=mid,
+            now_ts=now_ts,
+            buy=buy,
+            sell=sell,
+        )
         plan = self._native.compute_live_order_action_plan(
             context,
             self._replace,
@@ -447,6 +465,133 @@ class CheckedNativeOrderActionPlanner:
             self._native,
             plan=plan.sell,
             values=sell_values,
+        )
+        return plan
+
+    def compute_final(
+        self,
+        *,
+        inventory: float,
+        mid: float,
+        now_ts: float,
+        buy: NativeOrderSideBoundary,
+        sell: NativeOrderSideBoundary,
+        best_bid: float,
+        best_ask: float,
+        p3_side_bbo_floor_enabled: bool,
+        p3_delta_star: float,
+    ) -> Any:
+        """Run the pure native tail from Python-final prices to action PODs.
+
+        All stateful policies must already have run.  This boundary is allowed
+        only to re-assert the final side-BBO floor, validate the frozen
+        post-only boundary and reuse the existing stateless action planner.
+        """
+
+        if not bool(
+            getattr(
+                self._native,
+                "NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE",
+                False,
+            )
+        ):
+            raise NativeOrderActionBoundaryError(
+                "native final-order planner capability is unavailable"
+            )
+        context, buy_values, sell_values = self._checked_inputs(
+            inventory=inventory,
+            mid=mid,
+            now_ts=now_ts,
+            buy=buy,
+            sell=sell,
+        )
+        frozen_best_bid = _finite(best_bid, name="best_bid")
+        frozen_best_ask = _finite(best_ask, name="best_ask")
+        delta_star = _finite(p3_delta_star, name="p3_delta_star")
+        if frozen_best_bid <= 0.0 or frozen_best_ask <= frozen_best_bid:
+            raise NativeOrderActionBoundaryError("frozen BBO must be positive and ordered")
+        p3_enabled = bool(p3_side_bbo_floor_enabled)
+        if p3_enabled and delta_star <= 0.0:
+            raise NativeOrderActionBoundaryError(
+                "enabled P3 side-BBO floor requires positive delta_star"
+            )
+        flags = (
+            int(self._native.LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR)
+            if p3_enabled
+            else 0
+        )
+        boundary = (
+            int(self._native.LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI),
+            float(buy.target_price),
+            float(sell.target_price),
+            frozen_best_bid,
+            frozen_best_ask,
+            delta_star,
+            float(getattr(buy.order, "price", 0.0) or 0.0),
+            float(getattr(sell.order, "price", 0.0) or 0.0),
+            flags,
+        )
+        plan = self._native.compute_live_final_order_plan(
+            context,
+            self._replace,
+            boundary,
+            buy_values,
+            sell_values,
+        )
+        if plan.status != self._native.LiveFinalOrderPlanStatus.Ok:
+            raise NativeOrderActionBoundaryError(
+                f"native final-order planner rejected checked input: {plan.status}"
+            )
+
+        def final_values(
+            values: tuple[object, ...],
+            *,
+            final_price: float,
+            existing_price: float,
+            floor_unsafe: bool,
+        ) -> tuple[object, ...]:
+            mutable = list(values)
+            mutable[0] = checked_lattice_units(
+                final_price,
+                self._tick_size,
+                name="final_target_price",
+                allow_zero=False,
+            )
+            mutable[3] = final_price
+            mutable[6] = (
+                abs(final_price - existing_price) / self._tick_size
+                if existing_price > 0.0
+                else 0.0
+            )
+            if floor_unsafe:
+                mutable[8] = int(mutable[8]) | int(
+                    self._native.LIVE_ORDER_SIDE_FLAG_FORCE_UPDATE
+                ) | int(
+                    self._native.LIVE_ORDER_SIDE_FLAG_PROVIDED_NEEDS_UPDATE
+                )
+            return tuple(mutable)
+
+        final_buy_values = final_values(
+            buy_values,
+            final_price=float(plan.bid_price),
+            existing_price=float(boundary[6]),
+            floor_unsafe=bool(plan.bid_active_floor_unsafe),
+        )
+        final_sell_values = final_values(
+            sell_values,
+            final_price=float(plan.ask_price),
+            existing_price=float(boundary[7]),
+            floor_unsafe=bool(plan.ask_active_floor_unsafe),
+        )
+        _assert_side_result_safety(
+            self._native,
+            plan=plan.orders.buy,
+            values=final_buy_values,
+        )
+        _assert_side_result_safety(
+            self._native,
+            plan=plan.orders.sell,
+            values=final_sell_values,
         )
         return plan
 

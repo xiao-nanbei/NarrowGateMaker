@@ -15,7 +15,7 @@ from strategy.native_order_action import (
     checked_quote_atoms,
 )
 from strategy.order_manager import Order, OrderState, Side
-from strategy.quote_core import _exposure_increasing
+from strategy.quote_core import _exposure_increasing, apply_p3_side_bbo_floor
 from strategy.replay_controls import cap_exposure_qty_by_position_value
 
 cpp = pytest.importorskip("narrowgate_cpp")
@@ -388,6 +388,32 @@ def test_native_order_action_plan_uses_fixed_x86_cache_line_pods() -> None:
     assert cpp.LIVE_ORDER_ACTION_PLAN_SIDE_INPUT_BYTES == 64
     assert cpp.LIVE_ORDER_ACTION_PLAN_SIDE_RESULT_BYTES == 64
     assert cpp.LIVE_ORDER_ACTION_PLAN_DUAL_RESULT_BYTES == 128
+    assert cpp.LIVE_FINAL_ORDER_PLAN_BOUNDARY_BYTES == 64
+    assert cpp.LIVE_FINAL_ORDER_PLAN_RESULT_BYTES == 192
+
+
+def _assert_native_side_plan_equal(actual, expected) -> None:
+    fields = (
+        "target_price_ticks",
+        "target_quantity_lots",
+        "inventory_room_lots",
+        "position_value_room_lots",
+        "existing_remaining_lots",
+        "reason_mask",
+        "action",
+        "action_name",
+        "exposure_increasing",
+        "can_post_after_inventory",
+        "can_post",
+        "needs_update",
+        "force_update",
+        "order_active",
+        "order_pending",
+        "filter_valid",
+        "cancel_existing",
+    )
+    for field in fields:
+        assert getattr(actual, field) == getattr(expected, field), field
 
 
 def _checked_planner(
@@ -436,6 +462,198 @@ def _checked_boundary(
         allow_post=True,
         allow_exposure_increase=True,
     )
+
+
+def test_native_final_order_plan_reasserts_p3_and_forces_unsafe_orders() -> None:
+    bid_order = Order(
+        client_order_id="existing-buy",
+        symbol="BTCUSDC",
+        side=Side.BUY,
+        price=59_999.7,
+        quantity=0.001,
+        state=OrderState.OPEN,
+        create_time=999.0,
+    )
+    ask_order = Order(
+        client_order_id="existing-sell",
+        symbol="BTCUSDC",
+        side=Side.SELL,
+        price=60_000.3,
+        quantity=0.001,
+        state=OrderState.OPEN,
+        create_time=999.0,
+    )
+    plan = _checked_planner().compute_final(
+        inventory=0.0,
+        mid=60_000.0,
+        now_ts=1_000.0,
+        buy=_checked_boundary(
+            price=59_999.7,
+            order=bid_order,
+            needs_update=False,
+        ),
+        sell=_checked_boundary(
+            price=60_000.3,
+            order=ask_order,
+            needs_update=False,
+        ),
+        best_bid=59_999.9,
+        best_ask=60_000.1,
+        p3_side_bbo_floor_enabled=True,
+        p3_delta_star=0.5,
+    )
+
+    expected = apply_p3_side_bbo_floor(
+        59_999.7,
+        60_000.3,
+        enabled=True,
+        delta_star=0.5,
+        best_bid=59_999.9,
+        best_ask=60_000.1,
+        tick_size=0.1,
+    )
+    assert plan.status == cpp.LiveFinalOrderPlanStatus.Ok
+    assert plan.bid_price.hex() == expected[0].hex()
+    assert plan.ask_price.hex() == expected[1].hex()
+    assert plan.p3_buy_floor_price.hex() == expected[2].hex()
+    assert plan.p3_sell_floor_price.hex() == expected[3].hex()
+    assert (plan.p3_bid_changed, plan.p3_ask_changed) == expected[4:]
+    assert plan.bid_active_floor_unsafe
+    assert plan.ask_active_floor_unsafe
+    assert plan.orders.buy.force_update
+    assert plan.orders.sell.force_update
+    assert plan.orders.buy.action == cpp.LiveOrderAction.CancelFirst
+    assert plan.orders.sell.action == cpp.LiveOrderAction.CancelFirst
+
+
+def test_native_final_order_plan_rejects_crossing_post_only_boundary() -> None:
+    with pytest.raises(NativeOrderActionBoundaryError, match="rejected checked input"):
+        _checked_planner().compute_final(
+            inventory=0.0,
+            mid=60_000.0,
+            now_ts=1_000.0,
+            buy=_checked_boundary(price=60_000.1),
+            sell=_checked_boundary(price=60_000.2),
+            best_bid=60_000.0,
+            best_ask=60_000.1,
+            p3_side_bbo_floor_enabled=False,
+            p3_delta_star=0.0,
+        )
+
+
+def test_native_final_order_plan_matches_python_tail_random_and_nextafter() -> None:
+    rng = random.Random(0x46494E414C)
+    deltas = (
+        0.1,
+        math.nextafter(0.1, -math.inf),
+        math.nextafter(0.1, math.inf),
+        0.5,
+        math.nextafter(0.5, -math.inf),
+        math.nextafter(0.5, math.inf),
+    )
+    planner = _checked_planner(
+        add_min_price_change_ticks=1.0,
+        add_min_interval_ms=500.0,
+    )
+    for index in range(1_000):
+        best_bid_ticks = rng.randint(599_970, 600_020)
+        best_ask_ticks = best_bid_ticks + rng.randint(1, 5)
+        bid_ticks = best_bid_ticks - rng.randint(0, 8)
+        ask_ticks = best_ask_ticks + rng.randint(0, 8)
+        existing_bid_ticks = bid_ticks + rng.randint(-3, 3)
+        existing_ask_ticks = ask_ticks + rng.randint(-3, 3)
+        active = bool(rng.getrandbits(1))
+        needs_update = bool(rng.getrandbits(1))
+        delta = rng.choice(deltas)
+        inventory = rng.randint(-10, 10) * 0.001
+
+        bid_order = (
+            Order(
+                client_order_id=f"BUY-{index}",
+                symbol="BTCUSDC",
+                side=Side.BUY,
+                price=existing_bid_ticks * 0.1,
+                quantity=0.001,
+                state=OrderState.OPEN,
+                create_time=999.0,
+            )
+            if active
+            else None
+        )
+        ask_order = (
+            Order(
+                client_order_id=f"SELL-{index}",
+                symbol="BTCUSDC",
+                side=Side.SELL,
+                price=existing_ask_ticks * 0.1,
+                quantity=0.001,
+                state=OrderState.OPEN,
+                create_time=999.0,
+            )
+            if active
+            else None
+        )
+        buy = _checked_boundary(
+            price=bid_ticks * 0.1,
+            order=bid_order,
+            needs_update=needs_update,
+        )
+        sell = _checked_boundary(
+            price=ask_ticks * 0.1,
+            order=ask_order,
+            needs_update=needs_update,
+        )
+        final = planner.compute_final(
+            inventory=inventory,
+            mid=60_000.0,
+            now_ts=1_000.0,
+            buy=buy,
+            sell=sell,
+            best_bid=best_bid_ticks * 0.1,
+            best_ask=best_ask_ticks * 0.1,
+            p3_side_bbo_floor_enabled=True,
+            p3_delta_star=delta,
+        )
+        expected_floor = apply_p3_side_bbo_floor(
+            buy.target_price,
+            sell.target_price,
+            enabled=True,
+            delta_star=delta,
+            best_bid=best_bid_ticks * 0.1,
+            best_ask=best_ask_ticks * 0.1,
+            tick_size=0.1,
+        )
+        tolerance = max(0.1 * 1e-9, 1e-12)
+        bid_unsafe = bool(
+            bid_order is not None
+            and bid_order.price > expected_floor[2] + tolerance
+        )
+        ask_unsafe = bool(
+            ask_order is not None
+            and ask_order.price < expected_floor[3] - tolerance
+        )
+        reference = planner.compute(
+            inventory=inventory,
+            mid=60_000.0,
+            now_ts=1_000.0,
+            buy=_checked_boundary(
+                price=expected_floor[0],
+                order=bid_order,
+                needs_update=needs_update or bid_unsafe,
+                force_update=bid_unsafe,
+            ),
+            sell=_checked_boundary(
+                price=expected_floor[1],
+                order=ask_order,
+                needs_update=needs_update or ask_unsafe,
+                force_update=ask_unsafe,
+            ),
+        )
+        assert final.bid_price.hex() == expected_floor[0].hex()
+        assert final.ask_price.hex() == expected_floor[1].hex()
+        assert (final.p3_bid_changed, final.p3_ask_changed) == expected_floor[4:]
+        _assert_native_side_plan_equal(final.orders.buy, reference.buy)
+        _assert_native_side_plan_equal(final.orders.sell, reference.sell)
 
 
 def test_checked_native_boundary_rejects_fractional_wire_lattice() -> None:

@@ -81,7 +81,11 @@ from models.replay.prospective_baseline_epoch import (
     snapshot_action_enablement,
     snapshot_data_source_identity,
 )
-from strategy.maker_engine import MakerEngine, validate_live_artifact_authority
+from strategy.maker_engine import (
+    MakerEngine,
+    validate_live_artifact_authority,
+    validate_native_live_routing_policy_compatibility,
+)
 from strategy.quote_core import QUOTE_CORE_UNIT_ABI_FIELDS
 
 POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
@@ -95,9 +99,15 @@ CPP_RUNTIME_FLAGS = (
     "NARROWGATE_CPP_REPLACE_CONTINUATION",
     "NARROWGATE_CPP_COOLDOWN",
     "NARROWGATE_CPP_ORDER_ACTION_PLAN",
+    "NARROWGATE_CPP_FINAL_ORDER_PLAN",
     "NARROWGATE_CPP_STRICT",
 )
-OPTIONAL_CPP_RUNTIME_FLAGS = frozenset({"NARROWGATE_CPP_QUOTE_POLICY_STAGE"})
+OPTIONAL_CPP_RUNTIME_FLAGS = frozenset(
+    {
+        "NARROWGATE_CPP_QUOTE_POLICY_STAGE",
+        "NARROWGATE_CPP_FINAL_ORDER_PLAN",
+    }
+)
 CPP_MODULE_TOKEN_ENV = "NARROWGATE_CPP_EXPECT_MODULE_TOKEN"
 NATIVE_COOLDOWN_REQUIRED_APIS = frozenset(
     {
@@ -132,6 +142,15 @@ NATIVE_ORDER_ACTION_REQUIRED_APIS = frozenset(
         "LIVE_ORDER_REASON_THROTTLE_AGE",
         "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
         "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
+    }
+)
+NATIVE_FINAL_ORDER_PLAN_REQUIRED_APIS = frozenset(
+    {
+        "compute_live_final_order_plan",
+        "LiveFinalOrderPlanStatus",
+        "NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE",
+        "LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI",
+        "LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR",
     }
 )
 
@@ -993,6 +1012,8 @@ def audit_native_runtime(
         name: str(value).strip().lower() in {"1", "true", "yes", "on"}
         for name, value in values.items()
     }
+    if cfg is not None:
+        validate_native_live_routing_policy_compatibility(cfg)
     profile = os.environ.get("NARROWGATE_LIVE_PROFILE_NAME", "unmanaged")
     module_path = "disabled"
     native_build = {"available": False}
@@ -1038,6 +1059,9 @@ def audit_native_runtime(
         required.update(NATIVE_COOLDOWN_REQUIRED_APIS)
     if enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]:
         required.update(NATIVE_ORDER_ACTION_REQUIRED_APIS)
+    if enabled["NARROWGATE_CPP_FINAL_ORDER_PLAN"]:
+        required.update(NATIVE_ORDER_ACTION_REQUIRED_APIS)
+        required.update(NATIVE_FINAL_ORDER_PLAN_REQUIRED_APIS)
     global_flow_effective = bool(
         enabled["NARROWGATE_CPP_GLOBAL_FLOW"]
         and cfg is not None
@@ -1122,6 +1146,12 @@ def audit_native_runtime(
                 raise RuntimeError(
                     "narrowgate_cpp order-action planner capability is unavailable"
                 )
+            if enabled["NARROWGATE_CPP_FINAL_ORDER_PLAN"] and not bool(
+                module.NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE
+            ):
+                raise RuntimeError(
+                    "narrowgate_cpp final-order planner capability is unavailable"
+                )
             if enabled["NARROWGATE_CPP_QUOTE_POLICY_STAGE"] and not bool(
                 module.NATIVE_QUOTE_POLICY_STAGE_AVAILABLE
             ):
@@ -1170,6 +1200,11 @@ def audit_native_runtime(
                     "explicit native order-action planner failed preflight: "
                     f"{exc}"
                 ) from exc
+            if enabled["NARROWGATE_CPP_FINAL_ORDER_PLAN"]:
+                raise RuntimeError(
+                    "explicit native final-order planner failed preflight: "
+                    f"{exc}"
+                ) from exc
             logger.warning("Native runtime requested but unavailable: %s", exc)
             module_path = f"unavailable:{exc}"
 
@@ -1177,7 +1212,7 @@ def audit_native_runtime(
         "NATIVE_PROFILE name=%s quote_core=%d signal_features=%d "
         "quote_policy_stage=%d global_flow_requested=%d global_flow_effective=%d "
         "live_routing=%d replace_continuation=%d cooldown=%d "
-        "order_action_plan=%d strict=%d module=%s",
+        "order_action_plan=%d final_order_plan=%d strict=%d module=%s",
         profile,
         int(enabled["NARROWGATE_CPP_QUOTE_CORE"]),
         int(enabled["NARROWGATE_CPP_SIGNAL_FEATURES"]),
@@ -1188,6 +1223,7 @@ def audit_native_runtime(
         int(enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]),
         int(enabled["NARROWGATE_CPP_COOLDOWN"]),
         int(enabled["NARROWGATE_CPP_ORDER_ACTION_PLAN"]),
+        int(enabled["NARROWGATE_CPP_FINAL_ORDER_PLAN"]),
         int(enabled["NARROWGATE_CPP_STRICT"]),
         module_path,
     )

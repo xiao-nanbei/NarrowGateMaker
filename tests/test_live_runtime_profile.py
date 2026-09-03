@@ -70,6 +70,16 @@ def test_persisted_profiles_select_native_cooldown_explicitly() -> None:
         "cpp_order_action_plan=${NARROWGATE_CPP_ORDER_ACTION_PLAN:-0}"
         in run_sh
     )
+    assert 'export NARROWGATE_CPP_FINAL_ORDER_PLAN="0"' in native
+    assert 'export NARROWGATE_CPP_FINAL_ORDER_PLAN="0"' in python
+    assert (
+        "NARROWGATE_CPP_FINAL_ORDER_PLAN=${NARROWGATE_CPP_FINAL_ORDER_PLAN:-0}"
+        in run_sh
+    )
+    assert (
+        "cpp_final_order_plan=${NARROWGATE_CPP_FINAL_ORDER_PLAN:-0}"
+        in run_sh
+    )
     assert 'export NARROWGATE_CPP_QUOTE_POLICY_STAGE="1"' in native
     assert 'export NARROWGATE_CPP_QUOTE_POLICY_STAGE="0"' in python
     assert (
@@ -162,6 +172,80 @@ def test_native_order_action_plan_is_bound_into_runtime_identity(
     assert set(result["abi_contract"]["required_apis"]) == set(
         main.NATIVE_ORDER_ACTION_REQUIRED_APIS
     )
+
+
+def test_native_final_order_plan_is_default_off_and_bound_independently(
+    monkeypatch,
+) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_FINAL_ORDER_PLAN", "1")
+    required = (
+        main.NATIVE_ORDER_ACTION_REQUIRED_APIS
+        | main.NATIVE_FINAL_ORDER_PLAN_REQUIRED_APIS
+    )
+    fake_module = SimpleNamespace(
+        __file__="native-final-order.so",
+        NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE=True,
+        NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE=True,
+        **{
+            name: object
+            for name in required
+            if name
+            not in {
+                "NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE",
+                "NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE",
+            }
+        },
+    )
+    monkeypatch.setattr(main.importlib, "import_module", lambda name: fake_module)
+
+    result = main.audit_native_runtime(logging.getLogger("profile-test"))
+
+    assert result["NARROWGATE_CPP_FINAL_ORDER_PLAN"] is True
+    assert set(result["abi_contract"]["required_apis"]) == set(required)
+
+
+@pytest.mark.parametrize("mode", ["inventory_shift", "flow_add_widen", "hybrid"])
+def test_native_live_routing_rejects_non_noop_post_fill_before_import(
+    monkeypatch,
+    mode: str,
+) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIVE_ROUTING", "1")
+    cfg = SimpleNamespace(
+        strategy=SimpleNamespace(
+            post_fill_quote_response_enabled=True,
+            post_fill_quote_response_mode=mode,
+        )
+    )
+    monkeypatch.setattr(
+        main.importlib,
+        "import_module",
+        lambda name: (_ for _ in ()).throw(AssertionError(name)),
+    )
+
+    with pytest.raises(RuntimeError, match="cannot preserve non-noop post-fill"):
+        main.audit_native_runtime(logging.getLogger("profile-test"), cfg=cfg)
+
+
+def test_native_live_routing_allows_inactive_post_fill_mode(monkeypatch) -> None:
+    _clear_flags(monkeypatch)
+    monkeypatch.setenv("NARROWGATE_CPP_LIVE_ROUTING", "1")
+    cfg = SimpleNamespace(
+        strategy=SimpleNamespace(
+            post_fill_quote_response_enabled=False,
+            post_fill_quote_response_mode="inventory_shift",
+        )
+    )
+    fake_module = SimpleNamespace(
+        __file__="native-routing.so",
+        compute_live_routing_decision=lambda *args: None,
+    )
+    monkeypatch.setattr(main.importlib, "import_module", lambda name: fake_module)
+
+    result = main.audit_native_runtime(logging.getLogger("profile-test"), cfg=cfg)
+
+    assert result["NARROWGATE_CPP_LIVE_ROUTING"] is True
 
 
 def test_explicit_order_action_profile_rejects_disabled_capability(

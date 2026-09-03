@@ -371,6 +371,7 @@ profile() {
     echo "NARROWGATE_CPP_REPLACE_CONTINUATION=${NARROWGATE_CPP_REPLACE_CONTINUATION:-0}"
     echo "NARROWGATE_CPP_COOLDOWN=${NARROWGATE_CPP_COOLDOWN:-0}"
     echo "NARROWGATE_CPP_ORDER_ACTION_PLAN=${NARROWGATE_CPP_ORDER_ACTION_PLAN:-0}"
+    echo "NARROWGATE_CPP_FINAL_ORDER_PLAN=${NARROWGATE_CPP_FINAL_ORDER_PLAN:-0}"
     echo "NARROWGATE_CPP_STRICT=${NARROWGATE_CPP_STRICT:-0}"
 }
 
@@ -626,6 +627,7 @@ _record_runtime_profile() {
         echo "cpp_replace_continuation=${NARROWGATE_CPP_REPLACE_CONTINUATION:-0}"
         echo "cpp_cooldown=${NARROWGATE_CPP_COOLDOWN:-0}"
         echo "cpp_order_action_plan=${NARROWGATE_CPP_ORDER_ACTION_PLAN:-0}"
+        echo "cpp_final_order_plan=${NARROWGATE_CPP_FINAL_ORDER_PLAN:-0}"
         echo "cpp_strict=${NARROWGATE_CPP_STRICT:-0}"
         echo "preflight_identity=$PREFLIGHT_STATE_FILE"
     } > "$PROFILE_STATE_FILE"

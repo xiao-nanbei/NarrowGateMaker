@@ -818,6 +818,29 @@ def _live_order_action_plan_cpp_enabled() -> bool:
     ).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _live_final_order_plan_cpp_enabled() -> bool:
+    return os.environ.get(
+        "NARROWGATE_CPP_FINAL_ORDER_PLAN",
+        "",
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def validate_native_live_routing_policy_compatibility(cfg) -> None:
+    """Reject native routing when it would erase a stateful price transform."""
+
+    strategy = getattr(cfg, "strategy", None)
+    response_enabled = bool(
+        getattr(strategy, "post_fill_quote_response_enabled", False)
+    )
+    response_mode = str(
+        getattr(strategy, "post_fill_quote_response_mode", "noop") or "noop"
+    ).strip().lower()
+    if _live_routing_cpp_enabled() and response_enabled and response_mode != "noop":
+        raise RuntimeError(
+            "native live routing cannot preserve non-noop post-fill quote response"
+        )
+
+
 def _native_replace_continuation_enabled() -> bool:
     return os.environ.get(
         "NARROWGATE_CPP_REPLACE_CONTINUATION",
@@ -897,7 +920,8 @@ def _get_live_order_action_plan_cpp():
     """
 
     global _live_order_action_plan_cpp
-    if not _live_order_action_plan_cpp_enabled():
+    final_stage_enabled = _live_final_order_plan_cpp_enabled()
+    if not (_live_order_action_plan_cpp_enabled() or final_stage_enabled):
         return None
     if _live_order_action_plan_cpp is not None:
         return _live_order_action_plan_cpp
@@ -925,6 +949,14 @@ def _get_live_order_action_plan_cpp():
         "LIVE_ORDER_REASON_PENDING_LIFECYCLE",
         "LIVE_ORDER_REASON_CONFIGURED_CANCEL_FIRST",
     )
+    if final_stage_enabled:
+        required += (
+            "compute_live_final_order_plan",
+            "LiveFinalOrderPlanStatus",
+            "NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE",
+            "LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI",
+            "LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR",
+        )
     missing = [name for name in required if not hasattr(narrowgate_cpp, name)]
     if missing:
         raise RuntimeError(
@@ -933,6 +965,10 @@ def _get_live_order_action_plan_cpp():
         )
     if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
         raise RuntimeError("native order-action planner capability is unavailable")
+    if final_stage_enabled and not bool(
+        narrowgate_cpp.NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE
+    ):
+        raise RuntimeError("native final-order planner capability is unavailable")
     _live_order_action_plan_cpp = narrowgate_cpp
     return _live_order_action_plan_cpp
 
@@ -8204,7 +8240,10 @@ class MakerEngine:
         )
         if (
             native_order_action_planner is None
-            and _live_order_action_plan_cpp_enabled()
+            and (
+                _live_order_action_plan_cpp_enabled()
+                or _live_final_order_plan_cpp_enabled()
+            )
         ):
             raise RuntimeError(
                 "native order-action planner was not frozen after exchange filters"
@@ -8326,27 +8365,102 @@ class MakerEngine:
             can_bid = False
 
         # Re-assert the side-BBO contract after every live price transform.
-        # Existing orders inside the floor must not survive lazy-requote or
-        # replace throttling merely because the price delta is small.
-        (
-            bid_price,
-            ask_price,
-            p3_buy_floor_price,
-            p3_sell_floor_price,
-            p3_final_bid_changed,
-            p3_final_ask_changed,
-            bid_p3_floor_unsafe,
-            ask_p3_floor_unsafe,
-        ) = self._apply_final_p3_side_bbo_floor(
-            bid_price=bid_price,
-            ask_price=ask_price,
-            best_bid=best_bid,
-            best_ask=best_ask,
-            bid_order_price=float(getattr(bid_order, "price", 0.0) or 0.0),
-            ask_order_price=float(getattr(ask_order, "price", 0.0) or 0.0),
-            bid_order_active=bool(bid_alive),
-            ask_order_active=bool(ask_alive),
-        )
+        # The optional native tail consumes these already-final Python policy
+        # prices; it never reconstructs them from quote-core/base prices.
+        native_order_action_plan = None
+        if _live_final_order_plan_cpp_enabled():
+            if native_order_action_planner is None:
+                raise RuntimeError("native final-order planner was not frozen")
+            p3_enabled = bool(
+                self._last_quote_diagnostic_value(
+                    "p3_side_bbo_floor_enabled",
+                    False,
+                )
+            )
+            p3_delta_star = float(
+                self._last_quote_diagnostic_value(
+                    "p3_touch_delta_star",
+                    0.0,
+                )
+                or 0.0
+            )
+            p3_active = bool(
+                p3_enabled
+                and math.isfinite(p3_delta_star)
+                and p3_delta_star > 0.0
+            )
+            native_final_plan = native_order_action_planner.compute_final(
+                inventory=float(q),
+                mid=float(mid),
+                now_ts=float(now_ts),
+                buy=NativeOrderSideBoundary(
+                    target_price=float(bid_price),
+                    desired_quantity=float(bid_size_pre),
+                    exposure_probe_quantity=float(base_size),
+                    order=bid_order,
+                    needs_update=bool(bid_needs_update),
+                    force_update=bool(bid_force_update),
+                    route_allowed=bool(bid_route_allowed),
+                    allow_post=bool(bid_policy.allow_post),
+                    allow_exposure_increase=bool(
+                        bid_policy.allow_exposure_increase
+                    ),
+                ),
+                sell=NativeOrderSideBoundary(
+                    target_price=float(ask_price),
+                    desired_quantity=float(ask_size_pre),
+                    exposure_probe_quantity=float(base_size),
+                    order=ask_order,
+                    needs_update=bool(ask_needs_update),
+                    force_update=bool(ask_force_update),
+                    route_allowed=bool(ask_route_allowed),
+                    allow_post=bool(ask_policy.allow_post),
+                    allow_exposure_increase=bool(
+                        ask_policy.allow_exposure_increase
+                    ),
+                ),
+                best_bid=float(best_bid),
+                best_ask=float(best_ask),
+                p3_side_bbo_floor_enabled=p3_active,
+                p3_delta_star=(p3_delta_star if p3_active else 0.0),
+            )
+            bid_price = float(native_final_plan.bid_price)
+            ask_price = float(native_final_plan.ask_price)
+            p3_buy_floor_price = float(native_final_plan.p3_buy_floor_price)
+            p3_sell_floor_price = float(native_final_plan.p3_sell_floor_price)
+            p3_final_bid_changed = bool(native_final_plan.p3_bid_changed)
+            p3_final_ask_changed = bool(native_final_plan.p3_ask_changed)
+            bid_p3_floor_unsafe = bool(
+                native_final_plan.bid_active_floor_unsafe
+            )
+            ask_p3_floor_unsafe = bool(
+                native_final_plan.ask_active_floor_unsafe
+            )
+            native_order_action_plan = native_final_plan.orders
+        else:
+            (
+                bid_price,
+                ask_price,
+                p3_buy_floor_price,
+                p3_sell_floor_price,
+                p3_final_bid_changed,
+                p3_final_ask_changed,
+                bid_p3_floor_unsafe,
+                ask_p3_floor_unsafe,
+            ) = self._apply_final_p3_side_bbo_floor(
+                bid_price=bid_price,
+                ask_price=ask_price,
+                best_bid=best_bid,
+                best_ask=best_ask,
+                bid_order_price=float(
+                    getattr(bid_order, "price", 0.0) or 0.0
+                ),
+                ask_order_price=float(
+                    getattr(ask_order, "price", 0.0) or 0.0
+                ),
+                bid_order_active=bool(bid_alive),
+                ask_order_active=bool(ask_alive),
+            )
         if bid_p3_floor_unsafe:
             bid_needs_update = True
             bid_force_update = True
@@ -8526,8 +8640,10 @@ class MakerEngine:
             if native_order_action_planner is not None
             else None
         )
-        native_order_action_plan = None
-        if native_order_action_planner is not None:
+        if (
+            native_order_action_planner is not None
+            and native_order_action_plan is None
+        ):
             try:
                 native_order_action_plan = native_order_action_planner.compute(
                     inventory=float(q),
@@ -12826,6 +12942,7 @@ class MakerEngine:
     def _freeze_native_order_action_planner(self) -> None:
         """Bind static exchange/config inputs once before live quoting starts."""
 
+        validate_native_live_routing_policy_compatibility(self.cfg)
         native = _get_live_order_action_plan_cpp()
         if native is None:
             self._native_order_action_planner = None

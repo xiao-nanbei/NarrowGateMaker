@@ -544,6 +544,148 @@ LiveDualOrderActionPlan compute_live_order_action_plan(
     };
 }
 
+LiveFinalOrderPlan compute_live_final_order_plan(
+    const LiveOrderPlannerContext& context,
+    const LiveOrderReplaceConfig& replace,
+    const LiveFinalOrderBoundary& boundary,
+    const LiveSideOrderActionInput& buy,
+    const LiveSideOrderActionInput& sell
+) noexcept {
+    LiveFinalOrderPlan out{};
+    out.status = LiveFinalOrderPlanStatus::InvalidInput;
+    out.orders = LiveDualOrderActionPlan{
+        .buy = invalid_plan<Side::Buy>(buy),
+        .sell = invalid_plan<Side::Sell>(sell),
+    };
+
+    constexpr std::uint8_t known_flags =
+        LiveFinalOrderBoundaryP3SideBboFloor;
+    const double tick = replace.tick_size;
+    if (!valid_context(context) || !valid_replace(replace) ||
+        !valid_side_input(buy) || !valid_side_input(sell) ||
+        (boundary.flags & ~known_flags) != 0 ||
+        !std::isfinite(boundary.bid_price) || boundary.bid_price <= 0.0 ||
+        !std::isfinite(boundary.ask_price) || boundary.ask_price <= 0.0 ||
+        !std::isfinite(boundary.best_bid) || boundary.best_bid <= 0.0 ||
+        !std::isfinite(boundary.best_ask) || boundary.best_ask <= 0.0 ||
+        !std::isfinite(boundary.bid_existing_price) ||
+        boundary.bid_existing_price < 0.0 ||
+        !std::isfinite(boundary.ask_existing_price) ||
+        boundary.ask_existing_price < 0.0 ||
+        !std::isfinite(boundary.p3_delta_star)) {
+        return out;
+    }
+
+    out.bid_price = boundary.bid_price;
+    out.ask_price = boundary.ask_price;
+    const bool p3_active = has_flag(
+        boundary.flags,
+        LiveFinalOrderBoundaryP3SideBboFloor
+    );
+    if (p3_active) {
+        if (boundary.p3_delta_star <= 0.0) {
+            return out;
+        }
+        out.p3_buy_floor_price = floor_tick(
+            boundary.best_bid - boundary.p3_delta_star,
+            tick
+        );
+        out.p3_sell_floor_price = ceil_tick(
+            boundary.best_ask + boundary.p3_delta_star,
+            tick
+        );
+        const double tolerance = std::max(tick * 1e-9, 1e-12);
+        const double pre_floor_bid = out.bid_price;
+        const double pre_floor_ask = out.ask_price;
+        out.bid_price = std::min(out.bid_price, out.p3_buy_floor_price);
+        out.ask_price = std::max(out.ask_price, out.p3_sell_floor_price);
+        out.p3_bid_changed = out.bid_price < pre_floor_bid - tolerance;
+        out.p3_ask_changed = out.ask_price > pre_floor_ask + tolerance;
+        out.bid_active_floor_unsafe = order_is_active(buy.order_state) &&
+            boundary.bid_existing_price > 0.0 &&
+            boundary.bid_existing_price > out.p3_buy_floor_price + tolerance;
+        out.ask_active_floor_unsafe = order_is_active(sell.order_state) &&
+            boundary.ask_existing_price > 0.0 &&
+            boundary.ask_existing_price < out.p3_sell_floor_price - tolerance;
+    }
+
+    const auto price_ticks = [tick](double price) -> std::int64_t {
+        const double units = price / tick;
+        if (!std::isfinite(units) || units <= 0.0 ||
+            units >= static_cast<double>(std::numeric_limits<std::int64_t>::max()) ||
+            std::abs(units - std::round(units)) > 1e-7) {
+            return 0;
+        }
+        return static_cast<std::int64_t>(std::llround(units));
+    };
+    const std::int64_t bid_ticks = price_ticks(out.bid_price);
+    const std::int64_t ask_ticks = price_ticks(out.ask_price);
+    if (bid_ticks <= 0 || ask_ticks <= 0) {
+        out.status = LiveFinalOrderPlanStatus::InvalidTickPrice;
+        return out;
+    }
+
+    const auto finish_side = [tick](
+        LiveSideOrderActionInput input,
+        double final_price,
+        std::int64_t final_ticks,
+        double existing_price,
+        bool floor_unsafe
+    ) {
+        input.target_price_ticks = final_ticks;
+        if (has_flag(input.flags, LiveOrderSideInputUseProvidedNeedsUpdate)) {
+            input.target_price = final_price;
+            input.provided_price_delta_ticks = existing_price > 0.0
+                ? std::abs(final_price - existing_price) / tick
+                : 0.0;
+        }
+        if (floor_unsafe) {
+            input.flags |= LiveOrderSideInputForceUpdate |
+                LiveOrderSideInputProvidedNeedsUpdate;
+        }
+        return input;
+    };
+    const auto final_buy = finish_side(
+        buy,
+        out.bid_price,
+        bid_ticks,
+        boundary.bid_existing_price,
+        out.bid_active_floor_unsafe
+    );
+    const auto final_sell = finish_side(
+        sell,
+        out.ask_price,
+        ask_ticks,
+        boundary.ask_existing_price,
+        out.ask_active_floor_unsafe
+    );
+    out.orders = compute_live_order_action_plan(
+        context,
+        replace,
+        final_buy,
+        final_sell
+    );
+    if (out.orders.buy.action == LiveOrderAction::Invalid ||
+        out.orders.sell.action == LiveOrderAction::Invalid) {
+        out.status = LiveFinalOrderPlanStatus::InvalidActionPlan;
+        return out;
+    }
+
+    const double price_tolerance = tick * 1e-9;
+    if (out.orders.buy.can_post &&
+        out.bid_price >= boundary.best_ask - price_tolerance) {
+        out.status = LiveFinalOrderPlanStatus::PostOnlyBuyCrosses;
+        return out;
+    }
+    if (out.orders.sell.can_post &&
+        out.ask_price <= boundary.best_bid + price_tolerance) {
+        out.status = LiveFinalOrderPlanStatus::PostOnlySellCrosses;
+        return out;
+    }
+    out.status = LiveFinalOrderPlanStatus::Ok;
+    return out;
+}
+
 template LiveSideOrderActionPlan compute_live_side_order_action_plan<Side::Buy>(
     const LiveOrderPlannerContext&,
     const LiveOrderReplaceConfig&,

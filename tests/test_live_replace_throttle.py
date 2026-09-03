@@ -177,6 +177,7 @@ def _run_order_action_planner_arm(
     *,
     native: bool,
     scenario: str,
+    final_stage: bool = False,
 ) -> dict[str, object]:
     """Run one isolated BUY action through the real _update_orders wiring."""
 
@@ -261,7 +262,11 @@ def _run_order_action_planner_arm(
     engine._cancel_order = cancel_order
     monkeypatch.setenv(
         "NARROWGATE_CPP_ORDER_ACTION_PLAN",
-        "1" if native else "0",
+        "1" if native and not final_stage else "0",
+    )
+    monkeypatch.setenv(
+        "NARROWGATE_CPP_FINAL_ORDER_PLAN",
+        "1" if final_stage else "0",
     )
     monkeypatch.setattr(
         maker_engine_module,
@@ -319,6 +324,36 @@ def test_update_orders_native_action_plan_preserves_b0_actions_and_telemetry(
         monkeypatch,
         native=True,
         scenario=scenario,
+    )
+
+    assert native_result == python_result
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "pending",
+        "throttle",
+        "cancel_first",
+        "position_cap",
+        "min_notional",
+        "cross_zero",
+    ),
+)
+def test_update_orders_native_final_plan_preserves_b0_trace(
+    monkeypatch: pytest.MonkeyPatch,
+    scenario: str,
+) -> None:
+    python_result = _run_order_action_planner_arm(
+        monkeypatch,
+        native=False,
+        scenario=scenario,
+    )
+    native_result = _run_order_action_planner_arm(
+        monkeypatch,
+        native=True,
+        scenario=scenario,
+        final_stage=True,
     )
 
     assert native_result == python_result

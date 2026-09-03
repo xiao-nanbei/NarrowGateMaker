@@ -1057,6 +1057,14 @@ void bind_live_order_action_plan(py::module_& m) {
         .value("RouteDisabled", LiveOrderAction::RouteDisabled)
         .value("Invalid", LiveOrderAction::Invalid);
 
+    py::enum_<LiveFinalOrderPlanStatus>(m, "LiveFinalOrderPlanStatus")
+        .value("Ok", LiveFinalOrderPlanStatus::Ok)
+        .value("InvalidInput", LiveFinalOrderPlanStatus::InvalidInput)
+        .value("InvalidTickPrice", LiveFinalOrderPlanStatus::InvalidTickPrice)
+        .value("PostOnlyBuyCrosses", LiveFinalOrderPlanStatus::PostOnlyBuyCrosses)
+        .value("PostOnlySellCrosses", LiveFinalOrderPlanStatus::PostOnlySellCrosses)
+        .value("InvalidActionPlan", LiveFinalOrderPlanStatus::InvalidActionPlan);
+
     py::class_<LiveSideOrderActionPlan>(m, "LiveSideOrderActionPlan")
         .def_readonly(
             "target_price_ticks",
@@ -1108,6 +1116,30 @@ void bind_live_order_action_plan(py::module_& m) {
     py::class_<LiveDualOrderActionPlan>(m, "LiveDualOrderActionPlan")
         .def_readonly("buy", &LiveDualOrderActionPlan::buy)
         .def_readonly("sell", &LiveDualOrderActionPlan::sell);
+
+    py::class_<LiveFinalOrderPlan>(m, "LiveFinalOrderPlan")
+        .def_readonly("orders", &LiveFinalOrderPlan::orders)
+        .def_readonly("bid_price", &LiveFinalOrderPlan::bid_price)
+        .def_readonly("ask_price", &LiveFinalOrderPlan::ask_price)
+        .def_readonly(
+            "p3_buy_floor_price",
+            &LiveFinalOrderPlan::p3_buy_floor_price
+        )
+        .def_readonly(
+            "p3_sell_floor_price",
+            &LiveFinalOrderPlan::p3_sell_floor_price
+        )
+        .def_readonly("status", &LiveFinalOrderPlan::status)
+        .def_readonly("p3_bid_changed", &LiveFinalOrderPlan::p3_bid_changed)
+        .def_readonly("p3_ask_changed", &LiveFinalOrderPlan::p3_ask_changed)
+        .def_readonly(
+            "bid_active_floor_unsafe",
+            &LiveFinalOrderPlan::bid_active_floor_unsafe
+        )
+        .def_readonly(
+            "ask_active_floor_unsafe",
+            &LiveFinalOrderPlan::ask_active_floor_unsafe
+        );
 
     m.def(
         "compute_live_order_action_plan",
@@ -1194,6 +1226,110 @@ void bind_live_order_action_plan(py::module_& m) {
         py::arg("sell_values")
     );
 
+    m.def(
+        "compute_live_final_order_plan",
+        [](py::sequence context_values,
+           py::sequence replace_values,
+           py::sequence boundary_values,
+           py::sequence buy_values,
+           py::sequence sell_values) {
+            if (py::len(context_values) != 9 ||
+                py::len(replace_values) != 8 ||
+                py::len(boundary_values) != 9 ||
+                py::len(buy_values) != 9 ||
+                py::len(sell_values) != 9) {
+                throw std::invalid_argument(
+                    "live final order planner compact input length mismatch"
+                );
+            }
+            if (py::cast<std::uint32_t>(context_values[0]) != 2U) {
+                throw std::invalid_argument(
+                    "live final order planner context ABI mismatch"
+                );
+            }
+            if (py::cast<std::uint32_t>(boundary_values[0]) != 1U) {
+                throw std::invalid_argument(
+                    "live final order planner boundary ABI mismatch"
+                );
+            }
+
+            LiveOrderPlannerContext context{};
+            context.inventory = py::cast<double>(context_values[1]);
+            context.max_inventory = py::cast<double>(context_values[2]);
+            context.max_position_value = py::cast<double>(context_values[3]);
+            context.mid = py::cast<double>(context_values[4]);
+            context.lot_size = py::cast<double>(context_values[5]);
+            context.inventory_lots =
+                py::cast<std::int64_t>(context_values[6]);
+            context.min_quantity_lots =
+                py::cast<std::int64_t>(context_values[7]);
+            context.requote_threshold_bps =
+                py::cast<double>(context_values[8]);
+
+            LiveOrderReplaceConfig replace{};
+            replace.tick_size = py::cast<double>(replace_values[0]);
+            replace.lot_size = py::cast<double>(replace_values[1]);
+            replace.min_notional = py::cast<double>(replace_values[2]);
+            replace.add_min_price_change_ticks =
+                py::cast<double>(replace_values[3]);
+            replace.reducing_min_price_change_ticks =
+                py::cast<double>(replace_values[4]);
+            replace.add_min_interval_ms =
+                py::cast<double>(replace_values[5]);
+            replace.reducing_min_interval_ms =
+                py::cast<double>(replace_values[6]);
+            replace.flags = py::cast<std::uint8_t>(replace_values[7]);
+
+            LiveFinalOrderBoundary boundary{};
+            boundary.bid_price = py::cast<double>(boundary_values[1]);
+            boundary.ask_price = py::cast<double>(boundary_values[2]);
+            boundary.best_bid = py::cast<double>(boundary_values[3]);
+            boundary.best_ask = py::cast<double>(boundary_values[4]);
+            boundary.p3_delta_star = py::cast<double>(boundary_values[5]);
+            boundary.bid_existing_price = py::cast<double>(boundary_values[6]);
+            boundary.ask_existing_price = py::cast<double>(boundary_values[7]);
+            boundary.flags = py::cast<std::uint8_t>(boundary_values[8]);
+
+            const auto read_side = [](const py::sequence& values) {
+                LiveSideOrderActionInput input{};
+                input.target_price_ticks =
+                    py::cast<std::int64_t>(values[0]);
+                input.desired_quantity_lots =
+                    py::cast<std::int64_t>(values[1]);
+                input.exposure_probe_quantity_lots =
+                    py::cast<std::int64_t>(values[2]);
+                input.existing_remaining_lots =
+                    py::cast<std::int64_t>(values[4]);
+                input.order_state = py::cast<LivePlannerOrderState>(values[7]);
+                input.flags = py::cast<std::uint8_t>(values[8]);
+                input.order_age_ms = py::cast<double>(values[5]);
+                if ((input.flags & LiveOrderSideInputUseProvidedNeedsUpdate) != 0) {
+                    input.target_price = py::cast<double>(values[3]);
+                    input.provided_price_delta_ticks =
+                        py::cast<double>(values[6]);
+                } else {
+                    input.existing_price_ticks =
+                        py::cast<std::int64_t>(values[3]);
+                    input.order_ttl_ms = py::cast<double>(values[6]);
+                }
+                return input;
+            };
+
+            return compute_live_final_order_plan(
+                context,
+                replace,
+                boundary,
+                read_side(buy_values),
+                read_side(sell_values)
+            );
+        },
+        py::arg("context_values"),
+        py::arg("replace_values"),
+        py::arg("boundary_values"),
+        py::arg("buy_values"),
+        py::arg("sell_values")
+    );
+
     m.attr("LIVE_ORDER_ACTION_PLAN_CONTEXT_BYTES") = py::int_(
         sizeof(LiveOrderPlannerContext)
     );
@@ -1209,6 +1345,16 @@ void bind_live_order_action_plan(py::module_& m) {
     );
     m.attr("LIVE_ORDER_ACTION_PLAN_DUAL_RESULT_BYTES") = py::int_(
         sizeof(LiveDualOrderActionPlan)
+    );
+    m.attr("LIVE_FINAL_ORDER_PLAN_BOUNDARY_BYTES") = py::int_(
+        sizeof(LiveFinalOrderBoundary)
+    );
+    m.attr("LIVE_FINAL_ORDER_PLAN_RESULT_BYTES") = py::int_(
+        sizeof(LiveFinalOrderPlan)
+    );
+    m.attr("LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI") = py::int_(1);
+    m.attr("LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR") = py::int_(
+        static_cast<std::uint8_t>(LiveFinalOrderBoundaryP3SideBboFloor)
     );
     m.attr("LIVE_ORDER_SIDE_FLAG_ROUTE_ALLOWED") = py::int_(
         static_cast<std::uint8_t>(LiveOrderSideInputRouteAllowed)
@@ -1253,6 +1399,7 @@ void bind_live_order_action_plan(py::module_& m) {
         )
     );
     m.attr("NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE") = py::bool_(true);
+    m.attr("NATIVE_LIVE_FINAL_ORDER_PLAN_AVAILABLE") = py::bool_(true);
 }
 
 

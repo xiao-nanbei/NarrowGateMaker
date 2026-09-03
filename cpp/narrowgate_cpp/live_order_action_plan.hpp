@@ -38,6 +38,15 @@ enum class LiveOrderAction : std::uint8_t {
     Invalid = 8,
 };
 
+enum class LiveFinalOrderPlanStatus : std::uint8_t {
+    Ok = 0,
+    InvalidInput = 1,
+    InvalidTickPrice = 2,
+    PostOnlyBuyCrosses = 3,
+    PostOnlySellCrosses = 4,
+    InvalidActionPlan = 5,
+};
+
 enum LiveOrderPlanReason : std::uint32_t {
     LiveOrderPlanReasonNone = 0,
     LiveOrderPlanReasonRouteDisabled = 1U << 0,
@@ -178,27 +187,73 @@ struct alignas(64) LiveDualOrderActionPlan {
     LiveSideOrderActionPlan sell;
 };
 
+enum LiveFinalOrderBoundaryFlag : std::uint8_t {
+    LiveFinalOrderBoundaryP3SideBboFloor = 1U << 0,
+};
+
+// Immutable tail boundary after every Python-owned stateful policy has run.
+// Prices here are the actual final policy outputs; this stage must never
+// reconstruct them from a quote-core/base price.  Existing order prices remain
+// explicit because P3 can force an otherwise keepable active order outward.
+struct alignas(64) LiveFinalOrderBoundary {
+    double bid_price;
+    double ask_price;
+    double best_bid;
+    double best_ask;
+    double p3_delta_star;
+    double bid_existing_price;
+    double ask_existing_price;
+    std::uint8_t flags;
+    std::uint8_t reserved[7];
+};
+
+// Three x86 cache lines: the existing dual action plan plus one immutable
+// final-price/result line.  No state mutation, network request, callback or
+// evidence write is authorized by this value.
+struct alignas(64) LiveFinalOrderPlan {
+    LiveDualOrderActionPlan orders;
+    double bid_price;
+    double ask_price;
+    double p3_buy_floor_price;
+    double p3_sell_floor_price;
+    LiveFinalOrderPlanStatus status;
+    bool p3_bid_changed;
+    bool p3_ask_changed;
+    bool bid_active_floor_unsafe;
+    bool ask_active_floor_unsafe;
+    std::uint8_t reserved[27];
+};
+
 static_assert(std::is_trivial_v<LiveOrderPlannerContext>);
 static_assert(std::is_trivial_v<LiveOrderReplaceConfig>);
 static_assert(std::is_trivial_v<LiveSideOrderActionInput>);
 static_assert(std::is_trivial_v<LiveSideOrderActionPlan>);
 static_assert(std::is_trivial_v<LiveDualOrderActionPlan>);
+static_assert(std::is_trivial_v<LiveFinalOrderBoundary>);
+static_assert(std::is_trivial_v<LiveFinalOrderPlan>);
 static_assert(std::is_standard_layout_v<LiveOrderPlannerContext>);
 static_assert(std::is_standard_layout_v<LiveOrderReplaceConfig>);
 static_assert(std::is_standard_layout_v<LiveSideOrderActionInput>);
 static_assert(std::is_standard_layout_v<LiveSideOrderActionPlan>);
 static_assert(std::is_standard_layout_v<LiveDualOrderActionPlan>);
+static_assert(std::is_standard_layout_v<LiveFinalOrderBoundary>);
+static_assert(std::is_standard_layout_v<LiveFinalOrderPlan>);
 static_assert(std::is_trivially_copyable_v<LiveOrderPlannerContext>);
 static_assert(std::is_trivially_copyable_v<LiveOrderReplaceConfig>);
 static_assert(std::is_trivially_copyable_v<LiveSideOrderActionInput>);
 static_assert(std::is_trivially_copyable_v<LiveSideOrderActionPlan>);
 static_assert(std::is_trivially_copyable_v<LiveDualOrderActionPlan>);
+static_assert(std::is_trivially_copyable_v<LiveFinalOrderBoundary>);
+static_assert(std::is_trivially_copyable_v<LiveFinalOrderPlan>);
 static_assert(sizeof(LiveOrderPlannerContext) == 64);
 static_assert(sizeof(LiveOrderReplaceConfig) == 64);
 static_assert(sizeof(LiveSideOrderActionInput) == 64);
 static_assert(sizeof(LiveSideOrderActionPlan) == 64);
 static_assert(sizeof(LiveDualOrderActionPlan) == 128);
 static_assert(alignof(LiveDualOrderActionPlan) == 64);
+static_assert(sizeof(LiveFinalOrderBoundary) == 64);
+static_assert(sizeof(LiveFinalOrderPlan) == 192);
+static_assert(alignof(LiveFinalOrderPlan) == 64);
 
 template <Side S>
 [[nodiscard]] LiveSideOrderActionPlan compute_live_side_order_action_plan(
@@ -210,6 +265,14 @@ template <Side S>
 [[nodiscard]] LiveDualOrderActionPlan compute_live_order_action_plan(
     const LiveOrderPlannerContext& context,
     const LiveOrderReplaceConfig& replace,
+    const LiveSideOrderActionInput& buy,
+    const LiveSideOrderActionInput& sell
+) noexcept;
+
+[[nodiscard]] LiveFinalOrderPlan compute_live_final_order_plan(
+    const LiveOrderPlannerContext& context,
+    const LiveOrderReplaceConfig& replace,
+    const LiveFinalOrderBoundary& boundary,
     const LiveSideOrderActionInput& buy,
     const LiveSideOrderActionInput& sell
 ) noexcept;
