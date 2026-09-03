@@ -322,9 +322,13 @@ def _fresh_benchmark_snapshot(signal: SignalEngine) -> QuoteDecisionSnapshot:
 
 
 @contextlib.contextmanager
-def _quote_core_engine(engine: str, strict_cpp: bool):
+def _quote_core_engine(engine: str, strict_cpp: bool, quote_policy_stage: bool):
     old_quote = os.environ.get("NARROWGATE_CPP_QUOTE_CORE")
     old_strict = os.environ.get("NARROWGATE_CPP_STRICT")
+    old_policy_stage = os.environ.get("NARROWGATE_CPP_QUOTE_POLICY_STAGE")
+    os.environ["NARROWGATE_CPP_QUOTE_POLICY_STAGE"] = (
+        "1" if engine == "cpp" and quote_policy_stage else "0"
+    )
     if engine == "cpp":
         os.environ["NARROWGATE_CPP_QUOTE_CORE"] = "1"
         if strict_cpp:
@@ -344,6 +348,10 @@ def _quote_core_engine(engine: str, strict_cpp: bool):
             os.environ.pop("NARROWGATE_CPP_STRICT", None)
         else:
             os.environ["NARROWGATE_CPP_STRICT"] = old_strict
+        if old_policy_stage is None:
+            os.environ.pop("NARROWGATE_CPP_QUOTE_POLICY_STAGE", None)
+        else:
+            os.environ["NARROWGATE_CPP_QUOTE_POLICY_STAGE"] = old_policy_stage
 
 
 def _cpp_status() -> str:
@@ -389,7 +397,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
     q = float(args.inventory)
     if not args.signal_only:
         quote_snapshot = _fresh_benchmark_snapshot(signal)
-        with _quote_core_engine(args.engine, args.strict_cpp):
+        with _quote_core_engine(args.engine, args.strict_cpp, args.quote_policy_stage):
             engine._compute_quotes(quote_snapshot, q, pred)
             engine._build_side_policy(
                 Side.BUY,
@@ -507,7 +515,7 @@ def run(args: argparse.Namespace) -> list[dict[str, float]]:
 
     if not args.signal_only:
         quote_snapshot = _fresh_benchmark_snapshot(signal)
-        with _quote_core_engine(args.engine, args.strict_cpp):
+        with _quote_core_engine(args.engine, args.strict_cpp, args.quote_policy_stage):
             rows.append(
                 _time_samples(
                     "live _compute_quotes",
@@ -605,6 +613,11 @@ def main() -> None:
         help="raise instead of fallback when --engine cpp cannot load narrowgate_cpp",
     )
     parser.add_argument(
+        "--quote-policy-stage",
+        action="store_true",
+        help="fuse quote core and stateless common-side policy in the native stage",
+    )
+    parser.add_argument(
         "--ml",
         action="store_true",
         help="load and run saved LightGBM models during SignalEngine prediction",
@@ -628,7 +641,8 @@ def main() -> None:
     if _CPP_BOOTSTRAP_DIR is not None:
         print(f"cpp_bootstrap_dir={_CPP_BOOTSTRAP_DIR}")
     print(
-        f"quote_core_engine={args.engine} strict_cpp={args.strict_cpp} cpp_status={_cpp_status()}"
+        f"quote_core_engine={args.engine} strict_cpp={args.strict_cpp} "
+        f"quote_policy_stage={args.quote_policy_stage} cpp_status={_cpp_status()}"
     )
     print(
         f"ml={args.ml} n={args.n} signal_n={args.signal_n} "

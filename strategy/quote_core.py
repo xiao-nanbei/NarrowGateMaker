@@ -3553,9 +3553,9 @@ def compute_quote_core_live_deferred(
     retain it until evidence or logging requests the legacy mappings.
     """
 
-    # Deferred conversion moves compact-ABI validation to the first mapping
-    # consumer.  Use it only for the fail-fast native profile; non-strict mode
-    # retains the eager wrapper's synchronous Python-fallback boundary.
+    # Validate the complete compact ABI once per native result type before the
+    # deferred object can reach order routing.  Use this only for the fail-fast
+    # native profile; non-strict mode retains the eager Python-fallback boundary.
     if (
         _cpp_quote_core_enabled(cfg)
         and _cpp_strict_enabled()

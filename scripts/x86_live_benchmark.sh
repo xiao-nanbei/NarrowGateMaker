@@ -63,19 +63,32 @@ PY
 echo "N=$N SIGNAL_N=$SIGNAL_N TRADES_PER_SECOND=$TRADES_PER_SECOND TASKSET_CPU=${TASKSET_CPU:-none}"
 echo "threads OMP=$OMP_NUM_THREADS OPENBLAS=$OPENBLAS_NUM_THREADS MKL=$MKL_NUM_THREADS NUMEXPR=$NUMEXPR_NUM_THREADS MALLOC_ARENA_MAX=$MALLOC_ARENA_MAX"
 
+NARROWGATE_CPP_QUOTE_POLICY_STAGE=0 \
 bench_live_path "python baseline" --engine python
 
+NARROWGATE_CPP_QUOTE_POLICY_STAGE=0 \
 NARROWGATE_CPP_STRICT=1 \
 bench_live_path "cpp quote core" --engine cpp --strict-cpp
 
+NARROWGATE_CPP_QUOTE_POLICY_STAGE=0 \
 NARROWGATE_CPP_SIGNAL_FEATURES=1 \
 NARROWGATE_CPP_STRICT=1 \
 bench_live_path "cpp signal features only" --engine python
 
+NARROWGATE_CPP_QUOTE_POLICY_STAGE=0 \
 NARROWGATE_CPP_QUOTE_CORE=1 \
 NARROWGATE_CPP_SIGNAL_FEATURES=1 \
 NARROWGATE_CPP_STRICT=1 \
 bench_live_path "candidate: quote core + signal features" --engine cpp --strict-cpp
+
+NARROWGATE_CPP_QUOTE_POLICY_STAGE=1 \
+NARROWGATE_CPP_QUOTE_CORE=1 \
+NARROWGATE_CPP_SIGNAL_FEATURES=1 \
+NARROWGATE_CPP_STRICT=1 \
+bench_live_path "candidate: fused quote policy + signal features" \
+  --engine cpp \
+  --strict-cpp \
+  --quote-policy-stage
 
 echo
 echo "== live routing compact ABI =="
@@ -99,6 +112,7 @@ if [[ "$RUN_PERF" == "1" ]]; then
     MALLOC_ARENA_MAX="$MALLOC_ARENA_MAX" \
     PYTHONHASHSEED="$PYTHONHASHSEED" \
     NARROWGATE_CPP_QUOTE_CORE=1 \
+    NARROWGATE_CPP_QUOTE_POLICY_STAGE=1 \
     NARROWGATE_CPP_SIGNAL_FEATURES=1 \
     NARROWGATE_CPP_STRICT=1 \
     "$PYTHON" bench/bench_live_path.py \
@@ -106,5 +120,6 @@ if [[ "$RUN_PERF" == "1" ]]; then
       --signal-n "${PERF_SIGNAL_N:-300}" \
       --trades-per-second "$TRADES_PER_SECOND" \
       --engine cpp \
-      --strict-cpp || true
+      --strict-cpp \
+      --quote-policy-stage || true
 fi
