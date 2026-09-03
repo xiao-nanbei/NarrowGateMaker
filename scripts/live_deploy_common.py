@@ -102,6 +102,126 @@ for entry in os.scandir("/proc"):
 raise SystemExit(0)
 """
 
+_RUNTIME_FATAL_LINEAGE_CHECK: Final = """import base64,hashlib,json,runpy,sys
+from datetime import datetime,timezone
+from pathlib import Path
+
+(module_path,current_path,envelope_path,activation_path,reconciliation_path,
+ runtime_path,health_path,release_id)=sys.argv[1:]
+module=runpy.run_path(module_path)
+current=module['load_current_pointer'](
+    Path(current_path),
+    deployment_envelope_path=Path(envelope_path),
+    activation_receipt_path=Path(activation_path),
+)
+pointer=current['pointer']
+assert pointer['release_id']==release_id
+assert pointer['schema_version']==module['CURRENT_POINTER_SCHEMA']
+receipt=current['activation_receipt']
+module['_validate_activation_artifacts'](
+    receipt,
+    stopped_reconciliation_path=Path(reconciliation_path),
+    runtime_identity_path=Path(runtime_path),
+)
+runtime_raw=module['_read_regular_file'](
+    Path(runtime_path),private_authority=True
+)
+assert hashlib.sha256(runtime_raw).hexdigest()==receipt['runtime_identity_sha256']
+runtime=json.loads(runtime_raw)
+health_raw=module['_read_regular_file'](Path(health_path))
+health=json.loads(health_raw)
+pid=runtime.get('pid')
+assert type(pid) is int and pid>0 and health.get('pid')==pid
+assert health.get('schemaVersion')=='narrowgate.live_runtime_health.v1'
+assert health.get('fatalRuntimeLatched') is True
+assert health.get('reconciliationRequired') is True
+assert health.get('quoteLoopRunning') is False
+reason=health.get('fatalReason')
+assert isinstance(reason,str) and reason
+started_text=runtime.get('recorded_at_utc')
+assert isinstance(started_text,str) and started_text
+started=datetime.fromisoformat(started_text.replace('Z','+00:00'))
+assert started.tzinfo is not None and started.utcoffset() is not None
+started=started.astimezone(timezone.utc)
+recorded_ns=health.get('recordedAtNs')
+assert type(recorded_ns) is int and recorded_ns>=int(started.timestamp()*1_000_000_000)
+config_path=runtime.get('config_path')
+assert isinstance(config_path,str) and Path(config_path).is_absolute()
+config_token=base64.urlsafe_b64encode(config_path.encode('utf-8')).decode('ascii')
+print(
+    str(pid)+'\\t'+started.strftime('%Y-%m-%d %H:%M:%S UTC')+'\\t'
+    +hashlib.sha256(health_raw).hexdigest()+'\\t'+config_token
+)
+"""
+
+_RUNTIME_FATAL_MESSAGE_CHECK: Final = """import base64,hashlib,json,re,sys
+from pathlib import Path
+
+pid,expected_main,config_token,health_path,expected_health_sha256=sys.argv[1:]
+expected_config=base64.urlsafe_b64decode(config_token.encode('ascii')).decode('utf-8')
+health_raw=Path(health_path).read_bytes()
+assert hashlib.sha256(health_raw).hexdigest()==expected_health_sha256
+health=json.loads(health_raw)
+reason=health['fatalReason']
+pending=int(bool(health.get('reconciliationPending')))
+expected_message=(
+    'Execution state is uncertain at shutdown; exiting 78 for '
+    f'operator-gated reconciliation (reason={reason} pending={pending})'
+)
+invocation=''
+matches=0
+for line in sys.stdin:
+    try:
+        record=json.loads(line)
+    except (json.JSONDecodeError,TypeError):
+        continue
+    if not isinstance(record,dict):
+        continue
+    command=str(record.get('_CMDLINE','')).split()
+    if (
+        record.get('_PID')==pid
+        and record.get('_SYSTEMD_UNIT')=='narrowgate.service'
+        and expected_main in command
+        and expected_config in command
+        and str(record.get('MESSAGE','')).endswith(expected_message)
+        and int(record.get('__REALTIME_TIMESTAMP',0))*1000
+            >=int(health['recordedAtNs'])
+    ):
+        candidate=str(record.get('_SYSTEMD_INVOCATION_ID',''))
+        assert re.fullmatch('[0-9a-f]{32}',candidate)
+        invocation=candidate
+        matches+=1
+assert matches==1
+print(invocation)
+"""
+
+_RUNTIME_FATAL_EXIT_CHECK: Final = """import json,sys
+
+invocation=sys.argv[1]
+matches=0
+for line in sys.stdin:
+    try:
+        record=json.loads(line)
+    except (json.JSONDecodeError,TypeError):
+        continue
+    if not isinstance(record,dict):
+        continue
+    if (
+        record.get('UNIT')=='narrowgate.service'
+        and record.get('INVOCATION_ID')==invocation
+        and record.get('COMMAND')=='ExecStart'
+        and record.get('EXIT_CODE')=='exited'
+        and str(record.get('EXIT_STATUS'))=='78'
+        and record.get('MESSAGE_ID')=='98e322203f7a4ed290d09fe03c09fe15'
+        and record.get('_PID')=='1'
+        and record.get('_UID')=='0'
+        and record.get('_COMM')=='systemd'
+        and record.get('_EXE')=='/usr/lib/systemd/systemd'
+    ):
+        matches+=1
+assert matches==1
+"""
+
 
 def canonical_sha256(value: Any) -> str:
     encoded = json.dumps(
@@ -965,6 +1085,10 @@ def render_prepared_release_activation_shell(
     service_user: str = "ec2-user",
     health_timeout_s: int = 180,
     resume_stopped: bool = False,
+    recover_runtime_fatal: bool = False,
+    previous_deployment_envelope_path: str | None = None,
+    previous_activation_receipt_path: str | None = None,
+    previous_stopped_reconciliation_path: str | None = None,
 ) -> str:
     """Render one fixed transaction over an already prepared release."""
 
@@ -992,7 +1116,63 @@ def render_prepared_release_activation_shell(
         raise LiveDeployContractError("health timeout must be between 10 and 900 seconds")
     if not isinstance(resume_stopped, bool):
         raise LiveDeployContractError("resume-stopped must be boolean")
+    if not isinstance(recover_runtime_fatal, bool):
+        raise LiveDeployContractError("recover-runtime-fatal must be boolean")
+    if resume_stopped and recover_runtime_fatal:
+        raise LiveDeployContractError(
+            "resume-stopped and recover-runtime-fatal are mutually exclusive"
+        )
+    previous_evidence_values = (
+        previous_deployment_envelope_path,
+        previous_activation_receipt_path,
+        previous_stopped_reconciliation_path,
+    )
+    if recover_runtime_fatal:
+        if any(not isinstance(value, str) or not value for value in previous_evidence_values):
+            raise LiveDeployContractError(
+                "runtime-fatal recovery requires the previous deployment envelope, "
+                "activation receipt, and stopped reconciliation"
+            )
+        previous_envelope = path(
+            str(previous_deployment_envelope_path),
+            "previous deployment envelope",
+        )
+        previous_activation = path(
+            str(previous_activation_receipt_path),
+            "previous activation receipt",
+        )
+        previous_reconciliation = path(
+            str(previous_stopped_reconciliation_path),
+            "previous stopped reconciliation",
+        )
+        if (
+            len(
+                {
+                    previous_envelope,
+                    previous_activation,
+                    previous_reconciliation,
+                    envelope,
+                    reconciliation,
+                    activation,
+                    current,
+                }
+            )
+            != 7
+        ):
+            raise LiveDeployContractError(
+                "runtime-fatal recovery cannot reuse previous evidence as the "
+                "candidate envelope or outputs"
+            )
+    else:
+        if any(value is not None for value in previous_evidence_values):
+            raise LiveDeployContractError(
+                "previous activation evidence is only valid for runtime-fatal recovery"
+            )
+        previous_envelope = ""
+        previous_activation = ""
+        previous_reconciliation = ""
     resume = "1" if resume_stopped else "0"
+    runtime_fatal = "1" if recover_runtime_fatal else "0"
     previous_release_id = PurePosixPath(previous).name
     json_get = (
         "import json,sys;v=json.load(open(sys.argv[1]));"
@@ -1052,10 +1232,16 @@ report_error() {{
 }}
 trap 'report_error "$LINENO"' ERR
 rid={q(rid)} release={q(release)} previous={q(previous)} user={q(user)}
-resume_stopped={resume} previous_release_id={q(previous_release_id)}
+resume_stopped={resume} recover_runtime_fatal={runtime_fatal}
+previous_release_id={q(previous_release_id)}
 env_file={q(env_file)} config={q(config)} envelope={q(envelope)}
 envelope_sha={q(envelope_sha)} trusted={q(trusted)}
 reconciliation={q(reconciliation)} activation={q(activation)} current={q(current)}
+previous_envelope={q(previous_envelope)}
+previous_activation={q(previous_activation)}
+previous_reconciliation={q(previous_reconciliation)}
+previous_runtime="$previous/logs/runtime_identity.json"
+previous_health="$previous/logs/runtime_health.json"
 pointer_stage="$(dirname "$current")/.current-$rid-$$.pending"
 pointer_stage_owned=0
 start_marker="" start_marker_owned=0
@@ -1064,6 +1250,15 @@ cleanup_required=0
 pointer_committed=0
 quiescent() {{
   "$trusted" -c {q(_QUIESCENCE_PROCESS_CHECK)}
+}}
+unit_inactive_or_absent() {{
+  local load state substate pid
+  load="$(systemctl show narrowgate.service -p LoadState --value)" || return 1
+  state="$(systemctl show narrowgate.service -p ActiveState --value)" || return 1
+  substate="$(systemctl show narrowgate.service -p SubState --value)" || return 1
+  pid="$(systemctl show narrowgate.service -p MainPID --value)" || return 1
+  case "$load" in loaded|not-found) ;; *) return 1 ;; esac
+  test "$state" = inactive && test "$substate" = dead && test "$pid" = 0
 }}
 cleanup() {{
   rc=$?
@@ -1165,15 +1360,42 @@ sudo systemd-run --quiet --wait --collect --service-type=oneshot \
   "$release/live/run.sh" candidate-verify
 phase=stop_or_resume_quiescence
 if test "$resume_stopped" = 1; then
-  resume_state="$(systemctl show narrowgate.service -p ActiveState --value 2>/dev/null || true)"
-  resume_substate="$(systemctl show narrowgate.service -p SubState --value 2>/dev/null || true)"
-  resume_pid="$(systemctl show narrowgate.service -p MainPID --value 2>/dev/null || true)"
-  case "$resume_state" in ''|inactive) ;; *) false ;; esac
-  case "$resume_substate" in ''|dead) ;; *) false ;; esac
-  case "$resume_pid" in ''|0) ;; *) false ;; esac
+  unit_inactive_or_absent
   quiescent
   canonical_input "$current"
   "$trusted" -c {q(previous_pointer_check)} "$current" "$previous_release_id"
+elif test "$recover_runtime_fatal" = 1; then
+  unit_inactive_or_absent
+  quiescent
+  canonical_input "$current"
+  canonical_input "$previous_envelope"
+  canonical_input "$previous_activation"
+  canonical_input "$previous_reconciliation"
+  canonical_input "$previous_runtime"
+  canonical_input "$previous_health"
+  phase=runtime_fatal_proof
+  fatal_lineage="$("$trusted" -I -B -c {q(_RUNTIME_FATAL_LINEAGE_CHECK)} \
+    "$release/live/deployment_runtime.py" "$current" \
+    "$previous_envelope" "$previous_activation" "$previous_reconciliation" \
+    "$previous_runtime" "$previous_health" "$previous_release_id")"
+  IFS=$'\\t' read -r previous_pid previous_since previous_health_sha \
+    previous_config_token extra \
+    <<<"$fatal_lineage"
+  case "$previous_pid" in ''|*[!0-9]*) false ;; esac
+  test "$previous_pid" -gt 0 && test -n "$previous_since" && test -z "${{extra:-}}"
+  [[ "$previous_health_sha" =~ ^[0-9a-f]{{64}}$ ]]
+  [[ "$previous_config_token" =~ ^[A-Za-z0-9_-]+=*$ ]]
+  fatal_invocation="$(sudo journalctl -u narrowgate.service \
+    "_PID=$previous_pid" --since="$previous_since" --until=now \
+    --output=json --no-pager \
+    | "$trusted" -I -B -c {q(_RUNTIME_FATAL_MESSAGE_CHECK)} \
+      "$previous_pid" "$previous/live/main.py" \
+      "$previous_config_token" \
+      "$previous_health" "$previous_health_sha")"
+  [[ "$fatal_invocation" =~ ^[0-9a-f]{{32}}$ ]]
+  sudo journalctl -u narrowgate.service "INVOCATION_ID=$fatal_invocation" \
+    --since="$previous_since" --until=now --output=json --no-pager \
+    | "$trusted" -I -B -c {q(_RUNTIME_FATAL_EXIT_CHECK)} "$fatal_invocation"
 else
   test "$(systemctl show narrowgate.service -p ActiveState --value)" = active
   test "$(systemctl show narrowgate.service -p SubState --value)" = running
@@ -1335,11 +1557,15 @@ def activate_prepared_release(
     release_id = _activation_value(
         str(activation["release_id"]), label="release ID", pattern=_RELEASE_ID_RE
     )
+    phases = list(PREPARED_ACTIVATION_PHASES)
+    if bool(activation.get("recover_runtime_fatal", False)):
+        phases.insert(phases.index("fresh_reconcile"), "runtime_fatal_proof")
     result = {
         "target": target,
         "release_id": release_id,
-        "phases": list(PREPARED_ACTIVATION_PHASES),
+        "phases": phases,
         "resume_stopped": bool(activation.get("resume_stopped", False)),
+        "recover_runtime_fatal": bool(activation.get("recover_runtime_fatal", False)),
     }
     proxy = _socks5_proxy(socks5_proxy)
     if proxy is not None:
@@ -1426,7 +1652,12 @@ def _build_parser() -> argparse.ArgumentParser:
     activation.add_argument("--connect-timeout-s", type=int, default=20)
     activation.add_argument("--command-timeout-s", type=int, default=900)
     activation.add_argument("--socks5-proxy")
-    activation.add_argument("--resume-stopped", action="store_true")
+    stopped_mode = activation.add_mutually_exclusive_group()
+    stopped_mode.add_argument("--resume-stopped", action="store_true")
+    stopped_mode.add_argument("--recover-runtime-fatal", action="store_true")
+    activation.add_argument("--previous-deployment-envelope")
+    activation.add_argument("--previous-activation-receipt")
+    activation.add_argument("--previous-stopped-reconciliation")
     activation.add_argument("--execute", action="store_true")
     return parser
 
@@ -1466,6 +1697,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 service_user=args.service_user,
                 health_timeout_s=args.health_timeout_s,
                 resume_stopped=args.resume_stopped,
+                recover_runtime_fatal=args.recover_runtime_fatal,
+                previous_deployment_envelope_path=args.previous_deployment_envelope,
+                previous_activation_receipt_path=args.previous_activation_receipt,
+                previous_stopped_reconciliation_path=(args.previous_stopped_reconciliation),
             )
         else:  # pragma: no cover - argparse owns the command set.
             raise LiveDeployContractError(f"unsupported command: {args.command}")

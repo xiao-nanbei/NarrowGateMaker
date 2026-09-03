@@ -2161,16 +2161,386 @@ def test_prepared_activation_can_resume_only_from_proven_stopped_previous() -> N
         text=True,
     )
     resume = rendered.index('if test "$resume_stopped" = 1')
+    runtime_fatal = rendered.index(
+        'elif test "$recover_runtime_fatal" = 1',
+        resume,
+    )
     reconcile = rendered.index('phase=fresh_reconcile', resume)
-    resume_block = rendered[resume:reconcile]
-    assert 'case "$resume_state" in \'\'|inactive)' in resume_block
-    assert 'case "$resume_substate" in \'\'|dead)' in resume_block
-    assert 'case "$resume_pid" in \'\'|0)' in resume_block
+    resume_block = rendered[resume:runtime_fatal]
+    assert "unit_inactive_or_absent" in resume_block
+    assert 'case "$load" in loaded|not-found)' in rendered
+    assert 'test "$state" = inactive' in rendered
+    assert 'test "$substate" = dead' in rendered
+    assert 'test "$pid" = 0' in rendered
+    assert "|| true" not in rendered[
+        rendered.index("unit_inactive_or_absent()") : rendered.index("cleanup()")
+    ]
     assert 'canonical_input "$current"' in resume_block
     assert "narrowgate_live_current_pointer.v2" in resume_block
     assert "selected_activation" in resume_block
     assert "release_id" in resume_block
     assert '"$current" "$previous_release_id"' in resume_block
+    assert "journalctl" not in resume_block
+    assert "runtime_health" not in resume_block
+    assert runtime_fatal < reconcile
+
+
+def test_prepared_activation_recovers_only_from_bound_runtime_fatal_exit() -> None:
+    shell = source_deploy.render_prepared_release_activation_shell(
+        **_prepared_activation_args(),
+        recover_runtime_fatal=True,
+        previous_deployment_envelope_path="/srv/narrowgate/private/old-envelope.json",
+        previous_activation_receipt_path="/srv/narrowgate/private/old-activation.json",
+        previous_stopped_reconciliation_path="/srv/narrowgate/private/old-reconcile.json",
+    )
+    rendered = shlex.split(shell)[-1]
+    subprocess.run(
+        ("bash", "-n", "-c", rendered),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    fatal = rendered.index('elif test "$recover_runtime_fatal" = 1')
+    proof = rendered.index("phase=runtime_fatal_proof", fatal)
+    reconcile = rendered.index("phase=fresh_reconcile", proof)
+    fatal_block = rendered[fatal:reconcile]
+    assert "unit_inactive_or_absent" in fatal_block
+    assert fatal_block.index("quiescent") < fatal_block.index("phase=runtime_fatal_proof")
+    assert "load_current_pointer" in fatal_block
+    assert "_validate_activation_artifacts" in fatal_block
+    assert "fatalRuntimeLatched" in fatal_block
+    assert "reconciliationRequired" in fatal_block
+    assert "quoteLoopRunning" in fatal_block
+    assert "runtime_health.v1" in fatal_block
+    assert "operator-gated reconciliation" in fatal_block
+    assert "_SYSTEMD_INVOCATION_ID" in fatal_block
+    assert "INVOCATION_ID" in fatal_block
+    assert "EXIT_CODE" in fatal_block
+    assert "EXIT_STATUS" in fatal_block
+    assert "'78'" in fatal_block
+    assert '"_PID=$previous_pid" --since="$previous_since" --until=now' in fatal_block
+    assert '"INVOCATION_ID=$fatal_invocation"' in fatal_block
+    assert fatal_block.count('"$trusted" -I -B -c') == 3
+    assert "records=[]" not in fatal_block
+    absence_guard = rendered.index('test ! -e "$reconciliation" && test ! -e "$activation"')
+    assert absence_guard < proof < reconcile
+
+
+def test_runtime_fatal_recovery_proves_exact_lineage_health_and_journal(
+    tmp_path: Path,
+) -> None:
+    _bundle, repository, native_receipt, model_authorization = (
+        _deployment_envelope_fixture(tmp_path)
+    )
+    envelope_path = tmp_path / "deployment-envelope.json"
+    envelope = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=model_authorization,
+        output_path=envelope_path,
+    )
+    reconciliation_path, reconciliation_root, runtime_path, _runtime_sha256 = (
+        _activation_artifacts(
+            tmp_path,
+            envelope_sha256=envelope["canonical_sha256"],
+        )
+    )
+    release_id = "release-old"
+    release_dir = tmp_path / release_id
+    (release_dir / "live").mkdir(parents=True)
+    main_path = release_dir / "live" / "main.py"
+    main_path.write_text("# fixture\n", encoding="utf-8")
+    config_path = repository / "config.yaml"
+    pid = 191735
+    runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+    runtime.update(
+        {
+            "pid": pid,
+            "recorded_at_utc": "2026-09-03T11:25:25.624720+00:00",
+            "config_path": str(config_path.resolve()),
+        }
+    )
+    _write_private_json(runtime_path, runtime)
+    activation_path = tmp_path / "activation.json"
+    activation = subject.build_activation_receipt(
+        release_id=release_id,
+        deployment_envelope_path=envelope_path,
+        deployment_envelope_sha256=envelope["canonical_sha256"],
+        stopped_reconciliation_path=reconciliation_path,
+        stopped_reconciliation_sha256=reconciliation_root,
+        runtime_identity_path=runtime_path,
+        output_path=activation_path,
+    )
+    current_path = tmp_path / "current.json"
+    subject.publish_current_pointer(
+        release_id=release_id,
+        deployment_envelope_path=envelope_path,
+        deployment_envelope_sha256=envelope["canonical_sha256"],
+        activation_receipt_path=activation_path,
+        activation_receipt_sha256=activation["canonical_sha256"],
+        stopped_reconciliation_path=reconciliation_path,
+        runtime_identity_path=runtime_path,
+        output_path=current_path,
+    )
+    health_path = tmp_path / "runtime-health.json"
+    health = {
+        "schemaVersion": "narrowgate.live_runtime_health.v1",
+        "recordedAtNs": 1788444996775502889,
+        "pid": pid,
+        "quoteLoopRunning": False,
+        "fatalRuntimeLatched": True,
+        "reconciliationRequired": True,
+        "reconciliationPending": False,
+        "fatalReason": "EXACT_EXECUTION_RECONCILIATION_FAILED",
+    }
+    _write_private_json(health_path, health)
+    lineage = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_LINEAGE_CHECK,  # noqa: SLF001
+            str(Path(subject.__file__).resolve()),
+            str(current_path),
+            str(envelope_path),
+            str(activation_path),
+            str(reconciliation_path),
+            str(runtime_path),
+            str(health_path),
+            release_id,
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    observed_pid, since, health_sha256, config_token = lineage.stdout.strip().split("\t")
+    assert observed_pid == str(pid)
+    assert since == "2026-09-03 11:25:25 UTC"
+    assert health_sha256 == hashlib.sha256(health_path.read_bytes()).hexdigest()
+    assert base64.urlsafe_b64decode(config_token).decode() == str(config_path.resolve())
+
+    invocation = "3c493119689c4935a055481a7e673ef5"
+    fatal_record = {
+        "_PID": str(pid),
+        "_SYSTEMD_UNIT": "narrowgate.service",
+        "_SYSTEMD_INVOCATION_ID": invocation,
+        "_CMDLINE": (
+            f"/runtime/bin/python -I -B {main_path} --config {config_path.resolve()}"
+        ),
+        "__REALTIME_TIMESTAMP": "1788444996829935",
+        "MESSAGE": (
+            "2026-09-03 14:16:36 [main] CRITICAL Execution state is uncertain "
+            "at shutdown; exiting 78 for operator-gated reconciliation "
+            "(reason=EXACT_EXECUTION_RECONCILIATION_FAILED pending=0)"
+        ),
+    }
+    fatal_input = json.dumps({"MESSAGE": "irrelevant"}) + "\n" + json.dumps(fatal_record) + "\n"
+    message = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,  # noqa: SLF001
+            str(pid),
+            str(main_path),
+            config_token,
+            str(health_path),
+            health_sha256,
+        ),
+        input=fatal_input,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert message.stdout.strip() == invocation
+    duplicate = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,  # noqa: SLF001
+            str(pid),
+            str(main_path),
+            config_token,
+            str(health_path),
+            health_sha256,
+        ),
+        input=json.dumps(fatal_record) + "\n" + json.dumps(fatal_record) + "\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert duplicate.returncode != 0
+
+    stale_fatal_record = {
+        **fatal_record,
+        "__REALTIME_TIMESTAMP": str((health["recordedAtNs"] - 1) // 1000),
+    }
+    rejected_stale_message = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_MESSAGE_CHECK,  # noqa: SLF001
+            str(pid),
+            str(main_path),
+            config_token,
+            str(health_path),
+            health_sha256,
+        ),
+        input=json.dumps(stale_fatal_record) + "\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_stale_message.returncode != 0
+
+    exit_record = {
+        "UNIT": "narrowgate.service",
+        "INVOCATION_ID": invocation,
+        "COMMAND": "ExecStart",
+        "EXIT_CODE": "exited",
+        "EXIT_STATUS": "78",
+        "MESSAGE_ID": "98e322203f7a4ed290d09fe03c09fe15",
+        "_PID": "1",
+        "_UID": "0",
+        "_COMM": "systemd",
+        "_EXE": "/usr/lib/systemd/systemd",
+    }
+    subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_EXIT_CHECK,  # noqa: SLF001
+            invocation,
+        ),
+        input=json.dumps(exit_record) + "\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    wrong_exit = {**exit_record, "EXIT_STATUS": "1"}
+    rejected = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_EXIT_CHECK,  # noqa: SLF001
+            invocation,
+        ),
+        input=json.dumps(wrong_exit) + "\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+
+    forged_exit = {
+        **exit_record,
+        "_PID": str(pid),
+        "_UID": "1000",
+        "_COMM": "python3",
+        "_EXE": "/runtime/bin/python",
+    }
+    rejected_forgery = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_EXIT_CHECK,  # noqa: SLF001
+            invocation,
+        ),
+        input=json.dumps(forged_exit) + "\n",
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_forgery.returncode != 0
+
+    _write_private_json(health_path, {**health, "fatalRuntimeLatched": False})
+    rejected_health = subprocess.run(
+        (
+            sys.executable,
+            "-c",
+            source_deploy._RUNTIME_FATAL_LINEAGE_CHECK,  # noqa: SLF001
+            str(Path(subject.__file__).resolve()),
+            str(current_path),
+            str(envelope_path),
+            str(activation_path),
+            str(reconciliation_path),
+            str(runtime_path),
+            str(health_path),
+            release_id,
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected_health.returncode != 0
+
+
+def test_runtime_fatal_recovery_evidence_is_mode_scoped_and_never_reused() -> None:
+    args = _prepared_activation_args()
+    evidence = {
+        "previous_deployment_envelope_path": "/srv/narrowgate/private/old-envelope.json",
+        "previous_activation_receipt_path": "/srv/narrowgate/private/old-activation.json",
+        "previous_stopped_reconciliation_path": "/srv/narrowgate/private/old-reconcile.json",
+    }
+    planned = source_deploy.activate_prepared_release(
+        target="example.test",
+        **args,
+        recover_runtime_fatal=True,
+        **evidence,
+    )
+    assert planned["status"] == "planned"
+    assert planned["phases"] == [
+        "verify",
+        "stop_quiescence",
+        "runtime_fatal_proof",
+        "fresh_reconcile",
+        "start",
+        "bounded_health",
+        "activation_receipt",
+        "publish_current",
+    ]
+    with pytest.raises(source_deploy.LiveDeployContractError, match="mutually exclusive"):
+        source_deploy.render_prepared_release_activation_shell(
+            **args,
+            resume_stopped=True,
+            recover_runtime_fatal=True,
+            **evidence,
+        )
+    with pytest.raises(
+        source_deploy.LiveDeployContractError,
+        match="requires the previous deployment envelope",
+    ):
+        source_deploy.render_prepared_release_activation_shell(
+            **args,
+            recover_runtime_fatal=True,
+        )
+    with pytest.raises(
+        source_deploy.LiveDeployContractError,
+        match="only valid for runtime-fatal recovery",
+    ):
+        source_deploy.render_prepared_release_activation_shell(
+            **args,
+            **evidence,
+        )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="cannot reuse"):
+        source_deploy.render_prepared_release_activation_shell(
+            **args,
+            recover_runtime_fatal=True,
+            **{
+                **evidence,
+                "previous_activation_receipt_path": args["activation_receipt_path"],
+            },
+        )
+    with pytest.raises(source_deploy.LiveDeployContractError, match="cannot reuse"):
+        source_deploy.render_prepared_release_activation_shell(
+            **args,
+            recover_runtime_fatal=True,
+            **{
+                **evidence,
+                "previous_deployment_envelope_path": args[
+                    "deployment_envelope_path"
+                ],
+            },
+        )
 
 
 def test_quiescence_probe_matches_process_argv_not_wrapper_text() -> None:

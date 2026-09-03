@@ -4,6 +4,8 @@
 
 Last materially synchronized: 2026-09-03
 
+Last materially modified: 2026-09-03
+
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
 active release, strategy parameter, or artifact identity. `203.0.113.10` is an
@@ -257,6 +259,21 @@ an inactive/absent unit, exact process quiescence, the unchanged previous
 current pointer, and absent reconciliation/activation outputs; it re-verifies
 the candidate before producing a fresh reconciliation.
 
+If the selected live process later exits 78 because execution state is
+uncertain, use the separate `--recover-runtime-fatal` mode. Supply the selected
+release's deployment envelope, activation receipt, and stopped reconciliation
+as lineage evidence. The transaction also verifies the activation-bound
+runtime identity, final fail-closed runtime-health PID, and the same systemd
+journal invocation's operator-gated message and `EXIT_STATUS=78`. It accepts
+only an inactive or absent unit with no maker or supervisor process. New candidate
+reconciliation and activation paths must be unique and absent; old files are
+never treated as fresh. A missing or rotated journal proof leaves the host
+stopped. This mode does not broaden `--resume-stopped`.
+
+Both journal lookups are bounded and streamed: first by the runtime-identity
+PID and timestamp, then by the discovered systemd invocation. Recovery never
+buffers the unit's complete journal history in EC2 memory.
+
 The private systemd `EnvironmentFile` uses standalone `NAME=value` records and
 must end with a newline before deployment grants are appended. Validate only
 key presence and syntax; never print secret values.
@@ -276,7 +293,7 @@ attachment, callback release, public-market startup, then periodic metrics
 polling. This order prevents a market event or half-processed private callback
 from crossing the initial-state/evidence boundary.
 
-Safe activation order:
+Safe normal activation order:
 
 1. verify the prepared candidate and deployment envelope while the old service
    is still running;
@@ -290,6 +307,12 @@ Safe activation order:
 7. observe process and runtime health for a bounded interval;
 8. build the activation receipt;
 9. publish the current pointer last.
+
+Runtime-fatal recovery does not perform steps 1–3 against an already dead
+service. It first verifies the selected release lineage, its final fail-closed
+health, the authentic systemd exit-78 invocation, and global process
+quiescence. It then joins the same transaction at step 4 with a new
+reconciliation output; steps 4–9 remain unchanged.
 
 Run reconciliation through a bounded transient systemd unit so it receives the
 same root-owned environment without exposing credentials in the operator shell.

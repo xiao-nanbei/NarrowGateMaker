@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-02
+Last materially modified: 2026-09-03
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 本目录保存可复用的公共运维合同，不得包含当前主机、credential、账户/订单/持仓状态、
 active release identity、private artifact location、策略参数或 live economics。
@@ -83,9 +83,11 @@ python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 
 Release、private environment、active config、locked runtime 与 deployment envelope
 已经在主机上准备好后，`activate-prepared-release` 用一次 SSH 事务完成余下 activation。
-缺省只输出 dry-run plan；只有指定 `--execute` 才改变远端状态。事务先在旧服务仍运行时
+缺省只输出 dry-run plan；只有指定 `--execute` 才改变远端状态。正常模式先在旧服务仍运行时
 验证 candidate，然后严格执行 stop/quiescence、fresh reconciliation、start、bounded health
-admission、activation receipt 与 current-pointer publication；pointer 最后发布。Pointer
+admission、activation receipt 与 current-pointer publication。Runtime-fatal recovery 则先证明
+已经停止的 selected release 的 lineage、fail-closed health、systemd exit 与进程静默，再从
+fresh reconciliation 汇入同一后续顺序；pointer 最后发布。Pointer
 rename 前的失败不会发布 pointer；candidate 已启动但未通过 health admission 时会停止
 candidate，并且不会自动重启旧 release。`--service-user` 默认使用经过校验的 EC2 contract
 用户 `ec2-user`，也可指定
@@ -100,6 +102,35 @@ working directory、正数 `MainPID`、匹配的 `/proc/<pid>/cwd`，以及 prev
 `--resume-stopped`。它要求 maker/supervisor 均不存在、unit inactive 或不存在、current
 pointer 仍指向 previous release，且 reconciliation/activation output 都尚未出现；随后会重做
 candidate verification 并生成 fresh reconciliation。它不是绕过正常停机前证明的通用开关。
+
+已经成功选中的服务后来以 78 退出，属于另一种情况：只能使用独立的
+`--recover-runtime-fatal`，不能使用 `--resume-stopped`。该模式要求 compact current
+pointer、对应 activation receipt、deployment envelope、旧 stopped reconciliation 与
+activation 绑定的 runtime identity 构成完整一致链；最终 runtime-health 必须表明同一 PID
+处于 fail-closed 且需要 reconciliation，systemd journal 的同一 invocation 还必须同时记录
+operator-gated exit 与 `EXIT_STATUS=78`。Unit 必须 inactive 或不存在，maker/supervisor 进程必须完全
+不存在。新 candidate 必须使用从未存在的新 stopped-reconciliation 和 activation-receipt
+路径，旧 release 的文件不能冒充 fresh evidence。随后仍必须执行 fresh signed
+reconciliation、start、health admission、新 activation receipt 和 pointer-last publication。
+若 journal 或 lineage 证明缺失，主机保持 stopped。
+
+Journal 证明分两段有界流式读取：先读取 runtime identity 时间戳之后的旧 PID，再读取匹配的
+systemd invocation；小内存 live 主机不会把无界历史日志载入内存。
+
+在正常 candidate 参数之后，显式加入失败 current release 的三个不可变 lineage 文件：
+
+```bash
+python3.12 scripts/live_deploy_common.py activate-prepared-release \
+  <正常-candidate-参数> \
+  --recover-runtime-fatal \
+  --previous-deployment-envelope <失败-release-envelope> \
+  --previous-activation-receipt <失败-release-activation-receipt> \
+  --previous-stopped-reconciliation <失败-release-stopped-reconciliation> \
+  --execute
+```
+
+本次 transaction 的 stopped-reconciliation 和 activation-receipt 输出必须使用尚不存在的
+新路径，且不能指向上述三个旧文件；已有 current pointer 仅在最终提交步骤被原子替换。
 
 私有 systemd `EnvironmentFile` 必须由独立的 `NAME=value` 行组成。追加 deployment grant
 之前必须确保上一行以换行结束，否则第一个 grant 会粘到前一个 secret value 后面。验证时不得

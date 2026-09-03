@@ -4,6 +4,8 @@
 
 Last materially synchronized: 2026-09-03
 
+Last materially modified: 2026-09-03
+
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
 `203.0.113.10` 是 RFC 5737 文档地址，不是部署目标。
@@ -236,6 +238,18 @@ line。Persistent unit 或不明确进程会在 stop 前失败，且不会被修
 reconciliation/activation output 均不存在；随后重新验证 candidate 并生成 fresh
 reconciliation。
 
+若已选中的 live 进程后来因 execution state uncertain 以 78 退出，应使用独立的
+`--recover-runtime-fatal`。调用方要提供该 selected release 的 deployment envelope、
+activation receipt 和 stopped reconciliation 作为 lineage evidence；事务还会核验 activation
+绑定的 runtime identity、最终 fail-closed runtime-health 中的同一 PID，以及 systemd journal
+同一 invocation 的 operator-gated message 与 `EXIT_STATUS=78`。它只接受 inactive 或不存在的 unit 和
+完全不存在的 maker/supervisor 进程。新 candidate 的 reconciliation/activation 路径必须唯一
+且尚不存在，旧文件绝不当作 fresh evidence；journal 证明缺失或已轮转时，主机继续保持
+stopped。该模式不会放宽 `--resume-stopped`。
+
+两次 journal 查询都是有界流式读取：第一次由 runtime identity 的 PID 与时间戳约束，第二次
+由已发现的 systemd invocation 约束；恢复流程不会在 EC2 内存中缓存该 unit 的完整历史日志。
+
 私有 systemd `EnvironmentFile` 使用独立的 `NAME=value` 行；追加 deployment grant 前必须
 确保文件以换行结束。只校验变量名存在性和语法，不能打印 secret value。
 
@@ -250,7 +264,7 @@ private callback 屏障内做精确对账、发布 prospective epoch 并挂载�
 启动 public market stream，最后启动周期 metrics polling。这个顺序防止 market event 或处理到
 一半的 private callback 穿过 initial-state/evidence 边界。
 
-安全 activation 顺序：
+正常模式的安全 activation 顺序：
 
 1. 在旧服务仍运行时验证 prepared candidate 与 deployment envelope；
 2. 停止 systemd，等待进程优雅退出；
@@ -262,6 +276,10 @@ private callback 屏障内做精确对账、发布 prospective epoch 并挂载�
 7. 在 bounded interval 内观察 process 与 runtime health；
 8. 构建 activation receipt；
 9. 最后发布 current pointer。
+
+Runtime-fatal recovery 不会对已经死亡的服务执行第 1–3 步。它先验证 selected release
+lineage、最终 fail-closed health、可信 systemd exit-78 invocation 与全局进程静默，再用新的
+reconciliation output 从第 4 步汇入同一事务；第 4–9 步保持不变。
 
 Reconciliation 应通过 bounded transient systemd unit 运行，这样它能读取同一个
 root-owned environment，而不会把 credential 暴露到 operator shell。每次 attempt 使用

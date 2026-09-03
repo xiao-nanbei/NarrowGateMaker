@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-02
+Last materially modified: 2026-09-03
 
-Last materially synchronized: 2026-09-02
+Last materially synchronized: 2026-09-03
 
 This directory contains reusable public operations contracts. It must not contain
 current hosts, credentials, account/order/position state, active release
@@ -93,10 +93,13 @@ python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 Once the release, private environment, active config, locked runtime, and
 deployment envelope already exist on the host, `activate-prepared-release`
 executes the remaining activation as one SSH transaction. It is a dry-run plan
-unless `--execute` is present. The transaction verifies the candidate before
-stopping the old service, then performs stop/quiescence, fresh reconciliation,
-start, bounded health admission, activation receipt, and current-pointer
-publication in that order. The pointer is published last. Any failure before
+unless `--execute` is present. In normal mode, the transaction verifies the
+candidate before stopping the running old service, then performs
+stop/quiescence, fresh reconciliation, start, bounded health admission,
+activation receipt, and current-pointer publication in that order. Runtime-fatal
+recovery instead proves the already stopped selected release's lineage,
+fail-closed health, systemd exit, and process quiescence before it rejoins that
+same sequence at fresh reconciliation. The pointer is published last. Any failure before
 the pointer rename leaves it unchanged; a candidate that was started but fails
 admission is stopped, and the command never automatically restarts the old
 release. `--service-user`
@@ -117,6 +120,42 @@ supervisor process, an inactive/absent unit, a current pointer still naming the
 previous release, and previously absent reconciliation/activation outputs. It
 then repeats candidate verification and creates a fresh reconciliation; it is
 not a general bypass for the normal pre-stop proof.
+
+An already selected service that later exits with code 78 is a different case.
+Use `--recover-runtime-fatal`, never `--resume-stopped`. This narrowly scoped
+mode requires the compact current pointer, its activation receipt, deployment
+envelope, stopped reconciliation, and activation-bound runtime identity to form
+one valid lineage. The final runtime-health snapshot must show the same PID in
+the fail-closed reconciliation-required state, and the matching systemd journal
+invocation must record both the operator-gated exit and `EXIT_STATUS=78`. The
+unit must be inactive or absent, and every maker/supervisor process absent. The candidate
+must use new, previously absent stopped-reconciliation and activation-receipt
+paths; no artifact from the failed release is reused as fresh evidence. After
+these checks, fresh signed reconciliation, start, health admission, a new
+activation receipt, and pointer-last publication remain mandatory. If the
+journal or lineage proof is unavailable, leave the host stopped.
+
+The journal proof is read as two bounded streams: the old PID from its
+runtime-identity timestamp to the recovery instant, then the matching systemd
+invocation. It is never loaded as an unbounded in-memory history on a small
+live host.
+
+Use the ordinary candidate arguments plus the failed current release's three
+immutable lineage files:
+
+```bash
+python3.12 scripts/live_deploy_common.py activate-prepared-release \
+  <normal-candidate-arguments> \
+  --recover-runtime-fatal \
+  --previous-deployment-envelope <failed-release-envelope> \
+  --previous-activation-receipt <failed-release-activation-receipt> \
+  --previous-stopped-reconciliation <failed-release-stopped-reconciliation> \
+  --execute
+```
+
+The attempt-scoped stopped-reconciliation and activation-receipt outputs must
+be new and absent. Do not point either of them at the three previous files; the
+existing current pointer is replaced only at the final commit step.
 
 The private systemd `EnvironmentFile` must contain standalone `NAME=value`
 records. Keep a final newline before appending deployment grants; otherwise the
