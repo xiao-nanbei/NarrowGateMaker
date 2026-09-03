@@ -113,7 +113,14 @@ set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 CONFIG REQUIRED)
 
 pybind11_add_module(narrowgate_cpp
-    narrowgate_cpp/bindings.cpp
+    narrowgate_cpp/bindings_module.cpp
+    narrowgate_cpp/bindings_common_dynamic.cpp
+    narrowgate_cpp/bindings_transport_quote.cpp
+    narrowgate_cpp/bindings_tick_replay.cpp
+    narrowgate_cpp/bindings_streaming.cpp
+    narrowgate_cpp/bindings_research.cpp
+    narrowgate_cpp/bindings_replace_action.cpp
+    narrowgate_cpp/bindings_live_runtime.cpp
     narrowgate_cpp/dynamic_fill_hazard.cpp
     narrowgate_cpp/global_flow.cpp
     ${NARROWGATE_LIVE_CORE_SOURCES}
