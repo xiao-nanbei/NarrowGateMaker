@@ -733,6 +733,8 @@ def test_rest_only_account_trade_runs_the_normal_fill_and_cooldown_pipeline(
             ]
         ),
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.orders = OrderManager(on_fill=engine._on_fill)
     cid = engine.orders.create_order("BTCUSDC", Side.BUY, 70_000.0, 0.003)
     engine.orders.confirm_new(cid, 41)

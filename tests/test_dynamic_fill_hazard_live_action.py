@@ -187,7 +187,9 @@ def _engine() -> tuple[MakerEngine, str, _Rest, _Ws]:
     cfg.lot_size = 0.001
     engine.cfg = cfg
     engine.rest = _Rest()
-    engine._ws_handler = _Ws()
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
+    engine._event_source = _Ws()
     engine._dynamic_fill_hazard_action_policy = _Policy()
     engine._dynamic_fill_hazard_shadow_runtime = None
     engine._dynamic_fill_hazard_action_lock = threading.RLock()
@@ -215,8 +217,8 @@ def _engine() -> tuple[MakerEngine, str, _Rest, _Ws]:
         quantity=0.001,
     )
     engine.orders.confirm_new(cid, 42)
-    engine._ws_handler.active_depth_cursors.add(cid)
-    return engine, cid, engine.rest, engine._ws_handler
+    engine._event_source.active_depth_cursors.add(cid)
+    return engine, cid, engine.rest, engine._event_source
 
 
 def test_buy_exposure_cancel_ack_enters_independent_recovery_state() -> None:

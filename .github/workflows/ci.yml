@@ -72,7 +72,7 @@ jobs:
                   ;;
               esac
               case "$path" in
-                cpp/*|strategy/quote_core.py|strategy/signal.py|models/backtest_tick.py|models/replay/*|tests/test_cpp_*|tests/*_cpp_*.py|tests/test_fill_selection_feature_parity.py)
+                cpp/*|strategy/quote_core.py|strategy/signal.py|strategy/native_runtime.py|models/backtest_tick.py|models/replay/*|tests/test_cpp_*|tests/*_cpp_*.py|tests/test_fill_selection_feature_parity.py)
                   native=true
                   ;;
               esac

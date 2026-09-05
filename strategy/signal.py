@@ -56,6 +56,7 @@ from strategy.model_contract import (
     absolute_price_variance_unit_contract,
     validate_model_bundle,
 )
+from strategy.native_runtime import load_native_module, validate_native_capabilities
 
 logger = logging.getLogger("signal")
 
@@ -83,7 +84,7 @@ _CPP_SIGNAL_IMPORT_FAILED = False
 CPP_LIGHTGBM_INFERENCE_FLAG = "NARROWGATE_CPP_LIGHTGBM_INFERENCE"
 
 
-class _StrictNativeRefPerpError(RuntimeError):
+class _NativeSignalStateError(RuntimeError):
     pass
 
 
@@ -97,61 +98,58 @@ def _cpp_signal_flag(name: str) -> bool:
 
 def _load_cpp_signal_module():
     global _CPP_SIGNAL_MODULE, _CPP_SIGNAL_IMPORT_FAILED
-    if _CPP_SIGNAL_MODULE is not None:
-        return _CPP_SIGNAL_MODULE
     if _CPP_SIGNAL_IMPORT_FAILED and not _cpp_signal_strict():
         return None
-    try:
-        import narrowgate_cpp  # type: ignore
-        required = (
-            "TradeBarAggregator", "Bar1s", "FeatureHistoryRow",
-            "SignalFeatureEngine", "compute_signal_feature_overlay",
-        )
-        missing = [name for name in required if not hasattr(narrowgate_cpp, name)]
-        if _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG):
-            missing.extend(
-                name
-                for name in (
-                    "NativeLightgbmBundle",
-                    "LIGHTGBM_BUNDLE_HEAD_NAMES",
-                    "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
-                )
-                if not hasattr(narrowgate_cpp, name)
-            )
-        if (
-            _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
-            and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
-        ):
-            missing.extend(
-                name
-                for name in (
-                    "SignalFeatureBucketPrepared",
-                    "SignalModelFeatureRow173",
-                    "SIGNAL_MODEL_FEATURE_NAMES",
-                    "SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION",
-                    "SIGNAL_METRIC_FEATURE_NAMES",
-                    "SIGNAL_TIME_FEATURE_NAMES",
-                )
-                if not hasattr(narrowgate_cpp, name)
-            )
-        if missing:
-            raise RuntimeError(f"narrowgate_cpp missing signal symbols: {missing}")
-        if _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES"):
-            actual_abi = str(
-                getattr(narrowgate_cpp, "SIGNAL_FEATURE_ABI_VERSION", "")
-            )
-            if actual_abi != SIGNAL_FEATURE_CPP_ABI_VERSION:
-                raise RuntimeError(
-                    "narrowgate_cpp signal feature ABI mismatch: "
-                    f"expected={SIGNAL_FEATURE_CPP_ABI_VERSION} actual={actual_abi!r}"
-                )
-        _CPP_SIGNAL_MODULE = narrowgate_cpp
-        return _CPP_SIGNAL_MODULE
-    except Exception:
+    module = _CPP_SIGNAL_MODULE
+    if module is None:
+        module = load_native_module(optional=not _cpp_signal_strict())
+    if module is None:
         _CPP_SIGNAL_IMPORT_FAILED = True
-        if _cpp_signal_strict():
-            raise
         return None
+    required = ["TradeBarAggregator", "Bar1s", "FeatureHistoryRow", "SignalFeatureEngine"]
+    methods = {"TradeBarAggregator": ("update", "update_batch", "current_bar", "reset")}
+    abi_versions = {}
+    if _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES"):
+        required += [
+            "SIGNAL_FEATURE_NAMES", "SignalExecutionL2Engine",
+            "SIGNAL_EXECUTION_L2_FEATURE_NAMES", "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
+            "compute_signal_execution_l2_feature_values",
+            "compute_signal_execution_l2_policy_metric_values",
+        ]
+        methods["SignalFeatureEngine"] = (
+            "compute_values_at_cutoff", "compute_bucket_values", "push_bar",
+            "push_history", "reset", "immutable_snapshot",
+        )
+        methods["SignalExecutionL2Engine"] = (
+            "push_snapshot", "compute_feature_values", "compute_policy_metric_values",
+        )
+        abi_versions["SIGNAL_FEATURE_ABI_VERSION"] = SIGNAL_FEATURE_CPP_ABI_VERSION
+    if _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG):
+        required += [
+            "NativeLightgbmBundle", "LIGHTGBM_BUNDLE_HEAD_NAMES",
+            "NATIVE_LIGHTGBM_BUNDLE_INFERENCE_AVAILABLE",
+        ]
+        if _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES"):
+            required += [
+                "SignalFeatureBucketPrepared", "SignalModelFeatureRow173",
+                "SIGNAL_MODEL_FEATURE_NAMES", "SIGNAL_METRIC_FEATURE_NAMES",
+                "SIGNAL_TIME_FEATURE_NAMES",
+            ]
+            methods["SignalFeatureEngine"] += ("prepare_bucket", "assemble_model_row_173")
+            abi_versions["SIGNAL_MODEL_FEATURE_ROW_ABI_VERSION"] = (
+                SIGNAL_MODEL_FEATURE_ROW_CPP_ABI_VERSION
+            )
+    validate_native_capabilities(
+        module,
+        symbols=required,
+        methods=methods,
+        fields={"Bar1s": tuple(
+            "ts_ms" if name == "ts" else name for name in Bar1s.__dataclass_fields__
+        )},
+        abi_versions=abi_versions,
+    )
+    _CPP_SIGNAL_MODULE = module
+    return module
 
 # Match feature_engineer.py. Five-second microstructure state is computed from
 # the live 1s bar buffer, not approximated on the 10s feature-history grid.
@@ -797,7 +795,6 @@ class SignalEngine:
         self._native_inference_requested = bool(
             enable_ml and _cpp_signal_flag(CPP_LIGHTGBM_INFERENCE_FLAG)
         )
-        self._native_inference_disabled_after_error = False
         self._native_model_bundle = None
         self._cpp_signal = _load_cpp_signal_module() if (
             _cpp_signal_flag("NARROWGATE_CPP_SIGNAL_FEATURES")
@@ -846,8 +843,6 @@ class SignalEngine:
             )
         )
         self._refresh_native_model_row_173()
-        self._cpp_execution_l2_disabled_after_error = False
-        self._cpp_l2_policy_disabled_after_error = False
         self._cpp_global_flow_requested = bool(
             self._cpp_signal is not None and _cpp_signal_flag("NARROWGATE_CPP_GLOBAL_FLOW")
         )
@@ -855,42 +850,22 @@ class SignalEngine:
             self._global_flow_shadow_enabled and self._cpp_global_flow_requested
         )
         if self._cpp_global_flow_enabled:
-            native_flow_cls = getattr(self._cpp_signal, "NativeGlobalFlowEngine", None)
-            if native_flow_cls is None:
-                if _cpp_signal_strict():
-                    raise RuntimeError("narrowgate_cpp missing NativeGlobalFlowEngine")
-                logger.warning("C++ global flow disabled: NativeGlobalFlowEngine missing")
-                self._cpp_global_flow_enabled = False
-            else:
-                self._global_flow = GlobalFlowEngine(
-                    execution_symbol=self._symbol,
-                    reference_symbol=self._reference_symbol,
-                    native_backend=native_flow_cls(2_000, 1_000.0, 1_000.0),
-                )
+            validate_native_capabilities(self._cpp_signal, symbols=("NativeGlobalFlowEngine",))
+            self._global_flow = GlobalFlowEngine(
+                execution_symbol=self._symbol,
+                reference_symbol=self._reference_symbol,
+                native_backend=self._cpp_signal.NativeGlobalFlowEngine(2_000, 1_000.0, 1_000.0),
+            )
         self._cpp_feature_engine = (
             self._cpp_signal.SignalFeatureEngine(bar_buffer_size, 60480)
             if self._cpp_signal_features_enabled else None
         )
         self._cpp_feature_engine_seeded = self._cpp_feature_engine is not None
-        execution_l2_cls = (
-            getattr(self._cpp_signal, "SignalExecutionL2Engine", None)
-            if self._cpp_signal_features_enabled and self._cpp_signal is not None
-            else None
-        )
-        if (
-            self._cpp_signal_features_enabled
-            and execution_l2_cls is None
-            and _cpp_signal_strict()
-        ):
-            raise RuntimeError(
-                "narrowgate_cpp missing incremental SignalExecutionL2Engine"
-            )
         self._cpp_execution_l2_engine = (
-            execution_l2_cls(int(self._depth_history.maxlen or 300))
-            if execution_l2_cls is not None
+            self._cpp_signal.SignalExecutionL2Engine(int(self._depth_history.maxlen or 300))
+            if self._cpp_signal_features_enabled
             else None
         )
-        self._cpp_ref_perp_disabled_after_error = False
         self._cpp_ref_perp_engine = None
         self._model_requires_full_cross_market_features = False
         if self._cpp_signal_features_enabled and self._enable_ml:
@@ -900,6 +875,15 @@ class SignalEngine:
                 for name in model_schema
             )
             if set(model_schema).intersection(REF_PERP_FEATURE_NAMES):
+                validate_native_capabilities(
+                    self._cpp_signal,
+                    methods={"SignalRefPerpFeatureEngine": (
+                        "prepare", "commit", "update_trade_batch", "update_book_ticker",
+                    )},
+                    abi_versions={
+                        "SIGNAL_REF_PERP_FEATURE_ABI_VERSION": SIGNAL_REF_PERP_CPP_ABI_VERSION,
+                    },
+                )
                 native_names = tuple(
                     getattr(self._cpp_signal, "SIGNAL_REF_PERP_FEATURE_NAMES", ())
                 )
@@ -921,34 +905,19 @@ class SignalEngine:
                         f"expected_names={REF_PERP_FEATURE_NAMES} "
                         f"actual_names={native_names}"
                     )
-                    if _cpp_signal_strict():
-                        raise RuntimeError(message)
-                    logger.warning("C++ ref-perp features disabled: %s", message)
-                    self._cpp_ref_perp_disabled_after_error = True
-                else:
-                    ref_perp_cls = getattr(
-                        self._cpp_signal, "SignalRefPerpFeatureEngine", None
-                    )
-                    if ref_perp_cls is None:
-                        if _cpp_signal_strict():
-                            raise RuntimeError(
-                                "narrowgate_cpp missing SignalRefPerpFeatureEngine"
-                            )
-                        self._cpp_ref_perp_disabled_after_error = True
-                    else:
-                        self._cpp_ref_perp_engine = ref_perp_cls(
-                            3700,
-                            3600,
-                            CROSS_BASIS_WINDOW_10S,
-                            CROSS_BASIS_MIN_PERIODS,
-                            CROSS_SOURCE_MAX_AGE_S * 1000.0,
-                        )
+                    raise RuntimeError(message)
+                self._cpp_ref_perp_engine = self._cpp_signal.SignalRefPerpFeatureEngine(
+                    3700,
+                    3600,
+                    CROSS_BASIS_WINDOW_10S,
+                    CROSS_BASIS_MIN_PERIODS,
+                    CROSS_SOURCE_MAX_AGE_S * 1000.0,
+                )
         self._cpp_cross_aggregators: Dict[str, object] = {}
         self._cpp_cross_current_dirty = set()
         self._cpp_cross_batch_enabled = bool(
             self._cpp_signal is not None
             and self._cpp_global_flow_requested
-            and hasattr(self._cpp_signal.TradeBarAggregator, "update_batch")
         )
         if (
             self._cpp_signal_features_enabled
@@ -1081,26 +1050,12 @@ class SignalEngine:
         )
 
         native_bundle = None
-        native_initialization_failed = False
-        if native_inference_requested:
-            try:
-                native_bundle = self._build_native_model_bundle(
-                    lgb,
-                    model_dir=candidate_model_dir,
-                    feature_count=len(loaded_feature_schema),
-                )
-            except Exception as exc:
-                if _cpp_signal_strict():
-                    raise RuntimeError(
-                        "strict native LightGBM bundle initialization failed: "
-                        f"{exc}"
-                    ) from exc
-                logger.warning(
-                    "Native LightGBM bundle unavailable; using Python Boosters: %s",
-                    exc,
-                )
-                native_initialization_failed = True
-
+        if native_inference_requested and self._cpp_signal is not None:
+            native_bundle = self._build_native_model_bundle(
+                lgb,
+                model_dir=candidate_model_dir,
+                feature_count=len(loaded_feature_schema),
+            )
         row_state = None
         if hasattr(self, "_cpp_model_row_173_state"):
             # A strict schema/ABI rejection must happen before the new model
@@ -1121,9 +1076,6 @@ class SignalEngine:
             self._model_metadata = metadata
             self._native_inference_requested = native_inference_requested
             self._native_model_bundle = native_bundle
-            self._native_inference_disabled_after_error = (
-                native_initialization_failed
-            )
             if row_state is not None:
                 self._cpp_model_row_173_state = row_state
         if native_bundle is not None:
@@ -1157,11 +1109,6 @@ class SignalEngine:
                 if self._cpp_signal is not None
                 else ()
             )
-        )
-
-    def _disable_native_model_row_173(self) -> None:
-        self._cpp_model_row_173_state = (
-            self._disabled_native_model_row_173_state()
         )
 
     def _candidate_native_model_row_173_state(
@@ -1206,10 +1153,7 @@ class SignalEngine:
         elif native_time_names != TIME_FEATURE_NAMES:
             row_error = "native time feature order changed"
         if row_error:
-            if _cpp_signal_strict():
-                raise RuntimeError(row_error)
-            logger.warning("C++ fixed model row disabled: %s", row_error)
-            return disabled
+            raise RuntimeError(row_error)
         index = {name: position for position, name in enumerate(native_names)}
         return _NativeModelRow173State(
             names=native_names,
@@ -1462,27 +1406,27 @@ class SignalEngine:
     @staticmethod
     def _bar_from_cpp(cpp_bar) -> Bar1s:
         return Bar1s(
-            ts=int(getattr(cpp_bar, "ts_ms", 0)),
-            open=float(getattr(cpp_bar, "open", 0.0)),
-            high=float(getattr(cpp_bar, "high", 0.0)),
-            low=float(getattr(cpp_bar, "low", 0.0)),
-            close=float(getattr(cpp_bar, "close", 0.0)),
-            volume=float(getattr(cpp_bar, "volume", 0.0)),
-            buy_volume=float(getattr(cpp_bar, "buy_volume", 0.0)),
-            sell_volume=float(getattr(cpp_bar, "sell_volume", 0.0)),
-            trade_count=int(getattr(cpp_bar, "trade_count", 0.0)),
-            buy_count=int(getattr(cpp_bar, "buy_count", 0.0)),
-            sell_count=int(getattr(cpp_bar, "sell_count", 0.0)),
-            quote_qty=float(getattr(cpp_bar, "quote_qty", 0.0)),
-            buy_quote_qty=float(getattr(cpp_bar, "buy_quote_qty", 0.0)),
-            sell_quote_qty=float(getattr(cpp_bar, "sell_quote_qty", 0.0)),
-            max_same_side_run=int(getattr(cpp_bar, "max_same_side_run", 0.0)),
-            max_buy_run=int(getattr(cpp_bar, "max_buy_run", 0.0)),
-            max_sell_run=int(getattr(cpp_bar, "max_sell_run", 0.0)),
-            buy_price_high=float(getattr(cpp_bar, "buy_price_high", 0.0)),
-            buy_price_low=float(getattr(cpp_bar, "buy_price_low", 0.0)),
-            sell_price_high=float(getattr(cpp_bar, "sell_price_high", 0.0)),
-            sell_price_low=float(getattr(cpp_bar, "sell_price_low", 0.0)),
+            ts=int(cpp_bar.ts_ms),
+            open=float(cpp_bar.open),
+            high=float(cpp_bar.high),
+            low=float(cpp_bar.low),
+            close=float(cpp_bar.close),
+            volume=float(cpp_bar.volume),
+            buy_volume=float(cpp_bar.buy_volume),
+            sell_volume=float(cpp_bar.sell_volume),
+            trade_count=int(cpp_bar.trade_count),
+            buy_count=int(cpp_bar.buy_count),
+            sell_count=int(cpp_bar.sell_count),
+            quote_qty=float(cpp_bar.quote_qty),
+            buy_quote_qty=float(cpp_bar.buy_quote_qty),
+            sell_quote_qty=float(cpp_bar.sell_quote_qty),
+            max_same_side_run=int(cpp_bar.max_same_side_run),
+            max_buy_run=int(cpp_bar.max_buy_run),
+            max_sell_run=int(cpp_bar.max_sell_run),
+            buy_price_high=float(cpp_bar.buy_price_high),
+            buy_price_low=float(cpp_bar.buy_price_low),
+            sell_price_high=float(cpp_bar.sell_price_high),
+            sell_price_low=float(cpp_bar.sell_price_low),
         )
 
     def _bar_to_cpp(self, bar: Bar1s):
@@ -1877,48 +1821,26 @@ class SignalEngine:
                 venue=BINANCE_VENUE,
             )
             if self._cpp_ref_perp_engine is not None and key == ref_perp_key:
-                try:
-                    self._cpp_ref_perp_engine.update_trade_batch(
-                        ts_values,
-                        price_values,
-                        qty_values,
-                        maker_values,
-                    )
-                except Exception as exc:
-                    if _cpp_signal_strict():
-                        raise
-                    logger.warning(
-                        "C++ ref-perp trade state disabled after error: %s",
-                        exc,
-                    )
-                    self._cpp_ref_perp_engine = None
-                    self._cpp_ref_perp_disabled_after_error = True
-
+                self._cpp_ref_perp_engine.update_trade_batch(
+                    ts_values,
+                    price_values,
+                    qty_values,
+                    maker_values,
+                )
             if self._cpp_cross_batch_enabled and self._cpp_signal is not None:
-                try:
-                    agg = self._cpp_cross_aggregators.get(key)
-                    if agg is None:
-                        agg = self._cpp_signal.TradeBarAggregator(False)
-                        self._cpp_cross_aggregators[key] = agg
-                    completed = agg.update_batch(
-                        ts_values, price_values, qty_values, maker_values
-                    )
-                    if completed:
-                        buffer = self._cross_bar_buffer_locked(key)
-                        for cpp_bar in completed:
-                            buffer.append(self._bar_from_cpp(cpp_bar))
-                    self._cpp_cross_current_dirty.add(key)
-                    return
-                except Exception as exc:
-                    if _cpp_signal_strict():
-                        raise
-                    logger.warning(
-                        "C++ cross trade batch disabled after error: %s", exc
-                    )
-                    self._cpp_cross_batch_enabled = False
-                    self._cpp_cross_aggregators.clear()
-                    self._cpp_cross_current_dirty.clear()
-
+                agg = self._cpp_cross_aggregators.get(key)
+                if agg is None:
+                    agg = self._cpp_signal.TradeBarAggregator(False)
+                    self._cpp_cross_aggregators[key] = agg
+                completed = agg.update_batch(
+                    ts_values, price_values, qty_values, maker_values
+                )
+                if completed:
+                    buffer = self._cross_bar_buffer_locked(key)
+                    for cpp_bar in completed:
+                        buffer.append(self._bar_from_cpp(cpp_bar))
+                self._cpp_cross_current_dirty.add(key)
+                return
             for index in range(count):
                 event_ts_ms = int(ts_values[index])
                 price = float(price_values[index])
@@ -1949,20 +1871,12 @@ class SignalEngine:
         """Called when a 1s bar is complete — update buffers."""
         self._bar_buffer.append(bar)
         if self._cpp_signal_features_enabled and self._cpp_signal is not None:
-            try:
-                already_seeded = bool(
-                    self._cpp_feature_engine is not None and self._cpp_feature_engine_seeded
-                )
-                engine = self._ensure_cpp_feature_engine()
-                if engine is not None and already_seeded:
-                    engine.push_bar(self._bar_to_cpp(bar))
-            except Exception as exc:
-                if _cpp_signal_strict():
-                    raise
-                logger.warning("C++ persistent signal features disabled after bar update: %s", exc)
-                self._cpp_signal_features_enabled = False
-                self._cpp_feature_engine = None
-
+            already_seeded = bool(
+                self._cpp_feature_engine is not None and self._cpp_feature_engine_seeded
+            )
+            engine = self._ensure_cpp_feature_engine()
+            if engine is not None and already_seeded:
+                engine.push_bar(self._bar_to_cpp(bar))
         # Update close/sign history for tick momentum
         cl = bar.close
         self._close_history.append(cl)
@@ -2015,20 +1929,11 @@ class SignalEngine:
             self._last_depth = snap
             self._depth_history.append(snap)
             if self._cpp_execution_l2_engine is not None:
-                try:
-                    self._cpp_execution_l2_engine.push_snapshot(
-                        float(snap.ts),
-                        snap.bids,
-                        snap.asks,
-                    )
-                except Exception as exc:
-                    if _cpp_signal_strict():
-                        raise
-                    logger.warning(
-                        "C++ incremental execution L2 disabled after update: %s",
-                        exc,
-                    )
-                    self._cpp_execution_l2_engine = None
+                self._cpp_execution_l2_engine.push_snapshot(
+                    float(snap.ts),
+                    snap.bids,
+                    snap.asks,
+                )
             market_generation = int(self._quote_market_generation)
             depth_generation = int(self._depth_generation)
         for callback in tuple(self._on_depth_callbacks):
@@ -2104,52 +2009,38 @@ class SignalEngine:
             native_l2_policy_values: tuple[float, ...] = ()
             if (
                 self._cpp_execution_l2_engine is not None
-                and not self._cpp_l2_policy_disabled_after_error
                 and depth_exchange_ts_ms > 0
             ):
-                try:
-                    native_names = tuple(
-                        getattr(
-                            self._cpp_signal,
-                            "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
-                            (),
+                native_names = tuple(
+                    getattr(
+                        self._cpp_signal,
+                        "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
+                        (),
+                    )
+                )
+                if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
+                    raise RuntimeError(
+                        "C++ execution L2 policy metric order changed: "
+                        f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
+                        f"actual={native_names}"
+                    )
+                native_l2_policy_values = tuple(
+                    float(value)
+                    for value in (
+                        self._cpp_execution_l2_engine
+                        .compute_policy_metric_values(
+                            float(depth_exchange_ts_ms)
                         )
                     )
-                    if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
-                        raise RuntimeError(
-                            "C++ execution L2 policy metric order changed: "
-                            f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
-                            f"actual={native_names}"
-                        )
-                    native_l2_policy_values = tuple(
-                        float(value)
-                        for value in (
-                            self._cpp_execution_l2_engine
-                            .compute_policy_metric_values(
-                                float(depth_exchange_ts_ms)
-                            )
-                        )
+                )
+                if len(native_l2_policy_values) != len(
+                    EXECUTION_L2_POLICY_METRIC_COLS
+                ):
+                    raise RuntimeError(
+                        "C++ execution L2 policy metric width changed: "
+                        f"expected={len(EXECUTION_L2_POLICY_METRIC_COLS)} "
+                        f"actual={len(native_l2_policy_values)}"
                     )
-                    if len(native_l2_policy_values) != len(
-                        EXECUTION_L2_POLICY_METRIC_COLS
-                    ):
-                        raise RuntimeError(
-                            "C++ execution L2 policy metric width changed: "
-                            f"expected={len(EXECUTION_L2_POLICY_METRIC_COLS)} "
-                            f"actual={len(native_l2_policy_values)}"
-                        )
-                except Exception as exc:
-                    if _cpp_signal_strict():
-                        raise
-                    logger.warning(
-                        "C++ incremental L2 policy snapshot disabled: %s",
-                        exc,
-                    )
-                    # A policy-ABI error must not discard the independent
-                    # incremental feature engine.  Preserve it for completed
-                    # feature buckets and use the immutable Python history for
-                    # quote-policy metrics until restart.
-                    self._cpp_l2_policy_disabled_after_error = True
             # Native metrics are captured while the same state lock excludes
             # depth updates, so the live C++ path need not deep-copy the full
             # 300-snapshot L2 window. Keep the immutable Python fallback.
@@ -2520,10 +2411,9 @@ class SignalEngine:
                             ask_size=ask_size,
                         )
                     except Exception as exc:
-                        if _cpp_signal_strict():
-                            raise
-                        logger.warning("C++ global-flow book update failed: %s", exc)
-                        return
+                        raise _NativeSignalStateError(
+                            "native global-flow book update failed"
+                        ) from exc
                 with self._lock:
                     latest = self._book_tickers.get(key)
                     if isinstance(latest, list):
@@ -2549,16 +2439,9 @@ class SignalEngine:
                                 ask,
                             )
                         except Exception as exc:
-                            if _cpp_signal_strict():
-                                raise _StrictNativeRefPerpError(
-                                    "strict native ref-perp book update failed"
-                                ) from exc
-                            logger.warning(
-                                "C++ ref-perp book state disabled after error: %s",
-                                exc,
-                            )
-                            self._cpp_ref_perp_engine = None
-                            self._cpp_ref_perp_disabled_after_error = True
+                            raise _NativeSignalStateError(
+                                "native ref-perp book update failed"
+                            ) from exc
                     self._update_market_book_state_locked(
                         key,
                         venue=normalized_venue,
@@ -2605,7 +2488,7 @@ class SignalEngine:
                         self._record_book_ticker(
                             symbol, bid, ask, event_time, receive_time_ms=receive_time_ms
                         )
-        except _StrictNativeRefPerpError:
+        except _NativeSignalStateError:
             raise
         except Exception as exc:
             logger.debug(f"Bad bookTicker event: {exc}")
@@ -2936,7 +2819,6 @@ class SignalEngine:
             self._cpp_signal_features_enabled
             and self._cpp_feature_engine is not None
             and self._cpp_feature_engine_seeded
-            and hasattr(self._cpp_feature_engine, "compute_bucket_values")
         )
 
     def _native_model_row_173_available(
@@ -2954,8 +2836,6 @@ class SignalEngine:
             and not self._preserve_full_cross_market_features
             and not self._model_requires_full_cross_market_features
             and not self._live_feature_dump_path
-            and hasattr(self._cpp_feature_engine, "prepare_bucket")
-            and hasattr(self._cpp_feature_engine, "assemble_model_row_173")
         )
 
     def _time_feature_values(self, target_ts_ms: int) -> np.ndarray:
@@ -2986,25 +2866,15 @@ class SignalEngine:
         engine = self._cpp_ref_perp_engine
         if engine is None:
             return None
-        try:
-            prepared = engine.prepare(int(target_ts_ms), float(close))
-            values = np.asarray(prepared.values, dtype=np.float64)
-            expected_shape = (len(REF_PERP_FEATURE_NAMES),)
-            if values.shape != expected_shape:
-                raise RuntimeError(
-                    "C++ ref-perp feature row shape changed: "
-                    f"expected={expected_shape} actual={values.shape}"
-                )
-            return prepared, np.ascontiguousarray(values, dtype=np.float64)
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ fused ref-perp preparation disabled: %s", exc)
-            self._cpp_ref_perp_engine = None
-            self._cpp_ref_perp_disabled_after_error = True
-            self._disable_native_model_row_173()
-            return None
-
+        prepared = engine.prepare(int(target_ts_ms), float(close))
+        values = np.asarray(prepared.values, dtype=np.float64)
+        expected_shape = (len(REF_PERP_FEATURE_NAMES),)
+        if values.shape != expected_shape:
+            raise RuntimeError(
+                "C++ ref-perp feature row shape changed: "
+                f"expected={expected_shape} actual={values.shape}"
+            )
+        return prepared, np.ascontiguousarray(values, dtype=np.float64)
     def _commit_native_ref_perp_values(
         self,
         prepared: object,
@@ -3014,16 +2884,7 @@ class SignalEngine:
         engine = self._cpp_ref_perp_engine
         if engine is None:
             return
-        try:
-            engine.commit(prepared)
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ fused ref-perp commit disabled: %s", exc)
-            self._cpp_ref_perp_engine = None
-            self._cpp_ref_perp_disabled_after_error = True
-            self._disable_native_model_row_173()
-            return
+        engine.commit(prepared)
         available_index = REF_PERP_FEATURE_NAMES.index("cv_ref_perp_available")
         basis_index = REF_PERP_FEATURE_NAMES.index("cv_ref_perp_basis_bps")
         if values[available_index] > 0.0:
@@ -3040,63 +2901,55 @@ class SignalEngine:
         bucket_start_ms: int,
     ) -> _NativeFeatureTransaction | None:
         # Use one immutable row-state generation throughout the transaction.
-        # A non-strict native commit failure may disable the next bucket, but
-        # it must not erase the names/index of the already assembled row.
+        # A failed native commit aborts the bucket; it must not publish a row
+        # or switch to a different feature backend after partial state updates.
         row_state = self._cpp_model_row_173_state
         if not self._native_model_row_173_available(row_state):
             return None
         engine = self._cpp_feature_engine
         if engine is None:
             return None
-        try:
-            prepared_bucket = engine.prepare_bucket(int(bucket_start_ms))
-            aggregate = prepared_bucket.aggregate
-            target_ts_ms = int(aggregate.ts_ms)
-            cutoff_exclusive_ms = int(bucket_start_ms) + 10_000
-            execution_l2 = self._compute_cpp_execution_l2_values(
-                cutoff_exclusive_ms
-            )
-            if execution_l2 is None:
-                return None
-            ref_prepared_values = self._prepare_native_ref_perp_values(
-                target_ts_ms,
-                float(aggregate.close),
-            )
-            if ref_prepared_values is None:
-                return None
-            ref_prepared, ref_values = ref_prepared_values
-            metric_values = self._metric_feature_values(
-                target_ts_ms,
-                float(aggregate.close),
-            )
-            time_values = self._time_feature_values(target_ts_ms)
-            row = engine.assemble_model_row_173(
-                prepared_bucket,
-                execution_l2,
-                metric_values,
-                ref_values,
-                time_values,
-            )
-            self._commit_native_ref_perp_values(
-                ref_prepared,
-                ref_values,
-                target_ts_ms,
-            )
-            return _NativeFeatureTransaction(
-                row,
-                row_state.names,
-                row_state.index,
-                row_state.mapping_keys,
-                feature_ts_ms=target_ts_ms,
-                cutoff_exclusive_ms=cutoff_exclusive_ms,
-            )
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ fixed 173-feature row disabled: %s", exc)
-            self._disable_native_model_row_173()
+        prepared_bucket = engine.prepare_bucket(int(bucket_start_ms))
+        aggregate = prepared_bucket.aggregate
+        target_ts_ms = int(aggregate.ts_ms)
+        cutoff_exclusive_ms = int(bucket_start_ms) + 10_000
+        execution_l2 = self._compute_cpp_execution_l2_values(
+            cutoff_exclusive_ms
+        )
+        if execution_l2 is None:
             return None
-
+        ref_prepared_values = self._prepare_native_ref_perp_values(
+            target_ts_ms,
+            float(aggregate.close),
+        )
+        if ref_prepared_values is None:
+            return None
+        ref_prepared, ref_values = ref_prepared_values
+        metric_values = self._metric_feature_values(
+            target_ts_ms,
+            float(aggregate.close),
+        )
+        time_values = self._time_feature_values(target_ts_ms)
+        row = engine.assemble_model_row_173(
+            prepared_bucket,
+            execution_l2,
+            metric_values,
+            ref_values,
+            time_values,
+        )
+        self._commit_native_ref_perp_values(
+            ref_prepared,
+            ref_values,
+            target_ts_ms,
+        )
+        return _NativeFeatureTransaction(
+            row,
+            row_state.names,
+            row_state.index,
+            row_state.mapping_keys,
+            feature_ts_ms=target_ts_ms,
+            cutoff_exclusive_ms=cutoff_exclusive_ms,
+        )
     def _process_completed_feature_buckets_native_locked(
         self,
     ) -> list[dict | _NativeFeatureTransaction]:
@@ -3426,40 +3279,28 @@ class SignalEngine:
 
         native_prepared = None
         if self._cpp_ref_perp_engine is not None:
-            try:
-                native_prepared = self._cpp_ref_perp_engine.prepare(
-                    int(target_ts_ms),
-                    float(close),
+            native_prepared = self._cpp_ref_perp_engine.prepare(
+                int(target_ts_ms),
+                float(close),
+            )
+            native_values = np.asarray(
+                native_prepared.values,
+                dtype=np.float64,
+            )
+            if native_values.shape != (len(REF_PERP_FEATURE_NAMES),):
+                raise RuntimeError(
+                    "C++ ref-perp feature row shape changed: "
+                    f"expected={(len(REF_PERP_FEATURE_NAMES),)} "
+                    f"actual={native_values.shape}"
                 )
-                native_values = np.asarray(
-                    native_prepared.values,
-                    dtype=np.float64,
+            f.update(
+                (name, float(value))
+                for name, value in zip(
+                    REF_PERP_FEATURE_NAMES,
+                    native_values,
+                    strict=True,
                 )
-                if native_values.shape != (len(REF_PERP_FEATURE_NAMES),):
-                    raise RuntimeError(
-                        "C++ ref-perp feature row shape changed: "
-                        f"expected={(len(REF_PERP_FEATURE_NAMES),)} "
-                        f"actual={native_values.shape}"
-                    )
-                f.update(
-                    (name, float(value))
-                    for name, value in zip(
-                        REF_PERP_FEATURE_NAMES,
-                        native_values,
-                        strict=True,
-                    )
-                )
-            except Exception as exc:
-                if _cpp_signal_strict():
-                    raise
-                logger.warning(
-                    "C++ ref-perp features disabled after error: %s",
-                    exc,
-                )
-                self._cpp_ref_perp_engine = None
-                self._cpp_ref_perp_disabled_after_error = True
-                native_prepared = None
-
+            )
         if native_prepared is None:
             self._fill_cross_market_book_features(
                 f, "cv_ref_perp", PERP_MARKET, self._reference_symbol, close, target_ts_ms
@@ -3504,17 +3345,7 @@ class SignalEngine:
     ) -> None:
         if prepared is None:
             return
-        try:
-            self._cpp_ref_perp_engine.commit(prepared)
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning(
-                "C++ ref-perp commit disabled after error: %s",
-                exc,
-            )
-            self._cpp_ref_perp_engine = None
-            self._cpp_ref_perp_disabled_after_error = True
+        self._cpp_ref_perp_engine.commit(prepared)
         if f.get("cv_ref_perp_available", 0.0) > 0.0:
             basis = float(f.get("cv_ref_perp_basis_bps", 0.0))
             if np.isfinite(basis):
@@ -3557,69 +3388,38 @@ class SignalEngine:
         """Return one contiguous fixed-order native row for a completed bucket."""
         if not self._cpp_signal_features_enabled or self._cpp_signal is None:
             return None
-        try:
-            if not self._cpp_signal_feature_names:
-                self._cpp_signal_feature_names = tuple(
-                    getattr(self._cpp_signal, "SIGNAL_FEATURE_NAMES", ())
-                )
-            cutoff = cutoff or FeatureCutoff(int(bar_10s.get("ts", 0)) + 1_000)
-            cpp_bar_10s = self._cpp_signal.Bar1s()
-            cpp_bar_10s.ts_ms = int(bar_10s.get("ts", 0))
-            cpp_bar_10s.open = float(bar_10s.get("open", 0.0))
-            cpp_bar_10s.high = float(bar_10s.get("high", 0.0))
-            cpp_bar_10s.low = float(bar_10s.get("low", 0.0))
-            cpp_bar_10s.close = float(bar_10s.get("close", 0.0))
-            cpp_bar_10s.volume = float(bar_10s.get("volume", 0.0))
-            cpp_bar_10s.buy_volume = float(bar_10s.get("buy_volume", 0.0))
-            cpp_bar_10s.sell_volume = float(bar_10s.get("sell_volume", 0.0))
-            cpp_bar_10s.trade_count = float(bar_10s.get("trade_count", 0.0))
-            cpp_bar_10s.buy_count = float(bar_10s.get("buy_count", 0.0))
-            cpp_bar_10s.sell_count = float(bar_10s.get("sell_count", 0.0))
-            cpp_bar_10s.quote_qty = float(bar_10s.get("quote_qty", 0.0))
-            cpp_bar_10s.buy_quote_qty = float(bar_10s.get("buy_quote_qty", 0.0))
-            cpp_bar_10s.sell_quote_qty = float(bar_10s.get("sell_quote_qty", 0.0))
-            cpp_bar_10s.max_same_side_run = float(bar_10s.get("max_same_side_run", 0.0))
+        cutoff = cutoff or FeatureCutoff(int(bar_10s.get("ts", 0)) + 1_000)
+        cpp_bar_10s = self._cpp_signal.Bar1s()
+        cpp_bar_10s.ts_ms = int(bar_10s.get("ts", 0))
+        cpp_bar_10s.open = float(bar_10s.get("open", 0.0))
+        cpp_bar_10s.high = float(bar_10s.get("high", 0.0))
+        cpp_bar_10s.low = float(bar_10s.get("low", 0.0))
+        cpp_bar_10s.close = float(bar_10s.get("close", 0.0))
+        cpp_bar_10s.volume = float(bar_10s.get("volume", 0.0))
+        cpp_bar_10s.buy_volume = float(bar_10s.get("buy_volume", 0.0))
+        cpp_bar_10s.sell_volume = float(bar_10s.get("sell_volume", 0.0))
+        cpp_bar_10s.trade_count = float(bar_10s.get("trade_count", 0.0))
+        cpp_bar_10s.buy_count = float(bar_10s.get("buy_count", 0.0))
+        cpp_bar_10s.sell_count = float(bar_10s.get("sell_count", 0.0))
+        cpp_bar_10s.quote_qty = float(bar_10s.get("quote_qty", 0.0))
+        cpp_bar_10s.buy_quote_qty = float(bar_10s.get("buy_quote_qty", 0.0))
+        cpp_bar_10s.sell_quote_qty = float(bar_10s.get("sell_quote_qty", 0.0))
+        cpp_bar_10s.max_same_side_run = float(bar_10s.get("max_same_side_run", 0.0))
 
-            # Python feature code only needs close/sign history up to 320 bars
-            # and taker tempo up to 60 bars; sending the full 3700s buffer over
-            # pybind is slower than the pure Python path.
-            engine = self._ensure_cpp_feature_engine(all_bars)
-            if engine is None:
-                return None
-            if self._cpp_signal_feature_names and hasattr(engine, "compute_values_at_cutoff"):
-                values = np.asarray(
-                    engine.compute_values_at_cutoff(
-                        cpp_bar_10s,
-                        int(cutoff.cutoff_exclusive_ms),
-                    ),
-                    dtype=np.float64,
-                )
-                expected_shape = (len(self._cpp_signal_feature_names),)
-                if values.shape != expected_shape:
-                    raise RuntimeError(
-                        "C++ signal feature row shape changed: "
-                        f"expected={expected_shape} actual={values.shape}"
-                    )
-                if not values.flags.c_contiguous:
-                    values = np.ascontiguousarray(values, dtype=np.float64)
-                return values
-            if hasattr(engine, "compute_at_cutoff"):
-                legacy = dict(
-                    engine.compute_at_cutoff(
-                        cpp_bar_10s, int(cutoff.cutoff_exclusive_ms)
-                    )
-                )
-                return np.ascontiguousarray(
-                    [legacy[name] for name in self._cpp_signal_feature_names],
-                    dtype=np.float64,
-                )
-            raise RuntimeError("narrowgate_cpp lacks cutoff-aware signal feature ABI")
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ signal feature overlay disabled after error: %s", exc)
-            self._cpp_signal_features_enabled = False
-            return None
+        engine = self._ensure_cpp_feature_engine(all_bars)
+        if engine is None:
+            raise RuntimeError("selected native signal feature engine is unavailable")
+        values = np.asarray(
+            engine.compute_values_at_cutoff(cpp_bar_10s, int(cutoff.cutoff_exclusive_ms)),
+            dtype=np.float64,
+        )
+        expected_shape = (len(self._cpp_signal_feature_names),)
+        if values.shape != expected_shape:
+            raise RuntimeError(
+                "C++ signal feature row shape changed: "
+                f"expected={expected_shape} actual={values.shape}"
+            )
+        return np.ascontiguousarray(values, dtype=np.float64)
 
     def _features_from_cpp_values(
         self,
@@ -3907,51 +3707,38 @@ class SignalEngine:
         if (
             not self._cpp_signal_features_enabled
             or self._cpp_signal is None
-            or self._cpp_execution_l2_disabled_after_error
-            or not hasattr(
-                self._cpp_signal,
-                "compute_signal_execution_l2_feature_values",
-            )
         ):
             return None
-        try:
-            native_names = tuple(
-                getattr(self._cpp_signal, "SIGNAL_EXECUTION_L2_FEATURE_NAMES", ())
+        native_names = tuple(
+            getattr(self._cpp_signal, "SIGNAL_EXECUTION_L2_FEATURE_NAMES", ())
+        )
+        expected_names = tuple(EXECUTION_L2_FEATURE_COLS)
+        if native_names != expected_names:
+            raise RuntimeError(
+                "C++ execution L2 feature order changed: "
+                f"expected={expected_names} actual={native_names}"
             )
-            expected_names = tuple(EXECUTION_L2_FEATURE_COLS)
-            if native_names != expected_names:
-                raise RuntimeError(
-                    "C++ execution L2 feature order changed: "
-                    f"expected={expected_names} actual={native_names}"
+        if self._cpp_execution_l2_engine is not None:
+            raw_values = self._cpp_execution_l2_engine.compute_feature_values(
+                float(bucket_end_ms)
+            )
+        else:
+            raw_values = (
+                self._cpp_signal.compute_signal_execution_l2_feature_values(
+                    self._depth_history,
+                    float(bucket_end_ms),
                 )
-            if self._cpp_execution_l2_engine is not None:
-                raw_values = self._cpp_execution_l2_engine.compute_feature_values(
-                    float(bucket_end_ms)
-                )
-            else:
-                raw_values = (
-                    self._cpp_signal.compute_signal_execution_l2_feature_values(
-                        self._depth_history,
-                        float(bucket_end_ms),
-                    )
-                )
-            values = np.asarray(raw_values, dtype=np.float64)
-            expected_shape = (len(EXECUTION_L2_FEATURE_COLS),)
-            if values.shape != expected_shape:
-                raise RuntimeError(
-                    "C++ execution L2 feature row shape changed: "
-                    f"expected={expected_shape} actual={values.shape}"
-                )
-            if not values.flags.c_contiguous:
-                values = np.ascontiguousarray(values, dtype=np.float64)
-            return values
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ execution L2 features disabled after error: %s", exc)
-            self._cpp_execution_l2_disabled_after_error = True
-            return None
-
+            )
+        values = np.asarray(raw_values, dtype=np.float64)
+        expected_shape = (len(EXECUTION_L2_FEATURE_COLS),)
+        if values.shape != expected_shape:
+            raise RuntimeError(
+                "C++ execution L2 feature row shape changed: "
+                f"expected={expected_shape} actual={values.shape}"
+            )
+        if not values.flags.c_contiguous:
+            values = np.ascontiguousarray(values, dtype=np.float64)
+        return values
     def _compute_cpp_l2_policy_values(
         self,
         snapshots: Sequence[DepthSnapshot | QuoteDepthObservation],
@@ -3960,57 +3747,35 @@ class SignalEngine:
         if (
             not self._cpp_signal_features_enabled
             or self._cpp_signal is None
-            or self._cpp_l2_policy_disabled_after_error
         ):
             return None
-        native_compute = getattr(
-            self._cpp_signal,
-            "compute_signal_execution_l2_policy_metric_values",
-            None,
+        native_compute = self._cpp_signal.compute_signal_execution_l2_policy_metric_values
+        native_names = tuple(
+            getattr(
+                self._cpp_signal,
+                "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
+                (),
+            )
         )
-        if native_compute is None:
-            error = RuntimeError(
-                "narrowgate_cpp missing execution L2 policy metric batch ABI"
+        if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
+            raise RuntimeError(
+                "C++ execution L2 policy metric order changed: "
+                f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
+                f"actual={native_names}"
             )
-            if _cpp_signal_strict():
-                raise error
-            logger.warning("C++ L2 policy metrics unavailable: %s", error)
-            self._cpp_l2_policy_disabled_after_error = True
-            return None
-        try:
-            native_names = tuple(
-                getattr(
-                    self._cpp_signal,
-                    "SIGNAL_EXECUTION_L2_POLICY_METRIC_NAMES",
-                    (),
-                )
+        values = np.asarray(
+            native_compute(snapshots, float(end_exchange_ms)),
+            dtype=np.float64,
+        )
+        expected_shape = (len(EXECUTION_L2_POLICY_METRIC_COLS),)
+        if values.shape != expected_shape:
+            raise RuntimeError(
+                "C++ execution L2 policy metric row shape changed: "
+                f"expected={expected_shape} actual={values.shape}"
             )
-            if native_names != EXECUTION_L2_POLICY_METRIC_COLS:
-                raise RuntimeError(
-                    "C++ execution L2 policy metric order changed: "
-                    f"expected={EXECUTION_L2_POLICY_METRIC_COLS} "
-                    f"actual={native_names}"
-                )
-            values = np.asarray(
-                native_compute(snapshots, float(end_exchange_ms)),
-                dtype=np.float64,
-            )
-            expected_shape = (len(EXECUTION_L2_POLICY_METRIC_COLS),)
-            if values.shape != expected_shape:
-                raise RuntimeError(
-                    "C++ execution L2 policy metric row shape changed: "
-                    f"expected={expected_shape} actual={values.shape}"
-                )
-            if not values.flags.c_contiguous:
-                values = np.ascontiguousarray(values, dtype=np.float64)
-            return values
-        except Exception as exc:
-            if _cpp_signal_strict():
-                raise
-            logger.warning("C++ L2 policy metrics disabled after error: %s", exc)
-            self._cpp_l2_policy_disabled_after_error = True
-            return None
-
+        if not values.flags.c_contiguous:
+            values = np.ascontiguousarray(values, dtype=np.float64)
+        return values
     def _compute_execution_l2_features(self, f: dict, bucket_end_ms: int):
         cpp_values = self._compute_cpp_execution_l2_values(bucket_end_ms)
         if cpp_values is not None:
@@ -4623,37 +4388,21 @@ class SignalEngine:
 
         native_values = None
         if native_bundle is not None:
-            try:
-                if native_transaction is not None:
-                    native_result = native_bundle.predict_signal_row_173(
-                        native_transaction.row
-                    )
-                else:
-                    native_result = native_bundle.predict(X_model)
-                native_output = np.asarray(
-                    native_result,
-                    dtype=np.float64,
+            if native_transaction is not None:
+                native_result = native_bundle.predict_signal_row_173(
+                    native_transaction.row
                 )
-                if native_output.shape != (len(REQUIRED_MODEL_HEADS),):
-                    raise RuntimeError(
-                        "native LightGBM bundle returned an invalid output shape"
-                    )
-                native_values = tuple(float(value) for value in native_output)
-            except Exception as exc:
-                if _cpp_signal_strict():
-                    raise RuntimeError(
-                        f"strict native LightGBM prediction failed: {exc}"
-                    ) from exc
-                with self._model_runtime_lock:
-                    if self._native_model_bundle is native_bundle:
-                        self._native_model_bundle = None
-                        self._native_inference_disabled_after_error = True
-                logger.warning(
-                    "Native LightGBM inference failed; disabling it and using "
-                    "Python Boosters: %s",
-                    exc,
+            else:
+                native_result = native_bundle.predict(X_model)
+            native_output = np.asarray(
+                native_result,
+                dtype=np.float64,
+            )
+            if native_output.shape != (len(REQUIRED_MODEL_HEADS),):
+                raise RuntimeError(
+                    "native LightGBM bundle returned an invalid output shape"
                 )
-
+            native_values = tuple(float(value) for value in native_output)
         if native_values is not None:
             for name, value in zip(
                 REQUIRED_MODEL_HEADS,
@@ -4681,7 +4430,7 @@ class SignalEngine:
                     raise RuntimeError(f"prediction failed for {name}: {exc}") from exc
 
             # Run dir/vol/tox models after return heads, preserving the B0
-            # Python evaluation order for the fallback implementation.
+            # evaluation order for the selected Python backend.
             for name, model in models.items():
                 if name.startswith("ret_"):
                     continue  # already processed in stage 1

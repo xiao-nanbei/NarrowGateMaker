@@ -1468,16 +1468,43 @@ def test_cpp_quote_core_diagnostics_and_defense_context_parity(monkeypatch):
                 )
 
 
-def test_cpp_quote_core_strict_module_token_guard(monkeypatch):
+def test_cpp_quote_core_uses_shared_loader_and_validates_capabilities_once(monkeypatch):
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    monkeypatch.setenv("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", "__definitely_wrong_token__")
-    qc._CPP_QUOTE_CORE = None
-    qc._CPP_QUOTE_CORE_IMPORT_FAILED = False
-    with pytest.raises(RuntimeError, match="different build"):
-        qc._load_cpp_quote_core()
-    monkeypatch.delenv("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", raising=False)
-    qc._CPP_QUOTE_CORE = None
-    qc._CPP_QUOTE_CORE_IMPORT_FAILED = False
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE", None)
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE_IMPORT_FAILED", False)
+    calls = []
+    original_validator = qc.validate_native_capabilities
+
+    def load(*, optional):
+        calls.append(("load", optional))
+        return narrowgate_cpp
+
+    def validate(module, **kwargs):
+        calls.append(("validate", module))
+        return original_validator(module, **kwargs)
+
+    monkeypatch.setattr(qc, "load_native_module", load)
+    monkeypatch.setattr(qc, "validate_native_capabilities", validate)
+    assert qc._load_cpp_quote_core() is narrowgate_cpp
+    assert qc._load_cpp_quote_core() is narrowgate_cpp
+    assert calls == [("load", False), ("validate", narrowgate_cpp)]
+
+
+def test_cpp_quote_config_cache_is_bound_to_module_and_config(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(qc, "_CPP_CFG_CACHE_KEY", None)
+    monkeypatch.setattr(qc, "_CPP_CFG_CACHE_REF", None)
+    monkeypatch.setattr(qc, "_CPP_CFG_CACHE_VALUE", None)
+    cfg = _cfg()
+    first_module = SimpleNamespace(QuoteCoreConfig=narrowgate_cpp.QuoteCoreConfig)
+    second_module = SimpleNamespace(QuoteCoreConfig=narrowgate_cpp.QuoteCoreConfig)
+    first_config = qc._cached_cpp_config(first_module, cfg)
+    assert qc._cached_cpp_config(first_module, cfg) is first_config
+    second_config = qc._cached_cpp_config(second_module, cfg)
+    assert second_config is not first_config
+    assert qc._cached_cpp_config(second_module, cfg) is second_config
+    assert second_config.gamma == first_config.gamma
 
 
 def test_direct_cpp_p3_projection_requires_complete_touch_identity() -> None:

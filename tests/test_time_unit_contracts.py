@@ -40,6 +40,161 @@ from strategy.quote_core import (
 from strategy.signal import Bar1s, SignalEngine
 
 
+@pytest.mark.parametrize("missing_on", ["source", "destination"])
+def test_quote_config_copy_requires_all_fields_before_mutating(missing_on) -> None:
+    from strategy import quote_core as qc
+
+    source = SimpleNamespace(gamma=0.046, max_inventory=0.026)
+    destination = SimpleNamespace(gamma=0.010, max_inventory=0.010)
+    delattr(source if missing_on == "source" else destination, "max_inventory")
+    before = vars(destination).copy()
+    with pytest.raises(RuntimeError, match="max_inventory"):
+        qc._copy_attrs(source, destination, ("gamma", "max_inventory"))
+    assert vars(destination) == before
+
+
+@pytest.mark.parametrize("strict", ["0", "1"])
+@pytest.mark.parametrize("entrypoint", ["full", "compact", "live_full", "deferred"])
+def test_native_quote_calculation_error_never_selects_another_backend(
+    monkeypatch, strict, entrypoint
+) -> None:
+    from strategy import quote_core as qc
+
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", strict)
+    monkeypatch.setattr(qc, "_load_cpp_quote_core", lambda: object())
+    failure = RuntimeError("native calculation failed")
+    calls = []
+
+    def native_error(*args, **kwargs):
+        calls.append("native")
+        raise failure
+
+    def forbidden_python(*args, **kwargs):
+        pytest.fail("native failure must not invoke Python")
+
+    monkeypatch.setattr(qc, "_compute_quote_core_cpp", native_error)
+    monkeypatch.setattr(qc, "_compute_quote_core_cpp_compact", native_error)
+    monkeypatch.setattr(qc, "_call_cpp_quote_core", native_error)
+    monkeypatch.setattr(qc, "_compute_quote_core_py", forbidden_python)
+    entrypoints = {
+        "full": lambda: qc.compute_quote_core(None, None, None),
+        "compact": lambda: qc.compute_quote_core_live(None, None, None),
+        "live_full": lambda: qc.compute_quote_core_live(
+            None, None, None, require_full_context=True
+        ),
+        "deferred": lambda: qc.compute_quote_core_live_deferred(None, None, None),
+    }
+    with pytest.raises(RuntimeError) as raised:
+        entrypoints[entrypoint]()
+    assert raised.value is failure
+    assert calls == ["native"]
+
+
+def test_optional_native_absence_selects_python_once_before_calculation(monkeypatch) -> None:
+    from strategy import quote_core as qc
+
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE", None)
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE_IMPORT_FAILED", False)
+    load_calls = []
+
+    def absent_extension(*, optional):
+        load_calls.append(optional)
+        if optional:
+            return None
+        raise ModuleNotFoundError("narrowgate_cpp", name="narrowgate_cpp")
+
+    monkeypatch.setattr(qc, "load_native_module", absent_extension)
+    expected = object()
+    monkeypatch.setattr(qc, "_compute_quote_core_py", lambda *args: expected)
+    assert qc.compute_quote_core(None, None, None) is expected
+    assert qc.compute_quote_core_live(None, None, None) is expected
+    assert load_calls == [True]
+
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    with pytest.raises(ModuleNotFoundError):
+        qc.compute_quote_core(None, None, None)
+    assert load_calls == [True, False]
+
+
+@pytest.mark.parametrize("failure", [RuntimeError("broken ABI"), ImportError("broken dependency")])
+def test_native_loader_errors_do_not_select_python(monkeypatch, failure) -> None:
+    from strategy import quote_core as qc
+
+    monkeypatch.setenv("NARROWGATE_CPP_QUOTE_CORE", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE", None)
+    monkeypatch.setattr(qc, "_CPP_QUOTE_CORE_IMPORT_FAILED", False)
+
+    def broken_extension(**kwargs):
+        raise failure
+
+    monkeypatch.setattr(qc, "load_native_module", broken_extension)
+    with pytest.raises(type(failure)) as raised:
+        qc.compute_quote_core(None, None, None)
+    assert raised.value is failure
+    assert qc._CPP_QUOTE_CORE_IMPORT_FAILED is False
+
+
+@pytest.mark.parametrize("optional", [False, True])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ModuleNotFoundError("missing extension", name="narrowgate_cpp"),
+        ModuleNotFoundError("missing native dependency", name="narrowgate_cpp.dependency"),
+        ModuleNotFoundError("missing dependency", name="numpy"),
+        RuntimeError("native initialization failed"),
+    ],
+)
+def test_shared_native_loader_only_treats_top_level_absence_as_optional(
+    monkeypatch, optional, failure
+) -> None:
+    from strategy import native_runtime
+
+    def import_failure(name):
+        assert name == "narrowgate_cpp"
+        raise failure
+
+    monkeypatch.setattr(native_runtime.importlib, "import_module", import_failure)
+    if optional and isinstance(failure, ModuleNotFoundError) and failure.name == "narrowgate_cpp":
+        assert native_runtime.load_native_module(optional=optional) is None
+    else:
+        with pytest.raises(type(failure)) as raised:
+            native_runtime.load_native_module(optional=optional)
+        assert raised.value is failure
+
+
+@pytest.mark.parametrize(
+    "layout", ["inside", "similar_prefix", "symlink_escape", "relative", "no_file"]
+)
+def test_shared_native_loader_uses_canonical_directory_containment(
+    monkeypatch, tmp_path, layout
+) -> None:
+    from strategy import native_runtime
+
+    root = tmp_path / "runtime"
+    root.mkdir()
+    source = root / "site-packages" / "narrowgate_cpp.so"
+    if layout == "similar_prefix":
+        source = tmp_path / "runtime-other" / "narrowgate_cpp.so"
+    elif layout == "symlink_escape":
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (root / "site-packages").symlink_to(outside, target_is_directory=True)
+    elif layout == "relative":
+        root = "runtime"
+    module = SimpleNamespace() if layout == "no_file" else SimpleNamespace(__file__=str(source))
+    monkeypatch.setattr(native_runtime.importlib, "import_module", lambda name: module)
+    monkeypatch.setenv("NARROWGATE_CPP_EXPECT_MODULE_TOKEN", str(root))
+    if layout == "inside":
+        assert native_runtime.load_native_module() is module
+    else:
+        with pytest.raises(RuntimeError, match="outside the admitted runtime root"):
+            native_runtime.load_native_module()
+
+
 def _cfg(**overrides) -> QuoteCoreConfig:
     values = {
         "gamma": 0.1,

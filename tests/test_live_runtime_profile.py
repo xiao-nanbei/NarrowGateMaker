@@ -326,7 +326,7 @@ def test_explicit_order_action_profile_rejects_disabled_capability(
         main.audit_native_runtime(logging.getLogger("profile-test"))
 
 
-def test_live_routing_loader_preserves_strict_and_optional_fallback(
+def test_live_routing_loader_rejects_incomplete_native_in_every_mode(
     monkeypatch,
 ) -> None:
     fake_module = SimpleNamespace(compute_live_routing_decision=lambda *args: None)
@@ -334,18 +334,15 @@ def test_live_routing_loader_preserves_strict_and_optional_fallback(
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", fake_module)
     monkeypatch.setattr(maker_engine, "_live_routing_cpp", None)
-    monkeypatch.setattr(maker_engine, "_live_routing_cpp_failed", False)
     assert maker_engine._get_live_routing_cpp() is fake_module
 
     old_module = SimpleNamespace()
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", old_module)
     monkeypatch.setattr(maker_engine, "_live_routing_cpp", None)
-    monkeypatch.setattr(maker_engine, "_live_routing_cpp_failed", False)
-    assert maker_engine._get_live_routing_cpp() is None
-    assert maker_engine._live_routing_cpp_failed is True
+    with pytest.raises(RuntimeError, match="compute_live_routing_decision"):
+        maker_engine._get_live_routing_cpp()
 
     monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    monkeypatch.setattr(maker_engine, "_live_routing_cpp_failed", False)
     with pytest.raises(RuntimeError, match="compute_live_routing_decision"):
         maker_engine._get_live_routing_cpp()
 
@@ -357,7 +354,7 @@ def test_explicit_order_action_loader_never_silently_falls_back(
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", SimpleNamespace())
     monkeypatch.setattr(maker_engine, "_live_order_action_plan_cpp", None)
 
-    with pytest.raises(RuntimeError, match="ABI is incomplete"):
+    with pytest.raises(RuntimeError, match="ABI missing"):
         maker_engine._get_live_order_action_plan_cpp()
 
 
@@ -450,7 +447,7 @@ def test_strict_native_profile_fails_before_market_start_on_old_quote_abi(monkey
         ),
     )
 
-    with pytest.raises(RuntimeError, match="ABI missing fields"):
+    with pytest.raises(RuntimeError, match="ABI missing APIs/fields"):
         main.audit_native_runtime(logging.getLogger("profile-test"))
 
 
@@ -546,5 +543,5 @@ def test_explicit_native_replace_continuation_never_silently_falls_back(
     monkeypatch.setenv("NARROWGATE_CPP_REPLACE_CONTINUATION", "1")
     monkeypatch.setitem(sys.modules, "narrowgate_cpp", fake_module)
 
-    with pytest.raises(RuntimeError, match="ABI is incomplete"):
+    with pytest.raises(RuntimeError, match="ABI missing"):
         maker_engine._build_native_replace_continuation_state()

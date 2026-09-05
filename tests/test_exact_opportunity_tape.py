@@ -418,9 +418,15 @@ class _BlockingSubmitRest:
 
 def _bare_engine(rest) -> MakerEngine:
     engine = object.__new__(MakerEngine)
+    engine.set_admitted_user_stream_generation(1)
+    engine.set_event_source(SimpleNamespace(user_event_safety_snapshot=lambda: {
+        "user_stream_connected": True, "user_stream_generation": 1,
+    }))
     engine.cfg = Config()
     engine.cfg.symbol = "BTCUSDC"
     engine.rest = rest
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine._qty_precision = 3
     engine._price_precision = 1
     engine._order_ref_lock = threading.RLock()
@@ -605,6 +611,8 @@ def test_rest_minus_2013_cannot_release_unknown_submit_ownership(
         cid = engine._place_order("BTCUSDC", side, price, 0.001)
     assert cid is not None
     engine.rest = _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     resolution = engine.reconcile_pending_new_order(engine.orders.get_order(cid))
 
@@ -633,6 +641,8 @@ def test_rest_minus_2013_cannot_release_pending_cancel_ownership(
     assert cid is not None
     engine.orders.mark_pending_cancel(cid)
     engine.rest = _QueryRest(error=_ExchangeError(-2013, "Order does not exist"))
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     resolution = engine.reconcile_pending_cancel_order(engine.orders.get_order(cid))
 
@@ -696,6 +706,8 @@ def test_malformed_query_response_keeps_pending_ownership(
     else:
         response = _query_response_for_order(order, executedQty="0.002")
     engine.rest = _RawQueryRest(response)
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     if pending_state == OrderState.PENDING_NEW:
         resolution = engine.reconcile_pending_new_order(order)
@@ -730,6 +742,8 @@ def test_reconcile_uses_exact_account_trade_not_query_order_average(status: str)
             "avgPrice": None,
         }
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     _install_exact_account_trade_sync(
         engine,
         cid=cid,
@@ -766,6 +780,8 @@ def test_query_positive_fill_without_account_trades_latches_and_retains_ownershi
             avgPrice="99.8",
         )
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.sync_position = lambda *, required=False: (_ for _ in ()).throw(
         RuntimeError("accountTrades evidence unavailable")
     )
@@ -799,6 +815,8 @@ def test_pending_cancel_query_order_id_mismatch_keeps_ownership(
     order = engine.orders.get_order(cid)
     assert order is not None
     engine.rest = _RawQueryRest(_query_response_for_order(order, orderId=order.order_id + 1))
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     resolution = engine.reconcile_pending_cancel_order(order)
 
@@ -896,6 +914,8 @@ def test_ownership_conflict_fatal_cancel_runs_outside_nonreentrant_ref_lock(
         return {}
 
     engine.rest = SimpleNamespace(cancel_open_orders=_reentrant_cancel_open_orders)
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.sync_position = lambda *, required=False: True
     result: list[bool] = []
 
@@ -1048,6 +1068,8 @@ def test_rest_reconcile_preserves_unknown_activation_and_fill_clock(
             "updateTime": 1_900_000_000_000,
         }
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     if float(executed_qty) > 0.0:
         _install_exact_account_trade_sync(
             engine,
@@ -1119,6 +1141,8 @@ def test_pending_cancel_reconcile_keeps_known_activation_but_not_rest_event_cloc
             updateTime=1_900_000_000_000,
         )
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     if float(executed_qty) > 0.0:
         _install_exact_account_trade_sync(
             engine,
@@ -1167,9 +1191,15 @@ def test_live_producer_links_submit_and_cancel_to_origin_decision(
     tmp_path: Path,
 ) -> None:
     engine = object.__new__(MakerEngine)
+    engine.set_admitted_user_stream_generation(1)
+    engine.set_event_source(SimpleNamespace(user_event_safety_snapshot=lambda: {
+        "user_stream_connected": True, "user_stream_generation": 1,
+    }))
     engine.cfg = Config()
     engine.cfg.symbol = "BTCUSDC"
     engine.rest = _Rest()
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine._qty_precision = 3
     engine._price_precision = 1
     engine._order_ref_lock = threading.RLock()

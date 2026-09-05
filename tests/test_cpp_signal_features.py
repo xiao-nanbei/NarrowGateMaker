@@ -508,13 +508,10 @@ def test_quote_snapshot_rejects_drifted_native_policy_order_before_fast_path(
         receive_ts_ns=int(snapshot.ts * 1_000_000) + 1,
     )
 
-    quote_snapshot = engine.quote_decision_snapshot(
-        now_ns=int(end_exchange_ms * 1_000_000) + 2,
-    )
-
-    assert quote_snapshot.l2_policy_metric_values == ()
-    assert quote_snapshot.depth_history
-    assert engine._cpp_l2_policy_disabled_after_error is True
+    with pytest.raises(RuntimeError, match="policy metric order changed"):
+        engine.quote_decision_snapshot(
+            now_ns=int(end_exchange_ms * 1_000_000) + 2,
+        )
     assert engine._cpp_execution_l2_engine is not None
 
 
@@ -620,23 +617,17 @@ def test_cpp_l2_policy_batch_matches_python_empty_sparse_and_boundary(
     assert np.array_equal(actual, expected)
 
 
-def test_cpp_l2_policy_missing_abi_falls_back_or_fails_strict(monkeypatch) -> None:
+@pytest.mark.parametrize("strict", [False, True])
+def test_cpp_l2_policy_missing_abi_always_fails(monkeypatch, strict) -> None:
     engine = SignalEngine(enable_ml=False)
     engine._cpp_signal = object()
     engine._cpp_signal_features_enabled = True
-    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: False)
-    assert engine._compute_cpp_l2_policy_values([], 1_000_000.0) is None
-    assert engine._cpp_l2_policy_disabled_after_error is True
-
-    strict_engine = SignalEngine(enable_ml=False)
-    strict_engine._cpp_signal = object()
-    strict_engine._cpp_signal_features_enabled = True
-    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: True)
+    monkeypatch.setattr(signal_module, "_cpp_signal_strict", lambda: strict)
     with pytest.raises(
-        RuntimeError,
-        match="missing execution L2 policy metric batch ABI",
+        AttributeError,
+        match="compute_signal_execution_l2_policy_metric_values",
     ):
-        strict_engine._compute_cpp_l2_policy_values([], 1_000_000.0)
+        engine._compute_cpp_l2_policy_values([], 1_000_000.0)
 
 
 def test_maker_l2_policy_metrics_native_path_matches_python_fallback() -> None:
@@ -700,6 +691,7 @@ def test_cpp_signal_feature_overlay_matches_python_core_features():
     py_features = engine._compute_features(bar_10s, all_bars)
     engine._cpp_signal = narrowgate_cpp
     engine._cpp_signal_features_enabled = True
+    engine._cpp_signal_feature_names = tuple(narrowgate_cpp.SIGNAL_FEATURE_NAMES)
     cpp_features = engine._compute_features(bar_10s, all_bars)
     cpp_overlay = engine._compute_cpp_feature_overlay(bar_10s, all_bars)
     cpp_values = engine._compute_cpp_feature_values(bar_10s, all_bars)
@@ -1288,7 +1280,7 @@ def test_native_model_row_catch_up_matches_stepwise_inference(
         )
 
 
-def test_native_model_row_keeps_current_mapping_after_nonstrict_commit_failure(
+def test_native_model_row_does_not_publish_after_nonstrict_commit_failure(
     monkeypatch,
     synthetic_model_bundle_173: Path,
 ) -> None:
@@ -1327,17 +1319,10 @@ def test_native_model_row_keeps_current_mapping_after_nonstrict_commit_failure(
             raise RuntimeError("synthetic commit failure")
 
     engine._cpp_ref_perp_engine = CommitFailure()
-    transaction = engine._prepare_native_model_row_173(base_ms)
-
-    assert isinstance(transaction, signal_module._NativeFeatureTransaction)
-    assert transaction.mapping["close"] > 0.0
-    assert transaction.mapping["price_change_5s"] == pytest.approx(
-        transaction.row.value_at(
-            transaction.names.index("price_change_5s")
-        )
-    )
-    assert engine._cpp_model_row_173_enabled is False
-    assert engine._cpp_ref_perp_engine is None
+    with pytest.raises(RuntimeError, match="synthetic commit failure"):
+        engine._prepare_native_model_row_173(base_ms)
+    assert engine._cpp_model_row_173_enabled is True
+    assert isinstance(engine._cpp_ref_perp_engine, CommitFailure)
 
 
 def test_cpp_ref_perp_keeps_spot_computation_for_declared_diagnostics():
@@ -1678,8 +1663,9 @@ def test_native_lightgbm_preserves_final_prediction_and_demean_state(
     )
 
 
-def test_native_lightgbm_runtime_failure_is_strict_or_one_way_fallback(
-    monkeypatch,
+@pytest.mark.parametrize("strict", ["0", "1"])
+def test_native_lightgbm_runtime_failure_never_switches_backend(
+    monkeypatch, strict,
 ) -> None:
     class BrokenNativeBundle:
         def predict(self, _row):
@@ -1697,18 +1683,11 @@ def test_native_lightgbm_runtime_failure_is_strict_or_one_way_fallback(
         name: ["feature"] for name in REQUIRED_MODEL_HEADS
     }
 
-    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", strict)
     engine._native_model_bundle = BrokenNativeBundle()
-    prediction = engine._predict({"feature": 1.0})
-    assert prediction.dir_10s == 0.0
-    assert prediction.ret_10s == 0.06
-    assert engine._native_model_bundle is None
-    assert engine._native_inference_disabled_after_error is True
-
-    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
-    engine._native_model_bundle = BrokenNativeBundle()
-    with pytest.raises(RuntimeError, match="strict native LightGBM prediction"):
+    with pytest.raises(RuntimeError, match="synthetic native failure"):
         engine._predict({"feature": 1.0})
+    assert isinstance(engine._native_model_bundle, BrokenNativeBundle)
 
 
 def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
@@ -1731,7 +1710,7 @@ def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
         raise RuntimeError(f"rejected width {feature_count}")
 
     monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
-    with pytest.raises(RuntimeError, match="initialization failed"):
+    with pytest.raises(RuntimeError, match="rejected width"):
         engine.reload_models()
 
     assert engine._models is old_models
@@ -1739,13 +1718,15 @@ def test_native_lightgbm_failed_strict_reload_keeps_admitted_bundle(
     assert engine._model_dir == MODEL_BUNDLE
 
 
-def test_native_173_row_rejection_is_atomic_during_strict_reload(
+@pytest.mark.parametrize("strict", ["0", "1"])
+def test_native_173_row_rejection_is_atomic_during_reload(
     monkeypatch,
     synthetic_model_bundle_173: Path,
+    strict,
 ) -> None:
     monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
-    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "1")
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", strict)
     engine = SignalEngine(
         model_dir=synthetic_model_bundle_173,
         ret_demean_halflife=0,
@@ -1772,7 +1753,7 @@ def test_native_173_row_rejection_is_atomic_during_strict_reload(
     assert engine._model_dir == synthetic_model_bundle_173
 
 
-def test_native_lightgbm_failed_nonstrict_initialization_uses_python_bundle(
+def test_native_lightgbm_failed_nonstrict_initialization_keeps_old_bundle(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv(CPP_LIGHTGBM_INFERENCE_FLAG, "1")
@@ -1789,11 +1770,8 @@ def test_native_lightgbm_failed_nonstrict_initialization_uses_python_bundle(
         raise RuntimeError(f"rejected width {feature_count}")
 
     monkeypatch.setattr(engine, "_build_native_model_bundle", reject_candidate)
-    engine.reload_models()
-
-    assert set(engine._models) == set(REQUIRED_MODEL_HEADS)
-    assert engine._native_inference_requested is True
+    old_models = engine._models
+    with pytest.raises(RuntimeError, match="rejected width"):
+        engine.reload_models()
+    assert engine._models is old_models
     assert engine._native_model_bundle is None
-    assert engine._native_inference_disabled_after_error is True
-    prediction = engine._predict({"close": 1.0})
-    assert isinstance(prediction, signal_module.Prediction)

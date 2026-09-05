@@ -51,6 +51,7 @@ def _engine(
 
     engine = object.__new__(MakerEngine)
     engine.cfg = cfg
+    engine.order_gateway = SimpleNamespace()
     engine._buy_e3_cooldown_policy = (
         None if active_identity == "B0" else SimpleNamespace(deadline_identity=active_identity)
     )
@@ -154,6 +155,7 @@ def _restore_and_reconcile_second_fill(
         ]
 
     restarted.rest = SimpleNamespace(get_account_trades=account_trades)
+    restarted.reconciliation_client = restarted.rest
     first = restarted.reconcile_fill_cooldown_checkpoint_gap()
     units_after_first = restarted._consec_buy
     second = restarted.reconcile_fill_cooldown_checkpoint_gap()
@@ -317,6 +319,7 @@ def test_cursorless_restore_preserves_old_gap_boundary_until_reconciliation(
         ]
 
     restarted.rest = SimpleNamespace(get_account_trades=account_trades)
+    restarted.reconciliation_client = restarted.rest
     recovered = restarted.reconcile_fill_cooldown_checkpoint_gap()
 
     assert restored["checkpoint_sequence"] == 1
@@ -371,6 +374,7 @@ def test_restart_recovers_fill_after_last_durable_cursor_conservatively(
         ]
 
     restarted.rest = SimpleNamespace(get_account_trades=account_trades)
+    restarted.reconciliation_client = restarted.rest
     recovery = restarted.reconcile_fill_cooldown_checkpoint_gap()
 
     assert requests == [
@@ -420,6 +424,7 @@ def test_gap_reconciliation_rejects_duplicate_trade_ids(
     restarted.rest = SimpleNamespace(
         get_account_trades=lambda **_kwargs: [duplicate, dict(duplicate)]
     )
+    restarted.reconciliation_client = restarted.rest
 
     with pytest.raises(RuntimeError, match="not strictly increasing"):
         restarted.reconcile_fill_cooldown_checkpoint_gap()
@@ -498,6 +503,7 @@ def test_fill_callback_crash_boundaries_recover_from_exchange_cursor(
         ]
 
     restarted.rest = SimpleNamespace(get_account_trades=account_trades)
+    restarted.reconciliation_client = restarted.rest
     recovery = restarted.reconcile_fill_cooldown_checkpoint_gap()
 
     assert recovery["recovered_fill_count"] == expected_recovered

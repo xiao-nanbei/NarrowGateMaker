@@ -380,6 +380,8 @@ def test_maker_cancel_rest_failure_emits_cancel_rejected() -> None:
     engine = object.__new__(MakerEngine)
     engine.cfg = Config()
     engine.rest = RejectingRest()
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine._order_context_lock = threading.RLock()
     engine._order_policy_context = {}
     engine._exact_opportunity_tape_path = ""

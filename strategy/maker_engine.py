@@ -30,15 +30,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, NoReturn, Optional, Tuple
 
-from execution.order_lifecycle import (
-    OrderLifecyclePhase,
-    TerminalPolicyRoute,
-    terminal_policy_route,
-)
-from execution.order_lifecycle_journal import (
-    OrderLifecycleJournalRow,
-    order_lifecycle_journal_payload,
-)
 from execution.exact_opportunity_tape import (
     ExactQuoteOpportunityTapeRow,
     empty_exact_opportunity_row,
@@ -49,6 +40,55 @@ from execution.exact_opportunity_tape_runtime import (
     build_exact_opportunity_runtime_identity,
     validate_exact_opportunity_runtime_config,
 )
+from execution.order_lifecycle import (
+    OrderLifecyclePhase,
+    TerminalPolicyRoute,
+    terminal_policy_route,
+)
+from execution.order_lifecycle_journal import (
+    OrderLifecycleJournalRow,
+    order_lifecycle_journal_payload,
+)
+from features.feature_dag import CROSS_VENUE_FAIR_PRICE_GRAPH, TEN_SECOND_CAUSAL_GRAPH
+from market_fusion import default_reference_symbol, normalize_symbol
+from models.replay.prospective_baseline_epoch import (
+    CPP_FEATURE_RECONSTRUCTION_CONTRACT,
+    PROSPECTIVE_INITIAL_STATE_COMPLETENESS_SCHEMA_VERSION,
+    PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS,
+    PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS,
+    PYTHON_FEATURE_STATE_CONTRACT,
+)
+from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
+from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
+from strategy.cross_venue_fair_price import (
+    FAIR_PRICE_SCHEMA_VERSION,
+    CrossVenueFairPriceState,
+    project_fair_center_shadow,
+)
+from strategy.dynamic_fill_hazard_model import (
+    DynamicFillHazardActionPolicy,
+    DynamicFillHazardBundle,
+    DynamicFillHazardShadowRuntime,
+)
+from strategy.external_adverse_quote_edge_guard import (
+    ExternalAdverseQuoteEdgeProjection,
+    project_external_adverse_quote_edge,
+)
+from strategy.fill_cooldown import (
+    RESET_OPPOSITE_FILL_OR_EXPIRY,
+    normalize_consecutive_reset_policy,
+    update_same_side_fill_units,
+)
+from strategy.fill_cooldown_checkpoint import (
+    FILL_COOLDOWN_WAL_MAGIC,
+    FILL_COOLDOWN_WAL_SLOT_BYTES,
+    FillCooldownCheckpointWAL,
+)
+from strategy.fill_selection_model import (
+    FillSelectionScoreEnsemble,
+    build_fill_selection_feature_row,
+    fill_selection_actionable,
+)
 from strategy.inventory_manager import InventoryManager, PositionState
 from strategy.model_contract import f03_direct_quote_action_contract
 from strategy.native_order_action import (
@@ -57,42 +97,18 @@ from strategy.native_order_action import (
     NativeOrderSideBoundary,
     quantity_from_lots,
 )
+from strategy.native_runtime import (
+    load_native_module,
+    validate_native_capabilities,
+    validate_replace_continuation,
+)
 from strategy.order_manager import (
     OrderManager,
     OrderOwnershipStatus,
     OrderState,
     Side,
 )
-from strategy.post_fill_quote_response import (
-    PostFillQuoteResponse,
-    PostFillQuoteResponseConfig,
-)
-from strategy.quote_core import (
-    DeferredNativeQuoteCoreResult,
-    QuotePrediction,
-    QuoteState,
-    SPREAD_CAP_COMPRESS,
-    SPREAD_CAP_PAUSE_EXPOSURE,
-    apply_p3_side_bbo_floor,
-    apply_final_spread_cap,
-    apply_final_spread_cap_preserve_side,
-    ber_inventory_role_for_target,
-    compose_ber_exposure_add_only_quote,
-    circuit_breaker_loss_threshold,
-    circuit_breaker_triggered,
-    compute_native_quote_policy_stage_live,
-    compute_quote_core_live,
-    compute_quote_core_live_deferred,
-    make_native_quote_policy_stage,
-    microprice_from_book,
-    quote_core_config_from_live_config,
-    quote_depth_from_book,
-    spread_cap_mode_code,
-    _exposure_increasing,
-)
 from strategy.policy_guards import (
-    CommonSidePolicyInput,
-    LocalExtremeGuardConfig,
     POLICY_REASON_ADVERSE,
     POLICY_REASON_BURST,
     POLICY_REASON_BUY_FILL_SELECTION,
@@ -108,70 +124,57 @@ from strategy.policy_guards import (
     POLICY_REASON_STALE_WARN,
     POLICY_REASON_SYNC_DEGRADED,
     POLICY_REASON_THIN_DEPTH,
+    AdaptiveAddCooldownConfig,
+    CommonSidePolicyInput,
+    LocalExtremeGuardConfig,
+    adaptive_add_cooldown_multiplier,
     apply_local_extreme_guard_context,
     evaluate_common_side_policy,
     local_extreme_rank,
 )
-from strategy.policy_guards import (
-    AdaptiveAddCooldownConfig,
-    adaptive_add_cooldown_multiplier,
+from strategy.post_fill_quote_response import (
+    PostFillQuoteResponse,
+    PostFillQuoteResponseConfig,
 )
-from strategy.fill_selection_model import (
-    FillSelectionScoreEnsemble,
-    build_fill_selection_feature_row,
-    fill_selection_actionable,
-)
-from strategy.fill_cooldown import (
-    RESET_OPPOSITE_FILL_OR_EXPIRY,
-    normalize_consecutive_reset_policy,
-    update_same_side_fill_units,
-)
-from strategy.fill_cooldown_checkpoint import (
-    FILL_COOLDOWN_WAL_MAGIC,
-    FILL_COOLDOWN_WAL_SLOT_BYTES,
-    FillCooldownCheckpointWAL,
-)
-from strategy.boolean_cooldown_live import LiveBooleanCooldownPolicy
-from strategy.boolean_cooldown_buy_e3 import LiveBuyE3CooldownPolicy
-from strategy.dynamic_fill_hazard_model import (
-    DynamicFillHazardActionPolicy,
-    DynamicFillHazardBundle,
-    DynamicFillHazardShadowRuntime,
-)
-from strategy.cross_venue_fair_price import (
-    CrossVenueFairPriceState,
-    FAIR_PRICE_SCHEMA_VERSION,
-    project_fair_center_shadow,
-)
-from strategy.external_adverse_quote_edge_guard import (
-    ExternalAdverseQuoteEdgeProjection,
-    project_external_adverse_quote_edge,
-)
-from features.feature_dag import CROSS_VENUE_FAIR_PRICE_GRAPH, TEN_SECOND_CAUSAL_GRAPH
-from strategy.signal import (
-    Prediction,
-    QuoteDecisionSnapshot,
-    QuotePostOnlyGuard,
-    SIGNAL_COMPUTE_PHASE_FIELDS,
-    SignalEngine,
-)
-from strategy.state_conditioned_quote_policy import (
-    StateConditionedQuotePolicy,
-    apply_local_add_action,
-    inventory_role_for_quote,
+from strategy.quote_core import (
+    SPREAD_CAP_COMPRESS,
+    SPREAD_CAP_PAUSE_EXPOSURE,
+    DeferredNativeQuoteCoreResult,
+    QuotePrediction,
+    QuoteState,
+    _exposure_increasing,
+    apply_final_spread_cap,
+    apply_final_spread_cap_preserve_side,
+    apply_p3_side_bbo_floor,
+    ber_inventory_role_for_target,
+    circuit_breaker_loss_threshold,
+    circuit_breaker_triggered,
+    compose_ber_exposure_add_only_quote,
+    compute_native_quote_policy_stage_live,
+    compute_quote_core_live,
+    compute_quote_core_live_deferred,
+    make_native_quote_policy_stage,
+    microprice_from_book,
+    quote_core_config_from_live_config,
+    quote_depth_from_book,
+    spread_cap_mode_code,
 )
 from strategy.replay_controls import (
     ConsecutiveLossCooldown,
     cap_exposure_qty_by_position_value,
     hard_risk_reason,
 )
-from market_fusion import default_reference_symbol, normalize_symbol
-from models.replay.prospective_baseline_epoch import (
-    CPP_FEATURE_RECONSTRUCTION_CONTRACT,
-    PROSPECTIVE_INITIAL_STATE_COMPLETENESS_SCHEMA_VERSION,
-    PROSPECTIVE_INITIAL_STATE_DOMAIN_SCHEMAS,
-    PROSPECTIVE_INITIAL_STATE_REQUIRED_DOMAINS,
-    PYTHON_FEATURE_STATE_CONTRACT,
+from strategy.signal import (
+    SIGNAL_COMPUTE_PHASE_FIELDS,
+    Prediction,
+    QuoteDecisionSnapshot,
+    QuotePostOnlyGuard,
+    SignalEngine,
+)
+from strategy.state_conditioned_quote_policy import (
+    StateConditionedQuotePolicy,
+    apply_local_add_action,
+    inventory_role_for_quote,
 )
 
 try:
@@ -835,26 +838,7 @@ _fill_model_loaded = False
 _buy_fill_selection_model = None
 _buy_fill_selection_model_path = None
 _live_routing_cpp = None
-_live_routing_cpp_failed = False
 _live_order_action_plan_cpp = None
-
-
-_NATIVE_REPLACE_CONTINUATION_METHODS = (
-    "arm",
-    "publish",
-    "clear_exact",
-    "clear_side",
-    "clear_unready",
-    "take_ready",
-    "finalize_decision",
-    "drop_in_flight",
-    "clear_all",
-    "telemetry",
-)
-
-
-def _cpp_strict() -> bool:
-    return os.environ.get("NARROWGATE_CPP_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _live_routing_cpp_enabled() -> bool:
@@ -904,61 +888,28 @@ def _build_native_replace_continuation_state():
     if not _native_replace_continuation_enabled():
         return None, None
     try:
-        import narrowgate_cpp  # type: ignore
+        narrowgate_cpp = load_native_module()
     except Exception as exc:
         raise RuntimeError(
             "NARROWGATE_CPP_REPLACE_CONTINUATION=1 requires narrowgate_cpp"
         ) from exc
 
-    required_module_members = (
-        "NativeReplaceContinuationState",
-        "ReplaceContinuationEventKind",
-        "Side",
-    )
-    missing = [
-        name for name in required_module_members if not hasattr(narrowgate_cpp, name)
-    ]
-    if missing:
-        raise RuntimeError(
-            "native replacement-continuation ABI is incomplete: "
-            + ", ".join(missing)
-        )
-    native_state = narrowgate_cpp.NativeReplaceContinuationState(True)
-    missing_methods = [
-        name
-        for name in _NATIVE_REPLACE_CONTINUATION_METHODS
-        if not callable(getattr(native_state, name, None))
-    ]
-    if missing_methods:
-        raise RuntimeError(
-            "native replacement-continuation ABI is incomplete: "
-            + ", ".join(missing_methods)
-        )
-    native_side = narrowgate_cpp.Side
-    if not hasattr(native_side, "Buy") or not hasattr(native_side, "Sell"):
-        raise RuntimeError("native replacement-continuation ABI has no BUY/SELL sides")
+    native_state = validate_replace_continuation(narrowgate_cpp)
     return narrowgate_cpp, native_state
 
 
 def _get_live_routing_cpp():
-    global _live_routing_cpp, _live_routing_cpp_failed
+    global _live_routing_cpp
     if not _live_routing_cpp_enabled():
         return None
     if _live_routing_cpp is not None:
         return _live_routing_cpp
-    if _live_routing_cpp_failed and not _cpp_strict():
-        return None
-    try:
-        import narrowgate_cpp  # type: ignore
-        if not hasattr(narrowgate_cpp, "compute_live_routing_decision"):
-            raise RuntimeError("narrowgate_cpp missing compute_live_routing_decision")
-        _live_routing_cpp = narrowgate_cpp
-        return _live_routing_cpp
-    except Exception:
-        _live_routing_cpp_failed = True
-        if _cpp_strict():
-            raise
-        return None
+    narrowgate_cpp = load_native_module()
+    validate_native_capabilities(
+        narrowgate_cpp, symbols=("compute_live_routing_decision",)
+    )
+    _live_routing_cpp = narrowgate_cpp
+    return _live_routing_cpp
 
 
 def _get_live_order_action_plan_cpp():
@@ -976,7 +927,7 @@ def _get_live_order_action_plan_cpp():
     if _live_order_action_plan_cpp is not None:
         return _live_order_action_plan_cpp
     try:
-        import narrowgate_cpp  # type: ignore
+        narrowgate_cpp = load_native_module()
     except Exception as exc:
         raise RuntimeError(
             "NARROWGATE_CPP_ORDER_ACTION_PLAN=1 requires narrowgate_cpp"
@@ -1007,12 +958,7 @@ def _get_live_order_action_plan_cpp():
             "LIVE_FINAL_ORDER_PLAN_BOUNDARY_ABI",
             "LIVE_FINAL_ORDER_BOUNDARY_FLAG_P3_SIDE_BBO_FLOOR",
         )
-    missing = [name for name in required if not hasattr(narrowgate_cpp, name)]
-    if missing:
-        raise RuntimeError(
-            "native order-action planner ABI is incomplete: "
-            + ", ".join(missing)
-        )
+    validate_native_capabilities(narrowgate_cpp, symbols=required)
     if not bool(narrowgate_cpp.NATIVE_LIVE_ORDER_ACTION_PLAN_AVAILABLE):
         raise RuntimeError("native order-action planner capability is unavailable")
     if final_stage_enabled and not bool(
@@ -1568,9 +1514,8 @@ class MakerEngine:
         self.cfg = cfg
         # Keep ``rest`` as a compatibility alias for older integrations and
         # tests, while giving the hot order path and cold reconciliation path
-        # independent replacement boundaries.  The current runtime passes the
-        # same UMFutures instance for all three names, so this split is behavior
-        # preserving until an admitted native transport is selected.
+        # independent replacement boundaries. Legacy callers are normalized
+        # here once; production supplies independent hot and cold transports.
         self.rest = rest_client
         if order_gateway is None:
             raise ValueError("order_gateway cannot be None when provided explicitly")
@@ -1748,7 +1693,7 @@ class MakerEngine:
         ) = _load_dynamic_fill_hazard_shadow(cfg)
         self._state_conditioned_policy_campaigns: set[int] = set()
         self._event_source = None
-        self._ws_handler = None
+        self._admitted_user_stream_generation = 0
         self._order_policy_context: Dict[str, dict] = {}
         self._last_native_quote_publication: _DeferredLiveQuotePublication | None = None
         self._last_quote_context: Dict[str, dict[str, Any]] = {}
@@ -2420,8 +2365,6 @@ class MakerEngine:
         """Register the admitted market/private event source transport."""
 
         self._event_source = event_source
-        # Compatibility alias for old fixtures and the current WS transport.
-        self._ws_handler = event_source
 
     def set_admitted_user_stream_generation(self, generation: int) -> None:
         """Bind normal maker submissions to one connected private-stream era."""
@@ -2436,9 +2379,7 @@ class MakerEngine:
             getattr(self, "_admitted_user_stream_generation", 0) or 0
         )
         if expected <= 0:
-            # Narrow fixtures and offline consumers do not install a live
-            # private-stream authority. Production binds it before first tick.
-            return True
+            return False
         event_source = self._active_event_source()
         snapshotter = getattr(event_source, "user_event_safety_snapshot", None)
         if not callable(snapshotter):
@@ -2472,23 +2413,12 @@ class MakerEngine:
         self.set_event_source(ws_handler)
 
     def _active_event_source(self):
-        """Return the configured event source, including legacy fixtures."""
+        """Return the event source normalized at construction/registration."""
 
-        event_source = getattr(self, "_event_source", None)
-        if event_source is not None:
-            return event_source
-        return getattr(self, "_ws_handler", None)
+        return self._event_source
 
     def _order_transport(self):
-        """Return the admitted latency-sensitive order transport.
-
-        The fallback keeps narrow unit fixtures that construct ``MakerEngine``
-        with ``__new__`` compatible while the production constructor always
-        binds this role explicitly.
-        """
-
-        if not hasattr(self, "order_gateway"):
-            return self.rest
+        """Return the admitted latency-sensitive order transport."""
         client = self.order_gateway
         if client is None:
             raise RuntimeError("order_gateway is unavailable")
@@ -2497,11 +2427,7 @@ class MakerEngine:
     def _drain_order_completion_callbacks(self) -> None:
         """Finish admitted async order callbacks before final reconciliation."""
 
-        transport = getattr(self, "order_gateway", None)
-        if transport is None:
-            transport = getattr(self, "rest", None)
-        if transport is None:
-            return
+        transport = self._order_transport()
         drain = getattr(
             transport,
             "drain_async_order_completions",
@@ -2546,8 +2472,6 @@ class MakerEngine:
     def _reconciliation_transport(self):
         """Return the admitted low-frequency account/query transport."""
 
-        if not hasattr(self, "reconciliation_client"):
-            return self.rest
         client = self.reconciliation_client
         if client is None:
             raise RuntimeError("reconciliation_client is unavailable")
@@ -2556,8 +2480,6 @@ class MakerEngine:
     def _background_reconciliation_transport(self):
         """Return the isolated transport used only by the periodic worker."""
 
-        if not hasattr(self, "background_reconciliation_client"):
-            return self._reconciliation_transport()
         client = self.background_reconciliation_client
         if client is None:
             raise RuntimeError("background_reconciliation_client is unavailable")
@@ -8546,85 +8468,87 @@ class MakerEngine:
         cpp_route = _get_live_routing_cpp()
         cpp_routing_used = False
         if cpp_route is not None:
-            try:
-                max_spread = float(
-                    self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
-                )
-                if max_spread <= 0.0:
-                    cap_bps = float(getattr(cfg.strategy, "max_spread_bps", 0.0) or 0.0)
-                    max_spread = mid * cap_bps / 10000.0 if cap_bps > 0.0 and mid > 0.0 else 0.0
-                # Python already applies the configured cap action above. The
-                # compact C++ router only understands inward compression, so a
-                # non-compress A/B must pass zero here to avoid reintroducing it.
-                if cap_mode != SPREAD_CAP_COMPRESS:
-                    max_spread = 0.0
-                pre_cpp_post_policy_cap_hit = post_policy_cap_hit
-                now_ts = time.time()
-                routed = cpp_route.compute_live_routing_decision(
-                    (
-                        mid,
-                        q,
-                        base_bid_price,
-                        base_ask_price,
-                        best_bid,
-                        best_ask,
-                        cfg.tick_size,
-                        lot,
-                        min_qty,
-                        min_notional,
-                        base_size,
-                        cfg.strategy.max_inventory,
-                        eta,
-                        bool(symmetric_size),
-                        cfg.strategy.requote_threshold_bps,
-                        max_spread,
-                        bool(bid_alive),
-                        float(bid_order.price if bid_alive and bid_order else 0.0),
-                        max(0.0, (now_ts - bid_order.create_time) * 1000.0) if bid_alive and bid_order else 0.0,
-                        bool(ask_alive),
-                        float(ask_order.price if ask_alive and ask_order else 0.0),
-                        max(0.0, (now_ts - ask_order.create_time) * 1000.0) if ask_alive and ask_order else 0.0,
-                    ),
-                    (
-                        bid_policy.allow_post,
-                        bid_policy.allow_exposure_increase,
-                        bid_policy.spread_mult,
-                        bid_policy.size_mult,
-                        bid_policy.order_ttl_ms,
-                    ),
-                    (
-                        ask_policy.allow_post,
-                        ask_policy.allow_exposure_increase,
-                        ask_policy.spread_mult,
-                        ask_policy.size_mult,
-                        ask_policy.order_ttl_ms,
-                    ),
-                )
+            max_spread = float(
+                self._last_quote_diagnostic_value("max_spread", 0.0) or 0.0
+            )
+            if max_spread <= 0.0:
+                cap_bps = float(getattr(cfg.strategy, "max_spread_bps", 0.0) or 0.0)
+                max_spread = mid * cap_bps / 10000.0 if cap_bps > 0.0 and mid > 0.0 else 0.0
+            # Python already applies the configured cap action above. The
+            # compact C++ router only understands inward compression, so a
+            # non-compress A/B must pass zero here to avoid reintroducing it.
+            if cap_mode != SPREAD_CAP_COMPRESS:
+                max_spread = 0.0
+            pre_cpp_post_policy_cap_hit = post_policy_cap_hit
+            now_ts = time.time()
+            routed = cpp_route.compute_live_routing_decision(
                 (
-                    bid_price,
-                    ask_price,
-                    post_policy_cap_hit,
-                    can_bid_after_inventory,
-                    can_ask_after_inventory,
-                    can_bid,
-                    can_ask,
-                    bid_needs_update,
-                    ask_needs_update,
-                    bid_size_pre,
-                    ask_size_pre,
-                ) = routed
-                post_policy_cap_hit = bool(post_policy_cap_hit or pre_cpp_post_policy_cap_hit)
-                bid_force_update = bid_force_update or self._policy_order_ttl_expired(bid_policy, bid_order)
-                ask_force_update = ask_force_update or self._policy_order_ttl_expired(ask_policy, ask_order)
-                cpp_routing_used = True
-                self._last_cpp_routing_used = 1
-            except Exception as exc:
-                if _cpp_strict():
-                    raise
-                logger.warning("C++ live routing disabled after error: %s", exc)
-                global _live_routing_cpp_failed
-                _live_routing_cpp_failed = True
-                cpp_route = None
+                    mid,
+                    q,
+                    base_bid_price,
+                    base_ask_price,
+                    best_bid,
+                    best_ask,
+                    cfg.tick_size,
+                    lot,
+                    min_qty,
+                    min_notional,
+                    base_size,
+                    cfg.strategy.max_inventory,
+                    eta,
+                    bool(symmetric_size),
+                    cfg.strategy.requote_threshold_bps,
+                    max_spread,
+                    bool(bid_alive),
+                    float(bid_order.price if bid_alive and bid_order else 0.0),
+                    (
+                        max(0.0, (now_ts - bid_order.create_time) * 1000.0)
+                        if bid_alive and bid_order else 0.0
+                    ),
+                    bool(ask_alive),
+                    float(ask_order.price if ask_alive and ask_order else 0.0),
+                    (
+                        max(0.0, (now_ts - ask_order.create_time) * 1000.0)
+                        if ask_alive and ask_order else 0.0
+                    ),
+                ),
+                (
+                    bid_policy.allow_post,
+                    bid_policy.allow_exposure_increase,
+                    bid_policy.spread_mult,
+                    bid_policy.size_mult,
+                    bid_policy.order_ttl_ms,
+                ),
+                (
+                    ask_policy.allow_post,
+                    ask_policy.allow_exposure_increase,
+                    ask_policy.spread_mult,
+                    ask_policy.size_mult,
+                    ask_policy.order_ttl_ms,
+                ),
+            )
+            (
+                bid_price,
+                ask_price,
+                post_policy_cap_hit,
+                can_bid_after_inventory,
+                can_ask_after_inventory,
+                can_bid,
+                can_ask,
+                bid_needs_update,
+                ask_needs_update,
+                bid_size_pre,
+                ask_size_pre,
+            ) = routed
+            post_policy_cap_hit = bool(post_policy_cap_hit or pre_cpp_post_policy_cap_hit)
+            bid_force_update = bid_force_update or self._policy_order_ttl_expired(
+                bid_policy, bid_order
+            )
+            ask_force_update = ask_force_update or self._policy_order_ttl_expired(
+                ask_policy, ask_order
+            )
+            cpp_routing_used = True
+            self._last_cpp_routing_used = 1
 
         if not cpp_routing_used:
             bid_size_pre = base_size
@@ -11476,23 +11400,11 @@ class MakerEngine:
         return True
 
     def _async_completion_lock(self, side: Side) -> threading.RLock:
-        """Return the completion lock, including narrow ``__new__`` fixtures."""
+        """Return the completion lock bound for the configured lane mode."""
 
-        api = getattr(getattr(self, "cfg", None), "api", None)
-        if bool(getattr(api, "cross_side_order_lanes_enabled", False)):
-            locks = getattr(self, "_async_order_completion_locks", None)
-            if locks is None:
-                locks = {
-                    Side.BUY: threading.RLock(),
-                    Side.SELL: threading.RLock(),
-                }
-                self._async_order_completion_locks = locks
-            return locks[side]
-        lock = getattr(self, "_async_order_completion_lock", None)
-        if lock is None:
-            lock = threading.RLock()
-            self._async_order_completion_lock = lock
-        return lock
+        if self.cfg.api.cross_side_order_lanes_enabled:
+            return self._async_order_completion_locks[side]
+        return self._async_order_completion_lock
 
     def _complete_limit_order_submit_response(
         self,

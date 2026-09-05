@@ -17,10 +17,11 @@ import os
 import weakref
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from strategy.native_runtime import load_native_module, validate_native_capabilities
 
 SPREAD_CAP_COMPRESS = 0
 SPREAD_CAP_PAUSE_EXPOSURE = 1
@@ -2529,80 +2530,24 @@ def _cpp_quote_core_enabled(cfg: QuoteCoreConfig) -> bool:
     return True
 
 
-def _cpp_module_points_to_repo(repo_root: Path) -> bool:
-    try:
-        import json
-        from importlib import metadata as importlib_metadata
-        from urllib.parse import unquote, urlparse
-    except Exception:
-        return False
-
-    # The GitHub repo name is intentionally public-facing (`NarrowGateMaker`),
-    # while the private research directory and C++ package historically used
-    # `NarrowGate_BTCUSDC` / `narrowgate-btcusdc-cpp`.  Strict mode should prove
-    # that the editable C++ extension points at this checkout, not that the repo
-    # folder name matches the Python distribution name.
-    dist_names = {
-        f"{repo_root.name.lower().replace('_', '-')}-cpp",
-        "narrowgate-btcusdc-cpp",
-        "narrowgate-cpp",
-    }
-    repo_root = repo_root.resolve()
-    for dist_name in dist_names:
-        try:
-            direct_url = importlib_metadata.distribution(dist_name).read_text("direct_url.json")
-            if not direct_url:
-                continue
-            url = json.loads(direct_url).get("url", "")
-            if not url:
-                continue
-            parsed = urlparse(url)
-            raw_path = unquote(parsed.path if parsed.scheme == "file" else url)
-            project_path = Path(raw_path).resolve()
-        except Exception:
-            continue
-        if project_path == repo_root or project_path == (repo_root / "cpp"):
-            return True
-    return False
-
-
 def _load_cpp_quote_core():
     global _CPP_QUOTE_CORE, _CPP_QUOTE_CORE_IMPORT_FAILED
     if _CPP_QUOTE_CORE is not None:
         return _CPP_QUOTE_CORE
-    if _CPP_QUOTE_CORE_IMPORT_FAILED:
-        return None
-    try:
-        import narrowgate_cpp  # type: ignore
-    except Exception:
-        _CPP_QUOTE_CORE_IMPORT_FAILED = True
-        return None
-    expected_token = os.environ.get("NARROWGATE_CPP_EXPECT_MODULE_TOKEN")
     strict = _cpp_strict_enabled()
-    module_path = str(Path(getattr(narrowgate_cpp, "__file__", "")).resolve()).lower()
-    repo_root = Path(__file__).resolve().parents[1]
-    repo_token = repo_root.name.lower()
-    token_ok = True
-    if expected_token:
-        token_ok = expected_token.lower() in module_path
-    elif strict:
-        token_ok = (
-            repo_token in module_path
-            or repo_token.replace("narrowgate_", "") in module_path
-            or _cpp_module_points_to_repo(repo_root)
-        )
-    if not token_ok:
-        msg = (
-            "Imported narrowgate_cpp appears to belong to a different build: "
-            f"{getattr(narrowgate_cpp, '__file__', '<unknown>')}. "
-            "Set PYTHONPATH to the current repo build directory or set "
-            "NARROWGATE_CPP_EXPECT_MODULE_TOKEN deliberately."
-        )
-        if strict or expected_token:
-            raise RuntimeError(msg)
+    if _CPP_QUOTE_CORE_IMPORT_FAILED and not strict:
+        return None
+    module = load_native_module(optional=not strict)
+    if module is None:
         _CPP_QUOTE_CORE_IMPORT_FAILED = True
         return None
-    _CPP_QUOTE_CORE = narrowgate_cpp
+    validate_native_capabilities(
+        module,
+        symbols=("compute_quote_core_live", "compute_quote_core_batch_depth"),
+        fields=QUOTE_CORE_CPP_ABI_FIELDS,
+    )
+    _CPP_QUOTE_CORE = module
+    _CPP_QUOTE_CORE_IMPORT_FAILED = False
     return _CPP_QUOTE_CORE
 
 
@@ -2613,22 +2558,24 @@ def _copy_attrs(
     *,
     required: Sequence[str] = (),
 ) -> Any:
-    missing = [name for name in required if not hasattr(dst, name)]
-    if missing:
+    mandatory = tuple(dict.fromkeys((*names, *required)))
+    missing_src = [name for name in mandatory if not hasattr(src, name)]
+    missing_dst = [name for name in mandatory if not hasattr(dst, name)]
+    if missing_src or missing_dst:
         raise RuntimeError(
-            "narrowgate_cpp QuoteCoreConfig ABI missing fields: "
-            + ", ".join(missing)
+            "narrowgate_cpp ABI missing fields: "
+            f"source={missing_src}, destination={missing_dst}"
         )
-    for name in names:
-        if hasattr(dst, name) and hasattr(src, name):
-            setattr(dst, name, getattr(src, name))
+    values = tuple(getattr(src, name) for name in names)
+    for name, value in zip(names, values, strict=True):
+        setattr(dst, name, value)
     return dst
 
 
 def _cached_cpp_config(cpp: Any, cfg: QuoteCoreConfig) -> Any:
     """Cache the immutable native config used by the scalar live path."""
     global _CPP_CFG_CACHE_KEY, _CPP_CFG_CACHE_REF, _CPP_CFG_CACHE_VALUE
-    key = id(cfg)
+    key = (id(cpp), id(cfg))
     cached = _CPP_CFG_CACHE_REF() if _CPP_CFG_CACHE_REF is not None else None
     if key == _CPP_CFG_CACHE_KEY and cached is cfg and _CPP_CFG_CACHE_VALUE is not None:
         return _CPP_CFG_CACHE_VALUE
@@ -2695,6 +2642,12 @@ _CPP_STATE_FIELDS = (
 )
 
 _CPP_PRED_FIELDS = ("dir_10s", "vol_10s", "ret_10s", "tox_bid", "tox_ask")
+
+QUOTE_CORE_CPP_ABI_FIELDS = {
+    "QuoteCoreConfig": _CPP_CFG_FIELDS,
+    "QuoteState": _CPP_STATE_FIELDS,
+    "QuotePrediction": _CPP_PRED_FIELDS,
+}
 
 _DEFERRED_NATIVE_RESULT_FLOAT_FIELDS = (
     "ask_price",
@@ -2871,23 +2824,13 @@ def _call_cpp_quote_core(
     pred_tox_bid = _float(_get(pred, "tox_bid", _get(pred, "tox_bid_10s", 0.5)), 0.5)
     pred_tox_ask = _float(_get(pred, "tox_ask", _get(pred, "tox_ask_10s", 0.5)), 0.5)
     cpp_cfg = _cached_cpp_config(cpp, cfg)
-    if hasattr(cpp, "compute_quote_core_live"):
-        result = cpp.compute_quote_core_live(
-            tuple(getattr(state, name) for name in _CPP_STATE_FIELDS),
-            cpp_cfg,
-            (pred_dir, pred_vol, pred_ret, pred_tox_bid, pred_tox_ask),
-            depth.bids if depth is not None else (),
-            depth.asks if depth is not None else (),
-        )
-    else:
-        cpp_state = _copy_attrs(state, cpp.QuoteState(), _CPP_STATE_FIELDS)
-        cpp_pred = cpp.QuotePrediction()
-        cpp_pred.dir_10s = pred_dir
-        cpp_pred.vol_10s = pred_vol
-        cpp_pred.ret_10s = pred_ret
-        cpp_pred.tox_bid = pred_tox_bid
-        cpp_pred.tox_ask = pred_tox_ask
-        result = cpp.compute_quote_core(cpp_state, cpp_cfg, cpp_pred, _to_cpp_depth(cpp, depth))
+    result = cpp.compute_quote_core_live(
+        tuple(getattr(state, name) for name in _CPP_STATE_FIELDS),
+        cpp_cfg,
+        (pred_dir, pred_vol, pred_ret, pred_tox_bid, pred_tox_ask),
+        depth.bids if depth is not None else (),
+        depth.asks if depth is not None else (),
+    )
     return result, (pred_dir, pred_vol, pred_ret, pred_tox_bid, pred_tox_ask)
 
 
@@ -3426,8 +3369,6 @@ def compute_quote_core_batch_depth_cpp(
     cpp = _load_cpp_quote_core()
     if cpp is None:
         raise RuntimeError("narrowgate_cpp is not available")
-    if not hasattr(cpp, "compute_quote_core_batch_depth"):
-        raise RuntimeError("narrowgate_cpp.compute_quote_core_batch_depth is not available")
 
     def arr(values: Any, name: str, default: float | None = None) -> np.ndarray:
         if values is None:
@@ -3462,38 +3403,33 @@ def compute_quote_core_batch_depth_cpp(
         required=QUOTE_CORE_UNIT_ABI_FIELDS,
     )
 
-    try:
-        out = cpp.compute_quote_core_batch_depth(
-            mid_arr,
-            arr(inventory, "inventory"),
-            arr(sigma_sq, "sigma_sq"),
-            arr(trade_intensity, "trade_intensity"),
-            arr(best_bid, "best_bid"),
-            arr(best_ask, "best_ask"),
-            arr(dir_10s, "dir_10s", 0.5),
-            arr(vol_10s, "vol_10s"),
-            arr(ret_10s, "ret_10s"),
-            arr(tox_bid, "tox_bid", 0.5),
-            arr(tox_ask, "tox_ask", 0.5),
-            arr(mo_ema_bid, "mo_ema_bid", 0.0),
-            arr(mo_ema_ask, "mo_ema_ask", 0.0),
-            arr(mo_ema_all, "mo_ema_all", 0.0),
-            arr(mo_ref, "mo_ref", 50.0),
-            arr(ber_active, "ber_active", 0.0),
-            arr(position_open, "position_open", 0.0),
-            arr(hold_time_s, "hold_time_s", 0.0),
-            arr(unrealized_pnl, "unrealized_pnl", 0.0),
-            mat(l2_bid_px, "l2_bid_px"),
-            mat(l2_bid_qty, "l2_bid_qty"),
-            mat(l2_ask_px, "l2_ask_px"),
-            mat(l2_ask_qty, "l2_ask_qty"),
-            cpp_cfg,
-            max(1, int(workers)),
-        )
-    except Exception:
-        if strict or _cpp_strict_enabled():
-            raise
-        raise
+    out = cpp.compute_quote_core_batch_depth(
+        mid_arr,
+        arr(inventory, "inventory"),
+        arr(sigma_sq, "sigma_sq"),
+        arr(trade_intensity, "trade_intensity"),
+        arr(best_bid, "best_bid"),
+        arr(best_ask, "best_ask"),
+        arr(dir_10s, "dir_10s", 0.5),
+        arr(vol_10s, "vol_10s"),
+        arr(ret_10s, "ret_10s"),
+        arr(tox_bid, "tox_bid", 0.5),
+        arr(tox_ask, "tox_ask", 0.5),
+        arr(mo_ema_bid, "mo_ema_bid", 0.0),
+        arr(mo_ema_ask, "mo_ema_ask", 0.0),
+        arr(mo_ema_all, "mo_ema_all", 0.0),
+        arr(mo_ref, "mo_ref", 50.0),
+        arr(ber_active, "ber_active", 0.0),
+        arr(position_open, "position_open", 0.0),
+        arr(hold_time_s, "hold_time_s", 0.0),
+        arr(unrealized_pnl, "unrealized_pnl", 0.0),
+        mat(l2_bid_px, "l2_bid_px"),
+        mat(l2_bid_qty, "l2_bid_qty"),
+        mat(l2_ask_px, "l2_ask_px"),
+        mat(l2_ask_qty, "l2_ask_qty"),
+        cpp_cfg,
+        max(1, int(workers)),
+    )
 
     return {str(key): np.asarray(value) for key, value in dict(out).items()}
 
@@ -3506,16 +3442,12 @@ def compute_quote_core(
 ) -> QuoteCoreResult:
     """Compute quote core, optionally delegated to the C++ extension.
 
-    The default path remains the exact Python implementation.  Set
-    `NARROWGATE_CPP_QUOTE_CORE=1` when running targeted benchmarks or controlled
-    experiments that should use the pybind11 engine.
+    Select Python or native before calculation.  A non-strict caller may use
+    Python when the extension is not installed; native calculation failures
+    always propagate and never trigger a second backend.
     """
-    if _cpp_quote_core_enabled(cfg):
-        try:
-            return _compute_quote_core_cpp(state, cfg, pred, depth)
-        except Exception:
-            if os.environ.get("NARROWGATE_CPP_STRICT", "").strip().lower() in {"1", "true", "yes", "on"}:
-                raise
+    if _cpp_quote_core_enabled(cfg) and _load_cpp_quote_core() is not None:
+        return _compute_quote_core_cpp(state, cfg, pred, depth)
     return _compute_quote_core_py(state, cfg, pred, depth)
 
 
@@ -3528,13 +3460,14 @@ def compute_quote_core_live(
     require_full_context: bool = False,
 ) -> QuoteCoreResult:
     """Live wrapper with compact C++ context unless a model needs all fields."""
-    if _cpp_quote_core_enabled(cfg) and not require_full_context:
-        try:
-            return _compute_quote_core_cpp_compact(state, cfg, pred, depth)
-        except Exception:
-            if _cpp_strict_enabled():
-                raise
-    return compute_quote_core(state, cfg, pred, depth)
+    if _cpp_quote_core_enabled(cfg) and _load_cpp_quote_core() is not None:
+        converter = (
+            _compute_quote_core_cpp
+            if require_full_context
+            else _compute_quote_core_cpp_compact
+        )
+        return converter(state, cfg, pred, depth)
+    return _compute_quote_core_py(state, cfg, pred, depth)
 
 
 def compute_quote_core_live_deferred(
@@ -3555,7 +3488,7 @@ def compute_quote_core_live_deferred(
 
     # Validate the complete compact ABI once per native result type before the
     # deferred object can reach order routing.  Use this only for the fail-fast
-    # native profile; non-strict mode retains the eager Python-fallback boundary.
+    # native profile; non-strict mode retains the eager public result shape.
     if (
         _cpp_quote_core_enabled(cfg)
         and _cpp_strict_enabled()

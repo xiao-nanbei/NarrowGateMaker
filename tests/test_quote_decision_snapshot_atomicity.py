@@ -241,6 +241,8 @@ def test_cancel_all_does_not_repeat_rest_after_cancel_is_pending() -> None:
     engine.rest = SimpleNamespace(
         cancel_open_orders=lambda **kwargs: rest_calls.append(kwargs)
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine._prune_terminal_side_order_reference = lambda _side: None
     engine._record_exact_order_event = lambda *_args, **_kwargs: None
     engine._record_perf_rest_latency = lambda *_args, **_kwargs: None

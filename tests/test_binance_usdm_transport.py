@@ -1093,7 +1093,8 @@ def test_async_order_lanes_are_bounded_fifo_without_cross_side_hol():
     gateway.close()
 
 
-def test_async_response_isolation_preserves_global_cross_side_fifo_by_default():
+@pytest.mark.parametrize("transport", ["rest", "websocket_api"])
+def test_async_response_isolation_preserves_global_cross_side_fifo_by_default(transport):
     release_buy = threading.Event()
     buy_started = threading.Event()
     calls = []
@@ -1107,25 +1108,49 @@ def test_async_response_isolation_preserves_global_cross_side_fifo_by_default():
             return {"status": "NEW"}
 
     client = Client()
+    websocket = None
+    if transport == "websocket_api":
+        def respond(request):
+            return {
+                "id": request["id"],
+                "status": 200,
+                "result": client.new_order(**request["params"]),
+            }
+
+        websocket = create_binance_usdm_websocket_order_gateway(
+            key="key",
+            secret="secret",
+            config=_enabled_config(),
+            connection_factory=_ConnectionFactory([_FakeConnection(respond)]),
+        )
     gateway = BinanceUsdMOrderGateway(
         rest_order_client=client,
+        websocket_order_gateway=websocket,
         async_order_lanes_enabled=True,
+        cross_side_order_lanes_enabled=False,
     )
-    buy = gateway.new_order_async(
-        symbol="BTCUSDC", side="BUY", newClientOrderId="buy-first"
-    )
-    assert buy_started.wait(1.0)
-    sell = gateway.new_order_async(
-        symbol="BTCUSDC", side="SELL", newClientOrderId="sell-second"
-    )
-    time.sleep(0.01)
-    assert calls == ["buy-first"]
-    release_buy.set()
-    assert buy.result(timeout=1.0)["status"] == "NEW"
-    assert sell.result(timeout=1.0)["status"] == "NEW"
-    assert calls == ["buy-first", "sell-second"]
-    assert set(gateway.health_snapshot()["async_order_lanes"]) == {"GLOBAL"}
-    gateway.close()
+    try:
+        buy = gateway.new_order_async(
+            symbol="BTCUSDC", side="BUY", newClientOrderId="buy-first"
+        )
+        assert buy_started.wait(1.0)
+        sell = gateway.new_order_async(
+            symbol="BTCUSDC", side="SELL", newClientOrderId="sell-second"
+        )
+        # The caller regains control while the first response is blocked.
+        # Changing protocol must not silently add another in-flight write.
+        assert not buy.done()
+        assert not sell.done()
+        time.sleep(0.01)
+        assert calls == ["buy-first"]
+        release_buy.set()
+        assert buy.result(timeout=1.0)["status"] == "NEW"
+        assert sell.result(timeout=1.0)["status"] == "NEW"
+        assert calls == ["buy-first", "sell-second"]
+        assert set(gateway.health_snapshot()["async_order_lanes"]) == {"GLOBAL"}
+    finally:
+        release_buy.set()
+        gateway.close()
 
 
 def test_cross_side_lanes_require_async_response_isolation():

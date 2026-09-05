@@ -1,5 +1,7 @@
 import math
 from collections import deque
+from dataclasses import asdict
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -10,6 +12,7 @@ from features.feature_engineer import (
     compute_tick_momentum,
     resample_to_10s,
 )
+from strategy import signal as signal_module
 from strategy.signal import (
     FEATURE_NAMES_BASE,
     Bar1s,
@@ -18,6 +21,60 @@ from strategy.signal import (
 )
 
 BASE_MS = 1_000_000
+
+
+@pytest.mark.parametrize("missing", [None, *Bar1s.__dataclass_fields__])
+def test_native_bar_requires_every_declared_field(missing):
+    values = asdict(_bar(1))
+    values["ts_ms"] = values.pop("ts")
+    if missing is None:
+        values.clear()
+    else:
+        values.pop("ts_ms" if missing == "ts" else missing)
+    with pytest.raises(AttributeError):
+        SignalEngine._bar_from_cpp(SimpleNamespace(**values))
+
+
+def test_native_bar_preserves_complete_values():
+    expected = _bar(1)
+    values = asdict(expected)
+    values["ts_ms"] = values.pop("ts")
+    assert SignalEngine._bar_from_cpp(SimpleNamespace(**values)) == expected
+
+
+def test_native_signal_loader_rejects_incomplete_module_without_fallback(monkeypatch):
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", "0")
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "1")
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_MODULE", None)
+    monkeypatch.setattr(signal_module, "_CPP_SIGNAL_IMPORT_FAILED", False)
+    monkeypatch.setattr(signal_module, "load_native_module", lambda **_kwargs: SimpleNamespace())
+    with pytest.raises(RuntimeError, match="ABI missing"):
+        signal_module._load_cpp_signal_module()
+    assert signal_module._CPP_SIGNAL_MODULE is None
+    assert signal_module._CPP_SIGNAL_IMPORT_FAILED is False
+
+
+@pytest.mark.parametrize("strict", ["0", "1"])
+def test_native_feature_exception_does_not_select_another_backend(monkeypatch, strict):
+    monkeypatch.setenv("NARROWGATE_CPP_STRICT", strict)
+    monkeypatch.setenv("NARROWGATE_CPP_SIGNAL_FEATURES", "0")
+    engine = SignalEngine(enable_ml=False)
+    failure = RuntimeError("native feature calculation failed")
+
+    def broken(*_args):
+        raise failure
+
+    engine._cpp_signal = SimpleNamespace(Bar1s=SimpleNamespace)
+    engine._cpp_signal_features_enabled = True
+    engine._cpp_signal_feature_names = ("close",)
+    monkeypatch.setattr(
+        engine, "_ensure_cpp_feature_engine",
+        lambda _bars: SimpleNamespace(compute_values_at_cutoff=broken),
+    )
+    with pytest.raises(RuntimeError) as raised:
+        engine._compute_cpp_feature_values({"ts": BASE_MS}, [])
+    assert raised.value is failure
+    assert engine._cpp_signal_features_enabled is True
 
 
 def _bar(second: int, *, future_shock: float = 0.0) -> Bar1s:

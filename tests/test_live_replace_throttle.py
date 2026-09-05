@@ -36,6 +36,10 @@ def _engine() -> MakerEngine:
     cfg.strategy.replace_terminal_continuation = False
     engine = object.__new__(MakerEngine)
     engine.cfg = cfg
+    engine.set_admitted_user_stream_generation(1)
+    engine.set_event_source(SimpleNamespace(user_event_safety_snapshot=lambda: {
+        "user_stream_connected": True, "user_stream_generation": 1,
+    }))
     engine._replace_throttle_counts = {"BUY": 0, "SELL": 0}
     engine._last_replace_throttle_log = {"BUY": 0.0, "SELL": 0.0}
     engine._replace_pending_coalesce_counts = {"BUY": 0, "SELL": 0}
@@ -1738,6 +1742,8 @@ def test_terminal_during_cancel_rest_publishes_once_before_late_callback() -> No
         )
 
     engine.rest = SimpleNamespace(cancel_order=cancel_order)
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     assert engine._cancel_order(
         cid,
@@ -1798,6 +1804,8 @@ def test_terminal_callback_wins_over_late_sync_cancel_error_without_split_read(
         raise TimeoutError("REST response arrived after private terminal")
 
     engine.rest = SimpleNamespace(cancel_order=cancel_order)
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     assert engine._cancel_order(
         cid,
@@ -1838,6 +1846,8 @@ def test_cancel_ack_unknown_keeps_pending_ownership_for_reconciliation() -> None
         )
 
     engine.rest = SimpleNamespace(cancel_order=cancel_order)
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     assert not engine._cancel_order(
         cid,

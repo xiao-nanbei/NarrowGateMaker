@@ -65,6 +65,7 @@ def _engine_with_payload(payload: tuple) -> SimpleNamespace:
 def _periodic_engine(fetch) -> MakerEngine:
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine.order_gateway = SimpleNamespace()
     engine._reconciliation_lock = threading.Lock()
     engine._position_reconciliation_generation = 0
     engine._reconciliation_trade_identity_by_id = {}
@@ -706,6 +707,8 @@ def _stable_fetch_engine(response: object) -> MakerEngine:
         get_position_risk=Mock(return_value=response),
         get_account_trades=Mock(return_value=[]),
     )
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     return engine
 
 
@@ -1047,6 +1050,8 @@ def test_fatal_orphan_callback_defers_exact_sync_until_fifo_unwinds() -> None:
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(symbol="BTCUSDC")
     engine.rest = _BlockingCancelRest()
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine._reconciliation_lock = threading.Lock()
     engine._runtime_fatal_lock = threading.Lock()
     engine._runtime_fatal_reason = ""
@@ -1186,6 +1191,8 @@ def test_shutdown_drain_retries_when_concurrent_fatal_advances_generation() -> N
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(symbol="BTCUSDC")
     engine.rest = SimpleNamespace(cancel_open_orders=lambda **_kwargs: {})
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.signal = SimpleNamespace(stop=lambda: None)
     engine.orders = SimpleNamespace(
         fatal_status=lambda: {
@@ -1406,6 +1413,8 @@ def test_stop_finally_drains_reconciliation_latched_during_writer_shutdown() -> 
     engine = object.__new__(MakerEngine)
     engine.cfg = SimpleNamespace(symbol="BTCUSDC")
     engine.rest = SimpleNamespace(cancel_open_orders=lambda **_kwargs: {})
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.signal = SimpleNamespace(stop=lambda: None)
     engine.orders = SimpleNamespace(
         fatal_status=lambda: {

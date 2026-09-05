@@ -2193,9 +2193,13 @@ def test_live_start_repeats_exact_barrier_when_user_stream_generation_changes(
     engine.signal.start_metrics_polling.assert_called_once_with()
 
 
-def test_maker_engine_latches_when_admitted_user_stream_generation_is_lost() -> None:
+@pytest.mark.parametrize("generation", (None, 0, 7))
+def test_maker_engine_latches_when_admitted_user_stream_generation_is_lost(
+    generation: int | None,
+) -> None:
     engine = MakerEngine.__new__(MakerEngine)
-    engine._admitted_user_stream_generation = 7
+    if generation is not None:
+        engine._admitted_user_stream_generation = generation
     engine._event_source = SimpleNamespace(
         user_event_safety_snapshot=Mock(
             return_value={
@@ -2430,6 +2434,8 @@ def test_ws_stop_waits_for_late_user_callback_and_listen_key_thread() -> None:
     engine = object.__new__(MakerEngine)
     engine.cfg = Config()
     engine.rest = SimpleNamespace(cancel_open_orders=Mock(return_value={}))
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
     engine._runtime_fatal_lock = threading.Lock()
@@ -3137,6 +3143,8 @@ def test_fatal_cancel_bypasses_latched_ledger_and_stop_preserves_ownership() -> 
     engine = object.__new__(MakerEngine)
     engine.cfg = Config()
     engine.rest = SimpleNamespace(cancel_open_orders=Mock(return_value={}))
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
     engine.orders = SimpleNamespace(
         fatal_status=Mock(
             return_value={
@@ -3167,6 +3175,7 @@ def test_fatal_cancel_bypasses_latched_ledger_and_stop_preserves_ownership() -> 
 
 def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> None:
     engine = object.__new__(MakerEngine)
+    engine.order_gateway = SimpleNamespace()
     engine.cfg = Config()
     engine.orders = SimpleNamespace(
         fatal_status=Mock(return_value={"latched": False, "reconciliation_required": False}),
@@ -3190,6 +3199,7 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
 
 def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> None:
     engine = object.__new__(MakerEngine)
+    engine.order_gateway = SimpleNamespace()
     engine.cfg = Config()
     engine.orders = SimpleNamespace(
         fatal_status=Mock(
@@ -3226,6 +3236,7 @@ def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> N
 
 def test_normal_stop_accepts_valid_bounded_remote_lifecycle_spool() -> None:
     engine = object.__new__(MakerEngine)
+    engine.order_gateway = SimpleNamespace()
     engine.cfg = Config()
     engine.orders = SimpleNamespace(
         fatal_status=Mock(
@@ -3299,6 +3310,7 @@ def test_specialized_close_failure_still_closes_every_writer_and_checkpoint() ->
     engine.close_fill_cooldown_checkpoint_store = Mock(
         side_effect=lambda: close_calls.append("checkpoint")
     )
+    engine.order_gateway = SimpleNamespace()
     engine._cancel_all_orders = Mock(return_value=True)
     engine.sync_position = Mock(return_value=True)
     engine._running = True

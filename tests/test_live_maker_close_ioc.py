@@ -11,15 +11,21 @@ from strategy.maker_engine import MakerEngine
 from strategy.order_manager import OrderManager, OrderOwnershipStatus, OrderState, Side
 
 
-def test_live_transport_roles_default_to_legacy_and_split_independently() -> None:
+def test_live_transport_roles_are_explicit_and_split_independently() -> None:
     engine = object.__new__(MakerEngine)
     legacy = object()
     order_gateway = object()
     reconciliation_client = object()
     engine.rest = legacy
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
 
     assert engine._order_transport() is legacy
     assert engine._reconciliation_transport() is legacy
+
+    del engine.order_gateway
+    with pytest.raises(AttributeError, match="order_gateway"):
+        engine._order_transport()
 
     engine.order_gateway = order_gateway
     engine.reconciliation_client = reconciliation_client
@@ -38,7 +44,7 @@ def test_live_transport_roles_default_to_legacy_and_split_independently() -> Non
     event_source = object()
     engine.set_event_source(event_source)
     assert engine._active_event_source() is event_source
-    assert engine._ws_handler is event_source
+    assert engine._event_source is event_source
 
 
 class _RestClient:
@@ -183,6 +189,12 @@ def _engine(rest: _RestClient) -> MakerEngine:
     engine = object.__new__(MakerEngine)
     engine.cfg = cfg
     engine.rest = rest
+    engine.order_gateway = engine.rest
+    engine.reconciliation_client = engine.rest
+    engine.set_admitted_user_stream_generation(1)
+    engine.set_event_source(SimpleNamespace(user_event_safety_snapshot=lambda: {
+        "user_stream_connected": True, "user_stream_generation": 1,
+    }))
     engine.orders = OrderManager()
     engine._qty_precision = 3
     engine._price_precision = 1
@@ -193,6 +205,10 @@ def _engine(rest: _RestClient) -> MakerEngine:
     engine._bid_cid = None
     engine._ask_cid = None
     engine._order_ref_lock = threading.RLock()
+    engine._async_order_completion_lock = threading.RLock()
+    engine._async_order_completion_locks = {
+        Side.BUY: threading.RLock(), Side.SELL: threading.RLock(),
+    }
     engine._running = True
     engine._order_submit_fail_closed = False
     engine._record_exact_order_event = lambda *args, **kwargs: None

@@ -58,8 +58,8 @@ from live import deployment_runtime as locked_runtime
 from live.binance_usdm_transport import (
     BinanceUsdMOrderGateway,
     BinanceUsdMRestClients,
-    BinanceUsdMWebSocketOrderGateway,
     BinanceUsdMWebSocketOrderConfig,
+    BinanceUsdMWebSocketOrderGateway,
     binance_usdm_rest_base_url,
     create_binance_usdm_rest_clients,
     create_binance_usdm_websocket_order_gateway,
@@ -91,7 +91,12 @@ from strategy.maker_engine import (
     validate_live_artifact_authority,
     validate_native_live_routing_policy_compatibility,
 )
-from strategy.quote_core import QUOTE_CORE_UNIT_ABI_FIELDS
+from strategy.native_runtime import (  # noqa: E402
+    load_native_module,
+    validate_native_capabilities,
+    validate_replace_continuation,
+)
+from strategy.quote_core import QUOTE_CORE_CPP_ABI_FIELDS
 
 POSITION_RISK_RECONCILIATION_ENDPOINT = "/fapi/v2/positionRisk"
 
@@ -1170,38 +1175,12 @@ def audit_native_runtime(
 
     if required:
         try:
-            module = importlib.import_module("narrowgate_cpp")
+            module = load_native_module()
             module_path = str(getattr(module, "__file__", "<unknown>"))
-            missing = sorted(name for name in required if not hasattr(module, name))
-            if missing:
-                raise RuntimeError(f"narrowgate_cpp missing APIs: {', '.join(missing)}")
+            validate_native_capabilities(module, symbols=tuple(sorted(required)))
             if enabled["NARROWGATE_CPP_QUOTE_CORE"]:
-                missing_fields = []
-                for class_name, field_names in NATIVE_QUOTE_ABI_FIELDS.items():
-                    cls = getattr(module, class_name, None)
-                    instance = cls() if cls is not None else None
-                    for field_name in field_names:
-                        if instance is None or not hasattr(instance, field_name):
-                            missing_fields.append(f"{class_name}.{field_name}")
-                if missing_fields:
-                    raise RuntimeError(
-                        "narrowgate_cpp ABI missing fields: " + ", ".join(missing_fields)
-                    )
-                quote_config = getattr(module, "QuoteCoreConfig", None)
-                quote_config_instance = (
-                    quote_config() if quote_config is not None else None
-                )
-                missing_unit_fields = [
-                    f"QuoteCoreConfig.{field_name}"
-                    for field_name in QUOTE_CORE_UNIT_ABI_FIELDS
-                    if quote_config_instance is None
-                    or not hasattr(quote_config_instance, field_name)
-                ]
-                if missing_unit_fields:
-                    raise RuntimeError(
-                        "narrowgate_cpp ABI missing fields: "
-                        + ", ".join(missing_unit_fields)
-                    )
+                quote_fields = {**NATIVE_QUOTE_ABI_FIELDS, **QUOTE_CORE_CPP_ABI_FIELDS}
+                validate_native_capabilities(module, fields=quote_fields)
             if enabled["NARROWGATE_CPP_GLOBAL_FLOW"]:
                 aggregator = module.TradeBarAggregator(False)
                 if not hasattr(aggregator, "update_batch"):
@@ -1223,29 +1202,7 @@ def audit_native_runtime(
                         "from the Python model contract"
                     )
             if enabled["NARROWGATE_CPP_REPLACE_CONTINUATION"]:
-                continuation = module.NativeReplaceContinuationState(True)
-                continuation_methods = (
-                    "arm",
-                    "publish",
-                    "clear_exact",
-                    "clear_side",
-                    "clear_unready",
-                    "take_ready",
-                    "finalize_decision",
-                    "drop_in_flight",
-                    "clear_all",
-                    "telemetry",
-                )
-                missing_methods = [
-                    name
-                    for name in continuation_methods
-                    if not callable(getattr(continuation, name, None))
-                ]
-                if missing_methods:
-                    raise RuntimeError(
-                        "narrowgate_cpp continuation ABI missing methods: "
-                        + ", ".join(missing_methods)
-                    )
+                validate_replace_continuation(module)
             if enabled["NARROWGATE_CPP_COOLDOWN"] and not bool(
                 module.NATIVE_LIVE_COOLDOWN_HOT_PATH_AVAILABLE
             ):
@@ -1317,8 +1274,9 @@ def audit_native_runtime(
                     "explicit native final-order planner failed preflight: "
                     f"{exc}"
                 ) from exc
-            logger.warning("Native runtime requested but unavailable: %s", exc)
-            module_path = f"unavailable:{exc}"
+            raise RuntimeError(
+                f"requested native profile {profile!r} failed preflight: {exc}"
+            ) from exc
 
     logger.info(
         "NATIVE_PROFILE name=%s quote_core=%d signal_features=%d "
@@ -3720,6 +3678,8 @@ def main():
     )
 
     model_dir = _configured_model_dir(cfg)
+    if not (model_dir / "fill_prob_params.json").is_file():
+        raise RuntimeError(f"PREFLIGHT: Missing fill_prob_params.json in {model_dir}")
     model_metadata = validate_model_bundle(
         model_dir,
         require_live_authorization=True,
@@ -3933,33 +3893,14 @@ def main():
                     else:
                         logger.warning(f"Margin type check: {e}")
 
-                # The engine constructor already loads the bundle strictly.
-                # Repeat the lightweight contract here so the preflight log
-                # records the exact head count and P3 identity.
-                from pathlib import Path as _P
-
-                from strategy.model_contract import validate_model_bundle
-
-                model_dir = _P(getattr(cfg.ml, "model_dir", "models/saved"))
-                if not model_dir.is_absolute():
-                    model_dir = _P(__file__).resolve().parent.parent / model_dir
-                required_models = ["fill_prob_params.json"]
-                # The configured bundle must remain restart-safe even while
-                # inference is disabled.  Validation reads metadata only; it
-                # does not load LightGBM trees into the live process.
-                model_metadata = validate_model_bundle(
-                    model_dir,
-                    expected_symbol=cfg.symbol,
-                )
+                # Reuse the already authorized startup metadata, including
+                # when inference is disabled and signal has loaded no trees.
                 logger.info(
                     "Models: %d strict LightGBM heads validated in %s (active=%s)",
                     len(model_metadata),
                     model_dir,
                     cfg.ml.enabled,
                 )
-                for mf in required_models:
-                    if not (model_dir / mf).exists():
-                        raise RuntimeError(f"PREFLIGHT: Missing {mf} in {model_dir}")
 
             except SystemExit:
                 raise
