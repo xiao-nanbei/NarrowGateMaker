@@ -1871,13 +1871,27 @@ def _async_fifo_params(*, new=(2.0, 5.0, 300.0), cancel=(2.0, 11.0, 400.0)):
 
 
 @pytest.mark.parametrize("initial_sign", [-1, 1])
-def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
-    initial_sign, monkeypatch,
+@pytest.mark.parametrize("cause", ["position_timeout", "circuit_breaker"])
+@pytest.mark.parametrize("new_http_ms", [3.0, 2_500.0])
+def test_async_maker_close_escalation_clock_starts_after_bulk_http(
+    initial_sign, cause, new_http_ms, monkeypatch,
 ) -> None:
     from types import SimpleNamespace
 
     import strategy.maker_engine as live_engine
     from tests.test_exact_opportunity_tape import _Rest, _bare_engine
+
+    if cause == "circuit_breaker":
+        checks = 0
+
+        def trigger_after_initial_quotes(*_args):
+            nonlocal checks
+            checks += 1
+            return checks >= 2
+
+        monkeypatch.setattr(
+            "models.backtest_tick.circuit_breaker_triggered", trigger_after_initial_quotes,
+        )
 
     ts = np.arange(0, 80_001, 100, dtype=np.int64)
     trades = pd.DataFrame({
@@ -1889,9 +1903,12 @@ def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
     )
     result = simulate_tick(
         trades, np.asarray([0]), np.asarray([1.0]),
-        {**_params(), **_async_fifo_params(new=(1.0, 2.0, 3.0), cancel=(1.0, 2.0, 3.0)),
-         "position_timeout": 0.5, "initial_inventory": initial_sign * 0.001,
-         "initial_entry_price": 100.0, "circuit_breaker_sigma": 0.0,
+        {**_params(), **_async_fifo_params(new=(1.0, 2.0, new_http_ms),
+                                        cancel=(1.0, 2.0, 3.0)),
+         "position_timeout": 0.5 if cause == "position_timeout" else 0.0,
+         "initial_inventory": initial_sign * 0.001,
+         "initial_entry_price": 100.0,
+         "circuit_breaker_sigma": 1.0 if cause == "circuit_breaker" else 0.0,
          "use_bar_pricing": False, "replay_event_clock_end_ts_ms": 80_000,
          "_bulk_cancel_timing_samples_ms": [[4_000.0, 5_000.0, 10_000.0]],
          "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases"},
@@ -1899,11 +1916,13 @@ def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
     )
     old = [row for row in result["_quote_trace"] if row["submit_ts"] == 0]
     assert len(old) == 2
-    assert {row["cancel_request_ts"] for row in old} == {1_000}
-    assert {row["cancel_rest_return_ts"] for row in old} == {11_000}
+    bulk_dispatch_ms = int(max(1_000, 2 * new_http_ms))
+    bulk_http_ms = bulk_dispatch_ms + 10_000
+    assert {row["cancel_request_ts"] for row in old} == {bulk_dispatch_ms}
+    assert {row["cancel_rest_return_ts"] for row in old} == {bulk_http_ms}
     closing = [row for row in result["_quote_trace"] if row["circuit_breaker_close"]]
     assert closing
-    assert all(row["submit_ts"] > 11_000 for row in closing)
+    assert all(row["submit_ts"] > bulk_http_ms for row in closing)
     aggressive = [
         row for row in closing
         if "ioc_terminal_visible_ts" not in row
@@ -1911,12 +1930,20 @@ def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
     ]
     ioc = [row for row in closing if "ioc_terminal_visible_ts" in row]
     assert aggressive and ioc
-    # Both thresholds are relative to the 11s HTTP return, not the 1s
-    # timeout/cancel dispatch. Normal quote cadence determines the next wake.
-    assert 41_000 <= min(row["submit_ts"] for row in aggressive) < 42_000
-    assert 71_000 <= min(row["submit_ts"] for row in ioc) < 72_000
-    assert all(row["price"] == pytest.approx(100.0) for row in closing if row["submit_ts"] < 41_000)
-    assert result["n_timeouts"] == 1
+    # Neither the accepted GLOBAL FIFO work nor cancel-all's own HTTP wait
+    # counts toward the 30s/60s escalation. Cadence determines the next wake.
+    aggressive_due_ms = bulk_http_ms + 30_000
+    ioc_due_ms = bulk_http_ms + 60_000
+    assert aggressive_due_ms <= min(row["submit_ts"] for row in aggressive) < (
+        aggressive_due_ms + 1_000
+    )
+    assert ioc_due_ms <= min(row["submit_ts"] for row in ioc) < ioc_due_ms + 1_000
+    assert all(
+        row["price"] == pytest.approx(100.0)
+        for row in closing if row["submit_ts"] < aggressive_due_ms
+    )
+    assert result["n_timeouts"] == int(cause == "position_timeout")
+    assert result["circuit_breaker_count"] == int(cause == "circuit_breaker")
     assert result["rest_gateway_max_inflight"] == 1
     assert result["replay_main_loop_synchronous_request_pending"] is False
 
@@ -1927,13 +1954,13 @@ def test_async_position_timeout_escalation_clock_starts_after_bulk_http(
     now_s = [1.0]
 
     def cancel_all():
-        now_s[0] += 10.0
+        now_s[0] = bulk_http_ms / 1_000.0
         return True
 
     engine._cancel_all_orders = cancel_all
     monkeypatch.setattr(live_engine.time, "time", lambda: now_s[0])
     engine._handle_position_timeout(initial_sign * 0.001, 100.0)
-    assert engine._close_start_time * 1_000 == 11_000
+    assert engine._close_start_time * 1_000 == bulk_http_ms
 
 
 @pytest.mark.parametrize("initial_watermark,first_path", [
@@ -1999,6 +2026,11 @@ def test_async_fifo_terminal_wakes_decision_but_not_network_worker() -> None:
     assert result["rest_gateway_decision_deferral_count"] == 0
     assert result["rest_gateway_max_inflight"] == 1
     assert result["rest_gateway_timing_authority"] == "diagnostic_only"
+    assert any(
+        "completion_dispatcher_queue_and_callback_duration" in path
+        and "not observed Future callback" in path
+        for path in result["rest_gateway_unmodeled_paths"]
+    )
     intervals = sorted(
         (r[start], r[end])
         for r in result["_quote_trace"]
@@ -2266,7 +2298,7 @@ def test_async_ioc_reserves_physical_fill_then_publishes_one_local_terminal(
         initial_sign=initial_sign, top_qty=top_qty,
         param_overrides={
             **_async_fifo_params(new=(2.0, 900.0, http_ms)),
-            "lot_size": 0.0001, "replay_event_clock_end_ts_ms": 72_000,
+            "lot_size": 0.0001, "replay_event_clock_end_ts_ms": 82_000,
             "_private_fill_visibility_latency_samples_ms": [500.0],
             "_bulk_cancel_timing_samples_ms": [[2.0, 11.0, 400.0]],
             "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
@@ -2306,7 +2338,7 @@ def test_async_ioc_reserves_physical_fill_then_publishes_one_local_terminal(
 
 
 @pytest.mark.parametrize("http_ms", [300.0, 900.0])
-@pytest.mark.parametrize("end_ms", [70_100, 70_400, 70_600, 71_000])
+@pytest.mark.parametrize("end_ms", [80_100, 80_400, 80_600, 81_000])
 def test_async_ioc_http_releases_worker_independently_of_private_fill_and_close_caller(
     http_ms, end_ms,
 ) -> None:
@@ -2320,8 +2352,10 @@ def test_async_ioc_http_releases_worker_independently_of_private_fill_and_close_
             "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
         },
     )
-    visible = end_ms >= 70_502
-    returned = end_ms >= 70_000 + http_ms
+    # The initial bulk returns at 10.4s. Its 60s deadline is 70.4s;
+    # the 10s requote cadence next reaches the IOC branch at 80s.
+    visible = end_ms >= 80_502
+    returned = end_ms >= 80_000 + http_ms
     assert result["exchange_inventory_at_window_end"] == pytest.approx(0.0, abs=1e-12)
     assert result["final_inventory"] == pytest.approx(0.0 if visible else -0.001, abs=1e-12)
     assert result["private_fill_exchange_match_count"] == 1
@@ -2334,10 +2368,10 @@ def test_async_ioc_http_releases_worker_independently_of_private_fill_and_close_
     fills = result["_fill_trace"]
     assert len(fills) == int(visible)
     if fills:
-        assert fills[0]["fill_ts"] == 70_002
-        assert fills[0]["last_private_fill_visible_ts_ms"] == 70_502
+        assert fills[0]["fill_ts"] == 80_002
+        assert fills[0]["last_private_fill_visible_ts_ms"] == 80_502
     assert all(
-        row["ts_ms"] < 70_000 or row["ts_ms"] >= max(70_502, 70_000 + http_ms) + 100
+        row["ts_ms"] < 80_000 or row["ts_ms"] >= max(80_502, 80_000 + http_ms) + 100
         for row in result["_decision_trace"]
     )
 
@@ -2350,7 +2384,7 @@ def test_async_ioc_preserves_compute_clock_without_adding_work_to_exchange_or_ca
         initial_sign=-1,
         param_overrides={
             **_async_fifo_params(new=(2.0, 900.0, 300.0)),
-            "replay_event_clock_end_ts_ms": 78_000,
+            "replay_event_clock_end_ts_ms": 84_000,
             "_private_fill_visibility_latency_samples_ms": [private_ms],
             "_bulk_cancel_timing_samples_ms": [[2.0, 11.0, 400.0]],
             "_bulk_cancel_timing_sample_semantics": "synthetic coupled batch phases",
@@ -2360,10 +2394,10 @@ def test_async_ioc_preserves_compute_clock_without_adding_work_to_exchange_or_ca
         },
     )
     terminal = next(row for row in result["_quote_trace"] if "ioc_terminal_visible_ts" in row)
-    assert terminal["submit_ts"] == terminal["gateway_request_ts"] == 70_434
-    assert terminal["activate_ts"] == 70_436
-    assert terminal["outcome_ts"] == 70_436 + private_ms
-    assert result["_fill_trace"][0]["fill_ts"] == 70_436
+    assert terminal["submit_ts"] == terminal["gateway_request_ts"] == 80_460
+    assert terminal["activate_ts"] == 80_462
+    assert terminal["outcome_ts"] == 80_462 + private_ms
+    assert result["_fill_trace"][0]["fill_ts"] == 80_462
     assert result["rest_gateway_max_inflight"] == 1
     assert result["replay_main_loop_synchronous_request_pending"] is False
 

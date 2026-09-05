@@ -22694,6 +22694,27 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     "cancel_request",
                 )
 
+    def _start_maker_close(now_ts: int, *, reason: str) -> None:
+        """Start both live timeout causes after the same cancel-all return."""
+        nonlocal circuit_breaker_closing, circuit_breaker_close_start_ts
+        nonlocal circuit_breaker_close_gtx_reject_streak
+        circuit_breaker_closing = True
+        circuit_breaker_close_start_ts = -1 if async_rest_gateway else int(now_ts)
+        circuit_breaker_close_gtx_reject_streak = 0
+        _request_cancel_all(bid_orders, int(now_ts), reason=reason)
+        _request_cancel_all(ask_orders, int(now_ts), reason=reason)
+        if async_rest_gateway:
+            def start_close_clock(ready_ts: int) -> None:
+                nonlocal circuit_breaker_close_start_ts
+                # Live assigns _close_start_time after synchronous cancel-all
+                # returns for both position timeout and the circuit breaker.
+                circuit_breaker_close_start_ts = int(ready_ts)
+
+            if main_loop_waiting_request is not None:
+                main_loop_waiting_request["resume_close"] = start_close_clock
+            else:
+                start_close_clock(int(now_ts))
+
     def _complete_synchronous_rest_request(request: dict[str, Any], now_ts: int) -> None:
         """Resume a close caller after HTTP and any positive-fill proof.
 
@@ -28208,23 +28229,8 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                 # Live TIMEOUT_CLOSING cancels first and lets subsequent
                 # control calls place reduce-only limit orders. A timeout is
                 # not itself a fill and must not change cash or inventory.
-                circuit_breaker_closing = True
-                circuit_breaker_close_start_ts = -1 if async_rest_gateway else int(t)
-                circuit_breaker_close_gtx_reject_streak = 0
                 nto += 1
-                _request_cancel_all(bid_orders, int(t), reason="position_timeout")
-                _request_cancel_all(ask_orders, int(t), reason="position_timeout")
-                if async_rest_gateway:
-                    def start_timeout_close_clock(ready_ts: int) -> None:
-                        nonlocal circuit_breaker_close_start_ts
-                        # Live assigns _close_start_time after synchronous
-                        # cancel-all returns, excluding its FIFO/HTTP wait.
-                        circuit_breaker_close_start_ts = int(ready_ts)
-
-                    if main_loop_waiting_request is not None:
-                        main_loop_waiting_request["resume_close"] = start_timeout_close_clock
-                    else:
-                        start_timeout_close_clock(int(t))
+                _start_maker_close(int(t), reason="position_timeout")
                 continue
 
             if circuit_breaker_closing:
@@ -28280,19 +28286,7 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                     pos_open_ts = int(t)
                     entry_price = 0.0
                 else:
-                    circuit_breaker_closing = True
-                    circuit_breaker_close_start_ts = int(t)
-                    circuit_breaker_close_gtx_reject_streak = 0
-                    _request_cancel_all(
-                        bid_orders,
-                        int(t),
-                        reason="circuit_breaker",
-                    )
-                    _request_cancel_all(
-                        ask_orders,
-                        int(t),
-                        reason="circuit_breaker",
-                    )
+                    _start_maker_close(int(t), reason="circuit_breaker")
                 continue
 
             if hard_risk_enabled:
@@ -33225,6 +33219,9 @@ def simulate_tick(trades_df, var_ts_ms, var_ssq, params,
                             else ["bulk_safety_cancel_barrier"]
                         ),
                         "bulk_barrier_callback_admission_or_synchronous_close_interruption",
+                        "completion_dispatcher_queue_and_callback_duration: HTTP RESULT "
+                        "authority and admission-slot release use HTTP return, not observed "
+                        "Future callback delivery/completion",
                         "IOC_account_trades_lookup_latency",
                         "gateway_failure_and_unknown_response_tape",
                         *(["emergency_ownership_conflict_fatal_cancel_and_reconciliation"]
