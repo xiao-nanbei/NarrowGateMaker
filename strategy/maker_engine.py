@@ -1760,6 +1760,7 @@ class MakerEngine:
         # State
         self._running = False
         self._order_submit_fail_closed = False
+        self._shutdown_new_order_admission_revoked = False
         self._runtime_fatal_reason = ""
         self._runtime_fatal_error: Optional[BaseException] = None
         self._runtime_reconciliation_required = False
@@ -8498,7 +8499,9 @@ class MakerEngine:
         ask_alive = ask_order and ask_order.is_active
         if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.SELL)
-        if self._order_submit_fail_closed:
+        if self._order_submit_fail_closed or getattr(
+            self, "_shutdown_new_order_admission_revoked", False
+        ):
             prepare_end_ns = time.perf_counter_ns()
             prepare_policy_us = (
                 update_orders_prepare_policy_end_ns - update_orders_start_ns
@@ -11469,27 +11472,40 @@ class MakerEngine:
                 self._set_side_order_reference(side, None)
 
     def _abort_reserved_submit_if_fail_closed(self, *, side: Side, cid: str) -> bool:
-        """Reject a locally reserved order if a conflict latched before REST."""
+        """Reject a reserved order if admission closed before transport dispatch."""
 
         with self._order_ref_lock:
-            blocked = bool(getattr(self, "_order_submit_fail_closed", False))
-        if not blocked:
+            conflict = bool(getattr(self, "_order_submit_fail_closed", False))
+            shutdown = bool(
+                getattr(self, "_shutdown_new_order_admission_revoked", False)
+            )
+        if not (conflict or shutdown):
             return False
         self.orders.confirm_rejected(
             cid,
-            "local submit blocked by latched order-ownership conflict",
+            (
+                "local submit blocked by latched order-ownership conflict"
+                if conflict
+                else "local submit blocked by shutdown admission revocation"
+            ),
         )
         order = self.orders.get_order(cid)
         if order is not None:
-            self._log_order_outcome("reject_ownership_fail_closed", order)
+            self._log_order_outcome(
+                "reject_ownership_fail_closed" if conflict else "reject_local_error",
+                order,
+            )
         self._pop_order_context(cid)
         self._release_side_order_ownership(side=side, cid=cid)
-        logger.critical(
-            "ORDER_SUBMIT_ABORTED_BEFORE_REST side=%s cid=%s; "
-            "operator reconciliation required",
-            side.value,
-            cid,
-        )
+        if conflict:
+            logger.critical(
+                "ORDER_SUBMIT_ABORTED_BEFORE_REST side=%s cid=%s; "
+                "operator reconciliation required",
+                side.value,
+                cid,
+            )
+        else:
+            logger.info("ORDER_SUBMIT_ABORTED_FOR_SHUTDOWN side=%s cid=%s", side.value, cid)
         return True
 
     def _async_order_writes_enabled(self, transport: Any) -> bool:
@@ -11889,6 +11905,8 @@ class MakerEngine:
                      decision_context: Optional[dict] = None,
                      record_requote_perf: bool = True) -> Optional[str]:
         """Send limit order to exchange."""
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return None
         if not self._enforce_private_user_stream_authority():
             return None
         if self._execution_state_uncertain():
@@ -12035,6 +12053,8 @@ class MakerEngine:
         """Send one reduce-only close order using the caller-selected TIF."""
         MAX_GTX_REJECTS = 3
 
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return
         if getattr(self, "_order_submit_fail_closed", False):
             logger.critical(
                 "CLOSE_ORDER_SUBMIT_BLOCKED_FAIL_CLOSED side=%s; "
@@ -13507,6 +13527,8 @@ class MakerEngine:
                 "authoritatively canceled"
             )
             return
+        if getattr(self, "_shutdown_new_order_admission_revoked", False):
+            return
         q = self.inventory.net_position
         qty = abs(q)
         lot = float(self.cfg.lot_size)
@@ -14398,6 +14420,18 @@ class MakerEngine:
                         "shutdown cancel-all was not authoritatively accepted"
                     )
                 self.sync_position(required=True)
+                # Position agreement cannot resolve a lost submit ACK. Inspect
+                # current lifecycle state after response callbacks have drained;
+                # a historical unknown flag on an accepted/terminal order is
+                # not an unresolved submit and must not turn normal stop fatal.
+                if any(
+                    order.state is OrderState.PENDING_NEW
+                    and order.lifecycle.submit_ack_unknown_observed
+                    for order in self.orders.get_active_orders()
+                ):
+                    raise RuntimeError(
+                        "shutdown submit ACK remains unknown after response drain"
+                    )
             except Exception as exc:
                 shutdown_reconciliation_error = exc
                 self.latch_runtime_fatal(
@@ -14637,8 +14671,12 @@ class MakerEngine:
     def revoke_new_order_authority_for_shutdown(self) -> None:
         """Block every future new order while leaving cancellation available."""
 
-        self._order_submit_fail_closed = True
-        self._running = False
+        # Normal shutdown is not an ownership conflict. Keep its admission
+        # barrier separate so stop() still performs exact final reconciliation
+        # and any real conflict that arrives during drain remains observable.
+        with self._order_ref_lock:
+            self._shutdown_new_order_admission_revoked = True
+            self._running = False
         transport = self._order_transport()
         revoke = getattr(transport, "revoke_new_order_admission", None)
         if not callable(revoke):

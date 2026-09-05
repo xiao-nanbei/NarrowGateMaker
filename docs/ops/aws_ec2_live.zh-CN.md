@@ -391,8 +391,19 @@ write，必须停止新增 authority 并 reconcile。
 Activation 前必须设置 hard `max_runtime_s`，并预先调度 verified REST rollback，使其留出
 足够余量在 hard bound **之前**完成。Hard timer 只是停止 candidate 的 fail-safe，不是
 rollback mechanism。Active rollback 无法完成时，应让 host 保持 stopped 并 reconcile，
-不能延长实验。REST 与 WebSocket 必须按同一 request/client-order identity，比较 decision
-→ private visibility 延迟，并同时比较 authoritative outcome 与 `UNKNOWN` rate。内部
+不能延长实验。
+
+不要把 renderer 生成的多行 Bash 命令直接作为
+`systemd-run ... /bin/bash -c` 参数传入。当前 systemd 的命令行展开会把 `$$` 折叠成
+`$`；字面量 probe 到达 Bash 后会成为 `/proc/$/fd/9`，使事务的文件描述符 identity
+检查失效。应把既有 renderer 输出写入仅 owner 可访问的脚本文件，先用 `bash -n` 校验，
+再由 system-level one-shot timer 以 `User=ec2-user` 运行该脚本。事务本身不得以 root
+运行，不新增 manifest 或 SHA 层，也不得自动选择 runtime-fatal recovery。若 WebSocket
+进程在普通 rollback 开始前已 fatal exit，应保持 host stopped，等待显式 reconciliation
+与 recovery。
+
+REST 与 WebSocket 必须按同一 request/client-order identity，比较 decision → private
+visibility 延迟，并同时比较 authoritative outcome 与 `UNKNOWN` rate。内部
 decision → wire 时间不能作为跨 transport 主指标：当前 REST SDK 没有暴露可与 WebSocket
 同口径直接观测的 wire time。ACK/error latency 与 reconnect 只作为辅助诊断，不能只看
 ACK p99 更低就授权 transport。

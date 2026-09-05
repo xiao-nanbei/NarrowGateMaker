@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from live.config import Config
+from live.main import resolve_live_shutdown_exit
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
 from strategy.order_manager import OrderManager, OrderOwnershipStatus, OrderState, Side
@@ -195,11 +196,146 @@ def _engine(rest: _RestClient) -> MakerEngine:
     engine._order_ref_lock = threading.RLock()
     engine._running = True
     engine._order_submit_fail_closed = False
+    engine._shutdown_new_order_admission_revoked = False
     engine._record_exact_order_event = lambda *args, **kwargs: None
     engine._record_perf_rest_latency = lambda *args, **kwargs: None
     engine._log_order_outcome = lambda *args, **kwargs: None
     engine._pop_order_context = lambda *args, **kwargs: None
     return engine
+
+
+@pytest.mark.parametrize("route", ["limit", "async", "close", "emergency"])
+@pytest.mark.parametrize("after_reservation", [False, True])
+def test_shutdown_admission_blocks_all_new_order_routes(route, after_reservation):
+    rest = _RestClient()
+    rest.revoke_new_order_admission = lambda: None
+    engine = _engine(rest)
+    engine.inventory = SimpleNamespace(net_position=0.001)
+    if route == "async":
+        gateway = _ControllableAsyncGateway()
+        gateway.revoke_new_order_admission = lambda: None
+        engine.order_gateway = gateway
+        engine.cfg.api.async_order_lanes_enabled = True
+    if after_reservation:
+        engine._record_exact_order_event = (
+            lambda *_args, **_kwargs: engine.revoke_new_order_authority_for_shutdown()
+        )
+    else:
+        engine.revoke_new_order_authority_for_shutdown()
+
+    if route in {"limit", "async"}:
+        engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    elif route == "close":
+        engine._place_close_order("BTCUSDC", Side.SELL, 100.1, 0.001, use_ioc=True)
+    else:
+        engine._emergency_close(100.0)
+
+    assert rest.calls == []
+    if route == "async":
+        assert gateway.new_calls == []
+    assert engine._shutdown_new_order_admission_revoked is True
+    assert engine._execution_state_uncertain() is False
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is False
+    assert engine.orders.get_active_orders() == []
+
+
+@pytest.mark.parametrize("completion", ["NEW", "EXPIRED", "unknown"])
+def test_shutdown_preserves_late_async_response_and_unknown_ownership(completion):
+    gateway = _ControllableAsyncGateway()
+    gateway.revoke_new_order_admission = lambda: None
+    engine = _engine(_RestClient())
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.revoke_new_order_authority_for_shutdown()
+
+    if completion == "unknown":
+        gateway.new_future.set_exception(TimeoutError("submit response lost"))
+    else:
+        gateway.new_future.set_result(_result_for(gateway.new_calls[0], status=completion))
+    order = engine.orders.get_order(cid)
+    if completion == "unknown":
+        assert order.state is OrderState.PENDING_NEW
+        assert order.lifecycle.submit_ack_unknown_observed is True
+        assert engine._bid_cid == cid
+    else:
+        assert order.state is (
+            OrderState.OPEN if completion == "NEW" else OrderState.EXPIRED
+        )
+        assert order.lifecycle.submit_ack_unknown_observed is False
+    assert engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001) is None
+    assert len(gateway.new_calls) == 1
+
+
+@pytest.mark.parametrize("conflict_before_shutdown", [False, True])
+def test_shutdown_does_not_hide_real_ownership_conflict(conflict_before_shutdown):
+    rest = _RestClient()
+    rest.revoke_new_order_admission = lambda: None
+    engine = _engine(rest)
+    first = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert engine._reserve_side_order_ownership(side=Side.BUY, cid=first)
+    if not conflict_before_shutdown:
+        engine.revoke_new_order_authority_for_shutdown()
+    second = engine.orders.create_order("BTCUSDC", Side.BUY, 99.8, 0.001)
+    assert not engine._reserve_side_order_ownership(side=Side.BUY, cid=second)
+    if conflict_before_shutdown:
+        engine.revoke_new_order_authority_for_shutdown()
+    assert engine._execution_state_uncertain() is True
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is True
+
+
+@pytest.mark.parametrize("completion", ["unknown", "NEW", "PENDING_CANCEL", "CANCELED"])
+def test_shutdown_exit_rejects_only_current_unresolved_submit_ack(completion):
+    rest = _RestClient()
+    gateway = _ControllableAsyncGateway()
+    gateway.revoke_new_order_admission = lambda: None
+    gateway.cancel_open_orders = rest.cancel_open_orders
+    engine = _engine(rest)
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    engine.signal = SimpleNamespace(stop=lambda: None)
+    engine._persist_fill_cooldown_checkpoint = lambda: None
+    engine.close_fill_cooldown_checkpoint_store = lambda: None
+    sync_calls = []
+    engine.sync_position = lambda **kwargs: sync_calls.append(kwargs) or True
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.revoke_new_order_authority_for_shutdown()
+
+    def drain():
+        # Represents callback completion after the user stream has stopped.
+        gateway.new_future.set_exception(TimeoutError("submit response lost"))
+        assert engine.orders.get_order(cid).lifecycle.submit_ack_unknown_observed
+        if completion != "unknown":
+            engine.orders.confirm_new(cid, 123)
+        if completion == "PENDING_CANCEL":
+            engine.orders.mark_pending_cancel(cid)
+        if completion == "CANCELED":
+            engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+
+    engine._drain_order_completion_callbacks = drain
+    cleanup_errors = []
+    try:
+        engine.stop()
+    except RuntimeError as exc:
+        cleanup_errors.append(exc)
+
+    assert sync_calls and sync_calls[0] == {"required": True}
+    safety = engine.runtime_safety_snapshot()
+    assert safety["ownership_conflict_latched"] is False
+    assert rest.cancel_calls
+    exit_code = resolve_live_shutdown_exit(
+        engine=engine, fatal_error=None, fatal_traceback=None,
+        cleanup_errors=cleanup_errors,
+    )
+    if completion == "unknown":
+        assert engine.orders.get_order(cid).state is OrderState.PENDING_NEW
+        assert engine._bid_cid == cid
+        assert safety["reconciliation_required"] is True
+        assert exit_code == 78
+    else:
+        assert safety["reconciliation_required"] is False
+        assert cleanup_errors == []
+        assert exit_code == 0
 
 
 def _install_exact_result_trade_sync(

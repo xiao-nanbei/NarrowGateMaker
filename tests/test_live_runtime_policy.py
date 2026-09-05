@@ -3230,6 +3230,7 @@ def test_fatal_cancel_bypasses_latched_ledger_and_stop_preserves_ownership() -> 
             }
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3255,6 +3256,7 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine.orders = SimpleNamespace(
         fatal_status=Mock(return_value={"latched": False, "reconciliation_required": False}),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3262,14 +3264,30 @@ def test_normal_stop_does_not_invent_terminal_orders_after_cancel_all_ack() -> N
     engine.sync_position = Mock(return_value=True)
     engine._running = True
     engine._order_submit_fail_closed = False
+    engine._shutdown_new_order_admission_revoked = False
+    engine._order_ref_lock = threading.RLock()
+    engine.order_gateway = SimpleNamespace(revoke_new_order_admission=Mock())
     engine._order_lifecycle_live_writer_v2 = None
     engine._exact_opportunity_tape_runtime = None
 
-    engine.stop()
+    cleanup_errors: list[BaseException] = []
+    assert _quiesce_callbacks_then_stop_engine(
+        ws=SimpleNamespace(stop=Mock()),
+        engine=engine,
+        cleanup_errors=cleanup_errors,
+    ) is True
 
+    assert cleanup_errors == []
+    engine.order_gateway.revoke_new_order_admission.assert_called_once_with()
+    assert engine._shutdown_new_order_admission_revoked is True
     engine._cancel_all_orders.assert_called_once_with()
     engine.sync_position.assert_called_once_with(required=True)
     engine.orders.cancel_all_local.assert_not_called()
+    assert engine._execution_state_uncertain() is False
+    assert engine.runtime_safety_snapshot()["ownership_conflict_latched"] is False
+    assert resolve_live_shutdown_exit(
+        engine=engine, fatal_error=None, fatal_traceback=None, cleanup_errors=[]
+    ) == 0
 
 
 def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> None:
@@ -3280,6 +3298,7 @@ def test_normal_stop_fails_when_specialized_evidence_health_is_incomplete() -> N
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3316,6 +3335,7 @@ def test_normal_stop_accepts_valid_bounded_remote_lifecycle_spool() -> None:
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()
@@ -3377,6 +3397,7 @@ def test_specialized_close_failure_still_closes_every_writer_and_checkpoint() ->
             return_value={"latched": False, "reconciliation_required": False}
         ),
         cancel_all_local=Mock(),
+        get_active_orders=Mock(return_value=[]),
     )
     engine.signal = SimpleNamespace(stop=Mock())
     engine._persist_fill_cooldown_checkpoint = Mock()

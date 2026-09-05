@@ -444,8 +444,21 @@ Before activation, set a hard `max_runtime_s` and schedule the verified REST
 rollback to begin with enough margin to finish **before** that bound. The hard
 timer is only a fail-safe that stops the candidate; it is not a rollback
 mechanism. If the active rollback cannot complete, leave the host stopped and
-reconcile rather than extending the experiment. Compare REST and WebSocket on
-the same request/client-order identity using decision-to-private-visibility
+reconcile rather than extending the experiment.
+
+Do not pass the renderer's multiline Bash command directly as a
+`systemd-run ... /bin/bash -c` argument. The current systemd command-line
+expansion collapses `$$` to `$`; a literal probe then reaches Bash as
+`/proc/$/fd/9`, invalidating the transaction's file-descriptor identity check.
+Write the existing renderer output to an owner-only script, validate it with
+`bash -n`, and have a system-level one-shot timer run that script as
+`User=ec2-user`. The transaction itself must not run as root, gain a new
+manifest or SHA layer, or automatically select runtime-fatal recovery. If the
+WebSocket process exits fatally before the ordinary rollback starts, leave the
+host stopped for explicit reconciliation and recovery.
+
+Compare REST and WebSocket on the same request/client-order identity using
+decision-to-private-visibility
 latency plus authoritative outcome and `UNKNOWN` rates. Do not use an internal
 decision-to-wire timestamp as the primary cross-transport metric: the current
 REST SDK does not expose wire time at a directly comparable observation point.
