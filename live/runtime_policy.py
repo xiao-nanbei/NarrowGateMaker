@@ -30,7 +30,11 @@ def admit_runtime_policies(
     enabled = sorted(
         policy
         for policy, field in DEPLOYMENT_POLICY_CONFIG_FIELDS.items()
-        if strategy.get(field, False)
+        if (
+            str(strategy.get(field, "disabled") or "disabled").strip().lower() == "active"
+            if field == "state_conditioned_policy_mode"
+            else bool(strategy.get(field, False))
+        )
     )
     # The envelope loader owns schema, allowlist and byte verification.
     # This boundary only compares requested actions with that verified grant.
@@ -43,6 +47,20 @@ def admit_runtime_policies(
         "approved_policies": enabled,
         "authorization_source": "deployment_envelope",
     }
+
+
+def require_state_conditioned_policy_restart(
+    previous: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+) -> None:
+    """Keep the admitted state-policy mode and artifact binding restart-only."""
+    fields = ("state_conditioned_policy_mode", "state_conditioned_policy_model_path")
+    changed = [name for name in fields if previous.get(name) != candidate.get(name)]
+    if changed:
+        raise ValueError(
+            "State-conditioned quote policy is restart-only; changed field(s): "
+            + ", ".join(changed)
+        )
 
 
 def require_q90_action_restart(

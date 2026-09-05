@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from live.config import Config, _validate_config
 from models import backtest_tick
-from strategy.maker_engine import MakerEngine, SidePolicyDecision
+from strategy.maker_engine import MakerEngine, SidePolicyDecision, _load_state_conditioned_policy
 from strategy.order_manager import Side
 from strategy.state_conditioned_quote_policy import (
     LOCAL_QUOTE_ACTIONS,
@@ -75,15 +78,10 @@ def test_shadow_reports_candidate_but_executes_baseline() -> None:
     assert decision.reason == "shadow_candidate"
 
 
-def test_active_requires_promoted_artifact_and_selects_supported_action() -> None:
-    with pytest.raises(ValueError, match="promotion_status"):
-        StateConditionedQuotePolicy(
-            PolicyArtifact.from_dict(_artifact()),
-            mode="active",
-        )
-
+@pytest.mark.parametrize("status", ["shadow_only", "promotion_eligible", "closed"])
+def test_active_mechanics_do_not_interpret_research_annotation_as_permission(status) -> None:
     policy = StateConditionedQuotePolicy(
-        PolicyArtifact.from_dict(_artifact(status="promotion_eligible")),
+        PolicyArtifact.from_dict(_artifact(status=status)),
         mode="active",
     )
     decision = policy.decide(
@@ -154,7 +152,7 @@ def test_inventory_role_is_side_specific() -> None:
     assert inventory_role_for_quote("SELL", -0.003, 0.001) == "add"
 
 
-def test_live_config_requires_artifact_and_explicit_active_unlock(
+def test_live_config_checks_artifact_compatibility_without_environment_permission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cfg = Config()
@@ -167,8 +165,49 @@ def test_live_config_requires_artifact_and_explicit_active_unlock(
 
     cfg.strategy.state_conditioned_policy_mode = "active"
     monkeypatch.delenv("NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE", raising=False)
-    with pytest.raises(ValueError, match="promotion unlock"):
-        _validate_config(cfg)
+    _validate_config(cfg)
+    monkeypatch.setenv("NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE", "1")
+    _validate_config(cfg)
+
+
+def test_live_state_policy_loads_verified_envelope_bytes(tmp_path: Path) -> None:
+    path = tmp_path / "policy.json"
+    path.write_text(json.dumps(_artifact(status="closed")), encoding="utf-8")
+    authority = {
+        "model_policy_member_paths": {"state_conditioned_quote_policy": str(path.resolve())},
+        "model_policy_member_sha256": {
+            "state_conditioned_quote_policy": hashlib.sha256(path.read_bytes()).hexdigest(),
+        },
+    }
+    cfg = Config()
+    cfg.strategy.state_conditioned_policy_mode = "active"
+    cfg.strategy.state_conditioned_policy_model_path = "/wrong/policy.json"
+
+    policy = _load_state_conditioned_policy(cfg, artifact_authority=authority)
+    assert policy is not None
+    assert policy.artifact.promotion_status == "closed"
+    assert policy.mode == "active"
+
+    path.write_text(json.dumps(_artifact(status="promotion_eligible")), encoding="utf-8")
+    with pytest.raises(ValueError, match="file_sha256_mismatch"):
+        _load_state_conditioned_policy(cfg, artifact_authority=authority)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement", "error"),
+    [
+        ("schema_version", "unknown", "schema mismatch"),
+        ("actions", ["baseline", "cancel_all"], "action registry"),
+        ("features", [{"name": "inventory_ratio", "scale": -1}], "invalid transform"),
+    ],
+)
+def test_research_annotation_does_not_bypass_artifact_compatibility(
+    field: str, replacement: object, error: str,
+) -> None:
+    raw = _artifact(status="promotion_eligible")
+    raw[field] = replacement
+    with pytest.raises(ValueError, match=error):
+        PolicyArtifact.from_dict(raw)
 
 
 def test_live_shadow_uses_same_surface_and_does_not_move_quote() -> None:

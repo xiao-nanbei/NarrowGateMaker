@@ -228,22 +228,19 @@ def validate_deploy_config(
         raise ValueError(f"ml.model_dir does not exist: {model_dir}")
 
     ml_enabled = bool(ml.get("enabled", False))
-    # Validate the configured bundle even while ML is disabled.  This keeps an
-    # ML-OFF deployment restart-safe if the same config later enables ML.
-    model_metadata = validate_model_bundle(
-        model_dir,
-        require_live_authorization=True,
-        expected_symbol=str(config.get("symbol") or ""),
+    # ML enablement is frozen with the config. Disabled inference needs P3,
+    # not trees or a grant for an inference path that will never execute.
+    model_metadata = (
+        validate_model_bundle(
+            model_dir,
+            require_live_authorization=True,
+            expected_symbol=str(config.get("symbol") or ""),
+        )
+        if ml_enabled else {}
     )
-    promotion_authorities = {
-        str(metadata["promotion_authority"])
-        for metadata in model_metadata.values()
-    }
-    if promotion_authorities != {PRIVATE_DEPLOYMENT_AUTHORITY}:
-        raise ValueError("deploy bundle does not have one explicit private authorization")
-    model_authorization_path = resolve_model_authorization_manifest(
-        model_dir,
-        model_metadata,
+    model_authorization_path = (
+        resolve_model_authorization_manifest(model_dir, model_metadata)
+        if ml_enabled else None
     )
 
     if "quote_horizon_s" not in strategy:
@@ -275,8 +272,11 @@ def validate_deploy_config(
     p3_path = model_dir / "fill_prob_params.json"
     if not p3_path.is_file():
         raise ValueError(f"deploy bundle is missing fill_prob_params.json: {p3_path}")
-    p3 = _as_mapping(json.loads(p3_path.read_text(encoding="utf-8")), "P3 artifact")
-    p3_model = FillProbabilityModel.load(p3_path)
+    p3_raw = p3_path.read_bytes()
+    p3 = _as_mapping(json.loads(p3_raw), "P3 artifact")
+    p3_model = FillProbabilityModel.from_bytes(
+        p3_raw, artifact_path=p3_path, require_live_compatible=True,
+    )
     p3_identity = p3_model.semantic_identity(require_artifact_hash=True)
     artifact_kappa = float(p3.get("kappa_eff", 0.0))
     delta_star = float(p3.get("delta_star", 0.0))
@@ -447,9 +447,10 @@ def validate_deploy_config(
         if config_sha256 != deployment_authority["config_file_sha256"]:
             raise ValueError("deploy config differs from deployment envelope")
         validate_live_artifact_authority(
-            SimpleNamespace(strategy=SimpleNamespace(**strategy)),
+            SimpleNamespace(strategy=SimpleNamespace(**strategy), ml=SimpleNamespace(**ml)),
             artifact_authority=deployment_authority,
             model_authorization_path=model_authorization_path,
+            p3_path=p3_path,
         )
         policy_admission = admit_runtime_policies(
             strategy,
@@ -460,16 +461,39 @@ def validate_deploy_config(
             "stopped_exchange_reconciliation",
         ]
 
+    state_mode = str(
+        strategy.get("state_conditioned_policy_mode", "disabled") or "disabled"
+    ).strip().lower()
+    state_policy_identity: dict[str, Any] = {"mode": state_mode}
+    if state_mode != "disabled":
+        from strategy.state_conditioned_quote_policy import StateConditionedQuotePolicy
+
+        path_text = str(strategy.get("state_conditioned_policy_model_path", "")).strip()
+        if not path_text:
+            raise ValueError("state-conditioned policy requires an artifact path")
+        state_path = Path(path_text).expanduser()
+        if not state_path.is_absolute():
+            state_path = repo_root / state_path
+        expected_state_sha256 = (
+            deployment_authority["model_policy_member_sha256"]["state_conditioned_quote_policy"]
+            if check_policy_approval else None
+        )
+        state_policy = StateConditionedQuotePolicy.load(
+            state_path, mode=state_mode, expected_sha256=expected_state_sha256,
+        )
+        state_policy_identity["policy_id"] = state_policy.artifact.policy_id
+        state_policy_identity["path"] = _identity_path(state_path.resolve(), repo_root)
+
     return {
         "config_path": str(config_path),
         "config_sha256": config_sha256,
         "model_dir": _identity_path(model_dir, repo_root),
-        "model_authorization_path": _identity_path(
-            model_authorization_path,
-            repo_root,
+        "model_authorization_path": (
+            _identity_path(model_authorization_path, repo_root)
+            if model_authorization_path is not None else None
         ),
         "p3_path": _identity_path(p3_path, repo_root),
-        "p3_sha256": _sha256(p3_path),
+        "p3_sha256": p3_identity["artifact_sha256"],
         "p3_schema": str(p3.get("schema_version") or ""),
         "p3_event_type": str(p3_identity["event_type"]),
         "p3_horizon_s": float(p3_identity["horizon_s"]),
@@ -484,18 +508,19 @@ def validate_deploy_config(
         "effective_kappa": override if override > 0.0 else artifact_kappa,
         "effective_source": "config_override" if override > 0.0 else "artifact",
         "ml_enabled": ml_enabled,
+        "state_conditioned_policy": state_policy_identity,
         "buy_fill_selection_shadow_enabled": bool(
             strategy.get("buy_fill_selection_shadow_enabled", False)
         ),
         "buy_fill_selection_live_enabled": bool(
             strategy.get("buy_fill_selection_live_enabled", False)
         ),
-        "required_model_heads": list(REQUIRED_MODEL_HEADS),
+        "required_model_heads": list(REQUIRED_MODEL_HEADS) if ml_enabled else [],
         "validated_model_heads": sorted(model_metadata),
-        "model_promotion_authority": PRIVATE_DEPLOYMENT_AUTHORITY,
-        "model_live_authorized": True,
-        "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+        "model_promotion_authority": PRIVATE_DEPLOYMENT_AUTHORITY if ml_enabled else None,
+        "model_live_authorized": True if ml_enabled else None,
+        "feature_dag_id": REQUIRED_FEATURE_DAG_ID if ml_enabled else None,
+        "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256 if ml_enabled else None,
         "quote_horizon_s": quote_horizon_s,
         "quote_unit_contract": {
             "inventory_reference_qty": q_ref,

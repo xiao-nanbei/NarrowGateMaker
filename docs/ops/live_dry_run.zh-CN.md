@@ -29,7 +29,7 @@ Preflight 验证所选本地配置并解析模型/策略工件，但不能证明
 
 在已经准入的 live 部署中，完整配置字节与 release 绑定，只能通过重启变更，不仅限于各个热更新检查列出的字段。即使修改描述性字段也会改变字节；再次运行 preflight 不能使它获得热更新能力。应准备绑定目标配置的新 deployment envelope，完成所需停机对账，并通过正常部署事务激活。库中保留的通用 SIGHUP handler 不会覆盖部署配置绑定。见[运维流程](README.zh-CN.md)。
 
-`make deploy-preflight` 拒绝标记为 `PUBLIC TEMPLATE` 的配置，仅接受 head 和 bundle manifest 明确允许 live 用途、且有字节绑定的模型包。这仍是本地验证结果，不是部署批准。公共合成、`public_dry_run_only`、`research_only`、缺失授权或 `authority.live=false` 工件都会被该检查拒绝。`make publish-source-dry`/`make publish-source` 是独立源码发布操作，不检查私有部署输入。
+`make deploy-preflight` 拒绝标记为 `PUBLIC TEMPLATE` 的配置。ML 开启时，它要求全部 13 个模型 head、对应 schema/特征合同，以及经过字节绑定并明确允许 live 用途的私有模型授权；公共合成、`public_dry_run_only`、`research_only`、缺失授权或 `authority.live=false` 模型包都会被拒绝。ML 关闭时，它验证报价仍使用的 P3 成交概率工件，不要求未使用的模型 head 或模型授权包。P3 的身份、格式和运行数值检查仍然保留，`public_dry_run_only` P3 fixture 不能用于部署。这仍是本地验证结果，不是部署批准。`make publish-source-dry`/`make publish-source` 是独立源码发布操作，不检查私有部署输入。
 
 公共示例：
 
@@ -41,7 +41,7 @@ bash live/run.sh dry-run
 
 ## 正式 dry-run
 
-`bash live/run.sh dry-run` 是唯一公共运维 dry-run。没有环境覆盖时，它使用最小 [`live/formal_dry_run_public.yaml`](../../live/formal_dry_run_public.yaml) 辅助配置和受 Git 跟踪的合成模型包。它通过严格 live 配置解析器加载配置，并用 `strategy.model_contract.validate_model_bundle` 验证全部 model head，即使公共示例关闭了 ML。
+`bash live/run.sh dry-run` 是唯一公共运维 dry-run。没有环境覆盖时，它使用最小 [`live/formal_dry_run_public.yaml`](../../live/formal_dry_run_public.yaml) 辅助配置和受 Git 跟踪的合成 P3 工件。它通过严格 live 配置解析器加载配置，要求 P3 文件存在并记录其 SHA256。公共示例关闭了 ML，因此不要求模型 head 或模型授权包；ML 开启时，才额外通过 `strategy.model_contract.validate_model_bundle` 验证全部 13 个 head 及对应 schema/特征合同。这项公共本地检查不提供预检和启动所需的私有 live 授权，也不完成部署要求的全部 P3 验证。
 
 命令不读取 `live/.env` 或 runtime profile，并在日志初始化、交易所/网络客户端构造、`MakerEngine`、WebSocket、worker thread 和任何报单路径之前退出。默认期限 30 秒，超时退出码为 124。可以显式选择其他正期限：
 
@@ -49,7 +49,7 @@ bash live/run.sh dry-run
 NARROWGATE_DRY_RUN_TIMEOUT_S=10 bash live/run.sh dry-run
 ```
 
-stdout 只输出一个 JSON 对象。`status=passed` 和退出码 0 仅表示本地配置与模型合同验证在期限内完成。验证失败为 1，超时为 124。汇总包含配置/模型身份，以及明确为零的交易所客户端、线程和报单数量，不包含 API key 或完整配置。
+stdout 只输出一个 JSON 对象。`status=passed` 和退出码 0 仅表示本地配置检查、P3 文件/身份检查和已启用的模型合同验证在期限内完成。验证失败为 1，超时为 124。汇总包含配置/P3 身份、ML 是否开启、必需与已验证的 head 数量（ML-OFF 时均为零），以及明确为零的交易所客户端、线程和报单数量，不包含 API key 或完整配置。
 
 检查其他本地配置而不改变命令合同：
 

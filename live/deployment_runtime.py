@@ -56,6 +56,7 @@ DEPLOYMENT_POLICY_CONFIG_FIELDS = {
     "q90_action": "dynamic_fill_hazard_action_enabled",
     "f05_boolean_cooldown": "boolean_cooldown_policy_enabled",
     "f05_buy_e3": "buy_e3_cooldown_policy_enabled",
+    "state_conditioned_quote_policy": "state_conditioned_policy_mode",
 }
 DEPLOYMENT_POLICY_APPROVALS = frozenset(DEPLOYMENT_POLICY_CONFIG_FIELDS)
 ACTIVATION_RECEIPT_SCHEMA = "narrowgate_private_activation_receipt.v1"
@@ -1860,15 +1861,37 @@ def _validate_explicit_wheels(
         _inspect_wheel_path(native_path, expected_sha256=native_wheel_sha256),
         native_path,
     )
-    if root[0]["name"] != ROOT_DISTRIBUTION_NAME:
-        raise LockedRuntimeError("root wheel distribution must be narrowgate")
-    if native[0]["name"] not in NATIVE_DISTRIBUTION_NAMES:
-        raise LockedRuntimeError(
-            f"native wheel distribution is not recognized: {native[0]['name']}"
-        )
-    if root[0]["name"] == native[0]["name"]:
-        raise LockedRuntimeError("root and native wheels have the same distribution name")
+    _validate_explicit_wheel_identities({"root": root[0], "native": native[0]})
     return root, native
+
+
+def _validate_explicit_wheel_identities(value: Any) -> None:
+    if not isinstance(value, dict) or set(value) != {"root", "native"}:
+        raise LockedRuntimeError("explicit-wheel identity fields drifted")
+    for artifact in value.values():
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "name", "version", "filename", "sha256", "size_bytes"
+        }:
+            raise LockedRuntimeError("explicit-wheel artifact fields drifted")
+        if not isinstance(artifact["name"], str):
+            raise LockedRuntimeError("explicit-wheel distribution name is malformed")
+        _validate_version(artifact["version"], "explicit wheel")
+        _require_sha256(artifact["sha256"], "explicit wheel")
+        filename = artifact["filename"]
+        if (
+            not isinstance(filename, str)
+            or Path(filename).name != filename
+            or not filename.endswith(".whl")
+            or type(artifact["size_bytes"]) is not int
+            or artifact["size_bytes"] <= 0
+        ):
+            raise LockedRuntimeError("explicit-wheel filename/size drifted")
+    if value["root"]["name"] != ROOT_DISTRIBUTION_NAME:
+        raise LockedRuntimeError("root wheel distribution must be narrowgate")
+    if value["native"]["name"] not in NATIVE_DISTRIBUTION_NAMES:
+        raise LockedRuntimeError(
+            f"native wheel distribution is not recognized: {value['native']['name']}"
+        )
 
 
 def _validate_installed_versions(snapshot: dict[str, Any], expected: dict[str, str]) -> None:
@@ -2127,6 +2150,7 @@ def _load_install_receipt(
         raise LockedRuntimeError("install receipt canonical hash mismatch")
     if actual != _require_sha256(expected_canonical_sha256, "expected install receipt"):
         raise LockedRuntimeError("install receipt does not match frozen expected hash")
+    _validate_explicit_wheel_identities(payload.get("explicit_wheels"))
     _validate_interpreter_shape(payload.get("interpreter"), "install receipt")
     _require_sha256(payload.get("pyvenv_cfg_sha256", ""), "receipt pyvenv.cfg")
     _require_sha256(
@@ -2384,15 +2408,19 @@ def _load_canonical_authority(
     return payload, raw
 
 
-def _receipt_path(value: Any, label: str, *, directory: bool = False) -> Path:
+def _receipt_path(
+    value: Any, label: str, *, directory: bool = False, must_exist: bool = True
+) -> Path:
     raw = str(value or "")
     path = Path(raw).expanduser()
     if not raw or "\x00" in raw or not path.is_absolute():
         raise LockedRuntimeError(f"native receipt {label} path is invalid")
-    resolved = path.resolve(strict=True)
+    resolved = path.resolve(strict=True) if must_exist else _absolute(path)
     if resolved != path:
         raise LockedRuntimeError(f"native receipt {label} path is not canonical")
-    if (directory and not resolved.is_dir()) or (not directory and not resolved.is_file()):
+    if must_exist and (
+        (directory and not resolved.is_dir()) or (not directory and not resolved.is_file())
+    ):
         raise LockedRuntimeError(f"native receipt {label} path type drifted")
     return resolved
 
@@ -2477,8 +2505,14 @@ def _validate_native_build_bundle(
     execution_commit: str,
     execution_tree: str,
     expected_root_sha256: str | None = None,
+    verify_archives: bool = True,
 ) -> dict[str, Any]:
-    """Validate one nested build manifest and derive runtime-only leaves."""
+    """Derive installed authority; construction also revalidates build archives.
+
+    Startup still checks the frozen native/install receipts and native module;
+    ``validate_startup_runtime`` separately verifies the current installed tree.
+    Original lock/wheel archives are construction evidence, not runtime inputs.
+    """
 
     native_path = _receipt_path(_absolute(native_build_receipt_path), "native build receipt")
     native, _native_raw = _load_canonical_authority(
@@ -2574,21 +2608,24 @@ def _validate_native_build_bundle(
     }:
         raise LockedRuntimeError("native installed-distribution fields drifted")
 
-    lock_path = _receipt_path(Path(str(dependency.get("runtime_lock_path", ""))), "runtime lock")
+    lock_path = _receipt_path(
+        Path(str(dependency.get("runtime_lock_path", ""))),
+        "runtime lock", must_exist=verify_archives,
+    )
     lock_canonical = _require_sha256(
         dependency.get("runtime_lock_sha256", ""),
         "native receipt runtime lock root",
     )
-    lock, _ = load_lock(lock_path, expected_canonical_sha256=lock_canonical)
-
     wheelhouse_path = _receipt_path(
         Path(str(dependency.get("wheelhouse_path", ""))),
         "wheelhouse",
         directory=True,
+        must_exist=verify_archives,
     )
     manifest_path = _receipt_path(
         Path(str(dependency.get("wheelhouse_manifest_path", ""))),
         "wheelhouse manifest",
+        must_exist=verify_archives,
     )
     if manifest_path != wheelhouse_path / WHEELHOUSE_MANIFEST:
         raise LockedRuntimeError("wheelhouse manifest path binding drifted")
@@ -2596,13 +2633,6 @@ def _validate_native_build_bundle(
         dependency.get("wheelhouse_sha256", ""),
         "native receipt wheelhouse root",
     )
-    manifest = validate_wheelhouse(
-        lock_path=lock_path,
-        expected_lock_sha256=lock_canonical,
-        wheelhouse_dir=wheelhouse_path,
-        expected_manifest_sha256=wheelhouse_canonical,
-    )
-
     install_path = _receipt_path(
         Path(str(installed.get("install_receipt_path", ""))), "install receipt"
     )
@@ -2611,42 +2641,45 @@ def _validate_native_build_bundle(
         "native receipt install root",
     )
     install, _ = _load_install_receipt(install_path, expected_canonical_sha256=install_canonical)
-    if install.get("lock_authority", {}).get("canonical_lock_sha256") != lock[LOCK_CANONICAL_FIELD]:
+    if install.get("lock_authority") != {"canonical_lock_sha256": lock_canonical}:
         raise LockedRuntimeError("install receipt lock root drifted")
     if (
-        install.get("wheelhouse_authority", {}).get("canonical_wheelhouse_sha256")
-        != manifest[WHEELHOUSE_CANONICAL_FIELD]
+        install.get("wheelhouse_authority")
+        != {"canonical_wheelhouse_sha256": wheelhouse_canonical}
     ):
         raise LockedRuntimeError("install receipt wheelhouse root drifted")
 
-    root_wheel_path, root_wheel_sha256 = _file_binding(
+    root_wheel_path = _receipt_path(
         Path(str(installed.get("root_wheel_path", ""))),
-        installed.get("root_wheel_sha256"),
-        "root wheel",
+        "root wheel", must_exist=verify_archives,
     )
-    native_wheel_path, native_wheel_sha256 = _file_binding(
+    native_wheel_path = _receipt_path(
         Path(str(installed.get("native_wheel_path", ""))),
-        installed.get("native_wheel_sha256"),
-        "native wheel",
+        "native wheel", must_exist=verify_archives,
     )
-    explicit = _require_mapping(install.get("explicit_wheels"), "install explicit wheels")
-    root_artifact, native_artifact = _validate_explicit_wheels(
-        root_wheel_path=root_wheel_path,
-        root_wheel_sha256=root_wheel_sha256,
-        native_wheel_path=native_wheel_path,
-        native_wheel_sha256=native_wheel_sha256,
+    explicit = install["explicit_wheels"]
+    root_wheel_sha256 = _require_sha256(
+        installed.get("root_wheel_sha256"), "native receipt root wheel"
+    )
+    native_wheel_sha256 = _require_sha256(
+        installed.get("native_wheel_sha256"), "native receipt native wheel"
     )
     if (
-        _require_mapping(explicit.get("root"), "install root wheel") != root_artifact[0]
-        or _require_mapping(explicit.get("native"), "install native wheel") != native_artifact[0]
+        explicit["root"]["sha256"] != root_wheel_sha256
+        or explicit["native"]["sha256"] != native_wheel_sha256
+        or explicit["root"]["filename"] != root_wheel_path.name
+        or explicit["native"]["filename"] != native_wheel_path.name
     ):
         raise LockedRuntimeError("install receipt explicit wheel identity drifted")
     native_wheel = _require_mapping(native.get("wheel"), "native wheel")
     if (
-        _receipt_path(Path(str(native_wheel.get("path", ""))), "native receipt wheel")
+        _receipt_path(
+            Path(str(native_wheel.get("path", ""))),
+            "native receipt wheel", must_exist=verify_archives,
+        )
         != native_wheel_path
         or native_wheel.get("sha256") != native_wheel_sha256
-        or native_wheel.get("size_bytes") != native_wheel_path.stat().st_size
+        or native_wheel.get("size_bytes") != explicit["native"]["size_bytes"]
     ):
         raise LockedRuntimeError("native receipt wheel identity drifted")
     module = _require_mapping(native.get("module"), "native module")
@@ -2659,20 +2692,39 @@ def _validate_native_build_bundle(
     interpreter = _require_mapping(installed.get("interpreter"), "native interpreter")
     if (
         interpreter != install.get("interpreter")
-        or interpreter != lock.get("interpreter")
         or installed.get("installed_distributions") != install.get("installed_distributions")
         or installed.get("installed_record_aggregate_sha256")
         != install.get("installed_record_aggregate_sha256")
         or native.get("soabi") != interpreter.get("soabi")
     ):
         raise LockedRuntimeError("native/install runtime identity drifted")
-    _validate_installed_versions(
-        {
-            "distributions": install.get("installed_distributions"),
-            "record_aggregate_sha256": install.get("installed_record_aggregate_sha256"),
-        },
-        _expected_distribution_versions(lock, root_artifact[0], native_artifact[0]),
-    )
+    expected_venv = install_path.parent / f"venv-{execution_commit}"
+    if not module_path.is_relative_to(_site_packages_directory(expected_venv, interpreter)):
+        raise LockedRuntimeError("native module is outside the commit-bound installed site")
+    if verify_archives:
+        lock, _ = load_lock(lock_path, expected_canonical_sha256=lock_canonical)
+        _validate_wheelhouse_directory(
+            lock=lock,
+            wheelhouse_dir=wheelhouse_path,
+            expected_manifest_sha256=wheelhouse_canonical,
+        )
+        root_artifact, native_artifact = _validate_explicit_wheels(
+            root_wheel_path=root_wheel_path,
+            root_wheel_sha256=root_wheel_sha256,
+            native_wheel_path=native_wheel_path,
+            native_wheel_sha256=native_wheel_sha256,
+        )
+        if explicit != {"root": root_artifact[0], "native": native_artifact[0]}:
+            raise LockedRuntimeError("install receipt explicit wheel identity drifted")
+        if interpreter != lock["interpreter"]:
+            raise LockedRuntimeError("native/install runtime identity drifted")
+        _validate_installed_versions(
+            {
+                "distributions": install["installed_distributions"],
+                "record_aggregate_sha256": install["installed_record_aggregate_sha256"],
+            },
+            _expected_distribution_versions(lock, root_artifact[0], native_artifact[0]),
+        )
     installed_record_aggregate_sha256 = _require_sha256(
         installed.get("installed_record_aggregate_sha256", ""),
         "installed RECORD aggregate",
@@ -2717,8 +2769,10 @@ def build_deployment_envelope(
     repository_root: Path,
     active_config_path: Path,
     native_build_receipt_path: Path,
-    model_authorization_path: Path,
+    model_authorization_path: Path | None = None,
     output_path: Path,
+    p3_path: Path | None = None,
+    state_conditioned_policy_path: Path | None = None,
     boolean_policy_file_path: Path | None = None,
     boolean_predicate_bundle_path: Path | None = None,
     policy_artifact_manifest_path: Path | None = None,
@@ -2764,9 +2818,16 @@ def build_deployment_envelope(
     ):
         raise LockedRuntimeError("BUY E3 policy artifacts must be supplied all-or-none")
 
-    policy_members: list[tuple[str, Path]] = [
-        ("model_authorization", _absolute(model_authorization_path))
-    ]
+    if model_authorization_path is None and p3_path is None:
+        raise LockedRuntimeError("ML-OFF deployment requires an independently bound P3 artifact")
+    policy_members: list[tuple[str, Path]] = []
+    for role, path in (
+        ("model_authorization", model_authorization_path),
+        ("p3", p3_path),
+        ("state_conditioned_quote_policy", state_conditioned_policy_path),
+    ):
+        if path is not None:
+            policy_members.append((role, _absolute(path)))
     if all(path is not None for path in boolean_policy_paths):
         policy_members.extend(
             [
@@ -2883,6 +2944,7 @@ def load_deployment_envelope(
         execution_commit=commit,
         execution_tree=tree,
         expected_root_sha256=str(build_reference.get("root_sha256", "")),
+        verify_archives=False,
     )
     _config_paths, config_leaves = _validate_content_bundle_reference(
         payload.get("config_bundle"),
@@ -2893,17 +2955,22 @@ def load_deployment_envelope(
     policy_member_paths = _require_mapping(
         policy_reference.get("member_paths"), "model-policy bundle paths"
     )
-    base_policy_roles = frozenset({"model_authorization"})
+    model_roles = frozenset({"model_authorization", "p3"})
     buy_e3_policy_roles = frozenset({"artifact_manifest", "policy", "predicate_bundle"})
     boolean_policy_roles = frozenset({"boolean_policy", "boolean_predicate_bundle"})
     observed_policy_roles = frozenset(policy_member_paths)
-    allowed_policy_roles = {
-        base_policy_roles,
-        base_policy_roles | buy_e3_policy_roles,
-        base_policy_roles | boolean_policy_roles,
-        base_policy_roles | buy_e3_policy_roles | boolean_policy_roles,
-    }
-    if observed_policy_roles not in allowed_policy_roles:
+    allowed_policy_roles = (
+        model_roles | buy_e3_policy_roles | boolean_policy_roles
+        | {"state_conditioned_quote_policy"}
+    )
+    if (
+        not observed_policy_roles & model_roles
+        or observed_policy_roles - allowed_policy_roles
+        or any(
+            observed_policy_roles & group and not group <= observed_policy_roles
+            for group in (buy_e3_policy_roles, boolean_policy_roles)
+        )
+    ):
         raise LockedRuntimeError("model-policy bundle member roles drifted")
     policy_paths, policy_leaves = _validate_content_bundle_reference(
         policy_reference,
@@ -3473,7 +3540,9 @@ def _build_parser() -> argparse.ArgumentParser:
     envelope.add_argument("--repository-root", type=Path, required=True)
     envelope.add_argument("--active-config", type=Path, required=True)
     envelope.add_argument("--native-build-receipt", type=Path, required=True)
-    envelope.add_argument("--model-authorization", type=Path, required=True)
+    envelope.add_argument("--model-authorization", type=Path)
+    envelope.add_argument("--p3", type=Path, help="P3 artifact; required when ML is disabled")
+    envelope.add_argument("--state-conditioned-policy", type=Path)
     envelope.add_argument("--boolean-policy-file", type=Path)
     envelope.add_argument("--boolean-predicate-bundle", type=Path)
     envelope.add_argument("--policy-artifact-manifest", type=Path)
@@ -3633,6 +3702,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 active_config_path=args.active_config,
                 native_build_receipt_path=args.native_build_receipt,
                 model_authorization_path=args.model_authorization,
+                p3_path=args.p3,
+                state_conditioned_policy_path=args.state_conditioned_policy,
                 boolean_policy_file_path=args.boolean_policy_file,
                 boolean_predicate_bundle_path=args.boolean_predicate_bundle,
                 policy_artifact_manifest_path=args.policy_artifact_manifest,

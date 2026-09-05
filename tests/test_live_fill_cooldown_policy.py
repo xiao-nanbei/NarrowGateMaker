@@ -29,6 +29,20 @@ def _policy_authority(paths: dict[str, Path]) -> dict[str, dict[str, str]]:
     }
 
 
+def _write_live_p3(path: Path) -> None:
+    path.write_text(json.dumps({
+        "schema_version": "narrowgate_p3_touch_calibration.v2",
+        "model_type": "empirical_survival",
+        "delta_grid": [0.1, 14.0, 30.0],
+        "probability_grid": [0.8, 0.2, 0.01],
+        "metadata": {
+            "event_type": "touch", "horizon_s": 10.0, "distance_unit": "USDC_per_BTC",
+        },
+        "delta_star": 14.0,
+        "kappa_eff": 0.067,
+    }), encoding="utf-8")
+
+
 def test_boolean_cooldown_loader_uses_envelope_members_not_yaml_leaves(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -174,6 +188,8 @@ def test_live_artifact_authority_matches_enabled_config_locators(
         role: tmp_path / f"{role}.json"
         for role in (
             "model_authorization",
+            "p3",
+            "state_conditioned_quote_policy",
             "boolean_policy",
             "boolean_predicate_bundle",
             "artifact_manifest",
@@ -183,7 +199,10 @@ def test_live_artifact_authority_matches_enabled_config_locators(
     }
     for path in paths.values():
         path.write_text("{}\n", encoding="utf-8")
+    _write_live_p3(paths["p3"])
     cfg = Config()
+    cfg.strategy.state_conditioned_policy_mode = "active"
+    cfg.strategy.state_conditioned_policy_model_path = str(paths["state_conditioned_quote_policy"])
     cfg.strategy.boolean_cooldown_policy_enabled = True
     cfg.strategy.boolean_cooldown_policy_path = str(paths["boolean_policy"])
     cfg.strategy.boolean_cooldown_predicate_bundle_path = str(
@@ -203,6 +222,7 @@ def test_live_artifact_authority_matches_enabled_config_locators(
         cfg,
         artifact_authority=authority,
         model_authorization_path=paths["model_authorization"],
+        p3_path=paths["p3"],
     )
 
     cfg.strategy.buy_e3_cooldown_policy_path = str(tmp_path / "other.json")
@@ -211,7 +231,130 @@ def test_live_artifact_authority_matches_enabled_config_locators(
             cfg,
             artifact_authority=authority,
             model_authorization_path=paths["model_authorization"],
+            p3_path=paths["p3"],
         )
+
+
+@pytest.mark.parametrize("ml_enabled", [False, True])
+def test_live_artifact_authority_requires_only_enabled_ml_and_independent_p3(
+    tmp_path: Path, ml_enabled: bool,
+) -> None:
+    cfg = Config()
+    cfg.ml.enabled = ml_enabled
+    p3_path = tmp_path / "p3.json"
+    _write_live_p3(p3_path)
+    authority = _policy_authority({"p3": p3_path})
+    if ml_enabled:
+        with pytest.raises(ValueError, match="model_authorization_required"):
+            maker_engine_module.validate_live_artifact_authority(
+                cfg, artifact_authority=authority, model_authorization_path=None, p3_path=p3_path,
+            )
+        return
+
+    maker_engine_module.validate_live_artifact_authority(
+        cfg, artifact_authority=authority, model_authorization_path=None, p3_path=p3_path,
+    )
+    with pytest.raises(ValueError, match="p3_artifact_required"):
+        maker_engine_module.validate_live_artifact_authority(
+            cfg, artifact_authority=authority, model_authorization_path=None,
+        )
+    with pytest.raises(ValueError, match="required_roles_missing"):
+        maker_engine_module.validate_live_artifact_authority(
+            cfg, artifact_authority=_policy_authority({}),
+            model_authorization_path=None, p3_path=p3_path,
+        )
+
+
+@pytest.mark.parametrize(
+    ("role", "drift"),
+    [("p3", "path"), ("p3", "bytes"), ("state_conditioned_quote_policy", "path")],
+)
+def test_live_artifact_authority_rejects_p3_and_state_policy_drift(
+    tmp_path: Path, role: str, drift: str,
+) -> None:
+    cfg = Config()
+    cfg.ml.enabled = False
+    cfg.strategy.state_conditioned_policy_mode = "active"
+    paths = {name: tmp_path / f"{name}.json" for name in ("p3", "state_conditioned_quote_policy")}
+    for path in paths.values():
+        path.write_text("{}\n", encoding="utf-8")
+    _write_live_p3(paths["p3"])
+    cfg.strategy.state_conditioned_policy_model_path = str(paths["state_conditioned_quote_policy"])
+    authority = _policy_authority(paths)
+    if drift == "path":
+        changed_path = tmp_path / "changed.json"
+        changed_path.write_text("{}\n", encoding="utf-8")
+        paths[role] = changed_path
+        cfg.strategy.state_conditioned_policy_model_path = str(
+            paths["state_conditioned_quote_policy"]
+        )
+        error = f"config_path_drifted:{role}"
+    else:
+        # Keep the artifact usable so this exercises byte binding separately
+        # from the malformed-P3 checks below.
+        paths[role].write_bytes(paths[role].read_bytes() + b"\n")
+        error = f"file_sha256_mismatch:{role}"
+    with pytest.raises(ValueError, match=error):
+        maker_engine_module.validate_live_artifact_authority(
+            cfg, artifact_authority=authority, model_authorization_path=None, p3_path=paths["p3"],
+        )
+
+
+@pytest.mark.parametrize("invalid", ("public_fixture", "malformed", "invalid_horizon"))
+def test_ml_off_startup_rejects_unusable_p3_without_optional_preflight(
+    tmp_path: Path, invalid: str,
+) -> None:
+    cfg = Config()
+    cfg.ml.enabled = False
+    p3_path = tmp_path / "p3.json"
+    _write_live_p3(p3_path)
+    p3 = json.loads(p3_path.read_text(encoding="utf-8"))
+    if invalid == "public_fixture":
+        p3["metadata"]["authority"] = "public_dry_run_only"
+        error = "public_dry_run_only"
+    elif invalid == "invalid_horizon":
+        p3["metadata"]["horizon_s"] = 0.0
+        error = "horizon_s"
+    else:
+        p3["delta_star"] = -1.0
+        error = "positive"
+    p3_path.write_text(json.dumps(p3), encoding="utf-8")
+    with pytest.raises(ValueError, match=error):
+        maker_engine_module.validate_live_artifact_authority(
+            cfg, artifact_authority=_policy_authority({"p3": p3_path}),
+            model_authorization_path=None, p3_path=p3_path,
+        )
+
+
+@pytest.mark.parametrize("loaded", ("missing", "different_bytes"))
+def test_quote_preparation_refuses_p3_changed_after_startup_admission(
+    monkeypatch: pytest.MonkeyPatch, loaded: str,
+) -> None:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = Config()
+    engine._model_dir = Path("synthetic")
+    engine._p3_artifact_sha256 = "a" * 64
+    model = None if loaded == "missing" else SimpleNamespace(
+        optimal_delta=lambda: 1.0,
+        effective_kappa=lambda _delta: 1.0,
+        semantic_identity=lambda **_kwargs: {"artifact_sha256": "b" * 64},
+    )
+    monkeypatch.setattr(maker_engine_module, "_get_fill_model", lambda _path: model)
+    with pytest.raises(RuntimeError, match="loaded P3 differs"):
+        engine._prepare_quote_runtime()
+
+
+def test_legacy_ml_envelope_still_uses_model_authorization_p3_binding(tmp_path: Path) -> None:
+    cfg = Config()
+    cfg.ml.enabled = True
+    authorization_path = tmp_path / "model_authorization.json"
+    p3_path = tmp_path / "p3.json"
+    authorization_path.write_text("{}\n", encoding="utf-8")
+    p3_path.write_text("{}\n", encoding="utf-8")
+    maker_engine_module.validate_live_artifact_authority(
+        cfg, artifact_authority=_policy_authority({"model_authorization": authorization_path}),
+        model_authorization_path=authorization_path, p3_path=p3_path,
+    )
 
 
 def test_stateful_fill_cooldown_requires_checkpoint_path() -> None:

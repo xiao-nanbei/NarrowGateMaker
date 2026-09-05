@@ -271,12 +271,37 @@ class FillProbabilityModel:
         print(f"  Saved fill probability params → {path}")
 
     @classmethod
-    def load(cls, path=None):
+    def load(cls, path=None, *, require_live_compatible=False):
         if path is None:
             path = MODEL_DIR / "fill_prob_params.json"
         path = Path(path)
-        with open(path) as f:
-            d = json.load(f)
+        return cls.from_bytes(
+            path.read_bytes(),
+            artifact_path=path,
+            require_live_compatible=require_live_compatible,
+        )
+
+    @classmethod
+    def from_bytes(cls, raw: bytes, *, artifact_path=None, require_live_compatible=False):
+        """Parse and identify one byte snapshot; live compatibility grants no permission."""
+        d = json.loads(raw)
+        if not isinstance(d, dict):
+            raise ValueError("P3 artifact must be a JSON object")
+        if require_live_compatible:
+            metadata = d.get("metadata") or {}
+            if not isinstance(metadata, dict):
+                raise ValueError("P3 metadata must be a JSON object")
+            if metadata.get("authority") == "public_dry_run_only":
+                raise ValueError("public_dry_run_only P3 fixture cannot enter live deployment")
+            for name in ("kappa_eff", "delta_star"):
+                value = d.get(name)
+                try:
+                    scalar = float(value)
+                    valid = not isinstance(value, bool) and np.isfinite(scalar) and scalar > 0.0
+                except (TypeError, ValueError):
+                    valid = False
+                if not valid:
+                    raise ValueError(f"P3 artifact {name} must be positive and finite")
         if d.get("model_type") == "empirical_survival":
             model = cls(
                 xi=float(d.get("xi", 0.0)),
@@ -289,17 +314,24 @@ class FillProbabilityModel:
                 schema_version=str(d.get("schema_version", "")),
                 metadata=d.get("metadata") or {},
             )
-            model.artifact_path = path.resolve()
-            model.artifact_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        else:
+            model = cls(
+                xi=float(d["xi"]),
+                lam=float(d["lam"]),
+                gamma=float(d["gamma"]),
+                delta0=float(d["delta0"]),
+                schema_version=str(d.get("schema_version", "legacy_su_johnson.v1")),
+            )
+        model.artifact_path = Path(artifact_path).resolve() if artifact_path is not None else None
+        model.artifact_sha256 = hashlib.sha256(raw).hexdigest()
+        if model.model_type == "empirical_survival" or require_live_compatible:
             model.semantic_identity(require_artifact_hash=True)
-            return model
-        return cls(
-            xi=float(d["xi"]),
-            lam=float(d["lam"]),
-            gamma=float(d["gamma"]),
-            delta0=float(d["delta0"]),
-            schema_version=str(d.get("schema_version", "legacy_su_johnson.v1")),
-        )
+        if require_live_compatible and (
+            not np.all(np.isfinite(model.delta_grid))
+            or not np.all(np.isfinite(model.probability_grid))
+        ):
+            raise ValueError("live P3 empirical grids must be finite")
+        return model
 
     def __repr__(self):
         if self.model_type == "empirical_survival":

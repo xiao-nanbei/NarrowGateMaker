@@ -5,13 +5,15 @@ price orders, alter size, change inventory limits, or bypass strategy safety
 gates.  A caller must apply the selected action through the authoritative
 live/replay quote path.
 
-The JSON artifact is intentionally strict: unsupported actions, weak behavior
-overlap, non-positive uplift lower bounds, stale features, and non-promoted
-active policies all fall back to the rolling baseline.
+The JSON artifact is intentionally strict: unsupported actions are rejected,
+while weak behavior overlap, non-positive uplift lower bounds, and stale
+features fall back to the rolling baseline. Live permission comes from the
+verified deployment envelope, never from the artifact's research annotations.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections.abc import Mapping
@@ -189,8 +191,13 @@ class PolicyArtifact:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> PolicyArtifact:
-        payload = json.loads(Path(path).expanduser().read_text(encoding="utf-8"))
+    def load(
+        cls, path: str | Path, *, expected_sha256: str | None = None
+    ) -> PolicyArtifact:
+        raw = Path(path).expanduser().read_bytes()
+        if expected_sha256 is not None and hashlib.sha256(raw).hexdigest() != expected_sha256:
+            raise ValueError("state_conditioned_policy_file_sha256_mismatch")
+        payload = json.loads(raw.decode("utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("policy artifact must be a JSON object")
         return cls.from_dict(payload)
@@ -341,18 +348,14 @@ class StateConditionedQuotePolicy:
         normalized_mode = str(mode).strip().lower()
         if normalized_mode not in POLICY_MODES:
             raise ValueError(f"unsupported state-conditioned policy mode: {mode}")
-        if normalized_mode == "active" and artifact.promotion_status != PROMOTION_ELIGIBLE:
-            raise ValueError(
-                "active state-conditioned policy requires promotion_status=promotion_eligible"
-            )
         self.artifact = artifact
         self.mode = normalized_mode
 
     @classmethod
     def load(
-        cls, path: str | Path, *, mode: str = "shadow"
+        cls, path: str | Path, *, mode: str = "shadow", expected_sha256: str | None = None
     ) -> StateConditionedQuotePolicy:
-        return cls(PolicyArtifact.load(path), mode=mode)
+        return cls(PolicyArtifact.load(path, expected_sha256=expected_sha256), mode=mode)
 
     def decide(
         self,

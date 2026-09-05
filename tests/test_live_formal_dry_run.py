@@ -17,7 +17,6 @@ import yaml
 
 import live.main as live_main
 from live.config import Config
-from strategy.model_contract import REQUIRED_MODEL_HEADS
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_CONFIG = ROOT / "live" / "formal_dry_run_public.yaml"
@@ -79,12 +78,8 @@ def test_formal_dry_run_exits_before_runtime_or_side_effects(
         "remote_deploy_authorized": False,
     }
     assert result["model_contract"]["ml_enabled"] is False
-    assert result["model_contract"]["required_head_count"] == len(
-        REQUIRED_MODEL_HEADS
-    )
-    assert result["model_contract"]["validated_heads"] == sorted(
-        REQUIRED_MODEL_HEADS
-    )
+    assert result["model_contract"]["required_head_count"] == 0
+    assert result["model_contract"]["validated_heads"] == []
 
 
 def test_formal_dry_run_uses_strict_config_validation(tmp_path: Path) -> None:
@@ -170,6 +165,7 @@ def test_formal_dry_run_rejects_invalid_model_contract_without_leaking_secrets(
     config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
     config["api"]["key"] = "never-print-this-key"
     config["api"]["secret"] = "never-print-this-secret"
+    config["ml"]["enabled"] = True
     config["ml"]["model_dir"] = str(bundle)
     config_path = tmp_path / "invalid-model.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -194,6 +190,7 @@ def test_formal_dry_run_rejects_synthetic_model_byte_tampering(
     model_path = bundle / "dir_10s.txt"
     model_path.write_bytes(model_path.read_bytes() + b"\n")
     config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
+    config["ml"]["enabled"] = True
     config["ml"]["model_dir"] = str(bundle)
     config_path = tmp_path / "tampered-model.yaml"
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
@@ -207,6 +204,27 @@ def test_formal_dry_run_rejects_synthetic_model_byte_tampering(
     assert "public synthetic bundle byte count mismatch for dir_10s.txt" in result[
         "error"
     ]["message"]
+
+
+def test_formal_dry_run_ml_off_does_not_read_unused_model_heads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from strategy import model_contract
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("ML-OFF must not validate inference models")
+
+    monkeypatch.setattr(model_contract, "validate_model_bundle", forbidden)
+    bundle = tmp_path / "p3-only"
+    bundle.mkdir()
+    shutil.copyfile(PUBLIC_BUNDLE / "fill_prob_params.json", bundle / "fill_prob_params.json")
+    config = yaml.safe_load(PUBLIC_CONFIG.read_text(encoding="utf-8"))
+    config["ml"]["model_dir"] = str(bundle)
+    path = tmp_path / "ml-off.yaml"
+    path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    output = io.StringIO()
+    assert live_main.run_formal_dry_run(path, output=output) == 0
+    assert _summary(output.getvalue())["model_contract"]["validated_heads"] == []
 
 
 def test_formal_dry_run_deadline_emits_timeout_summary(
@@ -279,7 +297,5 @@ def test_public_run_sh_dry_run_emits_one_success_summary() -> None:
     assert completed.returncode == 0, completed.stderr
     result = _summary(completed.stdout)
     assert result["status"] == "passed"
-    assert result["model_contract"]["validated_head_count"] == len(
-        REQUIRED_MODEL_HEADS
-    )
+    assert result["model_contract"]["validated_head_count"] == 0
     assert result["config"]["path"] == str(PUBLIC_CONFIG)

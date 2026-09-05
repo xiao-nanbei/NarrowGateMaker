@@ -1364,16 +1364,6 @@ def _validate_config(cfg: Config, *, validate_live_storage: bool = True) -> None
         raise ValueError(
             "state-conditioned policy shadow/active mode requires a model artifact"
         )
-    if (
-        state_policy_mode == "active"
-        and os.environ.get("NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE") != "1"
-    ):
-        raise ValueError(
-            "State-conditioned live actions require an explicit promotion unlock. "
-            "Use shadow mode until chronological OPE and later holdout pass; set "
-            "NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE=1 only for a promoted trial."
-        )
-
     external = getattr(cfg, "external_venues", None)
     fair_shadow_enabled = bool(
         getattr(cfg.strategy, "cross_venue_fair_price_shadow_enabled", False)

@@ -24,6 +24,7 @@ from strategy.model_contract import (
     absolute_price_variance_unit_contract,
     validate_model_bundle,
 )
+from strategy.state_conditioned_quote_policy import LOCAL_QUOTE_ACTIONS, SCHEMA_VERSION
 
 EXAMPLE_REMOTE_COLLECTION_ROOT = "/srv/example-live/formal_collection"
 EXAMPLE_STORAGE_ROOT = "/srv/example-storage"
@@ -67,6 +68,7 @@ def _write_fixture(
     *,
     override: float = 0.0,
     q90_action_enabled: bool = False,
+    ml_enabled: bool = True,
     ret_skew: float = 0.0,
     quote_horizon_s: float = 1.0,
     direct_ret_action_horizon_s: float | None = None,
@@ -139,7 +141,7 @@ def _write_fixture(
                 },
                 "ml": {
                     "model_dir": "models/bundle",
-                    "enabled": ret_skew > 0.0,
+                    "enabled": ml_enabled,
                     "ret_skew": ret_skew,
                 },
                 "risk": {
@@ -182,6 +184,105 @@ def test_preflight_accepts_explicit_point_horizon_f03_action_contract(
         tmp_path,
     )
     assert identity["validated_model_heads"] == sorted(REQUIRED_MODEL_HEADS)
+
+
+def test_preflight_ml_off_requires_p3_not_unused_heads_or_authorization(tmp_path: Path) -> None:
+    config_path = _write_fixture(tmp_path, ml_enabled=False)
+    model_dir = tmp_path / "models" / "bundle"
+    for path in model_dir.iterdir():
+        if path.name != "fill_prob_params.json":
+            path.unlink()
+    identity = validate_deploy_config(config_path, tmp_path)
+    assert identity["ml_enabled"] is False
+    assert identity["required_model_heads"] == []
+    assert identity["validated_model_heads"] == []
+    assert identity["model_authorization_path"] is None
+    assert identity["model_live_authorized"] is None
+    assert identity["feature_dag_id"] is None
+    assert identity["p3_event_type"] == "touch"
+    (model_dir / "fill_prob_params.json").unlink()
+    with pytest.raises(ValueError, match="missing fill_prob_params"):
+        validate_deploy_config(config_path, tmp_path)
+
+
+@pytest.mark.parametrize("binding", ("valid", "missing", "tampered", "wrong_path"))
+def test_preflight_ml_off_admission_binds_independent_p3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, binding: str,
+) -> None:
+    config_path = _write_fixture(tmp_path, ml_enabled=False)
+    p3 = tmp_path / "models" / "bundle" / "fill_prob_params.json"
+    authority = {
+        "config_file_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "policy_approvals": [],
+        "model_policy_member_paths": {"p3": str(p3)},
+        "model_policy_member_sha256": {"p3": hashlib.sha256(p3.read_bytes()).hexdigest()},
+    }
+    if binding == "missing":
+        authority["model_policy_member_paths"] = {}
+        authority["model_policy_member_sha256"] = {}
+    elif binding == "tampered":
+        p3.write_bytes(p3.read_bytes() + b"\n")
+    elif binding == "wrong_path":
+        other = tmp_path / "other-p3.json"
+        other.write_bytes(p3.read_bytes())
+        authority["model_policy_member_paths"]["p3"] = str(other)
+    monkeypatch.setattr(runtime_policy, "deployment_envelope_runtime_authority", lambda: authority)
+    if binding == "valid":
+        assert validate_deploy_config(config_path, tmp_path, check_policy_approval=True)[
+            "policy_admission"
+        ]["approved_policies"] == []
+    else:
+        with pytest.raises(ValueError, match="authority"):
+            validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
+
+
+@pytest.mark.parametrize("case", ("approved", "unapproved", "tampered", "shadow"))
+def test_preflight_state_policy_uses_release_approval_and_bound_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, case: str,
+) -> None:
+    config_path = _write_fixture(tmp_path, ml_enabled=False)
+    policy = tmp_path / "state-policy.json"
+    policy.write_text(json.dumps({
+        "schema_version": SCHEMA_VERSION,
+        "policy_id": "synthetic-state-policy",
+        "promotion_status": "closed",
+        "actions": list(LOCAL_QUOTE_ACTIONS),
+        "features": [{"name": "inventory_ratio", "mean": 0.0, "scale": 1.0}],
+        "models": {"BUY:add": {"baseline": {"intercept": 0.0}}},
+    }), encoding="utf-8")
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    mode = "shadow" if case == "shadow" else "active"
+    config["strategy"].update({
+        "state_conditioned_policy_mode": mode,
+        "state_conditioned_policy_model_path": str(policy),
+    })
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    paths = {
+        "p3": tmp_path / "models" / "bundle" / "fill_prob_params.json",
+        "state_conditioned_quote_policy": policy,
+    }
+    approvals = [] if case in {"unapproved", "shadow"} else ["state_conditioned_quote_policy"]
+    authority = {
+        "config_file_sha256": hashlib.sha256(config_path.read_bytes()).hexdigest(),
+        "policy_approvals": approvals,
+        "model_policy_member_paths": {role: str(path) for role, path in paths.items()},
+        "model_policy_member_sha256": {
+            role: hashlib.sha256(path.read_bytes()).hexdigest() for role, path in paths.items()
+        },
+    }
+    monkeypatch.setattr(runtime_policy, "deployment_envelope_runtime_authority", lambda: authority)
+    monkeypatch.setenv("NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE", "1")
+    if case == "tampered":
+        policy.write_bytes(policy.read_bytes() + b"\n")
+    if case in {"unapproved", "tampered"}:
+        error = "does not approve" if case == "unapproved" else "sha256_mismatch"
+        with pytest.raises(ValueError, match=error):
+            validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
+    else:
+        identity = validate_deploy_config(config_path, tmp_path, check_policy_approval=True)
+        assert identity["state_conditioned_policy"]["mode"] == mode
+        assert identity["state_conditioned_policy"]["policy_id"] == "synthetic-state-policy"
+        assert identity["policy_admission"]["approved_policies"] == approvals
 
 
 def test_preflight_rejects_side_bbo_floor_with_inward_compression(

@@ -389,9 +389,9 @@ def run_formal_dry_run(
         )
 
         model_dir = _configured_model_dir(cfg)
-        model_metadata = validate_model_bundle(
-            model_dir,
-            expected_symbol=cfg.symbol,
+        model_metadata = (
+            validate_model_bundle(model_dir, expected_symbol=cfg.symbol)
+            if cfg.ml.enabled else {}
         )
         p3_path = model_dir / "fill_prob_params.json"
         if not p3_path.is_file():
@@ -407,11 +407,11 @@ def run_formal_dry_run(
                 },
                 "model_contract": {
                     "model_dir": str(model_dir),
-                    "required_head_count": len(REQUIRED_MODEL_HEADS),
+                    "required_head_count": len(REQUIRED_MODEL_HEADS) if cfg.ml.enabled else 0,
                     "validated_head_count": len(model_metadata),
                     "validated_heads": sorted(model_metadata),
-                    "feature_dag_id": REQUIRED_FEATURE_DAG_ID,
-                    "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256,
+                    "feature_dag_id": REQUIRED_FEATURE_DAG_ID if cfg.ml.enabled else None,
+                    "feature_dag_sha256": REQUIRED_FEATURE_DAG_SHA256 if cfg.ml.enabled else None,
                     "p3_path": str(p3_path),
                     "p3_sha256": hashlib.sha256(p3_path.read_bytes()).hexdigest(),
                     "ml_enabled": bool(cfg.ml.enabled),
@@ -3798,19 +3798,23 @@ def main():
     model_dir = _configured_model_dir(cfg)
     if not (model_dir / "fill_prob_params.json").is_file():
         raise RuntimeError(f"PREFLIGHT: Missing fill_prob_params.json in {model_dir}")
-    model_metadata = validate_model_bundle(
-        model_dir,
-        require_live_authorization=True,
-        expected_symbol=cfg.symbol,
+    model_metadata = (
+        validate_model_bundle(
+            model_dir,
+            require_live_authorization=True,
+            expected_symbol=cfg.symbol,
+        )
+        if cfg.ml.enabled else {}
     )
-    model_authorization_path = resolve_model_authorization_manifest(
-        model_dir,
-        model_metadata,
+    model_authorization_path = (
+        resolve_model_authorization_manifest(model_dir, model_metadata)
+        if cfg.ml.enabled else None
     )
     validate_live_artifact_authority(
         cfg,
         artifact_authority=safety_authority,
         model_authorization_path=model_authorization_path,
+        p3_path=model_dir / "fill_prob_params.json",
     )
     policy_admission = admit_runtime_policies(
         vars(cfg.strategy), deployment_authority=safety_authority
@@ -4014,8 +4018,7 @@ def main():
                     else:
                         logger.warning(f"Margin type check: {e}")
 
-                # Reuse the already authorized startup metadata, including
-                # when inference is disabled and signal has loaded no trees.
+                # Reuse startup metadata; disabled inference loads no trees.
                 logger.info(
                     "Models: %d strict LightGBM heads validated in %s (active=%s)",
                     len(model_metadata),

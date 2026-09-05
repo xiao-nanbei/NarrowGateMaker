@@ -2,9 +2,9 @@
 
 <p><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
 
-Last materially modified: 2026-09-05
+Last materially modified: 2026-09-06
 
-Last materially synchronized: 2026-09-05
+Last materially synchronized: 2026-09-06
 
 本目录保存可复用的公共运维合同，不得包含当前主机、credential、账户/订单/持仓状态、
 active release identity、private artifact location、策略参数或 live economics。
@@ -81,9 +81,13 @@ python3.12 scripts/live_deploy_common.py source-release --help
 python3.12 scripts/live_deploy_common.py activate-prepared-release --help
 ```
 
-策略许可保存在现有 deployment envelope 中，不由环境变量或研究结论授予。只有获得明确批准后，才为 `build-envelope` 添加对应的 `--approve-policy <policy>`，可重复指定 `q90_action`、`f05_boolean_cooldown`、`f05_buy_e3`。不得根据配置中的启用字段自动生成这些参数。Envelope 将批准列表与精确配置、策略工件绑定；启动入口在创建 engine 前只判断一次启用策略是否已获批准，之后将该结果直接传给运行身份记录和日志，不新增 receipt 或哈希链。
+`build-envelope` 绑定所选配置实际需要的工件。ML 开启时，保留 `--model-authorization` 和全部 13 个 head 的 schema/私有授权检查。不提供 `--model-authorization` 时，必须通过 `--p3 <artifact>` 为 ML-OFF 独立绑定 P3 工件；关闭推理不会取消 P3 验证。状态条件策略处于 `shadow` 或 `active` 模式时，需提供 `--state-conditioned-policy <artifact>`。这些字节由现有 envelope 绑定，不需要再增加 manifest 或审批文件。
 
-配置校验与普通 `preflight_live_deploy.py` 只检查配置和工件兼容性；普通预检明确输出“未判断策略准入”，不能授权启动。现有发布事务的 `candidate-verify` 另以 `--check-policy-approval` 调用同一个授权函数，使缺少批准的候选在停旧服务前失败。这项停机前诊断不是启动凭据：新进程只判断一次自己已验证的 release，不能信任以前的预检输出。BUY E3 加载器不把 `research_supported`、`owner_risk_accepted` 或历史 `evidence_route` 说明当作许可，历史结论继续保存在研究记录中。旧的 `NARROWGATE_ALLOW_*_PRIVATE_DEPLOY` 环境变量不再授予权限。没有 `policy_approvals` 的旧 envelope 不批准任何可选策略：全部关闭时仍可使用；启用策略则必须构建经过批准的新 envelope，不能原地修改不可变发布。本次重构本身不代表获得部署或重启实盘的许可。
+策略许可保存在现有 deployment envelope 中，不由环境变量或研究结论授予。只有获得明确批准后，才为 `build-envelope` 添加对应的 `--approve-policy <policy>`，可重复指定 `q90_action`、`f05_boolean_cooldown`、`f05_buy_e3` 或 `state_conditioned_quote_policy`。状态条件策略仅在 `active` 模式需要动作批准；`disabled` 和 `shadow` 不授予动作权限，说明已有 shadow 模式也不代表允许启用新的 shadow 机制。不得根据配置字段自动生成批准参数。Envelope 将批准列表与精确配置、策略工件绑定；启动入口在创建 engine 前只判断一次启用动作是否已获批准，之后将该结果直接传给运行身份记录和日志，不新增 receipt 或哈希链。
+
+配置校验与普通 `preflight_live_deploy.py` 只检查配置和工件兼容性；普通预检明确输出“未判断策略准入”，不能授权启动。现有发布事务的 `candidate-verify` 另以 `--check-policy-approval` 消费经过验证的 deployment envelope 并调用同一个授权函数，使缺少批准的候选在停旧服务前失败。这项停机前诊断不是启动凭据：新进程只判断一次自己已验证的 release，不能信任以前的预检输出。BUY E3 加载器不把 `research_supported`、`owner_risk_accepted` 或历史 `evidence_route` 说明当作许可，状态条件策略的研究 `promotion_status` 也不是 live 授权。历史结论继续保存在研究记录中。旧的 `NARROWGATE_ALLOW_*_PRIVATE_DEPLOY` 和 `NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE` 环境变量不再授予权限。状态策略工件结构、支持的动作、重叠度/提升下界/新鲜度限制及运行数值检查继续生效；模式和工件路径仍只能通过重启变更，reload 保留启动时加载的字节。没有 `policy_approvals` 的旧 envelope 不批准任何可选策略：全部关闭时仍可使用；启用策略则必须构建经过批准的新 envelope，不能原地修改不可变发布。将本次变更发布为新的源码 commit 不会部署或重启 live。
+
+创建 envelope 时执行完整的嵌套 build 校验，包括原始 lock、wheelhouse 和 wheel archive。普通 envelope 加载及启动不再重新读取这些构建输入，但仍验证绑定的 native-build receipt、install receipt 和当前 native module；启动还验证完整已安装 `RECORD` 清单、解释器和 ABI。这是将构建证据与已安装运行环境验证分开，并未取消运行时完整性检查。
 
 Release、private environment、active config、locked runtime 与 deployment envelope
 已经在主机上准备好后，`activate-prepared-release` 用一次 SSH 事务完成余下 activation。

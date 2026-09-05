@@ -60,6 +60,7 @@ from live.runtime_policy import (
     require_f05_boolean_cooldown_restart,
     require_f05_buy_e3_restart,
     require_q90_action_restart,
+    require_state_conditioned_policy_restart,
     write_runtime_identity,
 )
 from live.ws_handler import WSHandler
@@ -68,12 +69,22 @@ from strategy.maker_engine import MakerEngine
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_CASES = (
-    ("q90_action", "dynamic_fill_hazard_action_enabled", "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY"),
     (
-        "f05_boolean_cooldown", "boolean_cooldown_policy_enabled",
+        "q90_action", "dynamic_fill_hazard_action_enabled", True,
+        "NARROWGATE_ALLOW_Q90_PRIVATE_DEPLOY",
+    ),
+    (
+        "f05_boolean_cooldown", "boolean_cooldown_policy_enabled", True,
         "NARROWGATE_ALLOW_F05_BOOLEAN_COOLDOWN_PRIVATE_DEPLOY",
     ),
-    ("f05_buy_e3", "buy_e3_cooldown_policy_enabled", "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY"),
+    (
+        "f05_buy_e3", "buy_e3_cooldown_policy_enabled", True,
+        "NARROWGATE_ALLOW_F05_BUY_E3_PRIVATE_DEPLOY",
+    ),
+    (
+        "state_conditioned_quote_policy", "state_conditioned_policy_mode", "active",
+        "NARROWGATE_ALLOW_STATE_CONDITIONED_POLICY_LIVE",
+    ),
 )
 
 
@@ -1659,31 +1670,33 @@ def test_side_bbo_floor_rejects_later_inward_spread_compression() -> None:
         _validate_config(cfg)
 
 
-@pytest.mark.parametrize("policy, field, obsolete_env", POLICY_CASES)
+@pytest.mark.parametrize("policy, field, enabled_value, obsolete_env", POLICY_CASES)
 def test_obsolete_environment_flags_cannot_approve_a_policy(
-    monkeypatch, policy, field, obsolete_env,
+    monkeypatch, policy, field, enabled_value, obsolete_env,
 ):
-    for _, _, env_name in POLICY_CASES:
+    for _, _, _, env_name in POLICY_CASES:
         monkeypatch.setenv(env_name, "1")
     assert live_main.os.environ[obsolete_env] == "1"
     with pytest.raises(ValueError, match=f"does not approve enabled policy: {policy}"):
-        admit_runtime_policies({field: True}, deployment_authority={"policy_approvals": []})
+        admit_runtime_policies(
+            {field: enabled_value}, deployment_authority={"policy_approvals": []},
+        )
     with pytest.raises(ValueError, match=f"does not approve enabled policy: {policy}"):
         admit_runtime_policies(
-            {field: True},
+            {field: enabled_value},
             deployment_authority={
-                "policy_approvals": [name for name, _, _ in POLICY_CASES if name != policy],
+                "policy_approvals": [name for name, _, _, _ in POLICY_CASES if name != policy],
             },
         )
 
 
-@pytest.mark.parametrize("policy, field, obsolete_env", POLICY_CASES)
+@pytest.mark.parametrize("policy, field, enabled_value, obsolete_env", POLICY_CASES)
 def test_verified_policy_admission_ignores_research_annotations(
-    monkeypatch, policy, field, obsolete_env,
+    monkeypatch, policy, field, enabled_value, obsolete_env,
 ):
     monkeypatch.delenv(obsolete_env, raising=False)
-    strategy = {field: True}
-    authority = {"policy_approvals": [name for name, _, _ in POLICY_CASES]}
+    strategy = {field: enabled_value}
+    authority = {"policy_approvals": [name for name, _, _, _ in POLICY_CASES]}
     expected = {"approved_policies": [policy], "authorization_source": "deployment_envelope"}
     assert admit_runtime_policies(strategy, deployment_authority=authority) == expected
     strategy.update({
@@ -1697,12 +1710,15 @@ def test_verified_policy_admission_ignores_research_annotations(
     assert admit_runtime_policies(strategy, deployment_authority=authority) == expected
 
 
-def test_disabled_policies_do_not_acquire_runtime_action_approval():
+@pytest.mark.parametrize("state_mode", ["disabled", "shadow", " DISABLED ", " SHADOW "])
+def test_disabled_policies_do_not_acquire_runtime_action_approval(state_mode):
     for authority in (
         {"policy_approvals": []},
-        {"policy_approvals": [name for name, _, _ in POLICY_CASES]},
+        {"policy_approvals": [name for name, _, _, _ in POLICY_CASES]},
     ):
-        assert admit_runtime_policies({}, deployment_authority=authority) == {
+        assert admit_runtime_policies(
+            {"state_conditioned_policy_mode": state_mode}, deployment_authority=authority,
+        ) == {
             "approved_policies": [], "authorization_source": "deployment_envelope",
         }
 
@@ -3493,7 +3509,7 @@ def test_startup_identity_records_admission_without_rechecking_policy_or_env(
 
     class EnvironmentWithoutApprovalReads(dict):
         def get(self, key, default=None):
-            if key in {env for _, _, env in POLICY_CASES}:
+            if key in {env for _, _, _, env in POLICY_CASES}:
                 forbidden()
             return super().get(key, default)
 
@@ -3607,6 +3623,30 @@ def test_f05_buy_e3_identity_is_restart_only() -> None:
             "buy_e3_cooldown_evidence_route": "updated_research_annotation",
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("state_conditioned_policy_mode", "active"),
+        ("state_conditioned_policy_model_path", "/changed/policy.json"),
+    ],
+)
+def test_state_conditioned_policy_binding_is_restart_only_before_mutation(
+    field: str, replacement: str,
+) -> None:
+    previous = Config()
+    candidate = copy.deepcopy(previous)
+    setattr(candidate.strategy, field, replacement)
+    require_state_conditioned_policy_restart(vars(previous.strategy), vars(previous.strategy))
+    engine = MakerEngine.__new__(MakerEngine)
+    engine.cfg = previous
+    engine.set_event_source(None)
+
+    with pytest.raises(ValueError, match=field):
+        engine.on_config_reload(candidate)
+
+    assert engine.cfg is previous
 
 
 def _maker_engine_reload_fixture(

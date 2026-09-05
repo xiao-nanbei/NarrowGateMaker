@@ -210,7 +210,10 @@ def _install(
         if broken_root_requirement
         else ("frozen-dep==1.2.3",),
     )
-    native = _wheel(tmp_path, name="narrowgate-btcusdc-cpp", version="0.1.2.dev0")
+    native = _wheel(
+        tmp_path, name="narrowgate-btcusdc-cpp", version="0.1.2.dev0",
+        extra_members={"narrowgate_cpp.fixture.so": b"native module fixture"},
+    )
     root_binding = subject.inspect_wheel(root)
     native_binding = subject.inspect_wheel(native)
     manifest = subject.validate_wheelhouse(
@@ -301,8 +304,10 @@ def _deployment_envelope_fixture(
         capture_output=True,
         text=True,
     ).stdout.strip()
-    module = bundle_root / "narrowgate_cpp.fixture.so"
-    module.write_bytes(b"native module fixture")
+    committed_venv = bundle_root / f"venv-{commit}"
+    bundle["venv"].rename(committed_venv)
+    bundle["venv"] = committed_venv
+    module = _site_packages(committed_venv) / "narrowgate_cpp.fixture.so"
     install = bundle["receipt"]
     native_receipt: dict[str, Any] = {
         "schema_version": subject.NATIVE_BUILD_RECEIPT_SCHEMA,
@@ -1506,6 +1511,47 @@ def test_content_bundle_validation_preserves_member_read_failures(
         assert isinstance(caught.value.__cause__, PermissionError)
 
 
+@pytest.mark.parametrize("ml_enabled", (False, True))
+def test_deployment_envelope_binds_enabled_model_and_state_policy_members(
+    tmp_path: Path, ml_enabled: bool,
+) -> None:
+    _bundle, repository, native_receipt, authorization = _deployment_envelope_fixture(tmp_path)
+    p3 = tmp_path / "p3.json"
+    policy = tmp_path / "state-policy.json"
+    p3.write_text('{"fixture": "P3"}\n', encoding="utf-8")
+    policy.write_text('{"fixture": "state policy"}\n', encoding="utf-8")
+    output = tmp_path / "envelope.json"
+    result = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=authorization if ml_enabled else None,
+        p3_path=p3,
+        state_conditioned_policy_path=policy,
+        policy_approvals=("state_conditioned_quote_policy",),
+        output_path=output,
+    )
+    authority = subject.load_deployment_envelope(
+        output, expected_root_sha256=result["canonical_sha256"],
+    )
+    expected = {"p3": str(p3), "state_conditioned_quote_policy": str(policy)}
+    if ml_enabled:
+        expected["model_authorization"] = str(authorization)
+    assert authority["model_policy_member_paths"] == expected
+    assert authority["policy_approvals"] == ["state_conditioned_quote_policy"]
+    assert runtime_policy.admit_runtime_policies(
+        {"state_conditioned_policy_mode": "active"}, deployment_authority=authority,
+    )["approved_policies"] == ["state_conditioned_quote_policy"]
+    for member in (p3, policy):
+        original = member.read_bytes()
+        member.write_bytes(original + b"\n")
+        with pytest.raises(subject.LockedRuntimeError, match="root drifted"):
+            subject.load_deployment_envelope(
+                output, expected_root_sha256=result["canonical_sha256"],
+            )
+        member.write_bytes(original)
+
+
 def test_build_deployment_envelope_b0_omits_buy_e3_extension(
     tmp_path: Path,
 ) -> None:
@@ -1655,6 +1701,118 @@ def test_deployment_envelope_binds_canonical_policy_approvals_and_loads_legacy_e
     assert legacy_authority["policy_approvals"] == []
 
 
+def test_native_build_bundle_reuses_verified_lock_and_streamed_wheels(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle, _repository, native_receipt, _authorization = _deployment_envelope_fixture(tmp_path)
+    native = json.loads(native_receipt.read_text())
+    arguments = {
+        "execution_commit": native["execution"]["execution_commit"],
+        "execution_tree": native["execution"]["execution_tree"],
+        "expected_root_sha256": native[subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD],
+    }
+    original_read, original_stream = subject._read_regular_file, subject._stream_digest
+    reads: list[Path] = []
+    streams = 0
+
+    def count_read(path: Path, **kwargs: Any) -> bytes:
+        assert path.suffix != ".whl", "build validation must stream each wheel only once"
+        reads.append(path)
+        return original_read(path, **kwargs)
+
+    def count_stream(handle: Any) -> tuple[str, int]:
+        nonlocal streams
+        streams += 1
+        return original_stream(handle)
+
+    monkeypatch.setattr(subject, "_read_regular_file", count_read)
+    monkeypatch.setattr(subject, "_stream_digest", count_stream)
+    expected = subject._validate_native_build_bundle(native_receipt, **arguments)
+    assert reads.count(bundle["lock_path"]) == 1
+    assert streams == 3  # One locked dependency, root wheel, native wheel.
+    reads.clear()
+    assert subject._validate_native_build_bundle(native_receipt, **arguments) == expected
+    assert reads.count(bundle["lock_path"]) == 1
+    assert streams == 6  # No cache survives a verification call.
+    reads.clear()
+    assert subject._validate_native_build_bundle(
+        native_receipt, verify_archives=False, **arguments,
+    ) == expected
+    assert streams == 6
+    assert sorted(reads) == sorted((
+        native_receipt, bundle["receipt_path"], Path(native["module"]["path"]),
+    ))
+
+    for path in (
+        bundle["lock_path"], bundle["root"], bundle["native"],
+        bundle["wheelhouse"] / subject.WHEELHOUSE_MANIFEST,
+    ):
+        raw = path.read_bytes()
+        path.write_bytes(raw.replace(b"1.2.3", b"1.2.4") if path.suffix == ".json" else raw + b"tampered")
+        with pytest.raises(subject.LockedRuntimeError):
+            subject._validate_native_build_bundle(native_receipt, **arguments)
+        assert subject._validate_native_build_bundle(
+            native_receipt, verify_archives=False, **arguments,
+        ) == expected
+        path.write_bytes(raw)
+    held = bundle["root"].with_name("relocated-root.whl")
+    bundle["root"].rename(held)
+    bundle["root"].symlink_to(held)
+    with pytest.raises(subject.LockedRuntimeError, match="not canonical"):
+        subject._validate_native_build_bundle(native_receipt, **arguments)
+    assert subject._validate_native_build_bundle(
+        native_receipt, verify_archives=False, **arguments,
+    ) == expected
+
+
+def test_envelope_startup_uses_installed_identity_without_build_archives(
+    tmp_path: Path,
+) -> None:
+    bundle, repository, native_receipt, authorization = _deployment_envelope_fixture(tmp_path)
+    native = json.loads(native_receipt.read_text())
+    envelope_path = tmp_path / "envelope.json"
+    result = subject.build_deployment_envelope(
+        repository_root=repository,
+        active_config_path=repository / "config.yaml",
+        native_build_receipt_path=native_receipt,
+        model_authorization_path=authorization,
+        output_path=envelope_path,
+    )
+    (repository / ".git" / "info" / "exclude").write_text(".venv-active\n")
+    (repository / ".venv-active").symlink_to(bundle["venv"])
+    arguments = {
+        "repository_root": repository,
+        "envelope_path": envelope_path,
+        "expected_envelope_sha256": result["canonical_sha256"],
+        "venv_python": bundle["venv"] / "bin" / "python3",
+        "pip_runner_python": BUILDER_PYTHON,
+    }
+    for path in (bundle["lock_path"], bundle["wheelhouse"], bundle["root"], bundle["native"]):
+        path.rename(path.with_name(path.name + ".held"))
+    assert subject.validate_deployment_envelope_startup(**arguments)["receipt"] == bundle["receipt"]
+
+    module = Path(native["module"]["path"])
+    for path, message in (
+        (module, "native module file hash drifted"),
+        (_site_packages(bundle["venv"]) / "frozen_dep_fixture" / "__init__.py", "RECORD digest"),
+        (bundle["receipt_path"], "canonical hash mismatch"),
+    ):
+        raw = path.read_bytes()
+        changed = (
+            raw.replace(b"2026-08-25T01:00:00Z", b"2026-08-25T02:00:00Z")
+            if path == bundle["receipt_path"] else raw + b"tampered"
+        )
+        path.write_bytes(changed)
+        with pytest.raises(subject.LockedRuntimeError, match=message):
+            subject.validate_deployment_envelope_startup(**arguments)
+        path.write_bytes(raw)
+    held_module = module.with_name(module.name + ".held")
+    module.rename(held_module)
+    module.symlink_to(held_module)
+    with pytest.raises(subject.LockedRuntimeError, match="not canonical"):
+        subject.validate_deployment_envelope_startup(**arguments)
+
+
 def test_native_build_bundle_rejects_non_live_or_skipped_qualification(
     tmp_path: Path,
 ) -> None:
@@ -1676,6 +1834,8 @@ def test_native_build_bundle_rejects_non_live_or_skipped_qualification(
         text=True,
     ).stdout.strip()
     original = json.loads(native_receipt.read_text(encoding="utf-8"))
+    outside_module = tmp_path / "uninstalled-module.so"
+    outside_module.write_bytes(Path(original["module"]["path"]).read_bytes())
     missing_member_contract = subject.native_live_abi_contract_payload()
     missing_member_contract["required_class_members"][
         "NativeReplaceContinuationState"
@@ -1702,6 +1862,11 @@ def test_native_build_bundle_rejects_non_live_or_skipped_qualification(
             },
             "did not pass exactly",
         ),
+        (
+            "module",
+            {**original["module"], "path": str(outside_module)},
+            "outside the commit-bound installed site",
+        ),
     )):
         changed = {**original, field: value}
         changed[subject.NATIVE_BUILD_RECEIPT_CANONICAL_FIELD] = subject.canonical_sha256(
@@ -1710,12 +1875,14 @@ def test_native_build_bundle_rejects_non_live_or_skipped_qualification(
         )
         changed_path = native_receipt.with_name(f"native-build-invalid-{index}.json")
         subject._write_json_authority(changed_path, changed)  # noqa: SLF001
-        with pytest.raises(subject.LockedRuntimeError, match=message):
-            subject._validate_native_build_bundle(  # noqa: SLF001
-                changed_path,
-                execution_commit=commit,
-                execution_tree=tree,
-            )
+        for verify_archives in (True, False):
+            with pytest.raises(subject.LockedRuntimeError, match=message):
+                subject._validate_native_build_bundle(  # noqa: SLF001
+                    changed_path,
+                    execution_commit=commit,
+                    execution_tree=tree,
+                    verify_archives=verify_archives,
+                )
 
 
 def test_startup_derives_runtime_leaves_from_one_envelope_root(

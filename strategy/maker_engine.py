@@ -1169,19 +1169,33 @@ def _load_dynamic_fill_hazard_shadow(
     return bundle, runtime, action_policy
 
 
-def _load_state_conditioned_policy(cfg) -> Optional[StateConditionedQuotePolicy]:
+def _load_state_conditioned_policy(
+    cfg,
+    *,
+    artifact_authority: Mapping[str, Any] | None = None,
+) -> StateConditionedQuotePolicy | None:
     mode = str(
         getattr(cfg.strategy, "state_conditioned_policy_mode", "disabled")
         or "disabled"
     ).strip().lower()
     if mode == "disabled":
         return None
-    model_path = _resolve_state_conditioned_policy_path(cfg)
+    authority = _policy_artifact_authority_members(
+        artifact_authority,
+        required_roles=frozenset({"state_conditioned_quote_policy"}),
+    )
+    expected_sha256 = None
+    if authority is None:
+        model_path = _resolve_state_conditioned_policy_path(cfg)
+    else:
+        model_path, expected_sha256 = authority["state_conditioned_quote_policy"]
     if model_path is None:
         raise ValueError(
             "state-conditioned policy mode requires a model artifact path"
         )
-    policy = StateConditionedQuotePolicy.load(model_path, mode=mode)
+    policy = StateConditionedQuotePolicy.load(
+        model_path, mode=mode, expected_sha256=expected_sha256
+    )
     logger.info(
         "Loaded state-conditioned quote policy: id=%s mode=%s path=%s",
         policy.artifact.policy_id,
@@ -1273,13 +1287,34 @@ def validate_live_artifact_authority(
     cfg,
     *,
     artifact_authority: Mapping[str, Any],
-    model_authorization_path: Path,
+    model_authorization_path: Path | None,
+    p3_path: Path | None = None,
 ) -> None:
     """Prove enabled config locators name the artifacts bound by the envelope."""
 
-    expected_paths = {
-        "model_authorization": model_authorization_path.resolve(strict=True),
-    }
+    if not isinstance(artifact_authority, Mapping):
+        raise ValueError("live_artifact_authority_missing")
+    expected_paths = {}
+    ml_enabled = bool(getattr(getattr(cfg, "ml", None), "enabled", False))
+    if ml_enabled:
+        if model_authorization_path is None:
+            raise ValueError("live_model_authorization_required_when_ml_enabled")
+        expected_paths["model_authorization"] = model_authorization_path.resolve(strict=True)
+    member_paths = artifact_authority.get("model_policy_member_paths", {})
+    if not ml_enabled:
+        if p3_path is None:
+            raise ValueError("live_p3_artifact_required_when_ml_disabled")
+        expected_paths["p3"] = p3_path.resolve(strict=True)
+    elif p3_path is not None and isinstance(member_paths, Mapping) and "p3" in member_paths:
+        expected_paths["p3"] = p3_path.resolve(strict=True)
+    state_mode = str(
+        getattr(cfg.strategy, "state_conditioned_policy_mode", "disabled") or "disabled"
+    ).strip().lower()
+    if state_mode != "disabled":
+        state_path = _resolve_state_conditioned_policy_path(cfg)
+        if state_path is None:
+            raise ValueError("state-conditioned policy mode requires a model artifact path")
+        expected_paths["state_conditioned_quote_policy"] = state_path.resolve(strict=True)
     if bool(getattr(cfg.strategy, "boolean_cooldown_policy_enabled", False)):
         expected_paths.update(
             {
@@ -1314,6 +1349,20 @@ def validate_live_artifact_authority(
     for role, expected_path in expected_paths.items():
         if members[role][0] != expected_path:
             raise ValueError(f"policy_artifact_authority_config_path_drifted:{role}")
+        if role == "p3":
+            from research.families.f02_empirical_p3_touch.fill_probability import (
+                FillProbabilityModel,
+            )
+
+            # Check compatibility on the same bytes bound by the release,
+            # before constructing a trading runtime. Optional preflight is not
+            # required to make this startup boundary effective.
+            raw = expected_path.read_bytes()
+            model = FillProbabilityModel.from_bytes(
+                raw, artifact_path=expected_path, require_live_compatible=True,
+            )
+            if model.artifact_sha256 != members[role][1]:
+                raise ValueError(f"policy_artifact_authority_file_sha256_mismatch:{role}")
 
 
 def _manifest_artifact_sha256(path: Path) -> str:
@@ -1493,6 +1542,10 @@ class MakerEngine:
         engine.stop()        # graceful shutdown
     """
 
+    # Offline/library instances may be unbound; the live entry supplies the
+    # independently bound P3 member when inference is disabled.
+    _p3_artifact_sha256: str | None = None
+
     def __init__(
         self,
         cfg,
@@ -1615,6 +1668,10 @@ class MakerEngine:
         model_path = _resolve_model_dir(cfg)
         self._model_dir = model_path
         self._fill_model_quote_cache = None
+        self._p3_artifact_sha256 = (
+            artifact_authority["model_policy_member_sha256"].get("p3")
+            if artifact_authority is not None else None
+        )
 
         # Components
         multi = getattr(cfg, "multi_market", None)
@@ -1686,7 +1743,9 @@ class MakerEngine:
         self._post_fill_quote_response = PostFillQuoteResponse(
             PostFillQuoteResponseConfig.from_params(vars(cfg.strategy))
         )
-        self._state_conditioned_policy = _load_state_conditioned_policy(cfg)
+        self._state_conditioned_policy = _load_state_conditioned_policy(
+            cfg, artifact_authority=artifact_authority
+        )
         (
             self._dynamic_fill_hazard_shadow_bundle,
             self._dynamic_fill_hazard_shadow_runtime,
@@ -3128,10 +3187,12 @@ class MakerEngine:
         from live.runtime_policy import (
             require_f05_boolean_cooldown_restart,
             require_f05_buy_e3_restart,
+            require_state_conditioned_policy_restart,
         )
 
         previous_strategy = vars(self.cfg.strategy)
         candidate_strategy = vars(cfg.strategy)
+        require_state_conditioned_policy_restart(previous_strategy, candidate_strategy)
         require_f05_boolean_cooldown_restart(
             previous_strategy,
             candidate_strategy,
@@ -3166,8 +3227,8 @@ class MakerEngine:
         self._post_fill_quote_response = PostFillQuoteResponse(
             PostFillQuoteResponseConfig.from_params(vars(cfg.strategy))
         )
-        previous_state_policy = self._state_conditioned_policy
-        self._state_conditioned_policy = _load_state_conditioned_policy(cfg)
+        # The mode/path are restart-only. Keep the startup-loaded bytes even if
+        # an artifact at the same filesystem path has changed since admission.
         previous_hazard_action_policy = (
             self._dynamic_fill_hazard_action_policy
         )
@@ -3189,16 +3250,6 @@ class MakerEngine:
                 event="config_reload",
                 force_requote=False,
             )
-        previous_identity = (
-            previous_state_policy.artifact.policy_id,
-            previous_state_policy.mode,
-        ) if previous_state_policy is not None else None
-        current_identity = (
-            self._state_conditioned_policy.artifact.policy_id,
-            self._state_conditioned_policy.mode,
-        ) if self._state_conditioned_policy is not None else None
-        if current_identity != previous_identity:
-            self._state_conditioned_policy_campaigns.clear()
         self._model_dir = _resolve_model_dir(cfg)
         model_dir_changed = self._model_dir != old_model_dir
         if model_dir_changed:
@@ -7649,6 +7700,10 @@ class MakerEngine:
             p3_delta_star = float(cache[1])
             p3_kappa_eff = float(cache[2])
             p3_identity = dict(cache[3])
+        if self._p3_artifact_sha256 is not None and (
+            p3_identity is None or p3_identity["artifact_sha256"] != self._p3_artifact_sha256
+        ):
+            raise RuntimeError("loaded P3 differs from the deployment-bound artifact")
         p3_kappa_eff_override = float(
             getattr(cfg.strategy, "p3_kappa_eff_override", 0.0) or 0.0
         )
