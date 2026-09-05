@@ -1,5 +1,6 @@
 import threading
 import time
+from concurrent.futures import Future
 from types import SimpleNamespace
 
 import pytest
@@ -7,7 +8,7 @@ import pytest
 from live.config import Config
 from strategy.inventory_manager import PositionState
 from strategy.maker_engine import MakerEngine
-from strategy.order_manager import OrderManager, OrderState, Side
+from strategy.order_manager import OrderManager, OrderOwnershipStatus, OrderState, Side
 
 
 def test_live_transport_roles_default_to_legacy_and_split_independently() -> None:
@@ -101,6 +102,78 @@ class _UnknownCloseThenNotFoundRest:
 
     def query_order(self, **_params):
         raise _AuthoritativeExchangeError(-2013, "Order does not exist")
+
+
+class _ControllableAsyncGateway:
+    supports_narrowgate_request_metadata = True
+    async_order_lanes_enabled = True
+
+    def __init__(self) -> None:
+        self.new_calls = []
+        self.cancel_calls = []
+        self.new_future: Future = Future()
+        self.cancel_future: Future = Future()
+
+    def new_order_async(self, **params):
+        self.new_calls.append(params)
+        return self.new_future
+
+    def cancel_order_async(self, **params):
+        self.cancel_calls.append(params)
+        return self.cancel_future
+
+
+def _result_for(params, *, status: str = "NEW", order_id: int = 123):
+    return {
+        "orderId": order_id,
+        "status": status,
+        "clientOrderId": (
+            params.get("newClientOrderId") or params.get("origClientOrderId")
+        ),
+        "symbol": params["symbol"],
+        "side": params.get("side") or params.get("_narrowgate_order_side"),
+        "origQty": params.get("quantity", "0.001"),
+        "executedQty": "0",
+    }
+
+
+def _private_cancel(cid: str, *, side: Side, order_id: int = 123):
+    return {
+        "c": cid,
+        "i": order_id,
+        "s": "BTCUSDC",
+        "S": side.value,
+        "X": "CANCELED",
+        "o": "LIMIT",
+        "p": "99.9" if side is Side.BUY else "100.1",
+        "q": "0.001",
+        "z": "0",
+        "l": "0",
+        "L": "0",
+        "T": int(time.time() * 1000),
+        "_local_receive_ts_ns": time.time_ns(),
+    }
+
+
+def _private_fill(cid: str, *, side: Side, order_id: int = 123):
+    price = "99.9" if side is Side.BUY else "100.1"
+    return {
+        "c": cid,
+        "i": order_id,
+        "s": "BTCUSDC",
+        "S": side.value,
+        "X": "FILLED",
+        "o": "LIMIT",
+        "p": price,
+        "q": "0.001",
+        "l": "0.001",
+        "z": "0.001",
+        "L": price,
+        "n": "0",
+        "N": "USDC",
+        "t": 991,
+        "T": 1_900_000_000_000,
+    }
 
 
 def _engine(rest: _RestClient) -> MakerEngine:
@@ -399,6 +472,74 @@ def test_unknown_side_reference_is_not_treated_as_terminal_proof() -> None:
     assert safety["reconciliation_required"] is True
 
 
+def test_prune_consumes_one_atomic_snapshot_across_terminal_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _engine(_RestClient())
+    manager = OrderManager()
+    engine.orders = manager
+    cid = manager.create_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    manager.confirm_new(cid, 41)
+    engine._ask_cid = cid
+
+    snapshot_taken = threading.Event()
+    transition_done = threading.Event()
+    transition_errors: list[BaseException] = []
+    original_snapshot = manager.ownership_snapshot
+
+    def reject_split_read(*_args, **_kwargs):
+        pytest.fail("side-reference pruning must not perform a split ownership read")
+
+    monkeypatch.setattr(manager, "terminal_identity", reject_split_read)
+    monkeypatch.setattr(manager, "get_order", reject_split_read)
+
+    def snapshot_then_wait_for_terminal(client_order_id: str):
+        snapshot = original_snapshot(client_order_id)
+        assert snapshot.status is OrderOwnershipStatus.ACTIVE_NONTERMINAL
+        snapshot_taken.set()
+        assert transition_done.wait(timeout=2.0)
+        return snapshot
+
+    monkeypatch.setattr(manager, "ownership_snapshot", snapshot_then_wait_for_terminal)
+
+    def terminalize_after_snapshot() -> None:
+        assert snapshot_taken.wait(timeout=2.0)
+        try:
+            manager.on_order_update(
+                {
+                    "s": "BTCUSDC",
+                    "c": cid,
+                    "S": "SELL",
+                    "X": "CANCELED",
+                    "i": 41,
+                    "p": "100.1",
+                    "q": "0.001",
+                }
+            )
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            transition_errors.append(exc)
+        finally:
+            transition_done.set()
+
+    terminal_thread = threading.Thread(target=terminalize_after_snapshot)
+    terminal_thread.start()
+
+    # The snapshot linearizes before the terminal transition.  It may be stale
+    # by the time the consumer sees it, but it remains a coherent ACTIVE result
+    # and must not be combined with a later terminal lookup into false UNKNOWN.
+    assert engine._prune_terminal_side_order_reference(Side.SELL) is False
+    terminal_thread.join(timeout=2.0)
+    assert not terminal_thread.is_alive()
+    assert transition_errors == []
+    assert engine._ask_cid == cid
+    assert engine._running is True
+    assert engine._order_submit_fail_closed is False
+
+    monkeypatch.setattr(manager, "ownership_snapshot", original_snapshot)
+    assert engine._prune_terminal_side_order_reference(Side.SELL) is True
+    assert engine._ask_cid is None
+
+
 def test_residual_close_waits_for_old_cancel_then_places_one_candidate() -> None:
     engine = _engine(_RestClient())
     engine.inventory = SimpleNamespace(force_flat=lambda: None)
@@ -624,3 +765,278 @@ def test_submit_result_identity_or_quantity_mismatch_is_fatal(
     )
     assert safety["reconciliation_required"] is True
     assert len(rest.calls) == 1
+
+
+def test_normal_submit_keeps_synchronous_b0_when_async_switch_is_off() -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+    gateway = _ControllableAsyncGateway()
+    gateway.new_order = rest.new_order
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = False
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert cid is not None
+    assert gateway.new_calls == []
+    assert len(rest.calls) == 1
+    assert engine.orders.get_order(cid).state is OrderState.OPEN
+
+
+def test_async_submit_returns_pending_without_waiting_for_rest() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+
+    assert cid is not None
+    assert len(gateway.new_calls) == 1
+    assert gateway.new_calls[0]["_narrowgate_order_side"] == "BUY"
+    assert not gateway.new_future.done()
+    assert engine.orders.get_order(cid).state is OrderState.PENDING_NEW
+    assert engine._bid_cid == cid
+
+
+def test_async_submit_result_transitions_pending_new_to_open() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    assert cid is not None
+    gateway.new_future.set_result(_result_for(gateway.new_calls[0]))
+
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    assert order.state is OrderState.OPEN
+    assert order.order_id == 123
+    assert engine._ask_cid == cid
+
+
+def test_async_submit_late_result_does_not_resurrect_private_terminal() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+    assert engine.orders.ownership_snapshot(cid).status is OrderOwnershipStatus.TERMINAL
+
+    gateway.new_future.set_result(_result_for(gateway.new_calls[0]))
+
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status is OrderOwnershipStatus.TERMINAL
+    assert ownership.terminal_identity["terminal_state"] == "CANCELED"
+    assert engine.orders.get_active_orders() == []
+    assert engine._bid_cid is None
+
+
+def test_async_submit_late_terminal_result_does_not_duplicate_outcome() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    outcomes = []
+    engine._log_order_outcome = lambda event, _order: outcomes.append(event)
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+    outcomes.clear()
+
+    gateway.new_future.set_result(
+        _result_for(gateway.new_calls[0], status="CANCELED")
+    )
+
+    assert outcomes == []
+    assert engine.orders.ownership_snapshot(cid).status is OrderOwnershipStatus.TERMINAL
+
+
+def test_async_submit_late_result_does_not_duplicate_private_fill() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    fills = []
+    engine.orders._on_fill = lambda _order, event: fills.append(event["_fill_qty"])
+
+    cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    assert cid is not None
+    engine.orders.on_order_update(_private_fill(cid, side=Side.SELL))
+    assert fills == [pytest.approx(0.001)]
+
+    late_result = _result_for(gateway.new_calls[0], status="FILLED")
+    late_result["executedQty"] = "0.001"
+    gateway.new_future.set_result(late_result)
+
+    assert fills == [pytest.approx(0.001)]
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status is OrderOwnershipStatus.TERMINAL
+    assert ownership.terminal_identity["terminal_state"] == "FILLED"
+
+
+def test_async_submit_late_transport_error_defers_to_private_terminal() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    assert cid is not None
+    engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+
+    gateway.new_future.set_exception(TimeoutError("late response lost"))
+
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status is OrderOwnershipStatus.TERMINAL
+    assert ownership.terminal_identity["terminal_state"] == "CANCELED"
+    assert engine._bid_cid is None
+    assert engine.runtime_safety_snapshot(
+        now_monotonic_s=1.0
+    )["fatal_runtime_latched"] is False
+
+
+def test_async_submit_transport_unknown_retains_pending_new() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    assert cid is not None
+    gateway.new_future.set_exception(TimeoutError("response lost"))
+
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    assert order.state is OrderState.PENDING_NEW
+    assert engine._ask_cid == cid
+
+
+def test_async_cancel_consumes_late_result_after_private_terminal_once() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._ask_cid = cid
+
+    assert not engine._cancel_order(cid)
+    assert gateway.cancel_calls[0]["_narrowgate_order_side"] == "SELL"
+    assert engine.orders.get_order(cid).state is OrderState.PENDING_CANCEL
+    engine.orders.on_order_update(_private_cancel(cid, side=Side.SELL))
+
+    gateway.cancel_future.set_result(
+        _result_for(gateway.cancel_calls[0], status="CANCELED")
+    )
+
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status is OrderOwnershipStatus.TERMINAL
+    assert ownership.terminal_identity["terminal_state"] == "CANCELED"
+    assert engine.orders.get_active_orders() == []
+    assert engine._ask_cid is None
+
+
+def test_async_cancel_result_can_supply_terminal_before_private_callback() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+
+    assert not engine._cancel_order(cid)
+    gateway.cancel_future.set_result(
+        _result_for(gateway.cancel_calls[0], status="CANCELED")
+    )
+
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status is OrderOwnershipStatus.TERMINAL
+    assert ownership.terminal_identity["terminal_state"] == "CANCELED"
+    assert engine._bid_cid is None
+
+
+def test_async_cancel_active_result_clears_stale_replace_intent() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    cleared = []
+    engine._clear_replace_terminal_continuation = lambda **values: cleared.append(
+        values
+    )
+
+    assert not engine._cancel_order(cid, replace_continuation_generation=7)
+    gateway.cancel_future.set_result(_result_for(gateway.cancel_calls[0]))
+
+    assert engine.orders.get_order(cid).state is OrderState.OPEN
+    assert cleared == [
+        {
+            "side": Side.BUY,
+            "cid": cid,
+            "generation": 7,
+            "reason": "cancel_result_active",
+        }
+    ]
+
+
+def test_async_cancel_transport_unknown_retains_pending_cancel() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+
+    assert not engine._cancel_order(cid)
+    gateway.cancel_future.set_exception(TimeoutError("response lost"))
+
+    order = engine.orders.get_order(cid)
+    assert order is not None
+    assert order.state is OrderState.PENDING_CANCEL
+    assert engine._bid_cid == cid
+
+
+def test_async_submit_pre_dispatch_failure_releases_ownership() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+
+    def fail_before_dispatch(**_params):
+        raise _PreDispatchUnavailable("lane full")
+
+    gateway.new_order_async = fail_before_dispatch
+
+    assert engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001) is None
+    assert engine.orders.get_active_orders() == []
+    assert engine._bid_cid is None
+
+
+def test_async_cancel_pre_dispatch_failure_restores_active_ownership() -> None:
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._ask_cid = cid
+
+    def fail_before_dispatch(**_params):
+        raise _PreDispatchUnavailable("lane full")
+
+    gateway.cancel_order_async = fail_before_dispatch
+
+    assert not engine._cancel_order(cid)
+    assert engine.orders.get_order(cid).state is OrderState.OPEN
+    assert engine._ask_cid == cid

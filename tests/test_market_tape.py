@@ -10,7 +10,10 @@ import pytest
 from live.config import Config
 from live.venues.common import MARKET_TAPE_SCHEMA_VERSION, normalize_market_tape_row
 from live.ws_handler import WSHandler
-from research.system_engineering.audit.receive_time_tape import latency_distribution, leader_survival
+from research.system_engineering.audit.receive_time_tape import (
+    latency_distribution,
+    leader_survival,
+)
 
 
 class _FakeFuturesMarketWebSocket:
@@ -27,6 +30,14 @@ class _FakeFuturesMarketWebSocket:
 
     def list_subscribe(self, *, id):
         self.list_requests.append(id)
+
+
+class _UnexpectedLock:
+    def __enter__(self):
+        raise AssertionError("disabled deep book must not touch the hot-path lock")
+
+    def __exit__(self, *_args):
+        return False
 
 
 def test_usdm_market_subscription_never_falls_back_to_raw_trade():
@@ -91,6 +102,31 @@ def test_execution_depth_message_refreshes_watchdog_transport_clock():
     )
 
     assert handler._market_depth_seen["btcusdc"] > 0.0
+
+
+def test_execution_trade_skips_deep_book_lock_when_collection_is_disabled():
+    cfg = Config()
+    cfg.websocket.deep_book_enabled = False
+    signal = SimpleNamespace(on_agg_trade=lambda *_args, **_kwargs: None)
+    inventory = SimpleNamespace(update_mark_price=lambda *_args, **_kwargs: None)
+    engine = SimpleNamespace(signal=signal, inventory=inventory)
+    handler = WSHandler(engine, cfg)
+    handler._deep_book_lock = _UnexpectedLock()
+
+    handler._on_market_message(
+        None,
+        {
+            "e": "aggTrade",
+            "s": "BTCUSDC",
+            "E": 1,
+            "a": 2,
+            "p": "100.0",
+            "q": "0.01",
+            "m": False,
+        },
+    )
+
+    assert handler._exec_trade_count == 1
 
 
 def test_book_ticker_cannot_mask_execution_depth_transport_silence():

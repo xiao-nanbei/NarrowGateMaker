@@ -51,6 +51,15 @@ class ApiConfig:
     testnet: bool = True
     timeout_s: float = 5.0
     order_transport: str = "rest"
+    # Restart-only execution A/B.  The first switch only moves blocking
+    # responses off the decision thread and preserves one global FIFO.  The
+    # second switch is the separate, economically meaningful cross-side
+    # concurrency arm.
+    async_order_lanes_enabled: bool = False
+    cross_side_order_lanes_enabled: bool = False
+    async_order_lane_capacity: int = 8
+    async_order_lane_drain_timeout_s: float = 10.0
+    async_order_lane_max_runtime_s: float = 900.0
     websocket_order_ab: WebSocketOrderAbConfig = field(
         default_factory=WebSocketOrderAbConfig
     )
@@ -937,6 +946,49 @@ def _validate_config(cfg: Config) -> None:
             "api.order_transport must be rest or websocket_api_ab"
         )
     cfg.api.order_transport = order_transport
+    if type(cfg.api.async_order_lanes_enabled) is not bool:
+        raise ValueError("api.async_order_lanes_enabled must be a boolean")
+    if type(cfg.api.cross_side_order_lanes_enabled) is not bool:
+        raise ValueError("api.cross_side_order_lanes_enabled must be a boolean")
+    if (
+        cfg.api.cross_side_order_lanes_enabled
+        and not cfg.api.async_order_lanes_enabled
+    ):
+        raise ValueError(
+            "api.cross_side_order_lanes_enabled requires "
+            "api.async_order_lanes_enabled"
+        )
+    if (
+        isinstance(cfg.api.async_order_lane_capacity, bool)
+        or not isinstance(cfg.api.async_order_lane_capacity, int)
+        or int(cfg.api.async_order_lane_capacity) <= 0
+    ):
+        raise ValueError("api.async_order_lane_capacity must be a positive integer")
+    try:
+        lane_drain_timeout_s = float(cfg.api.async_order_lane_drain_timeout_s)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "api.async_order_lane_drain_timeout_s must be finite and positive"
+        ) from exc
+    if not math.isfinite(lane_drain_timeout_s) or lane_drain_timeout_s <= 0.0:
+        raise ValueError(
+            "api.async_order_lane_drain_timeout_s must be finite and positive"
+        )
+    cfg.api.async_order_lane_drain_timeout_s = lane_drain_timeout_s
+    try:
+        lane_max_runtime_s = float(cfg.api.async_order_lane_max_runtime_s)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "api.async_order_lane_max_runtime_s must be finite and positive"
+        ) from exc
+    if (
+        not math.isfinite(lane_max_runtime_s)
+        or not 1.0 <= lane_max_runtime_s <= 3_600.0
+    ):
+        raise ValueError(
+            "api.async_order_lane_max_runtime_s must be in [1, 3600]"
+        )
+    cfg.api.async_order_lane_max_runtime_s = lane_max_runtime_s
     from live.binance_usdm_transport import (
         BinanceUsdMWebSocketOrderConfig,
         binance_usdm_websocket_api_url,

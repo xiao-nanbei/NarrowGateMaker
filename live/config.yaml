@@ -36,6 +36,14 @@ api:
   # bounded to a short qualification window, and must never be enabled by a
   # hot reload or an implicit fallback.
   order_transport: "rest"
+  # Restart-only matched-host A/B. Async response isolation alone preserves
+  # one global FIFO. Cross-side concurrency is an independent, default-off
+  # economic timing arm. Cancel-all remains a synchronous exclusive barrier.
+  async_order_lanes_enabled: false
+  cross_side_order_lanes_enabled: false
+  async_order_lane_capacity: 8
+  async_order_lane_drain_timeout_s: 10.0
+  async_order_lane_max_runtime_s: 900.0
   websocket_order_ab:
     # Empty resolves to Binance's exact official endpoint for api.testnet.
     url: ""
@@ -91,9 +99,11 @@ strategy:
   replace_min_interval_ms_reducing: 0.0
   replace_pending_coalesce: true
   replace_cancel_first_exposure_increasing: false
-  # Startup-only system arm. Normal quote REST leaves the market-data thread
-  # and each side keeps only its latest desired quote. Safety cancel/close paths
-  # remain synchronous. Enable only for a controlled live soak.
+  # Restart-only lifecycle arm. A visible authoritative replacement terminal
+  # may wake a fresh same-side decision instead of waiting for normal cadence.
+  # This changes quote uptime and therefore remains disabled pending replay and
+  # matched-host economic qualification.
+  replace_terminal_continuation: false
 
   # Guard / cooldown examples. These are disabled by default in the public
   # template because promotion requires symbol-specific replay/live evidence.

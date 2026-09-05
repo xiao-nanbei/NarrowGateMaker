@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-05
 
-Last materially modified: 2026-09-03
+Last materially modified: 2026-09-05
 
 This runbook describes a reusable AWS EC2 deployment pattern for the public
 NarrowGateMaker code. It contains no current host, credential, account state,
@@ -384,13 +384,30 @@ and closes the descriptors, and reports accepted, committed, and uncommitted
 counts. This is an in-process ordering guarantee, not protection against power,
 kernel, or storage loss.
 
-USD-M REST traffic is split into persistent single-owner sessions. The hot
-order session is used only for new/cancel/close requests; reconciliation,
-market snapshots, metrics, and listen-key maintenance use independent cold
-sessions. Each pool is bounded and has automatic HTTP retries disabled. This
-prevents a slow cold request from occupying the order connection and prevents
-an ambiguous order write from being replayed automatically. A timed-out or
-otherwise uncertain write still requires exchange reconciliation.
+USD-M REST traffic is split into persistent single-owner sessions. The runtime
+allocates BUY, SELL, and safety order sessions, but the behavior-identical
+default routes BUY, SELL, and cancel-all through one global legacy order
+session. The side sessions become active only in the explicit cross-side A/B
+arm. Reconciliation, its worker fetch, market snapshots, metrics, and
+listen-key maintenance always use separate cold-role sessions. Each pool is
+bounded and has automatic HTTP retries disabled. This prevents a slow cold
+request from occupying the active order connection and prevents an ambiguous
+order write from being replayed automatically. A timed-out or otherwise
+uncertain write still requires exchange reconciliation.
+
+Asynchronous response isolation and cross-side concurrency are separate,
+restart-only A/B switches, and both are disabled by default. Enabling only
+`async_order_lanes_enabled` moves response waiting off the decision thread but
+keeps BUY and SELL writes in one `GLOBAL` FIFO, preserving their cross-side
+arrival order. Enabling `cross_side_order_lanes_enabled` additionally creates
+independent BUY and SELL lanes; that changes exchange arrival timing and is an
+economic lifecycle experiment, not a transparent performance refactor.
+
+On a 2-vCPU/4-GiB host, evidence and order-lane queues remain bounded, GC
+telemetry uses fixed histogram buckets rather than retaining samples, and cold
+reconciliation work is single-flight. Do not run multiple cold reconciliation
+fetches concurrently on that host class: preserve memory headroom and one CPU
+for the decision, private-event, and safety paths.
 
 The fill-cooldown checkpoint must never delay the immediate risk response to a
 fill. The engine first issues the required cancel of continuing
@@ -403,10 +420,11 @@ restart-gap, duplicate-fill, and stale-order cases.
 
 Signal computation has two distinct paths. A request for an already completed
 10-second bucket returns from the cache before copying historical bars or L2.
-A new bucket updates rolling execution-book state incrementally in the native
-C++ ring and materializes only the required features. The Python fallback and
-native path must preserve feature, causal-cutoff, prediction, and action parity;
-activation must expose which path is active, and latency reporting must keep
+When the native signal profile is active, a new bucket updates rolling
+execution-book state incrementally in the C++ ring and materializes only the
+required features; the Python fallback does not claim that optimization. Both
+paths must preserve feature, causal-cutoff, prediction, and action parity.
+Activation must expose which path is active, and latency reporting must keep
 `cached`, `new_bucket`, and `catch_up` samples separate.
 
 ## Bounded WebSocket order-gateway A/B
@@ -429,9 +447,12 @@ rollback to begin with enough margin to finish **before** that bound. The hard
 timer is only a fail-safe that stops the candidate; it is not a rollback
 mechanism. If the active rollback cannot complete, leave the host stopped and
 reconcile rather than extending the experiment. Compare REST and WebSocket on
-the same identity chain from decision to wire, authoritative ACK, and private
-visibility; report failure/unknown rates and reconnects alongside latency
-quantiles. A lower ACK p99 alone does not authorize the transport.
+the same request/client-order identity using decision-to-private-visibility
+latency plus authoritative outcome and `UNKNOWN` rates. Do not use an internal
+decision-to-wire timestamp as the primary cross-transport metric: the current
+REST SDK does not expose wire time at a directly comparable observation point.
+Report ACK/error latency and reconnects as supporting diagnostics. A lower ACK
+p99 alone does not authorize the transport.
 
 ## Post-activation latency observation
 
@@ -446,7 +467,10 @@ one release and process epoch at a time and exclude restart/warm-up rows.
   `catch_up`) instead of pooling unlike work.
 - Compute REST distributions only from rows where the operation occurred and
   report the request count. Aggregated count/sum health fields support a mean,
-  not a p99.
+  not a p99. For REST/WebSocket comparison, use matched request/client-order
+  identities and report decision-to-private-visibility plus authoritative
+  outcome/`UNKNOWN`; do not compare transport-internal wire timestamps that do
+  not share an observation contract.
 - For terminal-driven replacement, count `arm`, `publish`, `decision`, and
   `drop` markers, split terminal-visible-to-decision latency by side, and report
   every drop reason.

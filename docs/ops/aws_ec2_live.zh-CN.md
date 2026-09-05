@@ -2,9 +2,9 @@
 
 <p><a href="aws_ec2_live.md">English</a> | <a href="aws_ec2_live.zh-CN.md">简体中文</a></p>
 
-Last materially synchronized: 2026-09-03
+Last materially synchronized: 2026-09-05
 
-Last materially modified: 2026-09-03
+Last materially modified: 2026-09-05
 
 本文描述公共 NarrowGateMaker 代码在 AWS EC2 上的可复用部署模式，不包含当前主机、
 credential、账户状态、active release、策略参数或 artifact identity。
@@ -343,11 +343,24 @@ condition，不能伪装成成功采集。正常退出时先停止新 admission�
 全部已接受 item，flush 并关闭 descriptor，同时报告 accepted、committed 与 uncommitted
 计数。这是进程内顺序保证，不承诺抵御断电、kernel failure 或 storage failure。
 
-USD-M REST traffic 使用独立的 persistent single-owner session。热 order session 只承载
-new/cancel/close；reconciliation、market snapshot、metrics 与 listen-key maintenance
-分别走独立冷 session。每个 pool 均有界且禁用 HTTP 自动重试。这样冷请求的长尾不会占用
-报撤连接，结果不明确的 order write 也不会被自动重放。Write timeout 或其他 uncertain
-outcome 仍必须进入 exchange reconciliation。
+USD-M REST traffic 使用独立的 persistent single-owner session。运行时会预先分配 BUY、
+SELL 和 safety order session，但行为等价的默认路径仍让 BUY、SELL 与 cancel-all 共用一个
+legacy global order session；只有显式启用 cross-side A/B 后，两条 side session 才进入热路径。
+reconciliation、reconciliation worker fetch、market snapshot、metrics 与 listen-key
+maintenance 始终分别走独立的 cold-role session。每个 pool 均有界且禁用 HTTP 自动重试。
+这样冷请求的长尾不会占用当前生效的报撤连接，结果不明确的 order write 也不会被自动重放。
+Write timeout 或其他 uncertain outcome 仍必须进入 exchange reconciliation。
+
+Asynchronous response isolation 与 cross-side concurrency 是两个相互独立、仅重启生效的
+A/B 开关，默认均关闭。只启用 `async_order_lanes_enabled` 时，等待 response 会移出 decision
+thread，但 BUY/SELL 写入仍共用一个 `GLOBAL` FIFO，保持原有跨侧到达顺序。额外启用
+`cross_side_order_lanes_enabled` 才会建立独立 BUY/SELL lane；它会改变交易所的跨侧到达
+时序，属于经济 lifecycle 实验，不是透明的性能重构。
+
+在 2-vCPU/4-GiB host 上，evidence 与 order-lane queue 必须保持有界，GC telemetry 只使用
+固定 histogram bucket 而不保留样本，cold reconciliation 维持 single-flight。该规格不得
+并发运行多个冷对账 fetch；必须为 decision、private-event 与 safety path 保留内存和一个
+CPU 的余量。
 
 Fill-cooldown checkpoint 不能延后 fill 后的即时风险动作。Engine 先撤销仍会继续增加
 exposure 的订单，再把更新后的 checkpoint 写入带 sequence、checksum 的双槽 WAL。启动时
@@ -357,10 +370,11 @@ exposure 的订单，再把更新后的 checkpoint 写入带 sequence、checksum
 order。
 
 Signal computation 分成两条路径。请求已经完成的 10 秒 bucket 时，在复制历史 bar 或 L2
-之前直接返回 cache。新 bucket 则在 native C++ ring 中增量维护 execution-book rolling
-state，只 materialize 必要 feature。Python fallback 与 native path 必须保持 feature、
-causal cutoff、prediction 和 action parity；activation 必须暴露实际启用路径，延迟报告也
-必须把 `cached`、`new_bucket` 与 `catch_up` 样本分开。
+之前直接返回 cache。只有启用 native signal profile 时，新 bucket 才在 C++ ring 中增量
+维护 execution-book rolling state，并只 materialize 必要 feature；Python fallback 不声称
+具备这项优化。两条路径必须保持 feature、causal cutoff、prediction 和 action parity；
+activation 必须暴露实际启用路径，延迟报告也必须把 `cached`、`new_bucket` 与 `catch_up`
+样本分开。
 
 ## 有界 WebSocket order gateway A/B
 
@@ -378,8 +392,10 @@ write，必须停止新增 authority 并 reconcile。
 Activation 前必须设置 hard `max_runtime_s`，并预先调度 verified REST rollback，使其留出
 足够余量在 hard bound **之前**完成。Hard timer 只是停止 candidate 的 fail-safe，不是
 rollback mechanism。Active rollback 无法完成时，应让 host 保持 stopped 并 reconcile，
-不能延长实验。REST 与 WebSocket 必须按同一 identity chain 比较 decision → wire →
-authoritative ACK → private visibility，同时报告 failure/unknown rate 与 reconnect，不能只看
+不能延长实验。REST 与 WebSocket 必须按同一 request/client-order identity，比较 decision
+→ private visibility 延迟，并同时比较 authoritative outcome 与 `UNKNOWN` rate。内部
+decision → wire 时间不能作为跨 transport 主指标：当前 REST SDK 没有暴露可与 WebSocket
+同口径直接观测的 wire time。ACK/error latency 与 reconnect 只作为辅助诊断，不能只看
 ACK p99 更低就授权 transport。
 
 ## Activation 后延迟观测
@@ -393,7 +409,9 @@ Health admission 只能证明 release 安全启动，不能证明延迟已经改
 - Signal timing 必须按记录的 `cached`、`new_bucket`、`catch_up` path 分开，不能把不同
   工作量混在一个分布中。
 - REST 分布只使用真正发生该 operation 的行，并报告 request count。只有 count/sum 的
-  health 聚合字段只能计算 mean，不能据此声称 p99。
+  health 聚合字段只能计算 mean，不能据此声称 p99。REST/WebSocket 比较必须匹配同一
+  request/client-order identity，报告 decision-to-private-visibility 与 authoritative
+  outcome/`UNKNOWN`；不得比较 observation contract 不一致的 transport 内部 wire 时间。
 - 对 terminal-driven replacement，分别统计 `arm`、`publish`、`decision` 和 `drop`
   marker，按 side 报告 terminal-visible-to-decision latency，并列出所有 drop reason。
 - 单独记录 systemd restart count 与非 `ok` outcome；成功路径变短不能掩盖 failure 或

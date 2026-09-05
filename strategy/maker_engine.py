@@ -57,7 +57,12 @@ from strategy.native_order_action import (
     NativeOrderSideBoundary,
     quantity_from_lots,
 )
-from strategy.order_manager import OrderManager, OrderState, Side
+from strategy.order_manager import (
+    OrderManager,
+    OrderOwnershipStatus,
+    OrderState,
+    Side,
+)
 from strategy.post_fill_quote_response import (
     PostFillQuoteResponse,
     PostFillQuoteResponseConfig,
@@ -177,6 +182,34 @@ except Exception:  # pragma: no cover - live can run without research models on 
 logger = logging.getLogger("maker_engine")
 
 
+def _critical_log_without_raising(
+    message: object,
+    *args: object,
+    exc_info: object | None = None,
+) -> None:
+    """Keep a fatal-path diagnostic from changing exchange safety actions."""
+
+    try:
+        logger.critical(message, *args, exc_info=exc_info)
+        return
+    except BaseException as logging_error:
+        try:
+            rendered = str(message)
+            if args:
+                rendered = rendered % args
+        except BaseException:
+            rendered = "<unformattable-maker-fatal-log>"
+        try:
+            detail = f"{type(logging_error).__name__}:{logging_error}"
+            payload = (
+                "MAKER_FATAL_LOG_FAILED synchronous_stderr_fallback=1 "
+                f"detail={detail} message={rendered}\n"
+            ).encode("utf-8", errors="backslashreplace")
+            os.write(2, payload)
+        except BaseException:  # pragma: no cover - process teardown edge
+            pass
+
+
 FILL_COOLDOWN_CHECKPOINT_SCHEMA_V1 = "narrowgate_fill_cooldown_checkpoint.v1"
 FILL_COOLDOWN_CHECKPOINT_SCHEMA = "narrowgate_fill_cooldown_checkpoint.v2"
 FILL_COOLDOWN_CHECKPOINT_MAX_BYTES = 64 * 1024
@@ -189,6 +222,7 @@ _POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S = (
     0.40,
     0.40,
 )
+_PERIODIC_POSITION_RECONCILIATION_FETCH_TIMEOUT_S = 15.0
 FILL_COOLDOWN_RESTORE_MODES = frozenset(
     {
         "fresh_b0_no_checkpoint",
@@ -401,7 +435,7 @@ class SidePolicyDecision:
     order_ttl_ms: int = 0
 
 
-@dataclass
+@dataclass(slots=True)
 class QuoteDecisionLogRow:
     timestamp: str
     symbol: str
@@ -653,7 +687,7 @@ class InventoryCampaignShadowLogRow:
     ask_block_if_reducing_only: int
 
 
-@dataclass
+@dataclass(slots=True)
 class LivePerfTelemetryLogRow:
     timestamp: str
     symbol: str
@@ -716,7 +750,7 @@ class LivePerfTelemetryLogRow:
     cpp_routing_used: int
 
 
-@dataclass
+@dataclass(slots=True)
 class QuoteSnapshotIntegrityLogRow:
     timestamp: str
     symbol: str
@@ -757,7 +791,7 @@ class QuoteSnapshotIntegrityLogRow:
     ask_action: str
 
 
-@dataclass
+@dataclass(slots=True)
 class OrderOutcomeLogRow:
     timestamp: str
     symbol: str
@@ -790,6 +824,9 @@ class OrderOutcomeLogRow:
     mid: float
     target_price: float
     target_qty: float
+
+
+_CSV_ROW_FIELD_CACHE: dict[type, tuple[str, ...]] = {}
 
 # ── P3 fill probability model (lazy load) ──
 _fill_model = None
@@ -1462,6 +1499,41 @@ class _DeferredLiveQuotePublication:
     buy_active_order_floor_unsafe: bool | None = None
     sell_final_side_floor_changed: bool | None = None
     sell_active_order_floor_unsafe: bool | None = None
+    buy_preserved_source: "_DeferredQuoteSideSource | None" = None
+    sell_preserved_source: "_DeferredQuoteSideSource | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class _DeferredQuoteSideSource:
+    """Flat owner for one previously published native quote side."""
+
+    quote: DeferredNativeQuoteCoreResult
+    quote_ts_ms: int
+    snapshot: QuoteDecisionSnapshot
+    final_side_floor_changed: bool | None = None
+    active_order_floor_unsafe: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _PeriodicPositionReconciliationCapture:
+    """Immutable local state bound to one cold reconciliation fetch."""
+
+    generation: int
+    worker_epoch: int
+    barrier_json: str
+    trade_identities_json: str
+    requested_monotonic_s: float
+
+
+@dataclass(slots=True)
+class _PeriodicPositionReconciliationCompletion:
+    """Single-owner handoff from the cold fetch worker to the main thread."""
+
+    capture: _PeriodicPositionReconciliationCapture
+    payload: tuple[Any, ...] | None
+    error: BaseException | None
+    catastrophic: bool
+    completed_monotonic_s: float
 
 
 class MakerEngine:
@@ -1482,6 +1554,7 @@ class MakerEngine:
         artifact_authority: Mapping[str, Any] | None = None,
         order_gateway=_LEGACY_TRANSPORT_DEFAULT,
         reconciliation_client=_LEGACY_TRANSPORT_DEFAULT,
+        background_reconciliation_client=_LEGACY_TRANSPORT_DEFAULT,
         metrics_client=_LEGACY_TRANSPORT_DEFAULT,
     ):
         """
@@ -1489,6 +1562,7 @@ class MakerEngine:
         rest_client: compatibility default for both transport roles
         order_gateway: latency-sensitive new/cancel transport
         reconciliation_client: low-frequency account and exchange query transport
+        background_reconciliation_client: periodic P1/trades/P2-only transport
         metrics_client: low-frequency public metric polling transport
         """
         self.cfg = cfg
@@ -1504,6 +1578,11 @@ class MakerEngine:
             raise ValueError(
                 "reconciliation_client cannot be None when provided explicitly"
             )
+        if background_reconciliation_client is None:
+            raise ValueError(
+                "background_reconciliation_client cannot be None when provided "
+                "explicitly"
+            )
         if metrics_client is None:
             raise ValueError("metrics_client cannot be None when provided explicitly")
         self.order_gateway = (
@@ -1516,6 +1595,11 @@ class MakerEngine:
             if reconciliation_client is _LEGACY_TRANSPORT_DEFAULT
             else reconciliation_client
         )
+        self.background_reconciliation_client = (
+            self.reconciliation_client
+            if background_reconciliation_client is _LEGACY_TRANSPORT_DEFAULT
+            else background_reconciliation_client
+        )
         self.metrics_client = (
             rest_client
             if metrics_client is _LEGACY_TRANSPORT_DEFAULT
@@ -1527,6 +1611,15 @@ class MakerEngine:
         self._csv_log_lock = threading.Lock()
         self._order_ref_lock = threading.RLock()
         self._order_context_lock = threading.RLock()
+        # REST/WS request completion can arrive on the independent BUY/SELL
+        # gateway workers.  The exchange calls remain concurrent by side, but
+        # their small ledger-commit tails are serialized so a late response
+        # cannot race another completion through MakerEngine-owned context.
+        self._async_order_completion_lock = threading.RLock()
+        self._async_order_completion_locks = {
+            Side.BUY: threading.RLock(),
+            Side.SELL: threading.RLock(),
+        }
         self._replace_terminal_continuation_lock = threading.Lock()
         (
             self._replace_terminal_continuation_native_module,
@@ -1537,6 +1630,35 @@ class MakerEngine:
         self._native_quote_policy_stage_key = None
         self._native_quote_policy_results: dict[str, Any] = {}
         self._reconciliation_lock = threading.Lock()
+        # Periodic position reconciliation uses a single cold worker for only
+        # the P1 -> accountTrades -> P2 network proof.  The worker never owns
+        # InventoryManager or OrderManager state; the main thread validates
+        # this captured generation/barrier before committing the result.
+        self._position_reconciliation_generation = 0
+        self._periodic_reconciliation_state_lock = threading.Lock()
+        self._periodic_reconciliation_thread: threading.Thread | None = None
+        self._periodic_reconciliation_completion: (
+            _PeriodicPositionReconciliationCompletion | None
+        ) = None
+        self._periodic_reconciliation_shutdown = False
+        self._periodic_reconciliation_required_sync_active = False
+        self._periodic_reconciliation_worker_epoch = 0
+        self._periodic_reconciliation_retry_requested = False
+        self._periodic_reconciliation_retry_not_before_s = 0.0
+        self._periodic_reconciliation_retry_attempt = 0
+        self._periodic_reconciliation_retry_reason = ""
+        self._periodic_reconciliation_scheduled = 0
+        self._periodic_reconciliation_completed = 0
+        self._periodic_reconciliation_committed = 0
+        self._periodic_reconciliation_stale_discarded = 0
+        self._periodic_reconciliation_fetch_errors = 0
+        self._periodic_reconciliation_commit_errors = 0
+        self._periodic_reconciliation_single_flight_coalesced = 0
+        self._periodic_reconciliation_last_error = ""
+        self._periodic_reconciliation_catastrophic_error: (
+            BaseException | None
+        ) = None
+        self._periodic_reconciliation_last_completed_monotonic_s = 0.0
         self._runtime_fatal_lock = threading.Lock()
         self._order_lifecycle_journal_lock = threading.Lock()
         self._journaled_lifecycle_sequence: dict[str, int] = {}
@@ -1648,7 +1770,9 @@ class MakerEngine:
         self._last_tick_monotonic_s = 0.0
         # A trade ID alone is not an idempotency proof: a later REST response
         # carrying the same ID with changed identity/economics must fail closed.
-        self._reconciliation_trade_identity_by_id: dict[str, tuple[Any, ...]] = {}
+        self._reconciliation_trade_identity_by_id: dict[str, dict[str, Any]] = {}
+        self._reconciliation_trade_identity_retained_count = 0
+        self._reconciliation_trade_identity_retained_bytes = 0
         self._last_requote_time = 0.0
         self._cooldown_until = 0.0
         self._loss_cooldown_trigger_count = 0
@@ -1948,6 +2072,135 @@ class MakerEngine:
         self._last_quote_diagnostics_cache = None
         self._last_native_quote_publication = publication
 
+    @staticmethod
+    def _native_quote_side_source(
+        publication: _DeferredLiveQuotePublication,
+        side: str,
+    ) -> _DeferredQuoteSideSource:
+        """Return one flat owner for the effective side of a publication.
+
+        A side-only terminal continuation may itself follow another side-only
+        continuation.  Returning an already-preserved source keeps ownership
+        flat instead of building a recursive publication chain.
+        """
+
+        if side == "BUY":
+            preserved = publication.buy_preserved_source
+            if preserved is not None:
+                return preserved
+            return _DeferredQuoteSideSource(
+                quote=publication.quote,
+                quote_ts_ms=publication.quote_ts_ms,
+                snapshot=publication.snapshot,
+                final_side_floor_changed=publication.buy_final_side_floor_changed,
+                active_order_floor_unsafe=publication.buy_active_order_floor_unsafe,
+            )
+        if side == "SELL":
+            preserved = publication.sell_preserved_source
+            if preserved is not None:
+                return preserved
+            return _DeferredQuoteSideSource(
+                quote=publication.quote,
+                quote_ts_ms=publication.quote_ts_ms,
+                snapshot=publication.snapshot,
+                final_side_floor_changed=publication.sell_final_side_floor_changed,
+                active_order_floor_unsafe=publication.sell_active_order_floor_unsafe,
+            )
+        raise ValueError(f"unsupported quote side: {side!r}")
+
+    def _preserve_unrouted_quote_side(
+        self,
+        side: str,
+    ) -> tuple[str, bool, Any]:
+        """Capture one opposite-side context without forcing native maps."""
+
+        context = getattr(self, "_last_quote_context_cache", None)
+        if context is not None:
+            return "mapping", side in context, copy.deepcopy(context.get(side))
+        publication = getattr(self, "_last_native_quote_publication", None)
+        if publication is not None:
+            return "native", True, self._native_quote_side_source(publication, side)
+        return "mapping", False, None
+
+    def _restore_unrouted_quote_side(
+        self,
+        side: str,
+        preserved: tuple[str, bool, Any],
+    ) -> None:
+        """Restore a side-only continuation's untouched quote generation."""
+
+        representation, side_present, value = preserved
+        publication = getattr(self, "_last_native_quote_publication", None)
+        context_cache = getattr(self, "_last_quote_context_cache", None)
+        if (
+            representation == "native"
+            and publication is not None
+            and context_cache is None
+        ):
+            if side == "BUY":
+                publication.buy_preserved_source = value
+            elif side == "SELL":
+                publication.sell_preserved_source = value
+            else:
+                raise ValueError(f"unsupported quote side: {side!r}")
+            return
+
+        # Python fallback/cold paths retain the historical independent mapping
+        # semantics.  They may materialize here; the native-to-native hot path
+        # above does not.
+        context = self._last_quote_context
+        if side_present:
+            if representation == "native":
+                source: _DeferredQuoteSideSource = value
+                source_context = source.quote.materialize().quote_context.get(side)
+                restored_context = copy.deepcopy(source_context)
+                if isinstance(restored_context, dict):
+                    self._enrich_quote_side_context(
+                        restored_context,
+                        quote_ts_ms=source.quote_ts_ms,
+                        snapshot=source.snapshot,
+                    )
+                    if source.final_side_floor_changed is not None:
+                        restored_context["p3_final_side_floor_changed"] = (
+                            source.final_side_floor_changed
+                        )
+                    if source.active_order_floor_unsafe is not None:
+                        restored_context["p3_active_order_floor_unsafe"] = (
+                            source.active_order_floor_unsafe
+                        )
+                context[side] = restored_context
+            else:
+                context[side] = value
+        else:
+            context.pop(side, None)
+
+    @staticmethod
+    def _enrich_quote_side_context(
+        side_context: dict[str, Any],
+        *,
+        quote_ts_ms: int,
+        snapshot: QuoteDecisionSnapshot,
+    ) -> None:
+        side_context.setdefault("quote_ts_ms", quote_ts_ms)
+        side_context.setdefault(
+            "quote_snapshot_market_generation", snapshot.market_generation
+        )
+        side_context.setdefault(
+            "quote_snapshot_depth_generation", snapshot.depth_generation
+        )
+        side_context.setdefault(
+            "quote_snapshot_book_ticker_generation",
+            snapshot.book_ticker_generation,
+        )
+        side_context.setdefault(
+            "quote_snapshot_depth_exchange_ts_ms",
+            snapshot.depth_exchange_ts_ms,
+        )
+        side_context.setdefault(
+            "quote_snapshot_depth_receive_ts_ns",
+            snapshot.depth_receive_ts_ns,
+        )
+
     def _materialize_last_native_quote_maps(self) -> None:
         publication = getattr(self, "_last_native_quote_publication", None)
         if publication is None:
@@ -1960,34 +2213,66 @@ class MakerEngine:
 
         materialized = publication.quote.materialize()
         context = materialized.quote_context
+        side_sources = {
+            "BUY": publication.buy_preserved_source,
+            "SELL": publication.sell_preserved_source,
+        }
+        for side, source in side_sources.items():
+            if source is None:
+                continue
+            source_context = source.quote.materialize().quote_context.get(side)
+            context[side] = copy.deepcopy(source_context)
+
         snapshot = publication.snapshot
-        for side_context in context.values():
-            if isinstance(side_context, dict):
-                side_context.setdefault("quote_ts_ms", publication.quote_ts_ms)
-                side_context.setdefault(
-                    "quote_snapshot_market_generation", snapshot.market_generation
-                )
-                side_context.setdefault(
-                    "quote_snapshot_depth_generation", snapshot.depth_generation
-                )
-                side_context.setdefault(
-                    "quote_snapshot_book_ticker_generation",
-                    snapshot.book_ticker_generation,
-                )
-                side_context.setdefault(
-                    "quote_snapshot_depth_exchange_ts_ms",
-                    snapshot.depth_exchange_ts_ms,
-                )
-                side_context.setdefault(
-                    "quote_snapshot_depth_receive_ts_ns",
-                    snapshot.depth_receive_ts_ns,
-                )
+        for side, side_context in context.items():
+            if not isinstance(side_context, dict):
+                continue
+            source = side_sources.get(side)
+            self._enrich_quote_side_context(
+                side_context,
+                quote_ts_ms=(
+                    source.quote_ts_ms if source is not None else publication.quote_ts_ms
+                ),
+                snapshot=(source.snapshot if source is not None else snapshot),
+            )
 
         overrides = (
-            ("BUY", "p3_final_side_floor_changed", publication.buy_final_side_floor_changed),
-            ("BUY", "p3_active_order_floor_unsafe", publication.buy_active_order_floor_unsafe),
-            ("SELL", "p3_final_side_floor_changed", publication.sell_final_side_floor_changed),
-            ("SELL", "p3_active_order_floor_unsafe", publication.sell_active_order_floor_unsafe),
+            (
+                "BUY",
+                "p3_final_side_floor_changed",
+                (
+                    publication.buy_preserved_source.final_side_floor_changed
+                    if publication.buy_preserved_source is not None
+                    else publication.buy_final_side_floor_changed
+                ),
+            ),
+            (
+                "BUY",
+                "p3_active_order_floor_unsafe",
+                (
+                    publication.buy_preserved_source.active_order_floor_unsafe
+                    if publication.buy_preserved_source is not None
+                    else publication.buy_active_order_floor_unsafe
+                ),
+            ),
+            (
+                "SELL",
+                "p3_final_side_floor_changed",
+                (
+                    publication.sell_preserved_source.final_side_floor_changed
+                    if publication.sell_preserved_source is not None
+                    else publication.sell_final_side_floor_changed
+                ),
+            ),
+            (
+                "SELL",
+                "p3_active_order_floor_unsafe",
+                (
+                    publication.sell_preserved_source.active_order_floor_unsafe
+                    if publication.sell_preserved_source is not None
+                    else publication.sell_active_order_floor_unsafe
+                ),
+            ),
         )
         for side, key, value in overrides:
             if value is not None:
@@ -2029,7 +2314,52 @@ class MakerEngine:
             return context.get(side, {}).get(key, default)
         publication = getattr(self, "_last_native_quote_publication", None)
         if publication is not None:
-            return publication.quote.side_value(side, key, default)
+            if side == "BUY":
+                source = publication.buy_preserved_source
+                current_final_floor = publication.buy_final_side_floor_changed
+                current_floor_unsafe = publication.buy_active_order_floor_unsafe
+            elif side == "SELL":
+                source = publication.sell_preserved_source
+                current_final_floor = publication.sell_final_side_floor_changed
+                current_floor_unsafe = publication.sell_active_order_floor_unsafe
+            else:
+                raise ValueError(f"unsupported quote side: {side!r}")
+            quote = source.quote if source is not None else publication.quote
+            quote_ts_ms = (
+                source.quote_ts_ms
+                if source is not None
+                else publication.quote_ts_ms
+            )
+            snapshot = (
+                source.snapshot if source is not None else publication.snapshot
+            )
+            if key == "quote_ts_ms":
+                return quote_ts_ms
+            if key == "quote_snapshot_market_generation":
+                return snapshot.market_generation
+            if key == "quote_snapshot_depth_generation":
+                return snapshot.depth_generation
+            if key == "quote_snapshot_book_ticker_generation":
+                return snapshot.book_ticker_generation
+            if key == "quote_snapshot_depth_exchange_ts_ms":
+                return snapshot.depth_exchange_ts_ms
+            if key == "quote_snapshot_depth_receive_ts_ns":
+                return snapshot.depth_receive_ts_ns
+            if key == "p3_final_side_floor_changed":
+                value = (
+                    source.final_side_floor_changed
+                    if source is not None
+                    else current_final_floor
+                )
+                return default if value is None else value
+            if key == "p3_active_order_floor_unsafe":
+                value = (
+                    source.active_order_floor_unsafe
+                    if source is not None
+                    else current_floor_unsafe
+                )
+                return default if value is None else value
+            return quote.side_value(side, key, default)
         return default
 
     def _last_quote_diagnostic_value(self, key: str, default: Any = None) -> Any:
@@ -2049,16 +2379,40 @@ class MakerEngine:
         publication = getattr(self, "_last_native_quote_publication", None)
         if publication is not None:
             if side == "BUY" and key == "p3_final_side_floor_changed":
-                publication.buy_final_side_floor_changed = value
+                if publication.buy_preserved_source is None:
+                    publication.buy_final_side_floor_changed = value
+                else:
+                    publication.buy_preserved_source = replace(
+                        publication.buy_preserved_source,
+                        final_side_floor_changed=value,
+                    )
                 return
             if side == "BUY" and key == "p3_active_order_floor_unsafe":
-                publication.buy_active_order_floor_unsafe = value
+                if publication.buy_preserved_source is None:
+                    publication.buy_active_order_floor_unsafe = value
+                else:
+                    publication.buy_preserved_source = replace(
+                        publication.buy_preserved_source,
+                        active_order_floor_unsafe=value,
+                    )
                 return
             if side == "SELL" and key == "p3_final_side_floor_changed":
-                publication.sell_final_side_floor_changed = value
+                if publication.sell_preserved_source is None:
+                    publication.sell_final_side_floor_changed = value
+                else:
+                    publication.sell_preserved_source = replace(
+                        publication.sell_preserved_source,
+                        final_side_floor_changed=value,
+                    )
                 return
             if side == "SELL" and key == "p3_active_order_floor_unsafe":
-                publication.sell_active_order_floor_unsafe = value
+                if publication.sell_preserved_source is None:
+                    publication.sell_active_order_floor_unsafe = value
+                else:
+                    publication.sell_preserved_source = replace(
+                        publication.sell_preserved_source,
+                        active_order_floor_unsafe=value,
+                    )
                 return
         self._last_quote_context[side][key] = value
 
@@ -2140,6 +2494,22 @@ class MakerEngine:
             raise RuntimeError("order_gateway is unavailable")
         return client
 
+    def _drain_order_completion_callbacks(self) -> None:
+        """Finish admitted async order callbacks before final reconciliation."""
+
+        transport = getattr(self, "order_gateway", None)
+        if transport is None:
+            transport = getattr(self, "rest", None)
+        if transport is None:
+            return
+        drain = getattr(
+            transport,
+            "drain_async_order_completions",
+            None,
+        )
+        if callable(drain):
+            drain()
+
     @staticmethod
     def _order_gateway_decision_metadata(
         transport: Any,
@@ -2181,6 +2551,16 @@ class MakerEngine:
         client = self.reconciliation_client
         if client is None:
             raise RuntimeError("reconciliation_client is unavailable")
+        return client
+
+    def _background_reconciliation_transport(self):
+        """Return the isolated transport used only by the periodic worker."""
+
+        if not hasattr(self, "background_reconciliation_client"):
+            return self._reconciliation_transport()
+        client = self.background_reconciliation_client
+        if client is None:
+            raise RuntimeError("background_reconciliation_client is unavailable")
         return client
 
     def set_order_lifecycle_live_writer_v2(
@@ -2788,6 +3168,18 @@ class MakerEngine:
             raise ValueError(
                 "lifecycle_journal_v2 configuration is restart-only and cannot be hot-reloaded"
             )
+        for field_name in (
+            "async_order_lanes_enabled",
+            "cross_side_order_lanes_enabled",
+            "async_order_lane_capacity",
+            "async_order_lane_drain_timeout_s",
+            "async_order_lane_max_runtime_s",
+            "order_transport",
+        ):
+            if getattr(cfg.api, field_name) != getattr(self.cfg.api, field_name):
+                raise ValueError(
+                    f"api.{field_name} is restart-only and cannot be hot-reloaded"
+                )
         previous_multi = getattr(self.cfg, "multi_market", None)
         candidate_multi = getattr(cfg, "multi_market", None)
         for name in (
@@ -3364,10 +3756,26 @@ class MakerEngine:
     def _append_row(self, path: str, row):
         if not path:
             return
+        row_type = type(row)
+        fieldnames = _CSV_ROW_FIELD_CACHE.get(row_type)
+        if fieldnames is None:
+            if not is_dataclass(row):
+                raise TypeError("CSV rows must be dataclass instances")
+            fieldnames = tuple(field.name for field in fields(row))
+            _CSV_ROW_FIELD_CACHE[row_type] = fieldnames
+        values = tuple(getattr(row, fieldname) for fieldname in fieldnames)
         runtime = getattr(self, "_runtime_evidence_writer", None)
         if runtime is not None:
             try:
-                runtime.enqueue_csv(path, asdict(row))
+                enqueue_values = getattr(runtime, "enqueue_csv_values", None)
+                if callable(enqueue_values):
+                    enqueue_values(
+                        path,
+                        fieldnames=fieldnames,
+                        values=values,
+                    )
+                else:  # compatibility with narrow test/runtime adapters
+                    runtime.enqueue_csv(path, dict(zip(fieldnames, values, strict=True)))
             except Exception as exc:
                 logger.critical(
                     "Runtime evidence admission failed (%s): %s",
@@ -3378,7 +3786,7 @@ class MakerEngine:
                 raise
             return
         try:
-            payload = asdict(row)
+            payload = dict(zip(fieldnames, values, strict=True))
             with self._csv_log_lock:
                 with open(path, "a", newline="") as f:
                     csv.DictWriter(f, fieldnames=list(payload.keys())).writerow(payload)
@@ -7113,16 +7521,14 @@ class MakerEngine:
 
         # 6. Compute AS quotes with ML enhancement
         step_start = time.perf_counter()
-        preserved_unrouted_quote_context: dict[str, tuple[bool, Any]] = {}
+        preserved_unrouted_quote_context: dict[str, tuple[str, bool, Any]] = {}
         if route_sides is not None:
             for side in (Side.BUY, Side.SELL):
                 if side in route_sides:
                     continue
                 side_name = side.value
-                side_present = side_name in self._last_quote_context
                 preserved_unrouted_quote_context[side_name] = (
-                    side_present,
-                    copy.deepcopy(self._last_quote_context.get(side_name)),
+                    self._preserve_unrouted_quote_side(side_name)
                 )
         bid_price, ask_price, spread = self._compute_quotes(
             quote_snapshot,
@@ -7135,13 +7541,8 @@ class MakerEngine:
         # A terminal continuation owns only its triggering side, so restore
         # the opposite side before policy evaluation to avoid advancing or
         # releasing state that belongs to the normal cadence.
-        for side_name, (side_present, side_context) in (
-            preserved_unrouted_quote_context.items()
-        ):
-            if side_present:
-                self._last_quote_context[side_name] = side_context
-            else:
-                self._last_quote_context.pop(side_name, None)
+        for side_name, preserved in preserved_unrouted_quote_context.items():
+            self._restore_unrouted_quote_side(side_name, preserved)
         timings["compute_quotes_us"] = (time.perf_counter() - step_start) * 1_000_000.0
 
         # 7. Cancel and replace orders
@@ -10875,11 +11276,14 @@ class MakerEngine:
             cid = self._side_order_reference(side)
         if not cid:
             return False
-        terminal_identity = self.orders.terminal_identity(cid)
-        if terminal_identity is None:
-            order = self.orders.get_order(cid)
-            if order is not None and not bool(getattr(order, "is_terminal", False)):
-                return False
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.ACTIVE_NONTERMINAL:
+            return False
+        terminal_identity = ownership.terminal_identity
+        if (
+            ownership.status is OrderOwnershipStatus.UNKNOWN
+            or terminal_identity is None
+        ):
             # Missing history is not terminal evidence: history can be evicted,
             # and releasing an unknown CID could admit a second same-side order.
             self._order_submit_fail_closed = True
@@ -10942,6 +11346,35 @@ class MakerEngine:
             error=RuntimeError(
                 f"same-side ownership conflict for {side.value}: {cid}"
             ),
+            reconciliation_required=True,
+        )
+
+    def _stop_for_unknown_order_ownership(
+        self,
+        *,
+        cid: str,
+        phase: str,
+        side: Side | None = None,
+    ) -> None:
+        """Fail closed when a locally owned CID has no atomic ledger proof."""
+
+        self._order_submit_fail_closed = True
+        self._running = False
+        side_name = "UNKNOWN" if side is None else side.value
+        error = RuntimeError(
+            "order ownership became unknown: "
+            f"side={side_name} phase={phase} cid={cid}"
+        )
+        logger.critical(
+            "ORDER_OWNERSHIP_UNKNOWN side=%s phase=%s cid=%s; "
+            "quoting stopped pending exact reconciliation",
+            side_name,
+            phase,
+            cid,
+        )
+        self.latch_runtime_fatal(
+            reason="ORDER_OWNERSHIP_UNKNOWN",
+            error=error,
             reconciliation_required=True,
         )
 
@@ -11030,6 +11463,453 @@ class MakerEngine:
         )
         return True
 
+    def _async_order_writes_enabled(self, transport: Any) -> bool:
+        """Return whether ordinary writes use the restart-only async lanes."""
+
+        api = getattr(getattr(self, "cfg", None), "api", None)
+        if not bool(getattr(api, "async_order_lanes_enabled", False)):
+            return False
+        if not bool(getattr(transport, "async_order_lanes_enabled", False)):
+            raise RuntimeError(
+                "async order lanes are enabled in config but unavailable on transport"
+            )
+        return True
+
+    def _async_completion_lock(self, side: Side) -> threading.RLock:
+        """Return the completion lock, including narrow ``__new__`` fixtures."""
+
+        api = getattr(getattr(self, "cfg", None), "api", None)
+        if bool(getattr(api, "cross_side_order_lanes_enabled", False)):
+            locks = getattr(self, "_async_order_completion_locks", None)
+            if locks is None:
+                locks = {
+                    Side.BUY: threading.RLock(),
+                    Side.SELL: threading.RLock(),
+                }
+                self._async_order_completion_locks = locks
+            return locks[side]
+        lock = getattr(self, "_async_order_completion_lock", None)
+        if lock is None:
+            lock = threading.RLock()
+            self._async_order_completion_lock = lock
+        return lock
+
+    def _complete_limit_order_submit_response(
+        self,
+        *,
+        response: Any,
+        cid: str,
+        symbol: str,
+        side: Side,
+        quantity: float,
+        asynchronous_completion: bool = False,
+    ) -> Optional[str]:
+        """Commit one normal LIMIT RESULT without duplicating private events."""
+
+        resp, oid, status = self._validated_submit_response(
+            response,
+            route="limit-order submit",
+            cid=cid,
+            symbol=symbol,
+            side=side,
+            quantity=quantity,
+        )
+        if not asynchronous_completion:
+            # Keep the switch-off path byte-for-byte equivalent in lifecycle
+            # semantics to B0.  Late-response arbitration below is only for
+            # the independent async completion path.
+            executed_quantity = float(resp["executedQty"])
+            if status != "NEW" or executed_quantity > 0.0:
+                order = self.orders.get_order(cid)
+                if status not in {
+                    "NEW",
+                    "PARTIALLY_FILLED",
+                    "FILLED",
+                    "CANCELED",
+                    "EXPIRED",
+                    "REJECTED",
+                }:
+                    self._hold_submit_with_unknown_ack(
+                        cid=cid,
+                        side=side,
+                        error=RuntimeError(
+                            "unrecognized new-order response status: "
+                            f"{status or 'missing'}"
+                        ),
+                    )
+                    return cid
+                self._apply_rest_reconciled_order_status(
+                    response=resp,
+                    order=order,
+                    cid=cid,
+                    status=status,
+                    submit_ack_reconciled=True,
+                )
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        f"submit_result_{status.lower()}",
+                        order,
+                    )
+                ownership = self.orders.ownership_snapshot(cid)
+                if ownership.status is OrderOwnershipStatus.TERMINAL:
+                    self._pop_order_context(cid)
+                    self._release_side_order_ownership(side=side, cid=cid)
+                    return None
+                if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                    self._stop_for_unknown_order_ownership(
+                        side=side,
+                        cid=cid,
+                        phase=f"submit_result_{status.lower()}",
+                    )
+                    return cid
+                self._verify_side_order_ownership(
+                    side=side,
+                    cid=cid,
+                    phase=f"submit_result_{status.lower()}",
+                )
+                return cid
+
+            self.orders.confirm_new(
+                cid,
+                oid,
+                exchange_ts_ns=self._rest_exchange_timestamp_ns(resp),
+            )
+            order = self.orders.get_order(cid)
+            if order is not None:
+                self._log_order_outcome("placed", order)
+            self._verify_side_order_ownership(
+                side=side,
+                cid=cid,
+                phase="submit_new",
+            )
+            return cid
+
+        ownership_before = self.orders.ownership_snapshot(cid)
+        if ownership_before.status is OrderOwnershipStatus.UNKNOWN:
+            raise RuntimeError(
+                f"limit-order RESULT started with unknown ownership: cid={cid}"
+            )
+
+        executed_quantity = float(resp["executedQty"])
+        if status != "NEW" or executed_quantity > 0.0:
+            order = self.orders.get_order(cid)
+            if order is None:
+                raise RuntimeError(
+                    f"limit-order RESULT lost local ownership: cid={cid}"
+                )
+            if status not in {
+                "NEW",
+                "PARTIALLY_FILLED",
+                "FILLED",
+                "CANCELED",
+                "EXPIRED",
+                "REJECTED",
+            }:
+                self._hold_submit_with_unknown_ack(
+                    cid=cid,
+                    side=side,
+                    error=RuntimeError(
+                        "unrecognized new-order response status: "
+                        f"{status or 'missing'}"
+                    ),
+                )
+                return cid
+            self._apply_rest_reconciled_order_status(
+                response=resp,
+                order=order,
+                cid=cid,
+                status=status,
+                submit_ack_reconciled=True,
+            )
+            ownership = self.orders.ownership_snapshot(cid)
+            resolved = self.orders.get_order(cid)
+            if (
+                resolved is not None
+                and ownership.status is OrderOwnershipStatus.ACTIVE_NONTERMINAL
+            ):
+                self._log_order_outcome(
+                    f"submit_result_{status.lower()}",
+                    resolved,
+                )
+            if ownership.status is OrderOwnershipStatus.TERMINAL:
+                self._pop_order_context(cid)
+                self._release_side_order_ownership(side=side, cid=cid)
+                return None
+            if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                raise RuntimeError(
+                    f"limit-order RESULT ownership became unknown: cid={cid}"
+                )
+            self._verify_side_order_ownership(
+                side=side,
+                cid=cid,
+                phase=f"submit_result_{status.lower()}",
+            )
+            return cid
+
+        self.orders.confirm_new(
+            cid,
+            oid,
+            exchange_ts_ns=self._rest_exchange_timestamp_ns(resp),
+        )
+        ownership = self.orders.ownership_snapshot(cid)
+        order = self.orders.get_order(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN or order is None:
+            raise RuntimeError(
+                f"limit-order NEW ownership became unknown: cid={cid}"
+            )
+        # A private NEW may precede RESULT; it has not produced this outcome
+        # row.  A private terminal does produce terminal evidence and removes
+        # context, so a late NEW response must not emit a misleading `placed`.
+        if ownership.status is not OrderOwnershipStatus.TERMINAL:
+            self._log_order_outcome("placed", order)
+            self._verify_side_order_ownership(
+                side=side,
+                cid=cid,
+                phase="submit_new",
+            )
+            return cid
+        self._pop_order_context(cid)
+        self._release_side_order_ownership(side=side, cid=cid)
+        return None
+
+    def _complete_limit_order_submit_error(
+        self,
+        *,
+        error: BaseException,
+        cid: str,
+        side: Side,
+        price: float,
+        quantity: float,
+        request_started: bool,
+        asynchronous_completion: bool = False,
+    ) -> Optional[str]:
+        """Classify one normal submit error using current monotonic ownership."""
+
+        if not asynchronous_completion:
+            if self._execution_state_uncertain():
+                logger.critical(
+                    "Order submit stopped after exact-fill reconciliation fatal; "
+                    "ownership retained cid=%s",
+                    cid,
+                )
+                return cid
+            error_code = self._exchange_error_code(error)
+            may_have_been_dispatched = self._submit_may_have_been_dispatched(
+                error,
+                request_started,
+            )
+            if not may_have_been_dispatched or error_code == -5022:
+                self.orders.confirm_rejected(cid, str(error))
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome(
+                        (
+                            "reject_gtx"
+                            if error_code == -5022
+                            else "reject_local_error"
+                        ),
+                        order,
+                    )
+                self._pop_order_context(cid)
+                self._release_side_order_ownership(side=side, cid=cid)
+            else:
+                self._hold_submit_with_unknown_ack(
+                    cid=cid,
+                    side=side,
+                    error=error,
+                )
+                order = self.orders.get_order(cid)
+                if order is not None:
+                    self._log_order_outcome("submit_ack_unknown", order)
+            if error_code == -5022:
+                logger.debug(
+                    "GTX rejected (would cross): %s %s@%s",
+                    side.value,
+                    quantity,
+                    price,
+                )
+            elif may_have_been_dispatched:
+                logger.error(
+                    "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
+                    "%s %s@%s: %s",
+                    side.value,
+                    quantity,
+                    price,
+                    error,
+                )
+            else:
+                logger.error(
+                    "Order place failed: %s %s@%s: %s",
+                    side.value,
+                    quantity,
+                    price,
+                    error,
+                )
+            return (
+                cid
+                if may_have_been_dispatched and error_code != -5022
+                else None
+            )
+
+        if self._execution_state_uncertain():
+            logger.critical(
+                "Order submit stopped after exact-fill reconciliation fatal; "
+                "ownership retained cid=%s",
+                cid,
+            )
+            return cid
+
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+            raise RuntimeError(
+                f"submit error cannot classify unknown ownership: cid={cid}"
+            )
+        error_code = self._exchange_error_code(error)
+        may_have_been_dispatched = self._submit_may_have_been_dispatched(
+            error,
+            request_started,
+        )
+
+        if ownership.status is OrderOwnershipStatus.TERMINAL:
+            if error_code is not None:
+                raise RuntimeError(
+                    "authoritative submit error conflicts with private terminal "
+                    f"evidence: cid={cid} code={error_code}"
+                )
+            logger.info(
+                "ORDER_SUBMIT_LATE_ERROR_IGNORED terminal_already_visible=1 "
+                "cid=%s error=%s",
+                cid,
+                error,
+            )
+            self._pop_order_context(cid)
+            self._release_side_order_ownership(side=side, cid=cid)
+            return None
+
+        order = self.orders.get_order(cid)
+        if order is None:
+            raise RuntimeError(f"submit error lost active order: cid={cid}")
+        if order.state != OrderState.PENDING_NEW:
+            # A private NEW/PARTIALLY_FILLED already proved exchange
+            # acceptance.  A transport timeout that arrives later cannot
+            # regress that stronger evidence back to ACK-unknown.
+            if error_code is not None:
+                raise RuntimeError(
+                    "authoritative submit error conflicts with private active "
+                    f"evidence: cid={cid} state={order.state.name} code={error_code}"
+                )
+            logger.info(
+                "ORDER_SUBMIT_LATE_ERROR_IGNORED active_private_evidence=1 "
+                "cid=%s state=%s error=%s",
+                cid,
+                order.state.name,
+                error,
+            )
+            return cid
+
+        if not may_have_been_dispatched or error_code == -5022:
+            self.orders.confirm_rejected(cid, str(error))
+            order = self.orders.get_order(cid)
+            if order is not None:
+                self._log_order_outcome(
+                    "reject_gtx" if error_code == -5022 else "reject_local_error",
+                    order,
+                )
+            self._pop_order_context(cid)
+            self._release_side_order_ownership(side=side, cid=cid)
+        else:
+            self._hold_submit_with_unknown_ack(cid=cid, side=side, error=error)
+            order = self.orders.get_order(cid)
+            if order is not None:
+                self._log_order_outcome("submit_ack_unknown", order)
+        if error_code == -5022:
+            logger.debug(
+                "GTX rejected (would cross): %s %s@%s",
+                side.value,
+                quantity,
+                price,
+            )
+        elif may_have_been_dispatched:
+            logger.error(
+                "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
+                "%s %s@%s: %s",
+                side.value,
+                quantity,
+                price,
+                error,
+            )
+        else:
+            logger.error(
+                "Order place failed: %s %s@%s: %s",
+                side.value,
+                quantity,
+                price,
+                error,
+            )
+        return cid if may_have_been_dispatched and error_code != -5022 else None
+
+    def _finish_async_limit_order_submit(
+        self,
+        future: Any,
+        *,
+        cid: str,
+        symbol: str,
+        side: Side,
+        price: float,
+        quantity: float,
+    ) -> None:
+        """Consume a late normal-submit result on the gateway worker."""
+
+        with self._async_completion_lock(side):
+            try:
+                try:
+                    response = future.result()
+                except BaseException as exc:
+                    self._complete_limit_order_submit_error(
+                        error=exc,
+                        cid=cid,
+                        side=side,
+                        price=price,
+                        quantity=quantity,
+                        request_started=True,
+                        asynchronous_completion=True,
+                    )
+                else:
+                    try:
+                        self._complete_limit_order_submit_response(
+                            response=response,
+                            cid=cid,
+                            symbol=symbol,
+                            side=side,
+                            quantity=quantity,
+                            asynchronous_completion=True,
+                        )
+                    except BaseException as exc:
+                        self._complete_limit_order_submit_error(
+                            error=exc,
+                            cid=cid,
+                            side=side,
+                            price=price,
+                            quantity=quantity,
+                            request_started=True,
+                            asynchronous_completion=True,
+                        )
+            except BaseException as exc:
+                logger.critical(
+                    "ASYNC_ORDER_SUBMIT_COMPLETION_FAILED side=%s cid=%s error=%s",
+                    side.value,
+                    cid,
+                    exc,
+                    exc_info=True,
+                )
+                if not self._execution_state_uncertain():
+                    self.latch_runtime_fatal(
+                        reason="ASYNC_ORDER_SUBMIT_COMPLETION_FAILED",
+                        error=exc,
+                        reconciliation_required=True,
+                    )
+
     def _place_order(self, symbol: str, side: Side,
                      price: float, quantity: float,
                      reduce_only: bool = False,
@@ -11082,120 +11962,85 @@ class MakerEngine:
                 params["reduceOnly"] = "true"
             if self._abort_reserved_submit_if_fail_closed(side=side, cid=cid):
                 return None
+            transport = self._order_transport()
+            metadata = self._order_gateway_decision_metadata(
+                transport,
+                context=decision_context,
+            )
+            if self._async_order_writes_enabled(transport):
+                async_submit = getattr(transport, "new_order_async", None)
+                if not callable(async_submit):
+                    raise RuntimeError(
+                        "async order lanes enabled without new_order_async"
+                    )
+                def completion_callback(
+                    completed,
+                    *,
+                    order_cid=cid,
+                    order_symbol=symbol,
+                    order_side=side,
+                    order_price=price,
+                    order_quantity=quantity,
+                ):
+                    self._finish_async_limit_order_submit(
+                        completed,
+                        cid=order_cid,
+                        symbol=order_symbol,
+                        side=order_side,
+                        price=order_price,
+                        quantity=order_quantity,
+                    )
+                prebound_callback = bool(
+                    getattr(
+                        transport,
+                        "supports_prebound_async_callback",
+                        False,
+                    )
+                )
+                callback_kwargs = (
+                    {"_narrowgate_done_callback": completion_callback}
+                    if prebound_callback
+                    else {}
+                )
+                future = async_submit(
+                    **params,
+                    _narrowgate_order_side=side.value,
+                    **metadata,
+                    **callback_kwargs,
+                )
+                request_started = True
+                if not prebound_callback:
+                    future.add_done_callback(completion_callback)
+                return cid
             rest_start = time.perf_counter()
             try:
                 request_started = True
-                transport = self._order_transport()
                 resp = transport.new_order(
                     **params,
-                    **self._order_gateway_decision_metadata(
-                        transport,
-                        context=decision_context,
-                    ),
+                    **metadata,
                 )
             finally:
                 if record_requote_perf:
                     self._record_perf_rest_latency(
                         "new", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
-            resp, oid, status = self._validated_submit_response(
-                resp,
-                route="limit-order submit",
+            return self._complete_limit_order_submit_response(
+                response=resp,
                 cid=cid,
                 symbol=symbol,
                 side=side,
                 quantity=quantity,
             )
 
-            executed_quantity = float(resp["executedQty"])
-            if status != "NEW" or executed_quantity > 0.0:
-                order = self.orders.get_order(cid)
-                if status not in {
-                    "NEW",
-                    "PARTIALLY_FILLED",
-                    "FILLED",
-                    "CANCELED",
-                    "EXPIRED",
-                    "REJECTED",
-                }:
-                    self._hold_submit_with_unknown_ack(cid=cid, side=side, error=RuntimeError(
-                        f"unrecognized new-order response status: {status or 'missing'}"
-                    ))
-                    return cid
-                self._apply_rest_reconciled_order_status(
-                    response=resp,
-                    order=order,
-                    cid=cid,
-                    status=status,
-                    submit_ack_reconciled=True,
-                )
-                order = self.orders.get_order(cid)
-                if order is not None:
-                    self._log_order_outcome(
-                        f"submit_result_{status.lower()}",
-                        order,
-                    )
-                if self.orders.terminal_identity(cid) is not None:
-                    self._pop_order_context(cid)
-                    self._release_side_order_ownership(side=side, cid=cid)
-                    return None
-                self._verify_side_order_ownership(
-                    side=side,
-                    cid=cid,
-                    phase=f"submit_result_{status.lower()}",
-                )
-                return cid
-
-            self.orders.confirm_new(
-                cid,
-                oid,
-                exchange_ts_ns=self._rest_exchange_timestamp_ns(resp),
-            )
-            order = self.orders.get_order(cid)
-            if order is not None:
-                self._log_order_outcome("placed", order)
-
-            self._verify_side_order_ownership(side=side, cid=cid, phase="submit_new")
-            return cid
-
         except Exception as e:
-            if self._execution_state_uncertain():
-                logger.critical(
-                    "Order submit stopped after exact-fill reconciliation fatal; "
-                    "ownership retained cid=%s",
-                    cid,
-                )
-                return cid
-            error_code = self._exchange_error_code(e)
-            may_have_been_dispatched = self._submit_may_have_been_dispatched(
-                e, request_started
+            return self._complete_limit_order_submit_error(
+                error=e,
+                cid=cid,
+                side=side,
+                price=price,
+                quantity=quantity,
+                request_started=request_started,
             )
-            if not may_have_been_dispatched or error_code == -5022:
-                self.orders.confirm_rejected(cid, str(e))
-                order = self.orders.get_order(cid)
-                if order is not None:
-                    self._log_order_outcome(
-                        "reject_gtx" if error_code == -5022 else "reject_local_error",
-                        order,
-                    )
-                self._pop_order_context(cid)
-                self._release_side_order_ownership(side=side, cid=cid)
-            else:
-                self._hold_submit_with_unknown_ack(cid=cid, side=side, error=e)
-                order = self.orders.get_order(cid)
-                if order is not None:
-                    self._log_order_outcome("submit_ack_unknown", order)
-            if error_code == -5022:
-                # The exchange positively rejected this pre-activation GTX order.
-                logger.debug(f"GTX rejected (would cross): {side.value} {quantity}@{price}")
-            elif may_have_been_dispatched:
-                logger.error(
-                    "Order submit ACK unknown; holding PENDING_NEW for reconcile: "
-                    f"{side.value} {quantity}@{price}: {e}"
-                )
-            else:
-                logger.error(f"Order place failed: {side.value} {quantity}@{price}: {e}")
-            return cid if may_have_been_dispatched and error_code != -5022 else None
 
     def _place_close_order(self, symbol: str, side: Side,
                           price: float, quantity: float,
@@ -11303,9 +12148,17 @@ class MakerEngine:
                     self._close_gtx_rejects += 1
                 elif status == "NEW":
                     self._close_gtx_rejects = 0
-                if self.orders.terminal_identity(cid) is not None:
+                ownership = self.orders.ownership_snapshot(cid)
+                if ownership.status is OrderOwnershipStatus.TERMINAL:
                     self._pop_order_context(cid)
                     self._release_side_order_ownership(side=side, cid=cid)
+                    return
+                if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                    self._stop_for_unknown_order_ownership(
+                        side=side,
+                        cid=cid,
+                        phase=f"close_submit_result_{status.lower()}",
+                    )
                     return
                 self._verify_side_order_ownership(
                     side=side,
@@ -11844,6 +12697,228 @@ class MakerEngine:
             self._prune_terminal_side_order_reference(Side.BUY)
             self._prune_terminal_side_order_reference(Side.SELL)
 
+    def _finish_cancel_terminal_state(
+        self,
+        *,
+        cid: str,
+        side: Side,
+        replace_continuation_generation: int,
+        unready_reason: str,
+    ) -> bool:
+        """Publish one proven cancel terminal, or retain unresolved ownership."""
+
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+            raise RuntimeError(f"cancel completion lost ownership: cid={cid}")
+        if ownership.status is not OrderOwnershipStatus.TERMINAL:
+            return False
+        resolved = self.orders.get_order(cid)
+        if resolved is None:
+            raise RuntimeError(f"cancel terminal proof lost order: cid={cid}")
+        terminal_identity = ownership.terminal_identity or {}
+        if replace_continuation_generation > 0:
+            terminal_ts_ns = int(
+                getattr(
+                    getattr(resolved, "lifecycle", None),
+                    "terminal_ts_ns",
+                    0,
+                )
+                or 0
+            )
+            published = bool(
+                terminal_identity.get("terminal_state")
+                == OrderState.CANCELED.name
+                and terminal_ts_ns > 0
+                and self._publish_replace_terminal_continuation(
+                    resolved,
+                    generation=replace_continuation_generation,
+                )
+            )
+            if not published:
+                self._clear_unready_replace_terminal_continuation(
+                    side=side,
+                    cid=cid,
+                    generation=replace_continuation_generation,
+                    reason=unready_reason,
+                )
+        self._prune_terminal_side_order_reference(side)
+        return True
+
+    def _complete_cancel_order_response(
+        self,
+        *,
+        response: Any,
+        cid: str,
+        side: Side,
+        replace_continuation_generation: int,
+    ) -> bool:
+        """Validate and monotonically consume one asynchronous cancel RESULT."""
+
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+            raise RuntimeError(f"cancel RESULT has unknown ownership: cid={cid}")
+        order = self.orders.get_order(cid)
+        if order is None:
+            raise RuntimeError(f"cancel RESULT lost local order: cid={cid}")
+        normalized, _oid, status = self._validated_submit_response(
+            response,
+            route="cancel-order",
+            cid=cid,
+            symbol=str(getattr(order, "symbol", self.cfg.symbol)),
+            side=side,
+            quantity=float(getattr(order, "quantity", 0.0)),
+        )
+        if status not in {
+            "NEW",
+            "PARTIALLY_FILLED",
+            "FILLED",
+            "CANCELED",
+            "EXPIRED",
+            "REJECTED",
+        }:
+            raise RuntimeError(
+                f"unrecognized cancel-order response status: {status or 'missing'}"
+            )
+        self._apply_rest_reconciled_order_status(
+            response=normalized,
+            order=order,
+            cid=cid,
+            status=status,
+            submit_ack_reconciled=False,
+        )
+        if status == "NEW" and replace_continuation_generation > 0:
+            # An authoritative active response rejects this cancel attempt.
+            # The ledger has restored OPEN above; a later, unrelated terminal
+            # event must not execute the stale replacement intent.
+            self._clear_replace_terminal_continuation(
+                side=side,
+                cid=cid,
+                generation=replace_continuation_generation,
+                reason="cancel_result_active",
+            )
+        return self._finish_cancel_terminal_state(
+            cid=cid,
+            side=side,
+            replace_continuation_generation=replace_continuation_generation,
+            unready_reason="terminal_during_async_cancel_not_publishable",
+        )
+
+    def _complete_cancel_order_error(
+        self,
+        *,
+        error: BaseException,
+        cid: str,
+        side: Side,
+        replace_continuation_generation: int,
+        request_started: bool,
+    ) -> bool:
+        """Keep dispatched/unknown cancels pending; roll back pre-dispatch only."""
+
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+            raise RuntimeError(f"cancel error has unknown ownership: cid={cid}")
+        if ownership.status is OrderOwnershipStatus.TERMINAL:
+            logger.info(
+                "ORDER_CANCEL_LATE_ERROR_IGNORED terminal_already_visible=1 "
+                "cid=%s error=%s",
+                cid,
+                error,
+            )
+            return self._finish_cancel_terminal_state(
+                cid=cid,
+                side=side,
+                replace_continuation_generation=replace_continuation_generation,
+                unready_reason="terminal_before_async_cancel_error_not_publishable",
+            )
+
+        may_have_been_dispatched = self._submit_may_have_been_dispatched(
+            error,
+            request_started,
+        )
+        requires_reconciliation = bool(
+            getattr(error, "requires_reconciliation", False)
+        )
+        if may_have_been_dispatched and (
+            requires_reconciliation or self._exchange_error_code(error) is None
+        ):
+            logger.error(
+                "CANCEL_ACK_UNKNOWN cid=%s ownership=PENDING_CANCEL "
+                "reconciliation_required=1 error=%s",
+                cid,
+                error,
+            )
+            return False
+
+        self.orders.cancel_rejected(cid, str(error))
+        if replace_continuation_generation > 0:
+            self._clear_replace_terminal_continuation(
+                side=side,
+                cid=cid,
+                generation=replace_continuation_generation,
+                reason="cancel_request_failed",
+            )
+        logger.error("Cancel order %s failed: %s", cid, error)
+        return False
+
+    def _finish_async_cancel_order(
+        self,
+        future: Any,
+        *,
+        cid: str,
+        side: Side,
+        replace_continuation_generation: int,
+    ) -> None:
+        """Consume and reconcile one late cancel response on its side lane."""
+
+        with self._async_completion_lock(side):
+            try:
+                try:
+                    response = future.result()
+                except BaseException as exc:
+                    self._complete_cancel_order_error(
+                        error=exc,
+                        cid=cid,
+                        side=side,
+                        replace_continuation_generation=(
+                            replace_continuation_generation
+                        ),
+                        request_started=True,
+                    )
+                else:
+                    try:
+                        self._complete_cancel_order_response(
+                            response=response,
+                            cid=cid,
+                            side=side,
+                            replace_continuation_generation=(
+                                replace_continuation_generation
+                            ),
+                        )
+                    except BaseException as exc:
+                        self._complete_cancel_order_error(
+                            error=exc,
+                            cid=cid,
+                            side=side,
+                            replace_continuation_generation=(
+                                replace_continuation_generation
+                            ),
+                            request_started=True,
+                        )
+            except BaseException as exc:
+                logger.critical(
+                    "ASYNC_ORDER_CANCEL_COMPLETION_FAILED side=%s cid=%s error=%s",
+                    side.value,
+                    cid,
+                    exc,
+                    exc_info=True,
+                )
+                if not self._execution_state_uncertain():
+                    self.latch_runtime_fatal(
+                        reason="ASYNC_ORDER_CANCEL_COMPLETION_FAILED",
+                        error=exc,
+                        reconciliation_required=True,
+                    )
+
     def _cancel_order(
         self,
         cid: str,
@@ -11852,18 +12927,28 @@ class MakerEngine:
         trigger_decision_id: str = "",
         trigger_decision_ts_ns: int = 0,
         replace_continuation_generation: int = 0,
+        allow_async: bool = True,
     ) -> bool:
         """Cancel a single order by client order id."""
-        order = self.orders.get_order(cid)
-        if order is None:
+        ownership = self.orders.ownership_snapshot(cid)
+        if ownership.status is OrderOwnershipStatus.UNKNOWN:
             for side in (Side.BUY, Side.SELL):
                 self._clear_replace_terminal_continuation(
                     side=side,
                     cid=cid,
                     reason="order_missing",
                 )
-                if self._side_order_reference(side) == cid:
-                    self._prune_terminal_side_order_reference(side)
+            self._stop_for_unknown_order_ownership(
+                cid=cid,
+                phase="cancel_start",
+            )
+            return False
+        order = self.orders.get_order(cid)
+        if order is None:
+            self._stop_for_unknown_order_ownership(
+                cid=cid,
+                phase="cancel_start_order_missing_after_snapshot",
+            )
             return False
         if replace_continuation_generation <= 0:
             self._clear_replace_terminal_continuation(
@@ -11871,11 +12956,8 @@ class MakerEngine:
                 cid=cid,
                 reason="non_continuation_cancel",
             )
-        if order.is_terminal:
-            terminal_identity = self.orders.terminal_identity(cid)
-            if terminal_identity is None:
-                self._prune_terminal_side_order_reference(order.side)
-                return False
+        if ownership.status is OrderOwnershipStatus.TERMINAL:
+            terminal_identity = ownership.terminal_identity or {}
             if replace_continuation_generation > 0:
                 terminal_ts_ns = int(
                     getattr(getattr(order, "lifecycle", None), "terminal_ts_ns", 0)
@@ -11916,30 +12998,97 @@ class MakerEngine:
             trigger_decision_id=trigger_decision_id,
         )
         try:
+            transport = self._order_transport()
+            metadata = self._order_gateway_decision_metadata(
+                transport,
+                decision_ts_ns=trigger_decision_ts_ns,
+                decision_id=trigger_decision_id,
+            )
+            side_metadata = (
+                {"_narrowgate_order_side": order.side.value}
+                if bool(
+                    getattr(
+                        transport,
+                        "supports_narrowgate_request_metadata",
+                        False,
+                    )
+                )
+                else {}
+            )
+            if allow_async and self._async_order_writes_enabled(transport):
+                async_cancel = getattr(transport, "cancel_order_async", None)
+                if not callable(async_cancel):
+                    raise RuntimeError(
+                        "async order lanes enabled without cancel_order_async"
+                    )
+                def completion_callback(
+                    completed,
+                    *,
+                    order_cid=cid,
+                    order_side=order.side,
+                    generation=replace_continuation_generation,
+                ):
+                    self._finish_async_cancel_order(
+                        completed,
+                        cid=order_cid,
+                        side=order_side,
+                        replace_continuation_generation=generation,
+                    )
+                prebound_callback = bool(
+                    getattr(
+                        transport,
+                        "supports_prebound_async_callback",
+                        False,
+                    )
+                )
+                callback_kwargs = (
+                    {"_narrowgate_done_callback": completion_callback}
+                    if prebound_callback
+                    else {}
+                )
+                future = async_cancel(
+                    symbol=self.cfg.symbol,
+                    origClientOrderId=cid,
+                    **side_metadata,
+                    **metadata,
+                    **callback_kwargs,
+                )
+                if not prebound_callback:
+                    future.add_done_callback(completion_callback)
+                # Admission is not terminal proof.  PENDING_CANCEL continues
+                # to own the side until REST/private evidence is consumed.
+                return False
             rest_start = time.perf_counter()
             try:
-                transport = self._order_transport()
                 transport.cancel_order(
                     symbol=self.cfg.symbol,
                     origClientOrderId=cid,
-                    **self._order_gateway_decision_metadata(
-                        transport,
-                        decision_ts_ns=trigger_decision_ts_ns,
-                        decision_id=trigger_decision_id,
-                    ),
+                    **side_metadata,
+                    **metadata,
                 )
             finally:
                 if record_requote_perf:
                     self._record_perf_rest_latency(
                         "cancel", (time.perf_counter() - rest_start) * 1_000_000.0
                     )
-            resolved = self.orders.get_order(cid)
-            terminal_identity = self.orders.terminal_identity(cid)
-            if (
-                resolved is not None
-                and resolved.is_terminal
-                and terminal_identity is not None
-            ):
+            ownership = self.orders.ownership_snapshot(cid)
+            if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                self._stop_for_unknown_order_ownership(
+                    side=order.side,
+                    cid=cid,
+                    phase="cancel_result",
+                )
+                return False
+            if ownership.status is OrderOwnershipStatus.TERMINAL:
+                resolved = self.orders.get_order(cid)
+                if resolved is None:
+                    self._stop_for_unknown_order_ownership(
+                        side=order.side,
+                        cid=cid,
+                        phase="cancel_terminal_order_missing_after_snapshot",
+                    )
+                    return False
+                terminal_identity = ownership.terminal_identity or {}
                 if replace_continuation_generation > 0:
                     terminal_ts_ns = int(
                         getattr(
@@ -11969,6 +13118,31 @@ class MakerEngine:
                 return True
             return False
         except Exception as e:
+            ownership = self.orders.ownership_snapshot(cid)
+            if ownership.status is OrderOwnershipStatus.TERMINAL:
+                logger.info(
+                    "ORDER_CANCEL_LATE_ERROR_IGNORED terminal_already_visible=1 "
+                    "cid=%s error=%s",
+                    cid,
+                    e,
+                )
+                return self._finish_cancel_terminal_state(
+                    cid=cid,
+                    side=order.side,
+                    replace_continuation_generation=(
+                        replace_continuation_generation
+                    ),
+                    unready_reason=(
+                        "terminal_before_sync_cancel_error_not_publishable"
+                    ),
+                )
+            if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                self._stop_for_unknown_order_ownership(
+                    side=order.side,
+                    cid=cid,
+                    phase="cancel_error",
+                )
+                return False
             if bool(getattr(e, "requires_reconciliation", False)) and bool(
                 getattr(e, "may_have_been_dispatched", False)
             ):
@@ -12027,7 +13201,12 @@ class MakerEngine:
         if canceled:
             logger.info(f"{reason}: {side} active_orders_canceled={canceled}")
 
-    def _cancel_tracked_order_before_replacement(self, side: Side) -> bool:
+    def _cancel_tracked_order_before_replacement(
+        self,
+        side: Side,
+        *,
+        allow_async: bool = True,
+    ) -> bool:
         """Return true only after the tracked order is authoritatively terminal."""
 
         self._clear_side_replace_terminal_continuation(
@@ -12038,7 +13217,7 @@ class MakerEngine:
         cid = self._bid_cid if side == Side.BUY else self._ask_cid
         if not cid:
             return True
-        if not self._cancel_order(cid):
+        if not self._cancel_order(cid, allow_async=allow_async):
             return False
         self._prune_terminal_side_order_reference(side)
         return self._side_order_reference(side) is None
@@ -12070,7 +13249,10 @@ class MakerEngine:
             drift = abs(close_price - order.price) / order.price
             if drift <= self.cfg.strategy.requote_threshold_bps / 10000.0:
                 return False
-        return self._cancel_tracked_order_before_replacement(side)
+        return self._cancel_tracked_order_before_replacement(
+            side,
+            allow_async=False,
+        )
 
     def _block_stale_quote_data(self, book_age: float, max_age: float):
         """Cancel live quotes and skip requote when execution book data is stale."""
@@ -12208,10 +13390,16 @@ class MakerEngine:
 
         # Cancel any order on the opening side (should not exist, but safety)
         if q > 0 and self._ask_cid is None and self._bid_cid:
-            if not self._cancel_tracked_order_before_replacement(Side.BUY):
+            if not self._cancel_tracked_order_before_replacement(
+                Side.BUY,
+                allow_async=False,
+            ):
                 return
         elif q < 0 and self._bid_cid is None and self._ask_cid:
-            if not self._cancel_tracked_order_before_replacement(Side.SELL):
+            if not self._cancel_tracked_order_before_replacement(
+                Side.SELL,
+                allow_async=False,
+            ):
                 return
 
         # Round close quantity to lot_size
@@ -12229,12 +13417,18 @@ class MakerEngine:
         if use_ioc:
             # Tier 3: IOC taker — cancel existing order and send IOC
             if close_side == Side.SELL:
-                if not self._cancel_tracked_order_before_replacement(Side.SELL):
+                if not self._cancel_tracked_order_before_replacement(
+                    Side.SELL,
+                    allow_async=False,
+                ):
                     return
                 touch = best_bid if best_bid > 0.0 else mid
                 close_price = math.floor((touch - 2.0 * tick) / tick) * tick
             else:
-                if not self._cancel_tracked_order_before_replacement(Side.BUY):
+                if not self._cancel_tracked_order_before_replacement(
+                    Side.BUY,
+                    allow_async=False,
+                ):
                     return
                 touch = best_ask if best_ask > 0.0 else mid
                 close_price = math.ceil((touch + 2.0 * tick) / tick) * tick
@@ -12425,9 +13619,16 @@ class MakerEngine:
                         f"emergency_submit_result_{status.lower()}",
                         order,
                     )
-                if self.orders.terminal_identity(cid) is not None:
+                ownership = self.orders.ownership_snapshot(cid)
+                if ownership.status is OrderOwnershipStatus.TERMINAL:
                     self._pop_order_context(cid)
                     self._release_side_order_ownership(side=side, cid=cid)
+                elif ownership.status is OrderOwnershipStatus.UNKNOWN:
+                    self._stop_for_unknown_order_ownership(
+                        side=side,
+                        cid=cid,
+                        phase=f"emergency_submit_result_{status.lower()}",
+                    )
                 else:
                     self._verify_side_order_ownership(
                         side=side,
@@ -13164,8 +14365,13 @@ class MakerEngine:
         logger.info("MakerEngine stopping...")
         checkpoint_error: Optional[Exception] = None
         shutdown_reconciliation_error: Optional[Exception] = None
+        periodic_reconciliation_shutdown_error: Optional[Exception] = None
         evidence_barrier_error: Optional[BaseException] = None
         specialized_evidence_errors: list[str] = []
+        if hasattr(self, "_periodic_reconciliation_state_lock"):
+            # Reject late worker results immediately, but do not wait for a
+            # cold audit request before canceling exchange exposure below.
+            self._poison_periodic_position_reconciliation()
         try:
             self._persist_fill_cooldown_checkpoint()
         except Exception as exc:
@@ -13177,12 +14383,17 @@ class MakerEngine:
             # Cancel exposure directly at the exchange and preserve unresolved
             # local ownership for postmortem/exact operator reconciliation.
             self._emergency_cancel_all_exchange_orders()
+            # The transport's cancel-all barrier drains wire operations, not
+            # Future callbacks.  Wait only after that barrier has released so
+            # a callback may itself issue cancel-all without waiting on itself.
+            self._drain_order_completion_callbacks()
             self._drain_deferred_runtime_reconciliation()
         else:
             # A successful cancel-all request is not per-order terminal proof;
             # a fill can race the request/response.  Keep ownership unresolved
             # and deliver any accountTrades through the normal callback path.
             cancel_accepted = self._cancel_all_orders()
+            self._drain_order_completion_callbacks()
             try:
                 if not cancel_accepted:
                     raise RuntimeError(
@@ -13195,6 +14406,17 @@ class MakerEngine:
                     reason="SHUTDOWN_EXACT_RECONCILIATION_FAILED",
                     error=exc,
                     reconciliation_required=True,
+                )
+        if hasattr(self, "_periodic_reconciliation_state_lock"):
+            try:
+                self._quiesce_periodic_position_reconciliation(
+                    permanent=True,
+                )
+            except Exception as exc:
+                periodic_reconciliation_shutdown_error = exc
+                logger.critical(
+                    "Periodic position reconciliation worker failed to drain",
+                    exc_info=True,
                 )
         # Central FIFO tasks freeze callback state and then admit it to the
         # specialized lifecycle/exact writers.  Commit that admission boundary
@@ -13310,6 +14532,10 @@ class MakerEngine:
             raise RuntimeError(
                 "shutdown exact execution reconciliation failed"
             ) from shutdown_reconciliation_error
+        if periodic_reconciliation_shutdown_error is not None:
+            raise RuntimeError(
+                "periodic position reconciliation worker did not drain"
+            ) from periodic_reconciliation_shutdown_error
         if evidence_barrier_error is not None:
             raise RuntimeError(
                 "runtime evidence admission barrier failed during shutdown"
@@ -13371,30 +14597,45 @@ class MakerEngine:
                 self._drain_deferred_runtime_reconciliation()
             return
 
-        logger.critical(
+        # Stop exchange exposure without touching a ledger that may already be
+        # fatal. Ownership references remain until terminal identity is proven;
+        # this latch is never cleared in-process.  Cancellation comes before
+        # diagnostics so even a broken third-party logging handler cannot leave
+        # live exchange exposure behind.
+        self._emergency_cancel_all_exchange_orders()
+        _critical_log_without_raising(
             "RUNTIME_FATAL_LATCH reason=%s reconciliation_required=%d error=%s",
             reason,
             int(reconciliation_required),
             error,
             exc_info=(type(error), error, error.__traceback__),
         )
-        # Stop exchange exposure without touching a ledger that may already be
-        # fatal. Ownership references remain until terminal identity is proven;
-        # this latch is never cleared in-process.
-        self._emergency_cancel_all_exchange_orders()
         if reconciliation_required:
             if defer_reconciliation:
-                logger.critical(
+                _critical_log_without_raising(
                     "Fatal-latch exact reconciliation deferred because callback "
                     "quiescence was not established"
                 )
             elif self._in_order_manager_callback_dispatch():
-                logger.critical(
+                _critical_log_without_raising(
                     "Fatal-latch exact reconciliation deferred until the "
                     "OrderManager callback stack unwinds"
                 )
             else:
                 self._drain_deferred_runtime_reconciliation()
+
+    def revoke_new_order_authority_for_shutdown(self) -> None:
+        """Block every future new order while leaving cancellation available."""
+
+        self._order_submit_fail_closed = True
+        self._running = False
+        transport = self._order_transport()
+        revoke = getattr(transport, "revoke_new_order_admission", None)
+        if not callable(revoke):
+            raise RuntimeError(
+                "order transport cannot prove new-order shutdown admission barrier"
+            )
+        revoke()
 
     def _in_order_manager_callback_dispatch(self) -> bool:
         checker = getattr(getattr(self, "orders", None), "in_callback_dispatch", None)
@@ -13517,18 +14758,22 @@ class MakerEngine:
 
         try:
             self._order_transport().cancel_open_orders(symbol=self.cfg.symbol)
-            logger.critical(
-                "FATAL_EXCHANGE_CANCEL_ALL_ACCEPTED symbol=%s; local ownership retained",
-                self.cfg.symbol,
-            )
-            return True
-        except BaseException:
-            logger.critical(
+        except BaseException as cancel_error:
+            _critical_log_without_raising(
                 "FATAL_EXCHANGE_CANCEL_ALL_FAILED symbol=%s",
                 getattr(self.cfg, "symbol", "unknown"),
-                exc_info=True,
+                exc_info=(
+                    type(cancel_error),
+                    cancel_error,
+                    cancel_error.__traceback__,
+                ),
             )
             return False
+        _critical_log_without_raising(
+            "FATAL_EXCHANGE_CANCEL_ALL_ACCEPTED symbol=%s; local ownership retained",
+            self.cfg.symbol,
+        )
+        return True
 
     def raise_if_runtime_fatal(self) -> None:
         order_status = self._order_manager_fatal_status()
@@ -13610,6 +14855,11 @@ class MakerEngine:
                 order_status.get("reason", "unknown")
             )
         continuation = self.replace_terminal_continuation_telemetry_snapshot()
+        periodic_reconciliation = (
+            self.periodic_position_reconciliation_health()
+            if hasattr(self, "_periodic_reconciliation_state_lock")
+            else {}
+        )
         return {
             "quote_loop_running": bool(self._running and not order_fatal),
             "ownership_conflict_latched": conflict_latched,
@@ -13623,6 +14873,7 @@ class MakerEngine:
                 else None
             ),
             "replace_terminal_continuation": continuation,
+            "periodic_position_reconciliation": periodic_reconciliation,
         }
 
     # ── exchange sync ──
@@ -13632,6 +14883,9 @@ class MakerEngine:
         *,
         snapshot_update_time_ms: int,
         previous_snapshot_update_time_ms: int,
+        deadline_monotonic_s: float | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+        transport: Any | None = None,
     ) -> list[dict[str, Any]]:
         """Read every account-trade page in the exact exchange-time interval."""
 
@@ -13643,6 +14897,7 @@ class MakerEngine:
         if start_time_ms > snapshot_update_time_ms:
             raise RuntimeError("position snapshot clock regressed before trade query")
 
+        transport = self._reconciliation_transport() if transport is None else transport
         rows: list[dict[str, Any]] = []
         request: dict[str, Any] = {
             "symbol": self.cfg.symbol,
@@ -13651,7 +14906,16 @@ class MakerEngine:
             "limit": 1000,
         }
         for _page in range(100):
-            page = self._reconciliation_transport().get_account_trades(**request)
+            if cancel_requested is not None and cancel_requested():
+                raise RuntimeError("periodic position reconciliation was canceled")
+            if (
+                deadline_monotonic_s is not None
+                and time.monotonic() >= deadline_monotonic_s
+            ):
+                raise TimeoutError(
+                    "periodic position reconciliation fetch deadline exceeded"
+                )
+            page = transport.get_account_trades(**request)
             if not isinstance(page, list):
                 raise RuntimeError("account-trade response was not a list")
             if not page:
@@ -13747,6 +15011,7 @@ class MakerEngine:
         trades: list[dict[str, Any]],
         *,
         barrier: Mapping[str, Any],
+        committed_trade_identities: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> tuple[
         float,
         float,
@@ -13773,6 +15038,8 @@ class MakerEngine:
         included_trade_ids: list[str] = []
         committed_identities: dict[str, Mapping[str, Any]] = dict(
             getattr(self, "_reconciliation_trade_identity_by_id", {})
+            if committed_trade_identities is None
+            else committed_trade_identities
         )
         response_trade_ids: dict[str, dict[str, Any]] = {}
         normalized_new_trades: list[dict[str, Any]] = []
@@ -13919,6 +15186,11 @@ class MakerEngine:
         self,
         *,
         max_attempts: int = 3,
+        barrier: Mapping[str, Any] | None = None,
+        committed_trade_identities: Mapping[str, Mapping[str, Any]] | None = None,
+        deadline_monotonic_s: float | None = None,
+        cancel_requested: Callable[[], bool] | None = None,
+        transport: Any | None = None,
     ) -> tuple[
         float,
         float,
@@ -13931,22 +15203,48 @@ class MakerEngine:
     ]:
         """Acquire P1→accountTrades≤T→P2 and reject a drifting snapshot."""
 
-        barrier = self.inventory.reconciliation_snapshot()
+        transport = self._reconciliation_transport() if transport is None else transport
+        barrier = (
+            self.inventory.reconciliation_snapshot()
+            if barrier is None
+            else dict(barrier)
+        )
         previous_update_time_ms = int(
             barrier.get("snapshot_update_time_ms", 0) or 0
         )
         for attempt in range(1, max(1, int(max_attempts)) + 1):
+            if cancel_requested is not None and cancel_requested():
+                raise RuntimeError("periodic position reconciliation was canceled")
+            if (
+                deadline_monotonic_s is not None
+                and time.monotonic() >= deadline_monotonic_s
+            ):
+                raise TimeoutError(
+                    "periodic position reconciliation fetch deadline exceeded"
+                )
             first = self._parse_position_reconciliation_snapshot(
-                self._reconciliation_transport().get_position_risk(
+                transport.get_position_risk(
                     symbol=self.cfg.symbol
                 )
             )
             trades = self._account_trades_through_snapshot(
                 snapshot_update_time_ms=first[2],
                 previous_snapshot_update_time_ms=previous_update_time_ms,
+                deadline_monotonic_s=deadline_monotonic_s,
+                cancel_requested=cancel_requested,
+                transport=transport,
             )
+            if cancel_requested is not None and cancel_requested():
+                raise RuntimeError("periodic position reconciliation was canceled")
+            if (
+                deadline_monotonic_s is not None
+                and time.monotonic() >= deadline_monotonic_s
+            ):
+                raise TimeoutError(
+                    "periodic position reconciliation fetch deadline exceeded"
+                )
             second = self._parse_position_reconciliation_snapshot(
-                self._reconciliation_transport().get_position_risk(
+                transport.get_position_risk(
                     symbol=self.cfg.symbol
                 )
             )
@@ -13955,6 +15253,7 @@ class MakerEngine:
                     first,
                     trades,
                     barrier=barrier,
+                    committed_trade_identities=committed_trade_identities,
                 )
             logger.warning(
                 "POSITION_RECONCILIATION_SNAPSHOT_DRIFT attempt=%d p1=%s p2=%s",
@@ -13964,11 +15263,578 @@ class MakerEngine:
             )
         raise RuntimeError("position snapshot drifted across accountTrades query")
 
+    @staticmethod
+    def _reconciliation_state_json(value: Mapping[str, Any]) -> str:
+        """Canonicalize a copied reconciliation view for immutable handoff."""
+
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+            allow_nan=False,
+        )
+
+    def _install_reconciliation_trade_identity_boundary(
+        self,
+        *,
+        snapshot_update_time_ms: int,
+        trade_identities: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        """Retain only identities that can overlap the next inclusive query.
+
+        ``accountTrades`` is queried on the closed exchange-time interval
+        ``[previous_snapshot_update_time_ms, snapshot_update_time_ms]``.  Once
+        that barrier commits, rows older than its right edge cannot occur in
+        the next valid interval; if the exchange returns one anyway, the
+        existing interval check fails closed before dedupe.  Keeping only rows
+        exactly on the inclusive boundary preserves cross-round identity
+        checks without an O(process-lifetime fills) map and its periodic JSON
+        copies.
+        """
+
+        boundary_ms = int(snapshot_update_time_ms)
+        if boundary_ms <= 0:
+            raise RuntimeError("reconciliation identity boundary is invalid")
+        combined: dict[str, Mapping[str, Any]] = dict(
+            getattr(self, "_reconciliation_trade_identity_by_id", {})
+        )
+        combined.update(
+            {str(trade_id): identity for trade_id, identity in trade_identities.items()}
+        )
+        retained: dict[str, dict[str, Any]] = {}
+        for trade_id, identity in combined.items():
+            if not isinstance(identity, Mapping):
+                raise RuntimeError("reconciliation trade identity is not a mapping")
+            try:
+                trade_time_ms = int(identity["trade_time_ms"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise RuntimeError(
+                    "reconciliation trade identity lacks exchange time"
+                ) from exc
+            if trade_time_ms > boundary_ms:
+                raise RuntimeError(
+                    "reconciliation trade identity exceeds committed barrier"
+                )
+            if trade_time_ms == boundary_ms:
+                retained[str(trade_id)] = dict(identity)
+        self._reconciliation_trade_identity_by_id = retained
+        self._reconciliation_trade_identity_retained_count = len(retained)
+        self._reconciliation_trade_identity_retained_bytes = len(
+            MakerEngine._reconciliation_state_json(retained).encode("utf-8")
+        )
+
+    def _capture_periodic_position_reconciliation_locked(
+        self,
+        *,
+        worker_epoch: int,
+    ) -> _PeriodicPositionReconciliationCapture:
+        """Capture local proof inputs while holding ``_reconciliation_lock``."""
+
+        barrier = self.inventory.reconciliation_snapshot()
+        trade_identities = {
+            str(trade_id): dict(identity)
+            for trade_id, identity in dict(
+                getattr(self, "_reconciliation_trade_identity_by_id", {})
+            ).items()
+        }
+        return _PeriodicPositionReconciliationCapture(
+            generation=int(
+                getattr(self, "_position_reconciliation_generation", 0)
+            ),
+            worker_epoch=int(worker_epoch),
+            barrier_json=self._reconciliation_state_json(dict(barrier)),
+            trade_identities_json=self._reconciliation_state_json(
+                trade_identities
+            ),
+            requested_monotonic_s=time.monotonic(),
+        )
+
+    def _periodic_position_reconciliation_worker(
+        self,
+        capture: _PeriodicPositionReconciliationCapture,
+    ) -> None:
+        """Fetch one cold exchange proof without touching mutable local state."""
+
+        payload: tuple[Any, ...] | None = None
+        error: BaseException | None = None
+        catastrophic = False
+
+        def cancel_requested() -> bool:
+            with self._periodic_reconciliation_state_lock:
+                return bool(
+                    self._periodic_reconciliation_shutdown
+                    or self._periodic_reconciliation_required_sync_active
+                    or capture.worker_epoch
+                    != self._periodic_reconciliation_worker_epoch
+                )
+
+        try:
+            payload = self._stable_exchange_reconciliation_payload(
+                barrier=json.loads(capture.barrier_json),
+                committed_trade_identities=json.loads(
+                    capture.trade_identities_json
+                ),
+                deadline_monotonic_s=(
+                    capture.requested_monotonic_s
+                    + _PERIODIC_POSITION_RECONCILIATION_FETCH_TIMEOUT_S
+                ),
+                cancel_requested=cancel_requested,
+                transport=self._background_reconciliation_transport(),
+            )
+        except Exception as exc:
+            error = exc
+            catastrophic = isinstance(exc, MemoryError)
+        except BaseException as exc:
+            error = exc
+            catastrophic = True
+        completion = _PeriodicPositionReconciliationCompletion(
+            capture=capture,
+            payload=payload,
+            error=error,
+            catastrophic=catastrophic,
+            completed_monotonic_s=time.monotonic(),
+        )
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            self._periodic_reconciliation_thread = None
+            self._periodic_reconciliation_completed += 1
+            self._periodic_reconciliation_last_completed_monotonic_s = (
+                completion.completed_monotonic_s
+            )
+            if error is not None:
+                self._periodic_reconciliation_fetch_errors += 1
+                self._periodic_reconciliation_last_error = (
+                    f"{type(error).__name__}:{error}"
+                )
+            if catastrophic:
+                self._periodic_reconciliation_catastrophic_error = error
+            if (
+                self._periodic_reconciliation_shutdown
+                or self._periodic_reconciliation_required_sync_active
+                or capture.worker_epoch
+                != self._periodic_reconciliation_worker_epoch
+            ):
+                return
+            if self._periodic_reconciliation_completion is not None:
+                # Single-flight makes this unreachable.  Treat it as an
+                # explicit fault rather than overwriting an unconsumed proof.
+                self._periodic_reconciliation_fetch_errors += 1
+                self._periodic_reconciliation_last_error = (
+                    "periodic reconciliation completion slot was occupied"
+                )
+                return
+            self._periodic_reconciliation_completion = completion
+
+    def request_periodic_position_sync(self, *, _retry: bool = False) -> bool:
+        """Start one cold reconciliation fetch without blocking quote work."""
+
+        state_lock = getattr(
+            self,
+            "_periodic_reconciliation_state_lock",
+            None,
+        )
+        if state_lock is None:
+            raise RuntimeError("periodic position reconciliation is uninitialized")
+        with state_lock:
+            if (
+                self._periodic_reconciliation_shutdown
+                or self._periodic_reconciliation_required_sync_active
+            ):
+                return False
+            if (
+                self._periodic_reconciliation_thread is not None
+                or self._periodic_reconciliation_completion is not None
+            ):
+                self._periodic_reconciliation_single_flight_coalesced += 1
+                return True
+            admission_epoch = self._periodic_reconciliation_worker_epoch
+
+        # The reconciliation lock protects the generation and producer-side
+        # identity map as one capture.  InventoryManager returns its own copy.
+        with self._reconciliation_lock:
+            capture = self._capture_periodic_position_reconciliation_locked(
+                worker_epoch=admission_epoch,
+            )
+            with state_lock:
+                if (
+                    self._periodic_reconciliation_shutdown
+                    or self._periodic_reconciliation_required_sync_active
+                    or admission_epoch
+                    != self._periodic_reconciliation_worker_epoch
+                ):
+                    return False
+                if (
+                    self._periodic_reconciliation_thread is not None
+                    or self._periodic_reconciliation_completion is not None
+                ):
+                    self._periodic_reconciliation_single_flight_coalesced += 1
+                    return True
+                worker = threading.Thread(
+                    target=self._periodic_position_reconciliation_worker,
+                    args=(capture,),
+                    name="position-reconciliation-fetch",
+                    daemon=True,
+                )
+                self._periodic_reconciliation_thread = worker
+                self._periodic_reconciliation_retry_requested = False
+                if not _retry:
+                    self._periodic_reconciliation_retry_attempt = 0
+                    self._periodic_reconciliation_retry_reason = ""
+                self._periodic_reconciliation_scheduled += 1
+                worker.start()
+        return True
+
+    def _periodic_reconciliation_capture_is_current_locked(
+        self,
+        capture: _PeriodicPositionReconciliationCapture,
+    ) -> bool:
+        """Check generation and ledger barrier immediately before commit."""
+
+        if int(getattr(self, "_position_reconciliation_generation", 0)) != int(
+            capture.generation
+        ):
+            return False
+        current_barrier = self._reconciliation_state_json(
+            dict(self.inventory.reconciliation_snapshot())
+        )
+        if current_barrier != capture.barrier_json:
+            return False
+        current_identities = self._reconciliation_state_json(
+            {
+                str(trade_id): dict(identity)
+                for trade_id, identity in dict(
+                    getattr(self, "_reconciliation_trade_identity_by_id", {})
+                ).items()
+            }
+        )
+        return current_identities == capture.trade_identities_json
+
+    def _request_periodic_reconciliation_retry(self, *, reason: str) -> bool:
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            if self._periodic_reconciliation_shutdown:
+                return False
+            if self._periodic_reconciliation_retry_reason != str(reason):
+                self._periodic_reconciliation_retry_attempt = 0
+                self._periodic_reconciliation_retry_reason = str(reason)
+            attempt = self._periodic_reconciliation_retry_attempt
+            if attempt >= len(_POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S):
+                self._periodic_reconciliation_retry_requested = False
+                return False
+            delay_s = _POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S[attempt]
+            self._periodic_reconciliation_retry_attempt = attempt + 1
+            self._periodic_reconciliation_retry_requested = True
+            self._periodic_reconciliation_retry_not_before_s = max(
+                self._periodic_reconciliation_retry_not_before_s,
+                time.monotonic() + delay_s,
+            )
+            return True
+
+    def poll_periodic_position_sync(self) -> str:
+        """Validate and commit a completed cold proof on the main thread."""
+
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            completion = self._periodic_reconciliation_completion
+            if completion is None:
+                return (
+                    "fetching"
+                    if self._periodic_reconciliation_thread is not None
+                    else "idle"
+                )
+            self._periodic_reconciliation_completion = None
+
+        if completion.error is not None:
+            if completion.catastrophic:
+                error = completion.error
+                logger.critical(
+                    "Periodic position reconciliation worker failed fatally",
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                self.latch_runtime_fatal(
+                    reason="PERIODIC_RECONCILIATION_WORKER_FATAL",
+                    error=error,
+                    reconciliation_required=False,
+                )
+                return "worker_fatal"
+            logger.error(
+                "Periodic position reconciliation fetch failed: %s",
+                completion.error,
+            )
+            return "fetch_error"
+        if completion.payload is None:
+            with state_lock:
+                self._periodic_reconciliation_fetch_errors += 1
+                self._periodic_reconciliation_last_error = "empty fetch payload"
+            logger.error("Periodic position reconciliation returned no payload")
+            return "fetch_error"
+
+        stage = "validate_capture"
+        existing_barrier = False
+        error: BaseException | None = None
+        identity_cursor_lag = False
+        with self._reconciliation_lock:
+            if not self._periodic_reconciliation_capture_is_current_locked(
+                completion.capture
+            ):
+                with state_lock:
+                    self._periodic_reconciliation_stale_discarded += 1
+                logger.info(
+                    "POSITION_RECONCILIATION_STALE_DISCARDED generation=%d",
+                    completion.capture.generation,
+                )
+                stale = True
+            else:
+                stale = False
+                (
+                    qty,
+                    entry,
+                    snapshot_update_time_ms,
+                    order_cumulative_filled_qty,
+                    included_trade_ids,
+                    normalized_new_trades,
+                    trade_identities,
+                    initial_seed,
+                ) = completion.payload
+                existing_barrier = not initial_seed
+                try:
+                    if not initial_seed:
+                        stage = "deliver_identified_trades"
+                        for trade in normalized_new_trades:
+                            self.orders.reconcile_exchange_trade(
+                                **trade,
+                                local_receive_ts_ns=time.time_ns(),
+                            )
+                            order_status = self.orders.fatal_status()
+                            if bool(order_status.get("latched")):
+                                raise RuntimeError(
+                                    "order-manager fatal during account-trade "
+                                    "delivery: "
+                                    + str(order_status.get("reason", "unknown"))
+                                )
+                    stage = "install_exact_barrier"
+                    reconciliation = self.inventory.sync_from_exchange(
+                        qty,
+                        entry,
+                        snapshot_update_time_ms=snapshot_update_time_ms,
+                        order_cumulative_filled_qty=(
+                            order_cumulative_filled_qty
+                        ),
+                        included_trade_ids=included_trade_ids,
+                        included_trade_identities=trade_identities,
+                    )
+                    MakerEngine._install_reconciliation_trade_identity_boundary(
+                        self,
+                        snapshot_update_time_ms=snapshot_update_time_ms,
+                        trade_identities=trade_identities,
+                    )
+                    self._position_reconciliation_generation = int(
+                        getattr(self, "_position_reconciliation_generation", 0)
+                    ) + 1
+                    logger.info(
+                        "POSITION_RECONCILIATION_COMPLETE_ASYNC seed=%d "
+                        "trades=%d result=%s",
+                        int(initial_seed),
+                        len(normalized_new_trades),
+                        reconciliation,
+                    )
+                except BaseException as exc:
+                    error = exc
+                    identity_cursor_lag = (
+                        "exchange snapshot omitted the identity cursor for a "
+                        "locally applied fill at or before its update time"
+                    ) in str(exc)
+
+        if stale:
+            scheduled = self._request_periodic_reconciliation_retry(
+                reason="stale_capture"
+            )
+            if not scheduled:
+                logger.warning(
+                    "POSITION_RECONCILIATION_STALE_RETRY_EXHAUSTED"
+                )
+                return "stale_exhausted"
+            return "stale"
+        if error is not None:
+            with state_lock:
+                self._periodic_reconciliation_commit_errors += 1
+                self._periodic_reconciliation_last_error = (
+                    f"{stage}:{type(error).__name__}:{error}"
+                )
+            logger.error(
+                "Periodic position reconciliation commit failed at %s: %s",
+                stage,
+                error,
+            )
+            if identity_cursor_lag:
+                scheduled = self._request_periodic_reconciliation_retry(
+                    reason="identity_cursor_lag"
+                )
+                if scheduled:
+                    return "retry"
+                self.latch_runtime_fatal(
+                    reason="EXACT_EXECUTION_RECONCILIATION_FAILED",
+                    error=error,
+                    reconciliation_required=True,
+                )
+                return "retry_exhausted"
+            if existing_barrier and stage in {
+                "deliver_identified_trades",
+                "install_exact_barrier",
+            }:
+                self.latch_runtime_fatal(
+                    reason="EXACT_EXECUTION_RECONCILIATION_FAILED",
+                    error=error,
+                    reconciliation_required=True,
+                )
+            return "commit_error"
+
+        with state_lock:
+            self._periodic_reconciliation_committed += 1
+            self._periodic_reconciliation_last_error = ""
+            self._periodic_reconciliation_retry_attempt = 0
+            self._periodic_reconciliation_retry_reason = ""
+        return "committed"
+
+    def maintain_periodic_position_sync(self, *, request: bool = False) -> str:
+        """Poll a cold proof and schedule a due or invalidated replacement."""
+
+        outcome = self.poll_periodic_position_sync()
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            retry_due = bool(
+                self._periodic_reconciliation_retry_requested
+                and time.monotonic()
+                >= self._periodic_reconciliation_retry_not_before_s
+            )
+        if request or retry_due:
+            self.request_periodic_position_sync(_retry=retry_due and not request)
+        return outcome
+
+    def periodic_position_reconciliation_health(self) -> dict[str, Any]:
+        """Return bounded worker state without reading the mutable ledger."""
+
+        now = time.monotonic()
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            last_completed = self._periodic_reconciliation_last_completed_monotonic_s
+            return {
+                "worker_alive": self._periodic_reconciliation_thread is not None,
+                "completion_pending": (
+                    self._periodic_reconciliation_completion is not None
+                ),
+                "retry_pending": self._periodic_reconciliation_retry_requested,
+                "retry_attempt": self._periodic_reconciliation_retry_attempt,
+                "retry_reason": self._periodic_reconciliation_retry_reason,
+                "shutdown": self._periodic_reconciliation_shutdown,
+                "scheduled": self._periodic_reconciliation_scheduled,
+                "completed": self._periodic_reconciliation_completed,
+                "committed": self._periodic_reconciliation_committed,
+                "stale_discarded": (
+                    self._periodic_reconciliation_stale_discarded
+                ),
+                "fetch_errors": self._periodic_reconciliation_fetch_errors,
+                "commit_errors": self._periodic_reconciliation_commit_errors,
+                "single_flight_coalesced": (
+                    self._periodic_reconciliation_single_flight_coalesced
+                ),
+                "retained_trade_identity_count": int(
+                    getattr(
+                        self,
+                        "_reconciliation_trade_identity_retained_count",
+                        len(
+                            getattr(
+                                self,
+                                "_reconciliation_trade_identity_by_id",
+                                {},
+                            )
+                        ),
+                    )
+                ),
+                "retained_trade_identity_bytes": int(
+                    getattr(
+                        self,
+                        "_reconciliation_trade_identity_retained_bytes",
+                        0,
+                    )
+                ),
+                "last_error": self._periodic_reconciliation_last_error,
+                "catastrophic_error": (
+                    ""
+                    if self._periodic_reconciliation_catastrophic_error is None
+                    else type(
+                        self._periodic_reconciliation_catastrophic_error
+                    ).__name__
+                ),
+                "last_completion_age_s": (
+                    max(0.0, now - last_completed)
+                    if last_completed > 0.0
+                    else None
+                ),
+            }
+
+    def _poison_periodic_position_reconciliation(self) -> None:
+        """Prevent any in-flight cold proof from publishing after shutdown."""
+
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            self._periodic_reconciliation_shutdown = True
+            self._periodic_reconciliation_worker_epoch += 1
+            self._periodic_reconciliation_retry_requested = False
+            self._periodic_reconciliation_completion = None
+
+    def _quiesce_periodic_position_reconciliation(
+        self,
+        *,
+        permanent: bool,
+        timeout_s: float = 30.0,
+    ) -> None:
+        """Drain an in-flight cold read before a required synchronous proof."""
+
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            self._periodic_reconciliation_required_sync_active = True
+            self._periodic_reconciliation_worker_epoch += 1
+            self._periodic_reconciliation_retry_requested = False
+            if permanent:
+                self._periodic_reconciliation_shutdown = True
+            worker = self._periodic_reconciliation_thread
+        if worker is not None:
+            worker.join(timeout=max(0.0, float(timeout_s)))
+            if worker.is_alive():
+                raise RuntimeError(
+                    "periodic position reconciliation worker did not drain"
+                )
+        with state_lock:
+            self._periodic_reconciliation_thread = None
+            self._periodic_reconciliation_completion = None
+            self._periodic_reconciliation_retry_requested = False
+            catastrophic_error = self._periodic_reconciliation_catastrophic_error
+            self._periodic_reconciliation_catastrophic_error = None
+        if catastrophic_error is not None:
+            raise RuntimeError(
+                "periodic position reconciliation worker failed fatally"
+            ) from catastrophic_error
+
+    def _resume_periodic_position_reconciliation_after_required_sync(self) -> None:
+        state_lock = self._periodic_reconciliation_state_lock
+        with state_lock:
+            self._periodic_reconciliation_required_sync_active = False
+
     def sync_position(self, *, required: bool = False) -> bool:
         """Sync local position with exchange; optionally fail closed on error."""
         stage = "fetch_stable_snapshot"
         existing_barrier = False
+        periodic_sync_paused = False
         try:
+            if hasattr(self, "_periodic_reconciliation_state_lock"):
+                stage = "drain_periodic_fetch"
+                MakerEngine._quiesce_periodic_position_reconciliation(
+                    self,
+                    permanent=False,
+                )
+                periodic_sync_paused = True
             with self._reconciliation_lock:
                 identity_lag_attempts = (
                     len(_POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S) + 1
@@ -14038,15 +15904,13 @@ class MakerEngine:
                         time.sleep(retry_delay_s)
                         continue
                     break
-                trade_identity_map = getattr(
+                MakerEngine._install_reconciliation_trade_identity_boundary(
                     self,
-                    "_reconciliation_trade_identity_by_id",
-                    None,
+                    snapshot_update_time_ms=snapshot_update_time_ms,
+                    trade_identities=trade_identities,
                 )
-                if trade_identity_map is None:
-                    trade_identity_map = {}
-                    self._reconciliation_trade_identity_by_id = trade_identity_map
-                trade_identity_map.update(trade_identities)
+                if hasattr(self, "_position_reconciliation_generation"):
+                    self._position_reconciliation_generation += 1
                 logger.info(
                     "POSITION_RECONCILIATION_COMPLETE seed=%d trades=%d result=%s",
                     int(initial_seed),
@@ -14073,3 +15937,8 @@ class MakerEngine:
             if required:
                 raise RuntimeError("required position sync failed") from e
             return False
+        finally:
+            if periodic_sync_paused:
+                MakerEngine._resume_periodic_position_reconciliation_after_required_sync(
+                    self
+                )

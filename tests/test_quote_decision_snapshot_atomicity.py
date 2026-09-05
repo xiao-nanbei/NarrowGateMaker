@@ -1,6 +1,6 @@
+import copy
 import threading
 import time
-import copy
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -434,6 +434,118 @@ def test_deferred_quote_materialization_failure_keeps_publication_retryable() ->
     with pytest.raises(MemoryError, match="deterministic materialization failure"):
         _ = engine._last_quote_diagnostics
     assert quote.calls == 2
+
+
+def test_side_only_native_publication_preserves_opposite_side_without_materializing() -> None:
+    class DeferredProbe:
+        def __init__(self, generation: str) -> None:
+            self.generation = generation
+            self.materialize_calls = 0
+
+        def side_value(self, side: str, key: str, default=None):
+            if key == "order_ttl_ms":
+                return 1_000 if side == "BUY" else 2_000
+            return default
+
+        def materialize(self):
+            self.materialize_calls += 1
+            return SimpleNamespace(
+                quote_context={
+                    "BUY": {"generation": f"{self.generation}_buy"},
+                    "SELL": {"generation": f"{self.generation}_sell"},
+                },
+                diagnostics={"generation": self.generation},
+            )
+
+    def snapshot(generation: int):
+        return SimpleNamespace(
+            market_generation=generation,
+            depth_generation=generation,
+            book_ticker_generation=generation,
+            depth_exchange_ts_ms=generation * 1_000,
+            depth_receive_ts_ns=generation * 1_000_000_000,
+            best_bid=99.0,
+            best_ask=101.0,
+            book_ticker_bid=99.9,
+            book_ticker_ask=100.1,
+            book_ticker_exchange_ts_ms=generation * 1_000,
+            book_ticker_receive_ts_ns=generation * 1_000_000_000,
+            capture_ts_ns=generation * 1_000_000_000 + 1,
+            depth_visible_age_s=0.0,
+            depth_source_lag_s=0.0,
+            book_ticker_visible_age_s=0.0,
+            book_ticker_source_lag_s=0.0,
+            lock_wait_ns=0,
+            lock_hold_ns=0,
+        )
+
+    guard = SimpleNamespace(source="depth", fallback_reason="")
+    engine = object.__new__(MakerEngine)
+    engine._last_native_quote_publication = None
+    engine._last_quote_context_cache = None
+    engine._last_quote_diagnostics_cache = None
+    old_quote = DeferredProbe("old")
+    new_quote = DeferredProbe("new")
+
+    engine._publish_deferred_native_quote(
+        old_quote,
+        quote_ts_ms=1_000,
+        snapshot=snapshot(1),
+        guard=guard,
+    )
+    preserved_sell = engine._preserve_unrouted_quote_side("SELL")
+    engine._publish_deferred_native_quote(
+        new_quote,
+        quote_ts_ms=2_000,
+        snapshot=snapshot(2),
+        guard=guard,
+    )
+    engine._restore_unrouted_quote_side("SELL", preserved_sell)
+
+    assert old_quote.materialize_calls == 0
+    assert new_quote.materialize_calls == 0
+    assert engine._last_quote_side_value("BUY", "order_ttl_ms") == 1_000
+    assert engine._last_quote_side_value("SELL", "order_ttl_ms") == 2_000
+    assert engine._last_quote_side_value(
+        "SELL", "quote_snapshot_depth_generation"
+    ) == 1
+    assert old_quote.materialize_calls == 0
+    assert new_quote.materialize_calls == 0
+
+    context = engine._last_quote_context
+
+    assert new_quote.materialize_calls == 1
+    assert old_quote.materialize_calls == 1
+    assert context["BUY"]["generation"] == "new_buy"
+    assert context["BUY"]["quote_snapshot_depth_generation"] == 2
+    assert context["SELL"]["generation"] == "old_sell"
+    assert context["SELL"]["quote_snapshot_depth_generation"] == 1
+
+    # Periodic diagnostics may materialize the new pair before _requote gets
+    # control back.  That cold path must still restore the prior side exactly.
+    old_cold = DeferredProbe("old_cold")
+    new_cold = DeferredProbe("new_cold")
+    engine._publish_deferred_native_quote(
+        old_cold,
+        quote_ts_ms=3_000,
+        snapshot=snapshot(3),
+        guard=guard,
+    )
+    preserved_cold_sell = engine._preserve_unrouted_quote_side("SELL")
+    engine._publish_deferred_native_quote(
+        new_cold,
+        quote_ts_ms=4_000,
+        snapshot=snapshot(4),
+        guard=guard,
+    )
+    assert engine._last_quote_context["SELL"]["generation"] == "new_cold_sell"
+
+    engine._restore_unrouted_quote_side("SELL", preserved_cold_sell)
+
+    assert engine._last_quote_context["SELL"]["generation"] == "old_cold_sell"
+    assert engine._last_quote_context["SELL"][
+        "quote_snapshot_depth_generation"
+    ] == 3
 
 
 def test_native_quote_policy_stage_preserves_final_quote_and_context(monkeypatch) -> None:

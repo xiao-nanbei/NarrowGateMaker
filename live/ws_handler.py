@@ -1760,8 +1760,16 @@ class WSHandler:
                         receive_ts_ns=receive_ns,
                         sequence_number=data.get("a", data.get("t")),
                     )
-                    with self._deep_book_lock:
-                        deep_book = self._deep_book
+                    # Deep-book collection is restart-only and disabled in
+                    # the current baseline. Avoid taking its lock on every
+                    # execution aggTrade when no consumer can exist; a later
+                    # activation can begin with the next event.
+                    deep_book = None
+                    if bool(
+                        getattr(self.cfg.websocket, "deep_book_enabled", False)
+                    ):
+                        with self._deep_book_lock:
+                            deep_book = self._deep_book
                     if deep_book is not None:
                         deep_book.on_agg_trade(
                             data,

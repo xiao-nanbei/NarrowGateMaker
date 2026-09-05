@@ -8,6 +8,7 @@ import pytest
 from strategy.order_manager import (
     OrderManager,
     OrderManagerFatalError,
+    OrderOwnershipStatus,
     OrderReconciliationRequired,
     OrderState,
     Side,
@@ -546,6 +547,27 @@ def test_terminal_tombstone_survives_rich_history_eviction_and_deduplicates() ->
 
     assert manager.active_count() == 0
     assert fill_deltas == pytest.approx([0.001])
+
+
+def test_ownership_snapshot_classifies_active_terminal_and_unknown() -> None:
+    manager, cid = _tracked_order()
+
+    active = manager.ownership_snapshot(cid)
+    assert active.client_order_id == cid
+    assert active.status is OrderOwnershipStatus.ACTIVE_NONTERMINAL
+    assert active.terminal_identity is None
+
+    manager.on_order_update(_event(cid, "CANCELED", "0", l="0"))
+
+    terminal = manager.ownership_snapshot(cid)
+    assert terminal.client_order_id == cid
+    assert terminal.status is OrderOwnershipStatus.TERMINAL
+    assert terminal.terminal_identity == manager.terminal_identity(cid)
+
+    unknown = manager.ownership_snapshot("mm_B_never_observed")
+    assert unknown.client_order_id == "mm_B_never_observed"
+    assert unknown.status is OrderOwnershipStatus.UNKNOWN
+    assert unknown.terminal_identity is None
 
 
 @pytest.mark.parametrize(

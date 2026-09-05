@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import copy
 import csv
+import io
 import json
+import logging
+import queue
+import signal
 import stat
+import sys
 import threading
 import time
 from contextlib import nullcontext
@@ -14,6 +19,8 @@ from unittest.mock import Mock
 
 import pytest
 
+import live.main as live_main
+import strategy.maker_engine as maker_engine_module
 from execution.runtime_evidence_writer import (
     RuntimeEvidenceQueueFull,
     RuntimeEvidenceWorkerFailed,
@@ -23,14 +30,28 @@ from execution.runtime_evidence_writer import (
 from live.config import Config, _validate_config
 from live.main import (
     EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
+    _AsyncLoggingRuntime,
+    _cleanup_failed_live_startup,
+    _create_live_runtime_components,
+    _DrainingQueueListener,
+    _note_startup_cleanup_errors,
+    _OrderedQueueHandler,
+    _quiesce_callbacks_then_stop_engine,
+    _safe_runtime_log,
+    _ShutdownSignalFlag,
+    arm_order_gateway_experiment_runtime_guard,
     arm_websocket_order_ab_runtime_guard,
     collect_runtime_safety_health,
     create_rest_client,
     create_rest_clients,
     create_websocket_order_ab_gateway,
+    maintain_optional_deep_book,
+    optional_deep_book_health,
     record_startup_runtime_identity,
     resolve_live_shutdown_exit,
     runtime_safety_health_payload_factory,
+    setup_logging,
+    shutdown_logging,
     start_engine_with_prospective_collection,
 )
 from live.runtime_policy import (
@@ -50,6 +71,897 @@ from strategy.inventory_manager import InventoryManager, PositionState
 from strategy.maker_engine import MakerEngine
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_failed_live_startup_closes_every_constructed_owner_without_engine_stop() -> None:
+    closed: list[str] = []
+
+    class Engine:
+        signal = SimpleNamespace(stop=lambda: closed.append("signal"))
+        _exact_opportunity_tape_runtime = SimpleNamespace(
+            close=lambda: closed.append("exact")
+        )
+
+        @staticmethod
+        def close_fill_cooldown_checkpoint_store() -> None:
+            closed.append("checkpoint")
+
+        @staticmethod
+        def stop() -> None:  # pragma: no cover - must never be called
+            raise AssertionError("unstarted engine cleanup must not issue exchange writes")
+
+    writer = SimpleNamespace(
+        close=lambda *, drain_timeout_s: closed.append(
+            f"writer:{drain_timeout_s:.1f}"
+        )
+    )
+    ws = SimpleNamespace(stop=lambda: closed.append("ws"))
+    gateway = SimpleNamespace(close=lambda: closed.append("gateway"))
+    rest_clients = SimpleNamespace(close=lambda: closed.append("rest"))
+    logging_runtime = SimpleNamespace(close=lambda: closed.append("logging"))
+
+    assert (
+        _cleanup_failed_live_startup(
+            logging_runtime=logging_runtime,
+            rest_clients=rest_clients,
+            order_gateway=gateway,
+            engine=Engine(),
+            ws=ws,
+            runtime_evidence_writer=writer,
+        )
+        == ()
+    )
+    assert closed == [
+        "writer:1.0",
+        "ws",
+        "signal",
+        "checkpoint",
+        "exact",
+        "gateway",
+        "rest",
+        "logging",
+    ]
+
+
+def test_failed_live_startup_continues_after_engine_subresource_error() -> None:
+    closed: list[str] = []
+
+    def fail_signal() -> None:
+        closed.append("signal")
+        raise OSError("signal stop failed")
+
+    engine = SimpleNamespace(
+        signal=SimpleNamespace(stop=fail_signal),
+        close_fill_cooldown_checkpoint_store=lambda: closed.append("checkpoint"),
+        _exact_opportunity_tape_runtime=SimpleNamespace(
+            close=lambda: closed.append("exact")
+        ),
+    )
+    failures = _cleanup_failed_live_startup(
+        logging_runtime=SimpleNamespace(close=lambda: closed.append("logging")),
+        rest_clients=SimpleNamespace(close=lambda: closed.append("rest")),
+        engine=engine,
+    )
+
+    assert closed == ["signal", "checkpoint", "exact", "rest", "logging"]
+    assert len(failures) == 1
+    assert failures[0][0] == "unstarted-engine-resources"
+    assert "1 unstarted engine resource" in str(failures[0][1])
+
+
+def test_failed_live_startup_preserves_primary_error_and_all_cleanup_failures() -> None:
+    primary = RuntimeError("constructor failed")
+    closed: list[str] = []
+
+    def fail_writer(*, drain_timeout_s: float) -> None:
+        assert drain_timeout_s == pytest.approx(1.0)
+        closed.append("writer")
+        raise OSError("writer stuck")
+
+    failures = _cleanup_failed_live_startup(
+        logging_runtime=SimpleNamespace(close=lambda: closed.append("logging")),
+        rest_clients=SimpleNamespace(close=lambda: closed.append("rest")),
+        runtime_evidence_writer=SimpleNamespace(close=fail_writer),
+    )
+    _note_startup_cleanup_errors(primary, failures)
+
+    assert closed == ["writer", "rest", "logging"]
+    assert [(name, str(error)) for name, error in failures] == [
+        ("runtime-evidence-writer", "writer stuck")
+    ]
+    assert primary.__notes__ == [
+        "startup cleanup failed for runtime-evidence-writer: "
+        "OSError: writer stuck"
+    ]
+
+
+def test_live_component_transaction_closes_earlier_owners_on_attach_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[str] = []
+    client = SimpleNamespace()
+    rest_clients = SimpleNamespace(
+        order=client,
+        order_buy=SimpleNamespace(),
+        order_sell=SimpleNamespace(),
+        order_safety=SimpleNamespace(),
+        reconciliation=SimpleNamespace(),
+        reconciliation_worker=SimpleNamespace(),
+        metrics=SimpleNamespace(),
+        identity=lambda: {"roles": ("order",)},
+        close=lambda: closed.append("rest"),
+    )
+    websocket_gateway = SimpleNamespace(close=lambda: closed.append("ws-order"))
+
+    class Gateway:
+        active_transport = "rest"
+        async_order_lanes_enabled = False
+        cross_side_order_lanes_enabled = False
+
+        def set_runtime_evidence_writer(self, _writer, _path) -> None:
+            raise RuntimeError("synthetic attach failure")
+
+        @staticmethod
+        def close() -> None:
+            closed.append("gateway")
+
+    class Engine:
+        signal = SimpleNamespace(stop=lambda: closed.append("signal"))
+        _exact_opportunity_tape_runtime = None
+
+        @staticmethod
+        def set_replace_terminal_continuation_wakeup(_callback) -> None:
+            return None
+
+        @staticmethod
+        def restore_fill_cooldown_checkpoint() -> dict[str, object]:
+            return {
+                "restore_mode": "test",
+                "checkpoint_loaded": 0,
+                "checkpoint_sequence": 0,
+                "buy_deadline_identity": "B0",
+                "buy_remaining_ms": 0,
+            }
+
+        @staticmethod
+        def set_event_source(_source) -> None:
+            return None
+
+        @staticmethod
+        def set_runtime_evidence_writer(_writer) -> None:
+            raise AssertionError("gateway attachment must fail first")
+
+        @staticmethod
+        def close_fill_cooldown_checkpoint_store() -> None:
+            closed.append("checkpoint")
+
+    class Wakeup:
+        @staticmethod
+        def notify_replacement_terminal() -> None:
+            return None
+
+    class WebsocketHandler:
+        def __init__(self, _engine, _cfg) -> None:
+            pass
+
+        @staticmethod
+        def stop() -> None:
+            closed.append("ws-handler")
+
+    class Writer:
+        def close(self, *, drain_timeout_s: float) -> None:
+            closed.append(f"writer:{drain_timeout_s:.1f}")
+
+    monkeypatch.setattr(live_main, "create_rest_clients", lambda _cfg: rest_clients)
+    monkeypatch.setattr(
+        live_main,
+        "create_websocket_order_ab_gateway",
+        lambda _cfg: websocket_gateway,
+    )
+    monkeypatch.setattr(live_main, "BinanceUsdMOrderGateway", lambda **_kw: Gateway())
+    monkeypatch.setattr(live_main, "MakerEngine", lambda *_a, **_kw: Engine())
+    monkeypatch.setattr(live_main, "_LiveMainLoopWakeup", Wakeup)
+    monkeypatch.setattr(live_main, "WSHandler", WebsocketHandler)
+    monkeypatch.setattr(live_main, "RuntimeEvidenceWriter", Writer)
+    logging_runtime = SimpleNamespace(close=lambda: closed.append("logging"))
+    cfg = SimpleNamespace(
+        api=SimpleNamespace(
+            async_order_lanes_enabled=False,
+            cross_side_order_lanes_enabled=False,
+            async_order_lane_capacity=8,
+            async_order_lane_drain_timeout_s=10.0,
+            async_order_lane_max_runtime_s=900.0,
+        ),
+        logging=SimpleNamespace(order_gateway_receipt_log="receipts.csv"),
+    )
+
+    with pytest.raises(RuntimeError, match="synthetic attach failure"):
+        _create_live_runtime_components(
+            cfg=cfg,
+            safety_authority={},
+            logging_runtime=logging_runtime,
+        )
+
+    assert closed == [
+        "writer:1.0",
+        "ws-handler",
+        "signal",
+        "checkpoint",
+        "gateway",
+        "rest",
+        "logging",
+    ]
+
+
+@pytest.mark.parametrize("enabled", (False, True))
+def test_main_loop_skips_disabled_deep_book_work(enabled: bool) -> None:
+    ws = SimpleNamespace(
+        cfg=SimpleNamespace(
+            websocket=SimpleNamespace(deep_book_enabled=enabled)
+        ),
+        maintain_deep_book=Mock(),
+        maintain_active_order_depth_paths=Mock(),
+    )
+
+    assert maintain_optional_deep_book(ws, now_ns=123) is enabled
+
+    expected_calls = 1 if enabled else 0
+    assert ws.maintain_deep_book.call_count == expected_calls
+    assert ws.maintain_active_order_depth_paths.call_count == expected_calls
+
+
+def test_disabled_deep_book_health_does_not_read_handler_state() -> None:
+    ws = SimpleNamespace(
+        cfg=SimpleNamespace(
+            websocket=SimpleNamespace(deep_book_enabled=False)
+        ),
+        deep_book_snapshot=Mock(side_effect=AssertionError("must not read")),
+        active_order_depth_snapshot=Mock(
+            side_effect=AssertionError("must not read")
+        ),
+    )
+
+    deep_book, active_order_depth = optional_deep_book_health(ws)
+
+    assert deep_book["enabled"] == 0
+    assert deep_book["generation"] == 0
+    assert active_order_depth["tracked"] == 0
+    ws.deep_book_snapshot.assert_not_called()
+    ws.active_order_depth_snapshot.assert_not_called()
+
+
+class _BlockingLogSink(logging.Handler):
+    def __init__(self, block_message: str) -> None:
+        super().__init__()
+        self.block_message = block_message
+        self.entered = threading.Event()
+        self.release_event = threading.Event()
+        self.messages: list[str] = []
+        self.emit_thread_ids: dict[str, int] = {}
+
+    def emit(self, record: logging.LogRecord) -> None:
+        message = record.getMessage()
+        if message == self.block_message:
+            self.entered.set()
+            if not self.release_event.wait(timeout=2.0):
+                raise TimeoutError("test log sink was not released")
+        self.messages.append(message)
+        self.emit_thread_ids[message] = threading.get_ident()
+
+
+def _start_ordered_test_logger(
+    sink: logging.Handler,
+    *,
+    queue_capacity: int,
+) -> tuple[logging.Logger, _OrderedQueueHandler]:
+    record_queue: queue.Queue[logging.LogRecord | None] = queue.Queue(
+        maxsize=queue_capacity
+    )
+    listener = _DrainingQueueListener(record_queue, sink)
+    handler = _OrderedQueueHandler(record_queue, listener)
+    logger = logging.Logger(f"ordered-test-{id(handler)}", level=logging.INFO)
+    logger.addHandler(handler)
+    listener.start()
+    return logger, handler
+
+
+def test_async_logging_fans_out_fifo_and_drains_normal_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    console = io.StringIO()
+    log_path = tmp_path / "maker.log"
+    cfg = Config()
+    cfg.logging.level = "INFO"
+    cfg.logging.console = True
+    cfg.logging.file = str(log_path)
+    monkeypatch.setattr(sys, "stdout", console)
+
+    runtime = setup_logging(cfg, queue_capacity=128)
+    logger = logging.getLogger("async-logging-fifo-test")
+    expected = [f"sequence={sequence}" for sequence in range(64)]
+    try:
+        for message in expected:
+            logger.info(message)
+    finally:
+        shutdown_logging(runtime)
+
+    assert runtime.listener._thread is None
+    assert runtime.queue_handler.queue.empty()
+    assert runtime.queue_handler.queue.maxsize == 128
+    console_lines = [
+        line
+        for line in console.getvalue().splitlines()
+        if "[async-logging-fifo-test]" in line
+    ]
+    file_lines = [
+        line
+        for line in log_path.read_text(encoding="utf-8").splitlines()
+        if "[async-logging-fifo-test]" in line
+    ]
+    assert [line.rsplit(" ", 1)[-1] for line in console_lines] == expected
+    assert [line.rsplit(" ", 1)[-1] for line in file_lines] == expected
+
+
+def test_logging_setup_failure_stops_listener_and_restores_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[_DrainingQueueListener] = []
+    original_listener = live_main._DrainingQueueListener
+
+    class TrackingListener(original_listener):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    def fail_runtime(**_kwargs):
+        raise RuntimeError("synthetic logging runtime constructor failure")
+
+    root = logging.getLogger()
+    previous_handlers = tuple(root.handlers)
+    previous_level = root.level
+    cfg = Config()
+    cfg.logging.console = False
+    cfg.logging.file = ""
+    monkeypatch.setattr(live_main, "_DrainingQueueListener", TrackingListener)
+    monkeypatch.setattr(live_main, "_AsyncLoggingRuntime", fail_runtime)
+
+    with pytest.raises(
+        RuntimeError,
+        match="synthetic logging runtime constructor failure",
+    ):
+        setup_logging(cfg, queue_capacity=2)
+
+    assert len(created) == 1
+    assert created[0]._thread is None
+    assert tuple(root.handlers) == previous_handlers
+    assert root.level == previous_level
+
+
+def test_async_logging_full_queue_records_failure_without_interrupting_caller(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    sink = _BlockingLogSink("one")
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=1)
+    producer_started = threading.Event()
+    producer_returned = threading.Event()
+    producer_errors: list[BaseException] = []
+
+    def emit_third() -> None:
+        producer_started.set()
+        try:
+            logger.info("three")
+        except BaseException as exc:
+            producer_errors.append(exc)
+        finally:
+            producer_returned.set()
+
+    producer = threading.Thread(target=emit_third)
+    try:
+        logger.info("one")
+        assert sink.entered.wait(timeout=1.0)
+        logger.info("two")
+        producer.start()
+        assert producer_started.wait(timeout=1.0)
+        assert producer_returned.wait(timeout=1.0)
+        assert producer_errors == []
+        with pytest.raises(RuntimeError, match="async logging handler failed"):
+            handler.raise_if_failed()
+        sink.release_event.set()
+        producer.join(timeout=1.0)
+        handler.stop_and_drain()
+    finally:
+        sink.release_event.set()
+        producer.join(timeout=1.0)
+        handler.stop_and_drain()
+        handler.close()
+        sink.close()
+
+    assert sink.messages == ["one", "two"]
+    assert producer_errors == []
+    captured = capfd.readouterr()
+    assert "ASYNC_LOG_QUEUE_FULL" in captured.err
+    assert "capacity=1 action=fail_closed" in captured.err
+    assert "message=three" in captured.err
+
+
+def test_async_logging_shutdown_drains_an_already_full_queue() -> None:
+    sink = _BlockingLogSink("one")
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=1)
+    shutdown_returned = threading.Event()
+
+    def stop_handler() -> None:
+        handler.stop_and_drain()
+        shutdown_returned.set()
+
+    shutdown = threading.Thread(target=stop_handler)
+    try:
+        logger.info("one")
+        assert sink.entered.wait(timeout=1.0)
+        logger.info("two")
+        shutdown.start()
+        assert not shutdown_returned.wait(timeout=0.05)
+        sink.release_event.set()
+        assert shutdown_returned.wait(timeout=2.0)
+        shutdown.join(timeout=1.0)
+    finally:
+        sink.release_event.set()
+        shutdown.join(timeout=1.0)
+        handler.stop_and_drain()
+        handler.close()
+        sink.close()
+
+    assert sink.messages == ["one", "two"]
+
+
+def test_async_logging_critical_has_independent_sync_stderr_fallback(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    sink = _BlockingLogSink("queued-before-critical")
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=2)
+    critical_returned = threading.Event()
+
+    def emit_critical() -> None:
+        logger.critical("critical-fallback")
+        critical_returned.set()
+
+    producer = threading.Thread(target=emit_critical)
+    try:
+        logger.info("queued-before-critical")
+        assert sink.entered.wait(timeout=1.0)
+        producer.start()
+        assert critical_returned.wait(timeout=1.0)
+        captured = capfd.readouterr()
+        assert "ASYNC_LOG_CRITICAL" in captured.err
+        assert "message=critical-fallback" in captured.err
+        sink.release_event.set()
+        producer.join(timeout=1.0)
+        handler.stop_and_drain()
+    finally:
+        sink.release_event.set()
+        producer.join(timeout=1.0)
+        handler.stop_and_drain()
+        handler.close()
+        sink.close()
+
+    assert sink.messages == ["queued-before-critical", "critical-fallback"]
+    assert sink.messages.count("critical-fallback") == 1
+    assert sink.emit_thread_ids["critical-fallback"] != producer.ident
+
+
+def test_async_logging_linearizes_producers_before_handler_filters() -> None:
+    sink = _BlockingLogSink("never-block")
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=4)
+    first_in_filter = threading.Event()
+    release_first = threading.Event()
+
+    class PauseFirstFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            if record.getMessage() == "first":
+                first_in_filter.set()
+                assert release_first.wait(timeout=1.0)
+            return True
+
+    handler.addFilter(PauseFirstFilter())
+    first = threading.Thread(target=logger.info, args=("first",))
+    second = threading.Thread(target=logger.info, args=("second",))
+    try:
+        first.start()
+        assert first_in_filter.wait(timeout=1.0)
+        second.start()
+        time.sleep(0.05)
+        assert second.is_alive()
+        release_first.set()
+        first.join(timeout=1.0)
+        second.join(timeout=1.0)
+        handler.stop_and_drain()
+    finally:
+        release_first.set()
+        first.join(timeout=1.0)
+        second.join(timeout=1.0)
+        handler.stop_and_drain()
+        handler.close()
+        sink.close()
+
+    assert sink.messages == ["first", "second"]
+
+
+def test_async_logging_formats_only_on_listener_thread() -> None:
+    sink = _BlockingLogSink("never-block")
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=4)
+    producer_thread_id = threading.get_ident()
+    format_thread_ids: list[int] = []
+
+    class DeferredValue:
+        def __str__(self) -> str:
+            format_thread_ids.append(threading.get_ident())
+            return "deferred-value"
+
+    try:
+        logger.info("value=%s", DeferredValue())
+        handler.stop_and_drain()
+    finally:
+        handler.stop_and_drain()
+        handler.close()
+        sink.close()
+
+    assert sink.messages == ["value=deferred-value"]
+    assert format_thread_ids
+    assert producer_thread_id not in format_thread_ids
+
+
+def test_async_logging_runtime_preserves_shutdown_race(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    async_sink = _BlockingLogSink("queued")
+    previous_sink = _BlockingLogSink("never-block")
+    record_queue: queue.Queue[logging.LogRecord | None] = queue.Queue(maxsize=4)
+    listener = _DrainingQueueListener(record_queue, async_sink)
+    queue_handler = _OrderedQueueHandler(record_queue, listener)
+    logger = logging.Logger("shutdown-race", level=logging.INFO)
+    logger.addHandler(queue_handler)
+    runtime = _AsyncLoggingRuntime(
+        root_logger=logger,
+        queue_handler=queue_handler,
+        listener=listener,
+        sink_handlers=(async_sink,),
+        previous_handlers=(previous_sink,),
+        previous_level=logging.INFO,
+    )
+    listener.start()
+    runtime.raise_if_failed()
+    assert runtime.health_snapshot()["valid"] is True
+    closed = threading.Event()
+
+    def close_runtime() -> None:
+        runtime.close()
+        closed.set()
+
+    closer = threading.Thread(target=close_runtime)
+    try:
+        logger.info("queued")
+        assert async_sink.entered.wait(timeout=1.0)
+        closer.start()
+        deadline = time.monotonic() + 1.0
+        while queue_handler._accepting and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert not queue_handler._accepting
+        logger.warning("during-shutdown")
+        captured = capfd.readouterr()
+        assert "ASYNC_LOG_AFTER_SHUTDOWN" in captured.err
+        assert "message=during-shutdown" in captured.err
+        async_sink.release_event.set()
+        assert closed.wait(timeout=2.0)
+        closer.join(timeout=1.0)
+        logger.info("after-shutdown")
+    finally:
+        async_sink.release_event.set()
+        closer.join(timeout=1.0)
+        runtime.close()
+        previous_sink.close()
+
+    assert async_sink.messages == ["queued"]
+    assert previous_sink.messages == ["after-shutdown"]
+
+
+def test_async_logging_listener_failure_is_visible_and_stop_is_bounded(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    class ThrowingSink(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempted = threading.Event()
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.attempted.set()
+            raise OSError(f"synthetic sink failure: {record.getMessage()}")
+
+    sink = ThrowingSink()
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=1)
+    runtime = _AsyncLoggingRuntime(
+        root_logger=logger,
+        queue_handler=handler,
+        listener=handler._listener,
+        sink_handlers=(sink,),
+        previous_handlers=(),
+        previous_level=logging.INFO,
+    )
+    logger.info("explode")
+    assert sink.attempted.wait(timeout=1.0)
+    deadline = time.monotonic() + 1.0
+    while (
+        handler._listener.failure is None
+        or handler._listener._thread.is_alive()
+    ) and time.monotonic() < deadline:
+        time.sleep(0.001)
+    health = handler._listener.health_snapshot()
+    assert health == {
+        "valid": False,
+        "worker_alive": False,
+        "failure_type": "OSError",
+        "failure_message": "synthetic sink failure: explode",
+    }
+    assert runtime.health_snapshot()["valid"] is False
+    with pytest.raises(RuntimeError, match="listener worker failed"):
+        runtime.raise_if_failed()
+    logger.info("fail-closed-after-worker-failure")
+    with pytest.raises(RuntimeError, match="handler failed"):
+        runtime.raise_if_failed()
+
+    late_record = logging.LogRecord(
+        name="dead-listener-late-record",
+        level=logging.INFO,
+        pathname=__file__,
+        lineno=0,
+        msg="preserve-after-worker-failure",
+        args=(),
+        exc_info=None,
+    )
+    handler.queue.put_nowait(late_record)
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="listener worker failed"):
+        runtime.close()
+    elapsed = time.monotonic() - start
+    try:
+        assert elapsed < 0.5
+        assert handler.queue.empty()
+        assert handler.queue.unfinished_tasks == 0
+    finally:
+        runtime.close()
+
+    captured = capfd.readouterr()
+    assert "ASYNC_LOG_LISTENER_FAILED" in captured.err
+    assert "message=explode" in captured.err
+    assert "ASYNC_LOG_LISTENER_UNDELIVERED" in captured.err
+    assert "message=preserve-after-worker-failure" in captured.err
+    assert "ASYNC_LOG_HANDLER_FAILED" in captured.err
+
+
+def test_failed_logging_cannot_skip_fatal_or_cleanup_control_flow(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    class ThrowingSink(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempted = threading.Event()
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.attempted.set()
+            raise OSError(f"synthetic sink failure: {record.getMessage()}")
+
+    sink = ThrowingSink()
+    logger, handler = _start_ordered_test_logger(sink, queue_capacity=2)
+    actions: list[str] = []
+    try:
+        logger.info("break-worker")
+        assert sink.attempted.wait(timeout=1.0)
+        deadline = time.monotonic() + 1.0
+        while handler._listener.failure is None and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert handler._listener.failure is not None
+
+        # Logging after the worker fault must not become an exception edge in
+        # the fatal/shutdown transaction.  Health polling is the sole edge.
+        logger.critical("fatal-diagnostic")
+        actions.append("fatal-latch")
+        logger.info("shutdown-diagnostic")
+        actions.append("engine-cleanup")
+        actions.append("gateway-cleanup")
+        with pytest.raises(RuntimeError, match="handler failed"):
+            handler.raise_if_failed()
+    finally:
+        try:
+            handler.stop_and_drain()
+        except RuntimeError:
+            pass
+        handler.close()
+        sink.close()
+
+    assert actions == ["fatal-latch", "engine-cleanup", "gateway-cleanup"]
+    captured = capfd.readouterr()
+    assert "ASYNC_LOG_HANDLER_FAILED" in captured.err
+    assert "message=shutdown-diagnostic" in captured.err
+
+
+def test_safe_runtime_log_swallows_a_third_party_handler_failure(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    class RaisingHandler(logging.Handler):
+        def emit(self, _record: logging.LogRecord) -> None:
+            raise OSError("synthetic direct handler failure")
+
+    logger = logging.Logger("safe-runtime-log-test", level=logging.INFO)
+    handler = RaisingHandler()
+    logger.addHandler(handler)
+    try:
+        _safe_runtime_log(logger, logging.CRITICAL, "fatal=%s", "synthetic")
+    finally:
+        handler.close()
+
+    captured = capfd.readouterr()
+    assert "RUNTIME_LOG_CALL_FAILED" in captured.err
+    assert "message=fatal=synthetic" in captured.err
+
+
+def test_shutdown_signal_callback_only_sets_plain_flag() -> None:
+    shutdown_signal = _ShutdownSignalFlag()
+
+    shutdown_signal(signal.SIGTERM, None)
+    shutdown_signal(signal.SIGINT, None)
+
+    assert shutdown_signal.requested is True
+    assert set(_ShutdownSignalFlag.__call__.__code__.co_names) == {"requested"}
+
+
+def test_runtime_fatal_cancel_precedes_and_survives_logging_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RaisingLogger:
+        @staticmethod
+        def critical(*_args, **_kwargs) -> None:
+            raise OSError("synthetic maker logger failure")
+
+    cancel_open_orders = Mock(return_value={})
+    engine = object.__new__(MakerEngine)
+    engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine._order_transport = lambda: SimpleNamespace(
+        cancel_open_orders=cancel_open_orders
+    )
+    engine._clear_all_replace_terminal_continuations = Mock()
+    engine._running = True
+    engine._runtime_fatal_error = None
+    engine._runtime_reconciliation_required = False
+    monkeypatch.setattr(maker_engine_module, "logger", RaisingLogger())
+
+    root_error = RuntimeError("synthetic fatal")
+    engine.latch_runtime_fatal(
+        reason="TEST_FATAL",
+        error=root_error,
+        reconciliation_required=False,
+    )
+
+    cancel_open_orders.assert_called_once_with(symbol="BTCUSDC")
+    assert engine._running is False
+    assert engine._runtime_fatal_error is root_error
+
+
+def test_async_logging_close_does_not_close_sink_under_live_worker(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    class IndefinitelyBlockingSink(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.entered = threading.Event()
+            self.release_event = threading.Event()
+            self.closed_for_test = False
+            self.messages: list[str] = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            self.entered.set()
+            self.release_event.wait()
+            assert not self.closed_for_test
+            self.messages.append(record.getMessage())
+
+        def close(self) -> None:
+            self.closed_for_test = True
+            super().close()
+
+    sink = IndefinitelyBlockingSink()
+    previous_sink = _BlockingLogSink("never-block")
+    record_queue: queue.Queue[logging.LogRecord | None] = queue.Queue(maxsize=2)
+    listener = _DrainingQueueListener(
+        record_queue,
+        sink,
+        stop_timeout_s=0.05,
+    )
+    handler = _OrderedQueueHandler(record_queue, listener)
+    logger = logging.Logger("blocked-close", level=logging.INFO)
+    logger.addHandler(handler)
+    runtime = _AsyncLoggingRuntime(
+        root_logger=logger,
+        queue_handler=handler,
+        listener=listener,
+        sink_handlers=(sink,),
+        previous_handlers=(previous_sink,),
+        previous_level=logging.INFO,
+    )
+    listener.start()
+    logger.info("blocked-record")
+    assert sink.entered.wait(timeout=1.0)
+
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match="did not stop before deadline"):
+        runtime.close()
+    elapsed = time.monotonic() - start
+    assert elapsed < 0.5
+    assert listener._thread is not None
+    assert listener._thread.is_alive()
+    assert sink.closed_for_test is False
+    assert logger.handlers == [previous_sink]
+    captured = capfd.readouterr()
+    assert "ASYNC_LOG_LISTENER_STOP_TIMEOUT" in captured.err
+    assert "ASYNC_LOG_SINK_CLOSE_DEFERRED" in captured.err
+
+    sink.release_event.set()
+    listener._thread.join(timeout=1.0)
+    assert not listener._thread.is_alive()
+    runtime.close()
+    previous_sink.close()
+
+    assert sink.messages == ["blocked-record"]
+    assert sink.closed_for_test is True
+
+
+def test_async_logging_late_selected_producer_never_writes_closed_sink(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    class ClosedSink(logging.Handler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.closed_for_test = False
+            self.messages = []
+
+        def emit(self, record: logging.LogRecord) -> None:
+            assert not self.closed_for_test
+            self.messages.append(record.getMessage())
+
+        def close(self) -> None:
+            self.closed_for_test = True
+            super().close()
+
+    sink = ClosedSink()
+    _logger, handler = _start_ordered_test_logger(sink, queue_capacity=2)
+    selected = threading.Event()
+    release_selected = threading.Event()
+
+    def emit_after_selection_pause() -> None:
+        record = logging.LogRecord(
+            name="late-selected-producer",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=0,
+            msg="preserve-me",
+            args=(),
+            exc_info=None,
+        )
+        selected.set()
+        assert release_selected.wait(timeout=1.0)
+        handler.handle(record)
+
+    producer = threading.Thread(target=emit_after_selection_pause)
+    producer.start()
+    assert selected.wait(timeout=1.0)
+    handler.stop_and_drain()
+    handler.close()
+    sink.close()
+    release_selected.set()
+    producer.join(timeout=1.0)
+
+    assert not producer.is_alive()
+    assert sink.messages == []
+    captured = capfd.readouterr()
+    assert "ASYNC_LOG_AFTER_SHUTDOWN" in captured.err
+    assert "message=preserve-me" in captured.err
 
 
 def test_runtime_evidence_writer_preserves_fifo_and_drains_shutdown(
@@ -91,6 +1003,36 @@ def test_runtime_evidence_writer_preserves_fifo_and_drains_shutdown(
     assert closed["queue_full_count"] == 0
     assert closed["valid"] is True
     assert closed["worker_alive"] is False
+
+
+def test_runtime_evidence_writer_accepts_flattened_immutable_csv_rows(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "flat.csv"
+    writer = RuntimeEvidenceWriter(queue_capacity=4)
+
+    sequence = writer.enqueue_csv_values(
+        csv_path,
+        fieldnames=("side", "price", "quantity"),
+        values=("BUY", 100.1, 0.001),
+    )
+    with pytest.raises(TypeError, match="immutable scalars"):
+        writer.enqueue_csv_values(
+            csv_path,
+            fieldnames=("side", "payload", "quantity"),
+            values=("BUY", {"mutable": True}, 0.001),
+        )
+    with pytest.raises(TypeError, match="immutable scalars"):
+        writer.enqueue_csv_values(
+            csv_path,
+            fieldnames=("side", "payload", "quantity"),
+            values=("BUY", ("nested", ["mutable"]), 0.001),
+        )
+    writer.close(drain_timeout_s=2.0)
+
+    assert sequence == 1
+    with csv_path.open(newline="", encoding="utf-8") as handle:
+        assert list(csv.reader(handle)) == [["BUY", "100.1", "0.001"]]
 
 
 def test_runtime_evidence_writer_recursively_freezes_payloads_at_admission(
@@ -750,7 +1692,11 @@ def test_live_rest_roles_bind_complete_position_query_only_to_reconciliation(
 
     clients = SimpleNamespace(
         order=Client(),
+        order_buy=Client(),
+        order_sell=Client(),
+        order_safety=Client(),
         reconciliation=Client(),
+        reconciliation_worker=Client(),
         market_snapshot=Client(),
         metrics=Client(),
         listen_key=Client(),
@@ -768,6 +1714,7 @@ def test_live_rest_roles_bind_complete_position_query_only_to_reconciliation(
     result = create_rest_clients(cfg)
 
     assert result is clients
+    assert callable(clients.reconciliation_worker.get_position_risk)
     assert captured["factory"]["base_url"] == "https://demo-fapi.binance.com"
     assert captured["factory"]["timeout_s"] == pytest.approx(2.5)
     assert not hasattr(clients.order, "get_position_risk")
@@ -837,6 +1784,110 @@ def test_websocket_order_ab_runtime_guard_preconnects_and_arms_hard_stop():
     assert timer.started is True
     timer.callback()
     assert expirations == ["expired"]
+
+
+def test_combined_order_gateway_guard_uses_earliest_deadline():
+    class Gateway:
+        def __init__(self):
+            self.starts = 0
+
+        def start(self):
+            self.starts += 1
+
+    class FakeTimer:
+        def __init__(self, interval, callback):
+            self.interval = interval
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    gateway = Gateway()
+    expirations = []
+    result = arm_order_gateway_experiment_runtime_guard(
+        websocket_gateway=gateway,
+        websocket_max_runtime_s=900.0,
+        async_order_lanes_enabled=True,
+        async_order_lane_max_runtime_s=300.0,
+        on_expire=lambda arms, seconds: expirations.append((arms, seconds)),
+        timer_factory=FakeTimer,
+    )
+
+    assert result is not None
+    timer, runtime_s, limiting_arms = result
+    assert gateway.starts == 1
+    assert runtime_s == pytest.approx(300.0)
+    assert limiting_arms == ("async_order_lanes",)
+    assert timer.interval == pytest.approx(300.0)
+    assert timer.daemon is True
+    assert timer.started is True
+    timer.callback()
+    assert expirations == [(('async_order_lanes',), 300.0)]
+
+
+def test_order_gateway_guard_reuses_transport_absolute_deadline() -> None:
+    class FakeTimer:
+        def __init__(self, interval, callback):
+            self.interval = interval
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    expirations = []
+    result = arm_order_gateway_experiment_runtime_guard(
+        websocket_gateway=None,
+        websocket_max_runtime_s=0.0,
+        async_order_lanes_enabled=True,
+        async_order_lane_max_runtime_s=900.0,
+        async_order_lane_deadline_monotonic=1_450.0,
+        on_expire=lambda arms, seconds: expirations.append((arms, seconds)),
+        timer_factory=FakeTimer,
+        monotonic=lambda: 1_000.0,
+    )
+
+    assert result is not None
+    timer, runtime_s, limiting_arms = result
+    assert runtime_s == pytest.approx(450.0)
+    assert timer.interval == pytest.approx(450.0)
+    assert limiting_arms == ("async_order_lanes",)
+    assert timer.started is True
+    timer.callback()
+    assert expirations == [(('async_order_lanes',), 450.0)]
+
+
+def test_async_only_order_gateway_guard_arms_active_shutdown_timer():
+    class FakeTimer:
+        def __init__(self, interval, callback):
+            self.interval = interval
+            self.callback = callback
+            self.daemon = False
+            self.started = False
+
+        def start(self):
+            self.started = True
+
+    expirations = []
+    result = arm_order_gateway_experiment_runtime_guard(
+        websocket_gateway=None,
+        websocket_max_runtime_s=0.0,
+        async_order_lanes_enabled=True,
+        async_order_lane_max_runtime_s=900.0,
+        on_expire=lambda arms, seconds: expirations.append((arms, seconds)),
+        timer_factory=FakeTimer,
+    )
+
+    assert result is not None
+    timer, runtime_s, limiting_arms = result
+    assert runtime_s == pytest.approx(900.0)
+    assert limiting_arms == ("async_order_lanes",)
+    assert timer.started is True
+    timer.callback()
+    assert expirations == [(('async_order_lanes',), 900.0)]
 
 
 def test_live_start_routes_snapshot_and_listen_key_clients_independently(
@@ -1277,11 +2328,30 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
             },
         }
     )
+    logging_health = {
+        "valid": False,
+        "configured": True,
+        "failure_message": "simulated logging failure",
+    }
 
     health = collect_runtime_safety_health(
         engine=engine,
         ws=ws,
         order_gateway=order_gateway,
+        gc_pause_monitor=SimpleNamespace(
+            snapshot=lambda: {
+                "count": 4,
+                "total_ns": 1_200,
+                "max_ns": 700,
+                "last_ns": 200,
+                "generation_counts": (2, 1, 1),
+                "pause_bucket_upper_ns": (100, 500, 1_000),
+                "pause_bucket_counts": (1, 2, 1, 0),
+            }
+        ),
+        logging_runtime=SimpleNamespace(
+            health_snapshot=lambda: logging_health,
+        ),
         now_monotonic_s=10.0,
     )
 
@@ -1316,6 +2386,14 @@ def test_runtime_health_exposes_only_general_loop_and_stream_safety_facts() -> N
     assert health["runtimeEvidenceWriterUncommittedCount"] == 3
     assert health["runtimeEvidenceWriterErrorCount"] == 2
     assert health["runtimeEvidenceWriterFatalError"] == "simulated"
+    assert health["gcPauseCount"] == 4
+    assert health["gcPauseTotalNs"] == 1_200
+    assert health["gcPauseMaxNs"] == 700
+    assert health["gcPauseLastNs"] == 200
+    assert health["gcPauseGenerationCounts"] == [2, 1, 1]
+    assert health["gcPauseBucketUpperNs"] == [100, 500, 1_000]
+    assert health["gcPauseBucketCounts"] == [1, 2, 1, 0]
+    assert health["logging"] == logging_health
 
 
 def test_normal_cleanup_with_final_reconciliation_pending_exits_78() -> None:
@@ -1468,6 +2546,93 @@ def test_ws_stop_join_timeout_latches_execution_uncertainty_and_raises() -> None
     )
     assert call.kwargs["reconciliation_required"] is True
     assert call.kwargs["defer_reconciliation"] is True
+
+
+def test_unquiesced_user_callback_defers_engine_and_evidence_shutdown(
+    tmp_path: Path,
+) -> None:
+    callback_started = threading.Event()
+    release_callback = threading.Event()
+    callback_finished = threading.Event()
+    evidence_path = tmp_path / "late-user-callback.csv"
+    evidence = RuntimeEvidenceWriter(queue_capacity=8)
+    thread_errors: list[BaseException] = []
+
+    def late_callback() -> None:
+        callback_started.set()
+        try:
+            assert release_callback.wait(timeout=2.0)
+            evidence.enqueue_csv(
+                evidence_path,
+                {"event": "late_terminal", "sequence": 1},
+            )
+        except BaseException as exc:  # pragma: no cover - asserted below
+            thread_errors.append(exc)
+        finally:
+            callback_finished.set()
+
+    callback_thread = threading.Thread(target=late_callback)
+    callback_thread.start()
+    assert callback_started.wait(timeout=1.0)
+
+    class UnquiescedWs:
+        @staticmethod
+        def stop() -> None:
+            assert callback_thread.is_alive()
+            raise RuntimeError("user callback did not quiesce")
+
+    shutdown_order: list[str] = []
+    engine = SimpleNamespace(_running=True, stop=Mock())
+
+    def revoke_new_order_authority_for_shutdown() -> None:
+        engine._running = False
+        shutdown_order.append("new_order_admission_revoked")
+
+    def latch_runtime_fatal(**_kwargs) -> None:
+        engine._running = False
+        shutdown_order.append("fatal_latched")
+
+    def cancel_all() -> bool:
+        assert engine._running is False
+        shutdown_order.append("exchange_cancel_all")
+        return True
+
+    engine.revoke_new_order_authority_for_shutdown = Mock(
+        side_effect=revoke_new_order_authority_for_shutdown
+    )
+    engine.latch_runtime_fatal = Mock(side_effect=latch_runtime_fatal)
+    engine._emergency_cancel_all_exchange_orders = Mock(side_effect=cancel_all)
+    cleanup_errors: list[BaseException] = []
+
+    callbacks_quiesced = _quiesce_callbacks_then_stop_engine(
+        ws=UnquiescedWs(),
+        engine=engine,
+        cleanup_errors=cleanup_errors,
+    )
+
+    assert callbacks_quiesced is False
+    engine.stop.assert_not_called()
+    engine.revoke_new_order_authority_for_shutdown.assert_called_once()
+    engine.latch_runtime_fatal.assert_called_once()
+    engine._emergency_cancel_all_exchange_orders.assert_called_once()
+    assert shutdown_order == [
+        "new_order_admission_revoked",
+        "fatal_latched",
+        "exchange_cancel_all",
+    ]
+    assert engine._running is False
+    assert cleanup_errors
+    # The real shutdown caller uses this false result to skip gateway, REST,
+    # WAL, and evidence closure.  Prove a callback that was already alive can
+    # still publish safely after the failed quiescence boundary.
+    assert evidence.health_snapshot()["accepting"] is True
+    release_callback.set()
+    assert callback_finished.wait(timeout=1.0)
+    callback_thread.join(timeout=1.0)
+    assert thread_errors == []
+    evidence.barrier(timeout_s=1.0)
+    health = evidence.close(drain_timeout_s=1.0)
+    assert health["csv_rows_committed"] == 1
 
 
 def test_user_stream_restart_uses_dedicated_listen_key_client(
@@ -2396,3 +3561,41 @@ def test_maker_engine_reload_rejects_buy_e3_binding_drift_before_mutation(
     assert engine.cfg is previous
     assert vars(engine.cfg.strategy) == previous_strategy
     assert engine._buy_e3_cooldown_policy is previous_policy
+
+
+def test_cross_side_order_lanes_require_async_isolation() -> None:
+    cfg = Config()
+    cfg.api.cross_side_order_lanes_enabled = True
+    with pytest.raises(ValueError, match="requires api.async_order_lanes_enabled"):
+        _validate_config(cfg)
+
+
+def test_async_order_lane_experiment_runtime_must_be_positive() -> None:
+    cfg = Config()
+    cfg.api.async_order_lane_max_runtime_s = 0.0
+    with pytest.raises(ValueError, match="max_runtime_s"):
+        _validate_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "new_value"),
+    (
+        ("async_order_lanes_enabled", True),
+        ("cross_side_order_lanes_enabled", True),
+        ("async_order_lane_capacity", 9),
+        ("async_order_lane_drain_timeout_s", 11.0),
+        ("async_order_lane_max_runtime_s", 901.0),
+    ),
+)
+def test_order_lane_experiment_config_is_restart_only(
+    field_name: str,
+    new_value: object,
+) -> None:
+    engine = MakerEngine.__new__(MakerEngine)
+    engine.cfg = Config()
+    candidate = copy.deepcopy(engine.cfg)
+    setattr(candidate.api, field_name, new_value)
+
+    with pytest.raises(ValueError, match=field_name):
+        engine.on_config_reload(candidate)
+    assert getattr(engine.cfg.api, field_name) != new_value

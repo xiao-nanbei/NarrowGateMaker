@@ -1,9 +1,12 @@
 """Isolated Binance USD-M REST sessions and an optional WebSocket order gateway.
 
-The REST client set deliberately gives latency-sensitive order traffic its own
-connection pool.  Reconciliation, public snapshots, metrics and listen-key
-maintenance cannot occupy that pool.  Requests are never retried by the HTTP
-adapter: a write whose response is lost must be reconciled, not replayed.
+The REST client set allocates independent persistent pools for BUY, SELL and
+safety traffic.  The behavior-identical default still routes every order write
+through one legacy order pool; the side-specific pools become active only in
+the explicit cross-side A/B arm.  Reconciliation, public snapshots, metrics
+and listen-key maintenance cannot occupy an active order pool.  Requests are
+never retried by the HTTP adapter: a write whose response is lost must be
+reconciled, not replayed.
 
 The WebSocket API gateway implements the small synchronous transport surface
 consumed by :class:`strategy.maker_engine.MakerEngine`.  It is disabled by
@@ -20,11 +23,13 @@ import hashlib
 import hmac
 import json
 import math
+import queue
 import threading
 import time
 import uuid
 from collections import Counter, OrderedDict, deque
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -53,8 +58,11 @@ _ORDER_GATEWAY_CORRELATION_LIMIT = 16_384
 class BinanceUsdMRestRole(StrEnum):
     """One connection-pool ownership domain."""
 
-    ORDER = "order"
+    ORDER_BUY = "order_buy"
+    ORDER_SELL = "order_sell"
+    ORDER_SAFETY = "order_safety"
     RECONCILIATION = "reconciliation"
+    RECONCILIATION_WORKER = "reconciliation_worker"
     MARKET_SNAPSHOT = "market_snapshot"
     METRICS = "metrics"
     LISTEN_KEY = "listen_key"
@@ -114,13 +122,22 @@ def _configure_isolated_session(client: Any, *, role: BinanceUsdMRestRole) -> No
 
 @dataclass(frozen=True)
 class BinanceUsdMRestClients:
-    """Five independently pooled clients for mutually blocking REST roles."""
+    """Independently pooled clients for hot lanes and cold REST roles."""
 
-    order: Any
+    order_buy: Any
+    order_sell: Any
+    order_safety: Any
     reconciliation: Any
+    reconciliation_worker: Any
     market_snapshot: Any
     metrics: Any
     listen_key: Any
+
+    @property
+    def order(self) -> Any:
+        """Compatibility alias for the behavior-identical global order pool."""
+
+        return self.order_safety
 
     def by_role(self, role: BinanceUsdMRestRole | str) -> Any:
         normalized = BinanceUsdMRestRole(role)
@@ -130,6 +147,7 @@ class BinanceUsdMRestClients:
         """Close every independent session exactly once."""
 
         seen: set[int] = set()
+        failures: list[BaseException] = []
         for role in _REST_ROLES:
             client = self.by_role(role)
             session = getattr(client, "session", None)
@@ -138,14 +156,26 @@ class BinanceUsdMRestClients:
             seen.add(id(session))
             close = getattr(session, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except BaseException as exc:
+                    failures.append(exc)
+        if failures:
+            error = RuntimeError(
+                f"{len(failures)} Binance USD-M REST session(s) failed to close"
+            )
+            add_note = getattr(error, "add_note", None)
+            if callable(add_note):
+                for failure in failures:
+                    add_note(f"{type(failure).__name__}: {failure}")
+            raise error from failures[0]
 
     def identity(self) -> dict[str, object]:
         sessions = {
             role.value: id(getattr(self.by_role(role), "session", None)) for role in _REST_ROLES
         }
         return {
-            "schema_version": "narrowgate.binance_usdm_rest_roles.v1",
+            "schema_version": "narrowgate.binance_usdm_rest_roles.v2",
             "roles": tuple(role.value for role in _REST_ROLES),
             "independent_sessions": len(set(sessions.values())) == len(sessions),
         }
@@ -179,14 +209,26 @@ def create_binance_usdm_rest_clients(
             )
             _configure_isolated_session(client, role=role)
             clients[role.value] = client
-    except Exception:
-        BinanceUsdMRestClients(
-            order=clients.get("order"),
+    except Exception as primary_error:
+        partial = BinanceUsdMRestClients(
+            order_buy=clients.get("order_buy"),
+            order_sell=clients.get("order_sell"),
+            order_safety=clients.get("order_safety"),
             reconciliation=clients.get("reconciliation"),
+            reconciliation_worker=clients.get("reconciliation_worker"),
             market_snapshot=clients.get("market_snapshot"),
             metrics=clients.get("metrics"),
             listen_key=clients.get("listen_key"),
-        ).close()
+        )
+        try:
+            partial.close()
+        except BaseException as cleanup_error:
+            add_note = getattr(primary_error, "add_note", None)
+            if callable(add_note):
+                add_note(
+                    "REST role construction cleanup failed: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
         raise
 
     result = BinanceUsdMRestClients(**clients)
@@ -1237,6 +1279,342 @@ class BinanceUsdMWebSocketOrderGateway:
         }
 
 
+class BinanceUsdMOrderLaneFull(RuntimeError):
+    """Raised before dispatch when a bounded asynchronous side lane is full."""
+
+    may_have_been_dispatched = False
+    requires_reconciliation = False
+
+
+class BinanceUsdMOrderAdmissionRejected(RuntimeError):
+    """Raised before dispatch when shutdown or a safety barrier rejects a write."""
+
+    may_have_been_dispatched = False
+    requires_reconciliation = False
+
+
+class BinanceUsdMOrderProtocolUnknown(RuntimeError):
+    """A dispatched write returned a response that cannot prove its state."""
+
+    may_have_been_dispatched = True
+    requires_reconciliation = True
+
+
+@dataclass(frozen=True, slots=True)
+class _QueuedOrderWrite:
+    operation: Callable[[], Any]
+    future: Future[Any]
+
+
+@dataclass(frozen=True, slots=True)
+class _OrderWriteCompletion:
+    future: Future[Any]
+    result: Any
+    failure: BaseException | None
+    delivered: Callable[[], None]
+
+
+class _OrderedFutureCompletionDispatcher:
+    """Resolve Futures off the side workers without dropping or reordering them."""
+
+    _STOP = object()
+
+    def __init__(self, *, capacity: int) -> None:
+        if int(capacity) <= 0:
+            raise ValueError("order completion dispatcher capacity must be positive")
+        self._queue: queue.Queue[_OrderWriteCompletion | object] = queue.Queue(
+            maxsize=int(capacity)
+        )
+        self._lock = threading.Lock()
+        self._closed = False
+        self._stop_enqueued = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name="ng-order-completion-dispatcher",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def submit(self, completion: _OrderWriteCompletion) -> None:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("order completion dispatcher is closed")
+            try:
+                # Side-lane admission slots bound unresolved completions to no
+                # more than this queue's capacity.  Full therefore indicates
+                # an internal accounting violation, not runtime backpressure.
+                self._queue.put_nowait(completion)
+            except queue.Full as exc:  # pragma: no cover - invariant guard
+                raise RuntimeError("order completion dispatcher overflow") from exc
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            try:
+                if item is self._STOP:
+                    return
+                assert isinstance(item, _OrderWriteCompletion)
+                try:
+                    if item.failure is None:
+                        item.future.set_result(item.result)
+                    else:
+                        item.future.set_exception(item.failure)
+                finally:
+                    item.delivered()
+            finally:
+                self._queue.task_done()
+
+    def in_dispatch_thread(self) -> bool:
+        """Return whether the caller is this dispatcher's callback thread."""
+
+        return threading.current_thread() is self._thread
+
+    def close(self, *, deadline: float) -> None:
+        with self._lock:
+            self._closed = True
+            stop_enqueued = self._stop_enqueued
+        if not stop_enqueued:
+            remaining = max(0.0, float(deadline) - time.monotonic())
+            try:
+                self._queue.put(self._STOP, timeout=remaining)
+            except queue.Full as exc:
+                raise TimeoutError(
+                    "order completion dispatcher did not admit its stop marker"
+                ) from exc
+            with self._lock:
+                self._stop_enqueued = True
+        remaining = max(0.0, float(deadline) - time.monotonic())
+        self._thread.join(timeout=remaining)
+        if self._thread.is_alive():
+            raise TimeoutError(
+                "order completion dispatcher did not drain before shutdown"
+            )
+
+
+class _ExclusiveWriteBarrier:
+    """Allow BUY/SELL concurrency while making cancel-all globally exclusive."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition(threading.Lock())
+        self._barrier_owner = threading.Lock()
+        self._barrier_requested = False
+        self._active_side_writes = 0
+
+    def enter_side_write(self) -> None:
+        with self._condition:
+            while self._barrier_requested:
+                self._condition.wait()
+            self._active_side_writes += 1
+
+    def leave_side_write(self) -> None:
+        with self._condition:
+            self._active_side_writes -= 1
+            if self._active_side_writes < 0:  # pragma: no cover - invariant guard
+                self._active_side_writes = 0
+                raise RuntimeError("order write barrier active count underflow")
+            if self._active_side_writes == 0:
+                self._condition.notify_all()
+
+    def run_exclusive(self, operation: Callable[[], Any]) -> Any:
+        with self._barrier_owner:
+            with self._condition:
+                self._barrier_requested = True
+                while self._active_side_writes:
+                    self._condition.wait()
+            try:
+                return operation()
+            finally:
+                with self._condition:
+                    self._barrier_requested = False
+                    self._condition.notify_all()
+
+    def wait_idle(self, *, deadline: float) -> bool:
+        with self._condition:
+            while self._active_side_writes:
+                remaining = float(deadline) - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                self._condition.wait(timeout=remaining)
+            return True
+
+
+class _StrictOrderWriteLane:
+    """One bounded no-drop FIFO worker for a single order side."""
+
+    _STOP = object()
+
+    def __init__(
+        self,
+        *,
+        side: str,
+        capacity: int,
+        completion_dispatcher: _OrderedFutureCompletionDispatcher,
+    ) -> None:
+        if int(capacity) <= 0:
+            raise ValueError("asynchronous order lane capacity must be positive")
+        self.side = str(side)
+        self._queue: queue.Queue[_QueuedOrderWrite | object] = queue.Queue(
+            maxsize=int(capacity)
+        )
+        self._lock = threading.Lock()
+        self._idle_condition = threading.Condition(self._lock)
+        # One active operation plus ``capacity`` queued operations are the
+        # maximum admitted-but-not-yet-delivered writes for this side.  Holding
+        # this slot until Future callbacks return keeps the shared completion
+        # dispatcher mathematically bounded without ever blocking a side
+        # worker behind a callback that is waiting on cancel-all.
+        self._admission_slots = threading.BoundedSemaphore(int(capacity) + 1)
+        self._completion_dispatcher = completion_dispatcher
+        self._closed = False
+        self._stop_enqueued = False
+        self._submitted = 0
+        self._completed = 0
+        self._delivered = 0
+        self._failed = 0
+        self._high_watermark = 0
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"ng-order-{self.side.lower()}-lane",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def submit(
+        self,
+        operation: Callable[[], Any],
+        *,
+        done_callback: Callable[[Future[Any]], None] | None = None,
+    ) -> Future[Any]:
+        future: Future[Any] = Future()
+        # Bind the consumer before queue admission.  A fast network response
+        # can therefore never make add_done_callback execute synchronously on
+        # the decision thread.
+        if done_callback is not None:
+            future.add_done_callback(done_callback)
+        item = _QueuedOrderWrite(operation=operation, future=future)
+        if not self._admission_slots.acquire(blocking=False):
+            raise BinanceUsdMOrderLaneFull(
+                f"{self.side} asynchronous order lane is full"
+            )
+        with self._lock:
+            if self._closed:
+                self._admission_slots.release()
+                raise RuntimeError(f"{self.side} order lane is closed")
+            try:
+                self._queue.put_nowait(item)
+            except queue.Full as exc:
+                self._admission_slots.release()
+                raise BinanceUsdMOrderLaneFull(
+                    f"{self.side} asynchronous order lane is full"
+                ) from exc
+            self._submitted += 1
+            self._high_watermark = max(
+                self._high_watermark,
+                self._queue.qsize(),
+            )
+        return future
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is self._STOP:
+                self._queue.task_done()
+                return
+            assert isinstance(item, _QueuedOrderWrite)
+            if not item.future.set_running_or_notify_cancel():
+                self._queue.task_done()
+                with self._idle_condition:
+                    self._completed += 1
+                    self._idle_condition.notify_all()
+                self._mark_completion_delivered()
+                continue
+            result: Any = None
+            failure: BaseException | None = None
+            try:
+                result = item.operation()
+            except BaseException as exc:
+                failure = exc
+            completion = _OrderWriteCompletion(
+                future=item.future,
+                result=result,
+                failure=failure,
+                delivered=self._mark_completion_delivered,
+            )
+            self._completion_dispatcher.submit(completion)
+            # The network operation and its handoff are both complete before
+            # the lane advertises progress.  Future callbacks execute on the
+            # independent completion dispatcher, so this worker can drain a
+            # later admitted write while an earlier callback enters cancel-all.
+            self._queue.task_done()
+            with self._idle_condition:
+                if failure is not None:
+                    self._failed += 1
+                self._completed += 1
+                self._idle_condition.notify_all()
+
+    def _mark_completion_delivered(self) -> None:
+        self._admission_slots.release()
+        with self._idle_condition:
+            self._delivered += 1
+            self._idle_condition.notify_all()
+
+    def close(self, *, deadline: float) -> None:
+        with self._lock:
+            self._closed = True
+            stop_enqueued = self._stop_enqueued
+        if not stop_enqueued:
+            # STOP admission and thread join consume one shared deadline.  A
+            # full queue with a hung worker therefore cannot make shutdown wait
+            # once for space and then wait the full timeout a second time.
+            remaining = max(0.0, float(deadline) - time.monotonic())
+            try:
+                self._queue.put(self._STOP, timeout=remaining)
+            except queue.Full as exc:
+                raise TimeoutError(
+                    f"{self.side} order lane did not admit its stop marker"
+                ) from exc
+            with self._lock:
+                self._stop_enqueued = True
+        remaining = max(0.0, float(deadline) - time.monotonic())
+        self._thread.join(timeout=remaining)
+        if self._thread.is_alive():
+            raise TimeoutError(f"{self.side} order lane did not drain before shutdown")
+
+    def wait_idle(self, *, deadline: float) -> bool:
+        with self._idle_condition:
+            while self._completed < self._submitted:
+                remaining = float(deadline) - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                self._idle_condition.wait(timeout=remaining)
+            return True
+
+    def wait_completions_delivered(self, *, deadline: float) -> bool:
+        """Wait until every admitted Future and its callbacks have returned."""
+
+        with self._idle_condition:
+            while self._delivered < self._submitted:
+                remaining = float(deadline) - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                self._idle_condition.wait(timeout=remaining)
+            return True
+
+    def health_snapshot(self) -> dict[str, object]:
+        with self._lock:
+            return {
+                "side": self.side,
+                "closed": self._closed,
+                "submitted": self._submitted,
+                "completed": self._completed,
+                "future_results_delivered": self._delivered,
+                "failed": self._failed,
+                "queue_depth": self._queue.qsize(),
+                "queue_high_watermark": self._high_watermark,
+                "worker_alive": self._thread.is_alive(),
+            }
+
+
 class BinanceUsdMOrderGateway:
     """Complete MakerEngine order transport with an optional WS hot path.
 
@@ -1251,13 +1629,24 @@ class BinanceUsdMOrderGateway:
         self,
         *,
         rest_order_client: Any,
+        rest_buy_order_client: Any | None = None,
+        rest_sell_order_client: Any | None = None,
+        rest_safety_order_client: Any | None = None,
         websocket_order_gateway: BinanceUsdMWebSocketOrderGateway | None = None,
         request_id_factory: Callable[[], str] | None = None,
         wall_time_ns: Callable[[], int] | None = None,
+        async_order_lanes_enabled: bool = False,
+        cross_side_order_lanes_enabled: bool = False,
+        async_order_lane_capacity: int = 8,
+        async_order_lane_drain_timeout_s: float = 10.0,
+        async_order_lane_max_runtime_s: float = 900.0,
     ) -> None:
         if rest_order_client is None:
             raise ValueError("rest_order_client is required for cancel-all safety")
         self.rest_order_client = rest_order_client
+        self.rest_buy_order_client = rest_buy_order_client or rest_order_client
+        self.rest_sell_order_client = rest_sell_order_client or rest_order_client
+        self.rest_safety_order_client = rest_safety_order_client or rest_order_client
         self.websocket_order_gateway = websocket_order_gateway
         self._request_id_factory = request_id_factory or (
             lambda: f"rest-{uuid.uuid4().hex}"
@@ -1269,23 +1658,442 @@ class BinanceUsdMOrderGateway:
         self._request_correlations: OrderedDict[
             tuple[str, str], dict[str, object]
         ] = OrderedDict()
+        self._client_order_sides: OrderedDict[str, str] = OrderedDict()
         self._private_visibility_counts: Counter[str] = Counter()
-        # One owner serializes every write, including REST cancel-all.  This
-        # prevents a fill callback, the quote loop and a fatal cleanup from
-        # concurrently occupying the hot connection or reordering writes.
-        self._write_lock = threading.Lock()
-        if websocket_order_gateway is not None:
-            correlation_setter = getattr(
-                websocket_order_gateway, "set_request_correlation_sink", None
+        self._side_write_locks = {
+            "BUY": threading.Lock(),
+            "SELL": threading.Lock(),
+        }
+        # The deployed baseline serialized every write behind one lock.  Keep
+        # that exact arrival order unless the restart-only asynchronous-lane
+        # experiment is explicitly enabled; side parallelism is itself an
+        # economic timing change and must not leak into the switch-off path.
+        self._legacy_write_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._write_admission_lock = threading.RLock()
+        self._write_admission_state_lock = threading.Lock()
+        self._write_admission_epoch = 0
+        self._write_admission_barrier_active = False
+        self._new_order_admission_revoked = False
+        self._write_barrier = _ExclusiveWriteBarrier()
+        self._async_order_lane_drain_timeout_s = float(
+            async_order_lane_drain_timeout_s
+        )
+        if (
+            not math.isfinite(self._async_order_lane_drain_timeout_s)
+            or self._async_order_lane_drain_timeout_s <= 0.0
+        ):
+            raise ValueError("async order lane drain timeout must be positive")
+        self._async_order_lane_max_runtime_s = float(
+            async_order_lane_max_runtime_s
+        )
+        if (
+            not math.isfinite(self._async_order_lane_max_runtime_s)
+            or not 1.0 <= self._async_order_lane_max_runtime_s <= 3_600.0
+        ):
+            raise ValueError("async order lane max runtime must be in [1, 3600]")
+        self._async_order_lane_started_monotonic = time.monotonic()
+        self._async_order_lane_deadline_monotonic = (
+            self._async_order_lane_started_monotonic
+            + self._async_order_lane_max_runtime_s
+        )
+        self._cross_side_order_lanes_enabled = bool(
+            cross_side_order_lanes_enabled
+        )
+        if self._cross_side_order_lanes_enabled and not bool(
+            async_order_lanes_enabled
+        ):
+            raise ValueError(
+                "cross-side order lanes require asynchronous order lanes"
             )
-            if callable(correlation_setter):
-                correlation_setter(self._register_request_correlation)
+        async_capacity = int(async_order_lane_capacity)
+        if bool(async_order_lanes_enabled) and async_capacity <= 0:
+            raise ValueError("asynchronous order lane capacity must be positive")
+        self._completion_dispatchers: dict[
+            str, _OrderedFutureCompletionDispatcher
+        ] = {}
+        self._async_order_lanes = {}
+        self._async_lane_by_side: dict[str, _StrictOrderWriteLane] = {}
+        self._closed = False
+        self._shutdown_complete = False
+        try:
+            if bool(async_order_lanes_enabled):
+                lane_names = (
+                    ("BUY", "SELL")
+                    if self._cross_side_order_lanes_enabled
+                    else ("GLOBAL",)
+                )
+                for lane_name in lane_names:
+                    dispatcher = _OrderedFutureCompletionDispatcher(
+                        capacity=async_capacity + 1
+                    )
+                    # Record the dispatcher before constructing its lane so a
+                    # later constructor failure cannot orphan this thread.
+                    self._completion_dispatchers[lane_name] = dispatcher
+                    lane = _StrictOrderWriteLane(
+                        side=lane_name,
+                        capacity=async_capacity,
+                        completion_dispatcher=dispatcher,
+                    )
+                    self._async_order_lanes[lane_name] = lane
+                if self._cross_side_order_lanes_enabled:
+                    self._async_lane_by_side = dict(self._async_order_lanes)
+                else:
+                    global_lane = self._async_order_lanes["GLOBAL"]
+                    self._async_lane_by_side = {
+                        "BUY": global_lane,
+                        "SELL": global_lane,
+                    }
+            if websocket_order_gateway is not None:
+                correlation_setter = getattr(
+                    websocket_order_gateway, "set_request_correlation_sink", None
+                )
+                if callable(correlation_setter):
+                    correlation_setter(self._register_request_correlation)
+        except BaseException as primary_error:
+            # __init__ has already taken ownership of the supplied WS gateway
+            # and any lane threads it started.  The caller cannot close a
+            # half-constructed object, so unwind them here without hiding the
+            # construction failure.
+            try:
+                self.close()
+            except BaseException as cleanup_error:
+                primary_error.add_note(
+                    "order gateway constructor cleanup also failed: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
+            raise
 
     supports_narrowgate_request_metadata = True
 
     @property
     def active_transport(self) -> str:
         return "websocket_api" if self.websocket_order_gateway is not None else "rest"
+
+    @property
+    def async_order_lanes_enabled(self) -> bool:
+        return bool(self._async_order_lanes)
+
+    @property
+    def cross_side_order_lanes_enabled(self) -> bool:
+        return bool(self._cross_side_order_lanes_enabled)
+
+    @property
+    def async_order_lane_deadline_monotonic(self) -> float | None:
+        """Absolute experiment deadline shared with the process hard-stop timer."""
+
+        if not self.async_order_lanes_enabled:
+            return None
+        return float(self._async_order_lane_deadline_monotonic)
+
+    @property
+    def shutdown_complete(self) -> bool:
+        with self._write_admission_state_lock:
+            return bool(self._shutdown_complete)
+
+    supports_prebound_async_callback = True
+
+    def _reject_expired_async_experiment(self) -> None:
+        if not self.async_order_lanes_enabled:
+            return
+        if time.monotonic() >= self._async_order_lane_deadline_monotonic:
+            raise BinanceUsdMOrderAdmissionRejected(
+                "bounded asynchronous order-lane experiment expired"
+            )
+
+    @staticmethod
+    def _new_order_is_risk_adding(params: Mapping[str, Any]) -> bool:
+        """Conservatively classify new orders for experiment-expiry admission."""
+
+        def enabled(value: Any) -> bool:
+            if isinstance(value, bool):
+                return value
+            return str(value or "").strip().lower() == "true"
+
+        return not (
+            enabled(params.get("reduceOnly"))
+            or enabled(params.get("closePosition"))
+        )
+
+    def _capture_write_admission_ticket(
+        self,
+        *,
+        reject_if_async_experiment_expired: bool = False,
+        reject_if_new_order_revoked: bool = False,
+    ) -> int:
+        """Capture an attempt epoch without waiting behind an active barrier."""
+
+        if reject_if_async_experiment_expired:
+            self._reject_expired_async_experiment()
+        with self._write_admission_state_lock:
+            if self._closed:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "order gateway is closed; write rejected before dispatch"
+                )
+            if reject_if_new_order_revoked and self._new_order_admission_revoked:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "new-order admission was revoked; write rejected before dispatch"
+                )
+            if self._write_admission_barrier_active:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "exclusive safety barrier is active; write rejected before dispatch"
+                )
+            return int(self._write_admission_epoch)
+
+    def _validate_write_admission_ticket(
+        self,
+        ticket: int,
+        *,
+        reject_if_async_experiment_expired: bool = False,
+        reject_if_new_order_revoked: bool = False,
+    ) -> None:
+        if reject_if_async_experiment_expired:
+            self._reject_expired_async_experiment()
+        with self._write_admission_state_lock:
+            if self._closed:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "order gateway is closed; write rejected before dispatch"
+                )
+            if reject_if_new_order_revoked and self._new_order_admission_revoked:
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "new-order admission was revoked; write rejected before dispatch"
+                )
+            if (
+                self._write_admission_barrier_active
+                or int(ticket) != self._write_admission_epoch
+            ):
+                raise BinanceUsdMOrderAdmissionRejected(
+                    "write attempt crossed an exclusive safety barrier and was "
+                    "rejected before dispatch"
+                )
+
+    def _activate_write_admission_barrier(self, ticket: int) -> None:
+        self._validate_write_admission_ticket(ticket)
+        with self._write_admission_state_lock:
+            # Invalidate every attempt that observed the pre-barrier epoch but
+            # had not yet reached the admission critical section.
+            self._write_admission_epoch += 1
+            self._write_admission_barrier_active = True
+
+    def _release_write_admission_barrier(self) -> None:
+        with self._write_admission_state_lock:
+            self._write_admission_barrier_active = False
+
+    def revoke_new_order_admission(self) -> None:
+        """Permanently reject new orders while preserving safety cancellations."""
+
+        with self._write_admission_lock:
+            with self._write_admission_state_lock:
+                if self._new_order_admission_revoked:
+                    return
+                self._new_order_admission_revoked = True
+                # Invalidate new-order attempts that captured an earlier epoch
+                # but have not yet crossed the admission critical section.
+                self._write_admission_epoch += 1
+
+    @staticmethod
+    def _normalized_order_side(side: Any) -> str:
+        normalized = str(side or "").strip().upper()
+        if normalized not in {"BUY", "SELL"}:
+            raise ValueError("order side must be BUY or SELL")
+        return normalized
+
+    def _remember_client_order_side(self, client_order_id: str, side: str) -> None:
+        normalized_cid = str(client_order_id).strip()
+        if not normalized_cid:
+            return
+        normalized_side = self._normalized_order_side(side)
+        with self._correlation_lock:
+            self._client_order_sides.pop(normalized_cid, None)
+            self._client_order_sides[normalized_cid] = normalized_side
+            while len(self._client_order_sides) > _ORDER_GATEWAY_CORRELATION_LIMIT:
+                self._client_order_sides.popitem(last=False)
+
+    def _resolve_cancel_side(
+        self,
+        *,
+        client_order_id: str,
+        explicit_side: Any,
+    ) -> str:
+        if str(explicit_side or "").strip():
+            return self._normalized_order_side(explicit_side)
+        with self._correlation_lock:
+            remembered = self._client_order_sides.get(str(client_order_id))
+        if remembered is None:
+            raise ValueError(
+                "cancel side is unknown; pass _narrowgate_order_side so the "
+                "request can enter the correct strict FIFO lane"
+            )
+        return remembered
+
+    def _rest_client_for_side(self, side: str) -> Any:
+        # Preserve the deployed B0 network path unless the separate
+        # cross-side experiment is explicitly enabled.  Merely constructing
+        # isolated clients must not move BUY/SELL onto different TCP/TLS
+        # congestion and keepalive histories while both experiment switches
+        # are off (or while async response isolation keeps one GLOBAL FIFO).
+        if not self._cross_side_order_lanes_enabled:
+            return self.rest_order_client
+        return (
+            self.rest_buy_order_client
+            if self._normalized_order_side(side) == "BUY"
+            else self.rest_sell_order_client
+        )
+
+    def _run_side_write(
+        self,
+        side: str,
+        operation: Callable[[], Any],
+        *,
+        admission_already_counted: bool = False,
+    ) -> Any:
+        normalized_side = self._normalized_order_side(side)
+        write_lock = (
+            self._side_write_locks[normalized_side]
+            if self._cross_side_order_lanes_enabled
+            else self._legacy_write_lock
+        )
+        if not admission_already_counted:
+            self._write_barrier.enter_side_write()
+        with write_lock:
+            try:
+                return operation()
+            finally:
+                self._write_barrier.leave_side_write()
+
+    def _run_exclusive_write(
+        self,
+        operation: Callable[[], Any],
+        *,
+        admission_ticket: int,
+    ) -> Any:
+        """Run cancel-all/unknown-side writes against the active lane model."""
+
+        with self._write_admission_lock:
+            self._activate_write_admission_barrier(admission_ticket)
+            try:
+                deadline = (
+                    time.monotonic() + self._async_order_lane_drain_timeout_s
+                )
+                for lane in self._async_order_lanes.values():
+                    if not lane.wait_idle(deadline=deadline):
+                        raise TimeoutError(
+                            "asynchronous order lane did not drain before "
+                            "exclusive write"
+                        )
+                return self._write_barrier.run_exclusive(operation)
+            finally:
+                self._release_write_admission_barrier()
+
+    def _run_safety_exclusive_write(self, operation: Callable[[], Any]) -> Any:
+        """Serialize safety writes instead of rejecting a concurrent attempt."""
+
+        deadline = time.monotonic() + self._async_order_lane_drain_timeout_s
+        remaining = max(0.0, deadline - time.monotonic())
+        if not self._write_admission_lock.acquire(timeout=remaining):
+            raise TimeoutError(
+                "safety write did not acquire exclusive admission before deadline"
+            )
+        barrier_active = False
+        try:
+            with self._write_admission_state_lock:
+                if self._closed:
+                    raise BinanceUsdMOrderAdmissionRejected(
+                        "order gateway is closed; write rejected before dispatch"
+                    )
+                admission_ticket = int(self._write_admission_epoch)
+            self._activate_write_admission_barrier(admission_ticket)
+            barrier_active = True
+            for lane in self._async_order_lanes.values():
+                if not lane.wait_idle(deadline=deadline):
+                    raise TimeoutError(
+                        "asynchronous order lane did not drain before safety write"
+                    )
+            return self._write_barrier.run_exclusive(operation)
+        finally:
+            if barrier_active:
+                self._release_write_admission_barrier()
+            self._write_admission_lock.release()
+
+    def drain_async_order_completions(
+        self,
+        *,
+        timeout_s: float | None = None,
+    ) -> None:
+        """Boundedly wait for all admitted Future callbacks to return.
+
+        This is deliberately separate from the cancel-all lane barrier: that
+        barrier drains network writes but must not wait for a callback that may
+        itself issue a safety cancel-all.  Call this only after cancel-all has
+        released its barrier.
+        """
+
+        if not self._async_order_lanes:
+            return
+        if any(
+            dispatcher.in_dispatch_thread()
+            for dispatcher in self._completion_dispatchers.values()
+        ):
+            raise RuntimeError(
+                "cannot drain asynchronous order completions from a completion callback"
+            )
+        timeout = (
+            self._async_order_lane_drain_timeout_s
+            if timeout_s is None
+            else float(timeout_s)
+        )
+        if not math.isfinite(timeout) or timeout <= 0.0:
+            raise ValueError("async order completion drain timeout must be positive")
+        deadline = time.monotonic() + timeout
+        for lane in self._async_order_lanes.values():
+            if not lane.wait_completions_delivered(deadline=deadline):
+                raise TimeoutError(
+                    "asynchronous order completion callbacks did not drain"
+                )
+
+    def _run_or_enqueue_side_write(
+        self,
+        side: str,
+        operation: Callable[[], Any],
+        *,
+        admission_ticket: int,
+        reject_if_async_experiment_expired: bool = False,
+        reject_if_new_order_revoked: bool = False,
+    ) -> Any:
+        """Preserve strict same-side admission order for synchronous callers."""
+
+        normalized_side = self._normalized_order_side(side)
+        with self._write_admission_lock:
+            self._validate_write_admission_ticket(
+                admission_ticket,
+                reject_if_async_experiment_expired=(
+                    reject_if_async_experiment_expired
+                ),
+                reject_if_new_order_revoked=reject_if_new_order_revoked,
+            )
+            if not self._async_order_lanes:
+                # Count the write as admitted before it can wait behind the
+                # baseline's global serialization lock.  A later cancel-all
+                # must drain it rather than allowing it to escape afterward.
+                self._write_barrier.enter_side_write()
+                run_inline = True
+                future = None
+            else:
+                run_inline = False
+                future = self._async_lane_by_side[normalized_side].submit(
+                    lambda: self._run_side_write(
+                        normalized_side,
+                        operation,
+                    )
+                )
+        if run_inline:
+            return self._run_side_write(
+                normalized_side,
+                operation,
+                admission_already_counted=True,
+            )
+        assert future is not None
+        return future.result()
 
     def set_runtime_evidence_writer(self, writer: Any, receipt_path: str) -> None:
         normalized_path = str(receipt_path).strip()
@@ -1494,6 +2302,35 @@ class BinanceUsdMOrderGateway:
 
         completed_ts_ns = int(self._wall_time_ns())
         result = response if isinstance(response, Mapping) else {}
+        if method in {"order.place", "order.cancel"} and (
+            not isinstance(response, Mapping)
+            or not str(result.get("status", "")).strip()
+        ):
+            protocol_error = BinanceUsdMOrderProtocolUnknown(
+                f"{method} returned no authoritative order status"
+            )
+            receipt = _order_gateway_receipt_payload(
+                transport="rest",
+                recorded_at_ns=completed_ts_ns,
+                request_id=request_id,
+                client_order_id=client_order_id,
+                decision_id=decision_id,
+                method=method,
+                connection_generation=0,
+                decision_ts_ns=decision_ts_ns,
+                gateway_call_ts_ns=gateway_call_ts_ns,
+                dispatch_ts_ns=dispatch_ts_ns,
+                wire_ts_ns=0,
+                response_ts_ns=completed_ts_ns,
+                outcome="transport_unknown",
+                status_code=None,
+                exchange_order_status="",
+                error=f"{type(protocol_error).__name__}: {protocol_error}",
+            )
+            writer = self._runtime_evidence_writer
+            if writer is not None:
+                writer.enqueue_csv(self._receipt_path, receipt)
+            raise protocol_error
         receipt = _order_gateway_receipt_payload(
             transport="rest",
             recorded_at_ns=completed_ts_ns,
@@ -1522,9 +2359,21 @@ class BinanceUsdMOrderGateway:
         *,
         _narrowgate_decision_ts_ns: int = 0,
         _narrowgate_decision_id: str = "",
+        _narrowgate_order_side: str = "",
         **params: Any,
     ) -> Any:
-        with self._write_lock:
+        risk_adding = self._new_order_is_risk_adding(params)
+        admission_ticket = self._capture_write_admission_ticket(
+            reject_if_async_experiment_expired=risk_adding,
+            reject_if_new_order_revoked=True,
+        )
+        side = self._normalized_order_side(
+            _narrowgate_order_side or params.get("side")
+        )
+        client_order_id = str(params.get("newClientOrderId", ""))
+        self._remember_client_order_side(client_order_id, side)
+
+        def operation() -> Any:
             websocket_gateway = self.websocket_order_gateway
             if websocket_gateway is not None:
                 return websocket_gateway.new_order(
@@ -1532,12 +2381,76 @@ class BinanceUsdMOrderGateway:
                     _narrowgate_decision_id=_narrowgate_decision_id,
                     **params,
                 )
+            rest_client = self._rest_client_for_side(side)
             return self._rest_request(
                 method="order.place",
-                operation=self.rest_order_client.new_order,
+                operation=rest_client.new_order,
                 params=params,
                 decision_ts_ns=_narrowgate_decision_ts_ns,
                 decision_id=_narrowgate_decision_id,
+            )
+        return self._run_or_enqueue_side_write(
+            side,
+            operation,
+            admission_ticket=admission_ticket,
+            reject_if_async_experiment_expired=risk_adding,
+            reject_if_new_order_revoked=True,
+        )
+
+    def new_order_async(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        _narrowgate_order_side: str = "",
+        _narrowgate_done_callback: Callable[[Future[Any]], None] | None = None,
+        **params: Any,
+    ) -> Future[Any]:
+        """Admit one exact new-order write to its bounded side FIFO."""
+
+        risk_adding = self._new_order_is_risk_adding(params)
+        admission_ticket = self._capture_write_admission_ticket(
+            reject_if_async_experiment_expired=risk_adding,
+            reject_if_new_order_revoked=True,
+        )
+        if not self._async_order_lanes:
+            raise RuntimeError("asynchronous order lanes are not enabled")
+        side = self._normalized_order_side(
+            _narrowgate_order_side or params.get("side")
+        )
+        frozen_params = dict(params)
+        client_order_id = str(frozen_params.get("newClientOrderId", ""))
+        self._remember_client_order_side(client_order_id, side)
+
+        def operation() -> Any:
+            websocket_gateway = self.websocket_order_gateway
+            if websocket_gateway is not None:
+                return websocket_gateway.new_order(
+                    _narrowgate_decision_ts_ns=_narrowgate_decision_ts_ns,
+                    _narrowgate_decision_id=_narrowgate_decision_id,
+                    **frozen_params,
+                )
+            rest_client = self._rest_client_for_side(side)
+            return self._rest_request(
+                method="order.place",
+                operation=rest_client.new_order,
+                params=frozen_params,
+                decision_ts_ns=_narrowgate_decision_ts_ns,
+                decision_id=_narrowgate_decision_id,
+            )
+
+        with self._write_admission_lock:
+            self._validate_write_admission_ticket(
+                admission_ticket,
+                reject_if_async_experiment_expired=risk_adding,
+                reject_if_new_order_revoked=True,
+            )
+            return self._async_lane_by_side[side].submit(
+                lambda: self._run_side_write(
+                    side,
+                    operation,
+                ),
+                done_callback=_narrowgate_done_callback,
             )
 
     def cancel_order(
@@ -1545,9 +2458,26 @@ class BinanceUsdMOrderGateway:
         *,
         _narrowgate_decision_ts_ns: int = 0,
         _narrowgate_decision_id: str = "",
+        _narrowgate_order_side: str = "",
         **params: Any,
     ) -> Any:
-        with self._write_lock:
+        client_order_id = str(params.get("origClientOrderId", ""))
+        try:
+            side = self._resolve_cancel_side(
+                client_order_id=client_order_id,
+                explicit_side=_narrowgate_order_side,
+            )
+        except ValueError:
+            # Compatibility/query callers that do not own an in-process order
+            # cannot be assigned to a side lane.  Serialize them as an
+            # exclusive write rather than guessing a side.
+            side = ""
+
+        admission_ticket = (
+            self._capture_write_admission_ticket() if side else None
+        )
+
+        def operation() -> Any:
             websocket_gateway = self.websocket_order_gateway
             if websocket_gateway is not None:
                 return websocket_gateway.cancel_order(
@@ -1555,28 +2485,128 @@ class BinanceUsdMOrderGateway:
                     _narrowgate_decision_id=_narrowgate_decision_id,
                     **params,
                 )
+            rest_client = (
+                self._rest_client_for_side(side)
+                if side
+                else self.rest_safety_order_client
+            )
             return self._rest_request(
                 method="order.cancel",
-                operation=self.rest_order_client.cancel_order,
+                operation=rest_client.cancel_order,
                 params=params,
                 decision_ts_ns=_narrowgate_decision_ts_ns,
                 decision_id=_narrowgate_decision_id,
             )
+        if not side:
+            return self._run_safety_exclusive_write(operation)
+        assert admission_ticket is not None
+        return self._run_or_enqueue_side_write(
+            side,
+            operation,
+            admission_ticket=admission_ticket,
+        )
+
+    def cancel_order_async(
+        self,
+        *,
+        _narrowgate_decision_ts_ns: int = 0,
+        _narrowgate_decision_id: str = "",
+        _narrowgate_order_side: str = "",
+        _narrowgate_done_callback: Callable[[Future[Any]], None] | None = None,
+        **params: Any,
+    ) -> Future[Any]:
+        """Admit one exact cancel to the same FIFO as that side's submits."""
+
+        admission_ticket = self._capture_write_admission_ticket()
+        if not self._async_order_lanes:
+            raise RuntimeError("asynchronous order lanes are not enabled")
+        frozen_params = dict(params)
+        side = self._resolve_cancel_side(
+            client_order_id=str(frozen_params.get("origClientOrderId", "")),
+            explicit_side=_narrowgate_order_side,
+        )
+
+        def operation() -> Any:
+            websocket_gateway = self.websocket_order_gateway
+            if websocket_gateway is not None:
+                return websocket_gateway.cancel_order(
+                    _narrowgate_decision_ts_ns=_narrowgate_decision_ts_ns,
+                    _narrowgate_decision_id=_narrowgate_decision_id,
+                    **frozen_params,
+                )
+            rest_client = self._rest_client_for_side(side)
+            return self._rest_request(
+                method="order.cancel",
+                operation=rest_client.cancel_order,
+                params=frozen_params,
+                decision_ts_ns=_narrowgate_decision_ts_ns,
+                decision_id=_narrowgate_decision_id,
+            )
+
+        with self._write_admission_lock:
+            self._validate_write_admission_ticket(admission_ticket)
+            return self._async_lane_by_side[side].submit(
+                lambda: self._run_side_write(
+                    side,
+                    operation,
+                ),
+                done_callback=_narrowgate_done_callback,
+            )
 
     def cancel_open_orders(self, **params: Any) -> Any:
-        with self._write_lock:
+        def operation() -> Any:
             return self._rest_request(
                 method="order.cancel_all",
-                operation=self.rest_order_client.cancel_open_orders,
+                operation=self.rest_safety_order_client.cancel_open_orders,
                 params=params,
                 decision_ts_ns=0,
                 decision_id="",
             )
 
+        return self._run_safety_exclusive_write(operation)
+
     def close(self) -> None:
+        with self._close_lock:
+            self._close_once()
+
+    def _close_once(self) -> None:
+        with self._write_admission_lock:
+            with self._write_admission_state_lock:
+                if self._shutdown_complete:
+                    return
+                if not self._closed:
+                    self._closed = True
+                    self._new_order_admission_revoked = True
+                    self._write_admission_epoch += 1
+                    self._write_admission_barrier_active = True
+        deadline = time.monotonic() + self._async_order_lane_drain_timeout_s
+        if not self._write_barrier.wait_idle(deadline=deadline):
+            raise TimeoutError("active order writes did not drain before shutdown")
+        errors: list[BaseException] = []
+        for lane in self._async_order_lanes.values():
+            try:
+                lane.close(deadline=deadline)
+            except BaseException as exc:  # pragma: no cover - shutdown tail
+                errors.append(exc)
+        # Do not close the dispatcher or network transport while a lane may
+        # still hand off a completion.  A later close() retries the bounded
+        # drain without reopening write admission.
+        if errors:
+            raise RuntimeError(
+                "one or more asynchronous order lanes failed to drain"
+            ) from errors[0]
+        for completion_dispatcher in self._completion_dispatchers.values():
+            try:
+                completion_dispatcher.close(deadline=deadline)
+            except BaseException as exc:  # pragma: no cover - shutdown tail
+                raise RuntimeError(
+                    "order completion dispatcher failed to drain"
+                ) from exc
         websocket_gateway = self.websocket_order_gateway
         if websocket_gateway is not None:
             websocket_gateway.close()
+        with self._write_admission_state_lock:
+            self._shutdown_complete = True
 
     def health_snapshot(self) -> dict[str, object]:
         websocket_health = (
@@ -1586,13 +2616,38 @@ class BinanceUsdMOrderGateway:
         )
         with self._correlation_lock:
             correlation_count = len(self._request_correlations)
+            side_identity_count = len(self._client_order_sides)
             private_visibility_counts = dict(self._private_visibility_counts)
         return {
             "schema_version": "narrowgate.binance_usdm_order_gateway.v1",
             "active_transport": self.active_transport,
             "cancel_all_transport": "rest",
             "request_correlation_count": correlation_count,
+            "client_order_side_identity_count": side_identity_count,
             "private_visibility_counts": private_visibility_counts,
+            "async_order_lanes_enabled": self.async_order_lanes_enabled,
+            "shutdown_complete": self.shutdown_complete,
+            "new_order_admission_revoked": bool(
+                self._new_order_admission_revoked
+            ),
+            "cross_side_order_lanes_enabled": (
+                self.cross_side_order_lanes_enabled
+            ),
+            "async_order_lane_max_runtime_s": (
+                self._async_order_lane_max_runtime_s
+            ),
+            "async_order_lane_deadline_monotonic": (
+                self.async_order_lane_deadline_monotonic
+            ),
+            "async_order_lane_runtime_expired": (
+                self.async_order_lanes_enabled
+                and time.monotonic()
+                >= self._async_order_lane_deadline_monotonic
+            ),
+            "async_order_lanes": {
+                side: lane.health_snapshot()
+                for side, lane in self._async_order_lanes.items()
+            },
             "websocket_api": websocket_health,
         }
 

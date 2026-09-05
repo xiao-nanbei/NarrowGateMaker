@@ -25,6 +25,8 @@ Usage:
 """
 
 import argparse
+import atexit
+import copy
 import hashlib
 import importlib
 import json
@@ -32,6 +34,7 @@ import logging
 import logging.handlers
 import math
 import os
+import queue
 import signal
 import subprocess
 import sys
@@ -55,6 +58,7 @@ from live import deployment_runtime as locked_runtime
 from live.binance_usdm_transport import (
     BinanceUsdMOrderGateway,
     BinanceUsdMRestClients,
+    BinanceUsdMWebSocketOrderGateway,
     BinanceUsdMWebSocketOrderConfig,
     binance_usdm_rest_base_url,
     create_binance_usdm_rest_clients,
@@ -67,6 +71,7 @@ from live.config import (
     set_engine_ref,
     set_restart_only_config_sha256,
 )
+from live.runtime_gc import GcPauseMonitor
 from live.runtime_policy import (
     deployment_envelope_runtime_authority,
     f05_boolean_cooldown_runtime_policy,
@@ -163,6 +168,7 @@ EXECUTION_STATE_UNCERTAIN_EXIT_CODE = 78
 RUNTIME_HEALTH_SCHEMA = "narrowgate.live_runtime_health.v1"
 LIVE_MAIN_LOOP_FALLBACK_WAIT_S = 0.1
 STARTUP_USER_STREAM_READY_TIMEOUT_S = 30.0
+ASYNC_LOG_QUEUE_CAPACITY = 4_096
 
 PROSPECTIVE_EPOCH_RUNTIME_CODE_ROOTS = ("live", "strategy", "execution", "features")
 PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
@@ -171,6 +177,21 @@ PROSPECTIVE_EPOCH_RUNTIME_CODE_FILES = (
     "models/replay/baseline_epoch_manifest.py",
     "models/replay/prospective_baseline_epoch.py",
 )
+
+
+class _ShutdownSignalFlag:
+    """Minimal Python signal callback; intentionally performs no I/O or locking."""
+
+    __slots__ = ("requested",)
+
+    def __init__(self) -> None:
+        self.requested = False
+
+    def __call__(self, _signum: int, _frame: object) -> None:
+        # A Python signal may interrupt this same thread while it owns any
+        # application lock.  A plain reference assignment is the only action;
+        # the main loop's bounded wait observes it within 100 ms.
+        self.requested = True
 
 
 class FormalDryRunTimeout(TimeoutError):
@@ -208,14 +229,75 @@ def arm_websocket_order_ab_runtime_guard(
 ):
     """Preconnect and arm the independent hard stop for a short WS A/B."""
 
-    runtime_s = float(max_runtime_s)
-    if not math.isfinite(runtime_s) or not 1.0 <= runtime_s <= 3_600.0:
-        raise ValueError("WebSocket order A/B max runtime must be in [1, 3600]")
-    gateway.start()
-    timer = timer_factory(runtime_s, on_expire)
+    result = arm_order_gateway_experiment_runtime_guard(
+        websocket_gateway=gateway,
+        websocket_max_runtime_s=max_runtime_s,
+        async_order_lanes_enabled=False,
+        async_order_lane_max_runtime_s=0.0,
+        on_expire=lambda _arms, _runtime_s: on_expire(),
+        timer_factory=timer_factory,
+    )
+    assert result is not None
+    return result[0]
+
+
+def arm_order_gateway_experiment_runtime_guard(
+    *,
+    websocket_gateway,
+    websocket_max_runtime_s: float,
+    async_order_lanes_enabled: bool,
+    async_order_lane_max_runtime_s: float,
+    async_order_lane_deadline_monotonic: float | None = None,
+    on_expire,
+    timer_factory=threading.Timer,
+    monotonic=time.monotonic,
+):
+    """Arm one active hard stop at the earliest enabled gateway deadline."""
+
+    candidates: list[tuple[str, float]] = []
+    if websocket_gateway is not None:
+        websocket_runtime_s = float(websocket_max_runtime_s)
+        if (
+            not math.isfinite(websocket_runtime_s)
+            or not 1.0 <= websocket_runtime_s <= 3_600.0
+        ):
+            raise ValueError(
+                "WebSocket order A/B max runtime must be in [1, 3600]"
+            )
+        websocket_gateway.start()
+        candidates.append(("websocket_order_ab", websocket_runtime_s))
+    if bool(async_order_lanes_enabled):
+        async_runtime_s = float(async_order_lane_max_runtime_s)
+        if (
+            not math.isfinite(async_runtime_s)
+            or not 1.0 <= async_runtime_s <= 3_600.0
+        ):
+            raise ValueError(
+                "async order-lane max runtime must be in [1, 3600]"
+            )
+        if async_order_lane_deadline_monotonic is not None:
+            async_deadline = float(async_order_lane_deadline_monotonic)
+            if not math.isfinite(async_deadline):
+                raise ValueError("async order-lane deadline must be finite")
+            # The transport rejects at this same absolute monotonic deadline.
+            # Starting a second duration clock here would extend the bounded
+            # experiment by however long startup and preflight took.
+            async_runtime_s = max(0.0, async_deadline - float(monotonic()))
+        candidates.append(("async_order_lanes", async_runtime_s))
+    if not candidates:
+        return None
+
+    runtime_s = min(value for _name, value in candidates)
+    limiting_arms = tuple(
+        name for name, value in candidates if value == runtime_s
+    )
+    timer = timer_factory(
+        runtime_s,
+        lambda: on_expire(limiting_arms, runtime_s),
+    )
     timer.daemon = True
     timer.start()
-    return timer
+    return timer, runtime_s, limiting_arms
 
 
 def _positive_finite_seconds(value: str) -> float:
@@ -1390,27 +1472,629 @@ def audit_native_runtime(
     return runtime_identity
 
 
-def setup_logging(cfg):
-    """Configure logging.  cfg.logging paths must already be absolute."""
-    level = getattr(logging, cfg.logging.level.upper(), logging.INFO)
+class _DrainingQueueListener(logging.handlers.QueueListener):
+    """Queue listener that exposes worker failure and never blocks forever."""
 
-    handlers = []
-    if cfg.logging.console:
-        handlers.append(logging.StreamHandler(sys.stdout))
-    if cfg.logging.file:
-        log_path = Path(cfg.logging.file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        rotating = logging.handlers.RotatingFileHandler(
-            str(log_path), maxBytes=10_000_000, backupCount=5
+    _fallback_lock = threading.Lock()
+
+    def __init__(
+        self,
+        record_queue: queue.Queue[logging.LogRecord | None],
+        *handlers: logging.Handler,
+        stop_timeout_s: float = 2.0,
+    ) -> None:
+        super().__init__(record_queue, *handlers)
+        self._failure_lock = threading.Lock()
+        self._failure: BaseException | None = None
+        self._stop_lock = threading.Lock()
+        self._stop_timeout_s = float(stop_timeout_s)
+        self._sentinel_enqueued = False
+        if not math.isfinite(self._stop_timeout_s) or self._stop_timeout_s <= 0.0:
+            raise ValueError("stop_timeout_s must be finite and positive")
+
+    @classmethod
+    def _emit_worker_fallback(
+        cls,
+        marker: str,
+        *,
+        record: logging.LogRecord | None = None,
+        detail: str = "",
+    ) -> None:
+        if record is None:
+            message = "none"
+            level_name = "none"
+            logger_name = "none"
+        else:
+            try:
+                message = record.getMessage()
+            except Exception:  # pragma: no cover - malformed external record
+                message = repr(record.msg)
+            level_name = record.levelname
+            logger_name = record.name
+        payload = (
+            f"{marker} synchronous_stderr_fallback=1 "
+            f"level={level_name} logger={logger_name} "
+            f"detail={detail} message={message}\n"
+        ).encode("utf-8", errors="backslashreplace")
+        with cls._fallback_lock:
+            try:
+                os.write(2, payload)
+            except OSError:  # pragma: no cover - process teardown edge
+                pass
+
+    def _capture_failure(
+        self,
+        exc: BaseException,
+        record: logging.LogRecord,
+    ) -> None:
+        with self._failure_lock:
+            if self._failure is None:
+                self._failure = exc
+        self._emit_worker_fallback(
+            "ASYNC_LOG_LISTENER_FAILED",
+            record=record,
+            detail=f"{type(exc).__name__}:{exc}",
         )
-        handlers.append(rotating)
 
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    @property
+    def failure(self) -> BaseException | None:
+        with self._failure_lock:
+            return self._failure
+
+    def health_snapshot(self) -> dict[str, object]:
+        failure = self.failure
+        thread = self._thread
+        return {
+            "valid": failure is None,
+            "worker_alive": bool(thread is not None and thread.is_alive()),
+            "failure_type": None if failure is None else type(failure).__name__,
+            "failure_message": None if failure is None else str(failure),
+        }
+
+    def _drain_failed_queue_to_stderr(self) -> None:
+        while True:
+            try:
+                record = self.queue.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                if record is not self._sentinel:
+                    self._emit_worker_fallback(
+                        "ASYNC_LOG_LISTENER_UNDELIVERED",
+                        record=record,
+                        detail="worker_unavailable",
+                    )
+            finally:
+                self.queue.task_done()
+
+    def _monitor(self) -> None:
+        while True:
+            record = self.dequeue(True)
+            if record is self._sentinel:
+                self.queue.task_done()
+                return
+            try:
+                self.handle(record)
+            except BaseException as exc:
+                self._capture_failure(exc, record)
+                self.queue.task_done()
+                self._drain_failed_queue_to_stderr()
+                return
+            self.queue.task_done()
+
+    def enqueue_sentinel(self) -> None:
+        self.queue.put(self._sentinel, timeout=self._stop_timeout_s)
+
+    def stop(self) -> None:
+        with self._stop_lock:
+            thread = self._thread
+            if thread is None:
+                return
+            if not thread.is_alive():
+                self._thread = None
+                self._drain_failed_queue_to_stderr()
+            else:
+                if not self._sentinel_enqueued:
+                    try:
+                        self.enqueue_sentinel()
+                    except queue.Full as exc:
+                        self._emit_worker_fallback(
+                            "ASYNC_LOG_LISTENER_STOP_TIMEOUT",
+                            detail="sentinel_queue_full",
+                        )
+                        raise RuntimeError(
+                            "async logging listener stop timed out on full queue"
+                        ) from exc
+                    self._sentinel_enqueued = True
+                thread.join(timeout=self._stop_timeout_s)
+                if thread.is_alive():
+                    self._emit_worker_fallback(
+                        "ASYNC_LOG_LISTENER_STOP_TIMEOUT",
+                        detail="worker_join_timeout",
+                    )
+                    raise RuntimeError(
+                        "async logging listener did not stop before deadline"
+                    )
+                self._thread = None
+            failure = self.failure
+            if failure is not None:
+                raise RuntimeError("async logging listener worker failed") from failure
+
+
+class _OrderedQueueHandler(logging.handlers.QueueHandler):
+    """Linearize producers without letting a logging fault escape to callers.
+
+    Queue/listener failures remain fail-closed runtime health failures through
+    :meth:`raise_if_failed`.  A normal ``logger.*`` call only records the
+    failure and emits the synchronous stderr alarm, so it cannot interrupt an
+    exchange safety latch or the next shutdown cleanup step.
+    """
+
+    _late_fallback_lock = threading.Lock()
+
+    def __init__(
+        self,
+        record_queue: queue.Queue[logging.LogRecord | None],
+        listener: _DrainingQueueListener,
+    ) -> None:
+        super().__init__(record_queue)
+        self._listener = listener
+        self._admission_condition = threading.Condition(threading.Lock())
+        self._accepting = True
+        self._in_flight = 0
+        self._next_ticket = 0
+        self._serving_ticket = 0
+        self._failure: RuntimeError | None = None
+        self._stop_started = False
+        self._stopped = False
+        self._stop_error: BaseException | None = None
+
+    @classmethod
+    def _emit_sync_stderr(cls, marker: str, record: logging.LogRecord) -> None:
+        """Write an allocation-light fallback independent of the async sink."""
+
+        try:
+            message = record.getMessage()
+        except BaseException:  # pragma: no cover - malformed external LogRecord
+            try:
+                message = repr(record.msg)
+            except BaseException:
+                message = "<unformattable-log-record>"
+        payload = (
+            f"{marker} synchronous_stderr_fallback=1 "
+            f"level={record.levelname} logger={record.name} message={message}\n"
+        ).encode("utf-8", errors="backslashreplace")
+        with cls._late_fallback_lock:
+            try:
+                os.write(2, payload)
+            except BaseException:  # pragma: no cover - process teardown edge
+                pass
+
+    @classmethod
+    def _emit_after_shutdown(cls, record: logging.LogRecord) -> None:
+        """Preserve a producer that selected this handler before detach."""
+
+        cls._emit_sync_stderr("ASYNC_LOG_AFTER_SHUTDOWN", record)
+
+    def prepare(self, record: logging.LogRecord) -> logging.LogRecord:
+        """Copy the record without formatting it on the producer thread."""
+
+        return copy.copy(record)
+
+    def handle(self, record: logging.LogRecord) -> bool:
+        """Assign a FIFO ticket before filters and account for shutdown races."""
+
+        critical_fallback_emitted = record.levelno >= logging.CRITICAL
+        if critical_fallback_emitted:
+            # Do this before admission so a stalled filter or listener cannot
+            # hide the process's last safety message.
+            self._emit_sync_stderr("ASYNC_LOG_CRITICAL", record)
+        with self._admission_condition:
+            listener_failure = self._listener.failure
+            if listener_failure is not None and self._failure is None:
+                self._failure = RuntimeError(
+                    "async logging listener worker failed; live must fail closed"
+                )
+                self._accepting = False
+            if self._failure is not None:
+                if not critical_fallback_emitted:
+                    self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+                return False
+            if not self._accepting:
+                if not critical_fallback_emitted:
+                    self._emit_after_shutdown(record)
+                return False
+            ticket = self._next_ticket
+            self._next_ticket += 1
+            self._in_flight += 1
+            while ticket != self._serving_ticket:
+                self._admission_condition.wait()
+        try:
+            listener_failure = self._listener.failure
+            with self._admission_condition:
+                if listener_failure is not None and self._failure is None:
+                    self._failure = RuntimeError(
+                        "async logging listener worker failed; live must fail closed"
+                    )
+                    self._accepting = False
+                failure = self._failure
+            if failure is not None:
+                if not critical_fallback_emitted:
+                    self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+                return False
+            try:
+                accepted = self.filter(record)
+            except BaseException:
+                failure = RuntimeError(
+                    "async logging handler filter failed; live must fail closed"
+                )
+                with self._admission_condition:
+                    if self._failure is None:
+                        self._failure = failure
+                    self._accepting = False
+                    self._admission_condition.notify_all()
+                if not critical_fallback_emitted:
+                    self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+                return False
+            if accepted:
+                self.emit(record)
+            return accepted
+        finally:
+            with self._admission_condition:
+                self._serving_ticket += 1
+                self._in_flight -= 1
+                self._admission_condition.notify_all()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        listener_failure = self._listener.failure
+        if listener_failure is not None:
+            failure = RuntimeError(
+                "async logging listener worker failed; live must fail closed"
+            )
+            with self._admission_condition:
+                if self._failure is None:
+                    self._failure = failure
+                self._accepting = False
+                self._admission_condition.notify_all()
+            self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+            return
+        try:
+            prepared = self.prepare(record)
+            self.enqueue(prepared)
+        except queue.Full:
+            failure = RuntimeError(
+                "async logging queue full; live runtime must fail closed"
+            )
+            with self._admission_condition:
+                if self._failure is None:
+                    self._failure = failure
+                else:
+                    failure = self._failure
+                self._accepting = False
+                self._admission_condition.notify_all()
+            self._emit_sync_stderr(
+                (
+                    "ASYNC_LOG_QUEUE_FULL "
+                    f"capacity={self.queue.maxsize} action=fail_closed"
+                ),
+                record,
+            )
+            return
+        except BaseException as exc:
+            failure = RuntimeError(
+                "async logging enqueue failed; live runtime must fail closed: "
+                f"{type(exc).__name__}:{exc}"
+            )
+            with self._admission_condition:
+                if self._failure is None:
+                    self._failure = failure
+                self._accepting = False
+                self._admission_condition.notify_all()
+            self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+            return
+        listener_failure = self._listener.failure
+        if listener_failure is not None:
+            # The listener either consumed this record before failing or stop()
+            # will preserve it from the residual queue. Emit an immediate alarm
+            # as well so the producer cannot mistake enqueue for durable output.
+            failure = RuntimeError(
+                "async logging listener worker failed; live must fail closed"
+            )
+            with self._admission_condition:
+                if self._failure is None:
+                    self._failure = failure
+                self._accepting = False
+                self._admission_condition.notify_all()
+            self._emit_sync_stderr("ASYNC_LOG_HANDLER_FAILED", record)
+            return
+
+    def health_snapshot(self) -> dict[str, object]:
+        listener = self._listener.health_snapshot()
+        with self._admission_condition:
+            failure = self._failure
+            accepting = self._accepting
+            stopped = self._stopped
+        return {
+            "valid": failure is None and bool(listener["valid"]),
+            "accepting": accepting,
+            "stopped": stopped,
+            "queue_depth": self.queue.qsize(),
+            "queue_capacity": self.queue.maxsize,
+            "failure_type": None if failure is None else type(failure).__name__,
+            "failure_message": None if failure is None else str(failure),
+            "listener": listener,
+        }
+
+    def raise_if_failed(self) -> None:
+        listener_failure = self._listener.failure
+        with self._admission_condition:
+            failure = self._failure
+        if failure is not None:
+            raise RuntimeError("async logging handler failed") from failure
+        if listener_failure is not None:
+            raise RuntimeError("async logging listener worker failed") from (
+                listener_failure
+            )
+
+    def stop_and_drain(self) -> None:
+        """Stop admission only after every record accepted before shutdown."""
+
+        with self._admission_condition:
+            if self._stopped:
+                return
+            if self._stop_started:
+                while self._stop_started:
+                    self._admission_condition.wait()
+                if self._stopped:
+                    return
+                if self._stop_error is not None:
+                    raise RuntimeError("async logging stop failed") from (
+                        self._stop_error
+                    )
+            self._stop_started = True
+            self._stop_error = None
+            self._accepting = False
+            while self._in_flight:
+                self._admission_condition.wait()
+        stop_error: BaseException | None = None
+        try:
+            self._listener.stop()
+        except BaseException as exc:
+            stop_error = exc
+            raise
+        finally:
+            with self._admission_condition:
+                self._stop_started = False
+                self._stop_error = stop_error
+                self._stopped = stop_error is None
+                self._admission_condition.notify_all()
+
+
+class _AsyncLoggingRuntime:
+    """Own the one live logging queue, listener, and downstream handlers."""
+
+    def __init__(
+        self,
+        *,
+        root_logger: logging.Logger,
+        queue_handler: _OrderedQueueHandler,
+        listener: _DrainingQueueListener,
+        sink_handlers: tuple[logging.Handler, ...],
+        previous_handlers: tuple[logging.Handler, ...],
+        previous_level: int,
+    ) -> None:
+        self.root_logger = root_logger
+        self.queue_handler = queue_handler
+        self.listener = listener
+        self.sink_handlers = sink_handlers
+        self.previous_handlers = previous_handlers
+        self.previous_level = previous_level
+        self._close_lock = threading.Lock()
+        self._closed = False
+
+    def health_snapshot(self) -> dict[str, object]:
+        health = self.queue_handler.health_snapshot()
+        health["closed"] = self._closed
+        return health
+
+    def raise_if_failed(self) -> None:
+        self.queue_handler.raise_if_failed()
+
+    def close(self) -> None:
+        """Drain while attached, atomically restore handlers, then close sinks."""
+
+        with self._close_lock:
+            if self._closed:
+                return
+            drain_error: BaseException | None = None
+            try:
+                # Keep the handler selected while admission closes. Producers
+                # racing shutdown are synchronously preserved on stderr.
+                self.queue_handler.stop_and_drain()
+            except BaseException as exc:
+                drain_error = exc
+            finally:
+                # Assign the complete handler set in one operation: there is no
+                # interval in which the root logger has no destination.
+                self.root_logger.handlers = list(self.previous_handlers)
+                self.root_logger.setLevel(self.previous_level)
+
+            worker = self.listener._thread
+            if worker is not None and worker.is_alive():
+                # The worker can still be inside handler.emit(). Closing that
+                # handler here is a use-after-close race. Keep the runtime
+                # retryable; the process is already fail-closed by the error.
+                self.listener._emit_worker_fallback(
+                    "ASYNC_LOG_SINK_CLOSE_DEFERRED",
+                    detail="listener_worker_still_alive",
+                )
+                if drain_error is not None:
+                    raise drain_error
+                raise RuntimeError(
+                    "async logging listener remains alive after shutdown"
+                )
+
+            self._closed = True
+            try:
+                self.queue_handler.close()
+                for handler in self.sink_handlers:
+                    try:
+                        handler.flush()
+                    finally:
+                        handler.close()
+            finally:
+                if drain_error is not None:
+                    raise drain_error
+
+
+_ACTIVE_LOGGING_RUNTIME_LOCK = threading.Lock()
+_ACTIVE_LOGGING_RUNTIME: _AsyncLoggingRuntime | None = None
+
+
+def shutdown_logging(runtime: _AsyncLoggingRuntime | None = None) -> None:
+    """Drain one configured runtime; with no argument, drain the active one."""
+
+    global _ACTIVE_LOGGING_RUNTIME
+    with _ACTIVE_LOGGING_RUNTIME_LOCK:
+        selected = _ACTIVE_LOGGING_RUNTIME if runtime is None else runtime
+        if selected is _ACTIVE_LOGGING_RUNTIME:
+            _ACTIVE_LOGGING_RUNTIME = None
+    if selected is not None:
+        selected.close()
+
+
+def setup_logging(
+    cfg,
+    *,
+    queue_capacity: int = ASYNC_LOG_QUEUE_CAPACITY,
+) -> _AsyncLoggingRuntime:
+    """Configure one bounded async fan-out. Paths must already be absolute."""
+
+    global _ACTIVE_LOGGING_RUNTIME
+    capacity = int(queue_capacity)
+    if capacity <= 0:
+        raise ValueError("queue_capacity must be positive")
+    shutdown_logging()
+
+    level = getattr(logging, cfg.logging.level.upper(), logging.INFO)
+    formatter = logging.Formatter(
+        "%(asctime)s [%(name)s] %(levelname)s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
-        handlers=handlers,
     )
+    sink_handlers: list[logging.Handler] = []
+    listener: _DrainingQueueListener | None = None
+    queue_handler: _OrderedQueueHandler | None = None
+    root_logger: logging.Logger | None = None
+    previous_handlers: tuple[logging.Handler, ...] = ()
+    previous_level = logging.NOTSET
+    try:
+        if cfg.logging.console:
+            sink_handlers.append(logging.StreamHandler(sys.stdout))
+        if cfg.logging.file:
+            log_path = Path(cfg.logging.file)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            sink_handlers.append(
+                logging.handlers.RotatingFileHandler(
+                    str(log_path), maxBytes=10_000_000, backupCount=5
+                )
+            )
+        for handler in sink_handlers:
+            handler.setFormatter(formatter)
+
+        record_queue: queue.Queue[logging.LogRecord | None] = queue.Queue(
+            maxsize=capacity
+        )
+        listener = _DrainingQueueListener(record_queue, *sink_handlers)
+        queue_handler = _OrderedQueueHandler(record_queue, listener)
+        root_logger = logging.getLogger()
+        previous_handlers = tuple(root_logger.handlers)
+        previous_level = root_logger.level
+
+        listener.start()
+        for handler in previous_handlers:
+            root_logger.removeHandler(handler)
+        root_logger.addHandler(queue_handler)
+        root_logger.setLevel(level)
+        runtime = _AsyncLoggingRuntime(
+            root_logger=root_logger,
+            queue_handler=queue_handler,
+            listener=listener,
+            sink_handlers=tuple(sink_handlers),
+            previous_handlers=previous_handlers,
+            previous_level=previous_level,
+        )
+    except BaseException as primary_error:
+        cleanup_errors: list[tuple[str, BaseException]] = []
+        if root_logger is not None:
+            try:
+                root_logger.handlers = list(previous_handlers)
+                root_logger.setLevel(previous_level)
+            except BaseException as exc:  # pragma: no cover - custom logger edge
+                cleanup_errors.append(("logging-root-restore", exc))
+        listener_stopped = listener is None
+        if listener is not None:
+            try:
+                listener.stop()
+                listener_stopped = True
+            except BaseException as exc:
+                cleanup_errors.append(("logging-listener", exc))
+                worker = listener._thread
+                listener_stopped = not bool(worker is not None and worker.is_alive())
+        if listener_stopped:
+            if queue_handler is not None:
+                try:
+                    queue_handler.close()
+                except BaseException as exc:  # pragma: no cover - stdlib edge
+                    cleanup_errors.append(("logging-queue-handler", exc))
+            for handler in sink_handlers:
+                try:
+                    handler.close()
+                except BaseException as exc:  # pragma: no cover - stdlib edge
+                    cleanup_errors.append(("logging-sink", exc))
+        _note_startup_cleanup_errors(primary_error, cleanup_errors)
+        raise
+
+    with _ACTIVE_LOGGING_RUNTIME_LOCK:
+        _ACTIVE_LOGGING_RUNTIME = runtime
+    return runtime
+
+
+def _safe_runtime_log(
+    logger: logging.Logger,
+    level: int,
+    message: object,
+    *args: object,
+    exc_info: object | None = None,
+) -> None:
+    """Best-effort diagnostic that can never alter safety control flow."""
+
+    try:
+        logger.log(level, message, *args, exc_info=exc_info)
+        return
+    except BaseException as logging_error:
+        try:
+            rendered = str(message)
+            if args:
+                rendered = rendered % args
+        except BaseException:
+            rendered = "<unformattable-runtime-log>"
+        try:
+            detail = f"{type(logging_error).__name__}:{logging_error}"
+        except BaseException:
+            detail = "<unformattable-logging-error>"
+        try:
+            payload = (
+                "RUNTIME_LOG_CALL_FAILED synchronous_stderr_fallback=1 "
+                f"level={logging.getLevelName(level)} detail={detail} "
+                f"message={rendered}\n"
+            ).encode("utf-8", errors="backslashreplace")
+            with _DrainingQueueListener._fallback_lock:
+                os.write(2, payload)
+        except BaseException:  # pragma: no cover - process teardown edge
+            pass
+
+
+atexit.register(shutdown_logging)
 
 
 def collect_global_shadow_health(*, engine: MakerEngine, cfg, logger) -> tuple[dict, dict]:
@@ -2288,7 +2972,7 @@ def create_rest_client(cfg, dry_run=False):
 
 
 def create_rest_clients(cfg) -> BinanceUsdMRestClients:
-    """Create the five isolated persistent REST roles used by live runtime."""
+    """Create the isolated persistent REST roles used by live runtime."""
 
     clients = create_binance_usdm_rest_clients(
         key=str(cfg.api.key),
@@ -2297,6 +2981,7 @@ def create_rest_clients(cfg) -> BinanceUsdMRestClients:
         timeout_s=float(cfg.api.timeout_s),
     )
     _bind_position_risk_v2(clients.reconciliation)
+    _bind_position_risk_v2(clients.reconciliation_worker)
     return clients
 
 
@@ -2359,6 +3044,8 @@ def collect_runtime_safety_health(
     engine,
     ws,
     order_gateway=None,
+    gc_pause_monitor: GcPauseMonitor | None = None,
+    logging_runtime: _AsyncLoggingRuntime | None = None,
     now_monotonic_s: float | None = None,
 ) -> dict[str, object]:
     """Collect only general process/stream safety facts, never research state."""
@@ -2371,6 +3058,10 @@ def collect_runtime_safety_health(
     quote = engine.runtime_safety_snapshot(now_monotonic_s=now_monotonic_s)
     user = ws.user_event_safety_snapshot(now_monotonic_s=now_monotonic_s)
     continuation = quote.get("replace_terminal_continuation", {})
+    position_reconciliation = quote.get(
+        "periodic_position_reconciliation",
+        {},
+    )
     evidence_health_reader = getattr(
         engine,
         "runtime_evidence_writer_health_snapshot",
@@ -2385,6 +3076,24 @@ def collect_runtime_safety_health(
         order_gateway.health_snapshot()
         if order_gateway is not None
         else {"active_transport": "unknown", "websocket_api": {"enabled": False}}
+    )
+    gc_pauses = (
+        gc_pause_monitor.snapshot()
+        if gc_pause_monitor is not None
+        else {
+            "count": 0,
+            "total_ns": 0,
+            "max_ns": 0,
+            "last_ns": 0,
+            "generation_counts": (0, 0, 0),
+            "pause_bucket_upper_ns": (),
+            "pause_bucket_counts": (),
+        }
+    )
+    logging_health = (
+        logging_runtime.health_snapshot()
+        if logging_runtime is not None
+        else {"valid": True, "configured": False}
     )
     return {
         "schemaVersion": RUNTIME_HEALTH_SCHEMA,
@@ -2449,6 +3158,15 @@ def collect_runtime_safety_health(
         ),
         "runtimeEvidenceWriterErrorCount": int(evidence.get("error_count", 0)),
         "runtimeEvidenceWriterFatalError": str(evidence.get("fatal_error", "")),
+        "gcPauseCount": int(gc_pauses["count"]),
+        "gcPauseTotalNs": int(gc_pauses["total_ns"]),
+        "gcPauseMaxNs": int(gc_pauses["max_ns"]),
+        "gcPauseLastNs": int(gc_pauses["last_ns"]),
+        "gcPauseGenerationCounts": list(gc_pauses["generation_counts"]),
+        "gcPauseBucketUpperNs": list(gc_pauses["pause_bucket_upper_ns"]),
+        "gcPauseBucketCounts": list(gc_pauses["pause_bucket_counts"]),
+        "logging": logging_health,
+        "positionReconciliation": dict(position_reconciliation),
         "orderGateway": order_gateway_health,
     }
 
@@ -2478,11 +3196,15 @@ def resolve_live_shutdown_exit(
     final_safety = engine.runtime_safety_snapshot()
     if shutdown_requires_operator_reconciliation(final_safety):
         if cleanup_errors:
-            logger.critical(
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
                 "Execution-state uncertainty also encountered %d cleanup error(s)",
                 len(cleanup_errors),
             )
-        logger.critical(
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
             "Execution state is uncertain at shutdown; exiting %d for "
             "operator-gated reconciliation (reason=%s pending=%d)",
             EXECUTION_STATE_UNCERTAIN_EXIT_CODE,
@@ -2493,7 +3215,9 @@ def resolve_live_shutdown_exit(
 
     if fatal_error is not None:
         if cleanup_errors:
-            logger.critical(
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
                 "Fatal exit also encountered %d cleanup error(s)",
                 len(cleanup_errors),
             )
@@ -2503,6 +3227,105 @@ def resolve_live_shutdown_exit(
             f"live shutdown failed with {len(cleanup_errors)} cleanup error(s)"
         ) from cleanup_errors[0]
     return 0
+
+
+def _quiesce_callbacks_then_stop_engine(
+    *,
+    ws: Any,
+    engine: Any,
+    cleanup_errors: list[BaseException],
+) -> bool:
+    """Stop callback producers before any final economic reconciliation.
+
+    A user-data callback that survives ``ws.stop()`` can still mutate the
+    order ledger and enqueue evidence.  In that state it is unsafe to run the
+    engine's final exact reconciliation or to close the WAL/evidence/network
+    dependencies beneath the callback.  The only permitted action is the
+    ledger-independent exchange cancel-all path, followed by an uncertainty
+    exit that leaves those dependencies alive until process teardown.
+
+    Return ``True`` only when callback quiescence was proven.  ``engine.stop``
+    is attempted only in that case; its own failure is recorded but does not
+    undo the callback-quiescence proof.
+    """
+
+    logger = logging.getLogger("main")
+    try:
+        engine.revoke_new_order_authority_for_shutdown()
+    except BaseException as authority_error:
+        cleanup_errors.append(authority_error)
+        try:
+            engine.latch_runtime_fatal(
+                reason="NEW_ORDER_SHUTDOWN_BARRIER_FAILED",
+                error=authority_error,
+                reconciliation_required=True,
+                defer_reconciliation=True,
+            )
+        except BaseException as latch_error:
+            cleanup_errors.append(latch_error)
+        try:
+            logger.critical(
+                "NEW_ORDER_SHUTDOWN_BARRIER_FAILED action=fail_closed",
+                exc_info=(
+                    type(authority_error),
+                    authority_error,
+                    authority_error.__traceback__,
+                ),
+            )
+        except BaseException:
+            pass
+    try:
+        ws.stop()
+    except BaseException as ws_error:
+        cleanup_errors.append(ws_error)
+        try:
+            engine.latch_runtime_fatal(
+                reason="USER_CALLBACK_QUIESCENCE_FAILED",
+                error=ws_error,
+                reconciliation_required=True,
+                defer_reconciliation=True,
+            )
+        except BaseException as latch_error:
+            cleanup_errors.append(latch_error)
+        # Do not trust the latch's logging/callback path to have reached its
+        # built-in cancel attempt.  A second idempotent symbol cancel-all is
+        # preferable to leaving exchange exposure after a partially executed
+        # fatal latch.  This path must not read or mutate the local ledger.
+        try:
+            canceled = bool(engine._emergency_cancel_all_exchange_orders())
+            if not canceled:
+                cleanup_errors.append(
+                    RuntimeError(
+                        "unquiesced user callbacks and exchange cancel-all failed"
+                    )
+                )
+        except BaseException as cancel_error:
+            cleanup_errors.append(cancel_error)
+        try:
+            logger.critical(
+                "USER_CALLBACK_QUIESCENCE_FAILED "
+                "action=exchange_cancel_all_and_uncertainty_exit "
+                "engineExactReconciliation=deferred dependencyClose=deferred",
+                exc_info=(type(ws_error), ws_error, ws_error.__traceback__),
+            )
+        except BaseException:
+            # Logging has its own fail-closed health path.  Never let a failed
+            # alarm suppress the safety cancellation attempted above.
+            pass
+        return False
+
+    try:
+        engine.stop()
+    except BaseException as engine_error:
+        cleanup_errors.append(engine_error)
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "Shutdown engine cleanup failed: %s",
+            engine_error,
+            exc_info=True,
+        )
+    return True
 
 
 def write_runtime_safety_health(cfg, payload: dict[str, object]) -> Path:
@@ -2528,7 +3351,14 @@ def write_runtime_safety_health(cfg, payload: dict[str, object]) -> Path:
     return path
 
 
-def runtime_safety_health_payload_factory(*, engine, ws, order_gateway=None):
+def runtime_safety_health_payload_factory(
+    *,
+    engine,
+    ws,
+    order_gateway=None,
+    gc_pause_monitor: GcPauseMonitor | None = None,
+    logging_runtime: _AsyncLoggingRuntime | None = None,
+):
     """Build one worker-side collector without reading drifting loop locals."""
 
     def collect() -> dict[str, object]:
@@ -2536,6 +3366,8 @@ def runtime_safety_health_payload_factory(*, engine, ws, order_gateway=None):
             engine=engine,
             ws=ws,
             order_gateway=order_gateway,
+            gc_pause_monitor=gc_pause_monitor,
+            logging_runtime=logging_runtime,
         )
 
     return collect
@@ -2543,6 +3375,278 @@ def runtime_safety_health_payload_factory(*, engine, ws, order_gateway=None):
 
 def _runtime_age_text(value: object) -> str:
     return "unknown" if value is None else f"{float(value):.1f}s"
+
+
+def _disabled_deep_book_health() -> tuple[dict[str, object], dict[str, object]]:
+    """Return the stable HEALTH shape without touching disabled book state."""
+
+    return (
+        {
+            "enabled": 0,
+            "valid": 0,
+            "stale": 1,
+            "age_ms": float("inf"),
+            "generation": 0,
+            "last_update_id": 0,
+            "bid_levels": 0,
+            "ask_levels": 0,
+            "gap_count": 0,
+            "resync_count": 0,
+            "stale_restart_count": 0,
+            "buffer_events": 0,
+            "trade_count": 0,
+        },
+        {
+            "tracked": 0,
+            "retained": 0,
+            "valid": 0,
+            "ambiguous": 0,
+            "uncovered": 0,
+            "max_age_ms": 0.0,
+        },
+    )
+
+
+def maintain_optional_deep_book(ws, *, now_ns: int) -> bool:
+    """Maintain deep-book state only when the configured feature is active."""
+
+    enabled = bool(getattr(ws.cfg.websocket, "deep_book_enabled", False))
+    if enabled:
+        ws.maintain_deep_book(now_ns=now_ns)
+        ws.maintain_active_order_depth_paths(now_ns=now_ns)
+    return enabled
+
+
+def optional_deep_book_health(
+    ws,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Collect deep-book HEALTH without taking disabled feature locks."""
+
+    if bool(getattr(ws.cfg.websocket, "deep_book_enabled", False)):
+        return ws.deep_book_snapshot(), ws.active_order_depth_snapshot()
+    return _disabled_deep_book_health()
+
+
+def _note_startup_cleanup_errors(
+    primary_error: BaseException,
+    cleanup_errors: Sequence[tuple[str, BaseException]],
+) -> None:
+    """Preserve cleanup failures without hiding the startup root cause."""
+
+    add_note = getattr(primary_error, "add_note", None)
+    if not callable(add_note):  # pragma: no cover - Python >=3.11 in production
+        return
+    for component_name, cleanup_error in cleanup_errors:
+        add_note(
+            "startup cleanup failed for "
+            f"{component_name}: {type(cleanup_error).__name__}: {cleanup_error}"
+        )
+
+
+def _close_unstarted_engine_resources(engine: Any) -> None:
+    """Close constructor-owned resources without issuing exchange writes."""
+
+    failures: list[tuple[str, BaseException]] = []
+    signal_engine = getattr(engine, "signal", None)
+    stop_signal = getattr(signal_engine, "stop", None)
+    if callable(stop_signal):
+        try:
+            stop_signal()
+        except BaseException as exc:
+            failures.append(("signal", exc))
+    close_checkpoint = getattr(engine, "close_fill_cooldown_checkpoint_store", None)
+    if callable(close_checkpoint):
+        try:
+            close_checkpoint()
+        except BaseException as exc:
+            failures.append(("fill-cooldown-checkpoint", exc))
+    exact_runtime = getattr(engine, "_exact_opportunity_tape_runtime", None)
+    if exact_runtime is not None:
+        try:
+            exact_runtime.close()
+            engine._exact_opportunity_tape_runtime = None
+        except BaseException as exc:
+            failures.append(("exact-opportunity-writer", exc))
+    if failures:
+        error = RuntimeError(
+            f"{len(failures)} unstarted engine resource(s) failed to close"
+        )
+        _note_startup_cleanup_errors(error, failures)
+        raise error from failures[0][1]
+
+
+def _cleanup_failed_live_startup(
+    *,
+    logging_runtime: _AsyncLoggingRuntime | None,
+    rest_clients: BinanceUsdMRestClients | None = None,
+    websocket_order_gateway: BinanceUsdMWebSocketOrderGateway | None = None,
+    order_gateway: BinanceUsdMOrderGateway | None = None,
+    engine: MakerEngine | None = None,
+    ws: WSHandler | None = None,
+    runtime_evidence_writer: RuntimeEvidenceWriter | None = None,
+) -> tuple[tuple[str, BaseException], ...]:
+    """Best-effort reverse-order cleanup for pre-main-loop construction.
+
+    No callback here may issue a cancel/new request: startup has not yet
+    established an admitted exchange state.  The primary construction error
+    remains authoritative; cleanup failures are returned as annotations.
+    """
+
+    callbacks: list[tuple[str, Any]] = []
+    if runtime_evidence_writer is not None:
+        callbacks.append(
+            (
+                "runtime-evidence-writer",
+                lambda: runtime_evidence_writer.close(drain_timeout_s=1.0),
+            )
+        )
+    if ws is not None:
+        callbacks.append(("websocket-handler", ws.stop))
+    if engine is not None:
+        callbacks.append(
+            (
+                "unstarted-engine-resources",
+                lambda: _close_unstarted_engine_resources(engine),
+            )
+        )
+    if order_gateway is not None:
+        callbacks.append(("order-gateway", order_gateway.close))
+    elif websocket_order_gateway is not None:
+        # If the composite constructor itself failed, it never took ownership
+        # of the optional WebSocket transport.
+        callbacks.append(("websocket-order-gateway", websocket_order_gateway.close))
+    if rest_clients is not None:
+        callbacks.append(("REST-roles", rest_clients.close))
+    if logging_runtime is not None:
+        callbacks.append(("logging", lambda: shutdown_logging(logging_runtime)))
+
+    failures: list[tuple[str, BaseException]] = []
+    for component_name, callback in callbacks:
+        try:
+            callback()
+        except BaseException as exc:
+            failures.append((component_name, exc))
+    return tuple(failures)
+
+
+def _create_live_runtime_components(
+    *,
+    cfg: Any,
+    safety_authority: Mapping[str, Any],
+    logging_runtime: _AsyncLoggingRuntime,
+) -> tuple[
+    BinanceUsdMRestClients,
+    Any,
+    BinanceUsdMWebSocketOrderGateway | None,
+    BinanceUsdMOrderGateway,
+    MakerEngine,
+    _LiveMainLoopWakeup,
+    WSHandler,
+    RuntimeEvidenceWriter,
+]:
+    """Construct all live owners as one exception-safe startup transaction."""
+
+    logger = logging.getLogger("main")
+    rest_clients: BinanceUsdMRestClients | None = None
+    websocket_order_gateway: BinanceUsdMWebSocketOrderGateway | None = None
+    order_gateway: BinanceUsdMOrderGateway | None = None
+    engine: MakerEngine | None = None
+    ws: WSHandler | None = None
+    runtime_evidence_writer: RuntimeEvidenceWriter | None = None
+    try:
+        rest_clients = create_rest_clients(cfg)
+        reconciliation_client = rest_clients.reconciliation
+        websocket_order_gateway = create_websocket_order_ab_gateway(cfg)
+        order_gateway = BinanceUsdMOrderGateway(
+            rest_order_client=rest_clients.order,
+            rest_buy_order_client=rest_clients.order_buy,
+            rest_sell_order_client=rest_clients.order_sell,
+            rest_safety_order_client=rest_clients.order_safety,
+            websocket_order_gateway=websocket_order_gateway,
+            async_order_lanes_enabled=bool(cfg.api.async_order_lanes_enabled),
+            cross_side_order_lanes_enabled=bool(
+                cfg.api.cross_side_order_lanes_enabled
+            ),
+            async_order_lane_capacity=int(cfg.api.async_order_lane_capacity),
+            async_order_lane_drain_timeout_s=float(
+                cfg.api.async_order_lane_drain_timeout_s
+            ),
+            async_order_lane_max_runtime_s=float(
+                cfg.api.async_order_lane_max_runtime_s
+            ),
+        )
+        logger.info(
+            "BINANCE_USDM_TRANSPORT roles=%s order=%s websocket_order_ab=%s",
+            ",".join(rest_clients.identity()["roles"]),
+            order_gateway.active_transport,
+            "enabled" if websocket_order_gateway is not None else "disabled",
+        )
+        logger.info(
+            "BINANCE_USDM_ORDER_LANES async=%s cross_side=%s capacity=%d",
+            "enabled" if order_gateway.async_order_lanes_enabled else "disabled",
+            (
+                "enabled"
+                if order_gateway.cross_side_order_lanes_enabled
+                else "disabled"
+            ),
+            int(cfg.api.async_order_lane_capacity),
+        )
+
+        engine = MakerEngine(
+            cfg,
+            reconciliation_client,
+            artifact_authority=safety_authority,
+            order_gateway=order_gateway,
+            reconciliation_client=reconciliation_client,
+            background_reconciliation_client=rest_clients.reconciliation_worker,
+            metrics_client=rest_clients.metrics,
+        )
+        main_loop_wakeup = _LiveMainLoopWakeup()
+        engine.set_replace_terminal_continuation_wakeup(
+            main_loop_wakeup.notify_replacement_terminal
+        )
+        restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
+        logger.info(
+            "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "
+            "buy_identity=%s buy_remaining_ms=%d",
+            restored_fill_cooldown["restore_mode"],
+            int(restored_fill_cooldown["checkpoint_loaded"]),
+            int(restored_fill_cooldown["checkpoint_sequence"]),
+            restored_fill_cooldown["buy_deadline_identity"],
+            int(restored_fill_cooldown["buy_remaining_ms"]),
+        )
+
+        ws = WSHandler(engine, cfg)
+        engine.set_event_source(ws)
+        runtime_evidence_writer = RuntimeEvidenceWriter()
+        order_gateway.set_runtime_evidence_writer(
+            runtime_evidence_writer,
+            str(cfg.logging.order_gateway_receipt_log),
+        )
+        engine.set_runtime_evidence_writer(runtime_evidence_writer)
+    except BaseException as primary_error:
+        cleanup_errors = _cleanup_failed_live_startup(
+            logging_runtime=logging_runtime,
+            rest_clients=rest_clients,
+            websocket_order_gateway=websocket_order_gateway,
+            order_gateway=order_gateway,
+            engine=engine,
+            ws=ws,
+            runtime_evidence_writer=runtime_evidence_writer,
+        )
+        _note_startup_cleanup_errors(primary_error, cleanup_errors)
+        raise
+
+    return (
+        rest_clients,
+        reconciliation_client,
+        websocket_order_gateway,
+        order_gateway,
+        engine,
+        main_loop_wakeup,
+        ws,
+        runtime_evidence_writer,
+    )
 
 
 def main():
@@ -2637,136 +3741,156 @@ def main():
 
     resolve_logging_paths(cfg)
     # Setup logging
-    setup_logging(cfg)
+    logging_runtime = setup_logging(cfg)
     logger = logging.getLogger("main")
-
-    logger.info("=" * 60)
-    native_runtime = audit_native_runtime(
-        logger, cfg=cfg, safety_authority=safety_authority
-    )
-    project_name = getattr(cfg, "project_name", "NarrowGate")
-    logger.info(f"{project_name} Maker Engine Starting")
-    logger.info(f"  Symbol:    {cfg.symbol}")
-    logger.info(f"  Testnet:   {cfg.api.testnet}")
-    logger.info("  Mode:      live")
-    logger.info(f"  ML:        {cfg.ml.enabled}")
-    logger.info(
-        f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} (P3 κ_eff used when available)"
-    )
-    logger.info(f"  Order size: {cfg.strategy.order_size} BTC")
-    logger.info(f"  Max inv:   {cfg.strategy.max_inventory} BTC")
-    logger.info(f"  Requote:   {cfg.strategy.requote_interval}s")
-    logger.info("=" * 60)
+    try:
+        logger.info("=" * 60)
+        native_runtime = audit_native_runtime(
+            logger, cfg=cfg, safety_authority=safety_authority
+        )
+        project_name = getattr(cfg, "project_name", "NarrowGate")
+        logger.info(f"{project_name} Maker Engine Starting")
+        logger.info(f"  Symbol:    {cfg.symbol}")
+        logger.info(f"  Testnet:   {cfg.api.testnet}")
+        logger.info("  Mode:      live")
+        logger.info(f"  ML:        {cfg.ml.enabled}")
+        logger.info(
+            f"  γ={cfg.strategy.gamma} fallback_κ={cfg.strategy.kappa} "
+            "(P3 κ_eff used when available)"
+        )
+        logger.info(f"  Order size: {cfg.strategy.order_size} BTC")
+        logger.info(f"  Max inv:   {cfg.strategy.max_inventory} BTC")
+        logger.info(f"  Requote:   {cfg.strategy.requote_interval}s")
+        logger.info("=" * 60)
+    except BaseException as primary_error:
+        startup_cleanup_errors = _cleanup_failed_live_startup(
+            logging_runtime=logging_runtime,
+        )
+        _note_startup_cleanup_errors(primary_error, startup_cleanup_errors)
+        raise
 
     # Validate API keys
     if not cfg.api.key or not cfg.api.secret:
-        logger.error(
-            "API key/secret not set. Use env vars BINANCE_API_KEY / "
-            "BINANCE_API_SECRET, or set in config.yaml. On the live host, "
-            "start with ./live/run.sh start|restart so live/.env is sourced."
-        )
-        sys.exit(1)
+        try:
+            logger.error(
+                "API key/secret not set. Use env vars BINANCE_API_KEY / "
+                "BINANCE_API_SECRET, or set in config.yaml. On the live host, "
+                "start with ./live/run.sh start|restart so live/.env is sourced."
+            )
+        except BaseException as primary_error:
+            startup_cleanup_errors = _cleanup_failed_live_startup(
+                logging_runtime=logging_runtime,
+            )
+            _note_startup_cleanup_errors(primary_error, startup_cleanup_errors)
+            raise
+        shutdown_logging(logging_runtime)
+        return 1
 
-    # Keep latency-sensitive writes on one isolated, serial connection.  Cold
-    # reconciliation, public snapshots, metric polling and listen-key renewal
-    # each own a separate persistent session and cannot head-of-line block it.
-    rest_clients = create_rest_clients(cfg)
-    reconciliation_client = rest_clients.reconciliation
-    rest = reconciliation_client
-    websocket_order_gateway = create_websocket_order_ab_gateway(cfg)
-    order_gateway = BinanceUsdMOrderGateway(
-        rest_order_client=rest_clients.order,
-        websocket_order_gateway=websocket_order_gateway,
-    )
-    logger.info(
-        "BINANCE_USDM_TRANSPORT roles=%s order=%s websocket_order_ab=%s",
-        ",".join(rest_clients.identity()["roles"]),
-        order_gateway.active_transport,
-        "enabled" if websocket_order_gateway is not None else "disabled",
-    )
-
-    # Create engine
-    engine = MakerEngine(
-        cfg,
+    # Construct every session/thread/writer under one transaction.  The
+    # helper closes all earlier owners if any later constructor or attachment
+    # fails, before an exchange-admitted startup state exists.
+    (
+        rest_clients,
         rest,
-        artifact_authority=safety_authority,
-        order_gateway=order_gateway,
-        reconciliation_client=reconciliation_client,
-        metrics_client=rest_clients.metrics,
+        websocket_order_gateway,
+        order_gateway,
+        engine,
+        main_loop_wakeup,
+        ws,
+        runtime_evidence_writer,
+    ) = _create_live_runtime_components(
+        cfg=cfg,
+        safety_authority=safety_authority,
+        logging_runtime=logging_runtime,
     )
-    main_loop_wakeup = _LiveMainLoopWakeup()
-    engine.set_replace_terminal_continuation_wakeup(
-        main_loop_wakeup.notify_replacement_terminal
-    )
-    restored_fill_cooldown = engine.restore_fill_cooldown_checkpoint()
-    logger.info(
-        "FILL_COOLDOWN_RESTORE mode=%s checkpoint_loaded=%d sequence=%d "
-        "buy_identity=%s buy_remaining_ms=%d",
-        restored_fill_cooldown["restore_mode"],
-        int(restored_fill_cooldown["checkpoint_loaded"]),
-        int(restored_fill_cooldown["checkpoint_sequence"]),
-        restored_fill_cooldown["buy_deadline_identity"],
-        int(restored_fill_cooldown["buy_remaining_ms"]),
-    )
-
-    # Create WebSocket handler
-    ws = WSHandler(engine, cfg)
-    engine.set_event_source(ws)
-    runtime_evidence_writer = RuntimeEvidenceWriter()
-    try:
-        order_gateway.set_runtime_evidence_writer(
-            runtime_evidence_writer,
-            str(cfg.logging.order_gateway_receipt_log),
-        )
-        engine.set_runtime_evidence_writer(runtime_evidence_writer)
-    except BaseException:
-        runtime_evidence_writer.close(drain_timeout_s=1.0)
-        raise
 
     # Graceful shutdown
-    shutdown_event = False
-    websocket_order_ab_timer: threading.Timer | None = None
-
-    def handle_shutdown(signum, frame):
-        nonlocal shutdown_event
-        if shutdown_event:
-            logger.warning("Force exit")
-            sys.exit(1)
-        shutdown_event = True
-        main_loop_wakeup.notify_shutdown()
-        logger.info(f"Received signal {signum}, shutting down...")
-
-    signal.signal(signal.SIGINT, handle_shutdown)
-    signal.signal(signal.SIGTERM, handle_shutdown)
-
-    # Install config hot-reload (SIGHUP)
-    set_engine_ref(engine)
-    install_reload_handler()
+    shutdown_signal = _ShutdownSignalFlag()
+    order_gateway_experiment_timer: threading.Timer | None = None
 
     fatal_error: BaseException | None = None
     fatal_traceback = None
     cleanup_errors: list[BaseException] = []
+    gc_pause_monitor = GcPauseMonitor()
     try:
-        if websocket_order_gateway is not None and not args.dry_run:
-            # Preconnect inside the cleanup transaction: a TLS/DNS failure
-            # must still close all five REST sessions and runtime writers.
-            def expire_websocket_order_ab() -> None:
-                nonlocal shutdown_event
-                if shutdown_event:
+        signal.signal(signal.SIGINT, shutdown_signal)
+        signal.signal(signal.SIGTERM, shutdown_signal)
+
+        # Install config hot-reload (SIGHUP)
+        set_engine_ref(engine)
+        install_reload_handler()
+        gc_pause_monitor.install()
+    except BaseException as primary_error:
+        try:
+            gc_pause_monitor.close()
+        except BaseException as cleanup_error:
+            _note_startup_cleanup_errors(
+                primary_error,
+                (("GC-pause-monitor", cleanup_error),),
+            )
+        startup_cleanup_errors = _cleanup_failed_live_startup(
+            logging_runtime=logging_runtime,
+            rest_clients=rest_clients,
+            websocket_order_gateway=websocket_order_gateway,
+            order_gateway=order_gateway,
+            engine=engine,
+            ws=ws,
+            runtime_evidence_writer=runtime_evidence_writer,
+        )
+        _note_startup_cleanup_errors(primary_error, startup_cleanup_errors)
+        raise
+
+    try:
+        if not args.dry_run:
+            # Preconnect inside the cleanup transaction and arm exactly one
+            # timer at the earlier of the enabled experimental deadlines.
+            def expire_order_gateway_experiment(
+                limiting_arms: tuple[str, ...],
+                runtime_s: float,
+            ) -> None:
+                if shutdown_signal.requested:
                     return
-                shutdown_event = True
+                shutdown_signal.requested = True
                 main_loop_wakeup.notify_shutdown()
                 logger.warning(
-                    "BINANCE_USDM_WEBSOCKET_ORDER_AB_MAX_RUNTIME elapsed_s=%.3f "
-                    "action=graceful_shutdown",
-                    float(cfg.api.websocket_order_ab.max_runtime_s),
+                    "BINANCE_USDM_ORDER_GATEWAY_EXPERIMENT_MAX_RUNTIME "
+                    "limitingArms=%s elapsed_s=%.3f action=graceful_shutdown",
+                    "|".join(limiting_arms),
+                    runtime_s,
                 )
 
-            websocket_order_ab_timer = arm_websocket_order_ab_runtime_guard(
-                gateway=websocket_order_gateway,
-                max_runtime_s=float(cfg.api.websocket_order_ab.max_runtime_s),
-                on_expire=expire_websocket_order_ab,
+            guard = arm_order_gateway_experiment_runtime_guard(
+                websocket_gateway=websocket_order_gateway,
+                websocket_max_runtime_s=float(
+                    cfg.api.websocket_order_ab.max_runtime_s
+                ),
+                async_order_lanes_enabled=bool(
+                    cfg.api.async_order_lanes_enabled
+                ),
+                async_order_lane_max_runtime_s=float(
+                    cfg.api.async_order_lane_max_runtime_s
+                ),
+                async_order_lane_deadline_monotonic=(
+                    order_gateway.async_order_lane_deadline_monotonic
+                ),
+                on_expire=expire_order_gateway_experiment,
             )
+            if guard is not None:
+                (
+                    order_gateway_experiment_timer,
+                    experiment_runtime_s,
+                    limiting_arms,
+                ) = guard
+                logger.warning(
+                    "BINANCE_USDM_ORDER_GATEWAY_EXPERIMENT_ARMED "
+                    "websocket=%d async=%d crossSide=%d hardStopS=%.3f "
+                    "limitingArms=%s",
+                    int(websocket_order_gateway is not None),
+                    int(bool(cfg.api.async_order_lanes_enabled)),
+                    int(bool(cfg.api.cross_side_order_lanes_enabled)),
+                    experiment_runtime_s,
+                    "|".join(limiting_arms),
+                )
 
         # Check account
         if not args.dry_run:
@@ -2928,20 +4052,29 @@ def main():
         safety_state_interval = 1.0
         last_safety_state = 0.0
 
-        while not shutdown_event:
+        while not shutdown_signal.requested:
             now = time.time()
             now_ns = time.time_ns()
 
-            # Refresh one generation-consistent q90 view before policy code.
-            ws.maintain_deep_book(now_ns=now_ns)
-            ws.maintain_active_order_depth_paths(now_ns=now_ns)
+            # The deep-book/action-path feature is restart-bound and normally
+            # disabled.  Keep its locks and snapshot assembly completely off
+            # the main decision loop unless this runtime explicitly enabled it.
+            maintain_optional_deep_book(ws, now_ns=now_ns)
 
             # Engine tick (handles requote interval internally)
+            logging_runtime.raise_if_failed()
             runtime_evidence_writer.raise_if_failed()
+            # Cold P1 -> accountTrades -> P2 reads run on one worker.  Only
+            # this main-loop poll may validate their captured ledger generation
+            # and commit the resulting exact reconciliation barrier.
+            engine.maintain_periodic_position_sync()
+            engine.raise_if_runtime_fatal()
+            logging_runtime.raise_if_failed()
             if engine.is_running:
                 engine.tick()
             engine.raise_if_runtime_fatal()
             runtime_evidence_writer.raise_if_failed()
+            logging_runtime.raise_if_failed()
 
             if now - last_safety_state >= safety_state_interval:
                 runtime_evidence_writer.enqueue_json_snapshot_factory(
@@ -2950,6 +4083,8 @@ def main():
                         engine=engine,
                         ws=ws,
                         order_gateway=order_gateway,
+                        gc_pause_monitor=gc_pause_monitor,
+                        logging_runtime=logging_runtime,
                     ),
                 )
                 last_safety_state = now
@@ -2957,8 +4092,9 @@ def main():
             # Periodic position sync
             if now - last_sync >= sync_interval:
                 # REST sync 是 user stream 的审计兜底；发现差异后的硬降级由 MakerEngine 判定，
-                # 主循环只负责固定节奏触发，不在这里直接停策略。
-                engine.sync_position()
+                # 主循环只负责固定节奏触发。网络读取在单飞 cold worker 中完成，
+                # 账本提交仍由后续 main-loop poll 串行执行。
+                engine.maintain_periodic_position_sync(request=True)
                 last_sync = now
 
             # Stale submit reconciliation. An unknown REST response must never
@@ -3032,8 +4168,7 @@ def main():
                     boolean_cooldown = engine.boolean_cooldown_policy_snapshot()
                     buy_e3_cooldown = engine.buy_e3_cooldown_policy_snapshot()
                     market_tape = ws.market_tape_snapshot()
-                    deep_book = ws.deep_book_snapshot()
-                    active_order_depth = ws.active_order_depth_snapshot()
+                    deep_book, active_order_depth = optional_deep_book_health(ws)
                     external_sources = ws.external_venue_snapshot()
                     external_enabled = len(external_sources)
                     external_stale = sum(int(source.get("stale", 1)) for source in external_sources)
@@ -3111,6 +4246,8 @@ def main():
                         engine=engine,
                         ws=ws,
                         order_gateway=order_gateway,
+                        gc_pause_monitor=gc_pause_monitor,
+                        logging_runtime=logging_runtime,
                     )
                     active_order_count = engine.orders.active_count()
                     requote_count = engine._requote_count
@@ -3348,94 +4485,174 @@ def main():
             # Ordinary market callbacks never receive this wakeup handle and
             # therefore cannot turn the 5--10 second quote cadence into a
             # market-event-driven cadence.
-            if shutdown_event:
+            if shutdown_signal.requested:
                 break
             main_loop_wakeup.wait()
 
     except BaseException as exc:
         fatal_error = exc
         fatal_traceback = exc.__traceback__
-        logger.critical("Fatal error: %s", exc, exc_info=True)
         if not isinstance(exc, (SystemExit, KeyboardInterrupt)):
-            engine.latch_runtime_fatal(
-                reason="UNCAUGHT_LIVE_FATAL",
-                error=exc,
-                reconciliation_required=False,
-            )
-    finally:
-        logger.info("Shutting down...")
-        if websocket_order_ab_timer is not None:
-            websocket_order_ab_timer.cancel()
-        for component_name, stop_component in (
-            ("websocket", ws.stop),
-            ("engine", engine.stop),
-            ("order-gateway", order_gateway.close),
-            ("REST roles", rest_clients.close),
-        ):
             try:
-                stop_component()
+                engine.latch_runtime_fatal(
+                    reason="UNCAUGHT_LIVE_FATAL",
+                    error=exc,
+                    reconciliation_required=False,
+                )
+            except BaseException as latch_error:
+                cleanup_errors.append(latch_error)
+                _safe_runtime_log(
+                    logger,
+                    logging.CRITICAL,
+                    "Runtime fatal latch raised during uncaught-error handling: %s",
+                    latch_error,
+                    exc_info=True,
+                )
+        _safe_runtime_log(
+            logger,
+            logging.CRITICAL,
+            "Fatal error: %s",
+            exc,
+            exc_info=True,
+        )
+    finally:
+        _safe_runtime_log(logger, logging.INFO, "Shutting down...")
+        if order_gateway_experiment_timer is not None:
+            order_gateway_experiment_timer.cancel()
+        callbacks_quiesced = _quiesce_callbacks_then_stop_engine(
+            ws=ws,
+            engine=engine,
+            cleanup_errors=cleanup_errors,
+        )
+        gateway_shutdown_complete = False
+        if callbacks_quiesced:
+            try:
+                order_gateway.close()
+                gateway_shutdown_complete = bool(
+                    getattr(order_gateway, "shutdown_complete", True)
+                )
+                if not gateway_shutdown_complete:
+                    raise RuntimeError(
+                        "order gateway returned before its shutdown completed"
+                    )
             except BaseException as exc:
                 cleanup_errors.append(exc)
-                logger.critical(
-                    "Shutdown %s cleanup failed: %s",
-                    component_name,
+                _safe_runtime_log(
+                    logger,
+                    logging.CRITICAL,
+                    "Shutdown order-gateway cleanup failed: %s",
                     exc,
                     exc_info=True,
                 )
-        try:
-            engine.close_fill_cooldown_checkpoint_store()
-        except BaseException as exc:
-            cleanup_errors.append(exc)
-            logger.critical(
-                "Fill cooldown WAL close failed: %s",
-                exc,
-                exc_info=True,
+        else:
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
+                "USER_CALLBACK_DEPENDENCY_CLOSE_DEFERRED "
+                "resources=order_gateway|REST_roles|fill_cooldown_WAL|"
+                "runtime_evidence_writer action=process_fail_closed_exit",
             )
-        try:
-            runtime_evidence_writer.enqueue_json_snapshot_factory(
-                runtime_health_state_path(cfg),
-                runtime_safety_health_payload_factory(
-                    engine=engine,
-                    ws=ws,
-                    order_gateway=order_gateway,
-                ),
-            )
-        except BaseException as exc:
-            cleanup_errors.append(exc)
-            logger.critical(
-                "Final runtime health publication failed: %s",
-                exc,
-                exc_info=True,
-            )
-        try:
-            evidence_health = runtime_evidence_writer.close(
-                drain_timeout_s=10.0,
-            )
-            logger.info(
-                "RUNTIME_EVIDENCE_WRITER_CLOSED rows=%d health=%d "
-                "tasks=%d hwm=%d queueFull=%d errors=%d",
-                int(evidence_health["csv_rows_committed"]),
-                int(evidence_health["json_snapshots_committed"]),
-                int(evidence_health["tasks_committed"]),
-                int(evidence_health["queue_high_watermark"]),
-                int(evidence_health["queue_full_count"]),
-                int(evidence_health["error_count"]),
-            )
-        except BaseException as exc:
-            cleanup_errors.append(exc)
-            logger.critical(
-                "Runtime evidence writer shutdown failed: %s",
-                exc,
-                exc_info=True,
-            )
-        logger.info("Shutdown complete")
 
-    return resolve_live_shutdown_exit(
-        engine=engine,
-        fatal_error=fatal_error,
-        fatal_traceback=fatal_traceback,
-        cleanup_errors=cleanup_errors,
-    )
+        if gateway_shutdown_complete:
+            # Every asynchronous response callback has returned before its
+            # network clients, checkpoint store, or evidence writer can close.
+            # A gateway drain failure leaves these dependencies alive until
+            # the already-fatal process exits instead of creating use-after-
+            # close races in a late callback.
+            for component_name, stop_component in (
+                ("REST roles", rest_clients.close),
+                (
+                    "fill cooldown WAL",
+                    engine.close_fill_cooldown_checkpoint_store,
+                ),
+            ):
+                try:
+                    stop_component()
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+                    _safe_runtime_log(
+                        logger,
+                        logging.CRITICAL,
+                        "Shutdown %s cleanup failed: %s",
+                        component_name,
+                        exc,
+                        exc_info=True,
+                    )
+            try:
+                runtime_evidence_writer.enqueue_json_snapshot_factory(
+                    runtime_health_state_path(cfg),
+                    runtime_safety_health_payload_factory(
+                        engine=engine,
+                        ws=ws,
+                        order_gateway=order_gateway,
+                        gc_pause_monitor=gc_pause_monitor,
+                        logging_runtime=logging_runtime,
+                    ),
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+                _safe_runtime_log(
+                    logger,
+                    logging.CRITICAL,
+                    "Final runtime health publication failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+            try:
+                evidence_health = runtime_evidence_writer.close(
+                    drain_timeout_s=10.0,
+                )
+                _safe_runtime_log(
+                    logger,
+                    logging.INFO,
+                    "RUNTIME_EVIDENCE_WRITER_CLOSED rows=%d health=%d "
+                    "tasks=%d hwm=%d queueFull=%d errors=%d",
+                    int(evidence_health["csv_rows_committed"]),
+                    int(evidence_health["json_snapshots_committed"]),
+                    int(evidence_health["tasks_committed"]),
+                    int(evidence_health["queue_high_watermark"]),
+                    int(evidence_health["queue_full_count"]),
+                    int(evidence_health["error_count"]),
+                )
+            except BaseException as exc:
+                cleanup_errors.append(exc)
+                _safe_runtime_log(
+                    logger,
+                    logging.CRITICAL,
+                    "Runtime evidence writer shutdown failed: %s",
+                    exc,
+                    exc_info=True,
+                )
+        else:
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
+                "ORDER_GATEWAY_DEPENDENCY_CLOSE_DEFERRED "
+                "resources=REST_roles|fill_cooldown_WAL|runtime_evidence_writer "
+                "action=process_fail_closed_exit",
+            )
+        try:
+            gc_pause_monitor.close()
+        except BaseException as exc:
+            cleanup_errors.append(exc)
+            _safe_runtime_log(
+                logger,
+                logging.CRITICAL,
+                "GC pause monitor cleanup failed: %s",
+                exc,
+                exc_info=True,
+            )
+        _safe_runtime_log(logger, logging.INFO, "Shutdown complete")
+
+    try:
+        return resolve_live_shutdown_exit(
+            engine=engine,
+            fatal_error=fatal_error,
+            fatal_traceback=fatal_traceback,
+            cleanup_errors=cleanup_errors,
+        )
+    finally:
+        shutdown_logging(logging_runtime)
 
 
 if __name__ == "__main__":

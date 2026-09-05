@@ -1763,6 +1763,55 @@ def test_terminal_during_cancel_rest_publishes_once_before_late_callback() -> No
     assert telemetry["decision_count"] == 1
 
 
+def test_terminal_callback_wins_over_late_sync_cancel_error_without_split_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = _engine()
+    engine.cfg.strategy.replace_terminal_continuation = True
+    engine.orders = OrderManager(
+        on_terminal=lambda order, reason: engine._on_order_terminal(order, reason)
+    )
+    cid = engine.orders.create_order(
+        "BTCUSDC",
+        Side.BUY,
+        price=100.0,
+        quantity=0.001,
+    )
+    engine.orders.confirm_new(cid, 123)
+    _configure_terminal_callback(engine, cid)
+    engine._record_exact_order_event = lambda *args, **kwargs: None
+    engine._record_perf_rest_latency = lambda *args, **kwargs: None
+    generation = engine._arm_replace_terminal_continuation(
+        side=Side.BUY,
+        cid=cid,
+    )
+
+    def reject_split_read(*_args, **_kwargs):
+        pytest.fail("cancel completion must use one atomic ownership snapshot")
+
+    monkeypatch.setattr(engine.orders, "terminal_identity", reject_split_read)
+
+    def cancel_order(**_kwargs) -> None:
+        engine.orders.on_order_update(
+            _cancel_update(cid, visible_ts_ns=time.time_ns() + 1_000)
+        )
+        raise TimeoutError("REST response arrived after private terminal")
+
+    engine.rest = SimpleNamespace(cancel_order=cancel_order)
+
+    assert engine._cancel_order(
+        cid,
+        replace_continuation_generation=generation,
+    )
+    ownership = engine.orders.ownership_snapshot(cid)
+    assert ownership.status.name == "TERMINAL"
+    assert ownership.terminal_identity["terminal_state"] == "CANCELED"
+    telemetry = engine.replace_terminal_continuation_telemetry_snapshot()
+    assert telemetry["publish_count"] == 1
+    assert telemetry["drop_count"] == 0
+    assert set(engine._take_ready_replace_terminal_continuations()) == {Side.BUY}
+
+
 def test_cancel_ack_unknown_keeps_pending_ownership_for_reconciliation() -> None:
     engine = _engine()
     engine.cfg.strategy.replace_terminal_continuation = True

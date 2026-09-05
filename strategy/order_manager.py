@@ -49,6 +49,14 @@ class Side(Enum):
     SELL = "SELL"
 
 
+class OrderOwnershipStatus(Enum):
+    """Atomic ownership classification for one client order ID."""
+
+    ACTIVE_NONTERMINAL = "ACTIVE_NONTERMINAL"
+    TERMINAL = "TERMINAL"
+    UNKNOWN = "UNKNOWN"
+
+
 class OrderManagerFatalError(RuntimeError):
     """Raised after the manager latches an unrecoverable delivery/state fault."""
 
@@ -180,6 +188,15 @@ class _OrderTombstone:
     terminal_state: OrderState
     terminal_reason: str
     max_trade_id: int
+
+
+@dataclass(frozen=True)
+class OrderOwnershipSnapshot:
+    """One-lock ownership result consumed by side-reference pruning."""
+
+    client_order_id: str
+    status: OrderOwnershipStatus
+    terminal_identity: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -2469,19 +2486,53 @@ class OrderManager:
             tombstone = self._tombstones.get(cid)
             if tombstone is None:
                 return None
-            return {
-                "client_order_id": tombstone.client_order_id,
-                "exchange_order_id": tombstone.order_id,
-                "symbol": tombstone.symbol,
-                "side": tombstone.side.value,
-                "price": tombstone.price,
-                "quantity": tombstone.quantity,
-                "cumulative_fill": tombstone.filled_qty,
-                "average_fill_price": tombstone.avg_fill_price,
-                "terminal_state": tombstone.terminal_state.name,
-                "terminal_reason": tombstone.terminal_reason,
-                "max_trade_id": tombstone.max_trade_id,
-            }
+            return self._terminal_identity_payload(tombstone)
+
+    @staticmethod
+    def _terminal_identity_payload(
+        tombstone: _OrderTombstone,
+    ) -> dict[str, object]:
+        return {
+            "client_order_id": tombstone.client_order_id,
+            "exchange_order_id": tombstone.order_id,
+            "symbol": tombstone.symbol,
+            "side": tombstone.side.value,
+            "price": tombstone.price,
+            "quantity": tombstone.quantity,
+            "cumulative_fill": tombstone.filled_qty,
+            "average_fill_price": tombstone.avg_fill_price,
+            "terminal_state": tombstone.terminal_state.name,
+            "terminal_reason": tombstone.terminal_reason,
+            "max_trade_id": tombstone.max_trade_id,
+        }
+
+    def ownership_snapshot(self, cid: str) -> OrderOwnershipSnapshot:
+        """Classify one CID from a single acquisition of the manager lock.
+
+        A caller must not compose :meth:`terminal_identity` and
+        :meth:`get_order`: a terminal transition can occur between those two
+        individually valid reads.  This snapshot provides one linearization
+        point for ownership pruning while retaining UNKNOWN as fail-closed.
+        """
+
+        with self._lock:
+            tombstone = self._tombstones.get(cid)
+            if tombstone is not None:
+                return OrderOwnershipSnapshot(
+                    client_order_id=cid,
+                    status=OrderOwnershipStatus.TERMINAL,
+                    terminal_identity=self._terminal_identity_payload(tombstone),
+                )
+            order = self._orders.get(cid)
+            if order is not None and not order.is_terminal:
+                return OrderOwnershipSnapshot(
+                    client_order_id=cid,
+                    status=OrderOwnershipStatus.ACTIVE_NONTERMINAL,
+                )
+            return OrderOwnershipSnapshot(
+                client_order_id=cid,
+                status=OrderOwnershipStatus.UNKNOWN,
+            )
 
     def tombstone_count(self) -> int:
         with self._lock:

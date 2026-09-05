@@ -61,8 +61,8 @@ BUY E3 与 SELL owner cooldown 在所有者侧证据中的权限类别是 **owne
 - `live/run.sh` 必须加载可审计的 `live/profiles/python.env|native.env`，启动日志打印 profile、全部 native flags 和 extension 路径；strict native 缺模块/API 时 fail fast，不能重启后静默回到 Python。
 - 在 x86 live 机上做同配置、同线程限制、同 marker 口径的 Python/native soak，比较 `live_perf_telemetry.csv` 的 p50/p99/p99.9、fallback、WebSocket age、REST new/cancel tail；warmup、起点 inventory sync 和 sync-degrade 行必须排除。
 - 根据 soak 结果决定是否继续提高加仓侧 `replace_min_price_change_ticks` / `replace_min_interval_ms`，减仓侧保持更敏捷，且 TTL、pause、stale-data 和库存安全撤单不被 coalescing 阻断。
-- normal quote lifecycle 当前保持同步 order adapter。旧 per-side latest-wins async gateway 在 194.4 分钟目标机 soak 中几乎没有形成 coalesce，且 requote/order-update p99/p99.9 变差；2026-07-17 已删除实现、配置、telemetry ABI 和专属测试，不保留可误开的 dormant switch。
-- 后续若重新研究异步 order gateway，必须以新的实验身份从 bounded queue、背压和 target-host soak 重新开始；不能复活旧开关，也不能先调 replace threshold 再解释尾延迟。
+- normal quote lifecycle 默认保持 REST、单一 global FIFO 和同步 response。旧 per-side latest-wins async gateway 在 194.4 分钟目标机 soak 中几乎没有形成 coalesce，且 requote/order-update p99/p99.9 变差；2026-07-17 已删除该实现，它没有被复活。
+- 新的 bounded async-response lane、cross-side lane 与 USD-M WebSocket API adapter 是相互独立、restart-only、默认关闭的实验。它们必须逐项经过 target-host soak，并以同一 request/client-order identity 比较 decision-to-private-visibility、权威 outcome 与 `UNKNOWN` rate；cross-side lane 还必须通过 paired economic replay。不能只凭 response RTT 或调过 replace threshold 后的混合结果启用。
 
 两条线可以共享 telemetry 和 replay 工具，但结论不能互相替代：系统优化让策略更可执行，策略证据决定是否值得执行。
 

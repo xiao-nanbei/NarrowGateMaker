@@ -73,7 +73,13 @@ The native profile is strict: startup validates the extension source and every r
 
 ## Order gateway
 
-The live order adapter is synchronous. The former async latest-wins gateway was removed after its target-host soak worsened p99/p99.9 and produced almost no useful coalescing. A future gateway redesign must arrive as a new experiment; there is no disabled switch to re-enable.
+Persistent REST with one globally serialized order-write lane remains the
+default live adapter. The former async latest-wins gateway remains removed
+after its target-host soak worsened p99/p99.9 and produced almost no useful
+coalescing. The current bounded async-response lane, cross-side lane, and
+USD-M WebSocket API adapter are separate restart-only experiments and are all
+disabled by default; none is a latest-wins queue or a hot-reload switch. They
+require matched-host latency and economic qualification before activation.
 
 Do not publish hostnames, process ids, raw live PnL, account size, or complete private parameter snapshots.
 

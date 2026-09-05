@@ -4,6 +4,7 @@ import hashlib
 import json
 import stat
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -59,6 +60,392 @@ def _engine_with_payload(payload: tuple) -> SimpleNamespace:
         _reconciliation_trade_identity_by_id={},
         _stable_exchange_reconciliation_payload=Mock(return_value=payload),
     )
+
+
+def _periodic_engine(fetch) -> MakerEngine:
+    engine = object.__new__(MakerEngine)
+    engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine._reconciliation_lock = threading.Lock()
+    engine._position_reconciliation_generation = 0
+    engine._reconciliation_trade_identity_by_id = {}
+    engine._periodic_reconciliation_state_lock = threading.Lock()
+    engine._periodic_reconciliation_thread = None
+    engine._periodic_reconciliation_completion = None
+    engine._periodic_reconciliation_shutdown = False
+    engine._periodic_reconciliation_required_sync_active = False
+    engine._periodic_reconciliation_worker_epoch = 0
+    engine._periodic_reconciliation_retry_requested = False
+    engine._periodic_reconciliation_retry_not_before_s = 0.0
+    engine._periodic_reconciliation_retry_attempt = 0
+    engine._periodic_reconciliation_retry_reason = ""
+    engine._periodic_reconciliation_scheduled = 0
+    engine._periodic_reconciliation_completed = 0
+    engine._periodic_reconciliation_committed = 0
+    engine._periodic_reconciliation_stale_discarded = 0
+    engine._periodic_reconciliation_fetch_errors = 0
+    engine._periodic_reconciliation_commit_errors = 0
+    engine._periodic_reconciliation_single_flight_coalesced = 0
+    engine._periodic_reconciliation_last_error = ""
+    engine._periodic_reconciliation_catastrophic_error = None
+    engine._periodic_reconciliation_last_completed_monotonic_s = 0.0
+    engine.background_reconciliation_client = object()
+    barrier = {
+        "snapshot_update_time_ms": 0,
+        "order_cumulative_filled_qty": {},
+        "local_order_cumulative_filled_qty": {},
+        "retained_post_snapshot_fill_count": 0,
+        "tracked_trade_identity_count": 0,
+    }
+    engine._test_reconciliation_barrier = barrier
+    engine.inventory = SimpleNamespace(
+        reconciliation_snapshot=lambda: json.loads(
+            json.dumps(engine._test_reconciliation_barrier)
+        ),
+        sync_from_exchange=Mock(return_value={"ok": True}),
+    )
+    engine.orders = SimpleNamespace(
+        reconcile_exchange_trade=Mock(return_value=True),
+        fatal_status=Mock(
+            return_value={"latched": False, "reconciliation_required": False}
+        ),
+    )
+    engine._stable_exchange_reconciliation_payload = Mock(side_effect=fetch)
+    return engine
+
+
+def _wait_for_periodic_completion(engine: MakerEngine) -> None:
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if engine.periodic_position_reconciliation_health()[
+            "completion_pending"
+        ]:
+            return
+        threading.Event().wait(0.005)
+    raise TimeoutError("periodic reconciliation worker did not complete")
+
+
+def _flat_seed_payload(update_time_ms: int) -> tuple:
+    return (0.0, 0.0, update_time_ms, {}, (), (), {}, True)
+
+
+def test_periodic_position_sync_is_single_flight_and_commits_only_when_polled() -> None:
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+
+    def fetch(**kwargs) -> tuple:
+        assert kwargs["barrier"]["snapshot_update_time_ms"] == 0
+        assert kwargs["committed_trade_identities"] == {}
+        assert kwargs["transport"] is engine.background_reconciliation_client
+        fetch_entered.set()
+        assert release_fetch.wait(timeout=2.0)
+        return _flat_seed_payload(2_000)
+
+    engine = _periodic_engine(fetch)
+
+    assert engine.request_periodic_position_sync() is True
+    assert fetch_entered.wait(timeout=1.0)
+    assert engine.request_periodic_position_sync() is True
+    assert engine._stable_exchange_reconciliation_payload.call_count == 1
+    assert engine.inventory.sync_from_exchange.call_count == 0
+
+    release_fetch.set()
+    _wait_for_periodic_completion(engine)
+    assert engine.inventory.sync_from_exchange.call_count == 0
+    assert engine.poll_periodic_position_sync() == "committed"
+    engine.inventory.sync_from_exchange.assert_called_once_with(
+        0.0,
+        0.0,
+        snapshot_update_time_ms=2_000,
+        order_cumulative_filled_qty={},
+        included_trade_ids=(),
+        included_trade_identities={},
+    )
+    health = engine.periodic_position_reconciliation_health()
+    assert health["scheduled"] == 1
+    assert health["completed"] == 1
+    assert health["committed"] == 1
+    assert health["single_flight_coalesced"] == 1
+
+
+def test_periodic_position_sync_discards_stale_generation_and_refetches() -> None:
+    engine = _periodic_engine(
+        lambda **_kwargs: _flat_seed_payload(2_000)
+    )
+
+    assert engine.request_periodic_position_sync() is True
+    _wait_for_periodic_completion(engine)
+    engine._position_reconciliation_generation += 1
+
+    assert engine.poll_periodic_position_sync() == "stale"
+    engine.inventory.sync_from_exchange.assert_not_called()
+    health = engine.periodic_position_reconciliation_health()
+    assert health["stale_discarded"] == 1
+    assert health["retry_pending"] is True
+
+    with engine._periodic_reconciliation_state_lock:
+        engine._periodic_reconciliation_retry_not_before_s = 0.0
+    assert engine.maintain_periodic_position_sync() == "idle"
+    _wait_for_periodic_completion(engine)
+    assert engine._stable_exchange_reconciliation_payload.call_count == 2
+
+
+def test_required_position_sync_drains_worker_then_uses_fresh_sync_proof() -> None:
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+    calls = 0
+    call_kwargs: list[dict] = []
+
+    def fetch(**kwargs) -> tuple:
+        nonlocal calls
+        calls += 1
+        call_kwargs.append(kwargs)
+        if calls == 1:
+            fetch_entered.set()
+            assert release_fetch.wait(timeout=2.0)
+            return _flat_seed_payload(2_000)
+        return _flat_seed_payload(3_000)
+
+    engine = _periodic_engine(fetch)
+    result: list[bool] = []
+    errors: list[BaseException] = []
+
+    assert engine.request_periodic_position_sync() is True
+    assert fetch_entered.wait(timeout=1.0)
+
+    def required_sync() -> None:
+        try:
+            result.append(engine.sync_position(required=True))
+        except BaseException as exc:  # pragma: no cover - asserted below
+            errors.append(exc)
+
+    sync_thread = threading.Thread(target=required_sync)
+    sync_thread.start()
+    threading.Event().wait(0.02)
+    assert sync_thread.is_alive()
+    assert engine.inventory.sync_from_exchange.call_count == 0
+
+    release_fetch.set()
+    sync_thread.join(timeout=2.0)
+    assert not sync_thread.is_alive()
+    assert errors == []
+    assert result == [True]
+    assert calls == 2
+    assert call_kwargs[0]["transport"] is engine.background_reconciliation_client
+    assert "transport" not in call_kwargs[1]
+    engine.inventory.sync_from_exchange.assert_called_once_with(
+        0.0,
+        0.0,
+        snapshot_update_time_ms=3_000,
+        order_cumulative_filled_qty={},
+        included_trade_ids=(),
+        included_trade_identities={},
+    )
+    health = engine.periodic_position_reconciliation_health()
+    assert health["completion_pending"] is False
+    assert health["worker_alive"] is False
+    assert health["committed"] == 0
+
+
+def test_periodic_position_sync_shutdown_drains_and_discards_completion() -> None:
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+
+    def fetch(**_kwargs) -> tuple:
+        fetch_entered.set()
+        assert release_fetch.wait(timeout=2.0)
+        return _flat_seed_payload(2_000)
+
+    engine = _periodic_engine(fetch)
+    shutdown_complete = threading.Event()
+
+    assert engine.request_periodic_position_sync() is True
+    assert fetch_entered.wait(timeout=1.0)
+
+    def drain() -> None:
+        engine._quiesce_periodic_position_reconciliation(permanent=True)
+        shutdown_complete.set()
+
+    drain_thread = threading.Thread(target=drain)
+    drain_thread.start()
+    assert not shutdown_complete.wait(timeout=0.02)
+    release_fetch.set()
+    assert shutdown_complete.wait(timeout=1.0)
+    drain_thread.join(timeout=1.0)
+
+    health = engine.periodic_position_reconciliation_health()
+    assert health["shutdown"] is True
+    assert health["worker_alive"] is False
+    assert health["completion_pending"] is False
+    assert engine.inventory.sync_from_exchange.call_count == 0
+    assert engine.request_periodic_position_sync() is False
+
+
+def test_engine_stop_cancels_exchange_before_waiting_for_cold_worker() -> None:
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+    cancel_called = threading.Event()
+    events: list[str] = []
+
+    def fetch(**_kwargs) -> tuple:
+        fetch_entered.set()
+        assert release_fetch.wait(timeout=2.0)
+        return _flat_seed_payload(2_000)
+
+    engine = _periodic_engine(fetch)
+    engine._running = True
+    engine._clear_all_replace_terminal_continuations = lambda **_kwargs: None
+    engine._persist_fill_cooldown_checkpoint = lambda: None
+    engine.signal = SimpleNamespace(stop=lambda: None)
+    engine._execution_state_uncertain = lambda: False
+
+    def cancel_all() -> bool:
+        events.append("cancel_all")
+        cancel_called.set()
+        return True
+
+    engine._cancel_all_orders = cancel_all
+    engine.sync_position = lambda **_kwargs: events.append("required_sync") or True
+    engine._runtime_evidence_writer = None
+    engine._order_lifecycle_live_writer_v2 = None
+    engine._exact_opportunity_tape_runtime = None
+    engine._drain_deferred_runtime_reconciliation = lambda: True
+    engine.close_fill_cooldown_checkpoint_store = lambda: None
+    stop_errors: list[BaseException] = []
+
+    assert engine.request_periodic_position_sync() is True
+    assert fetch_entered.wait(timeout=1.0)
+
+    def stop() -> None:
+        try:
+            engine.stop()
+        except BaseException as exc:  # pragma: no cover - asserted below
+            stop_errors.append(exc)
+
+    stop_thread = threading.Thread(target=stop)
+    stop_thread.start()
+    assert cancel_called.wait(timeout=0.2)
+    assert stop_thread.is_alive()
+    assert events == ["cancel_all", "required_sync"]
+
+    release_fetch.set()
+    stop_thread.join(timeout=1.0)
+    assert not stop_thread.is_alive()
+    assert stop_errors == []
+
+
+def test_periodic_drain_timeout_poison_prevents_late_completion_resurrection() -> None:
+    fetch_entered = threading.Event()
+    release_fetch = threading.Event()
+
+    def fetch(**_kwargs) -> tuple:
+        fetch_entered.set()
+        assert release_fetch.wait(timeout=2.0)
+        return _flat_seed_payload(2_000)
+
+    engine = _periodic_engine(fetch)
+    assert engine.request_periodic_position_sync() is True
+    assert fetch_entered.wait(timeout=1.0)
+
+    with pytest.raises(RuntimeError, match="worker did not drain"):
+        engine._quiesce_periodic_position_reconciliation(
+            permanent=False,
+            timeout_s=0.001,
+        )
+
+    release_fetch.set()
+    deadline = time.monotonic() + 1.0
+    while engine.periodic_position_reconciliation_health()["worker_alive"]:
+        assert time.monotonic() < deadline
+        threading.Event().wait(0.005)
+    health = engine.periodic_position_reconciliation_health()
+    assert health["completion_pending"] is False
+    assert engine._periodic_reconciliation_required_sync_active is True
+    assert engine.request_periodic_position_sync() is False
+
+
+def test_periodic_identity_lag_retry_is_bounded_and_then_fails_closed() -> None:
+    identity_lag = RuntimeError(
+        "exchange snapshot omitted the identity cursor for a locally "
+        "applied fill at or before its update time"
+    )
+    engine = _periodic_engine(
+        lambda **_kwargs: (0.0, 0.0, 2_000, {}, (), (), {}, False)
+    )
+    engine._test_reconciliation_barrier["snapshot_update_time_ms"] = 1_000
+    engine.inventory.sync_from_exchange.side_effect = identity_lag
+    engine.latch_runtime_fatal = Mock()
+    outcomes: list[str] = []
+
+    assert engine.request_periodic_position_sync() is True
+    for attempt in range(
+        len(maker_engine_module._POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S)
+        + 1
+    ):
+        _wait_for_periodic_completion(engine)
+        outcomes.append(engine.poll_periodic_position_sync())
+        if attempt < len(
+            maker_engine_module._POSITION_RECONCILIATION_IDENTITY_LAG_BACKOFF_S
+        ):
+            with engine._periodic_reconciliation_state_lock:
+                engine._periodic_reconciliation_retry_not_before_s = 0.0
+            assert engine.maintain_periodic_position_sync() == "idle"
+
+    assert outcomes == ["retry"] * 5 + ["retry_exhausted"]
+    assert engine._stable_exchange_reconciliation_payload.call_count == 6
+    assert engine.inventory.sync_from_exchange.call_count == 6
+    engine.latch_runtime_fatal.assert_called_once_with(
+        reason="EXACT_EXECUTION_RECONCILIATION_FAILED",
+        error=identity_lag,
+        reconciliation_required=True,
+    )
+    health = engine.periodic_position_reconciliation_health()
+    assert health["retry_pending"] is False
+    assert health["retry_attempt"] == 5
+
+
+def test_periodic_position_sync_fetch_error_is_visible_without_ledger_mutation() -> None:
+    engine = _periodic_engine(
+        lambda **_kwargs: (_ for _ in ()).throw(TimeoutError("cold timeout"))
+    )
+
+    assert engine.request_periodic_position_sync() is True
+    _wait_for_periodic_completion(engine)
+    assert engine.poll_periodic_position_sync() == "fetch_error"
+    engine.inventory.sync_from_exchange.assert_not_called()
+    health = engine.periodic_position_reconciliation_health()
+    assert health["fetch_errors"] == 1
+    assert health["last_error"] == "TimeoutError:cold timeout"
+
+
+def test_periodic_worker_catastrophic_error_stops_runtime() -> None:
+    engine = _periodic_engine(
+        lambda **_kwargs: (_ for _ in ()).throw(MemoryError("exhausted"))
+    )
+    engine.latch_runtime_fatal = Mock()
+
+    assert engine.request_periodic_position_sync() is True
+    _wait_for_periodic_completion(engine)
+    assert engine.poll_periodic_position_sync() == "worker_fatal"
+    engine.inventory.sync_from_exchange.assert_not_called()
+    engine.latch_runtime_fatal.assert_called_once()
+    assert engine.latch_runtime_fatal.call_args.kwargs["reason"] == (
+        "PERIODIC_RECONCILIATION_WORKER_FATAL"
+    )
+    assert engine.latch_runtime_fatal.call_args.kwargs[
+        "reconciliation_required"
+    ] is False
+
+
+def test_periodic_stable_fetch_honors_expired_total_deadline() -> None:
+    engine = _stable_fetch_engine([])
+
+    with pytest.raises(TimeoutError, match="fetch deadline exceeded"):
+        engine._stable_exchange_reconciliation_payload(
+            deadline_monotonic_s=time.monotonic() - 1.0,
+        )
+
+    engine.rest.get_position_risk.assert_not_called()
+    engine.rest.get_account_trades.assert_not_called()
 
 
 def test_sync_position_installs_initial_identity_barrier_without_replaying_history() -> None:
@@ -523,6 +910,72 @@ def test_account_trade_identity_cannot_drift_across_reconciliation_rounds() -> N
         )
 
 
+def test_reconciliation_retains_only_next_inclusive_time_boundary() -> None:
+    engine = object.__new__(MakerEngine)
+    engine._reconciliation_trade_identity_by_id = {
+        "80": _producer_identity(
+            order_id="40",
+            side="BUY",
+            quantity=0.0004,
+            price=70_000.0,
+            commission=0.0,
+            commission_asset="",
+            trade_time_ms=1_000,
+            cumulative=0.0004,
+        ),
+        "81": _producer_identity(
+            order_id="41",
+            side="BUY",
+            quantity=0.0003,
+            price=70_001.0,
+            commission=0.0,
+            commission_asset="",
+            trade_time_ms=2_000,
+            cumulative=0.0003,
+        ),
+    }
+    newest = _producer_identity(
+        order_id="42",
+        side="SELL",
+        quantity=0.0002,
+        price=70_002.0,
+        commission=0.0,
+        commission_asset="",
+        trade_time_ms=2_000,
+        cumulative=0.0002,
+    )
+
+    engine._install_reconciliation_trade_identity_boundary(
+        snapshot_update_time_ms=2_000,
+        trade_identities={"82": newest},
+    )
+
+    assert set(engine._reconciliation_trade_identity_by_id) == {"81", "82"}
+    assert engine._reconciliation_trade_identity_retained_count == 2
+    assert engine._reconciliation_trade_identity_retained_bytes > 0
+
+
+def test_reconciliation_identity_boundary_rejects_future_identity() -> None:
+    engine = object.__new__(MakerEngine)
+    engine._reconciliation_trade_identity_by_id = {}
+    future = _producer_identity(
+        order_id="42",
+        side="SELL",
+        quantity=0.0002,
+        price=70_002.0,
+        commission=0.0,
+        commission_asset="",
+        trade_time_ms=2_001,
+        cumulative=0.0002,
+    )
+
+    with pytest.raises(RuntimeError, match="exceeds committed barrier"):
+        engine._install_reconciliation_trade_identity_boundary(
+            snapshot_update_time_ms=2_000,
+            trade_identities={"82": future},
+        )
+
+
 def test_same_millisecond_fill_between_p1_and_p2_rejects_unstable_snapshot() -> None:
     engine = _stable_fetch_engine([])
     engine.inventory = SimpleNamespace(
@@ -863,6 +1316,87 @@ def test_deferred_reconciliation_does_not_run_after_quiescence_timeout() -> None
     assert engine._drain_deferred_runtime_reconciliation() is False
     engine.sync_position.assert_not_called()
     assert engine._runtime_reconciliation_pending is True
+
+
+def test_stop_waits_for_order_callbacks_before_sync_and_evidence_close() -> None:
+    drain_entered = threading.Event()
+    release_callback = threading.Event()
+    stop_completed = threading.Event()
+    stop_errors: list[BaseException] = []
+    sequence: list[str] = []
+
+    class _OrderGateway:
+        def drain_async_order_completions(self) -> None:
+            sequence.append("callback-drain")
+            drain_entered.set()
+            assert release_callback.wait(timeout=2.0)
+
+    class _EvidenceRuntime:
+        def barrier(self, *, timeout_s: float) -> None:
+            assert timeout_s == pytest.approx(10.0)
+            sequence.append("evidence-barrier")
+
+    class _LifecycleWriter:
+        def close(self, *, drain_timeout_s: float) -> dict[str, object]:
+            assert drain_timeout_s == pytest.approx(1.0)
+            sequence.append("lifecycle-close")
+            return {
+                "rows_committed": 0,
+                "drop_count": 0,
+                "error_count": 0,
+                "state": "closed",
+                "worker_alive": False,
+                "queue_depth": 0,
+                "callbacks_enqueued": 0,
+                "callbacks_processed": 0,
+                "formal_collection_valid": True,
+            }
+
+    engine = object.__new__(MakerEngine)
+    engine.cfg = SimpleNamespace(symbol="BTCUSDC")
+    engine.order_gateway = _OrderGateway()
+    engine.signal = SimpleNamespace(stop=lambda: None)
+    engine._running = True
+    engine._clear_all_replace_terminal_continuations = lambda **_kwargs: None
+    engine._persist_fill_cooldown_checkpoint = lambda: None
+    engine._execution_state_uncertain = lambda: False
+    engine._cancel_all_orders = lambda: sequence.append("cancel-all") or True
+    engine.sync_position = (
+        lambda *, required=False: sequence.append("sync-position") or True
+    )
+    engine._drain_deferred_runtime_reconciliation = lambda: True
+    engine.close_fill_cooldown_checkpoint_store = lambda: None
+    engine._runtime_evidence_writer = _EvidenceRuntime()
+    engine._order_lifecycle_live_writer_v2 = _LifecycleWriter()
+    engine._order_lifecycle_live_writer_v2_shutdown_timeout_s = 1.0
+    engine._exact_opportunity_tape_runtime = None
+
+    def stop_engine() -> None:
+        try:
+            engine.stop()
+        except BaseException as exc:
+            stop_errors.append(exc)
+        finally:
+            stop_completed.set()
+
+    stop_thread = threading.Thread(target=stop_engine)
+    stop_thread.start()
+    assert drain_entered.wait(timeout=1.0)
+    time.sleep(0.01)
+    assert not stop_completed.is_set()
+    assert sequence == ["cancel-all", "callback-drain"]
+
+    release_callback.set()
+    stop_thread.join(timeout=2.0)
+    assert not stop_thread.is_alive()
+    assert stop_errors == []
+    assert sequence == [
+        "cancel-all",
+        "callback-drain",
+        "sync-position",
+        "evidence-barrier",
+        "lifecycle-close",
+    ]
 
 
 def test_stop_finally_drains_reconciliation_latched_during_writer_shutdown() -> None:

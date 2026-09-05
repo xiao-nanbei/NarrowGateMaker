@@ -32,6 +32,8 @@ from typing import Any, TextIO
 
 RUNTIME_EVIDENCE_WRITER_SCHEMA_VERSION = "runtime_evidence_writer.v1"
 
+_IMMUTABLE_CSV_SCALAR_TYPES = (str, bytes, int, float, bool, type(None))
+
 
 class RuntimeEvidenceWriterError(RuntimeError):
     """Base error for evidence admission, worker, and shutdown failures."""
@@ -122,7 +124,7 @@ class RuntimeEvidenceWriter:
         self._fatal_error = ""
         self._last_commit_ts_ns = 0
         self._stop_requested = threading.Event()
-        self._handles: dict[Path, tuple[TextIO, csv.DictWriter, tuple[str, ...]]] = {}
+        self._handles: dict[Path, tuple[TextIO, Any, tuple[str, ...]]] = {}
         self._thread = threading.Thread(
             target=self._run,
             name=str(thread_name),
@@ -146,6 +148,41 @@ class RuntimeEvidenceWriter:
                 path=normalized_path,
                 fieldnames=fieldnames,
                 values=values,
+            )
+        )
+
+    def enqueue_csv_values(
+        self,
+        path: str | Path,
+        *,
+        fieldnames: tuple[str, ...],
+        values: tuple[Any, ...],
+    ) -> int:
+        """Enqueue an already flattened immutable row without dict/deepcopy.
+
+        This is the hot-path API for frozen ``slots`` log rows.  Callers must
+        pass only scalar immutable values; mutable containers are rejected so
+        a producer cannot alter an admitted row behind the writer thread.
+        """
+
+        normalized_path = Path(path)
+        normalized_fields = tuple(str(name) for name in fieldnames)
+        normalized_values = tuple(values)
+        if not normalized_fields:
+            raise ValueError("CSV fieldnames must contain at least one field")
+        if len(normalized_fields) != len(normalized_values):
+            raise ValueError("CSV fieldnames and values must have equal length")
+        if any(
+            not isinstance(value, _IMMUTABLE_CSV_SCALAR_TYPES)
+            for value in normalized_values
+        ):
+            raise TypeError("flattened CSV values must be immutable scalars")
+        return self._admit(
+            lambda sequence: _CsvItem(
+                sequence=sequence,
+                path=normalized_path,
+                fieldnames=normalized_fields,
+                values=normalized_values,
             )
         )
 
@@ -387,13 +424,13 @@ class RuntimeEvidenceWriter:
         existing = self._handles.get(path)
         if existing is None:
             handle = path.open("a", newline="", encoding="utf-8")
-            writer = csv.DictWriter(handle, fieldnames=list(item.fieldnames))
+            writer = csv.writer(handle)
             existing = (handle, writer, item.fieldnames)
             self._handles[path] = existing
         handle, writer, fieldnames = existing
         if fieldnames != item.fieldnames:
             raise ValueError(f"evidence CSV schema changed in-process: {path}")
-        writer.writerow(dict(zip(item.fieldnames, item.values, strict=True)))
+        writer.writerow(item.values)
         # Preserve the old per-row userspace visibility without imposing the
         # old open/write/close cost on the decision thread. Durability is still
         # governed by the same process-shutdown contract, not per-row fsync.

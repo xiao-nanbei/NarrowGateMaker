@@ -1413,7 +1413,7 @@ def test_cpp_ref_perp_keeps_spot_computation_for_model_consumers(monkeypatch):
     assert features["cv_exec_spot_available"] == 1.0
 
 
-def test_native_new_bucket_does_not_iterate_or_copy_python_bar_ring():
+def test_native_new_bucket_does_not_iterate_or_copy_python_bar_ring(monkeypatch):
     class BoundaryOnlyRing:
         def __init__(self, first: Bar1s, last: Bar1s) -> None:
             self.first = first
@@ -1446,6 +1446,23 @@ def test_native_new_bucket_does_not_iterate_or_copy_python_bar_ring():
         engine._cpp_feature_engine.push_bar(engine._bar_to_cpp(bar))
     engine._last_processed_bucket = 10_000
     engine._bar_buffer = BoundaryOnlyRing(bars[0], bars[-1])  # type: ignore[assignment]
+    process_native = engine._process_completed_feature_buckets_native_locked
+
+    def assert_atomic_source_snapshot():
+        # A cutoff-before event arriving here must wait until the complete
+        # bar/L2/reference/metrics row has published.  Releasing this lock for
+        # only the rolling core creates a mixed-time feature row.
+        acquired = engine._lock.acquire(blocking=False)
+        if acquired:  # pragma: no cover - assertion cleanup
+            engine._lock.release()
+        assert not acquired
+        return process_native()
+
+    monkeypatch.setattr(
+        engine,
+        "_process_completed_feature_buckets_native_locked",
+        assert_atomic_source_snapshot,
+    )
 
     prediction = engine.compute_signal()
 
