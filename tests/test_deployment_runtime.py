@@ -2148,6 +2148,56 @@ def test_prepared_activation_is_dry_run_by_default_and_has_fixed_order(
     assert "activation failed phase=%s line=%s rc=%s" in shell
 
 
+@pytest.mark.parametrize(
+    "metadata_case",
+    ("regular", "missing", "symlink", "file_alias", "parent_alias", "sudo_denied"),
+)
+def test_prepared_activation_checks_root_private_environment_metadata(
+    metadata_case: str,
+) -> None:
+    rendered = shlex.split(
+        source_deploy.render_prepared_release_activation_shell(**_prepared_activation_args())
+    )[-1]
+    helper = rendered.split("canonical_environment_input() {", 1)[1].split("\n}", 1)[0]
+    assert rendered.count('canonical_environment_input "$env_file"') == 2
+    assert 'canonical_input "$env_file"' not in rendered
+    assert 'test -f "$env_file"' not in rendered
+    # This virtual root-private path cannot be stat'ed by the operator. Only
+    # the narrow sudo metadata calls may supply its identity; no content read.
+    script = r'''
+set -e
+metadata_case="$1"
+env_file=/unavailable-root-private/live.env
+sudo() {
+  test "$1" = -n || return 91
+  shift
+  test "$metadata_case" != sudo_denied || return 1
+  case "$1:$2" in
+    test:-f) test "$metadata_case" != missing ;;
+    test:!) test "$3" = -L && test "$metadata_case" != symlink ;;
+    readlink:-f)
+      test "$3" = -- || return 92
+      if test "$metadata_case" = file_alias && test "$4" = "$env_file"; then
+        printf '%s\n' /aliased/live.env
+      elif test "$metadata_case" = parent_alias && test "$4" != "$env_file"; then
+        printf '%s\n' /aliased
+      else
+        printf '%s\n' "$4"
+      fi ;;
+    *) return 93 ;;
+  esac
+}
+canonical_environment_input() {
+''' + helper + '\n}\ncanonical_environment_input "$env_file"\n'
+    result = subprocess.run(
+        ("bash", "-c", script, "environment-metadata-test", metadata_case),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) is (metadata_case == "regular"), result.stderr
+
+
 def test_prepared_activation_can_resume_only_from_proven_stopped_previous() -> None:
     shell = source_deploy.render_prepared_release_activation_shell(
         **_prepared_activation_args(),

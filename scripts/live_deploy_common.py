@@ -1290,6 +1290,12 @@ canonical_input() {{
   test "$(readlink -f -- "$1")" = "$1"
   test "$(readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
 }}
+canonical_environment_input() {{
+  # systemd reads this root-private file; the operator needs only metadata.
+  sudo -n test -f "$1" && sudo -n test ! -L "$1" || return
+  test "$(sudo -n readlink -f -- "$1")" = "$1" || return
+  test "$(sudo -n readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
+}}
 canonical_output() {{
   test ! -L "$1" && test ! -d "$1"
   test "$(readlink -f -- "$(dirname -- "$1")")" = "$(dirname -- "$1")"
@@ -1318,9 +1324,9 @@ candidate_unit_matches() {{
 trap cleanup EXIT
 trap 'exit 84' HUP INT TERM
 canonical_input "$release" && canonical_input "$previous"
-canonical_input "$env_file" && canonical_input "$config"
+canonical_environment_input "$env_file" && canonical_input "$config"
 canonical_input "$envelope" && canonical_input "$trusted"
-test -d "$release" && test -d "$previous" && test -f "$env_file"
+test -d "$release" && test -d "$previous"
 test -f "$config" && test -f "$envelope" && test -x "$trusted"
 canonical_output "$reconciliation" && canonical_output "$activation"
 canonical_output "$current" && canonical_output "$pointer_stage" && canonical_output "$lock"
@@ -1425,7 +1431,7 @@ while test "$(systemctl show narrowgate.service -p LoadState --value 2>/dev/null
   test "$SECONDS" -lt "$deadline"
   sleep 1
 done
-canonical_input "$release" && canonical_input "$env_file"
+canonical_input "$release" && canonical_environment_input "$env_file"
 canonical_input "$config" && canonical_input "$envelope" && canonical_input "$trusted"
 test "$($trusted -c {q(json_get)} "$envelope" canonical_sha256)" = "$envelope_sha"
 start_marker="$release/logs/.activation-start-$rid"
