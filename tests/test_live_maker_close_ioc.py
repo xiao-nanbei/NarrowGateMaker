@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from live.binance_usdm_transport import BinanceUsdMOrderGateway
 from live.config import Config
 from live.main import resolve_live_shutdown_exit
 from strategy.inventory_manager import PositionState
@@ -1039,6 +1040,115 @@ def test_unknown_ack_race_with_private_new_keeps_authoritative_acceptance() -> N
     assert engine.orders.get_order(cid).lifecycle.submit_ack_unknown_observed is False
 
 
+def test_engine_async_rest_uses_global_fifo_and_consumes_private_terminal_first():
+    new_started = threading.Event()
+    release_new = threading.Event()
+    cancel_started = threading.Event()
+    release_cancel = threading.Event()
+    network_lock = threading.Lock()
+    calls = []
+    inflight = 0
+    max_inflight = 0
+
+    def request(method, params, *, started=None, release=None):
+        nonlocal inflight, max_inflight
+        cid = params.get("newClientOrderId") or params["origClientOrderId"]
+        with network_lock:
+            calls.append((method, cid))
+            inflight += 1
+            max_inflight = max(max_inflight, inflight)
+        try:
+            if started is not None:
+                started.set()
+            if release is not None:
+                assert release.wait(2.0), "test HTTP response was not released"
+            return _result_for(
+                params,
+                status="CANCELED" if method == "cancel" else "NEW",
+                order_id=124 if params.get("side") == "SELL" else 123,
+            )
+        finally:
+            with network_lock:
+                inflight -= 1
+
+    class HeldRest:
+        def new_order(self, **params):
+            return request(
+                "new", params,
+                started=new_started if params["side"] == "BUY" else None,
+                release=release_new if params["side"] == "BUY" else None,
+            )
+
+        def cancel_order(self, **params):
+            return request(
+                "cancel", {**params, "side": "BUY"},
+                started=cancel_started, release=release_cancel,
+            )
+
+    rest = HeldRest()
+    gateway = BinanceUsdMOrderGateway(
+        rest_order_client=rest,
+        async_order_lanes_enabled=True,
+        cross_side_order_lanes_enabled=False,
+    )
+    engine = _engine(rest)
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    engine._dynamic_fill_hazard_shadow_runtime = None
+    engine._dynamic_fill_hazard_action_lock = threading.RLock()
+    engine._dynamic_fill_hazard_action_hold = None
+    engine.orders = OrderManager(
+        on_cancel=engine._on_cancel,
+        on_terminal=engine._on_order_terminal,
+    )
+    try:
+        buy_cid = engine._place_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+        assert buy_cid is not None
+        assert new_started.wait(1.0)
+        assert engine.orders.get_order(buy_cid).state is OrderState.PENDING_NEW
+        assert inflight == 1
+        private_new = _private_cancel(buy_cid, side=Side.BUY)
+        private_new["X"] = "NEW"
+        engine.orders.on_order_update(private_new)
+        assert engine.orders.get_order(buy_cid).state is OrderState.OPEN
+
+        assert not engine._cancel_order(buy_cid)
+        assert engine.orders.get_order(buy_cid).state is OrderState.PENDING_CANCEL
+        assert calls == [("new", buy_cid)]
+        assert not cancel_started.is_set()
+        release_new.set()
+        assert cancel_started.wait(1.0)
+        assert inflight == 1
+
+        engine.orders.on_order_update(_private_cancel(buy_cid, side=Side.BUY))
+        assert engine.orders.get_order(buy_cid).state is OrderState.CANCELED
+        assert engine._bid_cid is None
+        assert not release_cancel.is_set()
+        sell_cid = engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001)
+        assert sell_cid is not None
+        assert engine.orders.get_order(sell_cid).state is OrderState.PENDING_NEW
+        assert calls == [("new", buy_cid), ("cancel", buy_cid)]
+
+        release_cancel.set()
+        gateway.drain_async_order_completions(timeout_s=2.0)
+        assert calls == [("new", buy_cid), ("cancel", buy_cid), ("new", sell_cid)]
+        assert max_inflight == 1
+        assert inflight == 0
+        assert engine.orders.get_order(buy_cid).state is OrderState.CANCELED
+        assert engine.orders.get_order(sell_cid).state is OrderState.OPEN
+        assert engine._bid_cid is None
+        assert engine._ask_cid == sell_cid
+        health = gateway.health_snapshot()
+        assert health["active_transport"] == "rest"
+        assert list(health["async_order_lanes"]) == ["GLOBAL"]
+        assert health["async_order_lanes"]["GLOBAL"]["future_results_delivered"] == 3
+        assert engine.is_running is True
+    finally:
+        release_new.set()
+        release_cancel.set()
+        gateway.close()
+
+
 def test_runtime_fatal_cancels_before_failed_continuation_evidence() -> None:
     rest = _RestClient()
     engine = _engine(rest)
@@ -1267,6 +1377,80 @@ def test_async_cancel_transport_unknown_retains_pending_cancel() -> None:
     assert order is not None
     assert order.state is OrderState.PENDING_CANCEL
     assert engine._bid_cid == cid
+
+
+@pytest.mark.parametrize(
+    "failure_stage",
+    ["before_apply", "after_apply", "after_private_terminal", "after_active_result"],
+)
+def test_async_cancel_local_processing_failure_preserves_exchange_state(
+    failure_stage, caplog,
+) -> None:
+    rest = _RestClient()
+    engine = _engine(rest)
+    gateway = _ControllableAsyncGateway()
+    gateway.cancel_open_orders = rest.cancel_open_orders
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    assert not engine._cancel_order(cid)
+    if failure_stage == "after_private_terminal":
+        engine.orders.on_order_update(_private_cancel(cid, side=Side.BUY))
+
+    apply_response = engine._apply_rest_reconciled_order_status
+    response_error_calls = []
+    engine._complete_cancel_order_error = lambda **kwargs: response_error_calls.append(kwargs)
+
+    def fail_processing(**kwargs):
+        if failure_stage != "before_apply":
+            apply_response(**kwargs)
+        raise RuntimeError("local cancel result processing failed")
+
+    engine._apply_rest_reconciled_order_status = fail_processing
+    status = "NEW" if failure_stage == "after_active_result" else "CANCELED"
+    gateway.cancel_future.set_result(_result_for(gateway.cancel_calls[0], status=status))
+
+    assert response_error_calls == []
+    assert "CANCEL_ACK_UNKNOWN" not in caplog.text
+    expected_state = {
+        "before_apply": OrderState.PENDING_CANCEL,
+        "after_active_result": OrderState.OPEN,
+    }.get(failure_stage, OrderState.CANCELED)
+    assert engine.orders.get_order(cid).state is expected_state
+    assert engine._order_submit_fail_closed is True
+    assert engine.is_running is False
+    safety = engine.runtime_safety_snapshot()
+    assert safety["fatal_runtime_reason"] == "ASYNC_ORDER_CANCEL_COMPLETION_FAILED"
+    assert safety["reconciliation_required"] is True
+    assert engine._runtime_reconciliation_quiescence_blocked is True
+    assert len(rest.cancel_calls) == 1
+    assert engine._place_order("BTCUSDC", Side.SELL, 100.1, 0.001) is None
+    assert gateway.new_calls == []
+
+
+@pytest.mark.parametrize("response_kind", ["missing_field", "unrecognized_status"])
+def test_async_cancel_unvalidated_response_still_retains_unknown_ownership(response_kind):
+    engine = _engine(_RestClient())
+    gateway = _ControllableAsyncGateway()
+    engine.order_gateway = gateway
+    engine.cfg.api.async_order_lanes_enabled = True
+    cid = engine.orders.create_order("BTCUSDC", Side.BUY, 99.9, 0.001)
+    engine.orders.confirm_new(cid, 123)
+    engine._bid_cid = cid
+    assert not engine._cancel_order(cid)
+    response = _result_for(gateway.cancel_calls[0], status="CANCELED")
+    if response_kind == "missing_field":
+        del response["executedQty"]
+    else:
+        response["status"] = "UNRECOGNIZED"
+    gateway.cancel_future.set_result(response)
+
+    assert engine.orders.get_order(cid).state is OrderState.PENDING_CANCEL
+    assert engine._bid_cid == cid
+    assert engine.is_running is True
+    assert engine._order_submit_fail_closed is False
 
 
 def test_async_submit_pre_dispatch_failure_releases_ownership() -> None:

@@ -8475,11 +8475,17 @@ class MakerEngine:
         now_ts = time.time()
         update_orders_prepare_policy_end_ns = time.perf_counter_ns()
 
+        # A terminal callback can clear a side reference while this decision
+        # runs. Capture each identity once; never retarget an in-flight plan.
+        with self._order_ref_lock:
+            bid_cid = self._bid_cid
+            ask_cid = self._ask_cid
         # Check existing bid order
-        bid_order = self.orders.get_order(self._bid_cid) if self._bid_cid else None
+        bid_order = self.orders.get_order(bid_cid) if bid_cid else None
+        bid_observed_fill_qty = float(bid_order.filled_qty) if bid_order else 0.0
         bid_pending_lifecycle = self._order_lifecycle_pending(bid_order)
         bid_alive = bid_order and bid_order.is_active
-        if self._bid_cid and not bid_alive and not bid_pending_lifecycle:
+        if bid_cid and not bid_alive and not bid_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.BUY)
         bid_needs_update = True
         bid_force_update = False
@@ -8494,10 +8500,11 @@ class MakerEngine:
                 bid_policy.reason_text = self._policy_reason_text(bid_policy.reason_mask)
 
         # Check existing ask order
-        ask_order = self.orders.get_order(self._ask_cid) if self._ask_cid else None
+        ask_order = self.orders.get_order(ask_cid) if ask_cid else None
+        ask_observed_fill_qty = float(ask_order.filled_qty) if ask_order else 0.0
         ask_pending_lifecycle = self._order_lifecycle_pending(ask_order)
         ask_alive = ask_order and ask_order.is_active
-        if self._ask_cid and not ask_alive and not ask_pending_lifecycle:
+        if ask_cid and not ask_alive and not ask_pending_lifecycle:
             self._prune_terminal_side_order_reference(Side.SELL)
         if self._order_submit_fail_closed or getattr(
             self, "_shutdown_new_order_admission_revoked", False
@@ -9285,12 +9292,12 @@ class MakerEngine:
         if bid_cancel_first and bid_alive:
             bid_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.BUY,
-                cid=str(self._bid_cid),
+                cid=bid_replaced_cid,
                 can_post=bool(can_bid),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
-                self._bid_cid,
+                bid_replaced_cid,
                 trigger_decision_id=bid_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
@@ -9304,12 +9311,12 @@ class MakerEngine:
         elif bid_needs_update and bid_alive:
             bid_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.BUY,
-                cid=str(self._bid_cid),
+                cid=bid_replaced_cid,
                 can_post=bool(can_bid),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             bid_cancel_requested = self._cancel_order(
-                self._bid_cid,
+                bid_replaced_cid,
                 trigger_decision_id=bid_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=bid_continuation_generation,
@@ -9325,6 +9332,17 @@ class MakerEngine:
                 bid_needs_update = False
                 bid_pending_coalesce = True
             elif bid_cancel_requested:
+                terminal = self.orders.ownership_snapshot(bid_replaced_cid).terminal_identity
+                # Terminal does not necessarily mean canceled without a fill.
+                # A racing fill invalidates this decision's inventory/cooldown.
+                if not (
+                    terminal is not None
+                    and terminal["terminal_state"] == OrderState.CANCELED.name
+                    and terminal["cumulative_fill"] == bid_observed_fill_qty
+                    and abs(self.inventory.net_position - q) <= max(lot * 1e-9, 1e-12)
+                ):
+                    bid_needs_update = False
+                    bid_pending_coalesce = True
                 self._prune_terminal_side_order_reference(Side.BUY)
             else:
                 bid_needs_update = False
@@ -9332,12 +9350,12 @@ class MakerEngine:
         if ask_cancel_first and ask_alive:
             ask_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.SELL,
-                cid=str(self._ask_cid),
+                cid=ask_replaced_cid,
                 can_post=bool(can_ask),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
-                self._ask_cid,
+                ask_replaced_cid,
                 trigger_decision_id=ask_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
@@ -9351,12 +9369,12 @@ class MakerEngine:
         elif ask_needs_update and ask_alive:
             ask_continuation_generation = self._arm_replace_terminal_continuation(
                 side=Side.SELL,
-                cid=str(self._ask_cid),
+                cid=ask_replaced_cid,
                 can_post=bool(can_ask),
             )
             rest_before_us = float(self._perf_rest_cancel_sum_us)
             ask_cancel_requested = self._cancel_order(
-                self._ask_cid,
+                ask_replaced_cid,
                 trigger_decision_id=ask_decision_id,
                 trigger_decision_ts_ns=decision_start_ts_ns,
                 replace_continuation_generation=ask_continuation_generation,
@@ -9371,6 +9389,15 @@ class MakerEngine:
                 ask_needs_update = False
                 ask_pending_coalesce = True
             elif ask_cancel_requested:
+                terminal = self.orders.ownership_snapshot(ask_replaced_cid).terminal_identity
+                if not (
+                    terminal is not None
+                    and terminal["terminal_state"] == OrderState.CANCELED.name
+                    and terminal["cumulative_fill"] == ask_observed_fill_qty
+                    and abs(self.inventory.net_position - q) <= max(lot * 1e-9, 1e-12)
+                ):
+                    ask_needs_update = False
+                    ask_pending_coalesce = True
                 self._prune_terminal_side_order_reference(Side.SELL)
             else:
                 ask_needs_update = False
@@ -12759,38 +12786,15 @@ class MakerEngine:
     def _complete_cancel_order_response(
         self,
         *,
-        response: Any,
+        response: tuple[dict[str, Any], int, str],
+        order: Any,
         cid: str,
         side: Side,
         replace_continuation_generation: int,
     ) -> bool:
-        """Validate and monotonically consume one asynchronous cancel RESULT."""
+        """Apply an already validated cancel RESULT without reclassifying errors."""
 
-        ownership = self.orders.ownership_snapshot(cid)
-        if ownership.status is OrderOwnershipStatus.UNKNOWN:
-            raise RuntimeError(f"cancel RESULT has unknown ownership: cid={cid}")
-        order = self.orders.get_order(cid)
-        if order is None:
-            raise RuntimeError(f"cancel RESULT lost local order: cid={cid}")
-        normalized, _oid, status = self._validated_submit_response(
-            response,
-            route="cancel-order",
-            cid=cid,
-            symbol=str(getattr(order, "symbol", self.cfg.symbol)),
-            side=side,
-            quantity=float(getattr(order, "quantity", 0.0)),
-        )
-        if status not in {
-            "NEW",
-            "PARTIALLY_FILLED",
-            "FILLED",
-            "CANCELED",
-            "EXPIRED",
-            "REJECTED",
-        }:
-            raise RuntimeError(
-                f"unrecognized cancel-order response status: {status or 'missing'}"
-            )
+        normalized, _oid, status = response
         self._apply_rest_reconciled_order_status(
             response=normalized,
             order=order,
@@ -12898,14 +12902,27 @@ class MakerEngine:
                     )
                 else:
                     try:
-                        self._complete_cancel_order_response(
-                            response=response,
+                        ownership = self.orders.ownership_snapshot(cid)
+                        if ownership.status is OrderOwnershipStatus.UNKNOWN:
+                            raise RuntimeError(
+                                f"cancel RESULT has unknown ownership: cid={cid}"
+                            )
+                        order = self.orders.get_order(cid)
+                        if order is None:
+                            raise RuntimeError(f"cancel RESULT lost local order: cid={cid}")
+                        validated = self._validated_submit_response(
+                            response,
+                            route="cancel-order",
                             cid=cid,
+                            symbol=str(getattr(order, "symbol", self.cfg.symbol)),
                             side=side,
-                            replace_continuation_generation=(
-                                replace_continuation_generation
-                            ),
+                            quantity=float(getattr(order, "quantity", 0.0)),
                         )
+                        if validated[2] not in _REST_RECONCILE_STATUSES:
+                            raise RuntimeError(
+                                "unrecognized cancel-order response status: "
+                                f"{validated[2] or 'missing'}"
+                            )
                     except BaseException as exc:
                         self._complete_cancel_order_error(
                             error=exc,
@@ -12916,20 +12933,35 @@ class MakerEngine:
                             ),
                             request_started=True,
                         )
+                    else:
+                        # Network/schema uncertainty ends at validation. A
+                        # local apply, callback or log failure must stop the
+                        # runtime without rewriting known exchange evidence as
+                        # CANCEL_ACK_UNKNOWN.
+                        self._complete_cancel_order_response(
+                            response=validated,
+                            order=order,
+                            cid=cid,
+                            side=side,
+                            replace_continuation_generation=(
+                                replace_continuation_generation
+                            ),
+                        )
             except BaseException as exc:
-                logger.critical(
+                self._order_submit_fail_closed = True
+                self.latch_runtime_fatal(
+                    reason="ASYNC_ORDER_CANCEL_COMPLETION_FAILED",
+                    error=exc,
+                    reconciliation_required=True,
+                    defer_reconciliation=True,
+                )
+                _critical_log_without_raising(
                     "ASYNC_ORDER_CANCEL_COMPLETION_FAILED side=%s cid=%s error=%s",
                     side.value,
                     cid,
                     exc,
-                    exc_info=True,
+                    exc_info=(type(exc), exc, exc.__traceback__),
                 )
-                if not self._execution_state_uncertain():
-                    self.latch_runtime_fatal(
-                        reason="ASYNC_ORDER_CANCEL_COMPLETION_FAILED",
-                        error=exc,
-                        reconciliation_required=True,
-                    )
 
     def _cancel_order(
         self,
